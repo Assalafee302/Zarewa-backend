@@ -1,4 +1,4 @@
-import { companionOverpayNgnByReceiptId } from '../../frontend/src/lib/customerLedgerCore.js';
+import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow } from './auth.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';

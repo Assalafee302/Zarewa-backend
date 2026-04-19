@@ -11,7 +11,7 @@ import {
 import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
-} from '../../frontend/src/lib/coilSpecVersusProduct.js';
+} from '../shared/lib/coilSpecVersusProduct.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

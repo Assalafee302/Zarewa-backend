@@ -7,8 +7,8 @@ import {
   planReceiptWithQuotation,
   planRefundAdvance,
   receiptResultFromSavedRows,
-} from '../../frontend/src/lib/customerLedgerCore.js';
-import { productionTransactionReportRows } from '../../frontend/src/lib/productionTransactionReportCore.js';
+} from '../shared/lib/customerLedgerCore.js';
+import { productionTransactionReportRows } from '../shared/lib/productionTransactionReportCore.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
   CUSTOMER_AND_AR_READ_PERMS,

@@ -17,12 +17,12 @@ import {
   listHrStaff,
   listPayrollRuns,
 } from './hrOps.js';
-import { canAccessModuleWithPermissions } from '../../frontend/src/lib/moduleAccess.js';
-import { buildWorkspaceNotifications } from '../../frontend/src/lib/workspaceNotifications.js';
-import { quotationNeedsFollowUpAlert } from '../../frontend/src/lib/quotationLifecycleUi.js';
-import { computeCuttingListMaterialReadiness } from '../../frontend/src/lib/salesCuttingListMaterialReadiness.js';
-import { openAuditQueue, totalLiquidityNgn } from '../../frontend/src/lib/liveAnalytics.js';
-import { refundOutstandingAmount } from '../../frontend/src/lib/refundsStore.js';
+import { canAccessModuleWithPermissions } from '../shared/lib/moduleAccess.js';
+import { buildWorkspaceNotifications } from '../shared/lib/workspaceNotifications.js';
+import { quotationNeedsFollowUpAlert } from '../shared/lib/quotationLifecycleUi.js';
+import { computeCuttingListMaterialReadiness } from '../shared/lib/salesCuttingListMaterialReadiness.js';
+import { openAuditQueue, totalLiquidityNgn } from '../shared/lib/liveAnalytics.js';
+import { refundOutstandingAmount } from '../shared/lib/refundsStore.js';
 
 export const AI_ASSISTANT_MODES = ['search', 'sales', 'procurement', 'operations', 'finance', 'hr'];
 

@@ -13,3 +13,4 @@ data/*.sqlite-*
 playwright-report
 test-results
 playwright/.cache
+package-lock.json

@@ -48,6 +48,7 @@
     "stress:finance100": "node scripts/finance-stress-100.mjs",
     "bench:dashboard": "node scripts/bench-dashboard-summary.mjs",
     "retention:prune": "node scripts/retention-prune.mjs",
+    "build": "node -e \"console.log('[zarewa] build: no compile step (API-only package)');\"",
     "build:serve:lan": "node scripts/serve-built-lan.mjs",
     "install:ci": "npm ci",
     "rebuild:sqlite": "npm rebuild better-sqlite3",

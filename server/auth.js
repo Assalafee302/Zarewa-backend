@@ -272,6 +272,14 @@ const DEFAULT_USERS = [
     password: 'Finance@123',
   },
   {
+    id: 'USR-CASH',
+    username: 'cashier',
+    displayName: 'Cashier',
+    roleKey: 'cashier',
+    department: 'customer',
+    password: 'Cashier@12345!',
+  },
+  {
     id: 'USR-SM',
     username: 'sales.manager',
     displayName: 'Sales Manager',
@@ -463,18 +471,17 @@ export function actorId(actor) {
 
 export function seedAuthUsers(db) {
   // Prevent re-introducing known credentials in production by default.
-  // Enable explicitly for initial staging/testing if needed.
-  if (
-    process.env.NODE_ENV === 'production' &&
-    process.env.ZAREWA_ALLOW_SEEDED_USERS !== 'true' &&
-    process.env.ZAREWA_ALLOW_SEEDED_USERS !== '1'
-  ) {
-    return;
-  }
+  // On a brand-new production database (0 users), allow a one-time bootstrap
+  // so an operator can sign in and rotate credentials immediately.
+  const allowSeededUsers =
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1';
   const count = db.prepare(`SELECT COUNT(*) AS c FROM app_users`).get().c;
-  if (count > 0) return;
+  const isFirstBootstrap = Number(count || 0) === 0;
+  if (process.env.NODE_ENV === 'production' && !allowSeededUsers && !isFirstBootstrap) return;
   const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
   const hasDept = cols.some((c) => c.name === 'department');
+  const findByUsername = db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ?`);
   const ins = hasDept
     ? db.prepare(
         `INSERT INTO app_users (
@@ -489,6 +496,8 @@ export function seedAuthUsers(db) {
   const createdAtISO = nowIso();
   db.transaction(() => {
     for (const user of DEFAULT_USERS) {
+      const existing = findByUsername.get(String(user.username || '').trim().toLowerCase());
+      if (existing?.id) continue;
       const dept = normalizeWorkspaceDepartment(user.department);
       if (hasDept) {
         ins.run(

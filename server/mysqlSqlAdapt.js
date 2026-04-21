@@ -99,12 +99,16 @@ export function adaptSqlForMysql(sql, args) {
 }
 
 /**
- * SQLite UPSERT → MySQL 8.0.19+ row alias syntax.
+ * SQLite UPSERT → MySQL/MariaDB ON DUPLICATE KEY UPDATE syntax.
+ * Uses VALUES(col) for broad compatibility (including MariaDB).
  */
 export function adaptSqliteUpsertToMysql(sql) {
   let s = String(sql || '');
   if (!/\bON\s+CONFLICT\b/i.test(s)) return s;
-  s = s.replace(/\)\s*ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\s*/gi, ') AS ex ON DUPLICATE KEY UPDATE ');
-  s = s.replace(/\bexcluded\./gi, 'ex.');
+  s = s.replace(
+    /\)\s*ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\s*/gi,
+    ') ON DUPLICATE KEY UPDATE '
+  );
+  s = s.replace(/\bexcluded\.([a-z_][a-z0-9_]*)\b/gi, (_m, col) => `VALUES(${col})`);
   return s;
 }

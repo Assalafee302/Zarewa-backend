@@ -49,6 +49,7 @@
     "bench:dashboard": "node scripts/bench-dashboard-summary.mjs",
     "retention:prune": "node scripts/retention-prune.mjs",
     "build": "node -e \"console.log('[zarewa] build: no compile step (API-only package)');\"",
+    "build:serve:lan": "npm run build && npm run serve:built:lan",
     "serve:built:lan": "node scripts/serve-built-lan.mjs",
     "install:ci": "npm ci"
   },

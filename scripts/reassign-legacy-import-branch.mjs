@@ -3,23 +3,12 @@
  * Reassign all Access-imported legacy rows to a workspace branch so they appear when that
  * branch is selected in the app (Sales / Customers / ledger are scoped by branch_id).
  *
- * Importer defaults to BR-KAD. If you work in BR-YOL or BR-MAI, run this after import.
- *
  *   node scripts/reassign-legacy-import-branch.mjs BR-YOL
- *   set ZAREWA_DB=C:\path\to\zarewa.sqlite && node scripts/reassign-legacy-import-branch.mjs BR-MAI
- *
- * Stop the API first if you get SQLITE_BUSY.
  */
-import Database from 'better-sqlite3';
-import fs from 'node:fs';
-import path from 'node:path';
-import { SCHEMA_SQL } from '../server/schemaSql.js';
-import { runMigrations } from '../server/migrate.js';
-import { defaultDbPath } from '../server/db.js';
+import { openConfiguredMysql } from '../server/cliMysql.js';
 import { listBranches } from '../server/branches.js';
 
 const targetBranch = String(process.argv[2] ?? '').trim();
-const dbPath = process.env.ZAREWA_DB ? path.resolve(process.env.ZAREWA_DB) : defaultDbPath();
 
 if (!targetBranch) {
   console.error('Usage: node scripts/reassign-legacy-import-branch.mjs <branchId>');
@@ -27,15 +16,7 @@ if (!targetBranch) {
   process.exit(1);
 }
 
-if (!fs.existsSync(dbPath)) {
-  console.error('Database not found:', dbPath);
-  process.exit(1);
-}
-
-const db = new Database(dbPath);
-db.pragma('foreign_keys = ON');
-db.exec(SCHEMA_SQL);
-runMigrations(db);
+const { db, label } = openConfiguredMysql({ migrate: true });
 
 const valid = new Set(listBranches(db).map((b) => b.id));
 if (!valid.has(targetBranch)) {
@@ -90,4 +71,5 @@ db.transaction(() => {
 
 db.close();
 console.log(`Updated ${n} row(s) to branch_id = ${targetBranch}`);
+console.log('DB:', label());
 console.log('Sign out and back in (or hard refresh) so the SPA reloads bootstrap for that branch.');

@@ -23,9 +23,8 @@ export function normalizeIdempotencyKey(raw) {
  */
 export function pruneIdempotency(db) {
   try {
-    db.prepare(
-      `DELETE FROM http_idempotency WHERE datetime(created_at_iso) < datetime('now', ?)`
-    ).run(`-${TTL_HOURS} hours`);
+    const cutoff = new Date(Date.now() - TTL_HOURS * 3600e3).toISOString();
+    db.prepare(`DELETE FROM http_idempotency WHERE created_at_iso < ?`).run(cutoff);
   } catch {
     /* table may not exist on very old files until migrate runs */
   }
@@ -76,7 +75,11 @@ export function tryStoreIdempotentResponse(db, opts) {
     ).run(String(userId), String(scope), key, statusCode, bodyJson, iso);
   } catch (e) {
     const msg = String(e?.message || e);
-    if (!msg.includes('UNIQUE') && e?.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+    const dup =
+      msg.includes('UNIQUE') ||
+      e?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+      e?.code === 'ER_DUP_ENTRY';
+    if (!dup) {
       throw e;
     }
   }

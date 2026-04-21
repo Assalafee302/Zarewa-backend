@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import XLSX from 'xlsx';
-import { createDatabase, defaultDbPath } from './db.js';
+import { createDatabase } from './db.js';
 import { upsertHrStaffProfile, registerNewStaffWithProfile } from './hrOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
@@ -159,8 +159,7 @@ function main() {
     process.exit(1);
   }
 
-  const dbPath = process.env.ZAREWA_DB_PATH || defaultDbPath();
-  const db = createDatabase(dbPath);
+  const db = createDatabase();
   const actorUserId = pickActorUserId(db, actorArg);
   if (!actorUserId) {
     console.error('No actor user id (need at least one app user).');

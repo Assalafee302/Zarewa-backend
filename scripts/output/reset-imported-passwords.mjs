@@ -1,7 +1,6 @@
-import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+import { openConfiguredMysql } from '../../server/cliMysql.js';
 
-const dbPath = process.env.ZAREWA_DB_PATH || 'data/zarewa.sqlite';
 const nextPassword = process.env.ZAREWA_RESET_PASSWORD || '';
 
 if (!nextPassword || nextPassword.length < 12) {
@@ -28,7 +27,7 @@ const seeded = new Set([
   'ceo',
 ]);
 
-const db = new Database(dbPath);
+const { db, label } = openConfiguredMysql({ migrate: false });
 const rows = db
   .prepare(`SELECT id, username FROM app_users WHERE status = 'active'`)
   .all()
@@ -37,9 +36,9 @@ const rows = db
 const hash = createPasswordHash(nextPassword);
 
 const upd = db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`);
-const tx = db.transaction(() => {
+db.transaction(() => {
   for (const r of rows) upd.run(hash, r.id);
-});
-tx();
+})();
 
-console.log(`Reset password for ${rows.length} active non-seeded users in ${dbPath}.`);
+db.close();
+console.log(`Reset password for ${rows.length} active non-seeded users in ${label()}.`);

@@ -395,7 +395,7 @@ export function getCostingSnapshot(db, branchScope) {
         COUNT(DISTINCT pjc.job_id) AS jobs_touched
       FROM production_job_coils pjc
       INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
-      WHERE date(pj.created_at_iso) >= date('now', '-90 days')${pjB.sql}
+      WHERE DATE(pj.created_at_iso) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)${pjB.sql}
       GROUP BY pjc.product_id`
     )
     .all(...pjB.args);

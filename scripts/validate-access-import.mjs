@@ -1,27 +1,25 @@
 #!/usr/bin/env node
 /**
- * Step 2 — Compare Excel sources (docs/import) to SQLite legacy quotation rows.
+ * Step 2 — Compare Excel sources (docs/import) to MySQL legacy quotation rows.
  *
  *   npm run import:validate
- *   npm run import:validate -- --db data/zarewa-import-staging.sqlite
+ *   npm run import:validate -- --db zarewa_import_staging
  */
-import Database from 'better-sqlite3';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAccessImportPlan } from '../server/importAccessSalesPack.mjs';
-import { defaultDbPath } from '../server/db.js';
+import { openConfiguredMysql } from '../server/cliMysql.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs() {
-  let dbPath = process.env.ZAREWA_DB ? path.resolve(process.env.ZAREWA_DB) : defaultDbPath();
+  let dbOverride = '';
   let importDir = path.join(root, 'docs', 'import');
   for (let i = 2; i < process.argv.length; i++) {
-    if (process.argv[i] === '--db' && process.argv[i + 1]) dbPath = path.resolve(process.argv[++i]);
+    if (process.argv[i] === '--db' && process.argv[i + 1]) dbOverride = String(process.argv[++i]).trim();
     if (process.argv[i] === '--dir' && process.argv[i + 1]) importDir = path.resolve(process.argv[++i]);
   }
-  return { dbPath, importDir };
+  return { dbOverride, importDir };
 }
 
 function legacyFromQt(id) {
@@ -29,12 +27,7 @@ function legacyFromQt(id) {
   return m ? m[1] : '';
 }
 
-const { dbPath, importDir } = parseArgs();
-
-if (!fs.existsSync(dbPath)) {
-  console.error('Database not found:', dbPath);
-  process.exit(1);
-}
+const { dbOverride, importDir } = parseArgs();
 
 const plan = buildAccessImportPlan(importDir);
 if (plan.missing.length) {
@@ -52,7 +45,7 @@ for (const [qid, lines] of plan.linesByQuote) {
 
 const excelPaidRaw = plan.paidByQuote;
 
-const db = new Database(dbPath, { readonly: true });
+const { db, label } = openConfiguredMysql({ database: dbOverride || undefined, migrate: true });
 const qtRows = db
   .prepare(`SELECT id, customer_id, total_ngn, paid_ngn FROM quotations WHERE id LIKE 'QT-LEGACY-%'`)
   .all();
@@ -120,12 +113,12 @@ for (const id of excelQuoteIds) if (!sqliteQuoteIds.has(id)) onlyExcel++;
 for (const id of sqliteQuoteIds) if (!excelQuoteIds.has(id)) onlySqlite++;
 
 console.log('Access import validation');
-console.log('  DB:', dbPath);
+console.log('  DB:', label());
 console.log('  import dir:', importDir);
-console.log('  Legacy quotations in SQLite:', qtRows.length);
+console.log('  Legacy quotations in database:', qtRows.length);
 console.log('  Legacy quotations with order lines in Excel:', excelQuoteIds.size);
-console.log('  Quotation total_ngn mismatches (Excel line sum vs SQLite):', mismTotal);
-console.log('  paid_ngn mismatches (expected from receipts vs SQLite):', mismPaid);
+console.log('  Quotation total_ngn mismatches (Excel line sum vs DB):', mismTotal);
+console.log('  paid_ngn mismatches (expected from receipts vs DB):', mismPaid);
 console.log('  Receipts where SUM(ledger) ≠ paid_ngn (and paid > 0):', mismLedger);
 console.log('  Order IDs only in Excel (no matching QT-LEGACY row):', onlyExcel);
 console.log('  QT-LEGACY rows only in DB (no Excel order bucket):', onlySqlite);

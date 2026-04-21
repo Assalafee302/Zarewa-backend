@@ -639,7 +639,13 @@ export function createAppUserRecord(db, row) {
       );
     }
   } catch (e) {
-    if (e && (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY')) {
+    if (
+      e &&
+      (e.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+        e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+        e.code === 'ER_DUP_ENTRY' ||
+        e.errno === 1062)
+    ) {
       return { ok: false, error: 'Username already exists.' };
     }
     throw e;
@@ -1170,6 +1176,10 @@ export function completePasswordReset(db, identifier, token, newPassword) {
 }
 
 export function requireAuth(req, res, next) {
+  /* CORS library may forward OPTIONS when origin is disallowed; never answer preflight with JSON 401. */
+  if (String(req.method || '').toUpperCase() === 'OPTIONS') {
+    return next();
+  }
   if (!req.user) {
     return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
   }

@@ -8,15 +8,13 @@
  *
  * Env:
  *   RETAIN_DAYS=365
- *   DB_PATH=./data/zarewa.sqlite
  *   PRUNE_DRY_RUN=true|false
+ *   ZAREWA_MYSQL_DATABASE=... (optional override; otherwise from .env)
  */
 
-import path from 'node:path';
-import Database from 'better-sqlite3';
+import { openConfiguredMysql } from '../server/cliMysql.js';
 
 const RETAIN_DAYS = Math.max(7, Number(process.env.RETAIN_DAYS || 365));
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'zarewa.sqlite');
 const DRY_RUN = String(process.env.PRUNE_DRY_RUN || 'true').toLowerCase() !== 'false';
 
 function isoDateDaysAgo(days) {
@@ -27,7 +25,7 @@ function isoDateDaysAgo(days) {
 
 const cutoffDateIso = isoDateDaysAgo(RETAIN_DAYS);
 
-const db = new Database(DB_PATH);
+const { db, label } = openConfiguredMysql({ migrate: true });
 db.pragma('foreign_keys = ON');
 
 function tableExists(name) {
@@ -45,12 +43,9 @@ function pruneTable(table, dateColumn, extraWhere = '') {
 }
 
 const plan = [
-  // Audit log can grow quickly; keep a year by default.
   () => pruneTable('audit_log', 'occurred_at_iso'),
-  // Production conversion checks can explode; keep a year by default.
   () => pruneTable('production_conversion_checks', 'at_iso'),
-  // Treasury movements are important; you may prefer longer retention.
-  () => pruneTable('treasury_movements', 'at_iso'),
+  () => pruneTable('treasury_movements', 'posted_at_iso'),
 ];
 
 const results = [];
@@ -61,14 +56,12 @@ db.transaction(() => {
 console.log(
   JSON.stringify(
     {
-      dbPath: DB_PATH,
+      db: label(),
       dryRun: DRY_RUN,
       retainDays: RETAIN_DAYS,
       cutoffDateIso,
       results,
-      note: DRY_RUN
-        ? 'Dry run only. Set PRUNE_DRY_RUN=false to delete.'
-        : 'Deletion completed. Consider running VACUUM during maintenance windows.',
+      note: DRY_RUN ? 'Dry run only. Set PRUNE_DRY_RUN=false to delete.' : 'Deletion completed.',
     },
     null,
     2
@@ -76,4 +69,3 @@ console.log(
 );
 
 db.close();
-

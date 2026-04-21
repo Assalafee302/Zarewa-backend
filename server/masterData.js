@@ -709,7 +709,13 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
         db.prepare(stmt.insertSql).run(id, ...stmt.values);
       } catch (e) {
         // Windows / WAL edge cases: row may exist though pre-insert SELECT missed it.
-        if (e && (e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || e.code === 'SQLITE_CONSTRAINT_UNIQUE')) {
+        if (
+          e &&
+          (e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+            e.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+            e.code === 'ER_DUP_ENTRY' ||
+            e.errno === 1062)
+        ) {
           db.prepare(stmt.updateSql).run(...stmt.values, id);
         } else {
           throw e;

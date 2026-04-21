@@ -6,6 +6,19 @@ import cors from 'cors';
 import { registerHttpApi } from './httpApi.js';
 import { attachAuthContext } from './auth.js';
 
+/** Browser `Origin` has no path; env entries sometimes include a trailing `/`. */
+function normalizeCorsOrigin(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return '';
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return t.replace(/\/+$/, '');
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return t.replace(/\/+$/, '');
+  }
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  */
@@ -20,10 +33,42 @@ export function createApp(db) {
   // Disallow permissive CORS in production by default.
   const isProduction = process.env.NODE_ENV === 'production';
   const allowAllOrigins = corsOrigin === '*' && !isProduction;
-  const allowedOrigins =
+  const apiPort = Number(process.env.PORT || 8787) || 8787;
+  const devLocalSpaOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:4173',
+    'http://localhost:5180',
+    'http://localhost:3000',
+    `http://localhost:${apiPort}`,
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
+    'http://127.0.0.1:4173',
+    'http://127.0.0.1:5180',
+    'http://127.0.0.1:3000',
+    `http://127.0.0.1:${apiPort}`,
+  ];
+  let allowedOrigins =
     corsOrigin === '*'
       ? []
-      : corsOrigin.split(',').map((s) => s.trim()).filter(Boolean);
+      : corsOrigin
+          .split(',')
+          .map((s) => normalizeCorsOrigin(s))
+          .filter(Boolean);
+  /* Allow common Vite dev origins when not production, or when explicitly opting in (e.g. NODE_ENV=production but API+SPA on same machine). */
+  const allowLocalSpa =
+    !isProduction || String(process.env.ZAREWA_ALLOW_LOCAL_SPA_CORS || '').trim() === '1';
+  if (allowLocalSpa) {
+    const seen = new Set(allowedOrigins);
+    for (const o of devLocalSpaOrigins.map(normalizeCorsOrigin)) {
+      if (!seen.has(o)) {
+        seen.add(o);
+        allowedOrigins.push(o);
+      }
+    }
+  }
+
+  const allowedOriginSet = new Set(allowedOrigins.map(normalizeCorsOrigin));
 
   /** Dev-only: allow browsers on private LAN IPs (phone on Wi‑Fi) when the SPA talks directly to this API. */
   const allowDevLanCors =
@@ -72,7 +117,9 @@ export function createApp(db) {
       cors({
         origin(originHeader, callback) {
           if (!originHeader) return callback(null, true);
-          if (allowedOrigins.includes(originHeader)) return callback(null, originHeader);
+          if (allowedOriginSet.has(normalizeCorsOrigin(originHeader))) {
+            return callback(null, originHeader);
+          }
           if (allowDevLanCors && isDevPrivateLanOrigin(originHeader)) return callback(null, originHeader);
           return callback(null, false);
         },

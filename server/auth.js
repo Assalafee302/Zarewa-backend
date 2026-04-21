@@ -478,7 +478,23 @@ export function seedAuthUsers(db) {
     process.env.ZAREWA_ALLOW_SEEDED_USERS === '1';
   const count = db.prepare(`SELECT COUNT(*) AS c FROM app_users`).get().c;
   const isFirstBootstrap = Number(count || 0) === 0;
-  if (process.env.NODE_ENV === 'production' && !allowSeededUsers && !isFirstBootstrap) return;
+  const seedMissingFlag =
+    process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === 'true' ||
+    process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === '1';
+  const adminRow = db
+    .prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = 'admin'`)
+    .get();
+  // If production already has users but no `admin`, still insert missing defaults (at least admin).
+  // Otherwise set ZAREWA_SEED_MISSING_DEFAULT_USERS=1 once to backfill any missing demo accounts.
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !allowSeededUsers &&
+    !isFirstBootstrap &&
+    adminRow &&
+    !seedMissingFlag
+  ) {
+    return;
+  }
   const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
   const hasDept = cols.some((c) => c.name === 'department');
   const findByUsername = db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ?`);

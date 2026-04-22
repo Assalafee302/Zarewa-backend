@@ -104,6 +104,7 @@ Phase A does **not** depend on Phase C; completing Phase A makes Phase C easier 
 | `VITE_API_BASE` | Built into the SPA; full API origin, no trailing slash. |
 | `CORS_ORIGIN` | Allowed browser origins for the API. |
 | `ZAREWA_COOKIE_SAMESITE` | `strict` (default), `lax`, or `none` for cross-site. |
+| `ZAREWA_COOKIE_DOMAIN` | Optional parent domain (for example `.example.com`) for sibling subdomain UI/API CSRF cookie reads. |
 | `COOKIE_SECURE` / `NODE_ENV` | HTTPS cookies in production. |
 
 See also [ENVIRONMENT.md](ENVIRONMENT.md), **`.env.example`**, and **`.env.split-staging.example`** in this package (split staging variable list; `.env` is gitignored). The SPA has its own **`frontend/.env.example`** for `VITE_API_BASE`.

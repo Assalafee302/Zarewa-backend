@@ -827,19 +827,37 @@ function sessionCookieSameSite() {
   return 'Strict';
 }
 
+function sessionCookieDomainAttr() {
+  const raw = String(process.env.ZAREWA_COOKIE_DOMAIN || '').trim();
+  if (!raw) return '';
+  // Normalize common ".example.com/" input from copy/paste.
+  const normalized = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if (!normalized) return '';
+  if (normalized.includes(';') || /\s/.test(normalized)) {
+    console.warn(
+      `[zarewa] Invalid ZAREWA_COOKIE_DOMAIN=${JSON.stringify(process.env.ZAREWA_COOKIE_DOMAIN)}; ignoring`
+    );
+    return '';
+  }
+  return `; Domain=${normalized}`;
+}
+
 function sessionCookieFlags() {
   const sameSite = sessionCookieSameSite();
+  const domainAttr = sessionCookieDomainAttr();
   if (sameSite === 'None') {
-    return '; SameSite=None; Secure';
+    return `${domainAttr}; SameSite=None; Secure`;
   }
   if (process.env.COOKIE_SECURE === '0' || process.env.COOKIE_SECURE === 'false') {
-    return `; SameSite=${sameSite}`;
+    return `${domainAttr}; SameSite=${sameSite}`;
   }
   const secure =
     process.env.COOKIE_SECURE === '1' ||
     process.env.COOKIE_SECURE === 'true' ||
     process.env.NODE_ENV === 'production';
-  return secure ? `; SameSite=${sameSite}; Secure` : `; SameSite=${sameSite}`;
+  return secure
+    ? `${domainAttr}; SameSite=${sameSite}; Secure`
+    : `${domainAttr}; SameSite=${sameSite}`;
 }
 
 function pushSetCookie(res, value) {

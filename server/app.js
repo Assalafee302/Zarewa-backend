@@ -128,6 +128,7 @@ export function createApp(db) {
     );
   }
   app.use(attachAuthContext(db));
+  
 
   registerHttpApi(app, db);
 

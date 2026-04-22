@@ -272,6 +272,14 @@ const DEFAULT_USERS = [
     password: 'Finance@123',
   },
   {
+    id: 'USR-CASH',
+    username: 'cashier',
+    displayName: 'Cashier',
+    roleKey: 'cashier',
+    department: 'customer',
+    password: 'Cashier@12345!',
+  },
+  {
     id: 'USR-SM',
     username: 'sales.manager',
     displayName: 'Sales Manager',
@@ -463,18 +471,33 @@ export function actorId(actor) {
 
 export function seedAuthUsers(db) {
   // Prevent re-introducing known credentials in production by default.
-  // Enable explicitly for initial staging/testing if needed.
+  // On a brand-new production database (0 users), allow a one-time bootstrap
+  // so an operator can sign in and rotate credentials immediately.
+  const allowSeededUsers =
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1';
+  const count = db.prepare(`SELECT COUNT(*) AS c FROM app_users`).get().c;
+  const isFirstBootstrap = Number(count || 0) === 0;
+  const seedMissingFlag =
+    process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === 'true' ||
+    process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === '1';
+  const adminRow = db
+    .prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = 'admin'`)
+    .get();
+  // If production already has users but no `admin`, still insert missing defaults (at least admin).
+  // Otherwise set ZAREWA_SEED_MISSING_DEFAULT_USERS=1 once to backfill any missing demo accounts.
   if (
     process.env.NODE_ENV === 'production' &&
-    process.env.ZAREWA_ALLOW_SEEDED_USERS !== 'true' &&
-    process.env.ZAREWA_ALLOW_SEEDED_USERS !== '1'
+    !allowSeededUsers &&
+    !isFirstBootstrap &&
+    adminRow &&
+    !seedMissingFlag
   ) {
     return;
   }
-  const count = db.prepare(`SELECT COUNT(*) AS c FROM app_users`).get().c;
-  if (count > 0) return;
   const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
   const hasDept = cols.some((c) => c.name === 'department');
+  const findByUsername = db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ?`);
   const ins = hasDept
     ? db.prepare(
         `INSERT INTO app_users (
@@ -489,6 +512,8 @@ export function seedAuthUsers(db) {
   const createdAtISO = nowIso();
   db.transaction(() => {
     for (const user of DEFAULT_USERS) {
+      const existing = findByUsername.get(String(user.username || '').trim().toLowerCase());
+      if (existing?.id) continue;
       const dept = normalizeWorkspaceDepartment(user.department);
       if (hasDept) {
         ins.run(
@@ -639,7 +664,13 @@ export function createAppUserRecord(db, row) {
       );
     }
   } catch (e) {
-    if (e && (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY')) {
+    if (
+      e &&
+      (e.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+        e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+        e.code === 'ER_DUP_ENTRY' ||
+        e.errno === 1062)
+    ) {
       return { ok: false, error: 'Username already exists.' };
     }
     throw e;
@@ -796,19 +827,37 @@ function sessionCookieSameSite() {
   return 'Strict';
 }
 
+function sessionCookieDomainAttr() {
+  const raw = String(process.env.ZAREWA_COOKIE_DOMAIN || '').trim();
+  if (!raw) return '';
+  // Normalize common ".example.com/" input from copy/paste.
+  const normalized = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if (!normalized) return '';
+  if (normalized.includes(';') || /\s/.test(normalized)) {
+    console.warn(
+      `[zarewa] Invalid ZAREWA_COOKIE_DOMAIN=${JSON.stringify(process.env.ZAREWA_COOKIE_DOMAIN)}; ignoring`
+    );
+    return '';
+  }
+  return `; Domain=${normalized}`;
+}
+
 function sessionCookieFlags() {
   const sameSite = sessionCookieSameSite();
+  const domainAttr = sessionCookieDomainAttr();
   if (sameSite === 'None') {
-    return '; SameSite=None; Secure';
+    return `${domainAttr}; SameSite=None; Secure`;
   }
   if (process.env.COOKIE_SECURE === '0' || process.env.COOKIE_SECURE === 'false') {
-    return `; SameSite=${sameSite}`;
+    return `${domainAttr}; SameSite=${sameSite}`;
   }
   const secure =
     process.env.COOKIE_SECURE === '1' ||
     process.env.COOKIE_SECURE === 'true' ||
     process.env.NODE_ENV === 'production';
-  return secure ? `; SameSite=${sameSite}; Secure` : `; SameSite=${sameSite}`;
+  return secure
+    ? `${domainAttr}; SameSite=${sameSite}; Secure`
+    : `${domainAttr}; SameSite=${sameSite}`;
 }
 
 function pushSetCookie(res, value) {
@@ -1170,6 +1219,10 @@ export function completePasswordReset(db, identifier, token, newPassword) {
 }
 
 export function requireAuth(req, res, next) {
+  /* CORS library may forward OPTIONS when origin is disallowed; never answer preflight with JSON 401. */
+  if (String(req.method || '').toUpperCase() === 'OPTIONS') {
+    return next();
+  }
   if (!req.user) {
     return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
   }

@@ -51,10 +51,11 @@ function escRe(s) {
 }
 
 export function ensureHumanIdSequencesTable(db) {
+  /* `last_value` — MySQL treats LAST_VALUE as a reserved window name. */
   db.exec(`
     CREATE TABLE IF NOT EXISTS human_id_sequences (
       scope TEXT PRIMARY KEY,
-      last_value INTEGER NOT NULL DEFAULT 0
+      \`last_value\` INTEGER NOT NULL DEFAULT 0
     )
   `);
 }
@@ -86,10 +87,10 @@ export function getBranchCodeUpper(db, branchId) {
 export function bumpHumanSerial(db, scope) {
   ensureHumanIdSequencesTable(db);
   db.prepare(
-    `INSERT INTO human_id_sequences (scope, last_value) VALUES (?, 1)
-     ON CONFLICT(scope) DO UPDATE SET last_value = human_id_sequences.last_value + 1`
+    `INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, 1)
+     ON CONFLICT(scope) DO UPDATE SET \`last_value\` = human_id_sequences.\`last_value\` + 1`
   ).run(scope);
-  const row = db.prepare(`SELECT last_value FROM human_id_sequences WHERE scope = ?`).get(scope);
+  const row = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
   return row.last_value;
 }
 
@@ -159,7 +160,7 @@ export function allocateHumanId(db, prefix, branchId, opts) {
   const code = global ? null : getBranchCodeUpper(db, branchId);
   const scope = global ? `${prefix}||${fullYear}` : `${prefix}|${code}|${fullYear}`;
   ensureHumanIdSequencesTable(db);
-  const existing = db.prepare(`SELECT last_value FROM human_id_sequences WHERE scope = ?`).get(scope);
+  const existing = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
   if (!existing) {
     const escP = escRe(prefix);
     const patterns = [];
@@ -176,7 +177,7 @@ export function allocateHumanId(db, prefix, branchId, opts) {
       for (const re of opts.extraPatterns) patterns.push(re);
     }
     const max = opts.table ? maxMatchFromColumn(db, opts.table, idColumn, patterns) : 0;
-    db.prepare(`INSERT INTO human_id_sequences (scope, last_value) VALUES (?, ?)`).run(scope, max);
+    db.prepare(`INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, ?)`).run(scope, max);
   }
   const n = bumpHumanSerial(db, scope);
   if (global) return `${prefix}-${yy}-${String(n).padStart(width, '0')}`;
@@ -348,10 +349,10 @@ export function nextTreasuryTransferBatchHumanId(db) {
   const prefix = 'TR';
   const scope = `${prefix}||${fullYear}`;
   ensureHumanIdSequencesTable(db);
-  const existing = db.prepare(`SELECT last_value FROM human_id_sequences WHERE scope = ?`).get(scope);
+  const existing = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
   if (!existing) {
     const max = maxTreasuryBatchSerial(db, prefix, fullYear, yy);
-    db.prepare(`INSERT INTO human_id_sequences (scope, last_value) VALUES (?, ?)`).run(scope, max);
+    db.prepare(`INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, ?)`).run(scope, max);
   }
   const n = bumpHumanSerial(db, scope);
   return `${prefix}-${yy}-${String(n).padStart(5, '0')}`;
@@ -364,10 +365,10 @@ export function nextPostingBatchHumanId(db) {
   const prefix = 'TB';
   const scope = `${prefix}||${fullYear}`;
   ensureHumanIdSequencesTable(db);
-  const existing = db.prepare(`SELECT last_value FROM human_id_sequences WHERE scope = ?`).get(scope);
+  const existing = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
   if (!existing) {
     const max = maxTreasuryBatchSerial(db, prefix, fullYear, yy);
-    db.prepare(`INSERT INTO human_id_sequences (scope, last_value) VALUES (?, ?)`).run(scope, max);
+    db.prepare(`INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, ?)`).run(scope, max);
   }
   const n = bumpHumanSerial(db, scope);
   return `${prefix}-${yy}-${String(n).padStart(4, '0')}`;

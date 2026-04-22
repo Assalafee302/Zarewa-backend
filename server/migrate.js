@@ -281,7 +281,15 @@ export function runMigrations(db) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN preview_snapshot_json TEXT`);
   }
   // Legacy index blocked multiple refund requests per quotation (product defaulted to "—").
-  db.exec(`DROP INDEX IF EXISTS idx_customer_refunds_single_pending`);
+  const hasRefundPendingIdx = db
+    .prepare(
+      'SELECT 1 AS `1` FROM information_schema.statistics ' +
+        "WHERE table_schema = DATABASE() AND table_name = 'customer_refunds' AND index_name = ? LIMIT 1"
+    )
+    .get('idx_customer_refunds_single_pending');
+  if (hasRefundPendingIdx) {
+    db.exec(`ALTER TABLE customer_refunds DROP INDEX idx_customer_refunds_single_pending`);
+  }
   db.exec(`
     UPDATE customer_refunds
     SET suggested_lines_json = CASE
@@ -2450,11 +2458,11 @@ function migrateWipBalancesBranchComposite(db) {
     if (!colSet.has('branch_id')) {
       db.exec(`ALTER TABLE wip_balances ADD COLUMN branch_id TEXT NOT NULL DEFAULT ''`);
     }
-    const allWip = db.prepare(`SELECT rowid, product_id FROM wip_balances`).all();
+    const allWip = db.prepare(`SELECT product_id FROM wip_balances`).all();
     for (const w of allWip) {
       const p = db.prepare(`SELECT branch_id FROM products WHERE product_id = ?`).get(w.product_id);
       const bid = p ? String(p.branch_id ?? '').trim() : '';
-      db.prepare(`UPDATE wip_balances SET branch_id = ? WHERE rowid = ?`).run(bid, w.rowid);
+      db.prepare(`UPDATE wip_balances SET branch_id = ? WHERE product_id = ?`).run(bid, w.product_id);
     }
 
     db.exec(`DROP TABLE IF EXISTS wip_balances__new`);
@@ -2465,11 +2473,11 @@ function migrateWipBalancesBranchComposite(db) {
       PRIMARY KEY (branch_id, product_id)
     )`);
     db.exec(`
-      INSERT OR REPLACE INTO wip_balances__new (branch_id, product_id, qty)
+      REPLACE INTO wip_balances__new (branch_id, product_id, qty)
       SELECT TRIM(COALESCE(branch_id,'')), product_id, qty FROM wip_balances
     `);
     db.exec(`DROP TABLE wip_balances`);
-    db.exec(`ALTER TABLE wip_balances__new RENAME TO wip_balances`);
+    db.exec(`RENAME TABLE wip_balances__new TO wip_balances`);
   })();
 }
 

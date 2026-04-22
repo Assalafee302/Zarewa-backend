@@ -31,12 +31,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import Database from 'better-sqlite3';
 import XLSX from 'xlsx';
 import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
-import { SCHEMA_SQL } from './schemaSql.js';
 import { runMigrations } from './migrate.js';
-import { defaultDbPath } from './db.js';
+import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   insertTreasuryMovementTx,
@@ -53,7 +51,7 @@ function parseArgs(argv) {
   const out = {
     dryRun: false,
     dir: path.join(ROOT, 'docs', 'import'),
-    dbPath: process.env.ZAREWA_DB || defaultDbPath(),
+    dbOverride: '',
     branchId: DEFAULT_BRANCH_ID,
     defaultTreasuryAccountId: 0,
   };
@@ -61,7 +59,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--dir' && argv[i + 1]) out.dir = path.resolve(argv[++i]);
-    else if (a === '--db' && argv[i + 1]) out.dbPath = path.resolve(argv[++i]);
+    else if (a === '--db' && argv[i + 1]) out.dbOverride = String(argv[++i]).trim();
     else if (a === '--branch' && argv[i + 1]) out.branchId = String(argv[++i]).trim();
     else if (a === '--default-treasury-account-id' && argv[i + 1]) {
       out.defaultTreasuryAccountId = parseInt(String(argv[++i]), 10) || 0;
@@ -127,12 +125,12 @@ function sheetRows(wb, sheetName) {
   return XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: true });
 }
 
-function openDb(dbPath, dryRun) {
+function openDb(opts, dryRun) {
   if (dryRun) return null;
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const cfg = mysqlConfigFromEnv();
+  if (opts?.dbOverride) cfg.database = opts.dbOverride;
+  const db = createMysqlDatabase(cfg, { reset: false });
   db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA_SQL);
   runMigrations(db);
   return db;
 }
@@ -259,8 +257,8 @@ export function runFinanceImport(db, plan, branchId, opts = {}) {
 
     let id = selTa.get(accNo)?.id;
     if (id == null) {
-      insTa.run(name, bankName, 0, typ, accNo);
-      id = Number(db.prepare(`SELECT last_insert_rowid() AS id`).get().id);
+      const insRes = insTa.run(name, bankName, 0, typ, accNo);
+      id = Number(insRes.lastInsertRowid);
       if (opening > 0) {
         insertTreasuryMovementTx(db, {
           type: 'INTERNAL_TRANSFER_IN',
@@ -533,7 +531,9 @@ function main() {
   console.log('  receipt routing rows:', plan.receiptRoute.rows.length, plan.receiptRoute.source ? `← ${plan.receiptRoute.source}` : '');
   console.log('  expenses:', plan.expenses.rows.length, plan.expenses.source ? `← ${plan.expenses.source}` : '');
   console.log('  purchases / payments:', plan.purchases.rows.length, plan.purchases.source ? `← ${plan.purchases.source}` : '');
-  console.log('  DB:', args.dbPath);
+  const cfg = mysqlConfigFromEnv();
+  if (args.dbOverride) cfg.database = args.dbOverride;
+  console.log('  DB:', databaseLabel(cfg));
   console.log('  branch:', args.branchId);
   console.log('  default treasury id (receipt backfill):', args.defaultTreasuryAccountId || '(off)');
   console.log('  dryRun:', args.dryRun);
@@ -549,11 +549,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!fs.existsSync(path.dirname(args.dbPath))) {
-    fs.mkdirSync(path.dirname(args.dbPath), { recursive: true });
-  }
-
-  const db = openDb(args.dbPath, false);
+  const db = openDb(args, false);
   if (!db) {
     console.error('Failed to open database');
     process.exit(1);

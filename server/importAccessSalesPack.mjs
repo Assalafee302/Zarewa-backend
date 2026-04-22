@@ -43,11 +43,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import Database from 'better-sqlite3';
 import XLSX from 'xlsx';
-import { SCHEMA_SQL } from './schemaSql.js';
 import { runMigrations } from './migrate.js';
-import { defaultDbPath } from './db.js';
+import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,7 +55,7 @@ function parseArgs(argv) {
   const out = {
     dryRun: false,
     dir: path.join(ROOT, 'docs', 'import'),
-    dbPath: process.env.ZAREWA_DB || defaultDbPath(),
+    dbOverride: '',
     branchId: DEFAULT_BRANCH_ID,
     customerMergeReport: false,
     customerMergeReportOut: '',
@@ -72,7 +70,7 @@ function parseArgs(argv) {
     else if (a === '--dir' && argv[i + 1]) {
       out.dir = path.resolve(argv[++i]);
     } else if (a === '--db' && argv[i + 1]) {
-      out.dbPath = path.resolve(argv[++i]);
+      out.dbOverride = String(argv[++i]).trim();
     } else if (a === '--branch' && argv[i + 1]) {
       out.branchId = String(argv[++i]).trim();
     } else if (a === '--customer-merge-report') {
@@ -902,12 +900,12 @@ function syncQuotationLineRows(db, quotationId, linesJson) {
   }
 }
 
-function openDb(dbPath, dryRun) {
+function openDb(opts, dryRun) {
   if (dryRun) return null;
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const cfg = mysqlConfigFromEnv();
+  if (opts?.dbOverride) cfg.database = opts.dbOverride;
+  const db = createMysqlDatabase(cfg, { reset: false });
   db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA_SQL);
   runMigrations(db);
   return db;
 }
@@ -1123,23 +1121,24 @@ function runImport(db, plan, branchId) {
       status, tier, payment_terms, created_by, created_at_iso, last_activity_iso,
       company_name, lead_source, preferred_contact, follow_up_iso, crm_tags_json, crm_profile_notes, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(customer_id) DO UPDATE SET
-      name = excluded.name,
-      phone_number = excluded.phone_number,
-      email = excluded.email,
-      address_shipping = excluded.address_shipping,
-      address_billing = excluded.address_billing,
-      status = excluded.status,
-      tier = excluded.tier,
-      payment_terms = excluded.payment_terms,
-      last_activity_iso = excluded.last_activity_iso,
-      company_name = excluded.company_name,
-      lead_source = excluded.lead_source,
-      preferred_contact = excluded.preferred_contact,
-      follow_up_iso = excluded.follow_up_iso,
-      crm_tags_json = excluded.crm_tags_json,
-      crm_profile_notes = excluded.crm_profile_notes,
-      branch_id = excluded.branch_id,
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      name = ex.name,
+      phone_number = ex.phone_number,
+      email = ex.email,
+      address_shipping = ex.address_shipping,
+      address_billing = ex.address_billing,
+      status = ex.status,
+      tier = ex.tier,
+      payment_terms = ex.payment_terms,
+      last_activity_iso = ex.last_activity_iso,
+      company_name = ex.company_name,
+      lead_source = ex.lead_source,
+      preferred_contact = ex.preferred_contact,
+      follow_up_iso = ex.follow_up_iso,
+      crm_tags_json = ex.crm_tags_json,
+      crm_profile_notes = ex.crm_profile_notes,
+      branch_id = ex.branch_id,
       created_at_iso = customers.created_at_iso,
       created_by = customers.created_by
   `);
@@ -1173,23 +1172,24 @@ function runImport(db, plan, branchId) {
       total_display, total_ngn, paid_ngn, payment_status, status, approval_date, customer_feedback, handled_by,
       project_name, lines_json, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET
-      customer_id = excluded.customer_id,
-      customer_name = excluded.customer_name,
-      date_label = excluded.date_label,
-      date_iso = excluded.date_iso,
-      due_date_iso = excluded.due_date_iso,
-      total_display = excluded.total_display,
-      total_ngn = excluded.total_ngn,
-      paid_ngn = excluded.paid_ngn,
-      payment_status = excluded.payment_status,
-      status = excluded.status,
-      approval_date = excluded.approval_date,
-      customer_feedback = excluded.customer_feedback,
-      handled_by = excluded.handled_by,
-      project_name = excluded.project_name,
-      lines_json = excluded.lines_json,
-      branch_id = excluded.branch_id
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      customer_id = ex.customer_id,
+      customer_name = ex.customer_name,
+      date_label = ex.date_label,
+      date_iso = ex.date_iso,
+      due_date_iso = ex.due_date_iso,
+      total_display = ex.total_display,
+      total_ngn = ex.total_ngn,
+      paid_ngn = ex.paid_ngn,
+      payment_status = ex.payment_status,
+      status = ex.status,
+      approval_date = ex.approval_date,
+      customer_feedback = ex.customer_feedback,
+      handled_by = ex.handled_by,
+      project_name = ex.project_name,
+      lines_json = ex.lines_json,
+      branch_id = ex.branch_id
   `);
 
   for (const row of quotes) {
@@ -1252,38 +1252,40 @@ function runImport(db, plan, branchId) {
       id, at_iso, type, customer_id, customer_name, amount_ngn, quotation_ref,
       payment_method, bank_reference, purpose, created_by_user_id, created_by_name, note, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET
-      at_iso = excluded.at_iso,
-      type = excluded.type,
-      customer_id = excluded.customer_id,
-      customer_name = excluded.customer_name,
-      amount_ngn = excluded.amount_ngn,
-      quotation_ref = excluded.quotation_ref,
-      payment_method = excluded.payment_method,
-      bank_reference = excluded.bank_reference,
-      purpose = excluded.purpose,
-      created_by_user_id = excluded.created_by_user_id,
-      created_by_name = excluded.created_by_name,
-      note = excluded.note,
-      branch_id = excluded.branch_id
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      at_iso = ex.at_iso,
+      type = ex.type,
+      customer_id = ex.customer_id,
+      customer_name = ex.customer_name,
+      amount_ngn = ex.amount_ngn,
+      quotation_ref = ex.quotation_ref,
+      payment_method = ex.payment_method,
+      bank_reference = ex.bank_reference,
+      purpose = ex.purpose,
+      created_by_user_id = ex.created_by_user_id,
+      created_by_name = ex.created_by_name,
+      note = ex.note,
+      branch_id = ex.branch_id
   `);
   const insSr = db.prepare(`
     INSERT INTO sales_receipts (
       id, customer_id, customer_name, quotation_ref, date_label, date_iso, amount_display, amount_ngn, method, status, handled_by, ledger_entry_id, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET
-      customer_id = excluded.customer_id,
-      customer_name = excluded.customer_name,
-      quotation_ref = excluded.quotation_ref,
-      date_label = excluded.date_label,
-      date_iso = excluded.date_iso,
-      amount_display = excluded.amount_display,
-      amount_ngn = excluded.amount_ngn,
-      method = excluded.method,
-      status = excluded.status,
-      handled_by = excluded.handled_by,
-      ledger_entry_id = excluded.ledger_entry_id,
-      branch_id = excluded.branch_id
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      customer_id = ex.customer_id,
+      customer_name = ex.customer_name,
+      quotation_ref = ex.quotation_ref,
+      date_label = ex.date_label,
+      date_iso = ex.date_iso,
+      amount_display = ex.amount_display,
+      amount_ngn = ex.amount_ngn,
+      method = ex.method,
+      status = ex.status,
+      handled_by = ex.handled_by,
+      ledger_entry_id = ex.ledger_entry_id,
+      branch_id = ex.branch_id
   `);
 
   for (const row of receiptRows) {
@@ -1341,19 +1343,20 @@ function runImport(db, plan, branchId) {
       production_registered, production_register_ref, handled_by, branch_id,
       production_release_pending, production_released_at_iso, production_released_by
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET
-      customer_id = excluded.customer_id,
-      customer_name = excluded.customer_name,
-      quotation_ref = excluded.quotation_ref,
-      product_id = excluded.product_id,
-      product_name = excluded.product_name,
-      date_label = excluded.date_label,
-      date_iso = excluded.date_iso,
-      sheets_to_cut = excluded.sheets_to_cut,
-      total_meters = excluded.total_meters,
-      total_label = excluded.total_label,
-      handled_by = excluded.handled_by,
-      branch_id = excluded.branch_id,
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      customer_id = ex.customer_id,
+      customer_name = ex.customer_name,
+      quotation_ref = ex.quotation_ref,
+      product_id = ex.product_id,
+      product_name = ex.product_name,
+      date_label = ex.date_label,
+      date_iso = ex.date_iso,
+      sheets_to_cut = ex.sheets_to_cut,
+      total_meters = ex.total_meters,
+      total_label = ex.total_label,
+      handled_by = ex.handled_by,
+      branch_id = ex.branch_id,
       status = cutting_lists.status,
       machine_name = cutting_lists.machine_name,
       operator_name = cutting_lists.operator_name,
@@ -1427,30 +1430,31 @@ function runImport(db, plan, branchId) {
       current_status, location, po_id, supplier_id, supplier_name, received_at_iso, parent_coil_no,
       material_origin_note, landed_cost_ngn, unit_cost_ngn_per_kg, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(coil_no) DO UPDATE SET
-      product_id = excluded.product_id,
-      line_key = excluded.line_key,
-      qty_received = excluded.qty_received,
-      weight_kg = excluded.weight_kg,
-      colour = excluded.colour,
-      gauge_label = excluded.gauge_label,
-      material_type_name = excluded.material_type_name,
-      supplier_expected_meters = excluded.supplier_expected_meters,
-      supplier_conversion_kg_per_m = excluded.supplier_conversion_kg_per_m,
-      qty_remaining = excluded.qty_remaining,
-      qty_reserved = excluded.qty_reserved,
-      current_weight_kg = excluded.current_weight_kg,
-      current_status = excluded.current_status,
-      location = excluded.location,
-      po_id = excluded.po_id,
-      supplier_id = excluded.supplier_id,
-      supplier_name = excluded.supplier_name,
-      received_at_iso = excluded.received_at_iso,
-      parent_coil_no = excluded.parent_coil_no,
-      material_origin_note = excluded.material_origin_note,
-      landed_cost_ngn = excluded.landed_cost_ngn,
-      unit_cost_ngn_per_kg = excluded.unit_cost_ngn_per_kg,
-      branch_id = excluded.branch_id
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      product_id = ex.product_id,
+      line_key = ex.line_key,
+      qty_received = ex.qty_received,
+      weight_kg = ex.weight_kg,
+      colour = ex.colour,
+      gauge_label = ex.gauge_label,
+      material_type_name = ex.material_type_name,
+      supplier_expected_meters = ex.supplier_expected_meters,
+      supplier_conversion_kg_per_m = ex.supplier_conversion_kg_per_m,
+      qty_remaining = ex.qty_remaining,
+      qty_reserved = ex.qty_reserved,
+      current_weight_kg = ex.current_weight_kg,
+      current_status = ex.current_status,
+      location = ex.location,
+      po_id = ex.po_id,
+      supplier_id = ex.supplier_id,
+      supplier_name = ex.supplier_name,
+      received_at_iso = ex.received_at_iso,
+      parent_coil_no = ex.parent_coil_no,
+      material_origin_note = ex.material_origin_note,
+      landed_cost_ngn = ex.landed_cost_ngn,
+      unit_cost_ngn_per_kg = ex.unit_cost_ngn_per_kg,
+      branch_id = ex.branch_id
   `);
 
   /** @type {Map<string, string>} */
@@ -1508,28 +1512,29 @@ function runImport(db, plan, branchId) {
       status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
       conversion_alert_state, manager_review_required, branch_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(job_id) DO UPDATE SET
-      cutting_list_id = excluded.cutting_list_id,
-      quotation_ref = excluded.quotation_ref,
-      customer_id = excluded.customer_id,
-      customer_name = excluded.customer_name,
-      product_id = excluded.product_id,
-      product_name = excluded.product_name,
-      planned_meters = excluded.planned_meters,
-      planned_sheets = excluded.planned_sheets,
-      machine_name = excluded.machine_name,
-      operator_name = excluded.operator_name,
-      start_date_iso = excluded.start_date_iso,
-      end_date_iso = excluded.end_date_iso,
-      materials_note = excluded.materials_note,
-      status = excluded.status,
-      created_at_iso = excluded.created_at_iso,
-      completed_at_iso = excluded.completed_at_iso,
-      actual_meters = excluded.actual_meters,
-      actual_weight_kg = excluded.actual_weight_kg,
-      conversion_alert_state = excluded.conversion_alert_state,
-      manager_review_required = excluded.manager_review_required,
-      branch_id = excluded.branch_id,
+    AS ex
+    ON DUPLICATE KEY UPDATE
+      cutting_list_id = ex.cutting_list_id,
+      quotation_ref = ex.quotation_ref,
+      customer_id = ex.customer_id,
+      customer_name = ex.customer_name,
+      product_id = ex.product_id,
+      product_name = ex.product_name,
+      planned_meters = ex.planned_meters,
+      planned_sheets = ex.planned_sheets,
+      machine_name = ex.machine_name,
+      operator_name = ex.operator_name,
+      start_date_iso = ex.start_date_iso,
+      end_date_iso = ex.end_date_iso,
+      materials_note = ex.materials_note,
+      status = ex.status,
+      created_at_iso = ex.created_at_iso,
+      completed_at_iso = ex.completed_at_iso,
+      actual_meters = ex.actual_meters,
+      actual_weight_kg = ex.actual_weight_kg,
+      conversion_alert_state = ex.conversion_alert_state,
+      manager_review_required = ex.manager_review_required,
+      branch_id = ex.branch_id,
       manager_review_signed_at_iso = production_jobs.manager_review_signed_at_iso,
       manager_review_signed_by_user_id = production_jobs.manager_review_signed_by_user_id,
       manager_review_signed_by_name = production_jobs.manager_review_signed_by_name,
@@ -1820,18 +1825,16 @@ export function pruneLegacySalesLinkOrphans(db) {
   return { fixedProductionJobRefs, removed };
 }
 
+function dbLogLabel(args) {
+  const cfg = mysqlConfigFromEnv();
+  if (args.dbOverride) cfg.database = args.dbOverride;
+  return databaseLabel(cfg);
+}
+
 function main() {
   const args = parseArgs(process.argv);
   if (args.pruneLegacyLinksOnly) {
-    if (!fs.existsSync(path.dirname(args.dbPath))) {
-      console.error('Database directory missing:', path.dirname(args.dbPath));
-      process.exit(1);
-    }
-    if (!fs.existsSync(args.dbPath)) {
-      console.error('Database not found:', args.dbPath);
-      process.exit(1);
-    }
-    const db = openDb(args.dbPath, false);
+    const db = openDb(args, false);
     if (!db) {
       console.error('Failed to open database');
       process.exit(1);
@@ -1839,7 +1842,7 @@ function main() {
     try {
       const r = db.transaction(() => pruneLegacySalesLinkOrphans(db))();
       console.log('Legacy link prune only');
-      console.log('  DB:', args.dbPath);
+      console.log('  DB:', dbLogLabel(args));
       console.log('  Fixed production_jobs quotation_ref (from cutting list):', r.fixedProductionJobRefs);
       console.log('  Removed:', r.removed);
     } finally {
@@ -1890,7 +1893,7 @@ function main() {
   console.log('  cutting detail rows:', plan.counts.cuttingLines);
   console.log('  stock (coil) rows:', plan.counts.stock);
   console.log('  production rows:', plan.counts.production);
-  console.log('  DB:', args.dbPath);
+  console.log('  DB:', dbLogLabel(args));
   console.log('  branch:', args.branchId);
   console.log('  dryRun:', args.dryRun);
   const lg = plan.linkGaps;
@@ -1905,11 +1908,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!fs.existsSync(path.dirname(args.dbPath))) {
-    fs.mkdirSync(path.dirname(args.dbPath), { recursive: true });
-  }
-
-  const db = openDb(args.dbPath, false);
+  const db = openDb(args, false);
   if (!db) {
     console.error('Failed to open database');
     process.exit(1);

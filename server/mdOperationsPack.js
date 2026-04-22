@@ -27,7 +27,7 @@ export function buildMdOperationsPack(db, opts) {
     .prepare(
       `SELECT COUNT(*) AS c FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
-       WHERE strftime('%Y-%m', COALESCE(pr.approved_at_iso, pr.request_date)) = ?
+       WHERE DATE_FORMAT(COALESCE(pr.approved_at_iso, pr.request_date), '%Y-%m') = ?
          AND TRIM(LOWER(COALESCE(pr.approval_status,''))) = 'approved'
          AND COALESCE(pr.amount_requested_ngn, 0) > ?
          ${branchClause.sql}`

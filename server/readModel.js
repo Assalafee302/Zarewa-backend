@@ -688,7 +688,7 @@ export function listCoilControlEvents(db, branchScope = 'ALL') {
   const lim = 2000;
   return db
     .prepare(
-      `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY datetime(created_at_iso) DESC, id DESC LIMIT ?`
+      `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, id DESC LIMIT ?`
     )
     .all(...b.args, lim)
     .map((row) => ({
@@ -1679,8 +1679,6 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
   const empty = () => emptyOperationsInventoryAttention();
   try {
     const b = branchWhere(db, 'production_jobs', branchScope);
-    const plannedMod = `-${OPS_STALE_PLANNED_DAYS} days`;
-    const runningMod = `-${OPS_STALE_RUNNING_DAYS} days`;
 
     const plannedNoCoilCount =
       Number(
@@ -1701,7 +1699,7 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
           WHERE j.status = 'Planned'
             AND NOT EXISTS (SELECT 1 FROM production_job_coils c WHERE c.job_id = j.job_id)
             AND 1=1${b.sql}
-          ORDER BY datetime(COALESCE(j.created_at_iso, '')) ASC, j.job_id ASC
+          ORDER BY COALESCE(j.created_at_iso, '') ASC, j.job_id ASC
           LIMIT ?`
       )
       .all(...b.args, OPS_ATTENTION_SAMPLES);
@@ -1712,10 +1710,10 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
           .prepare(
             `SELECT COUNT(*) AS c FROM production_jobs j
              WHERE j.status = 'Planned'
-               AND date(j.created_at_iso) <= date('now', ?)
+               AND DATE(j.created_at_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)
                AND 1=1${b.sql}`
           )
-          .get(plannedMod, ...b.args)?.c
+          .get(OPS_STALE_PLANNED_DAYS, ...b.args)?.c
       ) || 0;
 
     const plannedStaleRows = db
@@ -1723,12 +1721,12 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
         `SELECT j.job_id, j.cutting_list_id, j.customer_name, j.quotation_ref, j.created_at_iso, j.start_date_iso, j.status
            FROM production_jobs j
           WHERE j.status = 'Planned'
-            AND date(j.created_at_iso) <= date('now', ?)
+            AND DATE(j.created_at_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)
             AND 1=1${b.sql}
-          ORDER BY datetime(COALESCE(j.created_at_iso, '')) ASC, j.job_id ASC
+          ORDER BY COALESCE(j.created_at_iso, '') ASC, j.job_id ASC
           LIMIT ?`
       )
-      .all(plannedMod, ...b.args, OPS_ATTENTION_SAMPLES);
+      .all(OPS_STALE_PLANNED_DAYS, ...b.args, OPS_ATTENTION_SAMPLES);
 
     const runningStaleCount =
       Number(
@@ -1737,10 +1735,10 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
             `SELECT COUNT(*) AS c FROM production_jobs j
              WHERE j.status = 'Running'
                AND TRIM(IFNULL(j.start_date_iso,'')) != ''
-               AND date(j.start_date_iso) <= date('now', ?)
+               AND DATE(j.start_date_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)
                AND 1=1${b.sql}`
           )
-          .get(runningMod, ...b.args)?.c
+          .get(OPS_STALE_RUNNING_DAYS, ...b.args)?.c
       ) || 0;
 
     const runningStaleRows = db
@@ -1749,12 +1747,12 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
            FROM production_jobs j
           WHERE j.status = 'Running'
             AND TRIM(IFNULL(j.start_date_iso,'')) != ''
-            AND date(j.start_date_iso) <= date('now', ?)
+            AND DATE(j.start_date_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)
             AND 1=1${b.sql}
-          ORDER BY datetime(COALESCE(j.start_date_iso, j.created_at_iso, '')) ASC, j.job_id ASC
+          ORDER BY COALESCE(j.start_date_iso, j.created_at_iso, '') ASC, j.job_id ASC
           LIMIT ?`
       )
-      .all(runningMod, ...b.args, OPS_ATTENTION_SAMPLES);
+      .all(OPS_STALE_RUNNING_DAYS, ...b.args, OPS_ATTENTION_SAMPLES);
 
     const mgrOpenCount =
       Number(
@@ -1775,7 +1773,7 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
           WHERE j.status IN ('Planned','Running')
             AND j.manager_review_required = 1
             AND 1=1${b.sql}
-          ORDER BY datetime(COALESCE(j.created_at_iso, '')) DESC, j.job_id DESC
+          ORDER BY COALESCE(j.created_at_iso, '') DESC, j.job_id DESC
           LIMIT ?`
       )
       .all(...b.args, OPS_ATTENTION_SAMPLES);
@@ -1813,14 +1811,14 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
                AND 1=1${b.sql}
                AND (
                  (j.status = 'Planned' AND NOT EXISTS (SELECT 1 FROM production_job_coils c WHERE c.job_id = j.job_id))
-                 OR (j.status = 'Planned' AND date(j.created_at_iso) <= date('now', ?))
+                 OR (j.status = 'Planned' AND DATE(j.created_at_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY))
                  OR (j.status = 'Running' AND TRIM(IFNULL(j.start_date_iso,'')) != ''
-                     AND date(j.start_date_iso) <= date('now', ?))
+                     AND DATE(j.start_date_iso) <= DATE_SUB(CURDATE(), INTERVAL ? DAY))
                  OR j.manager_review_required = 1
                  OR j.coil_spec_mismatch_pending = 1
                )`
           )
-          .get(plannedMod, runningMod, ...b.args)?.c
+          .get(OPS_STALE_PLANNED_DAYS, OPS_STALE_RUNNING_DAYS, ...b.args)?.c
       ) || 0;
 
     let wipProductsNonZero = 0;
@@ -1847,7 +1845,7 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
               `SELECT COUNT(*) AS c
                  FROM production_completion_adjustments a
                  INNER JOIN production_jobs j ON j.job_id = a.job_id
-                WHERE date(a.at_iso) >= date('now', '-30 day')
+                WHERE DATE(a.at_iso) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
                   AND 1=1${branchSqlA}`
             )
             .get(...ba.args)?.c
@@ -1872,7 +1870,7 @@ export function computeOperationsInventoryAttention(db, branchScope = 'ALL') {
            FROM deliveries d
           WHERE LOWER(TRIM(IFNULL(d.status,''))) NOT IN ('delivered','cancelled','void')
             AND 1=1${bd.sql}
-          ORDER BY datetime(COALESCE(d.ship_date, d.eta, '')) DESC, d.id DESC
+          ORDER BY COALESCE(d.ship_date, d.eta, '') DESC, d.id DESC
           LIMIT ?`
       )
       .all(...bd.args, OPS_ATTENTION_SAMPLES);
@@ -2109,7 +2107,7 @@ export function execOrgSummary(db) {
 }
 
 export function getJsonBlob(db, key) {
-  const row = db.prepare(`SELECT payload FROM app_json_blobs WHERE key = ?`).get(key);
+  const row = db.prepare('SELECT payload FROM app_json_blobs WHERE `key` = ?').get(key);
   if (!row) return null;
   try {
     return JSON.parse(row.payload);
@@ -2120,5 +2118,5 @@ export function getJsonBlob(db, key) {
 
 export function setJsonBlob(db, key, value) {
   const payload = typeof value === 'string' ? value : JSON.stringify(value ?? null);
-  db.prepare(`INSERT OR REPLACE INTO app_json_blobs (key, payload) VALUES (?,?)`).run(key, payload);
+    db.prepare('REPLACE INTO app_json_blobs (`key`, payload) VALUES (?,?)').run(key, payload);
 }

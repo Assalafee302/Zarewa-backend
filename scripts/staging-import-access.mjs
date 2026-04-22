@@ -1,47 +1,34 @@
 #!/usr/bin/env node
 /**
- * Step 1 — Import on a staging copy (keeps a timestamped backup of the live DB).
+ * Step 1 — Import Access pack into a separate MySQL database (staging), leaving the main DB unchanged.
+ *
+ * Create the staging database first, e.g.:
+ *   mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS zarewa_import_staging CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+ *
+ * Backup the main DB before import (example):
+ *   mysqldump -u root -p zarewa_db > backup-zarewa.sql
  *
  *   node scripts/staging-import-access.mjs
  *   node scripts/staging-import-access.mjs -- --strict-customer-merge
  *
- * Produces:
- *   data/zarewa.sqlite.<timestamp>.bak   (backup of current file)
- *   data/zarewa-import-staging.sqlite      (copy + import target)
- *
- * Then validate:  npm run import:validate -- --db data/zarewa-import-staging.sqlite
+ * Then validate:
+ *   npm run import:validate -- --db zarewa_import_staging
  */
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultDbPath } from '../server/db.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const mainDb = path.resolve(defaultDbPath());
-
-if (!fs.existsSync(mainDb)) {
-  console.error('No database file at:', mainDb);
-  process.exit(1);
-}
-
-const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-const backup = mainDb.replace(/\.sqlite$/i, `.sqlite.${stamp}.bak`);
-const staging = path.join(path.dirname(mainDb), 'zarewa-import-staging.sqlite');
-
-fs.copyFileSync(mainDb, backup);
-console.log('Backup written:', backup);
-fs.copyFileSync(mainDb, staging);
-console.log('Staging copy:', staging);
+const stagingDb = String(process.env.ZAREWA_IMPORT_STAGING_DATABASE || 'zarewa_import_staging').trim();
 
 const importScript = path.join(root, 'server', 'importAccessSalesPack.mjs');
 const extra = process.argv.slice(2).filter((a) => a !== '--');
-const args = [importScript, '--db', staging, '--dir', path.join(root, 'docs', 'import'), ...extra];
+const args = [importScript, '--db', stagingDb, '--dir', path.join(root, 'docs', 'import'), ...extra];
 
 const r = spawnSync(process.execPath, args, {
   cwd: root,
   stdio: 'inherit',
-  env: { ...process.env, ZAREWA_DB: staging },
+  env: { ...process.env, ZAREWA_MYSQL_DATABASE: stagingDb },
 });
 
 if (r.status !== 0) {
@@ -49,4 +36,4 @@ if (r.status !== 0) {
   process.exit(r.status ?? 1);
 }
 
-console.log('\nNext: npm run import:validate -- --db data/zarewa-import-staging.sqlite');
+console.log(`\nNext: npm run import:validate -- --db ${stagingDb}`);

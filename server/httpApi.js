@@ -934,7 +934,7 @@ export function registerHttpApi(app, db) {
     try {
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'manager_targets', 'manager_targets', (stripped) => {
         const { targets } = stripped || {};
-        db.prepare(`INSERT OR REPLACE INTO app_json_blobs (key, payload) VALUES (?, ?)`).run(
+        db.prepare('REPLACE INTO app_json_blobs (`key`, payload) VALUES (?, ?)').run(
           'manager_targets',
           JSON.stringify(targets)
         );

@@ -2,9 +2,12 @@ import os from 'node:os';
 import { readAiAssistConfig } from './aiAssist.js';
 import { createDatabase, defaultDbPath } from './db.js';
 import { createApp } from './app.js';
+import { loadProjectEnv } from './loadProjectEnv.js';
 
-const dbPath = process.env.ZAREWA_DB || defaultDbPath();
-const db = createDatabase(dbPath);
+loadProjectEnv();
+
+const db = createDatabase();
+const dbPath = defaultDbPath();
 const app = createApp(db);
 
 const port = Number(process.env.PORT || 8787);

@@ -4,19 +4,11 @@
  *
  * Usage:
  *   node scripts/ensure-default-admin.mjs
- *   ZAREWA_DB=C:\\path\\to\\custom.sqlite node scripts/ensure-default-admin.mjs
  */
-
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
+import { openConfiguredMysql } from '../server/cliMysql.js';
 import { ensureDefaultAdminUser } from '../server/auth.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, '..');
-const dbPath = process.env.ZAREWA_DB || path.join(root, 'data', 'zarewa.sqlite');
-
-const db = new Database(dbPath);
+const { db, label } = openConfiguredMysql({ migrate: true });
 ensureDefaultAdminUser(db);
 db.close();
-console.log('Default admin ensured for', dbPath);
+console.log('Default admin ensured for', label());

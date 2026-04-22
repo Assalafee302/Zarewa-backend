@@ -35,7 +35,7 @@ export function migrateTimestampStyleDocumentIds(db) {
   try {
     db.transaction(() => {
       const leRows = db
-        .prepare(`SELECT id, branch_id, at_iso FROM ledger_entries WHERE id GLOB 'LE-[0-9]*'`)
+        .prepare(`SELECT id, branch_id, at_iso FROM ledger_entries WHERE id REGEXP '^LE-[0-9]+$'`)
         .all()
         .filter((r) => isLegacyLedgerId(r.id));
       leRows.sort((a, b) => String(a.at_iso).localeCompare(String(b.at_iso)) || String(a.id).localeCompare(String(b.id)));
@@ -119,7 +119,7 @@ export function migrateTimestampStyleDocumentIds(db) {
       }
 
       const clRows = db
-        .prepare(`SELECT id, branch_id FROM cutting_lists WHERE id GLOB 'CL-[0-9]*'`)
+        .prepare(`SELECT id, branch_id FROM cutting_lists WHERE id REGEXP '^CL-[0-9]+$'`)
         .all()
         .filter((r) => isLegacyCuttingListId(r.id));
 

@@ -12,7 +12,6 @@ process.chdir(root);
 const apiPort = process.env.E2E_API_PORT || process.env.PORT || '8788';
 const env = {
   ...process.env,
-  ZAREWA_DB: process.env.ZAREWA_DB || 'data/playwright.sqlite',
   PORT: apiPort,
   E2E_API_PORT: apiPort,
 };

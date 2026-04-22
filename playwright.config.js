@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
  * If the UI port is busy (e.g. a leftover e2e-web process), run with different ports, e.g. PowerShell:
  *   $env:E2E_UI_PORT='5182'; $env:E2E_API_PORT='8790'; npm run test:e2e
  * Optional: E2E_REUSE_SERVER=1 reuses an already-running dev stack (may use the wrong DB — use only when you understand the tradeoff).
- * Fresh E2E DB: npm run wipe:e2e-db (removes data/playwright.sqlite only). See docs/ENVIRONMENT.md.
+ * Fresh E2E DB: npm run wipe:e2e-db (drops tables in ZAREWA_MYSQL_E2E_DATABASE, default zarewa_e2e). See docs/ENVIRONMENT.md.
  * HR stress (opt-in): HR_STRESS=1 HR_STRESS_N=12 npm run test:e2e -- e2e/hr-stress.spec.js
  */
 export default defineConfig({
@@ -28,11 +28,10 @@ export default defineConfig({
     command: 'node scripts/e2e-web.mjs',
     url: `http://127.0.0.1:${process.env.E2E_UI_PORT || 5180}`,
     env: {
-      ZAREWA_DB: 'data/playwright.sqlite',
       E2E_UI_PORT: process.env.E2E_UI_PORT || '5180',
       E2E_API_PORT: process.env.E2E_API_PORT || '8788',
     },
-    // Prefer the Playwright stack (API + Vite with playwright.sqlite). Set E2E_REUSE_SERVER=1 only if you intentionally reuse a running server.
+    // Playwright stack: API (MySQL E2E DB) + Vite. Set E2E_REUSE_SERVER=1 only if you intentionally reuse a running server.
     reuseExistingServer: !!process.env.E2E_REUSE_SERVER,
     timeout: 180_000,
   },

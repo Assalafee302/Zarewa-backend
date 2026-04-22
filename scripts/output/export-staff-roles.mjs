@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { openConfiguredMysql } from '../../server/cliMysql.js';
 
 const outDir = path.join(process.cwd(), 'scripts', 'output');
 fs.mkdirSync(outDir, { recursive: true });
 
-const dbPath = process.env.ZAREWA_DB_PATH || path.join(process.cwd(), 'data', 'zarewa.sqlite');
-const db = new Database(dbPath);
+const { db, label } = openConfiguredMysql({ migrate: false });
 
 const rows = db
   .prepare(
@@ -24,10 +23,12 @@ const rows = db
   )
   .all();
 
+db.close();
+
 const header = ['username', 'role', 'branch', 'displayName'];
 const lines = [header.join('\t'), ...rows.map((r) => [r.username, r.roleKey, r.branchId, r.displayName].join('\t'))];
 
 const tsvPath = path.join(outDir, 'staff-roles.tsv');
 fs.writeFileSync(tsvPath, `${lines.join('\n')}\n`, 'utf8');
 
-console.log(`Wrote ${rows.length} rows to ${tsvPath}`);
+console.log(`Wrote ${rows.length} rows to ${tsvPath} (${label()})`);

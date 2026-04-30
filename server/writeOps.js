@@ -71,71 +71,69 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
-  const run = db.transaction((rows) => {
-    const saved = [];
-    for (const r of rows) {
-      if (r.quotationRef) {
-        const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
-        if (q) {
-          if (q.manager_cleared_at_iso) {
-             throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
-          }
-          if (q.manager_flagged_at_iso) {
-             throw new Error(`Quotation ${r.quotationRef} is flagged by manager for review and is closed for further payments.`);
-          }
+  /** No nested `db.transaction` here: httpApi and writeOps callers already wrap in an outer transaction. Nested tx breaks the MySQL worker SAVEPOINT stack (`SAVEPOINT sp_1 does not exist`). */
+  const saved = [];
+  for (const r of planRows) {
+    if (r.quotationRef) {
+      const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
+      if (q) {
+        if (q.manager_cleared_at_iso) {
+          throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
         }
-        
-        // Also check for refunds
-        const ref = db.prepare(`SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`).get(r.quotationRef);
-        if (ref) {
-          throw new Error(`Quotation ${r.quotationRef} has an active refund request (${ref.refund_id}) and is closed for further payments.`);
+        if (q.manager_flagged_at_iso) {
+          throw new Error(`Quotation ${r.quotationRef} is flagged by manager for review and is closed for further payments.`);
         }
       }
 
-      const bid = allowPerRow
-        ? r.branchId != null && String(r.branchId).trim()
-          ? String(r.branchId).trim()
-          : branchId
-        : branchId;
-      const id = nextLedgerEntryId(db, bid || DEFAULT_BRANCH_ID);
-      const atIso = r.atISO || new Date().toISOString();
-      ins.run(
-        id,
-        atIso,
-        r.type,
-        r.customerID,
-        r.customerName ?? null,
-        r.amountNgn,
-        r.quotationRef || null,
-        r.paymentMethod ?? null,
-        r.bankReference ?? null,
-        r.purpose ?? null,
-        r.createdByUserId ?? null,
-        r.createdByName ?? null,
-        r.note ?? null,
-        bid ?? null
-      );
-      saved.push({
-        id,
-        atISO: atIso,
-        type: r.type,
-        customerID: r.customerID,
-        customerName: r.customerName,
-        amountNgn: r.amountNgn,
-        quotationRef: r.quotationRef || '',
-        paymentMethod: r.paymentMethod,
-        bankReference: r.bankReference,
-        purpose: r.purpose,
-        createdByUserId: r.createdByUserId ?? '',
-        createdByName: r.createdByName ?? '',
-        note: r.note,
-        branchId: bid ?? '',
-      });
+      // Also check for refunds
+      const ref = db.prepare(`SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`).get(r.quotationRef);
+      if (ref) {
+        throw new Error(`Quotation ${r.quotationRef} has an active refund request (${ref.refund_id}) and is closed for further payments.`);
+      }
     }
-    return saved;
-  });
 
-  return run(planRows);
+    const bid = allowPerRow
+      ? r.branchId != null && String(r.branchId).trim()
+        ? String(r.branchId).trim()
+        : branchId
+      : branchId;
+    const id = nextLedgerEntryId(db, bid || DEFAULT_BRANCH_ID);
+    const atIso = r.atISO || new Date().toISOString();
+    ins.run(
+      id,
+      atIso,
+      r.type,
+      r.customerID,
+      r.customerName ?? null,
+      r.amountNgn,
+      r.quotationRef || null,
+      r.paymentMethod ?? null,
+      r.bankReference ?? null,
+      r.purpose ?? null,
+      r.createdByUserId ?? null,
+      r.createdByName ?? null,
+      r.note ?? null,
+      bid ?? null
+    );
+    saved.push({
+      id,
+      atISO: atIso,
+      type: r.type,
+      customerID: r.customerID,
+      customerName: r.customerName,
+      amountNgn: r.amountNgn,
+      quotationRef: r.quotationRef || '',
+      paymentMethod: r.paymentMethod,
+      bankReference: r.bankReference,
+      purpose: r.purpose,
+      createdByUserId: r.createdByUserId ?? '',
+      createdByName: r.createdByName ?? '',
+      note: r.note,
+      branchId: bid ?? '',
+    });
+  }
+
+  return saved;
 }
 
 /**

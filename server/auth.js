@@ -21,8 +21,8 @@ const RESET_TOKEN_BYTES = 32;
 
 export function validatePasswordStrength(password) {
   const p = String(password || '');
-  if (p.length < 12) {
-    return { ok: false, error: 'Password must be at least 12 characters.' };
+  if (p.length < 8) {
+    return { ok: false, error: 'Password must be at least 8 characters.' };
   }
   if (!/[a-z]/.test(p)) {
     return { ok: false, error: 'Password must include a lowercase letter.' };
@@ -1268,8 +1268,24 @@ export function requirePermission(required) {
  * @param {import('better-sqlite3').Database} db
  */
 export function listAllAppUsers(db) {
-  const rows = db.prepare(`SELECT * FROM app_users ORDER BY username ASC`).all();
-  return rows.map((r) => publicUserFromRow(r));
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT u.*, p.branch_id AS hr_branch_id
+         FROM app_users u
+         LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+         ORDER BY u.username ASC`
+      )
+      .all();
+  } catch {
+    rows = db.prepare(`SELECT * FROM app_users ORDER BY username ASC`).all();
+  }
+  return rows.map((r) => {
+    const u = publicUserFromRow(r);
+    const bid = String(r.hr_branch_id ?? r.HR_BRANCH_ID ?? '').trim();
+    return { ...u, branchId: bid || null };
+  });
 }
 
 const PRIVILEGED_ROLE_KEYS = new Set(['admin', 'ceo']);

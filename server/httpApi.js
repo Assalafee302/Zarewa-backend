@@ -85,6 +85,7 @@ import {
   handlePatchWithEditApprovalQuotation,
   listPendingEditApprovals,
 } from './editApproval.js';
+import { hrTablesReady, upsertHrStaffProfile } from './hrOps.js';
 import {
   addOfficeMessage,
   convertOfficeThreadToPaymentRequest,
@@ -1463,6 +1464,36 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.patch('/api/workspace/app-users/:userId/workspace-branch', requirePermission('settings.view'), (req, res) => {
+    try {
+      const uid = req.params.userId;
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', uid, (stripped) => {
+        const branchId = String(stripped?.branchId ?? '').trim();
+        if (!branchId) return { ok: false, error: 'branchId is required.' };
+        if (!hrTablesReady(db)) {
+          return { ok: false, error: 'HR module not initialised — branch assignment is unavailable.' };
+        }
+        const u = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
+        if (!u) return { ok: false, error: 'User not found.' };
+        const br = db.prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`).get(branchId);
+        if (!br) return { ok: false, error: 'Invalid or inactive branch.' };
+        const up = upsertHrStaffProfile(db, req.user.id, { userId: uid, branchId });
+        if (!up.ok) return up;
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'user.workspace_branch',
+          entityKind: 'user',
+          entityId: uid,
+          note: branchId,
+        });
+        return { ok: true, branchId };
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update workspace branch.' });
+    }
+  });
+
   app.get('/api/users', requirePermission('settings.view'), (req, res) => {
     try {
       res.json({ ok: true, users: listAllAppUsers(db) });
@@ -1474,14 +1505,45 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/users', requirePermission('settings.view'), (req, res) => {
     try {
-      const r = createAppUserRecord(db, req.body || {});
+      const body = req.body || {};
+      const r = createAppUserRecord(db, body);
       if (!r.ok) return res.status(400).json(r);
+
+      if (hrTablesReady(db)) {
+        const branchId = String(body.branchId ?? body.homeBranchId ?? '').trim();
+        if (!branchId) {
+          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+          return res.status(400).json({ ok: false, error: 'Home branch is required.' });
+        }
+        const br = db
+          .prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`)
+          .get(branchId);
+        if (!br) {
+          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+          return res.status(400).json({ ok: false, error: 'Invalid or inactive branch.' });
+        }
+        const suffix = String(r.userId)
+          .replace(/\W/g, '')
+          .slice(-8)
+          .toUpperCase();
+        const up = upsertHrStaffProfile(db, req.user.id, {
+          userId: r.userId,
+          branchId,
+          employeeNo: String(body.employeeNo || '').trim() || `EMP-${suffix || 'NEW'}`,
+          jobTitle: String(body.jobTitle || '').trim() || 'Team member',
+        });
+        if (!up.ok) {
+          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+          return res.status(400).json(up);
+        }
+      }
+
       appendAuditLog(db, {
         actor: req.user,
         action: 'user.create',
         entityKind: 'user',
         entityId: r.userId,
-        note: `Created user ${req.body.username}`,
+        note: `Created user ${body.username}`,
       });
       res.status(201).json(r);
     } catch (e) {

@@ -84,6 +84,9 @@ export function ensureSupplementalGlAccounts(db) {
   const ins = db.prepare(
     `INSERT OR IGNORE INTO gl_accounts (id, code, name, type, is_active, sort_order) VALUES (?,?,?,?,1,?)`
   );
+  /** Receipt / advance auto-posting expects these codes; older DBs may lack them if seed changed. */
+  ins.run('acc-cash', '1000', 'Cash on hand', 'asset', 10);
+  ins.run('acc-ar', '1200', 'Accounts receivable', 'asset', 20);
   ins.run('acc-adv', '2500', 'Customer advances / deposits', 'liability', 75);
   ins.run('acc-revenue', '4000', 'Sales revenue (management)', 'revenue', 35);
   ins.run('acc-accum-dep', '1398', 'Accumulated depreciation', 'asset', 31);

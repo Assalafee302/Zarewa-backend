@@ -4195,7 +4195,11 @@ export function registerHttpApi(app, db) {
       if (/flagged|refund request|cleared by manager/i.test(msg)) {
         return res.status(400).json({ ok: false, error: msg, code: 'LEDGER_POST_BLOCKED' });
       }
-      res.status(500).json({ ok: false, error: 'Failed to apply advance' });
+      res.status(500).json({
+        ok: false,
+        error: msg || 'Failed to apply advance',
+        code: 'LEDGER_APPLY_ADVANCE_FAILED',
+      });
     }
   }
   );
@@ -4325,7 +4329,11 @@ export function registerHttpApi(app, db) {
       if (/flagged|refund request|cleared by manager/i.test(msg)) {
         return res.status(400).json({ ok: false, error: msg, code: 'LEDGER_POST_BLOCKED' });
       }
-      res.status(500).json({ ok: false, error: 'Failed to record receipt' });
+      res.status(500).json({
+        ok: false,
+        error: msg || 'Failed to record receipt',
+        code: 'LEDGER_RECEIPT_FAILED',
+      });
     }
   }
   );

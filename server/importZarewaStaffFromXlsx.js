@@ -89,9 +89,9 @@ function mapRoleKey(raw) {
   if (/cashier|cash\s*office/.test(s)) return 'cashier';
   if (/branch\s*manager|\bbm\b/.test(s)) return 'branch_manager';
   if (/sales\s*manager|commercial\s*manager/.test(s)) return 'sales_manager';
-  if (/procurement|buyer/.test(s)) return 'procurement_officer';
+  if (/procurement|buyer/.test(s)) return 'md';
   if (/operation|production|factory|logistics|warehouse|driver/.test(s)) return 'operations_officer';
-  if (/viewer|read\s*only|audit/.test(s)) return 'viewer';
+  if (/viewer|read\s*only|audit/.test(s)) return 'sales_staff';
   if (/sales|cashier|marketer|rep|officer/.test(s)) return 'sales_staff';
   return 'sales_staff';
 }

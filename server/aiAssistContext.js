@@ -62,13 +62,12 @@ function topRows(rows, limit, mapFn) {
 }
 
 function allowedModesForPermissions(user, permissions) {
-  if (!user || String(user.roleKey || '').toLowerCase() === 'ceo') return [];
+  if (!user) return [];
   const modes = ['search'];
   if (canReadSalesDomain(user)) modes.push('sales');
   if (canReadProcurementDomain(user)) modes.push('procurement');
   if (canReadOperationsDomain(user)) modes.push('operations');
   if (canReadFinanceDomain(user)) modes.push('finance');
-  if (canAccessModuleWithPermissions(permissions || [], 'hr')) modes.push('hr');
   return modes;
 }
 

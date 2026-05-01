@@ -3040,8 +3040,8 @@ export function registerHttpApi(app, db) {
   app.delete('/api/treasury/accounts/:id', requireAuth, (req, res) => {
     try {
       const rk = String(req.user?.roleKey || '').toLowerCase();
-      if (!['admin', 'md', 'ceo'].includes(rk)) {
-        return res.status(403).json({ ok: false, error: 'Only Admin, MD, or CEO may delete treasury accounts.' });
+      if (!['admin', 'md'].includes(rk)) {
+        return res.status(403).json({ ok: false, error: 'Only Admin or Managing Director may delete treasury accounts.' });
       }
       const r = deleteTreasuryAccount(db, req.params.id, req.user);
       res.status(r.ok ? 200 : 400).json(r);

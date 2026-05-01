@@ -81,17 +81,17 @@ describe('Branch isolation and rollups', () => {
     expect(idsAll).toContain('CUS-BR-B');
   });
 
-  it('CEO can enable all-branches rollup and sees aggregated bootstrap data', async () => {
-    const ceo = request.agent(app);
-    const login = await ceo.post('/api/session/login').send({ username: 'ceo', password: 'Ceo@1234567890!' });
+  it('Managing director can enable all-branches rollup and sees aggregated bootstrap data', async () => {
+    const md = request.agent(app);
+    const login = await md.post('/api/session/login').send({ username: 'md', password: 'Md@1234567890!' });
     expect(login.status).toBe(200);
     expect(login.body.permissions || []).toContain('hq.view_all_branches');
 
-    const on = await ceo.patch('/api/session/workspace').send({ viewAllBranches: true });
+    const on = await md.patch('/api/session/workspace').send({ viewAllBranches: true });
     expect(on.status).toBe(200);
     expect(on.body.viewAllBranches).toBe(true);
 
-    const boot = await ceo.get('/api/bootstrap');
+    const boot = await md.get('/api/bootstrap');
     expect(boot.status).toBe(200);
     expect(boot.body.branchScope).toBe('ALL');
   });

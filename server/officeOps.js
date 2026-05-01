@@ -87,7 +87,7 @@ function userCanSeeThreadWithUser(scope, user, row) {
     String(row.created_by_user_id || '').trim() === uid || to.includes(uid) || cc.includes(uid);
 
   const hqRollup = canUseAllBranchesRollup(user) && scope.viewAll;
-  if (hqRollup && (rk === 'admin' || rk === 'md' || rk === 'ceo')) {
+  if (hqRollup && (rk === 'admin' || rk === 'md')) {
     // Confidential memos: executives must still be on distribution (or admin/*), not the whole branch roll-up.
     if (confidentiality === 'confidential') {
       if (rk === 'admin' || userHasPermission(user, '*')) return true;

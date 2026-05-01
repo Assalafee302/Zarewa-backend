@@ -8,7 +8,7 @@ import { isManagerInboxWorkItemDocType } from './managerInboxWorkItemTypes.js';
 export function userMaySeeManagementApprovalQueues(roleKey, permissions) {
   if (hasPermissionInList(permissions, '*')) return true;
   const rk = String(roleKey || '').trim().toLowerCase();
-  if (rk === 'admin' || rk === 'ceo' || rk === 'md' || rk === 'sales_manager') return true;
+  if (rk === 'admin' || rk === 'md' || rk === 'sales_manager') return true;
   return hasPermissionInList(permissions, 'sales.manage');
 }
 

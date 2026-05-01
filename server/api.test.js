@@ -71,12 +71,14 @@ describe.sequential('Zarewa API', () => {
     expect(salesRes.body.allowedModes).toContain('sales');
     expect(salesRes.body.allowedModes).not.toContain('finance');
 
-    const ceoAgent = request.agent(app);
-    await loginAs(ceoAgent, 'ceo', 'Ceo@1234567890!');
-    const ceoRes = await ceoAgent.get('/api/ai/status');
-    expect(ceoRes.status).toBe(200);
-    expect(ceoRes.body.enabled).toBe(false);
-    expect(ceoRes.body.allowedModes).toEqual([]);
+    const mdAgent = request.agent(app);
+    await loginAs(mdAgent, 'md', 'Md@1234567890!');
+    const mdRes = await mdAgent.get('/api/ai/status');
+    expect(mdRes.status).toBe(200);
+    expect(mdRes.body.enabled).toBe(true);
+    expect(mdRes.body.allowedModes).toContain('search');
+    expect(mdRes.body.allowedModes).toContain('procurement');
+    expect(mdRes.body.allowedModes).toContain('finance');
   });
 
   it('POST /api/ai/chat rejects module mode without access', async () => {
@@ -136,7 +138,7 @@ describe.sequential('Zarewa API', () => {
     });
     expect(loginRes.status).toBe(200);
     expect(loginRes.body.user.username).toBe('admin');
-    expect(loginRes.body.user.department).toBe('it');
+    expect(loginRes.body.user.department).toBe('admin');
 
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);
@@ -160,7 +162,7 @@ describe.sequential('Zarewa API', () => {
     expect(typeof res.body.dashboardPrefs).toBe('object');
     expect(res.body).toHaveProperty('orgManagerTargets');
     expect(Array.isArray(res.body.workspaceDepartmentIds)).toBe(true);
-    expect(res.body.workspaceDepartmentIds).toContain('sales');
+    expect(res.body.workspaceDepartmentIds).toContain('sales_staff');
     expect(res.body.suggestedRoleByDepartment?.sales).toBe('sales_staff');
     expect(res.body.operationsInventoryAttention).toBeDefined();
     expect(res.body.operationsInventoryAttention.ok).toBe(true);
@@ -194,12 +196,12 @@ describe.sequential('Zarewa API', () => {
     }
   });
 
-  it('GET /api/workspace/search returns 403 for ceo', async () => {
-    const ceoAgent = request.agent(app);
-    await loginAs(ceoAgent, 'ceo', 'Ceo@1234567890!');
-    const res = await ceoAgent.get('/api/workspace/search?q=CU');
-    expect(res.status).toBe(403);
-    expect(res.body.ok).toBe(false);
+  it('GET /api/workspace/search works for managing director', async () => {
+    const mdAgent = request.agent(app);
+    await loginAs(mdAgent, 'md', 'Md@1234567890!');
+    const res = await mdAgent.get('/api/workspace/search?q=CU');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
   });
 
   it('GET /api/workspace/search returns structured hits for admin', async () => {
@@ -226,12 +228,14 @@ describe.sequential('Zarewa API', () => {
   it('POST /api/users creates a login when admin has settings.view', async () => {
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);
+    const boot = await signedAgent.get('/api/bootstrap');
+    const branchId = boot.body?.session?.branches?.[0]?.id || 'BR-KD';
     const res = await signedAgent.post('/api/users').send({
       username: 'e2e.created.user',
       displayName: 'E2E Created',
       password: 'TempPass@999!',
-      roleKey: 'viewer',
-      department: 'general',
+      roleKey: 'sales_staff',
+      branchId,
     });
     expect(res.status).toBe(201);
     expect(res.body.ok).toBe(true);
@@ -545,10 +549,10 @@ describe.sequential('Zarewa API', () => {
     expect(String(hit.title || '')).toMatch(/Bank reconciliation/i);
   });
 
-  it('GET /api/exec/summary returns queue KPIs for CEO', async () => {
-    const ceoAgent = request.agent(app);
-    await loginAs(ceoAgent, 'ceo', 'Ceo@1234567890!');
-    const res = await ceoAgent.get('/api/exec/summary');
+  it('GET /api/exec/summary returns queue KPIs for managing director', async () => {
+    const mdAgent = request.agent(app);
+    await loginAs(mdAgent, 'md', 'Md@1234567890!');
+    const res = await mdAgent.get('/api/exec/summary');
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(typeof res.body.payrollDraftsAwaitingMd).toBe('number');
@@ -558,9 +562,9 @@ describe.sequential('Zarewa API', () => {
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {
     const anon = await request(app).get('/api/advance-deposits');
     expect(anon.status).toBe(401);
-    const viewerAgent = request.agent(app);
-    await loginAs(viewerAgent, 'viewer', 'Viewer@123456!');
-    const v = await viewerAgent.get('/api/advance-deposits');
+    const staffAgent = request.agent(app);
+    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
+    const v = await staffAgent.get('/api/advance-deposits');
     expect(v.status).toBe(403);
   });
 
@@ -2052,9 +2056,9 @@ describe.sequential('Zarewa API', () => {
     });
     expect(dup.status).toBe(400);
 
-    const viewer = request.agent(app);
-    await loginAs(viewer, 'viewer', 'Viewer@123456!');
-    const denied = await viewer
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const denied = await staff
       .patch(`/api/production-jobs/${encodeURIComponent(jobId)}/manager-review-signoff`)
       .send({ remark: 'Should not work' });
     expect(denied.status).toBe(403);
@@ -2188,9 +2192,9 @@ describe.sequential('Zarewa API', () => {
     expect(typeof intel.body.summary.bookedOnQuotationNgn).toBe('number');
     expect(typeof intel.body.summary.quotationCashInNgn).toBe('number');
 
-    const viewer = request.agent(app);
-    await loginAs(viewer, 'viewer', 'Viewer@123456!');
-    const denied = await viewer.get('/api/refunds/eligible-quotations');
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const denied = await staff.get('/api/refunds/eligible-quotations');
     expect(denied.status).toBe(403);
   });
 

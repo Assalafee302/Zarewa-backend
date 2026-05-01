@@ -668,6 +668,7 @@ export function runMigrations(db) {
   migrateCoilSkuProductsBranchGlobal(db);
   migrateMaterialPricingWorkbook(db);
   migrateUserProfileAndPasswordReset(db);
+  migrateOrganisationRoles2026(db);
   migrateHrStaffProfileColumns(db);
   migrateAccountingLayer(db);
   migrateExpenseCategoriesToCanonical(db);
@@ -2099,6 +2100,62 @@ function migrateHrModule(db) {
   `);
 }
 
+/** Role consolidation, workspace branch on app_users (no HR profile required). */
+function migrateOrganisationRoles2026(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const users = tableCols('app_users');
+  if (users.size && !users.has('workspace_branch_id')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN workspace_branch_id TEXT`);
+  }
+  try {
+    if (
+      users.has('workspace_branch_id') &&
+      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_profiles'`).get()
+    ) {
+      db.prepare(
+        `UPDATE app_users SET workspace_branch_id = (
+           SELECT p.branch_id FROM hr_staff_profiles p WHERE p.user_id = app_users.id LIMIT 1
+         )
+         WHERE (workspace_branch_id IS NULL OR trim(workspace_branch_id) = '')
+           AND EXISTS (
+             SELECT 1 FROM hr_staff_profiles p
+             WHERE p.user_id = app_users.id AND p.branch_id IS NOT NULL AND trim(p.branch_id) != ''
+           )`
+      ).run();
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    db.prepare(`UPDATE app_users SET role_key = 'md', permissions_json = NULL WHERE role_key = 'ceo'`).run();
+    db.prepare(
+      `UPDATE app_users SET role_key = 'sales_staff', permissions_json = NULL WHERE role_key IN ('viewer','hr_officer')`
+    ).run();
+    db.prepare(`UPDATE app_users SET role_key = 'sales_manager', permissions_json = NULL WHERE role_key = 'hr_manager'`).run();
+    db.prepare(
+      `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL WHERE role_key = 'procurement_officer'`
+    ).run();
+  } catch {
+    /* ignore */
+  }
+
+  if (users.has('department')) {
+    try {
+      db.prepare(`UPDATE app_users SET department = lower(trim(role_key)) WHERE role_key IS NOT NULL`).run();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** User profile fields + password reset token table. */
 function migrateUserProfileAndPasswordReset(db) {
   const tableCols = (name) => {
@@ -2121,14 +2178,14 @@ function migrateUserProfileAndPasswordReset(db) {
     db.exec(`ALTER TABLE app_users ADD COLUMN department TEXT NOT NULL DEFAULT 'general'`);
     db.prepare(
       `UPDATE app_users SET department = CASE role_key
-        WHEN 'admin' THEN 'it'
-        WHEN 'finance_manager' THEN 'finance'
-        WHEN 'sales_manager' THEN 'sales'
-        WHEN 'sales_staff' THEN 'sales'
-        WHEN 'procurement_officer' THEN 'purchase'
-        WHEN 'operations_officer' THEN 'inventory'
-        WHEN 'viewer' THEN 'reports'
-        ELSE 'general' END`
+        WHEN 'admin' THEN 'admin'
+        WHEN 'md' THEN 'md'
+        WHEN 'finance_manager' THEN 'finance_manager'
+        WHEN 'sales_manager' THEN 'sales_manager'
+        WHEN 'sales_staff' THEN 'sales_staff'
+        WHEN 'cashier' THEN 'cashier'
+        WHEN 'operations_officer' THEN 'operations_officer'
+        ELSE 'sales_staff' END`
     ).run();
   }
 

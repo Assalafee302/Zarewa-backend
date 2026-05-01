@@ -63,7 +63,6 @@ import {
 } from './workspaceAccess.js';
 import {
   ensureWorkItemsForVisibleOfficeThreads,
-  listHrPerformanceReviews,
   listMachines,
   listMaintenancePlans,
   listMaintenanceWorkOrders,
@@ -218,7 +217,7 @@ export function buildBootstrap(db, opts = {}) {
     machines: user ? listMachines(db, workScope) : [],
     maintenancePlans: user ? listMaintenancePlans(db, workScope) : [],
     maintenanceWorkOrders: user ? listMaintenanceWorkOrders(db, workScope) : [],
-    hrPerformanceReviews: user ? listHrPerformanceReviews(db, workScope) : [],
+    hrPerformanceReviews: [],
     workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
     suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
   };

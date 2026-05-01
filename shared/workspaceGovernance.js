@@ -17,7 +17,7 @@ export const REFUND_MD_APPROVAL_THRESHOLD_NGN = 1_000_000;
  */
 export const EXPENSE_MD_APPROVAL_THRESHOLD_NGN = 200_000;
 
-const EXECUTIVE_ROLE_KEYS = new Set(['md', 'ceo', 'chairman']);
+const EXECUTIVE_ROLE_KEYS = new Set(['md', 'chairman']);
 
 /**
  * Roles that may approve routine branch expenses up to the expense executive threshold

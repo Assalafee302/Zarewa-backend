@@ -1517,8 +1517,8 @@ export function upsertTreasuryAccount(db, payload, actor) {
 
 export function deleteTreasuryAccount(db, accountId, actor) {
   const rk = String(actor?.roleKey || '').toLowerCase();
-  if (!['admin', 'md', 'ceo'].includes(rk)) {
-    return { ok: false, error: 'Only Admin, MD, or CEO may delete treasury accounts.' };
+  if (!['admin', 'md'].includes(rk)) {
+    return { ok: false, error: 'Only Admin or Managing Director may delete treasury accounts.' };
   }
 
   const id = Number(accountId);

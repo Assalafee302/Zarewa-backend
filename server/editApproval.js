@@ -1,6 +1,6 @@
 /**
  * Second-party approval for sensitive PATCH (edit) operations.
- * Exempt roles: admin, ceo. Everyone else must obtain an approved token (single-use) per edit.
+ * Exempt roles: admin, md. Everyone else must obtain an approved token (single-use) per edit.
  */
 import { editMutationRequiresSecondApproval, userCanApproveEditMutations } from './auth.js';
 import { appendAuditLog } from './controlOps.js';

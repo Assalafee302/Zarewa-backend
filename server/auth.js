@@ -56,67 +56,31 @@ export const ROLE_DEFINITIONS = {
     label: 'Administrator',
     permissions: ['*'],
   },
-  hr_manager: {
-    label: 'HR manager',
-    permissions: [
-      'dashboard.view',
-      'office.use',
-      'reports.view',
-      'hr.directory.view',
-      'hr.staff.manage',
-      'hr.requests.hr_review',
-      'hr.requests.final_approve',
-      'hr.requests.gm_approve',
-      'hr.branch.endorse_staff',
-      'hr.payroll.manage',
-      'hr.attendance.upload',
-      'hr.loan_maintain',
-      'hr.letters.generate',
-      'hr.compliance',
-    ],
-  },
-  hr_officer: {
-    label: 'HR officer',
-    permissions: [
-      'dashboard.view',
-      'office.use',
-      'reports.view',
-      'hr.directory.view',
-      'hr.requests.hr_review',
-      'hr.attendance.upload',
-      'hr.letters.generate',
-    ],
-  },
   md: {
     label: 'Managing Director',
-    // MD can view everything and use all-branches rollups, but should not have settings/admin write access by default.
+    // Executive + org-wide rollups (merged former CEO scope). Procurement is centralized here, not a separate job role.
     permissions: [
       'hq.view_all_branches',
+      'exec.dashboard.view',
       'dashboard.view',
       'office.use',
       'reports.view',
       'sales.view',
       'procurement.view',
+      'procurement.manage',
+      'suppliers.manage',
+      'purchase_orders.manage',
       'operations.view',
       'finance.view',
       'audit.view',
-      'hr.directory.view',
-      'hr.daily_roll.mark',
-      // Manager dashboard (/manager): quotation clearance / flags / production override, payment approvals, conversion sign-off; refunds: same gate as branch manager (refunds.approve) plus finance.approve on API
       'quotations.manage',
       'finance.approve',
       'refunds.approve',
       'production.release',
-      'hr.payroll.md_approve',
       'pricing.manage',
       'md.price_exception.approve',
       'inter_branch_loan.md_approve',
     ],
-  },
-  ceo: {
-    label: 'Chief Executive Officer',
-    // Read-only executive: org aggregates only (see GET /api/exec/summary); no line-level modules.
-    permissions: ['hq.view_all_branches', 'exec.dashboard.view', 'dashboard.view', 'office.use'],
   },
   finance_manager: {
     label: 'Finance manager',
@@ -126,6 +90,9 @@ export const ROLE_DEFINITIONS = {
       'reports.view',
       'sales.view',
       'procurement.view',
+      'procurement.manage',
+      'suppliers.manage',
+      'purchase_orders.manage',
       'operations.view',
       'finance.view',
       'finance.post',
@@ -171,9 +138,6 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'finance.approve',
-      'hr.directory.view',
-      'hr.daily_roll.mark',
-      'hr.branch.endorse_staff',
     ],
   },
   sales_staff: {
@@ -186,19 +150,6 @@ export const ROLE_DEFINITIONS = {
       'quotations.manage',
       'receipts.post',
       'refunds.request',
-      'hr.directory.view',
-    ],
-  },
-  procurement_officer: {
-    label: 'Procurement officer',
-    permissions: [
-      'dashboard.view',
-      'office.use',
-      'reports.view',
-      'procurement.view',
-      'procurement.manage',
-      'suppliers.manage',
-      'purchase_orders.manage',
     ],
   },
   operations_officer: {
@@ -216,10 +167,6 @@ export const ROLE_DEFINITIONS = {
       'deliveries.manage',
     ],
   },
-  viewer: {
-    label: 'Read only',
-    permissions: ['dashboard.view', 'reports.view'],
-  },
 };
 
 const DEFAULT_USERS = [
@@ -228,47 +175,23 @@ const DEFAULT_USERS = [
     username: 'admin',
     displayName: 'Zarewa Admin',
     roleKey: 'admin',
-    department: 'it',
+    department: 'admin',
     password: 'Admin@123',
-  },
-  {
-    id: 'USR-HRM',
-    username: 'hr.manager',
-    displayName: 'HR Manager',
-    roleKey: 'hr_manager',
-    department: 'hr',
-    password: 'HrManager@12345!',
-  },
-  {
-    id: 'USR-HRO',
-    username: 'hr.officer',
-    displayName: 'HR Officer',
-    roleKey: 'hr_officer',
-    department: 'hr',
-    password: 'HrOfficer@12345!',
   },
   {
     id: 'USR-MD',
     username: 'md',
     displayName: 'Managing Director',
     roleKey: 'md',
-    department: 'leadership',
+    department: 'md',
     password: 'Md@1234567890!',
-  },
-  {
-    id: 'USR-CEO',
-    username: 'ceo',
-    displayName: 'Chief Executive Officer',
-    roleKey: 'ceo',
-    department: 'leadership',
-    password: 'Ceo@1234567890!',
   },
   {
     id: 'USR-FIN',
     username: 'finance.manager',
     displayName: 'Finance Manager',
     roleKey: 'finance_manager',
-    department: 'finance',
+    department: 'finance_manager',
     password: 'Finance@123',
   },
   {
@@ -276,7 +199,7 @@ const DEFAULT_USERS = [
     username: 'cashier',
     displayName: 'Cashier',
     roleKey: 'cashier',
-    department: 'customer',
+    department: 'cashier',
     password: 'Cashier@12345!',
   },
   {
@@ -284,7 +207,7 @@ const DEFAULT_USERS = [
     username: 'sales.manager',
     displayName: 'Sales Manager',
     roleKey: 'sales_manager',
-    department: 'sales',
+    department: 'sales_manager',
     password: 'Sales@123',
   },
   {
@@ -292,32 +215,16 @@ const DEFAULT_USERS = [
     username: 'sales.staff',
     displayName: 'Sales Officer',
     roleKey: 'sales_staff',
-    department: 'customer',
+    department: 'sales_staff',
     password: 'Sales@123',
-  },
-  {
-    id: 'USR-PROC',
-    username: 'procurement',
-    displayName: 'Procurement Officer',
-    roleKey: 'procurement_officer',
-    department: 'purchase',
-    password: 'Procure@123',
   },
   {
     id: 'USR-OPS',
     username: 'operations',
     displayName: 'Operations Officer',
     roleKey: 'operations_officer',
-    department: 'inventory',
+    department: 'operations_officer',
     password: 'Ops@123',
-  },
-  {
-    id: 'USR-VIEW',
-    username: 'viewer',
-    displayName: 'Read-only viewer',
-    roleKey: 'viewer',
-    department: 'reports',
-    password: 'Viewer@123456!',
   },
 ];
 
@@ -384,21 +291,18 @@ export function userHasPermission(user, permission) {
 
 export function canUseAllBranchesRollup(user) {
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
-  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo';
+  return roleKey === 'admin' || roleKey === 'md';
 }
 
 /** Only these roles may PATCH without a prior second-party approval token. */
-const EDIT_MUTATION_EXEMPT_ROLE_KEYS = new Set(['admin', 'ceo']);
+const EDIT_MUTATION_EXEMPT_ROLE_KEYS = new Set(['admin', 'md']);
 
 /** Who may approve another user's edit request (two-person control). */
 const EDIT_APPROVER_ROLE_KEYS = new Set([
   'admin',
-  'ceo',
   'md',
   'sales_manager',
   'finance_manager',
-  'hr_manager',
-  'procurement_officer',
   'operations_officer',
 ]);
 
@@ -422,7 +326,7 @@ export function publicUserFromRow(row) {
   const roleKey = row.role_key ?? row.roleKey;
   const emailRaw = row.email ?? null;
   const avatarRaw = row.avatar_url ?? row.avatarUrl ?? null;
-  const department = normalizeWorkspaceDepartment(row.department ?? row.workspace_department);
+  const department = normalizeWorkspaceDepartment(roleKey);
   let permissions = permissionsForRole(roleKey);
   const pJson = row.permissions_json ?? row.permissionsJson;
   if (pJson && String(pJson).trim()) {
@@ -617,7 +521,7 @@ export function createAppUserRecord(db, row) {
     .toLowerCase();
   const displayName = String(row?.displayName ?? '').trim();
   const roleKey = String(row?.roleKey ?? '').trim();
-  const department = normalizeWorkspaceDepartment(row?.department ?? row?.workspaceDepartment);
+  const department = normalizeWorkspaceDepartment(roleKey);
   if (!username) return { ok: false, error: 'Username is required.' };
   if (!displayName) return { ok: false, error: 'Display name is required.' };
   if (!roleKey) return { ok: false, error: 'Role is required.' };
@@ -698,7 +602,8 @@ function findSessionRow(db, token) {
          u.department,
          u.status,
          u.last_login_at_iso,
-         u.created_at_iso
+         u.created_at_iso,
+         u.workspace_branch_id
        FROM user_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.session_token = ?`
@@ -726,8 +631,8 @@ function defaultBranchIdForDb(db) {
 }
 
 /**
- * HQ roles may pick any active branch. Other users may only select their HR-assigned branch when set,
- * otherwise the organisation default branch (used when staff have no profile row yet).
+ * HQ roles may pick any active branch. Other users stay on their assigned workspace branch when set,
+ * otherwise the organisation default branch.
  */
 export function userMaySelectSessionWorkspaceBranch(db, user, branchId) {
   const id = String(branchId || '').trim();
@@ -737,8 +642,8 @@ export function userMaySelectSessionWorkspaceBranch(db, user, branchId) {
   if (canUseAllBranchesRollup(user)) return true;
   let assigned = '';
   try {
-    const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(user.id);
-    assigned = String(prof?.branch_id || '').trim();
+    const ur = db.prepare(`SELECT workspace_branch_id FROM app_users WHERE id = ?`).get(user.id);
+    assigned = String(ur?.workspace_branch_id || '').trim();
   } catch {
     /* older DBs */
   }
@@ -779,22 +684,15 @@ export function attachAuthContext(db) {
     const rawViewAll = Number(row.view_all_branches) === 1;
     const viewAllBranches = rawViewAll && canUseAllBranchesRollup(user);
 
-    // Pin normal users to their assigned branch (from HR staff profile) when available.
+    // Pin normal users to their assigned workspace branch on the user record when set.
     // PATCH /api/session/workspace still persists a chosen branch when allowed by userMaySelectSessionWorkspaceBranch.
     if (!canUseAllBranchesRollup(user)) {
-      try {
-        const prof = db
-          .prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`)
-          .get(user.id);
-        const assigned = String(prof?.branch_id || '').trim();
-        if (assigned) {
-          const br = db.prepare(`SELECT id, active FROM branches WHERE id = ?`).get(assigned);
-          if (br?.id && Number(br.active) === 1) {
-            currentBranchId = assigned;
-          }
+      const assigned = String(row.workspace_branch_id || '').trim();
+      if (assigned) {
+        const br = db.prepare(`SELECT id, active FROM branches WHERE id = ?`).get(assigned);
+        if (br?.id && Number(br.active) === 1) {
+          currentBranchId = assigned;
         }
-      } catch {
-        /* If HR tables are absent on older DBs, fall back to session/default branch. */
       }
     }
 
@@ -1121,7 +1019,8 @@ export function patchAppUserWorkspaceDepartment(db, actorUser, targetUserId, raw
   }
   const row = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(tid);
   if (!row) return { ok: false, error: 'User not found.' };
-  const department = normalizeWorkspaceDepartment(rawDepartment);
+  const roleKey = row.role_key ?? row.roleKey;
+  const department = normalizeWorkspaceDepartment(roleKey);
   db.prepare(`UPDATE app_users SET department = ? WHERE id = ?`).run(department, tid);
   const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(tid);
   return { ok: true, user: publicUserFromRow(next) };
@@ -1272,7 +1171,8 @@ export function listAllAppUsers(db) {
   try {
     rows = db
       .prepare(
-        `SELECT u.*, p.branch_id AS hr_branch_id
+        `SELECT u.*,
+          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id
          FROM app_users u
          LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
          ORDER BY u.username ASC`
@@ -1288,12 +1188,12 @@ export function listAllAppUsers(db) {
   });
 }
 
-const PRIVILEGED_ROLE_KEYS = new Set(['admin', 'ceo']);
+const PRIVILEGED_ROLE_KEYS = new Set(['admin', 'md']);
 
 function countOtherPrivilegedActiveAdmins(db, excludeUserId) {
   const row = db
     .prepare(
-      `SELECT COUNT(*) AS c FROM app_users WHERE id != ? AND role_key IN ('admin','ceo') AND status = 'active'`
+      `SELECT COUNT(*) AS c FROM app_users WHERE id != ? AND role_key IN ('admin','md') AND status = 'active'`
     )
     .get(excludeUserId);
   return row?.c ?? 0;
@@ -1325,10 +1225,11 @@ export function updateAppUserRole(db, targetUserId, roleKey) {
   const willPri = PRIVILEGED_ROLE_KEYS.has(roleKey);
   if (wasPri && !willPri) {
     if (countOtherPrivilegedActiveAdmins(db, targetUserId) < 1) {
-      return { ok: false, error: 'Cannot remove the last privileged administrator (admin or CEO role).' };
+      return { ok: false, error: 'Cannot remove the last privileged administrator (admin or managing director role).' };
     }
   }
-  db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = NULL WHERE id = ?`).run(
+  db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = NULL, department = ? WHERE id = ?`).run(
+    roleKey,
     roleKey,
     targetUserId
   );

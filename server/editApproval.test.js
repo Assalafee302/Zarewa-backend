@@ -16,7 +16,7 @@ afterAll(() => {
 });
 
 describe('Edit approval (second-party token)', () => {
-  it('blocks procurement_officer PO status PATCH without token; approves and consumes single-use token', async () => {
+  it('blocks finance_manager PO status PATCH without token; approves and consumes single-use token', async () => {
     const db = createDatabase(':memory:');
     openDbs.push(db);
     const app = createApp(db);
@@ -45,7 +45,7 @@ describe('Edit approval (second-party token)', () => {
     expect(poId).toBeTruthy();
 
     const proc = request.agent(app);
-    res = await proc.post('/api/session/login').send({ username: 'procurement', password: 'Procure@123' });
+    res = await proc.post('/api/session/login').send({ username: 'finance.manager', password: 'Finance@123' });
     expect(res.status).toBe(200);
 
     const denied = await proc

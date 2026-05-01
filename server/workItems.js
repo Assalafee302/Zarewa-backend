@@ -13,7 +13,6 @@ import {
   nextWorkItemDecisionHumanId,
   nextWorkItemHumanId,
 } from './humanId.js';
-import { hrListScope, listHrRequests } from './hrOps.js';
 import { filingCompletenessForWorkItem } from './filingCompleteness.js';
 import { listCoilRequests, listManagementItems, listPaymentRequests } from './readModel.js';
 
@@ -74,31 +73,23 @@ export function officeKeyForUser(user) {
       return 'branch_manager';
     case 'sales_staff':
       return 'sales';
-    case 'procurement_officer':
-      return 'procurement';
     case 'operations_officer':
       return 'operations';
     case 'finance_manager':
       return 'finance';
     case 'cashier':
       return 'finance';
-    case 'hr_manager':
-    case 'hr_officer':
-      return 'hr';
     case 'md':
-      return 'executive';
-    case 'ceo':
       return 'executive';
     case 'admin':
       return 'office_admin';
     default: {
       const dep = String(user?.department || '').trim().toLowerCase();
-      if (dep === 'purchase') return 'procurement';
-      if (dep === 'finance') return 'finance';
-      if (dep === 'sales' || dep === 'customer') return 'sales';
-      if (dep === 'inventory' || dep === 'production') return 'operations';
+      if (dep === 'finance_manager' || dep === 'finance') return 'finance';
+      if (dep === 'sales_manager' || dep === 'sales_staff' || dep === 'sales' || dep === 'customer') return 'sales';
+      if (dep === 'operations_officer' || dep === 'inventory' || dep === 'production') return 'operations';
+      if (dep === 'md' || dep === 'purchase') return 'procurement';
       if (dep === 'reports') return 'reports';
-      if (dep === 'hr') return 'hr';
       return 'general';
     }
   }
@@ -109,7 +100,7 @@ export function canSeeManagementApprovalQueues(user) {
   if (!user) return false;
   if (userHasPermission(user, '*')) return true;
   const rk = String(user?.roleKey || '').trim().toLowerCase();
-  if (rk === 'admin' || rk === 'ceo' || rk === 'md' || rk === 'sales_manager') return true;
+  if (rk === 'admin' || rk === 'md' || rk === 'sales_manager') return true;
   return userHasPermission(user, 'sales.manage');
 }
 
@@ -143,25 +134,6 @@ function userMatchesWorkItemOfficeAudience(user, row) {
   if (ro === 'office_admin') return userHasPermission(user, 'office.use');
   if (ro === 'general' || ro === 'reports') return userHasPermission(user, 'dashboard.view');
   return officeKeyForUser(user) === ro;
-}
-
-function hrLegacyRequestVisibleToUser(user, row) {
-  const st = String(row.status || '');
-  const rk = String(user?.roleKey || '').trim().toLowerCase();
-  if (userHasPermission(user, '*') || rk === 'admin') return true;
-  if (st === 'branch_manager_review') {
-    return (
-      userHasPermission(user, 'hr.branch.endorse_staff') ||
-      rk === 'sales_manager' ||
-      rk === 'md' ||
-      rk === 'ceo'
-    );
-  }
-  if (st === 'gm_hr_review') return userHasPermission(user, 'hr.requests.gm_approve');
-  if (st === 'hr_review') {
-    return userHasPermission(user, 'hr.requests.hr_review') || userHasPermission(user, 'hr.requests.final_approve');
-  }
-  return userHasPermission(user, 'hr.staff.manage') || userHasPermission(user, 'hr.requests.final_approve');
 }
 
 export const OFFICE_KEY_LABELS = {
@@ -300,7 +272,7 @@ export function userCanSeePersistedWorkItem(db, scope, user, row) {
   const officeKey = officeKeyForUser(user);
   const branchId = String(row.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   const hqRollup = canUseAllBranchesRollup(user) && scope?.viewAll;
-  if (hqRollup && (roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo')) return true;
+  if (hqRollup && (roleKey === 'admin' || roleKey === 'md')) return true;
   if (userHasPermission(user, '*')) return true;
   if (!scope?.viewAll && branchId !== String(scope?.branchId || DEFAULT_BRANCH_ID).trim()) return false;
   if (String(row.sender_user_id || '').trim() === uid) return true;
@@ -1101,49 +1073,10 @@ function listLegacyCoilRequestWorkItems(db, scope, user) {
 }
 
 function listLegacyHrRequestWorkItems(db, scope, user) {
-  const hrScope = hrListScope({
-    user,
-    workspaceBranchId: scope?.branchId || DEFAULT_BRANCH_ID,
-    workspaceViewAll: scope?.viewAll,
-  });
-  const canSee =
-    userHasPermission(user, 'hr.requests.hr_review') ||
-    userHasPermission(user, 'hr.requests.gm_approve') ||
-    userHasPermission(user, 'hr.requests.final_approve') ||
-    userHasPermission(user, 'hr.branch.endorse_staff') ||
-    userHasPermission(user, 'hr.staff.manage') ||
-    userHasPermission(user, '*');
-  if (!canSee) return [];
-  return listHrRequests(db, hrScope, {})
-    .filter((row) => row.status !== 'draft')
-    .filter((row) => hrLegacyRequestVisibleToUser(user, row))
-    .map((row) => {
-      const st = String(row.status || '').trim().toLowerCase();
-      const terminal = st === 'approved' || st === 'rejected' || st === 'cancelled';
-      return legacyWorkItemBase({
-        id: legacyItemId('hr-request', row.id),
-        referenceNo: row.id,
-        branchId: row.branchId || DEFAULT_BRANCH_ID,
-        officeKey:
-          row.status === 'branch_manager_review'
-            ? 'branch_manager'
-            : row.status === 'approved' || row.status === 'rejected'
-              ? 'hr'
-              : 'hr',
-        documentClass: 'request',
-        documentType: `hr_${row.kind}`,
-        status: row.status,
-        title: row.title,
-        summary: `${row.staffDisplayName || row.staffUsername || ''} · ${row.kind}`.trim(),
-        createdAtIso: row.createdAtIso || '',
-        updatedAtIso: row.gmHrReviewedAtIso || row.managerReviewedAtIso || row.hrReviewedAtIso || row.createdAtIso || '',
-        requiresApproval: !terminal,
-        requiresResponse: !terminal,
-        sourceKind: 'hr_request',
-        sourceId: row.id,
-        routePath: '/hr/talent',
-      });
-    });
+  void db;
+  void scope;
+  void user;
+  return [];
 }
 
 function filterWorkItems(items, filter = {}) {
@@ -1897,92 +1830,21 @@ export function createHrPerformanceReview(db, body, actor, workspaceBranchId = D
 }
 
 export function listHrPerformanceReviews(db, scope) {
-  const args = [];
-  let sql = `SELECT * FROM hr_performance_reviews WHERE 1=1`;
-  if (!scope?.viewAll) {
-    sql += ` AND branch_id = ?`;
-    args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
-  }
-  sql += ` ORDER BY updated_at_iso DESC`;
-  return db.prepare(sql).all(...args).map((row) => ({
-    id: row.id,
-    referenceNo: row.reference_no,
-    branchId: row.branch_id,
-    userId: row.user_id,
-    machineId: row.machine_id || '',
-    departmentKey: row.department_key || '',
-    periodKey: row.period_key,
-    status: row.status,
-    reviewType: row.review_type,
-    reviewerUserId: row.reviewer_user_id || '',
-    branchRecommendation: row.branch_recommendation || '',
-    hrFinalNote: row.hr_final_note || '',
-    score: safeJsonParse(row.score_json, {}),
-    linkedWorkItemId: row.linked_work_item_id || '',
-    createdAtIso: row.created_at_iso,
-    updatedAtIso: row.updated_at_iso,
-  }));
+  void db;
+  void scope;
+  return [];
 }
 
 function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
-  const canSee =
-    userHasPermission(user, 'hr.staff.manage') ||
-    userHasPermission(user, 'hr.requests.hr_review') ||
-    userHasPermission(user, 'hr.requests.final_approve') ||
-    userHasPermission(user, '*');
-  if (!canSee) return [];
-  let sql = `SELECT * FROM hr_discipline_cases WHERE 1=1`;
-  const args = [];
-  if (!scope?.viewAll) {
-    sql += ` AND branch_id = ?`;
-    args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
-  }
-  sql += ` ORDER BY opened_at_iso DESC LIMIT 150`;
-  return db.prepare(sql).all(...args).map((row) =>
-    legacyWorkItemBase({
-      id: legacyItemId('hr-discipline-case', row.id),
-      referenceNo: row.id,
-      branchId: row.branch_id || DEFAULT_BRANCH_ID,
-      officeKey: 'hr',
-      responsibleOfficeKey: 'hr',
-      documentClass: 'case_file',
-      documentType: 'hr_discipline_case',
-      status: row.status || 'open',
-      priority: 'high',
-      title: row.summary || `Discipline case ${row.id}`,
-      summary: row.offence_category || 'Disciplinary case',
-      createdAtIso: row.opened_at_iso || '',
-      sourceKind: 'hr_discipline_case',
-      sourceId: row.id,
-      routePath: '/hr/talent',
-    })
-  );
+  void db;
+  void scope;
+  void user;
+  return [];
 }
 
 function listLegacyHrPerformanceReviewWorkItems(db, scope, user) {
-  const canSee =
-    userHasPermission(user, 'hr.staff.manage') ||
-    userHasPermission(user, 'hr.requests.hr_review') ||
-    userHasPermission(user, 'hr.requests.final_approve') ||
-    userHasPermission(user, '*');
-  if (!canSee) return [];
-  return listHrPerformanceReviews(db, scope).map((row) =>
-    legacyWorkItemBase({
-      id: legacyItemId('hr-performance-review', row.id),
-      referenceNo: row.referenceNo || row.id,
-      branchId: row.branchId || DEFAULT_BRANCH_ID,
-      officeKey: 'hr',
-      responsibleOfficeKey: 'hr',
-      documentClass: 'report',
-      documentType: 'performance_review',
-      status: row.status || 'draft',
-      title: `Performance review ${row.periodKey}`,
-      summary: `${row.userId || ''}${row.machineId ? ` · ${row.machineId}` : ''}`.trim(),
-      createdAtIso: row.createdAtIso || '',
-      updatedAtIso: row.updatedAtIso || row.createdAtIso || '',
-      sourceKind: 'hr_performance_review',
-      sourceId: row.id,
-      routePath: '/hr/talent',
-    })
-  );
+  void db;
+  void scope;
+  void user;
+  return [];
 }

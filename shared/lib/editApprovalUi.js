@@ -1,19 +1,16 @@
 import { hasPermissionInList } from './moduleAccess.js';
 
-/** Mirrors server: only admin and CEO may PATCH without a second-party token. */
+/** Mirrors server: only admin and MD may PATCH without a second-party token. */
 export function editMutationNeedsSecondApprovalRole(roleKey) {
   const r = String(roleKey || '').toLowerCase();
-  return r !== 'admin' && r !== 'ceo';
+  return r !== 'admin' && r !== 'md';
 }
 
 const APPROVER_ROLES = new Set([
   'admin',
-  'ceo',
   'md',
   'sales_manager',
   'finance_manager',
-  'hr_manager',
-  'procurement_officer',
   'operations_officer',
 ]);
 

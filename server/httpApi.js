@@ -2214,7 +2214,10 @@ export function registerHttpApi(app, db) {
     });
   });
 
-  app.post('/api/cutting-lists', requirePermission(['sales.manage', 'operations.manage']), (req, res) => {
+  app.post(
+    '/api/cutting-lists',
+    requirePermission(['sales.manage', 'operations.manage', 'quotations.manage']),
+    (req, res) => {
     try {
       const r = write.insertCuttingList(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       if (!r.ok) return res.status(400).json(r);
@@ -2226,7 +2229,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/cutting-lists/:id', requirePermission(['sales.manage', 'operations.manage']), (req, res) => {
+  app.patch(
+    '/api/cutting-lists/:id',
+    requirePermission(['sales.manage', 'operations.manage', 'quotations.manage']),
+    (req, res) => {
     try {
       const cid = req.params.id;
       const cl0 = getCuttingList(db, cid);
@@ -2279,7 +2285,7 @@ export function registerHttpApi(app, db) {
 
   app.post(
     '/api/cutting-lists/:id/register-production',
-    requirePermission(['sales.manage', 'production.manage', 'operations.manage']),
+    requirePermission(['sales.manage', 'production.manage', 'operations.manage', 'quotations.manage']),
     (req, res) => {
       try {
         const clId = req.params.id;

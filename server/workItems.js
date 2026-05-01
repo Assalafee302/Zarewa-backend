@@ -130,7 +130,13 @@ function userMatchesWorkItemOfficeAudience(user, row) {
       userHasPermission(user, 'hr.requests.final_approve')
     );
   }
-  if (ro === 'sales') return userHasPermission(user, 'sales.manage');
+  if (ro === 'sales') {
+    return (
+      userHasPermission(user, 'sales.manage') ||
+      userHasPermission(user, 'quotations.manage') ||
+      userHasPermission(user, 'receipts.post')
+    );
+  }
   if (ro === 'office_admin') return userHasPermission(user, 'office.use');
   if (ro === 'general' || ro === 'reports') return userHasPermission(user, 'dashboard.view');
   return officeKeyForUser(user) === ro;

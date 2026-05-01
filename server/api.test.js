@@ -81,6 +81,26 @@ describe.sequential('Zarewa API', () => {
     expect(mdRes.body.allowedModes).toContain('finance');
   });
 
+  it('sales.staff can create cutting lists (quotations.manage)', async () => {
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const cutting = await staff.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      operatorName: 'Ibrahim',
+      lines: [
+        { sheets: 1, lengthM: 6 },
+        { sheets: 1, lengthM: 4.5 },
+      ],
+    });
+    expect(cutting.status).toBe(201);
+    expect(cutting.body.id || cutting.body.cuttingList?.id).toBeTruthy();
+  });
+
   it('POST /api/ai/chat rejects module mode without access', async () => {
     process.env.ZAREWA_AI_API_KEY = 'test-key';
     const salesAgent = request.agent(app);

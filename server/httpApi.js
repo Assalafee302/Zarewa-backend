@@ -141,6 +141,7 @@ import {
   listProductionJobCoilsForJob,
   listProductionJobCoils,
   previewProductionConversion,
+  saveProductionCoilRunLogDraft,
   returnProductionJobToPlanned,
   saveProductionJobAllocations,
   signOffProductionManagerReview,
@@ -2486,6 +2487,18 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         append: Boolean(req.body?.append),
       });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/production-jobs/:jobId/coil-run-log', requirePermission('production.manage'), (req, res) => {
+    try {
+      const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      const r = saveProductionCoilRunLogDraft(db, req.params.jobId, req.body || {}, { actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);

@@ -810,6 +810,7 @@ function buildVarianceSummaryPayload(row) {
  */
 export function computeCompletionConversionRows(db, jobID, payload = {}, opts = {}) {
   const requireFinishRollWhenTail = opts.requireFinishRollWhenTail !== false;
+  const partialPreview = Boolean(opts.partialPreview);
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
   if ((job.status ?? 'Planned') !== 'Running') {
@@ -829,11 +830,13 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
     if (cn) submittedByCoil.set(cn, line);
   }
   try {
-    const conversionRows = existingAllocations.map((allocation) => {
+    const conversionRows = [];
+    for (const allocation of existingAllocations) {
       const coilKey = String(allocation.coil_no ?? '').trim();
       const submitted =
         submittedByAllocId.get(String(allocation.id ?? '').trim()) ?? submittedByCoil.get(coilKey);
       if (!submitted) {
+        if (partialPreview) continue;
         throw new Error(`Provide completion readings for coil ${coilKey || allocation.coil_no}.`);
       }
       const openingWeightKg = safeNumber(allocation.opening_weight_kg);
@@ -841,9 +844,11 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       const metersProduced = safeNumber(submitted.metersProduced);
       const finishCoil = Boolean(submitted.finishCoil ?? submitted.finish_coil);
       if (closingWeightKg < 0 || closingWeightKg > openingWeightKg) {
+        if (partialPreview) continue;
         throw new Error(`Coil ${coilKey} closing kg must be between 0 and ${openingWeightKg}.`);
       }
       if (finishCoil && closingWeightKg >= COIL_TAIL_FINISH_MAX_KG) {
+        if (partialPreview) continue;
         throw new Error(
           `Coil ${coilKey}: “Finish roll” only applies when closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg.`
         );
@@ -853,15 +858,18 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         closingWeightKg < COIL_TAIL_FINISH_MAX_KG &&
         !finishCoil
       ) {
+        if (partialPreview) continue;
         throw new Error(
           `Coil ${coilKey}: closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg (typical core/spool tail). Confirm “Finish roll” to clear the remaining tail from coil stock when completing, or raise closing kg if usable steel is still on the roll.`
         );
       }
       if (metersProduced <= 0) {
+        if (partialPreview) continue;
         throw new Error(`Coil ${coilKey} must produce a positive number of metres.`);
       }
       const consumedWeightKg = openingWeightKg - closingWeightKg;
       if (consumedWeightKg <= 0) {
+        if (partialPreview) continue;
         throw new Error(`Coil ${coilKey} shows no consumed kg.`);
       }
       const actualConversionKgPerM = consumedWeightKg / metersProduced;
@@ -871,11 +879,12 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
       );
       if (consumedWeightKg > qtyRemaining + 0.0001) {
+        if (partialPreview) continue;
         throw new Error(`Coil ${coilKey} does not have enough remaining kg.`);
       }
       const references = buildReferenceSet(db, coil, actualConversionKgPerM, jobID);
       const alert = determineAlertState(actualConversionKgPerM, references);
-      return {
+      conversionRows.push({
         allocationId: allocation.id,
         coilNo: coilKey || allocation.coil_no,
         productID: coil.product_id ?? '',
@@ -889,8 +898,16 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         managerReviewRequired: alert.managerReviewRequired,
         note: String(submitted.note ?? '').trim(),
         finishCoil,
+      });
+    }
+    if (conversionRows.length === 0) {
+      return {
+        ok: false,
+        error: partialPreview
+          ? 'Enter closing kg and metres on at least one coil to preview conversion (other coils can stay open until you finish each roll).'
+          : 'No valid conversion rows — check coil readings.',
       };
-    });
+    }
     const totalMeters = conversionRows.reduce((sum, row) => sum + row.metersProduced, 0);
     const totalWeightKg = conversionRows.reduce((sum, row) => sum + row.consumedWeightKg, 0);
     const aggregatedAlertState = aggregateAlertState(conversionRows.map((row) => row.alertState));
@@ -902,6 +919,9 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       totalWeightKg,
       aggregatedAlertState,
       managerReviewRequired,
+      previewPartial: partialPreview,
+      previewCoilCount: partialPreview ? conversionRows.length : undefined,
+      previewCoilsTotal: partialPreview ? existingAllocations.length : undefined,
     };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
@@ -927,12 +947,18 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       accessoryPlan: acc.plannedLines,
     };
   }
-  const r = computeCompletionConversionRows(db, jobID, payload, { requireFinishRollWhenTail: false });
+  const r = computeCompletionConversionRows(db, jobID, payload, {
+    requireFinishRollWhenTail: false,
+    partialPreview: true,
+  });
   if (!r.ok) return r;
   const acc = planAccessoryCompletion(db, jobRow, payload);
   if (!acc.ok) return { ok: false, error: acc.error };
   return {
     ok: true,
+    previewPartial: Boolean(r.previewPartial),
+    previewCoilCount: r.previewCoilCount,
+    previewCoilsTotal: r.previewCoilsTotal,
     rows: r.conversionRows.map((row) => ({
       allocationId: row.allocationId,
       coilNo: row.coilNo,
@@ -955,6 +981,65 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     totalWeightKg: r.totalWeightKg,
     accessoryPlan: acc.plannedLines,
   };
+}
+
+/**
+ * Persist closing kg, metres, and note on allocated coils while the job is running (no stock move, not completion).
+ * Lets operators save progress between coils or from a phone before hitting Complete.
+ */
+export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}) {
+  const job = productionJobRow(db, jobID);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  if (jobIsStoneMeter(db, job)) {
+    return { ok: false, error: 'Stone-coated jobs do not use coil run log rows.' };
+  }
+  if ((job.status ?? '') !== 'Running') {
+    return { ok: false, error: 'Run log can only be saved while the job is running.' };
+  }
+  const lines = Array.isArray(payload.readings) ? payload.readings : [];
+  if (!lines.length) return { ok: false, error: 'Nothing to save — add readings for at least one coil line.' };
+  const existing = listJobCoilsForJob(db, jobID);
+  const byId = new Map(existing.map((row) => [String(row.id ?? '').trim(), row]));
+  const upd = db.prepare(
+    `UPDATE production_job_coils
+     SET closing_weight_kg = ?, consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?, note = ?
+     WHERE id = ? AND job_id = ?`
+  );
+  try {
+    db.transaction(() => {
+      for (const line of lines) {
+        const aid = String(line?.allocationId ?? line?.allocation_id ?? '').trim();
+        if (!aid) continue;
+        const row = byId.get(aid);
+        if (!row) throw new Error(`Unknown coil line ${aid} on this job.`);
+        const opening = safeNumber(row.opening_weight_kg);
+        const closing = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
+        const meters = safeNumber(line.metersProduced ?? line.meters_produced);
+        if (closing < 0 || closing > opening + 0.0001) {
+          throw new Error(`Coil ${row.coil_no}: closing kg must be between 0 and ${opening}.`);
+        }
+        if (meters < 0) {
+          throw new Error(`Coil ${row.coil_no}: metres cannot be negative.`);
+        }
+        const consumed = opening - closing;
+        const actual =
+          meters > 0.0001 && consumed > 0.0001 ? consumed / meters : null;
+        const note = String(line.note ?? '').trim();
+        upd.run(closing, consumed, meters, actual, note || null, aid, jobID);
+      }
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.run_log_draft',
+        entityKind: 'production_job',
+        entityId: jobID,
+        note: `Run log draft saved (${lines.filter((l) => String(l?.allocationId ?? l?.allocation_id ?? '').trim()).length} line(s))`,
+        details: { jobID },
+      });
+    })();
+    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID) };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
 }
 
 function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {

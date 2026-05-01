@@ -1,4 +1,5 @@
 import os from 'node:os';
+import express from 'express';
 import { readAiAssistConfig } from './aiAssist.js';
 import { createDatabase, defaultDbPath } from './db.js';
 import { createApp } from './app.js';
@@ -6,14 +7,53 @@ import { loadProjectEnv } from './loadProjectEnv.js';
 
 loadProjectEnv();
 
-const db = createDatabase();
-const dbPath = defaultDbPath();
-const app = createApp(db);
-
-const port = Number(process.env.PORT || 8787);
+const port = Number(process.env.PORT || 8787) || 8787;
 const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefined;
 
+console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
+
+let app;
+let dbPath = '';
+let bootDegraded = false;
+
+try {
+  const db = createDatabase();
+  dbPath = defaultDbPath();
+  app = createApp(db);
+} catch (e) {
+  bootDegraded = true;
+  const errMsg = String(e?.message || e || 'unknown');
+  console.error('[zarewa] Startup failed — minimal HTTP only until fixed:', errMsg);
+  console.error(e);
+  dbPath = '(not connected)';
+  app = express();
+  app.disable('x-powered-by');
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({
+      ok: false,
+      service: 'zarewa-api',
+      degraded: true,
+      database: false,
+      bootError: errMsg,
+      time: new Date().toISOString(),
+    });
+  });
+  app.use((_req, res) => {
+    res.status(503).json({
+      ok: false,
+      error: 'Server failed during startup.',
+      bootError: errMsg,
+    });
+  });
+}
+
 function onListen() {
+  if (bootDegraded) {
+    console.log(
+      `[zarewa] listening DEGRADED on port ${port}${listenHost ? ` host=${listenHost}` : ''} — check bootError from GET /api/health`
+    );
+    return;
+  }
   console.log(`Zarewa listening on http://127.0.0.1:${port} (db: ${dbPath})`);
   if (listenHost === '0.0.0.0' || listenHost === '::') {
     for (const nets of Object.values(os.networkInterfaces())) {

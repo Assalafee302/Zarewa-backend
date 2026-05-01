@@ -2,12 +2,24 @@
 /**
  * Drops all tables in the configured MySQL database (default from env: zarewa_db).
  * Stop the API first to avoid connection errors mid-wipe.
+ *
+ * Requires explicit confirmation (prevents accidental production wipe):
+ *   ZAREWA_CONFIRM_DB_WIPE=1 npm run db:wipe
  */
 import mysql from 'mysql2/promise';
 import { loadProjectEnv } from '../server/loadProjectEnv.js';
 import { mysqlConfigFromEnv, databaseLabel } from '../server/mysqlDatabase.js';
 
 loadProjectEnv();
+
+if (String(process.env.ZAREWA_CONFIRM_DB_WIPE || '').trim() !== '1') {
+  console.error(
+    '[zarewa] Refusing wipe: set ZAREWA_CONFIRM_DB_WIPE=1 (this deletes ALL tables in ' +
+      databaseLabel(mysqlConfigFromEnv()) +
+      '). Stop the API first.'
+  );
+  process.exit(1);
+}
 const cfg = mysqlConfigFromEnv();
 const conn = await mysql.createConnection({
   host: cfg.host,

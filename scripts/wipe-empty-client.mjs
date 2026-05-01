@@ -3,7 +3,7 @@
  * Wipes the configured MySQL database (same as npm run db:wipe). After this, run a fresh seed
  * without demo data:
  *
- *   npm run db:fresh-empty
+ *   ZAREWA_CONFIRM_FRESH_EMPTY=1 npm run db:fresh-empty
  *
  * Or start the API with empty seed (schema must exist — run db:migrate or db:fresh-empty first):
  *   PowerShell:  $env:ZAREWA_EMPTY_SEED='1'; npm run server

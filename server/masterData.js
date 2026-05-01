@@ -243,6 +243,7 @@ const MASTER_DATA_CONFIG = {
       { id: 'COL-005', name: 'Zinc Grey', abbreviation: 'ZG', active: true, sortOrder: 150 },
       { id: 'COL-016', name: 'Wine Red', abbreviation: 'WR', active: true, sortOrder: 160 },
       { id: 'COL-017', name: 'Vandal Grey', abbreviation: 'VG', active: true, sortOrder: 170 },
+      { id: 'COL-018', name: 'Dark Grey', abbreviation: 'DG', active: true, sortOrder: 175 },
     ],
     normalizePayload(payload, fallbackSort = 0) {
       return {
@@ -278,6 +279,9 @@ const MASTER_DATA_CONFIG = {
       { id: 'GAU-007', label: '0.45mm', gaugeMm: 0.45, active: true, sortOrder: 7 },
       { id: 'GAU-008', label: '0.55mm', gaugeMm: 0.55, active: true, sortOrder: 8 },
       { id: 'GAU-009', label: '0.70mm', gaugeMm: 0.7, active: true, sortOrder: 9 },
+      { id: 'GAU-010', label: '0.18mm', gaugeMm: 0.18, active: true, sortOrder: 10 },
+      { id: 'GAU-011', label: '0.35mm', gaugeMm: 0.35, active: true, sortOrder: 11 },
+      { id: 'GAU-012', label: '0.60mm', gaugeMm: 0.6, active: true, sortOrder: 12 },
     ],
     normalizePayload(payload, fallbackSort = 0) {
       const gaugeMm = decimalOrNull(payload.gaugeMm);

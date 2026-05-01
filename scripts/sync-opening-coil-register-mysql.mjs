@@ -59,6 +59,13 @@ if (!Array.isArray(thinGroups) || !Array.isArray(kgGroups)) {
 const NOTE = 'OPENING-PHYSICAL-REGISTER-2026';
 const branchId = String(process.env.ZAREWA_IMPORT_BRANCH_ID || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
 
+function gaugeCore(g) {
+  return String(g ?? '')
+    .trim()
+    .replace(/mm$/i, '')
+    .trim();
+}
+
 /** @type {Map<string, number>} */
 const coilUseCount = new Map();
 let untagSeq = 0;
@@ -76,7 +83,7 @@ function allocateCoilNo(rawCoilNo, gauge) {
   const prev = coilUseCount.get(base) ?? 0;
   coilUseCount.set(base, prev + 1);
   if (prev === 0) return base;
-  const g = String(gauge || '').replace(/\./g, '');
+  const g = gaugeCore(gauge).replace(/\./g, '');
   if (prev === 1) return `${base}+G${g}`;
   return `${base}+G${g}x${prev}`;
 }
@@ -84,17 +91,18 @@ function allocateCoilNo(rawCoilNo, gauge) {
 /** @returns {Array<Record<string, unknown>>} */
 function buildSpreadsheetRows() {
   const rows = [];
-  const preferred = ['0.28', '0.24'];
+  const preferredCores = ['0.28', '0.24'];
   const kgSorted = [
-    ...kgGroups.filter((g) => preferred.includes(g.gauge)).sort(
-      (a, b) => preferred.indexOf(a.gauge) - preferred.indexOf(b.gauge)
+    ...kgGroups.filter((g) => preferredCores.includes(gaugeCore(g.gauge))).sort(
+      (a, b) => preferredCores.indexOf(gaugeCore(a.gauge)) - preferredCores.indexOf(gaugeCore(b.gauge))
     ),
-    ...kgGroups.filter((g) => !preferred.includes(g.gauge)),
+    ...kgGroups.filter((g) => !preferredCores.includes(gaugeCore(g.gauge))),
   ];
 
   for (const g of kgSorted) {
     const gauge = String(g.gauge || '');
-    const isAluz = gauge === '0.28' || gauge === '0.24';
+    const core = gaugeCore(gauge);
+    const isAluz = core === '0.28' || core === '0.24';
     const productID = isAluz ? 'PRD-102' : 'COIL-ALU';
     const materialTypeName = isAluz ? 'Aluzinc (PPGI)' : 'Aluminium';
     for (const r of g.rows || []) {
@@ -114,7 +122,7 @@ function buildSpreadsheetRows() {
   }
 
   for (const g of thinGroups) {
-    if (g.gauge === '0.24') continue;
+    if (gaugeCore(g.gauge) === '0.24') continue;
     const gauge = String(g.gauge || '');
     for (const r of g.rows || []) {
       const qty = Number(r.quantity);

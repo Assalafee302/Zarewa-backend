@@ -678,6 +678,7 @@ export function runMigrations(db) {
   migrateQuotationLineCatalog2026(db);
   migrateCoilAluzincColours2026(db);
   migrateStoneCoatedAndPricingArch(db);
+  migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
   migrateProcurementOrderKind(db);
   migrateHrExcellence2026(db);
@@ -1586,6 +1587,60 @@ function migrateStoneCoatedAndPricingArch(db) {
       // leaving core items (e.g. SQI-001) missing and breaking setup_price_lists FKs.
     }
   }
+}
+
+/**
+ * Roofing / sheet designs (aluzinc + stone-coated). Metcopo → Metcoppo; Steptiles → Steptile;
+ * Stonecoted → Stone coated; Flatsheet → Flat sheet; Off Cut → Offcut; Krimpt curve → Crimp curve;
+ * Metrotile → Longspan (Metra). Adds Roman, Metcoppo, Stone coated, Offcut, Crimp curve profiles.
+ */
+function migrateRoofingProfileCatalog2026(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_profiles'`).get()) return;
+  try {
+    const pc = db.prepare(`PRAGMA table_info(setup_profiles)`).all();
+    if (!pc.some((c) => c.name === 'material_type_id')) {
+      db.exec(`ALTER TABLE setup_profiles ADD COLUMN material_type_id TEXT`);
+    }
+  } catch {
+    return;
+  }
+
+  const exists = db.prepare(`SELECT 1 FROM setup_profiles WHERE profile_id = ?`);
+  const upd = db.prepare(
+    `UPDATE setup_profiles SET name = ?, active = 1, sort_order = ?, material_type_id = ? WHERE profile_id = ?`
+  );
+  const ins = db.prepare(
+    `INSERT INTO setup_profiles (profile_id, name, active, sort_order, material_type_id) VALUES (?,?,1,?,?)`
+  );
+
+  /** @type {[string, string, string, number][]} */
+  const rows = [
+    ['PROF-001', 'Longspan (Indus6)', 'MAT-002', 10],
+    ['PROF-002', 'Longspan (Metra)', 'MAT-002', 20],
+    ['PROF-012', 'Metcoppo', 'MAT-002', 30],
+    ['PROF-013', 'Stone coated', 'MAT-005', 40],
+    ['PROF-006', 'Flat sheet', 'MAT-002', 50],
+    ['PROF-014', 'Offcut', 'MAT-002', 60],
+    ['PROF-003', 'Steptile', 'MAT-002', 70],
+    ['PROF-004', 'Capping', 'MAT-002', 75],
+    ['PROF-005', 'Ridge Cap', 'MAT-002', 80],
+    ['PROF-008', 'Bond', 'MAT-005', 90],
+    ['PROF-007', 'Milano', 'MAT-005', 100],
+    ['PROF-009', 'Classic', 'MAT-005', 110],
+    ['PROF-010', 'Shingle', 'MAT-005', 120],
+    ['PROF-011', 'Roman', 'MAT-005', 130],
+    ['PROF-015', 'Crimp curve', 'MAT-002', 140],
+  ];
+
+  db.transaction(() => {
+    for (const [id, name, mat, sort] of rows) {
+      if (exists.get(id)) {
+        upd.run(name, sort, mat, id);
+      } else {
+        ins.run(id, name, sort, mat);
+      }
+    }
+  })();
 }
 
 /**

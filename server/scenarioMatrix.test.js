@@ -377,7 +377,7 @@ function buildScenarioMatrix() {
       const fgProduct = snap.products[0];
       const customerID = await createCustomer(agent, 'SCN002', 'Small Flatsheet Buyer');
       const quote = await createQuotation(agent, customerID, 'SCN002', {
-        products: [{ name: 'Flat Sheet', qty: '10', unitPrice: '15000' }],
+        products: [{ name: 'Flat sheet', qty: '10', unitPrice: '15000' }],
         accessories: [],
         services: [],
       });

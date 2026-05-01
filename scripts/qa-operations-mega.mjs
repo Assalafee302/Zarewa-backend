@@ -697,7 +697,7 @@ async function officeThreadsSample(session) {
           requestDate: dateIsoForIndex(t * 11),
           description: `MEGA converted from thread ${t}`,
           requestReference: `MEGA-OFF-${RUN_KEY}-${t}`,
-          expenseCategory: 'Logistics & haulage',
+          expenseCategory: 'Truck & mining',
           lineItems: [{ item: `Haulage line ${t}`, unit: 1, unitPriceNgn: 18_000 + t * 1000 }],
         },
       });

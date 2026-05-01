@@ -70,13 +70,13 @@ const PROJECTS = [
  
 /** Must match `shared/expenseCategories.js` — API rejects free-text categories. */
 const EXPENSE_CATS = [
-  'Operational — rent & utilities',
-  'Maintenance — plant & equipment',
-  'Logistics & haulage',
-  'Marketing & business development',
-  'COGS — consumables & supplies',
-  'Other — misc operating',
-  'Bank & finance charges',
+  'Rent & utilities',
+  'Maintenance',
+  'Truck & mining',
+  'Marketing & advertising',
+  'Accessories',
+  'Others',
+  'Bank charges',
 ];
  
 /** @param {number} n 0..99 */

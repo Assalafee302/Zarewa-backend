@@ -500,7 +500,7 @@ async function rampPhase(session, telemetry, { targets }) {
         expenseType: `Ramp expense step ${i}`,
         amountNgn: scaled(2500 + i * 200),
         date: '2026-04-02',
-        category: 'Other — misc operating',
+        category: 'Others',
         paymentMethod: 'Transfer',
         treasuryAccountId: a0.id,
         reference: `FIN100-RAMP-${RUN_KEY}-${i}`,

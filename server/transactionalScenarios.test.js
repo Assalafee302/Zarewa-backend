@@ -769,7 +769,7 @@ describe('Transactional scenarios (business checklist)', () => {
         expenseType: 'Rent — March',
         amountNgn: 12_500,
         date: '2026-03-29',
-        category: 'Operational — rent & utilities',
+        category: 'Rent & utilities',
         paymentMethod: 'Transfer',
         treasuryAccountId,
         reference: 'TX17-RENT',

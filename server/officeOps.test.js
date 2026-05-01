@@ -38,7 +38,7 @@ describe('officeOps', () => {
     const tid = created.thread.id;
 
     const conv = convertOfficeThreadToPaymentRequest(db, scope, actor, DEFAULT_BRANCH_ID, tid, {
-      expenseCategory: 'Logistics & haulage',
+      expenseCategory: 'Truck & mining',
       lineItems: [{ item: 'Diesel', unit: 1, unitPriceNgn: 5000 }],
       requestDate: '2026-04-09',
       description: 'Diesel refill',

@@ -737,7 +737,7 @@ function buildScenarioMatrix() {
           expenseType: 'Operational support',
           amountNgn: amount,
           date: '2026-03-29',
-          category: i % 2 === 0 ? 'Operational — rent & utilities' : 'Maintenance — plant & equipment',
+          category: i % 2 === 0 ? 'Rent & utilities' : 'Maintenance',
           paymentMethod: 'Mixed',
           reference: `EXP-REQ-${i + 1}`,
         });
@@ -1688,7 +1688,7 @@ function buildScenarioMatrix() {
         expenseType: 'Harsh multi-leg',
         amountNgn: amount,
         date: '2026-03-29',
-        category: 'Maintenance — plant & equipment',
+        category: 'Maintenance',
         paymentMethod: 'Mixed',
         reference: 'EXP-H7',
       });

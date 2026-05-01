@@ -911,7 +911,7 @@ async function runScenario(session, scenario) {
         amountNgn: 8000 + n * 150,
         date: scenario.dateISO,
         category:
-          n % 2 === 0 ? 'Operational — rent & utilities' : 'Maintenance — plant & equipment',
+          n % 2 === 0 ? 'Rent & utilities' : 'Maintenance',
         paymentMethod: 'Transfer',
         treasuryAccountId,
         reference: expRef,

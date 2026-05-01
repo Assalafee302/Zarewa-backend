@@ -18,16 +18,19 @@ describe('expenseCategories', () => {
   });
 
   it('mapLegacy leaves canonical values unchanged', () => {
-    expect(mapLegacyExpenseCategoryToCanonical('Bank & finance charges')).toBe('Bank & finance charges');
+    expect(mapLegacyExpenseCategoryToCanonical('Bank charges')).toBe('Bank charges');
+    expect(mapLegacyExpenseCategoryToCanonical('Rent & utilities')).toBe('Rent & utilities');
   });
 
-  it('mapLegacy maps known legacy strings', () => {
-    expect(mapLegacyExpenseCategoryToCanonical('Plant consumables')).toBe('COGS — consumables & supplies');
-    expect(mapLegacyExpenseCategoryToCanonical('PHCN / diesel top-up')).toBe('Operational — rent & utilities');
+  it('mapLegacy maps prior canonical strings', () => {
+    expect(mapLegacyExpenseCategoryToCanonical('Plant consumables')).toBe('Accessories');
+    expect(mapLegacyExpenseCategoryToCanonical('PHCN / diesel top-up')).toBe('Rent & utilities');
+    expect(mapLegacyExpenseCategoryToCanonical('COGS — consumables & supplies')).toBe('Accessories');
+    expect(mapLegacyExpenseCategoryToCanonical('Logistics & haulage')).toBe('Truck & mining');
   });
 
   it('mapLegacy uses heuristics then fallback', () => {
-    expect(mapLegacyExpenseCategoryToCanonical('Office rent March')).toBe('Operational — rent & utilities');
-    expect(mapLegacyExpenseCategoryToCanonical('xyz-unknown-label-999')).toBe('Other — misc operating');
+    expect(mapLegacyExpenseCategoryToCanonical('Office rent March')).toBe('Rent & utilities');
+    expect(mapLegacyExpenseCategoryToCanonical('xyz-unknown-label-999')).toBe('Others');
   });
 });

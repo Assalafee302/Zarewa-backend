@@ -588,7 +588,12 @@ CREATE TABLE IF NOT EXISTS treasury_accounts (
   bank_name TEXT,
   balance INTEGER NOT NULL DEFAULT 0,
   type TEXT NOT NULL,
-  acc_no TEXT
+  acc_no TEXT,
+  account_officer_name TEXT,
+  account_officer_phone TEXT,
+  bank_branch TEXT,
+  sort_code_or_swift TEXT,
+  notes TEXT
 );
 
 CREATE TABLE IF NOT EXISTS treasury_movements (

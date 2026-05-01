@@ -1452,13 +1452,19 @@ export function upsertTreasuryAccount(db, payload, actor) {
   const name = String(payload.name ?? '').trim();
   if (!name) return { ok: false, error: 'Account name is required.' };
   const balance = roundMoney(payload.balance);
+  const accountOfficerName = String(payload.accountOfficerName ?? '').trim();
+  const accountOfficerPhone = String(payload.accountOfficerPhone ?? '').trim();
+  const bankBranch = String(payload.bankBranch ?? '').trim();
+  const sortCodeOrSwift = String(payload.sortCodeOrSwift ?? '').trim();
+  const notes = String(payload.notes ?? '').trim();
   let savedId = null;
   try {
     db.transaction(() => {
       if (payload.id) {
         db.prepare(
           `UPDATE treasury_accounts
-           SET name = ?, bank_name = ?, balance = ?, type = ?, acc_no = ?
+           SET name = ?, bank_name = ?, balance = ?, type = ?, acc_no = ?,
+               account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?
            WHERE id = ?`
         ).run(
           name,
@@ -1466,18 +1472,28 @@ export function upsertTreasuryAccount(db, payload, actor) {
           balance,
           String(payload.type ?? 'Bank').trim() || 'Bank',
           String(payload.accNo ?? '').trim() || 'N/A',
+          accountOfficerName,
+          accountOfficerPhone,
+          bankBranch,
+          sortCodeOrSwift,
+          notes,
           Number(payload.id)
         );
       } else {
         db.prepare(
-          `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no)
-           VALUES (?,?,?,?,?)`
+          `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`
         ).run(
           name,
           String(payload.bankName ?? '').trim(),
           balance,
           String(payload.type ?? 'Bank').trim() || 'Bank',
-          String(payload.accNo ?? '').trim() || 'N/A'
+          String(payload.accNo ?? '').trim() || 'N/A',
+          accountOfficerName,
+          accountOfficerPhone,
+          bankBranch,
+          sortCodeOrSwift,
+          notes
         );
       }
       const row = payload.id
@@ -1494,6 +1510,60 @@ export function upsertTreasuryAccount(db, payload, actor) {
       });
     })();
     return { ok: true, id: savedId };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+export function deleteTreasuryAccount(db, accountId, actor) {
+  const id = Number(accountId);
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'Invalid account id.' };
+  const exists = db.prepare(`SELECT id, name FROM treasury_accounts WHERE id = ?`).get(id);
+  if (!exists) return { ok: false, error: 'Account not found.' };
+
+  const tm = db.prepare(`SELECT COUNT(*) AS c FROM treasury_movements WHERE treasury_account_id = ?`).get(id);
+  if (Number(tm?.c) > 0) {
+    return {
+      ok: false,
+      error:
+        'Cannot delete this account while treasury movements exist. Use transfers and receipts to zero it, or archive it by renaming.',
+    };
+  }
+  const br = db
+    .prepare(`SELECT COUNT(*) AS c FROM bank_reconciliation_lines WHERE treasury_account_id = ?`)
+    .get(id);
+  if (Number(br?.c) > 0) {
+    return { ok: false, error: 'Cannot delete: bank reconciliation lines are linked to this account.' };
+  }
+  const ibl = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM inter_branch_loans WHERE from_treasury_account_id = ? OR to_treasury_account_id = ?`
+    )
+    .get(id, id);
+  if (Number(ibl?.c) > 0) {
+    return { ok: false, error: 'Cannot delete: inter-branch loan records reference this account.' };
+  }
+  const ibr = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM inter_branch_loan_repayments WHERE from_treasury_account_id = ? OR to_treasury_account_id = ?`
+    )
+    .get(id, id);
+  if (Number(ibr?.c) > 0) {
+    return { ok: false, error: 'Cannot delete: inter-branch repayments reference this account.' };
+  }
+
+  try {
+    db.transaction(() => {
+      db.prepare(`DELETE FROM treasury_accounts WHERE id = ?`).run(id);
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury_account.delete',
+        entityKind: 'treasury_account',
+        entityId: String(id),
+        note: `Treasury account removed: ${String(exists.name || '')}`,
+      });
+    })();
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

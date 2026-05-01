@@ -3003,18 +3003,35 @@ export function acknowledgeCoilRequest(db, id) {
 
 export function replaceTreasuryAccounts(db, accounts) {
   const ins = db.prepare(
-    `INSERT INTO treasury_accounts (id, name, bank_name, balance, type, acc_no)
-     VALUES (?,?,?,?,?,?)
+    `INSERT INTO treasury_accounts (id, name, bank_name, balance, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        bank_name = excluded.bank_name,
        balance = excluded.balance,
        type = excluded.type,
-       acc_no = excluded.acc_no`
+       acc_no = excluded.acc_no,
+       account_officer_name = excluded.account_officer_name,
+       account_officer_phone = excluded.account_officer_phone,
+       bank_branch = excluded.bank_branch,
+       sort_code_or_swift = excluded.sort_code_or_swift,
+       notes = excluded.notes`
   );
   db.transaction(() => {
     for (const a of accounts) {
-      ins.run(a.id, a.name, a.bankName ?? '', Number(a.balance) || 0, a.type ?? 'Bank', a.accNo ?? 'N/A');
+      ins.run(
+        a.id,
+        a.name,
+        a.bankName ?? '',
+        Number(a.balance) || 0,
+        a.type ?? 'Bank',
+        a.accNo ?? 'N/A',
+        String(a.accountOfficerName ?? '').trim(),
+        String(a.accountOfficerPhone ?? '').trim(),
+        String(a.bankBranch ?? '').trim(),
+        String(a.sortCodeOrSwift ?? '').trim(),
+        String(a.notes ?? '').trim()
+      );
     }
   })();
   return { ok: true };

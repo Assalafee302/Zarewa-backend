@@ -15,6 +15,25 @@ export function runMigrations(db) {
     return new Set(rows.map((c) => c.name));
   };
 
+  const taCols = tableCols('treasury_accounts');
+  if (taCols.size) {
+    if (!taCols.has('account_officer_name')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN account_officer_name TEXT`);
+    }
+    if (!taCols.has('account_officer_phone')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN account_officer_phone TEXT`);
+    }
+    if (!taCols.has('bank_branch')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN bank_branch TEXT`);
+    }
+    if (!taCols.has('sort_code_or_swift')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN sort_code_or_swift TEXT`);
+    }
+    if (!taCols.has('notes')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN notes TEXT`);
+    }
+  }
+
   const q = tableCols('quotations');
   if (!q.has('project_name')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN project_name TEXT`);

@@ -67,6 +67,7 @@ import {
   assertPeriodOpen,
   decidePaymentRequest,
   decideRefundRequest,
+  deleteTreasuryAccount,
   insertPaymentRequest,
   insertRefundRequest,
   lockAccountingPeriod,
@@ -3050,6 +3051,16 @@ export function registerHttpApi(app, db) {
     try {
       const r = upsertTreasuryAccount(db, req.body || {}, req.user);
       res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.delete('/api/treasury/accounts/:id', requirePermission('treasury.manage'), (req, res) => {
+    try {
+      const r = deleteTreasuryAccount(db, req.params.id, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

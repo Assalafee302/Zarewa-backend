@@ -1206,6 +1206,11 @@ export function listTreasuryAccounts(db) {
       balance: row.balance,
       type: row.type,
       accNo: row.acc_no,
+      accountOfficerName: row.account_officer_name ?? '',
+      accountOfficerPhone: row.account_officer_phone ?? '',
+      bankBranch: row.bank_branch ?? '',
+      sortCodeOrSwift: row.sort_code_or_swift ?? '',
+      notes: row.notes ?? '',
     }));
 }
 

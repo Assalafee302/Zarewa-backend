@@ -10,6 +10,7 @@
     "start:lan": "node scripts/start-lan.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:wipe": "node scripts/wipe-local-mysql.mjs",
+    "db:fresh-empty": "node scripts/fresh-empty-database.mjs",
     "wipe:e2e-db": "node scripts/wipe-playwright-e2e.mjs",
     "db:wipe-empty-client": "node scripts/wipe-empty-client.mjs",
     "db:legacy-demo": "node server/applyLegacyDemoPackCli.js",

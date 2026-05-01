@@ -1,6 +1,11 @@
 /**
- * Human-readable document ids: PREFIX-BRANCHCODE-YY-NNNN (or PREFIX-YY-NNNN for global scopes), YY = calendar year mod 100.
- * Sequences are still scoped per full calendar year; existing ...-2026-... ids are counted when seeding the counter.
+ * Human-readable document ids: PREFIX-BRANCHCODE-YY-NNNN (or PREFIX-YY-NNNN for global scopes).
+ * YY = two-digit calendar year. NNNN is zero-padded (starts at 0001 per branch per year on a clean DB).
+ *
+ * Example (Kaduna, 2026): quotation **QT-KD-26-0001** — type QT, branch KD, year 26, sequence 0001.
+ * Receipt ledger rows use **LE** with the same branch/year pattern (e.g. LE-KD-26-0001).
+ *
+ * Legacy rows without a branch segment (e.g. QT-2026-001) are still scanned so the next serial does not collide.
  * @param {import('better-sqlite3').Database} db
  */
 import { DEFAULT_BRANCH_ID } from './branches.js';

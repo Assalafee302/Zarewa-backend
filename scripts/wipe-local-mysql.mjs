@@ -4,8 +4,10 @@
  * Stop the API first to avoid connection errors mid-wipe.
  */
 import mysql from 'mysql2/promise';
+import { loadProjectEnv } from '../server/loadProjectEnv.js';
 import { mysqlConfigFromEnv, databaseLabel } from '../server/mysqlDatabase.js';
 
+loadProjectEnv();
 const cfg = mysqlConfigFromEnv();
 const conn = await mysql.createConnection({
   host: cfg.host,

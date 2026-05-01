@@ -12,6 +12,8 @@ import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
 } from '../shared/lib/coilSpecVersusProduct.js';
+import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
+import { listMasterData } from './masterData.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -171,6 +173,10 @@ function normalizeAllocationInput(payload, index) {
   };
 }
 
+function masterDataForCoilColourMatch(db) {
+  return { colours: listMasterData(db).colours || [] };
+}
+
 function jobProductAttrsFromDb(db, productId) {
   const pid = String(productId ?? '').trim();
   if (!pid) return null;
@@ -193,7 +199,7 @@ function jobProductAttrsFromDb(db, productId) {
   };
 }
 
-function allocationCoilSpecMismatched(db, job, coilNo) {
+function allocationCoilSpecMismatched(db, job, coilNo, masterDataForCoil) {
   const coil = coilRow(db, coilNo);
   if (!coil) return { mismatched: false, detail: '' };
   const qref = String(job.quotation_ref || '').trim();
@@ -203,9 +209,10 @@ function allocationCoilSpecMismatched(db, job, coilNo) {
   const lot = {
     gaugeLabel: coil.gauge_label,
     colour: coil.colour,
+    colourRaw: coil.colour,
     materialTypeName: coil.material_type_name,
   };
-  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected);
+  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterDataForCoil);
   if (!hasExpected || issues.length === 0) return { mismatched: false, detail: '' };
   return { mismatched: true, detail: issues.join('; ') };
 }
@@ -221,9 +228,10 @@ function refreshJobCoilSpecFlagsTx(db, jobID) {
 }
 
 function validateSpecAcknowledgements(db, job, normalizedLines) {
+  const masterDataForCoil = masterDataForCoilColourMatch(db);
   const mismatches = [];
   for (const line of normalizedLines) {
-    const r = allocationCoilSpecMismatched(db, job, line.coilNo);
+    const r = allocationCoilSpecMismatched(db, job, line.coilNo, masterDataForCoil);
     if (r.mismatched && !line.specMismatchAcknowledged) {
       mismatches.push({ coilNo: line.coilNo, detail: r.detail });
     }
@@ -268,7 +276,7 @@ function gaugeRowByLabel(db, label) {
 
 /**
  * Procurement → Conversion catalogue: use as production "standard" kg/m when it matches coil product + gauge.
- * Tie-break: exact catalog `color` vs coil `colour`, else first row by id.
+ * Tie-break: catalog `color` vs coil `colour` using Setup colours when needed (full name ↔ abbreviation), else first row by id.
  */
 function procurementCatalogStandardKgPerM(db, coil) {
   const pid = String(coil.product_id ?? '').trim();
@@ -294,9 +302,10 @@ function procurementCatalogStandardKgPerM(db, coil) {
   });
   if (!matches.length) return null;
 
+  const masterDataForColour = masterDataForCoilColourMatch(db);
   const coilColour = String(coil.colour ?? '').trim().toLowerCase();
   if (coilColour) {
-    const exact = matches.find((r) => String(r.color ?? '').trim().toLowerCase() === coilColour);
+    const exact = matches.find((r) => coloursMatchWithMaster(masterDataForColour, r.color, coil.colour));
     if (exact) return positiveNumberOrNull(exact.conversion_kg_per_m);
   }
   if (matches.length === 1) return positiveNumberOrNull(matches[0].conversion_kg_per_m);
@@ -534,6 +543,7 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         );
         const specMismatchCoils = [];
+        const masterDataForCoil = masterDataForCoilColourMatch(db);
         for (const line of normalized) {
           const coil = coilRow(db, line.coilNo);
           if (!coil) throw new Error(`Coil ${line.coilNo} was not found.`);
@@ -554,7 +564,7 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           );
           updateCoilDerivedStateTx(db, line.coilNo);
           maxSeq += 1;
-          const sm = allocationCoilSpecMismatched(db, job, line.coilNo);
+          const sm = allocationCoilSpecMismatched(db, job, line.coilNo, masterDataForCoil);
           const specFlag = sm.mismatched ? 1 : 0;
           if (specFlag) specMismatchCoils.push(line.coilNo);
           insertAllocation.run(
@@ -666,9 +676,10 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       );
       const specMismatchCoils = [];
+      const masterDataForCoil = masterDataForCoilColourMatch(db);
       normalized.forEach((line, index) => {
         const coil = coilRow(db, line.coilNo);
-        const sm = allocationCoilSpecMismatched(db, job, line.coilNo);
+        const sm = allocationCoilSpecMismatched(db, job, line.coilNo, masterDataForCoil);
         const specFlag = sm.mismatched ? 1 : 0;
         if (specFlag) specMismatchCoils.push(line.coilNo);
         insertAllocation.run(

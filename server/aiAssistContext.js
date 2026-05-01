@@ -255,7 +255,12 @@ function salesContextLines(db, req, snapshot, branchScope, pageContext) {
     return due < new Date().toISOString().slice(0, 10);
   });
   const refundsAwaitingPay = refunds.filter((row) => row.status === 'Approved' && refundOutstandingAmount(row) > 0);
-  const readiness = computeCuttingListMaterialReadiness(cuttingLists, quotes, buildSalesCoilInventoryRows(snapshot));
+  const readiness = computeCuttingListMaterialReadiness(
+    cuttingLists,
+    quotes,
+    buildSalesCoilInventoryRows(snapshot),
+    snapshot?.masterData
+  );
   const searchRows = searchSection(db, req, pageContext);
 
   const lines = [

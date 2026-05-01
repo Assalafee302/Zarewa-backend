@@ -31,6 +31,7 @@ function inventoryRowToCoilLot(row) {
   return {
     gaugeLabel: row.gaugeLabel,
     colour: row.colour,
+    colourRaw: row.colourRaw ?? row.colour,
     materialTypeName: row.materialType,
   };
 }
@@ -39,13 +40,14 @@ function inventoryRowToCoilLot(row) {
  * Strict match: quote must have comparable material fields; coil row must pass spec check and have kg.
  * @param {Record<string, unknown>} row — Sales coilInventoryRows shape
  * @param {Record<string, unknown>} quotation
+ * @param {{ colours?: object[] } | null | undefined} [masterData] — Setup colours for name ↔ abbreviation (e.g. Bush Green vs BG)
  */
-export function inventoryRowMatchesQuotationCoilSpec(row, quotation) {
+export function inventoryRowMatchesQuotationCoilSpec(row, quotation, masterData) {
   if (!row || !quotation) return false;
   if (Number(row.kg) <= 0) return false;
   const lot = inventoryRowToCoilLot(row);
   const expected = buildExpectedCoilSpecFromQuotation(quotation, null);
-  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected);
+  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterData);
   if (!hasExpected) return false;
   return issues.length === 0;
 }
@@ -83,13 +85,14 @@ export function formatNoCoilMatchAlertForCuttingList(cl, quotation) {
  * @param {object[]} cuttingLists
  * @param {object[]} quotations
  * @param {object[]} coilInventoryRows — from Sales.jsx coilInventoryRows
+ * @param {{ colours?: object[] } | null | undefined} [masterData] — optional Setup colours for coil ↔ quote colour resolution
  * @returns {{
  *   ready: Array<{ cl: object, quotation: object, matches: object[], totalKg: number, totalEstM: number, needM: number, meterCoverageOk: boolean }>,
  *   waitingWithSpecNoStock: number,
  *   waitingNoMatch: Array<{ cl: object, quotation: object, alertText: string }>,
  * }}
  */
-export function computeCuttingListMaterialReadiness(cuttingLists, quotations, coilInventoryRows) {
+export function computeCuttingListMaterialReadiness(cuttingLists, quotations, coilInventoryRows, masterData) {
   const byQ = new Map(quotations.map((q) => [String(q.id), q]));
   const ready = [];
   const waitingNoMatch = [];
@@ -101,7 +104,7 @@ export function computeCuttingListMaterialReadiness(cuttingLists, quotations, co
     if (!quotationExpectsCoilAllocation(q)) continue;
     if (!quotationHasComparableCoilSpec(q)) continue;
 
-    const matches = (coilInventoryRows || []).filter((r) => inventoryRowMatchesQuotationCoilSpec(r, q));
+    const matches = (coilInventoryRows || []).filter((r) => inventoryRowMatchesQuotationCoilSpec(r, q, masterData));
     if (matches.length === 0) {
       waitingNoMatch.push({
         cl,

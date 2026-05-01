@@ -1,3 +1,5 @@
+import { stockRowMatchesColourFilter } from './stockCheckMasterOptions.js';
+
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
 export function firstGaugeNumber(value) {
   const m = String(value ?? '').match(/(\d+(?:\.\d+)?)/);
@@ -64,11 +66,12 @@ export function buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs) {
 }
 
 /**
- * @param {Record<string, unknown> | null | undefined} lot — gaugeLabel, colour, materialTypeName
+ * @param {Record<string, unknown> | null | undefined} lot — gaugeLabel, colour, materialTypeName (optional colourRaw)
  * @param {{ gauge?: string | null; colour?: string | null; materialType?: string | null }} expected from buildExpectedCoilSpecFromQuotation
+ * @param {{ colours?: object[] } | null | undefined} [masterData] — when present, colour match uses Setup colour names ↔ abbreviations (e.g. Bush Green vs BG), same as Sales stock filters.
  * @returns {{ issues: string[], hasExpected: boolean }}
  */
-export function coilSpecMismatchIssues(lot, expected) {
+export function coilSpecMismatchIssues(lot, expected, masterData) {
   if (!lot || !expected) return { issues: [], hasExpected: false };
   const gBounds = expectedGaugeBoundsMm(expected.gauge);
   const gCoil = firstGaugeNumber(lot.gaugeLabel);
@@ -88,8 +91,17 @@ export function coilSpecMismatchIssues(lot, expected) {
       issues.push(`gauge (coil ${lot.gaugeLabel || '—'} vs quotation ${expected.gauge || '—'})`);
     }
   }
-  if (cExp && cCoil && !cCoil.includes(cExp) && !cExp.includes(cCoil)) {
-    issues.push(`colour (coil ${lot.colour || '—'} vs quotation ${expected.colour || '—'})`);
+  if (cExp && cCoil) {
+    let colourOk = cCoil.includes(cExp) || cExp.includes(cCoil);
+    if (!colourOk && Array.isArray(masterData?.colours) && masterData.colours.length) {
+      colourOk = stockRowMatchesColourFilter(masterData, String(expected.colour || '').trim(), {
+        colour: lot.colour,
+        colourRaw: lot.colourRaw ?? lot.colour,
+      });
+    }
+    if (!colourOk) {
+      issues.push(`colour (coil ${lot.colour || '—'} vs quotation ${expected.colour || '—'})`);
+    }
   }
   if (mExp && mCoil) {
     const a = mExp.split(/\s+/)[0];
@@ -108,10 +120,10 @@ export function quotationExpectsCoilAllocation(quotation) {
   return true;
 }
 
-export function coilMatchesQuotationSpec(lot, quotation, jobProductAttrs) {
+export function coilMatchesQuotationSpec(lot, quotation, jobProductAttrs, masterData) {
   if (quotation && !quotationExpectsCoilAllocation(quotation)) return true;
   const expected = buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs);
-  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected);
+  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterData);
   if (!hasExpected) return true;
   return issues.length === 0;
 }
@@ -120,9 +132,9 @@ export function coilMatchesQuotationSpec(lot, quotation, jobProductAttrs) {
  * Compare selected coil lot to quotation + finished-good attrs (storekeeper warning).
  * @returns {string | null} Warning sentence or null if aligned / insufficient data
  */
-export function coilVersusQuotationAndProductWarning(lot, quotation, jobProductAttrs) {
+export function coilVersusQuotationAndProductWarning(lot, quotation, jobProductAttrs, masterData) {
   const expected = buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs);
-  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected);
+  const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterData);
   if (!hasExpected || issues.length === 0) return null;
   return `Spec check: this coil does not match the quotation material spec — ${issues.join('; ')}. Pick a recommended coil or save with acknowledgement to flag the branch manager.`;
 }
@@ -131,8 +143,9 @@ export function coilVersusQuotationAndProductWarning(lot, quotation, jobProductA
  * Compare selected coil lot to finished-good product attrs only (no quotation header).
  * @param {Record<string, unknown> | null | undefined} lot
  * @param {{ gauge?: string; colour?: string; materialType?: string } | null | undefined} jobProductAttrs
+ * @param {{ colours?: object[] } | null | undefined} [masterData]
  * @returns {string | null} Warning sentence or null if aligned / insufficient data
  */
-export function coilVersusJobProductWarning(lot, jobProductAttrs) {
-  return coilVersusQuotationAndProductWarning(lot, null, jobProductAttrs);
+export function coilVersusJobProductWarning(lot, jobProductAttrs, masterData) {
+  return coilVersusQuotationAndProductWarning(lot, null, jobProductAttrs, masterData);
 }

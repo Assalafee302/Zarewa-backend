@@ -676,6 +676,7 @@ export function runMigrations(db) {
   migratePriceListAndPayrollMd(db);
   migrateProductionCompletionAdjustments(db);
   migrateQuotationLineCatalog2026(db);
+  migrateCoilAluzincColours2026(db);
   migrateStoneCoatedAndPricingArch(db);
   migrateEnsureQuotationMaterialTypes(db);
   migrateProcurementOrderKind(db);
@@ -1392,6 +1393,53 @@ function migrateQuotationLineCatalog2026(db) {
     db.prepare(
       `UPDATE setup_quote_items SET inventory_product_id = 'ACC-SPOOL-PACK' WHERE item_id = 'SQI-020' AND inventory_product_id = 'ACC-SPOOK-PACK'`
     ).run();
+  })();
+}
+
+/**
+ * Aluminium / aluzinc coil colours (names + codes). Stone-coated profiles keep separate COL-ST-* rows from
+ * migrateStoneCoatedAndPricingArch. NB = Nut Brown (not navy); TR = TC red code; NA green → Natural Green;
+ * CBN yellow → Canary Yellow; extras: Wine Red, Vandal Grey (common variants beyond the core list).
+ */
+function migrateCoilAluzincColours2026(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_colours'`).get()) return;
+  const exists = db.prepare(`SELECT 1 FROM setup_colours WHERE colour_id = ?`);
+  const upd = db.prepare(
+    `UPDATE setup_colours SET name = ?, abbreviation = ?, active = 1, sort_order = ? WHERE colour_id = ?`
+  );
+  const ins = db.prepare(
+    `INSERT INTO setup_colours (colour_id, name, abbreviation, active, sort_order) VALUES (?,?,?,1,?)`
+  );
+
+  /** @type {[string, string, string, number][]} */
+  const rows = [
+    ['COL-001', 'HM Blue', 'HMB', 10],
+    ['COL-002', 'Traffic Black', 'TB', 20],
+    ['COL-003', 'TC Red', 'TR', 30],
+    ['COL-004', 'Bush Green', 'BG', 40],
+    ['COL-010', 'Gray Beige', 'GB', 50],
+    ['COL-006', 'Ivory Beige', 'IV', 60],
+    ['COL-009', 'P Red', 'PR', 70],
+    ['COL-008', 'Pale Green', 'PG', 80],
+    ['COL-007', 'Nut Brown', 'NB', 90],
+    ['COL-011', 'Stucco', 'ST', 100],
+    ['COL-012', 'Natural Green', 'NG', 110],
+    ['COL-013', 'CP Blue', 'CB', 120],
+    ['COL-014', 'Canary Yellow', 'CY', 130],
+    ['COL-015', 'Coloured', 'CL', 140],
+    ['COL-005', 'Zinc Grey', 'ZG', 150],
+    ['COL-016', 'Wine Red', 'WR', 160],
+    ['COL-017', 'Vandal Grey', 'VG', 170],
+  ];
+
+  db.transaction(() => {
+    for (const [id, name, abbr, sort] of rows) {
+      if (exists.get(id)) {
+        upd.run(name, abbr, sort, id);
+      } else {
+        ins.run(id, name, abbr, sort);
+      }
+    }
   })();
 }
 

@@ -35,10 +35,13 @@ export const TRANSPORT_AGENTS_SEED = [
   { id: 'AG-003', name: 'Abuja Linehaul', region: 'Abuja / Central', phone: '0803 000 0003' },
 ];
 
-const longspanThinQty = 80060;
-const aluzinc028Kg = 12792;
-const heavyCoilKg = 9157;
+const longspanThinQty = 72482;
+const aluzinc028Kg = 14300;
+const heavyCoilKg = 11045;
 const tappingScrewCartons = 142;
+
+/** Next numeric C/NO after last physical stock sheet (max coil no. 1967). */
+export const YARD_REGISTER_NEXT_COIL_NUMERIC_HINT = 1968;
 
 export const PRODUCTS_SEED = [
   {
@@ -480,14 +483,14 @@ export const PROCUREMENT_CATALOG_SEED = [
 ];
 
 export const YARD_COILS_SEED = [
-  { id: 'COIL-1882', colour: 'HMB', gaugeLabel: '0.24', materialType: 'Aluzinc longspan', weightKg: 3279, loc: 'Bay A' },
+  { id: 'COIL-1882', colour: 'HMB', gaugeLabel: '0.24', materialType: 'Aluzinc longspan', weightKg: 3297, loc: 'Bay A' },
   { id: 'COIL-1908', colour: 'TB', gaugeLabel: '0.24', materialType: 'Aluzinc longspan', weightKg: 3428, loc: 'Bay A' },
   { id: 'COIL-1878', colour: 'GB', gaugeLabel: '0.55', materialType: 'Aluzinc longspan', weightKg: 732, loc: 'Bay B' },
   { id: 'COIL-1912', colour: 'IV', gaugeLabel: '0.20', materialType: 'Aluzinc longspan', weightKg: 2890, loc: 'Bay A' },
 ];
 
 export const AVAILABLE_STOCK_SEED = [
-  { id: 'COIL-1882', material: 'HM Blue', gauge: '0.24', color: 'Blue', weight: '3,279kg' },
+  { id: 'COIL-1882', material: 'HM Blue', gauge: '0.24', color: 'Blue', weight: '3,297kg' },
   { id: 'COIL-1908', material: 'Traffic Black', gauge: '0.24', color: 'Black', weight: '3,428kg' },
   { id: 'COIL-1878', material: 'HM Blue', gauge: '0.55', color: 'Blue', weight: '732kg' },
 ];

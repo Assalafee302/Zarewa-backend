@@ -495,7 +495,7 @@ export const AVAILABLE_STOCK_SEED = [
   { id: 'COIL-1878', material: 'HM Blue', gauge: '0.55', color: 'Blue', weight: '732kg' },
 ];
 
-/** CRM dashboard demo payload (stored in app_json_blobs). */
+/** CRM dashboard bootstrap payload from live-style seed rows (stored in app_json_blobs). */
 export const CUSTOMER_DASHBOARD_SEED = {
   orders: [
     {

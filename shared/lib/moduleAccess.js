@@ -9,14 +9,7 @@ export function hasPermissionInList(permissions, permission) {
 export const MODULE_ACCESS_POLICY = {
   sales: ['sales.view', 'sales.manage', 'quotations.manage', 'receipts.post'],
   procurement: ['procurement.view', 'purchase_orders.manage'],
-  operations: [
-    'operations.view',
-    'operations.manage',
-    'production.manage',
-    'inventory.receive',
-    'inventory.adjust',
-    'deliveries.manage',
-  ],
+  operations: ['operations.view', 'production.manage'],
   finance: [
     'finance.view',
     'finance.post',

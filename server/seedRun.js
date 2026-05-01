@@ -411,12 +411,12 @@ export function seedEverything(db) {
 
   const crmCount = db.prepare(`SELECT COUNT(*) AS c FROM customer_crm_interactions`).get().c;
   if (crmCount === 0) {
-    const seedCustomer = db.prepare(`SELECT 1 FROM customers WHERE customer_id = ?`).get('CUS-001');
-    if (seedCustomer) {
+    const demoCustomer = db.prepare(`SELECT 1 FROM customers WHERE customer_id = ?`).get('CUS-001');
+    if (demoCustomer) {
       db.prepare(
         `INSERT INTO customer_crm_interactions (id, customer_id, at_iso, kind, title, detail, created_by_name, branch_id) VALUES (?,?,?,?,?,?,?,?)`
       ).run(
-        'CRM-LIVE-1',
+        'CRM-DEMO-1',
         'CUS-001',
         '2026-03-28T09:30:00.000Z',
         'call',

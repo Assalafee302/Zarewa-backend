@@ -140,13 +140,12 @@ export function canReadProductionSnapshot(user) {
   );
 }
 
-/** Coil lots & stock movements — ops, procurement, or sales (view/manage) */
+/** Coil lots & stock movements — receiving, production, or sales management */
 export function canReadCoilAndMovements(user) {
   return (
     canAnyPermission(user, OPERATIONS_DOMAIN_PERMS) ||
     canAnyPermission(user, PROCUREMENT_DOMAIN_PERMS) ||
-    userHasPermission(user, 'sales.manage') ||
-    userHasPermission(user, 'sales.view')
+    userHasPermission(user, 'sales.manage')
   );
 }
 

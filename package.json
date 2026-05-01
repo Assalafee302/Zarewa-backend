@@ -9,6 +9,7 @@
     "start": "node server/index.js",
     "start:lan": "node scripts/start-lan.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",
+    "db:sync-opening-coils": "node scripts/sync-opening-coil-register-mysql.mjs",
     "db:wipe": "node scripts/wipe-local-mysql.mjs",
     "db:fresh-empty": "node scripts/fresh-empty-database.mjs",
     "wipe:e2e-db": "node scripts/wipe-playwright-e2e.mjs",

@@ -684,23 +684,14 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
 
 export function listCoilControlEvents(db, branchScope = 'ALL') {
   if (!hasColumn(db, 'coil_control_events', 'branch_id')) return [];
+  const b = branchWhere(db, 'coil_control_events', branchScope);
   const lim = 2000;
-  let rows;
-  if (branchScope === 'ALL' || !branchScope) {
-    const b = branchWhere(db, 'coil_control_events', branchScope);
-    rows = db
-      .prepare(
-        `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, id DESC LIMIT ?`
-      )
-      .all(...b.args, lim);
-  } else {
-    rows = db
-      .prepare(
-        `SELECT * FROM coil_control_events WHERE branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '' ORDER BY created_at_iso DESC, id DESC LIMIT ?`
-      )
-      .all(branchScope, lim);
-  }
-  return rows.map((row) => ({
+  return db
+    .prepare(
+      `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, id DESC LIMIT ?`
+    )
+    .all(...b.args, lim)
+    .map((row) => ({
       id: row.id,
       branchId: row.branch_id ?? '',
       eventKind: row.event_kind ?? '',
@@ -732,21 +723,11 @@ export function listCoilControlEvents(db, branchScope = 'ALL') {
 }
 
 export function listCoilLots(db, branchScope = 'ALL') {
-  const hasCb = hasColumn(db, 'coil_lots', 'branch_id');
-  let rows;
-  if (branchScope === 'ALL' || !branchScope || !hasCb) {
-    const b = branchWhere(db, 'coil_lots', branchScope);
-    rows = db
-      .prepare(`SELECT * FROM coil_lots WHERE 1=1${b.sql} ORDER BY received_at_iso DESC, coil_no DESC`)
-      .all(...b.args);
-  } else {
-    rows = db
-      .prepare(
-        `SELECT * FROM coil_lots WHERE branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '' ORDER BY received_at_iso DESC, coil_no DESC`
-      )
-      .all(branchScope);
-  }
-  return rows.map((row) => ({
+  const b = branchWhere(db, 'coil_lots', branchScope);
+  return db
+    .prepare(`SELECT * FROM coil_lots WHERE 1=1${b.sql} ORDER BY received_at_iso DESC, coil_no DESC`)
+    .all(...b.args)
+    .map((row) => ({
       coilNo: row.coil_no,
       productID: row.product_id,
       lineKey: row.line_key,

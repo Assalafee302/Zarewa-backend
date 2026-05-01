@@ -2538,4 +2538,56 @@ describe.sequential('Zarewa API', () => {
     expect(res.status).toBe(503);
     expect(res.body.ok).toBe(false);
   });
+
+  it('GET /api/admin/data-reset-presets returns 403 for non-admin', async () => {
+    const salesAgent = request.agent(app);
+    await loginAs(salesAgent, 'sales.staff', 'Sales@123');
+    const res = await salesAgent.get('/api/admin/data-reset-presets');
+    expect(res.status).toBe(403);
+    expect(res.body.ok).toBe(false);
+  });
+
+  it('GET /api/admin/data-reset-presets returns presets for admin', async () => {
+    const res = await agent.get('/api/admin/data-reset-presets');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.presets)).toBe(true);
+    expect(res.body.presets.length).toBeGreaterThan(0);
+    expect(res.body.presets[0]).toHaveProperty('id');
+    expect(res.body.presets[0]).toHaveProperty('label');
+    expect(String(res.body.confirmPhrase || '')).toBeTruthy();
+  });
+
+  it('POST /api/admin/data-reset returns 403 for non-admin', async () => {
+    const salesAgent = request.agent(app);
+    await loginAs(salesAgent, 'sales.staff', 'Sales@123');
+    const res = await salesAgent.post('/api/admin/data-reset').send({
+      presetIds: ['document_sequences'],
+      confirmPhrase: 'RESET SELECTED DATA',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.ok).toBe(false);
+  });
+
+  it('POST /api/admin/data-reset rejects wrong confirm phrase', async () => {
+    const res = await agent.post('/api/admin/data-reset').send({
+      presetIds: ['document_sequences'],
+      confirmPhrase: 'wrong',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+  });
+
+  it('POST /api/admin/data-reset clears selected tables for admin', async () => {
+    const before = db.prepare('SELECT COUNT(*) as c FROM human_id_sequences').get();
+    expect(Number(before.c)).toBeGreaterThan(0);
+    const res = await agent.post('/api/admin/data-reset').send({
+      presetIds: ['document_sequences'],
+      confirmPhrase: 'RESET SELECTED DATA',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const after = db.prepare('SELECT COUNT(*) as c FROM human_id_sequences').get();
+    expect(Number(after.c)).toBe(0);
+  });
 });

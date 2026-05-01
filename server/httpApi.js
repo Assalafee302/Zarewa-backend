@@ -78,6 +78,11 @@ import {
   upsertTreasuryAccount,
 } from './controlOps.js';
 import {
+  ADMIN_DATA_RESET_CONFIRM_PHRASE,
+  ADMIN_DATA_RESET_PRESETS,
+  applyAdminDataReset,
+} from './adminDataResetOps.js';
+import {
   approveEditApproval,
   createEditApprovalRequest,
   getEditApproval,
@@ -1611,6 +1616,48 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load roles.' });
+    }
+  });
+
+  app.get('/api/admin/data-reset-presets', requireAuth, (req, res) => {
+    try {
+      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      }
+      res.json({
+        ok: true,
+        presets: ADMIN_DATA_RESET_PRESETS.map(({ id, label, warning }) => ({ id, label, warning })),
+        confirmPhrase: ADMIN_DATA_RESET_CONFIRM_PHRASE,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/admin/data-reset', requireAuth, (req, res) => {
+    try {
+      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+        return res.status(403).json({ ok: false, error: 'Admin only.' });
+      }
+      const body = req.body || {};
+      const presetIds = Array.isArray(body.presetIds) ? body.presetIds : [];
+      const r = applyAdminDataReset(db, presetIds, body.confirmPhrase, { actorId: req.user?.id });
+      if (!r.ok) {
+        return res.status(400).json(r);
+      }
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'admin.data_reset',
+        entityKind: 'system',
+        entityId: 'data_reset',
+        note: `Admin data reset: ${r.presetIds.join(', ')}`,
+        details: { presetIds: r.presetIds, tablesCleared: r.tablesCleared },
+      });
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
     }
   });
 

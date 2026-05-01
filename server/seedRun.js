@@ -190,6 +190,8 @@ export function seedEverything(db) {
         insA.run(a.id, a.name, a.region, a.phone, DEFAULT_BRANCH_ID);
       }
       for (const p of PRODUCTS_SEED) {
+        const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(p.productID);
+        if (exists) continue;
         insP.run(
           p.productID,
           p.name,

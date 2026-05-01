@@ -648,7 +648,7 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
     const hi = govLimits.expenseExecutiveThresholdNgn;
     return {
       ok: false,
-      error: `Non-refund expenses above ₦${hi.toLocaleString('en-NG')} require MD/CEO-level approval (branch manager may approve at or below this threshold).`,
+      error: `Non-refund expenses above ₦${hi.toLocaleString('en-NG')} require managing director approval (branch manager may approve at or below this threshold).`,
     };
   }
   const note = String(payload.note ?? '').trim();
@@ -1516,24 +1516,46 @@ export function upsertTreasuryAccount(db, payload, actor) {
 }
 
 export function deleteTreasuryAccount(db, accountId, actor) {
+  const rk = String(actor?.roleKey || '').toLowerCase();
+  if (!['admin', 'md', 'ceo'].includes(rk)) {
+    return { ok: false, error: 'Only Admin, MD, or CEO may delete treasury accounts.' };
+  }
+
   const id = Number(accountId);
   if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'Invalid account id.' };
-  const exists = db.prepare(`SELECT id, name FROM treasury_accounts WHERE id = ?`).get(id);
+  const exists = db.prepare(`SELECT id, name, balance FROM treasury_accounts WHERE id = ?`).get(id);
   if (!exists) return { ok: false, error: 'Account not found.' };
+
+  const totalAccounts = Number(db.prepare(`SELECT COUNT(*) AS c FROM treasury_accounts`).get()?.c) || 0;
+  if (totalAccounts <= 1) {
+    return { ok: false, error: 'Cannot delete the last remaining treasury account.' };
+  }
+
+  const bal = roundMoney(exists.balance);
+  if (bal !== 0) {
+    return {
+      ok: false,
+      error:
+        'Cannot delete while the book balance is non-zero. Transfer funds out or correct the balance to exactly ₦0 before removal.',
+    };
+  }
 
   const tm = db.prepare(`SELECT COUNT(*) AS c FROM treasury_movements WHERE treasury_account_id = ?`).get(id);
   if (Number(tm?.c) > 0) {
     return {
       ok: false,
       error:
-        'Cannot delete this account while treasury movements exist. Use transfers and receipts to zero it, or archive it by renaming.',
+        'Cannot delete: this account has treasury movement history. Removal is blocked even if the running balance was adjusted manually.',
     };
   }
   const br = db
     .prepare(`SELECT COUNT(*) AS c FROM bank_reconciliation_lines WHERE treasury_account_id = ?`)
     .get(id);
   if (Number(br?.c) > 0) {
-    return { ok: false, error: 'Cannot delete: bank reconciliation lines are linked to this account.' };
+    return {
+      ok: false,
+      error: 'Cannot delete: one or more bank reconciliation lines are tied to this treasury account.',
+    };
   }
   const ibl = db
     .prepare(

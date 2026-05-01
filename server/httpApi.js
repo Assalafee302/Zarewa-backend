@@ -92,7 +92,6 @@ import {
   listPendingEditApprovals,
   stripEditApprovalFromBody,
 } from './editApproval.js';
-import { hrTablesReady, upsertHrStaffProfile } from './hrOps.js';
 import {
   addOfficeMessage,
   convertOfficeThreadToPaymentRequest,
@@ -1476,17 +1475,15 @@ export function registerHttpApi(app, db) {
       const stripped = stripEditApprovalFromBody(req.body || {});
       const branchId = String(stripped?.branchId ?? '').trim();
       if (!branchId) return res.status(400).json({ ok: false, error: 'branchId is required.' });
-      if (!hrTablesReady(db)) {
-        return res
-          .status(400)
-          .json({ ok: false, error: 'HR module not initialised — branch assignment is unavailable.' });
-      }
       const u = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
       if (!u) return res.status(400).json({ ok: false, error: 'User not found.' });
       const br = db.prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`).get(branchId);
       if (!br) return res.status(400).json({ ok: false, error: 'Invalid or inactive branch.' });
-      const up = upsertHrStaffProfile(db, req.user.id, { userId: uid, branchId });
-      if (!up.ok) return res.status(400).json(up);
+      const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
+      if (!cols.some((c) => c.name === 'workspace_branch_id')) {
+        return res.status(500).json({ ok: false, error: 'Workspace branch column missing — run migrations.' });
+      }
+      db.prepare(`UPDATE app_users SET workspace_branch_id = ? WHERE id = ?`).run(branchId, uid);
       appendAuditLog(db, {
         actor: req.user,
         action: 'user.workspace_branch',
@@ -1516,33 +1513,19 @@ export function registerHttpApi(app, db) {
       const r = createAppUserRecord(db, body);
       if (!r.ok) return res.status(400).json(r);
 
-      if (hrTablesReady(db)) {
-        const branchId = String(body.branchId ?? body.homeBranchId ?? '').trim();
-        if (!branchId) {
-          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
-          return res.status(400).json({ ok: false, error: 'Home branch is required.' });
-        }
-        const br = db
-          .prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`)
-          .get(branchId);
-        if (!br) {
-          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
-          return res.status(400).json({ ok: false, error: 'Invalid or inactive branch.' });
-        }
-        const suffix = String(r.userId)
-          .replace(/\W/g, '')
-          .slice(-8)
-          .toUpperCase();
-        const up = upsertHrStaffProfile(db, req.user.id, {
-          userId: r.userId,
-          branchId,
-          employeeNo: String(body.employeeNo || '').trim() || `EMP-${suffix || 'NEW'}`,
-          jobTitle: String(body.jobTitle || '').trim() || 'Team member',
-        });
-        if (!up.ok) {
-          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
-          return res.status(400).json(up);
-        }
+      const branchId = String(body.branchId ?? body.homeBranchId ?? '').trim();
+      if (!branchId) {
+        db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+        return res.status(400).json({ ok: false, error: 'Home branch is required.' });
+      }
+      const br = db.prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`).get(branchId);
+      if (!br) {
+        db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+        return res.status(400).json({ ok: false, error: 'Invalid or inactive branch.' });
+      }
+      const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
+      if (cols.some((c) => c.name === 'workspace_branch_id')) {
+        db.prepare(`UPDATE app_users SET workspace_branch_id = ? WHERE id = ?`).run(branchId, r.userId);
       }
 
       appendAuditLog(db, {
@@ -1916,13 +1899,10 @@ export function registerHttpApi(app, db) {
 
   /**
    * Permission-aware quick search (SQL LIMIT per category): CRM, sales docs, procurement, ops,
-   * refunds, product SKUs, HR directory.
+   * refunds, product SKUs.
    */
   app.get('/api/workspace/search', requireAuth, (req, res) => {
     try {
-      if (String(req.user?.roleKey || '').toLowerCase() === 'ceo') {
-        return res.status(403).json({ ok: false, error: 'Workspace search is not available for the executive role.' });
-      }
       const raw = String(req.query.q ?? '').trim();
       const limit = Math.min(40, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
       if (raw.length < 2) {
@@ -3057,8 +3037,12 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.delete('/api/treasury/accounts/:id', requirePermission('treasury.manage'), (req, res) => {
+  app.delete('/api/treasury/accounts/:id', requireAuth, (req, res) => {
     try {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (!['admin', 'md', 'ceo'].includes(rk)) {
+        return res.status(403).json({ ok: false, error: 'Only Admin, MD, or CEO may delete treasury accounts.' });
+      }
       const r = deleteTreasuryAccount(db, req.params.id, req.user);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {

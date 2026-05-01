@@ -2,11 +2,12 @@ import { CUSTOMERS_SEED, QUOTATIONS_SEED } from './seedData.js';
 import { SALES_RECEIPTS_SEED } from './seedExtra.js';
 import { LAGACY_CUTTING_LIST_SEED } from './lagacyCuttingListSeed.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-
-const DEMO_CUSTOMER_ID = 'CUS-NDA';
-const DEMO_QUOTE_ID = 'QT-2026-027';
-const DEMO_RECEIPT_ID = 'RC-2026-1849';
-const DEMO_CL_ID = 'CL-2026-1592';
+import {
+  DEMO_CL_ID,
+  DEMO_CUSTOMER_ID,
+  DEMO_QUOTE_ID,
+  DEMO_RECEIPT_ID,
+} from './legacyDemoPackPolicy.js';
 
 /**
  * Ensures the legacy factory demo pack exists in the SQLite file even when the DB was

@@ -25,7 +25,7 @@
     "test:transactions": "vitest run server/scenarioMatrix.test.js server/transactionalScenarios.test.js",
     "test:operations": "vitest run server/inventoryScenarios.test.js server/accessoryFulfillment.test.js server/transactionalScenarios.test.js",
     "test:financial": "vitest run server/refundSecurity.test.js server/refundE2E.test.js server/accountingPhase2.test.js server/accountingStatementsOps.test.js server/api.test.js",
-    "test:critical-workflows": "vitest run server/ensureLegacyDemoPack.test.js server/refundSecurity.test.js server/refundE2E.test.js server/accountingPhase2.test.js server/api.test.js",
+    "test:critical-workflows": "vitest run server/ensureLegacyDemoPack.test.js server/legacyDemoPackPolicy.test.js server/refundSecurity.test.js server/refundE2E.test.js server/accountingPhase2.test.js server/api.test.js",
     "test:ops-finance": "npm run test:operations && npm run test:financial",
     "test:e2e:operations": "playwright test e2e/complete-gate.spec.js --grep \"operations: Store\"",
     "test:e2e:production": "playwright test e2e/complete-gate.spec.js e2e/production-register.spec.js --grep \"Store & production|Production register\"",

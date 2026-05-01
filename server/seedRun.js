@@ -24,6 +24,13 @@ import { seedMasterData } from './masterData.js';
 import { seedProductionLineDemo } from './seedProductionLineDemo.js';
 import { seedHrIfEmpty } from './hrOps.js';
 import { isEmptySeedMode, seedEmptyClientMinimal } from './emptySeed.js';
+import {
+  legacyDemoPackActive,
+  DEMO_CL_ID,
+  DEMO_RECEIPT_ID,
+  LEGACY_DEMO_CUSTOMER_IDS,
+  LEGACY_DEMO_QUOTATION_IDS,
+} from './legacyDemoPackPolicy.js';
 
 /**
  * Idempotent seed: fills empty tables. Safe on existing DBs after migrations.
@@ -39,8 +46,16 @@ export function seedEverything(db) {
     return;
   }
 
+  const includeLegacyDemo = legacyDemoPackActive(db);
+
   const custCount = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;
   if (custCount === 0) {
+    const customersSeed = includeLegacyDemo
+      ? CUSTOMERS_SEED
+      : CUSTOMERS_SEED.filter((c) => !LEGACY_DEMO_CUSTOMER_IDS.has(c.customerID));
+    const quotationsSeed = includeLegacyDemo
+      ? QUOTATIONS_SEED
+      : QUOTATIONS_SEED.filter((q) => !LEGACY_DEMO_QUOTATION_IDS.has(q.id));
     const insC = db.prepare(`
       INSERT INTO customers (
         customer_id, name, phone_number, email, address_shipping, address_billing,
@@ -56,7 +71,7 @@ export function seedEverything(db) {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     db.transaction(() => {
-      for (const c of CUSTOMERS_SEED) {
+      for (const c of customersSeed) {
         const tagsJson = JSON.stringify(
           Array.isArray(c.crmTags) ? c.crmTags : []
         );
@@ -82,7 +97,7 @@ export function seedEverything(db) {
           DEFAULT_BRANCH_ID
         );
       }
-      for (const q of QUOTATIONS_SEED) {
+      for (const q of quotationsSeed) {
         insQ.run(
           q.id,
           q.customerID,
@@ -108,6 +123,12 @@ export function seedEverything(db) {
 
   const supCount = db.prepare('SELECT COUNT(*) AS c FROM suppliers').get().c;
   if (supCount === 0) {
+    const receiptsSeed = includeLegacyDemo
+      ? SALES_RECEIPTS_SEED
+      : SALES_RECEIPTS_SEED.filter((r) => r.id !== DEMO_RECEIPT_ID);
+    const cuttingListsSeed = includeLegacyDemo
+      ? CUTTING_LISTS_SEED
+      : CUTTING_LISTS_SEED.filter((c) => c.id !== DEMO_CL_ID);
     const insS = db.prepare(
       `INSERT INTO suppliers (supplier_id, name, city, payment_terms, quality_score, notes, branch_id, supplier_profile_json) VALUES (?,?,?,?,?,?,?,?)`
     );
@@ -255,7 +276,7 @@ export function seedEverything(db) {
           DEFAULT_BRANCH_ID
         );
       }
-      for (const r of SALES_RECEIPTS_SEED) {
+      for (const r of receiptsSeed) {
         insR.run(
           r.id,
           r.customerID,
@@ -272,7 +293,7 @@ export function seedEverything(db) {
           DEFAULT_BRANCH_ID
         );
       }
-      for (const c of CUTTING_LISTS_SEED) {
+      for (const c of cuttingListsSeed) {
         insCl.run(
           c.id,
           c.customerID,

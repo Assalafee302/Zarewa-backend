@@ -4,6 +4,7 @@ import { seedEverything } from './seedRun.js';
 import { backfillAccountsPayableFromPurchaseOrders } from './writeOps.js';
 import { ensureLegacyDemoPack } from './ensureLegacyDemoPack.js';
 import { isEmptySeedMode } from './emptySeed.js';
+import { legacyDemoPackActive } from './legacyDemoPackPolicy.js';
 import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 
 /**
@@ -43,7 +44,7 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
   }
   if (seed) {
     seedEverything(db);
-    if (!isEmptySeedMode()) ensureLegacyDemoPack(db);
+    if (!isEmptySeedMode() && legacyDemoPackActive(db)) ensureLegacyDemoPack(db);
     backfillAccountsPayableFromPurchaseOrders(db);
   }
   return db;

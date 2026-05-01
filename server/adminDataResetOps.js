@@ -3,6 +3,8 @@
  * Does not drop users, branches, products, suppliers, master setup_*, or treasury account rows.
  */
 
+import { setSuppressLegacyDemoPackAfterOperationsReset } from './legacyDemoPackPolicy.js';
+
 /** @type {{ id: string, label: string, warning: string, tables: string[] }[]} */
 export const ADMIN_DATA_RESET_PRESETS = [
   {
@@ -174,6 +176,10 @@ export function applyAdminDataReset(db, presetIds, confirmPhrase, meta = {}) {
     })();
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
+  }
+
+  if (idSet.has('operations_core')) {
+    setSuppressLegacyDemoPackAfterOperationsReset(db, { actorId: meta.actorId ?? null });
   }
 
   return {

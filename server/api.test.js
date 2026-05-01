@@ -262,6 +262,36 @@ describe.sequential('Zarewa API', () => {
     expect(res.body.userId).toMatch(/^USR-/);
   });
 
+  it('DELETE /api/users/:id removes a user when confirmUsername matches (admin)', async () => {
+    const signedAgent = request.agent(app);
+    await loginAs(signedAgent);
+    const boot = await signedAgent.get('/api/bootstrap');
+    const branchId = boot.body?.session?.branches?.[0]?.id || 'BR-KD';
+    const create = await signedAgent.post('/api/users').send({
+      username: 'e2e.delete.me.user',
+      displayName: 'E2E Delete Me',
+      password: 'TempPass@999!',
+      roleKey: 'sales_staff',
+      branchId,
+    });
+    expect(create.status).toBe(201);
+    const userId = create.body.userId;
+    const bad = await signedAgent.delete(`/api/users/${encodeURIComponent(userId)}`).send({
+      confirmUsername: 'wrong',
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.ok).toBe(false);
+    const del = await signedAgent.delete(`/api/users/${encodeURIComponent(userId)}`).send({
+      confirmUsername: 'e2e.delete.me.user',
+    });
+    expect(del.status).toBe(200);
+    expect(del.body.ok).toBe(true);
+    const list = await signedAgent.get('/api/users');
+    expect(list.status).toBe(200);
+    const still = list.body.users.some((u) => u.id === userId);
+    expect(still).toBe(false);
+  });
+
   it('PATCH /api/session/dashboard-prefs persists and returns on bootstrap', async () => {
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);

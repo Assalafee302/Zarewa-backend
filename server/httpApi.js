@@ -40,6 +40,7 @@ import {
   updateAppUserPermissions,
   updateAppUserRole,
   updateAppUserStatus,
+  deleteAppUser,
   updateUserProfile,
   userCanApproveEditMutations,
   userHasPermission,
@@ -1657,6 +1658,31 @@ export function registerHttpApi(app, db) {
           entityKind: 'user',
           entityId: id,
           note: `Status updated to ${stripped?.status}`,
+        });
+        return { ok: true };
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.delete('/api/users/:id', requirePermission('settings.view'), (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      return handlePatchWithEditApproval(res, db, req.user, body, 'user', id, (stripped) => {
+        const r = deleteAppUser(db, id, {
+          actorUserId: req.user.id,
+          confirmUsername: stripped?.confirmUsername,
+        });
+        if (!r.ok) return r;
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'user.delete',
+          entityKind: 'user',
+          entityId: id,
+          note: `Deleted user ${String(stripped?.confirmUsername || '').trim()}`,
         });
         return { ok: true };
       });

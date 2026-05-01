@@ -1286,3 +1286,51 @@ export function updateAppUserStatus(db, targetUserId, status, opts = {}) {
   }
   return { ok: true };
 }
+
+/**
+ * Permanently remove an app user (sessions first). Requires matching confirmUsername (login name).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} targetUserId
+ * @param {{ actorUserId?: string; confirmUsername?: string }} [opts]
+ */
+export function deleteAppUser(db, targetUserId, opts = {}) {
+  const tid = String(targetUserId || '').trim();
+  const actorUserId = String(opts.actorUserId || '').trim();
+  const confirmUsername = String(opts.confirmUsername || '').trim().toLowerCase();
+  if (!tid) return { ok: false, error: 'User id required.' };
+  if (actorUserId && tid === actorUserId) {
+    return { ok: false, error: 'You cannot delete your own account.' };
+  }
+  const row = db.prepare(`SELECT id, username, role_key, status FROM app_users WHERE id = ?`).get(tid);
+  if (!row) return { ok: false, error: 'User not found.' };
+  const un = String(row.username || '').trim().toLowerCase();
+  if (!confirmUsername || confirmUsername !== un) {
+    return {
+      ok: false,
+      error: 'Confirm by sending confirmUsername matching this user’s login name.',
+    };
+  }
+  const st = String(row.status || '').trim().toLowerCase();
+  if (PRIVILEGED_ROLE_KEYS.has(row.role_key) && st === 'active') {
+    if (countOtherPrivilegedActiveAdmins(db, tid) < 1) {
+      return { ok: false, error: 'Cannot delete the last active privileged administrator.' };
+    }
+  }
+  try {
+    db.transaction(() => {
+      db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(tid);
+      db.prepare(`DELETE FROM app_users WHERE id = ?`).run(tid);
+    })();
+  } catch (e) {
+    const msg = String(e?.message || e || '');
+    const isFk =
+      msg.includes('FOREIGN KEY') || msg.toLowerCase().includes('constraint') || msg.includes('SQLITE_CONSTRAINT');
+    return {
+      ok: false,
+      error: isFk
+        ? 'This user cannot be deleted while related records still reference them. Remove or reassign those links first, or suspend the account instead.'
+        : msg || 'Delete failed.',
+    };
+  }
+  return { ok: true };
+}

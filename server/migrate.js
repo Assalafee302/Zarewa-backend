@@ -1398,8 +1398,8 @@ function migrateQuotationLineCatalog2026(db) {
 
 /**
  * Aluminium / aluzinc coil colours (names + codes). Stone-coated profiles keep separate COL-ST-* rows from
- * migrateStoneCoatedAndPricingArch. NB = Nut Brown (not navy); TR = TC red code; NA green → Natural Green;
- * CBN yellow → Canary Yellow; extras: Wine Red, Vandal Grey (common variants beyond the core list).
+ * migrateStoneCoatedAndPricingArch. NB = Nut Brown (not navy); TR = TC red code; NA green → National Green;
+ * C blue → Cobalt Blue (CB); CBN yellow → Canary Yellow; extras: Wine Red, Vandal Grey (common variants beyond the core list).
  */
 function migrateCoilAluzincColours2026(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_colours'`).get()) return;
@@ -1423,8 +1423,8 @@ function migrateCoilAluzincColours2026(db) {
     ['COL-008', 'Pale Green', 'PG', 80],
     ['COL-007', 'Nut Brown', 'NB', 90],
     ['COL-011', 'Stucco', 'ST', 100],
-    ['COL-012', 'Natural Green', 'NG', 110],
-    ['COL-013', 'CP Blue', 'CB', 120],
+    ['COL-012', 'National Green', 'NG', 110],
+    ['COL-013', 'Cobalt Blue', 'CB', 120],
     ['COL-014', 'Canary Yellow', 'CY', 130],
     ['COL-015', 'Coloured', 'CL', 140],
     ['COL-005', 'Zinc Grey', 'ZG', 150],

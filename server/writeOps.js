@@ -1814,6 +1814,36 @@ function productExistsForBranch(db, productId, branchId) {
   );
 }
 
+/**
+ * Resolve product_id for opening-balance rows when omitted (Material column or default SKU).
+ * @param {import('better-sqlite3').Database} db
+ * @param {Record<string, unknown>} r
+ * @param {string} bid branch id
+ * @param {string} payloadDefault from POST body defaultProductId
+ */
+function resolveCoilImportProductId(db, r, bid, payloadDefault) {
+  let pid = String(r.productID ?? r.product_id ?? '').trim();
+  if (pid && productExistsForBranch(db, pid, bid)) return pid;
+  pid = String(payloadDefault || '').trim();
+  if (pid && productExistsForBranch(db, pid, bid)) return pid;
+  const mat = String(
+    r.materialTypeName ?? r.material_type_name ?? r.material_type ?? r.Material ?? r.material ?? ''
+  ).trim();
+  const low = mat.toLowerCase();
+  if (mat && /^COIL-/i.test(mat)) {
+    const u = mat.toUpperCase();
+    if (productExistsForBranch(db, u, bid)) return u;
+  }
+  if (/\baluzinc\b|\bppgi\b|\bgalvan/i.test(low) || (/\bzinc\b/.test(low) && /\bcoil\b/.test(low))) {
+    if (productExistsForBranch(db, 'PRD-102', bid)) return 'PRD-102';
+  }
+  if (/\balumin/i.test(low) || /\balu\b/i.test(low)) {
+    if (productExistsForBranch(db, 'COIL-ALU', bid)) return 'COIL-ALU';
+  }
+  if (productExistsForBranch(db, 'COIL-ALU', bid)) return 'COIL-ALU';
+  return '';
+}
+
 function reconcileCoilProductStockFromLots(db, productID, branchId) {
   const hasB = pragmaHasColumn(db, 'coil_lots', 'branch_id');
   const bid = String(branchId || '').trim();
@@ -1851,7 +1881,8 @@ function reconcileCoilProductStockFromLots(db, productID, branchId) {
 
 /**
  * Bulk upsert coil opening balances from spreadsheet-style rows (no purchase order, no GL).
- * Rows use camelCase or snake_case. Required: coilNo, productID, currentKg (on-hand kg).
+ * Rows use camelCase or snake_case. Required: coilNo, currentKg (on-hand kg). Product ID may be
+ * omitted when `defaultProductId` is set (e.g. COIL-ALU) or when Material type maps to a catalog SKU.
  */
 export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BRANCH_ID, actor = null) {
   const rowsIn = Array.isArray(payload?.rows) ? payload.rows : [];
@@ -1859,26 +1890,31 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
   const insertOnly = Boolean(payload?.insertOnly);
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   const hasCoilBranch = pragmaHasColumn(db, 'coil_lots', 'branch_id');
+  const payloadDefaultPid = String(payload?.defaultProductId ?? '').trim();
 
   const normalized = [];
   const rowErrors = [];
   for (let i = 0; i < rowsIn.length; i++) {
     const r = rowsIn[i];
-    const coilNo = String(r.coilNo ?? r.coil_no ?? '').trim();
-    const productID = String(r.productID ?? r.product_id ?? '').trim();
+    const coilNo = String(
+      r.coilNo ?? r.coil_no ?? r.coil_num ?? r.coil_number ?? r.coil_tag ?? r.tag ?? ''
+    ).trim();
+    const productID = resolveCoilImportProductId(db, r, bid, payloadDefaultPid);
     if (!coilNo) {
       rowErrors.push({ row: i + 1, error: 'Missing coil number.' });
       continue;
     }
     if (!productID) {
-      rowErrors.push({ row: i + 1, error: 'Missing product ID.' });
+      rowErrors.push({
+        row: i + 1,
+        error:
+          'Missing or unknown product for this branch — add a Product ID column, a Material type (e.g. Aluminium), or pass defaultProductId (e.g. COIL-ALU) in the import request.',
+      });
       continue;
     }
-    if (!productExistsForBranch(db, productID, bid)) {
-      rowErrors.push({ row: i + 1, error: `Unknown product for this branch: ${productID}` });
-      continue;
-    }
-    const currentKg = Number(r.currentKg ?? r.current_kg ?? r.qtyRemaining ?? r.qty_remaining);
+    const currentKg = Number(
+      r.currentKg ?? r.current_kg ?? r.kg ?? r.qty_kg ?? r.weight_kg ?? r.qtyRemaining ?? r.qty_remaining
+    );
     if (!Number.isFinite(currentKg) || currentKg < 0) {
       rowErrors.push({ row: i + 1, error: 'Current kg must be a non-negative number.' });
       continue;
@@ -1896,8 +1932,8 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
       rowErrors.push({ row: i + 1, error: 'Invalid weight kg.' });
       continue;
     }
-    const colour = String(r.colour ?? r.color ?? '').trim() || null;
-    const gaugeLabel = String(r.gaugeLabel ?? r.gauge_label ?? r.gauge ?? '').trim() || null;
+    const colour = String(r.colour ?? r.color ?? r.colour_code ?? r.color_code ?? '').trim() || null;
+    const gaugeLabel = String(r.gaugeLabel ?? r.gauge_label ?? r.gauge ?? r.gauge_mm ?? '').trim() || null;
     const location = String(r.location ?? '').trim() || null;
     const supplierName = String(r.supplierName ?? r.supplier_name ?? '').trim() || null;
     const supplierID = String(r.supplierID ?? r.supplier_id ?? '').trim() || null;
@@ -1906,7 +1942,8 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
       new Date().toISOString().slice(0, 10);
     const unitCostNgnPerKg = roundMoney(r.unitCostNgnPerKg ?? r.unit_cost_ngn_per_kg ?? 0);
     const landedCostNgn = roundMoney(r.landedCostNgn ?? r.landed_cost_ngn ?? 0);
-    const materialTypeName = String(r.materialTypeName ?? r.material_type_name ?? '').trim() || null;
+    const materialTypeName =
+      String(r.materialTypeName ?? r.material_type_name ?? r.material_type ?? r.material ?? '').trim() || null;
     const semRaw = r.supplierExpectedMeters ?? r.supplier_expected_meters;
     const supplierExpectedMeters =
       semRaw != null && semRaw !== '' && Number.isFinite(Number(semRaw)) ? Number(semRaw) : null;

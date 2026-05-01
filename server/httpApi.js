@@ -84,6 +84,7 @@ import {
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
   listPendingEditApprovals,
+  stripEditApprovalFromBody,
 } from './editApproval.js';
 import { hrTablesReady, upsertHrStaffProfile } from './hrOps.js';
 import {
@@ -1446,18 +1447,17 @@ export function registerHttpApi(app, db) {
   app.patch('/api/workspace/app-users/:userId/department', requirePermission('settings.view'), (req, res) => {
     try {
       const uid = req.params.userId;
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', uid, (stripped) => {
-        const r = patchAppUserWorkspaceDepartment(db, req.user, uid, stripped?.department);
-        if (!r.ok) return { ok: false, error: r.error };
-        appendAuditLog(db, {
-          actor: req.user,
-          action: 'user.workspace_department',
-          entityKind: 'user',
-          entityId: r.user.id,
-          note: String(r.user.department || ''),
-        });
-        return { ok: true, user: r.user };
+      const stripped = stripEditApprovalFromBody(req.body || {});
+      const r = patchAppUserWorkspaceDepartment(db, req.user, uid, stripped?.department);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'user.workspace_department',
+        entityKind: 'user',
+        entityId: r.user.id,
+        note: String(r.user.department || ''),
       });
+      return res.json({ ok: true, user: r.user });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update workspace department.' });
@@ -1467,27 +1467,28 @@ export function registerHttpApi(app, db) {
   app.patch('/api/workspace/app-users/:userId/workspace-branch', requirePermission('settings.view'), (req, res) => {
     try {
       const uid = req.params.userId;
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', uid, (stripped) => {
-        const branchId = String(stripped?.branchId ?? '').trim();
-        if (!branchId) return { ok: false, error: 'branchId is required.' };
-        if (!hrTablesReady(db)) {
-          return { ok: false, error: 'HR module not initialised — branch assignment is unavailable.' };
-        }
-        const u = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
-        if (!u) return { ok: false, error: 'User not found.' };
-        const br = db.prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`).get(branchId);
-        if (!br) return { ok: false, error: 'Invalid or inactive branch.' };
-        const up = upsertHrStaffProfile(db, req.user.id, { userId: uid, branchId });
-        if (!up.ok) return up;
-        appendAuditLog(db, {
-          actor: req.user,
-          action: 'user.workspace_branch',
-          entityKind: 'user',
-          entityId: uid,
-          note: branchId,
-        });
-        return { ok: true, branchId };
+      const stripped = stripEditApprovalFromBody(req.body || {});
+      const branchId = String(stripped?.branchId ?? '').trim();
+      if (!branchId) return res.status(400).json({ ok: false, error: 'branchId is required.' });
+      if (!hrTablesReady(db)) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'HR module not initialised — branch assignment is unavailable.' });
+      }
+      const u = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
+      if (!u) return res.status(400).json({ ok: false, error: 'User not found.' });
+      const br = db.prepare(`SELECT id FROM branches WHERE id = ? AND COALESCE(active, 1) = 1`).get(branchId);
+      if (!br) return res.status(400).json({ ok: false, error: 'Invalid or inactive branch.' });
+      const up = upsertHrStaffProfile(db, req.user.id, { userId: uid, branchId });
+      if (!up.ok) return res.status(400).json(up);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'user.workspace_branch',
+        entityKind: 'user',
+        entityId: uid,
+        note: branchId,
       });
+      return res.json({ ok: true, branchId });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update workspace branch.' });

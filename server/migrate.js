@@ -675,6 +675,7 @@ export function runMigrations(db) {
   migrateAccessoryOperations(db);
   migratePriceListAndPayrollMd(db);
   migrateProductionCompletionAdjustments(db);
+  migrateQuotationLineCatalog2026(db);
   migrateStoneCoatedAndPricingArch(db);
   migrateEnsureQuotationMaterialTypes(db);
   migrateProcurementOrderKind(db);
@@ -1307,6 +1308,93 @@ function migrateProcurementOrderKind(db) {
   }
 }
 
+/** Canonical quotation line catalog: products, accessories, services (Zarewa 2026 list). */
+function migrateQuotationLineCatalog2026(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) return;
+  const cols = new Set(db.prepare(`PRAGMA table_info(setup_quote_items)`).all().map((c) => c.name));
+  if (!cols.has('inventory_product_id')) {
+    db.exec(`ALTER TABLE setup_quote_items ADD COLUMN inventory_product_id TEXT`);
+  }
+
+  /** @type {[string, string, string, string, number, string | null][]} */
+  const rows = [
+    ['SQI-001', 'product', 'Roofing Sheet', 'm', 1, null],
+    ['SQI-002', 'product', 'Bargeboard', 'm', 2, null],
+    ['SQI-003', 'product', 'Top End', 'm', 3, null],
+    ['SQI-004', 'product', 'Gutter', 'm', 4, null],
+    ['SQI-021', 'product', 'Eaves angle', 'm', 5, null],
+    ['SQI-022', 'product', 'Wall Flashing', 'm', 6, null],
+    ['SQI-023', 'product', 'Ridge Cap', 'm', 7, null],
+    ['SQI-024', 'product', 'Capping', 'm', 8, null],
+    ['SQI-025', 'product', 'Bottom eaves', 'm', 9, null],
+    ['SQI-026', 'product', 'Fascia', 'm', 10, null],
+    ['SQI-027', 'product', 'Cladding', 'm', 11, null],
+    ['SQI-028', 'product', 'Flat sheet', 'm', 12, null],
+    ['SQI-029', 'product', 'Offcut', 'm', 13, null],
+    ['SQI-030', 'product', 'Wall eaves', 'm', 14, null],
+    ['SQI-031', 'product', 'Crimp', 'm', 15, null],
+    ['SQI-032', 'product', 'Coil', 'kg', 16, null],
+    ['SQI-005', 'accessory', 'Tapping Screw', 'pcs', 101, 'ACC-TAPPING-SCREW-PCS'],
+    ['SQI-006', 'accessory', 'Silicone tube', 'tube', 102, 'ACC-SILICON-TUBE'],
+    ['SQI-007', 'accessory', 'Rivet pins', 'pack', 103, 'ACC-RIVET-PACK'],
+    ['SQI-008', 'accessory', 'Flash band', 'roll', 104, 'ACC-FLASH-BAND-ROLL'],
+    ['SQI-012', 'accessory', 'Drive screw nail', 'pack', 105, 'ACC-DRIVE-SCREW-PACK'],
+    ['SQI-013', 'accessory', 'Copper nail', 'pack', 106, 'ACC-COPPER-NAIL-PACK'],
+    ['SQI-014', 'accessory', 'Concrete nail', 'pack', 107, 'ACC-CONCRETE-NAIL-PACK'],
+    ['SQI-015', 'accessory', 'Felt', 'roll', 108, 'ACC-FELT-ROLL'],
+    ['SQI-016', 'accessory', 'Hooks and bolts', 'pcs', 109, 'ACC-HOOKS-BOLT-PCS'],
+    ['SQI-017', 'accessory', 'Washer', 'pack', 110, 'ACC-WASHER-PACK'],
+    ['SQI-018', 'accessory', 'Repair Kit', 'kit', 111, 'ACC-REPAIR-KIT'],
+    ['SQI-019', 'accessory', 'Strapping nail', 'pack', 112, 'ACC-STRAPPING-NAIL-PACK'],
+    ['SQI-020', 'accessory', 'Spool', 'pack', 113, 'ACC-SPOOL-PACK'],
+    ['SQI-009', 'service', 'Commission', 'job', 201, null],
+    ['SQI-010', 'service', 'Transportation', 'job', 202, null],
+    ['SQI-011', 'service', 'Installation', 'job', 203, null],
+    ['SQI-033', 'service', 'Corrugation', 'job', 204, null],
+    ['SQI-034', 'service', 'Bending', 'job', 205, null],
+  ];
+
+  const exists = db.prepare(`SELECT 1 FROM setup_quote_items WHERE item_id = ?`);
+  const upd = db.prepare(
+    `UPDATE setup_quote_items SET item_type = ?, name = ?, unit = ?, sort_order = ?, inventory_product_id = ? WHERE item_id = ?`
+  );
+  const ins = db.prepare(
+    `INSERT INTO setup_quote_items (item_id, item_type, name, unit, default_unit_price_ngn, active, sort_order, inventory_product_id)
+     VALUES (?,?,?,?,0,1,?,?)`
+  );
+
+  db.transaction(() => {
+    for (const [itemId, itemType, name, unit, sortOrder, inv] of rows) {
+      const invVal = inv || null;
+      if (exists.get(itemId)) {
+        upd.run(itemType, name, unit, sortOrder, invVal, itemId);
+      } else {
+        ins.run(itemId, itemType, name, unit, sortOrder, invVal);
+      }
+    }
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_price_lists'`).get()) {
+      db.prepare(
+        `UPDATE setup_price_lists SET quote_item_id = 'SQI-011', item_name = 'Installation' WHERE quote_item_id = 'SQI-009' AND lower(trim(item_name)) = 'installation'`
+      ).run();
+      db.prepare(`UPDATE setup_price_lists SET item_name = 'Bargeboard' WHERE quote_item_id = 'SQI-002'`).run();
+    }
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
+      const pnm = db.prepare(`UPDATE products SET name = ? WHERE product_id = ?`);
+      pnm.run('Silicone (tube)', 'ACC-SILICON-TUBE');
+      pnm.run('Copper nail (pack)', 'ACC-COPPER-NAIL-PACK');
+      pnm.run('Spool (pack)', 'ACC-SPOOL-PACK');
+      pnm.run('Flash band (roll)', 'ACC-FLASH-BAND-ROLL');
+      pnm.run('Hooks and bolts (pcs)', 'ACC-HOOKS-BOLT-PCS');
+    }
+    db.prepare(
+      `UPDATE setup_quote_items SET inventory_product_id = 'ACC-COPPER-NAIL-PACK' WHERE item_id = 'SQI-013' AND inventory_product_id = 'ACC-CUPPA-NAIL-PACK'`
+    ).run();
+    db.prepare(
+      `UPDATE setup_quote_items SET inventory_product_id = 'ACC-SPOOL-PACK' WHERE item_id = 'SQI-020' AND inventory_product_id = 'ACC-SPOOK-PACK'`
+    ).run();
+  })();
+}
+
 /** Stone-coated routing, profile scoping, colours, accessory SKUs, extended price_list_items. */
 function migrateStoneCoatedAndPricingArch(db) {
   const tableCols = (name) => {
@@ -1396,12 +1484,18 @@ function migrateStoneCoatedAndPricingArch(db) {
 
   const accessoryProducts = [
     ['ACC-DRIVE-SCREW-PACK', 'Drive screw nail (pack)', 'pack'],
-    ['ACC-SILICON-TUBE', 'Silicon (tube)', 'tube'],
-    ['ACC-RIVET-PACK', 'Rivet pin (pack)', 'pack'],
+    ['ACC-SILICON-TUBE', 'Silicone (tube)', 'tube'],
+    ['ACC-RIVET-PACK', 'Rivet pins (pack)', 'pack'],
     ['ACC-CONCRETE-NAIL-PACK', 'Concrete nail (pack)', 'pack'],
     ['ACC-COPPER-NAIL-PACK', 'Copper nail (pack)', 'pack'],
     ['ACC-TAPPING-SCREW-PCS', 'Tapping screw nail (pcs)', 'pcs'],
-    ['ACC-HOOKS-PCS', 'Hooks (pcs)', 'pcs'],
+    ['ACC-FLASH-BAND-ROLL', 'Flash band (roll)', 'roll'],
+    ['ACC-FELT-ROLL', 'Felt (roll)', 'roll'],
+    ['ACC-HOOKS-BOLT-PCS', 'Hooks and bolts (pcs)', 'pcs'],
+    ['ACC-WASHER-PACK', 'Washer (pack)', 'pack'],
+    ['ACC-REPAIR-KIT', 'Repair Kit', 'kit'],
+    ['ACC-STRAPPING-NAIL-PACK', 'Strapping nail (pack)', 'pack'],
+    ['ACC-SPOOL-PACK', 'Spool (pack)', 'pack'],
   ];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
     for (const [pid, pname, unit] of accessoryProducts) {
@@ -1417,13 +1511,18 @@ function migrateStoneCoatedAndPricingArch(db) {
 
   const accessoryQuoteLinks = [
     ['SQI-005', 'Tapping Screw', 'ACC-TAPPING-SCREW-PCS', 'pcs'],
-    ['SQI-006', 'Silicon Tube', 'ACC-SILICON-TUBE', 'tube'],
-    ['SQI-007', 'Rivets', 'ACC-RIVET-PACK', 'pack'],
+    ['SQI-006', 'Silicone tube', 'ACC-SILICON-TUBE', 'tube'],
+    ['SQI-007', 'Rivet pins', 'ACC-RIVET-PACK', 'pack'],
+    ['SQI-008', 'Flash band', 'ACC-FLASH-BAND-ROLL', 'roll'],
     ['SQI-012', 'Drive screw nail', 'ACC-DRIVE-SCREW-PACK', 'pack'],
-    ['SQI-013', 'Rivet pin', 'ACC-RIVET-PACK', 'pack'],
+    ['SQI-013', 'Copper nail', 'ACC-COPPER-NAIL-PACK', 'pack'],
     ['SQI-014', 'Concrete nail', 'ACC-CONCRETE-NAIL-PACK', 'pack'],
-    ['SQI-015', 'Copper nail', 'ACC-COPPER-NAIL-PACK', 'pack'],
-    ['SQI-016', 'Hooks', 'ACC-HOOKS-PCS', 'pcs'],
+    ['SQI-015', 'Felt', 'ACC-FELT-ROLL', 'roll'],
+    ['SQI-016', 'Hooks and bolts', 'ACC-HOOKS-BOLT-PCS', 'pcs'],
+    ['SQI-017', 'Washer', 'ACC-WASHER-PACK', 'pack'],
+    ['SQI-018', 'Repair Kit', 'ACC-REPAIR-KIT', 'kit'],
+    ['SQI-019', 'Strapping nail', 'ACC-STRAPPING-NAIL-PACK', 'pack'],
+    ['SQI-020', 'Spool', 'ACC-SPOOL-PACK', 'pack'],
   ];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) {
     for (const [itemId, , invPid, unit] of accessoryQuoteLinks) {

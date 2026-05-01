@@ -40,12 +40,12 @@ export const LAGACY_LINES_JSON = {
   materialColor: 'P RED',
   materialDesign: 'Longspan (Indus6)',
   products: [
-    { id: 'lag-p1', name: 'Roofing sheet', qty: '1888.85', unitPrice: '12000' },
+    { id: 'lag-p1', name: 'Roofing Sheet', qty: '1888.85', unitPrice: '12000' },
     { id: 'lag-p2', name: 'Flat sheet', qty: '132.5', unitPrice: '12000' },
     { id: 'lag-p3', name: 'Bending', qty: '1', unitPrice: '7500' },
   ],
   accessories: [
-    { id: 'lag-a1', name: 'Silicon tube', qty: '4', unitPrice: '3500' },
+    { id: 'lag-a1', name: 'Silicone tube', qty: '4', unitPrice: '3500' },
     { id: 'lag-a2', name: 'Rivet pins', qty: '4', unitPrice: '6500' },
     { id: 'lag-a3', name: 'Tapping screw', qty: '12000', unitPrice: '120' },
   ],

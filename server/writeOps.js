@@ -5454,6 +5454,127 @@ export function patchSalesReceiptBankConfirmation(db, receiptId, confirmed, acto
 }
 
 /**
+ * Finance: correct a single LEDGER_RECEIPT treasury split (per payment line; updates cash/bank books).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ amountNgn?: number, treasuryAccountId?: number, postedAtISO?: string, note?: string }} payload
+ * @param {object | null} actor
+ */
+export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, actor = null) {
+  const mid = String(movementId || '').trim();
+  if (!mid) return { ok: false, error: 'Movement id required.' };
+
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  if (row.reverses_movement_id) {
+    return { ok: false, error: 'Cannot correct a reversal or adjustment line.' };
+  }
+  if (String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
+    return { ok: false, error: 'Only customer receipt inflow lines (ledger payment splits) can be corrected here.' };
+  }
+
+  const oldAmt = roundMoney(row.amount_ngn);
+  if (oldAmt <= 0) return { ok: false, error: 'Expected a positive inflow amount.' };
+
+  const hasAmount = payload?.amountNgn !== undefined && payload?.amountNgn !== null;
+  const hasAccount = payload?.treasuryAccountId !== undefined && payload?.treasuryAccountId !== null;
+  const hasPosted = payload?.postedAtISO !== undefined && String(payload?.postedAtISO || '').trim() !== '';
+
+  const nextAmt = hasAmount ? roundMoney(payload.amountNgn) : oldAmt;
+  const nextAcc = hasAccount ? Number(payload.treasuryAccountId) : Number(row.treasury_account_id);
+  const nextPostedRaw = hasPosted ? String(payload.postedAtISO).trim() : String(row.posted_at_iso || '');
+  const nextPosted = normalizeIsoTimestamp(nextPostedRaw);
+
+  if (!nextAcc || Number.isNaN(nextAcc)) {
+    return { ok: false, error: 'Treasury account is required.' };
+  }
+  if (nextAmt <= 0) {
+    return { ok: false, error: 'Amount must be positive. To remove a split, use the proper reversal flow or contact support.' };
+  }
+
+  const accRow = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(nextAcc);
+  if (!accRow) return { ok: false, error: 'Treasury account not found.' };
+
+  const oldAcc = Number(row.treasury_account_id);
+  const dateForLock = String(nextPosted || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, dateForLock, 'Receipt payment correction date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const noteExtra = payload?.note != null ? String(payload.note).trim() : '';
+  const baseNote = row.note != null ? String(row.note) : '';
+  const mergedNote = (() => {
+    if (noteExtra) {
+      if (baseNote && baseNote.includes(noteExtra)) return baseNote;
+      if (baseNote) return `${baseNote} — Finance correction: ${noteExtra}`;
+      return `Finance correction: ${noteExtra}`;
+    }
+    return baseNote || null;
+  })();
+
+  const sameNumbers =
+    nextAcc === oldAcc && nextAmt === oldAmt && nextPosted === String(row.posted_at_iso || '');
+  if (sameNumbers && !noteExtra) {
+    return { ok: true, noOp: true };
+  }
+  if (sameNumbers && noteExtra) {
+    db.prepare(`UPDATE treasury_movements SET note = ? WHERE id = ?`).run(mergedNote, mid);
+    appendAuditLog(db, {
+      actor,
+      action: 'treasury.ledger_receipt_correct',
+      entityKind: 'treasury_movement',
+      entityId: mid,
+      note: `Receipt split note updated · source ${String(row.source_id || '')}`,
+      details: { movementId: mid, sourceId: row.source_id, noteOnly: true },
+    });
+    return { ok: true };
+  }
+
+  db.transaction(() => {
+    if (oldAcc === nextAcc) {
+      const delta = nextAmt - oldAmt;
+      if (delta !== 0) {
+        adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
+      }
+    } else {
+      adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
+      adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
+    }
+
+    db.prepare(
+      `UPDATE treasury_movements SET
+        treasury_account_id = ?,
+        amount_ngn = ?,
+        posted_at_iso = ?,
+        note = ?
+       WHERE id = ?`
+    ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
+  })();
+
+  appendAuditLog(db, {
+    actor,
+    action: 'treasury.ledger_receipt_correct',
+    entityKind: 'treasury_movement',
+    entityId: mid,
+    note: `Receipt split corrected · receipt source ${String(row.source_id || '')}`,
+    details: {
+      movementId: mid,
+      sourceId: row.source_id,
+      oldAmountNgn: oldAmt,
+      newAmountNgn: nextAmt,
+      oldTreasuryAccountId: oldAcc,
+      newTreasuryAccountId: nextAcc,
+      oldPostedAtISO: row.posted_at_iso,
+      newPostedAtISO: nextPosted,
+    },
+  });
+
+  return { ok: true };
+}
+
+/**
  * Finance: record amount actually received in bank and optionally clear receipt for delivery.
  * @param {import('better-sqlite3').Database} db
  * @param {string} receiptId

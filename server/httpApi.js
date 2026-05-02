@@ -1924,6 +1924,31 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.patch(
+    '/api/treasury/movements/:movementId/ledger-receipt-correction',
+    requirePermission(['finance.pay', 'finance.post']),
+    (req, res) => {
+      try {
+        const movementId = String(req.params.movementId || '').trim();
+        if (!movementId) {
+          return res.status(400).json({ ok: false, error: 'movementId is required.' });
+        }
+        return handlePatchWithEditApproval(
+          res,
+          db,
+          req.user,
+          req.body || {},
+          'treasury_movement',
+          movementId,
+          (stripped) => write.patchLedgerReceiptTreasuryMovement(db, movementId, stripped || {}, req.user)
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   /**
    * Permission-aware quick search (SQL LIMIT per category): CRM, sales docs, procurement, ops,
    * refunds, product SKUs.

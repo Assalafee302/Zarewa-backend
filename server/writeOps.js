@@ -5453,14 +5453,59 @@ export function patchSalesReceiptBankConfirmation(db, receiptId, confirmed, acto
   return { ok: true };
 }
 
+function userMayReviseFinalizedReceiptSettlement(actor) {
+  return (
+    actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.approve'))
+  );
+}
+
 /**
- * Finance: correct a single LEDGER_RECEIPT treasury split (per payment line; updates cash/bank books).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementSourceId
+ */
+function findSalesReceiptLockRowByMovementSource(db, movementSourceId) {
+  const s = String(movementSourceId || '').trim();
+  if (!s) return null;
+  return db
+    .prepare(
+      `SELECT id, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
+    )
+    .get(s, s);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} movementRow treasury_movements row
+ * @param {string} receiptCanonicalId sales_receipts.id from the settlement PATCH
+ */
+function assertLedgerReceiptMovementBelongsToReceipt(db, movementRow, receiptCanonicalId) {
+  const rid = String(receiptCanonicalId || '').trim();
+  const sid = String(movementRow.source_id || '').trim();
+  if (!rid || !sid) return { ok: false, error: 'Invalid receipt or movement link.' };
+  const rec = db.prepare(`SELECT id, ledger_entry_id FROM sales_receipts WHERE id = ?`).get(rid);
+  if (!rec) return { ok: false, error: 'Receipt not found.' };
+  if (sid === String(rec.id)) return { ok: true };
+  if (rec.ledger_entry_id != null && sid === String(rec.ledger_entry_id)) return { ok: true };
+  return { ok: false, error: 'Payment line does not belong to this receipt.' };
+}
+
+/**
+ * Apply LEDGER_RECEIPT treasury correction (balances + row). Caller supplies transaction boundary.
  * @param {import('better-sqlite3').Database} db
  * @param {string} movementId
  * @param {{ amountNgn?: number, treasuryAccountId?: number, postedAtISO?: string, note?: string }} payload
  * @param {object | null} actor
+ * @param {{ bypassReceiptLock?: boolean, receiptId?: string }} [options] receiptId required when bypassReceiptLock is true (validates movement belongs to receipt)
+ * @returns {{ ok: boolean, error?: string, noOp?: boolean }}
  */
-export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, actor = null) {
+export function ledgerReceiptTreasuryMovementCorrectTx(
+  db,
+  movementId,
+  payload,
+  actor = null,
+  options = {}
+) {
+  const { bypassReceiptLock = false, receiptId = '' } = options;
   const mid = String(movementId || '').trim();
   if (!mid) return { ok: false, error: 'Movement id required.' };
 
@@ -5471,6 +5516,23 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
   }
   if (String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
     return { ok: false, error: 'Only customer receipt inflow lines (ledger payment splits) can be corrected here.' };
+  }
+
+  if (bypassReceiptLock) {
+    const bel = assertLedgerReceiptMovementBelongsToReceipt(db, row, receiptId);
+    if (!bel.ok) return bel;
+  } else {
+    const lockRow = findSalesReceiptLockRowByMovementSource(db, row.source_id);
+    if (
+      lockRow?.finance_reconciliation_saved_at_iso &&
+      !userMayReviseFinalizedReceiptSettlement(actor)
+    ) {
+      return {
+        ok: false,
+        error:
+          'This receipt reconciliation was finalized. Only a user with finance approval access can revise payment lines.',
+      };
+    }
   }
 
   const oldAmt = roundMoney(row.amount_ngn);
@@ -5489,7 +5551,10 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
     return { ok: false, error: 'Treasury account is required.' };
   }
   if (nextAmt <= 0) {
-    return { ok: false, error: 'Amount must be positive. To remove a split, use the proper reversal flow or contact support.' };
+    return {
+      ok: false,
+      error: 'Amount must be positive. To remove a split, use the proper reversal flow or contact support.',
+    };
   }
 
   const accRow = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(nextAcc);
@@ -5532,26 +5597,24 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
     return { ok: true };
   }
 
-  db.transaction(() => {
-    if (oldAcc === nextAcc) {
-      const delta = nextAmt - oldAmt;
-      if (delta !== 0) {
-        adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
-      }
-    } else {
-      adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
-      adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
+  if (oldAcc === nextAcc) {
+    const delta = nextAmt - oldAmt;
+    if (delta !== 0) {
+      adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
     }
+  } else {
+    adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
+    adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
+  }
 
-    db.prepare(
-      `UPDATE treasury_movements SET
-        treasury_account_id = ?,
-        amount_ngn = ?,
-        posted_at_iso = ?,
-        note = ?
-       WHERE id = ?`
-    ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
-  })();
+  db.prepare(
+    `UPDATE treasury_movements SET
+      treasury_account_id = ?,
+      amount_ngn = ?,
+      posted_at_iso = ?,
+      note = ?
+     WHERE id = ?`
+  ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
 
   appendAuditLog(db, {
     actor,
@@ -5575,17 +5638,62 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
 }
 
 /**
- * Finance: record amount actually received in bank and optionally clear receipt for delivery.
+ * Finance: correct a single LEDGER_RECEIPT treasury split (per payment line; updates cash/bank books).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ amountNgn?: number, treasuryAccountId?: number, postedAtISO?: string, note?: string }} payload
+ * @param {object | null} actor
+ */
+export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, actor = null) {
+  let result = { ok: false };
+  try {
+    db.transaction(() => {
+      const r = ledgerReceiptTreasuryMovementCorrectTx(db, movementId, payload, actor, {});
+      result = r;
+      if (!r.ok) {
+        throw new Error(r.error || 'Correction failed.');
+      }
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return result;
+}
+
+/**
+ * Finance: record amount actually received in bank, optional delivery clearance, optional batched
+ * payment-line corrections, and mark reconciliation finalized (MD may revise later).
  * @param {import('better-sqlite3').Database} db
  * @param {string} receiptId
- * @param {{ bankReceivedAmountNgn?: number | string | null, clearForDelivery?: boolean }} payload
+ * @param {{
+ *   bankReceivedAmountNgn?: number | string | null,
+ *   clearForDelivery?: boolean,
+ *   paymentLineCorrections?: Array<{
+ *     movementId: string,
+ *     amountNgn: number,
+ *     treasuryAccountId: number,
+ *     postedAtISO?: string,
+ *     note?: string,
+ *   }>,
+ * }} payload
  * @param {object | null} actor
  */
 export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor = null) {
   const id = String(receiptId || '').trim();
   if (!id) return { ok: false, error: 'Receipt id required.' };
+
   const row = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Receipt not found.' };
+
+  const finalized =
+    row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
+  if (finalized && !userMayReviseFinalizedReceiptSettlement(actor)) {
+    return {
+      ok: false,
+      error:
+        'This receipt reconciliation was finalized. Only a user with finance approval access can change settlement.',
+    };
+  }
 
   const clearForDelivery = Boolean(payload?.clearForDelivery);
   const rawAmt = payload?.bankReceivedAmountNgn;
@@ -5599,25 +5707,60 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     nextBankReceived = n;
   }
 
+  const corrections = Array.isArray(payload?.paymentLineCorrections) ? payload.paymentLineCorrections : [];
+
   const now = new Date().toISOString();
   const uid = actor?.id ?? null;
 
-  db.prepare(
-    `UPDATE sales_receipts SET
-      bank_received_amount_ngn = ?,
-      finance_delivery_cleared_at_iso = ?,
-      finance_delivery_cleared_by_user_id = ?,
-      bank_confirmed_at_iso = ?,
-      bank_confirmed_by_user_id = ?
-     WHERE id = ?`
-  ).run(
-    nextBankReceived,
-    clearForDelivery ? now : null,
-    clearForDelivery ? uid : null,
-    clearForDelivery ? now : null,
-    clearForDelivery ? uid : null,
-    id
-  );
+  try {
+    db.transaction(() => {
+      for (const c of corrections) {
+        const mid = String(c?.movementId || '').trim();
+        if (!mid) continue;
+        const postedAtISO =
+          c?.postedAtISO != null && String(c.postedAtISO).trim() !== ''
+            ? String(c.postedAtISO).trim()
+            : undefined;
+        const noteTrim = c?.note != null ? String(c.note).trim() : '';
+        const pl = {
+          amountNgn: roundMoney(c?.amountNgn),
+          treasuryAccountId: Number(c?.treasuryAccountId),
+          ...(postedAtISO ? { postedAtISO } : {}),
+          ...(noteTrim ? { note: noteTrim } : {}),
+        };
+        const r = ledgerReceiptTreasuryMovementCorrectTx(db, mid, pl, actor, {
+          bypassReceiptLock: true,
+          receiptId: id,
+        });
+        if (!r.ok) {
+          throw new Error(r.error || 'Payment line correction failed.');
+        }
+      }
+
+      db.prepare(
+        `UPDATE sales_receipts SET
+          bank_received_amount_ngn = ?,
+          finance_delivery_cleared_at_iso = ?,
+          finance_delivery_cleared_by_user_id = ?,
+          bank_confirmed_at_iso = ?,
+          bank_confirmed_by_user_id = ?,
+          finance_reconciliation_saved_at_iso = ?,
+          finance_reconciliation_saved_by_user_id = ?
+         WHERE id = ?`
+      ).run(
+        nextBankReceived,
+        clearForDelivery ? now : null,
+        clearForDelivery ? uid : null,
+        clearForDelivery ? now : null,
+        clearForDelivery ? uid : null,
+        now,
+        uid,
+        id
+      );
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 
   appendAuditLog(db, {
     actor,
@@ -5625,12 +5768,13 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     entityKind: 'sales_receipt',
     entityId: id,
     note: clearForDelivery
-      ? `Cleared for delivery; bank received ₦${nextBankReceived ?? row.amount_ngn}`
-      : `Bank received amount updated`,
+      ? `Reconciliation finalized; cleared for delivery; bank received ₦${nextBankReceived ?? row.amount_ngn}`
+      : `Reconciliation finalized; bank received ₦${nextBankReceived ?? row.amount_ngn}`,
     details: {
       bankReceivedAmountNgn: nextBankReceived,
       bookAmountNgn: row.amount_ngn,
       clearForDelivery,
+      paymentLineCorrectionCount: corrections.length,
     },
   });
   return { ok: true };

@@ -85,6 +85,12 @@ export function runMigrations(db) {
   if (r.size && !r.has('finance_delivery_cleared_by_user_id')) {
     db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_delivery_cleared_by_user_id TEXT`);
   }
+  if (r.size && !r.has('finance_reconciliation_saved_at_iso')) {
+    db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_reconciliation_saved_at_iso TEXT`);
+  }
+  if (r.size && !r.has('finance_reconciliation_saved_by_user_id')) {
+    db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_reconciliation_saved_by_user_id TEXT`);
+  }
 
   const ledger = tableCols('ledger_entries');
   if (!ledger.has('created_by_user_id')) {

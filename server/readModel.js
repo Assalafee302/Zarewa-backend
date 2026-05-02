@@ -876,6 +876,8 @@ export function listSalesReceipts(db, branchScope = 'ALL') {
         row.bank_received_amount_ngn != null ? Number(row.bank_received_amount_ngn) : null,
       financeDeliveryClearedAtISO: row.finance_delivery_cleared_at_iso ?? null,
       financeDeliveryClearedByUserId: row.finance_delivery_cleared_by_user_id ?? null,
+      financeReconciliationSavedAtISO: row.finance_reconciliation_saved_at_iso ?? null,
+      financeReconciliationSavedByUserId: row.finance_reconciliation_saved_by_user_id ?? null,
     }));
 }
 

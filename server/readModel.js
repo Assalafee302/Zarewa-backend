@@ -1072,7 +1072,15 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     return {
       receipts: [],
       cuttingLists: [],
-      summary: { producedMeters: 0, accessoriesSummary: { lines: [] } },
+      summary: {
+        producedMeters: 0,
+        accessoriesSummary: { lines: [] },
+        overpayAdvanceNgn: 0,
+        bookedOnQuotationNgn: 0,
+        quotationCashInNgn: 0,
+        receiptAllocatedSumNgn: 0,
+        advanceAppliedNgn: 0,
+      },
     };
   }
   const ledgerRows = listLedgerEntries(db, branchScope);
@@ -1083,14 +1091,28 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     )
     .get(ref, ...lb.args);
   const overpayAdvanceNgn = Math.round(Number(overpayRow?.s) || 0);
+  const advAppliedRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'ADVANCE_APPLIED' AND quotation_ref = ?${lb.sql}`
+    )
+    .get(ref, ...lb.args);
+  const advanceAppliedNgn = Math.round(Number(advAppliedRow?.s) || 0);
   const qb = branchWhere(db, 'quotations', branchScope);
   const qPaidRow = db
     .prepare(`SELECT paid_ngn FROM quotations WHERE id = ?${qb.sql}`)
     .get(ref, ...qb.args);
   const bookedOnQuotationNgn = Math.round(Number(qPaidRow?.paid_ngn) || 0);
 
+  const rawReceiptRowsForQuote = listSalesReceipts(db, branchScope).filter(
+    (r) => String(r.quotationRef || '').trim() === ref
+  );
+  const receiptAllocatedSumNgn = rawReceiptRowsForQuote.reduce(
+    (s, r) => s + Math.round(Number(r.amountNgn) || 0),
+    0
+  );
+
   const receipts = enrichSalesReceiptRowsWithCashFromLedger(
-    listSalesReceipts(db, branchScope).filter((r) => String(r.quotationRef || '').trim() === ref),
+    rawReceiptRowsForQuote,
     ledgerRows
   ).map((r) => ({
     id: r.id,
@@ -1116,6 +1138,10 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
       overpayAdvanceNgn,
       bookedOnQuotationNgn,
       quotationCashInNgn: bookedOnQuotationNgn + overpayAdvanceNgn,
+      /** Sum of `sales_receipts.amount_ngn` toward this quote (what each receipt line shows). */
+      receiptAllocatedSumNgn,
+      /** Deposit / advance moved onto this quote (`ADVANCE_APPLIED`); included in `bookedOnQuotationNgn` with receipts. */
+      advanceAppliedNgn,
     },
   };
 }

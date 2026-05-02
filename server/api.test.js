@@ -2241,6 +2241,8 @@ describe.sequential('Zarewa API', () => {
     expect(typeof intel.body.summary.overpayAdvanceNgn).toBe('number');
     expect(typeof intel.body.summary.bookedOnQuotationNgn).toBe('number');
     expect(typeof intel.body.summary.quotationCashInNgn).toBe('number');
+    expect(typeof intel.body.summary.receiptAllocatedSumNgn).toBe('number');
+    expect(typeof intel.body.summary.advanceAppliedNgn).toBe('number');
 
     const staff = request.agent(app);
     await loginAs(staff, 'sales.staff', 'Sales@123');

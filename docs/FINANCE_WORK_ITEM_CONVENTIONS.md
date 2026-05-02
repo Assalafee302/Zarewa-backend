@@ -8,6 +8,11 @@ Use these values when registering finance exceptions in the **workspace registry
 |----------|---------------|-------------|-----------------|----------------|
 | Bank lines in **Review** or **PendingManager** for a branch | `finance_bank_recon` | Branch id string (same as `branch_id`) | `bank_recon_exceptions` | `finance` |
 
+## Payment requests
+
+- **Approval** happens in **Management** or the workspace **Needs action** inbox (unified work items), not on Finance → Expenses & requests.
+- After approval, **treasury payout** is posted from Finance & accounts → **Treasury** (same idea as refunds awaiting payout).
+
 ## Rules
 
 - **One upsert per branch** for bank recon exceptions: `source_id` must equal the branch id so `upsertWorkItemBySource` merges updates.

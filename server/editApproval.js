@@ -26,7 +26,18 @@ export function ensureEditApprovalTable(db) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_edit_approval_status ON edit_approval_tokens (status, requested_at_iso)`);
 }
 
-function newApprovalId() {
+/**
+ * Human-friendly single-use token (6 digits). Retries on collision; falls back to legacy EA-… if needed.
+ * @param {import('better-sqlite3').Database} db
+ */
+function newApprovalId(db) {
+  ensureEditApprovalTable(db);
+  const taken = db.prepare('SELECT 1 AS x FROM edit_approval_tokens WHERE id = ?');
+  for (let i = 0; i < 80; i++) {
+    const n = Math.floor(100000 + Math.random() * 900000);
+    const id = String(n);
+    if (!taken.get(id)) return id;
+  }
   return `EA-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -57,7 +68,7 @@ export function createEditApprovalRequest(db, { entityKind, entityId, branchId =
   const ek = String(entityKind || '').trim();
   const eid = String(entityId || '').trim();
   if (!ek || !eid) return { ok: false, error: 'entityKind and entityId are required.' };
-  const id = newApprovalId();
+  const id = newApprovalId(db);
   const now = new Date().toISOString();
   const uid = String(actor?.id ?? '').trim();
   const disp = String(actor?.displayName ?? actor?.username ?? '').trim();
@@ -193,7 +204,7 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
       ok: false,
       code: 'EDIT_APPROVAL_REQUIRED',
       error:
-        'A manager or administrator must approve this change first. Request an approval (Procurement / quotation save panel, or POST /api/edit-approvals/request), have them approve it on the Manager dashboard, then paste the approval ID and retry.',
+        'A manager or administrator must approve this change first. Request an approval (Procurement / quotation save panel, or POST /api/edit-approvals/request), have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
     });
   }
   try {
@@ -229,7 +240,7 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
       ok: false,
       code: 'EDIT_APPROVAL_REQUIRED',
       error:
-        'A manager or administrator must approve this change first. Request an approval, then retry with the approval ID.',
+        'A manager or administrator must approve this change first. Request an approval, then retry with the 6-digit approval code.',
     });
   }
   try {

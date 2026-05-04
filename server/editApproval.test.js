@@ -62,6 +62,7 @@ describe('Edit approval (second-party token)', () => {
     expect(reqApproval.body.ok).toBe(true);
     const aid = reqApproval.body.approvalId;
     expect(aid).toBeTruthy();
+    expect(aid).toMatch(/^\d{6}$/);
 
     const approve = await admin.post(`/api/edit-approvals/${encodeURIComponent(aid)}/approve`).send({});
     expect(approve.status).toBe(200);

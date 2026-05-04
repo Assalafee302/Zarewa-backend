@@ -2139,7 +2139,9 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO)
   const delta = type === 'Increase' ? q : -q;
   const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
   if (!p) return { ok: false, error: 'Product not found.' };
-  const next = Math.max(0, p.stock_level + delta);
+  const raw = Number(p.stock_level) + delta;
+  const accessorySku = /^ACC-/i.test(String(productID || '').trim());
+  const next = accessorySku ? raw : Math.max(0, raw);
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, productID);
   appendMovementTx(db, {
     type: 'ADJUSTMENT',

@@ -96,12 +96,12 @@ export function resolveAccessoryInventoryProductId(db, quoteLineId, lineName) {
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} jobRow production_jobs row
  * @param {{ accessoriesSupplied?: unknown[] }} payload
- * @returns {{ ok: true, plannedLines: object[] } | { ok: false, error: string }}
+ * @returns {{ ok: true, plannedLines: object[], accessoryStockWarnings: string[] } | { ok: false, error: string }}
  */
 export function planAccessoryCompletion(db, jobRow, payload = {}) {
   const quotationRef = String(jobRow?.quotation_ref ?? '').trim();
   if (!quotationRef) {
-    return { ok: true, plannedLines: [] };
+    return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
   }
   const quote = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
   if (!quote) {
@@ -109,7 +109,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
   }
   const accessoryLines = parseQuotationAccessoryLines(quote.lines_json);
   if (!accessoryLines.length) {
-    return { ok: true, plannedLines: [] };
+    return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
   }
 
   const accessoriesSupplied = Array.isArray(payload.accessoriesSupplied) ? payload.accessoriesSupplied : [];
@@ -124,6 +124,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
   }
 
   const plannedLines = [];
+  const accessoryStockWarnings = [];
   const EPS = 1e-6;
 
   for (const line of accessoryLines) {
@@ -161,10 +162,9 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
       }
       const stock = Number(p.stock_level) || 0;
       if (stock + EPS < supplied) {
-        return {
-          ok: false,
-          error: `Insufficient stock for "${line.name}" (${p.name || inventoryProductId}): need ${supplied}, have ${stock}.`,
-        };
+        accessoryStockWarnings.push(
+          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} on hand — accessory balance will go negative.`
+        );
       }
     }
     plannedLines.push({
@@ -177,7 +177,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
     });
   }
 
-  return { ok: true, plannedLines };
+  return { ok: true, plannedLines, accessoryStockWarnings };
 }
 
 /**

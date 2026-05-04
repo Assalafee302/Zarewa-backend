@@ -44,7 +44,11 @@ function clampNonNegative(value) {
   return Math.max(0, Number(value) || 0);
 }
 
-/** Closing weight below this (kg) may be paired with `finishCoil` to zero the roll off stock on completion. */
+function isAccessoryInventoryProductId(productID) {
+  return /^ACC-/i.test(String(productID || '').trim());
+}
+
+/** Threshold (kg): UI shows “Roll finished” when closing is below this; checking it clears residual tail from coil stock on complete. Not required to complete if steel remains on the roll. */
 const COIL_TAIL_FINISH_MAX_KG = 85;
 
 function parseGaugeMm(value) {
@@ -88,7 +92,8 @@ function adjustProductStockTx(db, productID, delta) {
   if (!productID) return;
   const row = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
   if (!row) return;
-  const next = clampNonNegative(Number(row.stock_level) + Number(delta || 0));
+  const raw = Number(row.stock_level) + Number(delta || 0);
+  const next = isAccessoryInventoryProductId(productID) ? raw : clampNonNegative(raw);
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, productID);
 }
 
@@ -809,7 +814,8 @@ function buildVarianceSummaryPayload(row) {
  * @param {{ allocations?: unknown[], completedAtISO?: string }} payload
  */
 export function computeCompletionConversionRows(db, jobID, payload = {}, opts = {}) {
-  const requireFinishRollWhenTail = opts.requireFinishRollWhenTail !== false;
+  /** When true, block completion if closing &lt; tail threshold without “finish roll”. Default off — remainder may stay on the coil. */
+  const requireFinishRollWhenTail = opts.requireFinishRollWhenTail === true;
   const partialPreview = Boolean(opts.partialPreview);
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
@@ -945,6 +951,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       totalMeters: 0,
       totalWeightKg: 0,
       accessoryPlan: acc.plannedLines,
+      accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
     };
   }
   const r = computeCompletionConversionRows(db, jobID, payload, {
@@ -959,6 +966,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     previewPartial: Boolean(r.previewPartial),
     previewCoilCount: r.previewCoilCount,
     previewCoilsTotal: r.previewCoilsTotal,
+    accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
     rows: r.conversionRows.map((row) => ({
       allocationId: row.allocationId,
       coilNo: row.coilNo,
@@ -1065,11 +1073,13 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
     return { ok: false, error: `Insufficient stone-coated metres in stock (have ${stock.toFixed(2)} m).` };
   }
   let totalCogsForGl = 0;
+  let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
     db.transaction(() => {
       const accPlan = planAccessoryCompletion(db, job, payload);
       if (!accPlan.ok) throw new Error(accPlan.error);
+      accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
       adjustProductStockTx(db, stonePid, -metres);
       appendStockMovementTx(db, {
         atISO: completedAtISO,
@@ -1133,6 +1143,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       actualWeightKg: 0,
       alertState: 'OK',
       managerReviewRequired: false,
+      accessoryStockWarnings,
     };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
@@ -1155,9 +1166,11 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     if (!computed.ok) return computed;
     const { conversionRows, totalMeters, totalWeightKg, aggregatedAlertState, managerReviewRequired } = computed;
     let totalCogsForGl = 0;
+    let accessoryStockWarnings = [];
     db.transaction(() => {
       const accPlan = planAccessoryCompletion(db, job, payload);
       if (!accPlan.ok) throw new Error(accPlan.error);
+      accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
       const updateAllocation = db.prepare(
         `UPDATE production_job_coils
          SET closing_weight_kg = ?, consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?,
@@ -1330,6 +1343,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       actualWeightKg: totalWeightKg,
       alertState: aggregatedAlertState,
       managerReviewRequired,
+      accessoryStockWarnings,
     };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };

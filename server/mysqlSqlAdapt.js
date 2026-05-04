@@ -9,6 +9,11 @@ import { mysqlTypeForSqliteTextColumnName } from './schemaMysqlTransform.js';
  */
 export function adaptExecSqlForMysql(sql) {
   let s = String(sql || '');
+  /* Migrations use db.exec(); they skip sqliteDdlToMysql — SQLite AUTOINCREMENT is invalid on MariaDB. */
+  s = s.replace(
+    /\b(\w+)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi,
+    '$1 INT NOT NULL AUTO_INCREMENT PRIMARY KEY'
+  );
   s = s.replace(/\bCREATE UNIQUE INDEX IF NOT EXISTS\b/gi, 'CREATE UNIQUE INDEX');
   s = s.replace(/\bCREATE INDEX IF NOT EXISTS\b/gi, 'CREATE INDEX');
   /* SQLite partial indexes — not supported in MySQL */

@@ -4,8 +4,8 @@
 export function sqliteDdlToMysql(ddl) {
   let s = String(ddl || '');
   s = s.replace(
-    /CREATE TABLE IF NOT EXISTS treasury_accounts \(\s*\n\s*id INTEGER PRIMARY KEY AUTOINCREMENT,/i,
-    'CREATE TABLE IF NOT EXISTS treasury_accounts (\n  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,'
+    /\b(\w+)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi,
+    '$1 INT NOT NULL AUTO_INCREMENT PRIMARY KEY'
   );
   s = s.replace(/\bCREATE UNIQUE INDEX IF NOT EXISTS\b/gi, 'CREATE UNIQUE INDEX');
   s = s.replace(/\bCREATE INDEX IF NOT EXISTS\b/gi, 'CREATE INDEX');

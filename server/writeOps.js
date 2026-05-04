@@ -7,6 +7,7 @@ import {
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
 import { ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
+import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
@@ -4347,8 +4348,8 @@ export function clearCuttingListProductionHold(db, cuttingListId, actor = null) 
 export function updateCuttingList(db, cuttingListId, payload) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
-  if (existing.production_registered) {
-    return { ok: false, error: 'Cutting list is already tied to a production job.' };
+  if (isCuttingListProductionCompleted(db, existing)) {
+    return { ok: false, error: 'Cutting list cannot be edited after production is completed.' };
   }
   const quotationRef =
     payload.quotationRef !== undefined ? String(payload.quotationRef ?? '').trim() : existing.quotation_ref || '';

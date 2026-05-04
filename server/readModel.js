@@ -5,6 +5,7 @@ import { procurementKindFromPoRow } from './procurementPoKind.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
 import { listBranches } from './branches.js';
 import { branchPredicate } from './branchSql.js';
+import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { listInTransitLoads } from './inTransitOps.js';
 /** @param {import('better-sqlite3').Database} db */
 
@@ -506,6 +507,7 @@ function mapCuttingListRow(db, row) {
     machineName: row.machine_name ?? '',
     operatorName: row.operator_name ?? '',
     productionRegistered: Boolean(row.production_registered),
+    productionEditLocked: isCuttingListProductionCompleted(db, row),
     productionRegisterRef: row.production_register_ref ?? '',
     handledBy: row.handled_by,
     lines,

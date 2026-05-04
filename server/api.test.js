@@ -1160,6 +1160,7 @@ describe.sequential('Zarewa API', () => {
     const cl = boot.body.cuttingLists.find((row) => row.id === cutting.body.id);
     expect(cl.productionRegistered).toBe(true);
     expect(cl.productionRegisterRef).toBe(job.body.jobID);
+    expect(cl.productionEditLocked).toBe(false);
   });
 
 

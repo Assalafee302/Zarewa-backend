@@ -2,13 +2,14 @@
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 1;
+export const REFUND_PREVIEW_VERSION = 2;
 
 export const REFUND_REASON_CATEGORY_VALUES = [
   'Order cancellation',
   'Overpayment',
   'Transport issue',
   'Installation issue',
+  'Additional services',
   'Accessory shortfall',
   'Calculation error',
   'Substitution Difference',

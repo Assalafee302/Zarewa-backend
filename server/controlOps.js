@@ -12,6 +12,7 @@ import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import {
   normalizeRefundReasonCategoriesForApi,
   REFUND_PREVIEW_VERSION,
+  REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import {
   actorMayApprovePaymentRequestAmount,
@@ -1089,8 +1090,9 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
-  // 3. Service refunds — transport / installation (JSON lines_json + quotation_lines fallback; broad name matching)
+  // 3. Service refunds — transport / installation / other quoted services (bending, labour, etc.)
   const quoteLines = collectQuotationServices(db, quotationRef, quote);
+  const miscServiceLines = [];
   for (const s of quoteLines) {
     const nl = serviceNameLower(s);
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
@@ -1125,12 +1127,27 @@ export function previewRefundRequest(db, payload) {
         amountNgn: amt,
         category: 'Transport issue',
       });
+      continue;
     }
     if (isInstall && !refundedCategories.has('Installation issue')) {
       suggestedLines.push({
         label: `Unclaimed installation: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
         amountNgn: amt,
         category: 'Installation issue',
+      });
+      continue;
+    }
+    miscServiceLines.push({ name: String(s?.name ?? 'Service').trim() || 'Service', amt });
+  }
+
+  if (miscServiceLines.length && !refundedCategories.has('Additional services')) {
+    const totalMisc = roundMoney(miscServiceLines.reduce((sum, x) => sum + x.amt, 0));
+    if (totalMisc > 0) {
+      const names = miscServiceLines.map((x) => x.name);
+      suggestedLines.push({
+        label: `Quoted additional services (e.g. bending, labour): ${names.join('; ')} — ₦${totalMisc.toLocaleString('en-NG')} total`,
+        amountNgn: totalMisc,
+        category: 'Additional services',
       });
     }
   }
@@ -1265,7 +1282,7 @@ export function previewRefundRequest(db, payload) {
     suggestedLines.push({
       label: 'Manual adjustment',
       amountNgn: manualAdj,
-      category: 'Adjustment',
+      category: 'Other',
     });
   }
 
@@ -1275,6 +1292,73 @@ export function previewRefundRequest(db, payload) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
     if (el.ok) remainingRefundableNgn = el.remainingNgn;
   }
+
+  const suggestedPositiveCategories = new Set(
+    suggestedLines.filter((l) => roundMoney(l.amountNgn) > 0).map((l) => String(l.category || '').trim()).filter(Boolean)
+  );
+  const suggestedAnyCategories = new Set(
+    suggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
+  );
+
+  const hasTransportServiceLine = quoteLines.some((s) => {
+    const nl = serviceNameLower(s);
+    if (!matchesTransportService(nl)) return false;
+    const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
+    return roundMoney(qty * unitPrice) > 0;
+  });
+  const hasInstallationServiceLine = quoteLines.some((s) => {
+    const nl = serviceNameLower(s);
+    if (!matchesInstallationService(nl)) return false;
+    const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
+    return roundMoney(qty * unitPrice) > 0;
+  });
+
+  const eligibleRefundCategories = [];
+  for (const cat of REFUND_REASON_CATEGORY_VALUES) {
+    if (refundedCategories.has(cat)) continue;
+    if (blockedRefundCategories.includes(cat)) continue;
+    if (cat === 'Order cancellation') {
+      eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Overpayment') {
+      if (
+        suggestedPositiveCategories.has(cat) ||
+        (quotationCashInNgn > quoteTotalNgn && quoteTotalNgn > 0)
+      ) {
+        eligibleRefundCategories.push(cat);
+      }
+      continue;
+    }
+    if (cat === 'Transport issue') {
+      if (suggestedPositiveCategories.has(cat) || hasTransportServiceLine) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Installation issue') {
+      if (suggestedPositiveCategories.has(cat) || hasInstallationServiceLine) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Additional services') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Accessory shortfall') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Calculation error') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Substitution Difference') {
+      if (suggestedAnyCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Other') {
+      if (remainingRefundableNgn != null && remainingRefundableNgn > 0) eligibleRefundCategories.push(cat);
+    }
+  }
+
   return {
     ok: true,
     preview: {
@@ -1296,6 +1380,7 @@ export function previewRefundRequest(db, payload) {
       warnings,
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,
+      eligibleRefundCategories,
     },
   };
 }

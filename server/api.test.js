@@ -2261,6 +2261,29 @@ describe.sequential('Zarewa API', () => {
     expect(Array.isArray(res.body.rows)).toBe(true);
   });
 
+  it('GET /api/reports/receipts-register and sales-bridge return row arrays', async () => {
+    const admin = request.agent(app);
+    await loginAs(admin);
+    const rr = await admin.get('/api/reports/receipts-register?startDate=2026-01-01&endDate=2026-12-31');
+    expect(rr.status).toBe(200);
+    expect(rr.body.ok).toBe(true);
+    expect(Array.isArray(rr.body.rows)).toBe(true);
+    const sb = await admin.get(
+      '/api/reports/sales-bridge?startDate=2026-01-01&endDate=2026-12-31&asAtDate=2026-12-31'
+    );
+    expect(sb.status).toBe(200);
+    expect(sb.body.ok).toBe(true);
+    expect(Array.isArray(sb.body.rows)).toBe(true);
+    const rev = await admin.get('/api/reports/revenue-production?startDate=2026-01-01&endDate=2026-12-31');
+    expect(rev.status).toBe(200);
+    expect(rev.body.ok).toBe(true);
+    expect(Array.isArray(rev.body.rows)).toBe(true);
+    const ar = await admin.get('/api/reports/ar-as-at?asAtDate=2026-12-31');
+    expect(ar.status).toBe(200);
+    expect(ar.body.ok).toBe(true);
+    expect(Array.isArray(ar.body.rows)).toBe(true);
+  });
+
   it('POST /api/coil-lots/import upserts spreadsheet rows', async () => {
     const admin = request.agent(app);
     await loginAs(admin);

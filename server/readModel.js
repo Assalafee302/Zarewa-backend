@@ -755,6 +755,35 @@ export function listCoilLots(db, branchScope = 'ALL') {
     }));
 }
 
+/** Month-end coil snapshot rows for `as_at_iso` (empty if table missing or no capture). */
+export function listInventoryCoilSnapshots(db, asAtISO, branchScope = 'ALL') {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='inventory_coil_snapshots'`).get()) {
+    return [];
+  }
+  const iso = String(asAtISO || '').slice(0, 10);
+  if (!iso) return [];
+  const b = branchWhere(db, 'inventory_coil_snapshots', branchScope);
+  return db
+    .prepare(
+      `SELECT * FROM inventory_coil_snapshots WHERE as_at_iso = ?${b.sql} ORDER BY coil_no COLLATE NOCASE`
+    )
+    .all(iso, ...b.args)
+    .map((row) => ({
+      coilNo: row.coil_no,
+      productID: row.product_id ?? '',
+      colour: row.colour ?? '',
+      gaugeLabel: row.gauge_label ?? '',
+      materialTypeName: row.material_type_name ?? '',
+      supplierName: row.supplier_name ?? '',
+      poID: row.po_id ?? '',
+      currentWeightKg: Number(row.current_weight_kg) || 0,
+      unitCostNgnPerKg: row.unit_cost_ngn_per_kg != null ? Number(row.unit_cost_ngn_per_kg) : null,
+      branchId: row.branch_id ?? '',
+      asAtISO: row.as_at_iso,
+      capturedAtISO: row.captured_at_iso ?? '',
+    }));
+}
+
 export function listStockMovements(db) {
   return db
     .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC`)

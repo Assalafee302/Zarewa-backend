@@ -3,6 +3,8 @@
  * One row per coil allocation line on completed jobs in the date range (by completion date).
  */
 
+import { displayCoilNumber, displayDocNumber } from './reportDisplayFormat.js';
+
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
 }
@@ -103,19 +105,28 @@ export function productionTransactionReportRows(
 
       const cNo = String(coilRow?.coilNo || '').trim();
       const lot = cNo ? coilByNo.get(cNo) : null;
+      const materialType = String(lot?.materialTypeName || '').trim() || '—';
+      const gaugeLabel = String(coilRow?.gaugeLabel || '').trim() || '—';
+      const matGaugeKey = `${materialType}|${gaugeLabel}`;
       const unitKg = Math.round(Number(lot?.unitCostNgnPerKg) || 0);
       const materialCostNgn = Math.round(unitKg * consumed);
 
       const conv = coilRow?.actualConversionKgPerM;
       const convNum = conv != null && Number.isFinite(Number(conv)) ? Number(conv) : null;
 
+      const qtFull = qref || '—';
       out.push({
-        qtNo: qref || '—',
+        qtNo: qtFull,
+        qtNoFull: qtFull,
+        qtNoDisplay: displayDocNumber(qref) || '—',
         prodDate,
         customer,
         color: String(coilRow?.colour || '').trim() || '—',
-        gauge: String(coilRow?.gaugeLabel || '').trim() || '—',
+        gauge: gaugeLabel,
+        materialType,
+        matGaugeKey,
         coilNo: cNo || '—',
+        coilNoDisplay: displayCoilNumber(cNo) || '—',
         beforeKg: opening,
         afterKg: closing,
         kgUsed: consumed,
@@ -131,13 +142,19 @@ export function productionTransactionReportRows(
     };
 
     if (coils.length === 0) {
+      const qtFull = qref || '—';
       out.push({
-        qtNo: qref || '—',
+        qtNo: qtFull,
+        qtNoFull: qtFull,
+        qtNoDisplay: displayDocNumber(qref) || '—',
         prodDate,
         customer,
         color: '—',
         gauge: '—',
+        materialType: '—',
+        matGaugeKey: '—|—',
         coilNo: '—',
+        coilNoDisplay: '—',
         beforeKg: 0,
         afterKg: 0,
         kgUsed: Number(job.actualWeightKg) || 0,

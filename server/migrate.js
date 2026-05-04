@@ -695,6 +695,30 @@ export function runMigrations(db) {
   migrateUnifiedWorkspaceRegistry(db);
   migrateOperationsMaintenanceWorkspace(db);
   migrateOfficeOperations2026(db);
+  migrateInventoryCoilSnapshots(db);
+}
+
+/** Point-in-time coil balances for month-end stock reports (optional capture). */
+function migrateInventoryCoilSnapshots(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_coil_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      as_at_iso TEXT NOT NULL,
+      branch_id TEXT NOT NULL DEFAULT '',
+      coil_no TEXT NOT NULL,
+      current_weight_kg REAL NOT NULL DEFAULT 0,
+      colour TEXT,
+      gauge_label TEXT,
+      material_type_name TEXT,
+      product_id TEXT,
+      po_id TEXT,
+      supplier_name TEXT,
+      unit_cost_ngn_per_kg INTEGER,
+      captured_at_iso TEXT NOT NULL,
+      UNIQUE(as_at_iso, branch_id, coil_no)
+    );
+    CREATE INDEX IF NOT EXISTS idx_inv_coil_snap_as_at ON inventory_coil_snapshots(as_at_iso DESC, branch_id);
+  `);
 }
 
 /** Org governance limits, filing references, dossiers, inter-branch office requests. */

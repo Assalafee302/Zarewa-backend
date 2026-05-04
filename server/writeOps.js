@@ -16,6 +16,7 @@ import {
   enrichSalesReceiptRowsWithCashFromLedger,
   listLedgerEntries,
   listSalesReceipts,
+  listCoilLots,
 } from './readModel.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
@@ -5778,4 +5779,49 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     },
   });
   return { ok: true };
+}
+
+/**
+ * Replace coil lot snapshots for `asAtISO` from current `listCoilLots` (branch scope).
+ * @param {import('better-sqlite3').Database} db
+ */
+export function replaceInventoryCoilSnapshots(db, asAtISO, branchScope) {
+  const iso = String(asAtISO || '').slice(0, 10);
+  if (!iso) return { ok: false, error: 'asAtISO required' };
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='inventory_coil_snapshots'`).get()) {
+    return { ok: false, error: 'Snapshot table missing; run migrations.' };
+  }
+  const lots = listCoilLots(db, branchScope);
+  const now = new Date().toISOString();
+  const run = db.transaction(() => {
+    if (branchScope === 'ALL' || !String(branchScope || '').trim()) {
+      db.prepare(`DELETE FROM inventory_coil_snapshots WHERE as_at_iso = ?`).run(iso);
+    } else {
+      db.prepare(`DELETE FROM inventory_coil_snapshots WHERE as_at_iso = ? AND branch_id = ?`).run(iso, branchScope);
+    }
+    const ins = db.prepare(
+      `INSERT INTO inventory_coil_snapshots (
+        as_at_iso, branch_id, coil_no, current_weight_kg, colour, gauge_label, material_type_name,
+        product_id, po_id, supplier_name, unit_cost_ngn_per_kg, captured_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    );
+    for (const lot of lots) {
+      ins.run(
+        iso,
+        String(lot.branchId || '').trim(),
+        String(lot.coilNo || '').trim(),
+        Number(lot.currentWeightKg) || 0,
+        String(lot.colour || ''),
+        String(lot.gaugeLabel || ''),
+        String(lot.materialTypeName || ''),
+        String(lot.productID || ''),
+        String(lot.poID || ''),
+        String(lot.supplierName || ''),
+        lot.unitCostNgnPerKg != null ? Math.round(Number(lot.unitCostNgnPerKg)) : null,
+        now
+      );
+    }
+  });
+  run();
+  return { ok: true, rowCount: lots.length, asAtISO: iso };
 }

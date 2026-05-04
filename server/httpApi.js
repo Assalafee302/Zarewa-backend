@@ -9,6 +9,19 @@ import {
   receiptResultFromSavedRows,
 } from '../shared/lib/customerLedgerCore.js';
 import { productionTransactionReportRows } from '../shared/lib/productionTransactionReportCore.js';
+import {
+  arAsAtReportRows,
+  receiptsRegisterReportRows,
+  revenueProductionReportRows,
+  salesBridgeReportRows,
+} from '../shared/lib/standardReportsSales.js';
+import { expensesPackReport, refundsPackReport } from '../shared/lib/standardReportsFinance.js';
+import {
+  purchasesOrderedRows,
+  purchasesPaidRows,
+  purchasesReceivedRows,
+} from '../shared/lib/standardReportsPurchases.js';
+import { stockCoilAsAtRows } from '../shared/lib/standardReportsStock.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
   CUSTOMER_AND_AR_READ_PERMS,
@@ -158,6 +171,7 @@ import {
   listSuppliers,
   listTransportAgents,
   listRefunds,
+  listExpenses,
   getRefundIntelligenceForQuotation,
   listAdvanceInEvents,
   listAuditLog,
@@ -165,6 +179,8 @@ import {
   listPeriodLocks,
   listCustomerCrmInteractions,
   listCoilLots,
+  listPurchaseOrders,
+  listInventoryCoilSnapshots,
   listCoilControlEvents,
   listStockMovementsForProduct,
   listProductionJobs,
@@ -178,6 +194,9 @@ import {
   listBankReconciliation,
   getPaymentRequestDetail,
   getCustomerRefundDetail,
+  listSalesReceipts,
+  enrichSalesReceiptRowsWithCashFromLedger,
+  listTreasuryMovements,
 } from './readModel.js';
 import {
   approveMdPriceExceptionForQuotation,
@@ -1775,6 +1794,184 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build production transaction report.' });
+    }
+  });
+
+  app.get('/api/reports/receipts-register', requirePermission('reports.view'), (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const raw = listSalesReceipts(db, branchScope);
+      const ledger = listLedgerEntries(db, branchScope);
+      const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
+      const tm = listTreasuryMovements(db);
+      const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
+      res.json({ ok: true, startDate, endDate, branchScope, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build receipts register.' });
+    }
+  });
+
+  app.get('/api/reports/revenue-production', requirePermission('reports.view'), (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const quotations = listQuotations(db, branchScope);
+      const jobs = listProductionJobs(db, branchScope);
+      const rows = revenueProductionReportRows(quotations, jobs, startDate, endDate);
+      res.json({ ok: true, startDate, endDate, branchScope, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build revenue (production) report.' });
+    }
+  });
+
+  app.get('/api/reports/ar-as-at', requirePermission('reports.view'), (req, res) => {
+    try {
+      const asAtDate = String(req.query.asAtDate || req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const quotations = listQuotations(db, branchScope);
+      const ledger = listLedgerEntries(db, branchScope);
+      const rows = arAsAtReportRows(quotations, ledger);
+      res.json({
+        ok: true,
+        asAtDate: asAtDate || null,
+        branchScope,
+        arBasis: 'quote_row_live',
+        rows,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build AR as-at report.' });
+    }
+  });
+
+  app.get('/api/reports/sales-bridge', requirePermission('reports.view'), (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const asAtDate = String(req.query.asAtDate || endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const raw = listSalesReceipts(db, branchScope);
+      const ledger = listLedgerEntries(db, branchScope);
+      const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
+      const jobs = listProductionJobs(db, branchScope);
+      const rows = salesBridgeReportRows(enriched, jobs, startDate, endDate, asAtDate);
+      res.json({ ok: true, startDate, endDate, asAtDate: asAtDate || null, branchScope, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build sales bridge report.' });
+    }
+  });
+
+  app.get('/api/reports/expenses-pack', requirePermission('reports.view'), (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const expenses = listExpenses(db, branchScope);
+      const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate);
+      res.json({ ok: true, startDate, endDate, branchScope, detail, summaryByCategory });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build expenses pack.' });
+    }
+  });
+
+  app.get('/api/reports/refunds-pack', requirePermission('reports.view'), (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const refunds = listRefunds(db, branchScope);
+      const pack = refundsPackReport(refunds, startDate, endDate);
+      res.json({ ok: true, startDate, endDate, branchScope, ...pack });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build refunds pack.' });
+    }
+  });
+
+  app.get('/api/reports/purchases', requirePermission('reports.view'), (req, res) => {
+    try {
+      const cut = String(req.query.cut || 'received').toLowerCase();
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (cut === 'ordered') {
+        const pos = listPurchaseOrders(db, branchScope);
+        const rows = purchasesOrderedRows(pos, startDate, endDate);
+        return res.json({ ok: true, cut: 'ordered', startDate, endDate, branchScope, rows });
+      }
+      if (cut === 'paid') {
+        const tm = listTreasuryMovements(db);
+        const rows = purchasesPaidRows(tm, startDate, endDate);
+        return res.json({ ok: true, cut: 'paid', startDate, endDate, branchScope, rows });
+      }
+      const lots = listCoilLots(db, branchScope);
+      const rows = purchasesReceivedRows(lots, startDate, endDate);
+      return res.json({ ok: true, cut: 'received', startDate, endDate, branchScope, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build purchases report.' });
+    }
+  });
+
+  app.get('/api/reports/stock-coil-as-at', requirePermission('reports.view'), (req, res) => {
+    try {
+      const asAtDate = String(req.query.asAtDate || req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!asAtDate) {
+        return res.status(400).json({ ok: false, error: 'asAtDate (or endDate) required' });
+      }
+      const snap = listInventoryCoilSnapshots(db, asAtDate, branchScope);
+      if (snap.length > 0) {
+        const rows = stockCoilAsAtRows(snap);
+        return res.json({
+          ok: true,
+          asAtDate,
+          branchScope,
+          asAtMode: 'snapshot',
+          snapshotRowCount: snap.length,
+          rows,
+        });
+      }
+      const live = listCoilLots(db, branchScope);
+      const rows = stockCoilAsAtRows(live);
+      return res.json({
+        ok: true,
+        asAtDate,
+        branchScope,
+        asAtMode: 'live',
+        snapshotRowCount: 0,
+        disclaimer:
+          'No snapshot for this date — rows show current coil balances. Capture a month-end snapshot (POST /api/reports/coil-snapshot-capture) for historical closing.',
+        rows,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build stock report.' });
+    }
+  });
+
+  app.post('/api/reports/coil-snapshot-capture', requirePermission(['finance.view', 'reports.view']), (req, res) => {
+    try {
+      const asAtISO = String(req.body?.asAtISO || req.body?.asAtDate || '').slice(0, 10);
+      if (!asAtISO) {
+        return res.status(400).json({ ok: false, error: 'asAtISO required (YYYY-MM-DD)' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const r = write.replaceInventoryCoilSnapshots(db, asAtISO, branchScope);
+      if (!r.ok) {
+        return res.status(400).json(r);
+      }
+      res.json({ ok: true, ...r, branchScope });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not capture coil snapshot.' });
     }
   });
 

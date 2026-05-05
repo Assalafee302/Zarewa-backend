@@ -68,16 +68,33 @@ export function createEditApprovalRequest(db, { entityKind, entityId, branchId =
   const ek = String(entityKind || '').trim();
   const eid = String(entityId || '').trim();
   if (!ek || !eid) return { ok: false, error: 'entityKind and entityId are required.' };
+  const bid = String(branchId || '').trim();
+  const uid = String(actor?.id ?? '').trim();
+  const existing = db
+    .prepare(
+      `SELECT id FROM edit_approval_tokens
+       WHERE entity_kind = ? AND entity_id = ? AND branch_id = ? AND requested_by_user_id = ? AND status = 'pending'
+       ORDER BY requested_at_iso DESC LIMIT 1`
+    )
+    .get(ek, eid, bid, uid);
+  if (existing?.id) {
+    return {
+      ok: false,
+      code: 'EDIT_APPROVAL_ALREADY_PENDING',
+      error:
+        'You already have a pending approval request for this record. Wait for your approver (or enter the code when they approve it). A second request was not created.',
+      existingApprovalId: String(existing.id),
+    };
+  }
   const id = newApprovalId(db);
   const now = new Date().toISOString();
-  const uid = String(actor?.id ?? '').trim();
   const disp = String(actor?.displayName ?? actor?.username ?? '').trim();
   db.prepare(
     `INSERT INTO edit_approval_tokens (
       id, entity_kind, entity_id, branch_id, requested_by_user_id, requested_by_display,
       requested_at_iso, status
     ) VALUES (?,?,?,?,?,?,?,'pending')`
-  ).run(id, ek, eid, String(branchId || '').trim(), uid, disp, now);
+  ).run(id, ek, eid, bid, uid, disp, now);
   appendAuditLog(db, {
     actor,
     action: 'edit_approval.requested',

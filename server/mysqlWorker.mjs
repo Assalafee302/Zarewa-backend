@@ -8,6 +8,10 @@ let pool = null;
 /** @type {import('mysql2/promise').PoolConnection | null} */
 let txConn = null;
 let txDepth = 0;
+/** Monotonic names for nested SAVEPOINT / RELEASE / ROLLBACK (avoids sp_depth drift bugs). */
+let savepointSeq = 0;
+/** @type {string[]} */
+let savepointStack = [];
 
 /** Split `sql` on `;` outside quotes / backticks (for multipleStatements batches). */
 function splitSqlStatements(sql) {
@@ -147,6 +151,7 @@ runAsWorker(async (payload) => {
     }
     txConn = null;
     txDepth = 0;
+    savepointStack = [];
     await ensurePool(config);
     return { ok: true };
   }
@@ -158,6 +163,7 @@ runAsWorker(async (payload) => {
     }
     txConn = null;
     txDepth = 0;
+    savepointStack = [];
     return { ok: true };
   }
 
@@ -205,8 +211,13 @@ runAsWorker(async (payload) => {
     if (txDepth === 0) {
       txConn = await pool.getConnection();
       await txConn.beginTransaction();
+      savepointStack = [];
     } else {
-      await txConn.query(`SAVEPOINT sp_${txDepth}`);
+      if (!txConn) throw new Error('txBegin nested without active connection');
+      savepointSeq += 1;
+      const sp = `zsp_${savepointSeq}`;
+      await txConn.query(`SAVEPOINT ${sp}`);
+      savepointStack.push(sp);
     }
     txDepth += 1;
     return { ok: true };
@@ -219,8 +230,11 @@ runAsWorker(async (payload) => {
       await txConn.commit();
       txConn.release();
       txConn = null;
+      savepointStack = [];
     } else {
-      await txConn.query(`RELEASE SAVEPOINT sp_${txDepth}`);
+      const sp = savepointStack.pop();
+      if (!sp) throw new Error('txCommit: savepoint stack underflow');
+      await txConn.query(`RELEASE SAVEPOINT ${sp}`);
     }
     return { ok: true };
   }
@@ -232,8 +246,18 @@ runAsWorker(async (payload) => {
       await txConn.rollback();
       txConn.release();
       txConn = null;
+      savepointStack = [];
     } else {
-      await txConn.query(`ROLLBACK TO SAVEPOINT sp_${txDepth}`);
+      const sp = savepointStack.pop();
+      if (!sp) {
+        await txConn.rollback();
+        txConn.release();
+        txConn = null;
+        txDepth = 0;
+        savepointStack = [];
+        return { ok: true };
+      }
+      await txConn.query(`ROLLBACK TO SAVEPOINT ${sp}`);
     }
     return { ok: true };
   }

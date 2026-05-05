@@ -458,7 +458,7 @@ export function registerHttpApi(app, db) {
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         actor: req.user,
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      res.status(r.ok ? 200 : r.code === 'EDIT_APPROVAL_ALREADY_PENDING' ? 409 : 400).json(r);
     } catch (e) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }

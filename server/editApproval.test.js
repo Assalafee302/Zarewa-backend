@@ -64,6 +64,15 @@ describe('Edit approval (second-party token)', () => {
     expect(aid).toBeTruthy();
     expect(aid).toMatch(/^\d{6}$/);
 
+    const dup = await proc.post('/api/edit-approvals/request').send({
+      entityKind: 'purchase_order',
+      entityId: poId,
+    });
+    expect(dup.status).toBe(409);
+    expect(dup.body.ok).toBe(false);
+    expect(dup.body.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
+    expect(dup.body.existingApprovalId).toBe(aid);
+
     const approve = await admin.post(`/api/edit-approvals/${encodeURIComponent(aid)}/approve`).send({});
     expect(approve.status).toBe(200);
     expect(approve.body.ok).toBe(true);

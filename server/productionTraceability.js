@@ -13,6 +13,7 @@ import {
   coilSpecMismatchIssues,
 } from '../shared/lib/coilSpecVersusProduct.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
+import { coilAndProductMaterialFamiliesConflict } from '../shared/lib/coilMaterialFamily.js';
 import { listMasterData } from './masterData.js';
 
 function nextId(prefix) {
@@ -281,11 +282,26 @@ function gaugeRowByLabel(db, label) {
 
 /**
  * Procurement → Conversion catalogue: use as production "standard" kg/m when it matches coil product + gauge.
+ * Skips catalogue when coil_lots.material_type_name disagrees with products.material_type for the same product_id
+ * (so corrected coil metal uses setup density instead of the wrong catalogue).
  * Tie-break: catalog `color` vs coil `colour` using Setup colours when needed (full name ↔ abbreviation), else first row by id.
  */
 function procurementCatalogStandardKgPerM(db, coil) {
   const pid = String(coil.product_id ?? '').trim();
   if (!pid) return null;
+  const coilMtName = String(coil.material_type_name ?? '').trim();
+  if (coilMtName) {
+    let productMaterialType = '';
+    try {
+      const pr = db.prepare(`SELECT material_type FROM products WHERE product_id = ? LIMIT 1`).get(pid);
+      productMaterialType = String(pr?.material_type ?? '').trim();
+    } catch {
+      productMaterialType = '';
+    }
+    if (coilAndProductMaterialFamiliesConflict(coilMtName, productMaterialType)) {
+      return null;
+    }
+  }
   const coilGaugeMm = parseGaugeMm(coil.gauge_label);
   if (!coilGaugeMm || coilGaugeMm <= 0) return null;
 

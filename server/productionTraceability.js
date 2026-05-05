@@ -265,6 +265,28 @@ function validateUniqueCoils(lines) {
   }
 }
 
+/** Adjust qty_reserved on a coil lot (delta can be negative). Throws if coil missing or reservation would exceed remaining. */
+function bumpCoilReservedKgTx(db, coilNo, deltaKg) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn || Math.abs(Number(deltaKg) || 0) < 1e-9) return;
+  const coil = coilRow(db, cn);
+  if (!coil) throw new Error(`Coil ${cn} was not found.`);
+  const qtyRemaining = clampNonNegative(
+    coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
+  );
+  const qtyReserved = clampNonNegative(coil.qty_reserved ?? 0);
+  const next = qtyReserved + deltaKg;
+  if (next < -0.0001) {
+    throw new Error(`Coil ${cn}: reservation adjustment would go negative.`);
+  }
+  if (next > qtyRemaining + 0.0001) {
+    const avail = Math.max(0, qtyRemaining - qtyReserved);
+    throw new Error(`Coil ${cn} only has ${avail.toFixed(2)} kg available for allocation.`);
+  }
+  db.prepare(`UPDATE coil_lots SET qty_reserved = ? WHERE coil_no = ?`).run(clampNonNegative(next), cn);
+  updateCoilDerivedStateTx(db, cn);
+}
+
 function materialTypeRowByName(db, name) {
   const value = String(name ?? '').trim();
   if (!value) return null;
@@ -1016,6 +1038,9 @@ export function previewProductionConversion(db, jobID, payload = {}) {
 /**
  * Persist closing kg, metres, and note on allocated coils while the job is running (no stock move, not completion).
  * Lets operators save progress between coils or from a phone before hitting Complete.
+ *
+ * Each reading may optionally include `coilNo` and/or `openingWeightKg` to correct a mistaken allocation
+ * (same permission as production.manage). Reservations on coil_lots are adjusted; no finished-goods or COGS move.
  */
 export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
@@ -1030,40 +1055,148 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
   if (!lines.length) return { ok: false, error: 'Nothing to save — add readings for at least one coil line.' };
   const existing = listJobCoilsForJob(db, jobID);
   const byId = new Map(existing.map((row) => [String(row.id ?? '').trim(), row]));
-  const upd = db.prepare(
+
+  const parsed = [];
+  for (const line of lines) {
+    const aid = String(line?.allocationId ?? line?.allocation_id ?? '').trim();
+    if (!aid) continue;
+    const row = byId.get(aid);
+    if (!row) return { ok: false, error: `Unknown coil line ${aid} on this job.` };
+    const st = String(row.allocation_status ?? '').trim();
+    if (st === 'Completed') {
+      return { ok: false, error: `Coil line ${aid} is already completed and cannot be changed here.` };
+    }
+    const hasCoilInPayload = Object.prototype.hasOwnProperty.call(line, 'coilNo');
+    const hasOpenInPayload =
+      Object.prototype.hasOwnProperty.call(line, 'openingWeightKg') ||
+      Object.prototype.hasOwnProperty.call(line, 'opening_weight_kg');
+    const nextCoil = hasCoilInPayload ? String(line.coilNo ?? '').trim() : String(row.coil_no ?? '').trim();
+    if (hasCoilInPayload && !nextCoil) {
+      return { ok: false, error: 'Each run log line must have a coil number when coil is sent in the payload.' };
+    }
+    const nextOpening = hasOpenInPayload
+      ? safeNumber(line.openingWeightKg ?? line.opening_weight_kg)
+      : safeNumber(row.opening_weight_kg);
+    if (nextOpening <= 0) {
+      return { ok: false, error: `Opening kg must be greater than 0 (line ${aid}).` };
+    }
+    const closing = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
+    const meters = safeNumber(line.metersProduced ?? line.meters_produced);
+    if (closing < 0 || closing > nextOpening + 0.0001) {
+      return {
+        ok: false,
+        error: `Coil ${nextCoil || row.coil_no}: closing kg must be between 0 and ${nextOpening}.`,
+      };
+    }
+    if (meters < 0) {
+      return { ok: false, error: `Coil ${nextCoil || row.coil_no}: metres cannot be negative.` };
+    }
+    const note = String(line.note ?? '').trim();
+    const specMismatchAcknowledged = Boolean(line.specMismatchAcknowledged);
+    const oldCoil = String(row.coil_no ?? '').trim();
+    const oldOpen = safeNumber(row.opening_weight_kg);
+    const identityChanged =
+      nextCoil !== oldCoil || Math.abs(nextOpening - oldOpen) > 0.0001;
+    parsed.push({
+      aid,
+      row,
+      nextCoil,
+      nextOpening,
+      closing,
+      meters,
+      note,
+      specMismatchAcknowledged,
+      identityChanged,
+    });
+  }
+  if (!parsed.length) {
+    return { ok: false, error: 'Nothing to save — add readings for at least one coil line.' };
+  }
+
+  const coilsAfter = [];
+  for (const r of existing) {
+    const id = String(r.id ?? '').trim();
+    const hit = parsed.find((p) => p.aid === id);
+    const cn = hit ? hit.nextCoil : String(r.coil_no ?? '').trim();
+    if (cn) coilsAfter.push(cn);
+  }
+  try {
+    validateUniqueCoils(coilsAfter.map((coilNo) => ({ coilNo })));
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const specLines = parsed
+    .filter((p) => String(p.nextCoil) !== String(p.row.coil_no ?? '').trim())
+    .map((p) => ({
+      coilNo: p.nextCoil,
+      note: '',
+      specMismatchAcknowledged: p.specMismatchAcknowledged,
+    }));
+  if (specLines.length) {
+    const specBlock = validateSpecAcknowledgements(db, job, specLines);
+    if (specBlock) return specBlock;
+  }
+
+  const updFull = db.prepare(
     `UPDATE production_job_coils
-     SET closing_weight_kg = ?, consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?, note = ?
+     SET coil_no = ?, product_id = ?, colour = ?, gauge_label = ?, opening_weight_kg = ?,
+         closing_weight_kg = ?, consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?,
+         spec_mismatch = ?, note = ?
      WHERE id = ? AND job_id = ?`
   );
   try {
     db.transaction(() => {
-      for (const line of lines) {
-        const aid = String(line?.allocationId ?? line?.allocation_id ?? '').trim();
-        if (!aid) continue;
-        const row = byId.get(aid);
-        if (!row) throw new Error(`Unknown coil line ${aid} on this job.`);
-        const opening = safeNumber(row.opening_weight_kg);
-        const closing = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
-        const meters = safeNumber(line.metersProduced ?? line.meters_produced);
-        if (closing < 0 || closing > opening + 0.0001) {
-          throw new Error(`Coil ${row.coil_no}: closing kg must be between 0 and ${opening}.`);
+      const masterDataForCoil = masterDataForCoilColourMatch(db);
+      for (const p of parsed) {
+        const oldCoil = String(p.row.coil_no ?? '').trim();
+        const oldOpen = safeNumber(p.row.opening_weight_kg);
+        if (p.identityChanged) {
+          if (p.nextCoil === oldCoil) {
+            bumpCoilReservedKgTx(db, oldCoil, p.nextOpening - oldOpen);
+          } else {
+            bumpCoilReservedKgTx(db, oldCoil, -oldOpen);
+            bumpCoilReservedKgTx(db, p.nextCoil, p.nextOpening);
+          }
         }
-        if (meters < 0) {
-          throw new Error(`Coil ${row.coil_no}: metres cannot be negative.`);
-        }
-        const consumed = opening - closing;
+        const consumed = p.nextOpening - p.closing;
         const actual =
-          meters > 0.0001 && consumed > 0.0001 ? consumed / meters : null;
-        const note = String(line.note ?? '').trim();
-        upd.run(closing, consumed, meters, actual, note || null, aid, jobID);
+          p.meters > 0.0001 && consumed > 0.0001 ? consumed / p.meters : null;
+        const newCoilRow = coilRow(db, p.nextCoil);
+        const sm = allocationCoilSpecMismatched(db, job, p.nextCoil, masterDataForCoil);
+        updFull.run(
+          p.nextCoil,
+          newCoilRow?.product_id ?? null,
+          newCoilRow?.colour ?? null,
+          newCoilRow?.gauge_label ?? null,
+          p.nextOpening,
+          p.closing,
+          consumed,
+          p.meters,
+          actual,
+          sm.mismatched ? 1 : 0,
+          p.note || null,
+          p.aid,
+          jobID
+        );
       }
+      refreshJobCoilSpecFlagsTx(db, jobID);
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.run_log_draft',
         entityKind: 'production_job',
         entityId: jobID,
-        note: `Run log draft saved (${lines.filter((l) => String(l?.allocationId ?? l?.allocation_id ?? '').trim()).length} line(s))`,
-        details: { jobID },
+        note: `Run log draft saved (${parsed.length} line(s))`,
+        details: {
+          jobID,
+          identityCorrections: parsed
+            .filter((p) => p.identityChanged)
+            .map((p) => ({
+              allocationId: p.aid,
+              from: { coilNo: p.row.coil_no, openingWeightKg: safeNumber(p.row.opening_weight_kg) },
+              to: { coilNo: p.nextCoil, openingWeightKg: p.nextOpening },
+            })),
+        },
       });
     })();
     return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID) };

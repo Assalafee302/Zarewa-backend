@@ -2040,6 +2040,113 @@ describe.sequential('Zarewa API', () => {
     expect(coils.length).toBe(2);
   });
 
+  it('POST coil-run-log corrects opening kg and coil identity while job is running', async () => {
+    const sup = await agent.post('/api/suppliers').send({ name: 'RunLog Correct Sup', city: 'Test' });
+    expect(sup.status).toBe(201);
+    const mkGrn = async (coilNo, lineKey) => {
+      const po = await agent.post('/api/purchase-orders').send({
+        supplierID: sup.body.supplierID,
+        supplierName: 'RunLog Correct Sup',
+        orderDateISO: '2026-04-02',
+        expectedDeliveryISO: '',
+        status: 'Approved',
+        lines: [
+          {
+            lineKey,
+            productID: 'COIL-ALU',
+            productName: 'Aluminium coil (kg)',
+            color: 'IV',
+            gauge: '0.24',
+            metersOffered: 2000,
+            conversionKgPerM: 5000 / 2000,
+            qtyOrdered: 5000,
+            unitPricePerKgNgn: 100,
+            unitPriceNgn: 100,
+            qtyReceived: 0,
+          },
+        ],
+      });
+      expect(po.status).toBe(201);
+      await agent.post(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/grn`).send({
+        entries: [
+          {
+            lineKey,
+            productID: 'COIL-ALU',
+            qtyReceived: 5000,
+            weightKg: 5000,
+            coilNo,
+            location: 'Bay',
+            gaugeLabel: '0.24mm',
+            materialTypeName: 'Aluminium',
+            supplierExpectedMeters: 2000,
+            supplierConversionKgPerM: 5000 / 2000,
+          },
+        ],
+        supplierID: sup.body.supplierID,
+        supplierName: 'RunLog Correct Sup',
+      });
+    };
+    await mkGrn('CL-RLOG-C1', 'L-RL-C1');
+    await mkGrn('CL-RLOG-C2', 'L-RL-C2');
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-04-02',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 5 }],
+    });
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 5,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    const jobId = job.body.jobID;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: 'CL-RLOG-C1', openingWeightKg: 2000 }],
+    });
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-04-02' });
+    const listAlloc = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(listAlloc.status).toBe(200);
+    const allocId = listAlloc.body.allocations[0].id;
+    const r1 = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-run-log`).send({
+      readings: [
+        {
+          allocationId: allocId,
+          coilNo: 'CL-RLOG-C1',
+          openingWeightKg: 1500,
+          closingWeightKg: 0,
+          metersProduced: 0,
+          note: '',
+        },
+      ],
+    });
+    expect(r1.status).toBe(200);
+    expect(r1.body.ok).toBe(true);
+    expect(r1.body.allocations[0].openingWeightKg).toBe(1500);
+    const r2 = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-run-log`).send({
+      readings: [
+        {
+          allocationId: allocId,
+          coilNo: 'CL-RLOG-C2',
+          openingWeightKg: 1200,
+          closingWeightKg: 0,
+          metersProduced: 0,
+          note: 'wrong coil typed',
+        },
+      ],
+    });
+    expect(r2.status).toBe(200);
+    expect(r2.body.ok).toBe(true);
+    expect(r2.body.allocations[0].coilNo).toBe('CL-RLOG-C2');
+    expect(r2.body.allocations[0].openingWeightKg).toBe(1200);
+  });
+
   it('PATCH manager-review-signoff records remark and clears open review flag', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'Signoff Supplier', city: 'Kano' });
     expect(sup.status).toBe(201);

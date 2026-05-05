@@ -357,6 +357,16 @@ export function userCanApproveEditMutations(user) {
   return userHasPermission(user, 'quotations.manage');
 }
 
+/** Administrator, managing director, or branch manager (`sales_manager`; `branch_manager` reserved). */
+const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set(['admin', 'md', 'sales_manager', 'branch_manager']);
+
+/** @param {object|null|undefined} user */
+export function userMayEditCoilLotMasterData(user) {
+  if (!user) return false;
+  const rk = String(user.roleKey || '').trim().toLowerCase();
+  return COIL_LOT_MASTER_EDIT_ROLE_KEYS.has(rk);
+}
+
 export function publicUserFromRow(row) {
   if (!row) return null;
   const roleKey = row.role_key ?? row.roleKey;

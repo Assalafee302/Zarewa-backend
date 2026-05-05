@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
-  coilAndProductMaterialFamiliesConflict,
   materialFamilyKeyForConversion,
+  procurementCatalogMaterialAlignedWithCoil,
+  resolveCoilMaterialFamilyKey,
 } from './coilMaterialFamily.js';
 
 describe('materialFamilyKeyForConversion', () => {
   it('classifies aluminium spellings', () => {
     expect(materialFamilyKeyForConversion('Aluminium')).toBe('aluminium');
     expect(materialFamilyKeyForConversion('  aluminum  ')).toBe('aluminium');
+  });
+
+  it('classifies short ALU', () => {
+    expect(materialFamilyKeyForConversion('ALU')).toBe('aluminium');
+    expect(materialFamilyKeyForConversion('alu-0.5')).toBe('aluminium');
   });
 
   it('classifies aluzinc / galvalume', () => {
@@ -23,21 +29,32 @@ describe('materialFamilyKeyForConversion', () => {
   });
 });
 
-describe('coilAndProductMaterialFamiliesConflict', () => {
-  it('detects aluminium coil vs aluzinc product', () => {
-    expect(coilAndProductMaterialFamiliesConflict('Aluminium', 'Aluzinc')).toBe(true);
+describe('resolveCoilMaterialFamilyKey', () => {
+  it('uses setup canonical name when raw label has no keyword', () => {
+    expect(resolveCoilMaterialFamilyKey('Custom label', 'Aluminium')).toBe('aluminium');
   });
 
-  it('allows same family', () => {
-    expect(coilAndProductMaterialFamiliesConflict('Aluminium', 'Aluminium')).toBe(false);
-    expect(coilAndProductMaterialFamiliesConflict('Aluzinc', 'Aluzinc')).toBe(false);
+  it('prefers raw label when it parses', () => {
+    expect(resolveCoilMaterialFamilyKey('Aluminium', 'Aluzinc')).toBe('aluminium');
+  });
+});
+
+describe('procurementCatalogMaterialAlignedWithCoil', () => {
+  it('blocks catalogue when coil is aluminium but product material is missing', () => {
+    expect(procurementCatalogMaterialAlignedWithCoil('aluminium', '')).toBe(false);
+    expect(procurementCatalogMaterialAlignedWithCoil('aluminium', '   ')).toBe(false);
   });
 
-  it('does not block when coil family is unknown', () => {
-    expect(coilAndProductMaterialFamiliesConflict('Custom alloy', 'Aluzinc')).toBe(false);
+  it('blocks when coil is aluminium and product is aluzinc', () => {
+    expect(procurementCatalogMaterialAlignedWithCoil('aluminium', 'Aluzinc')).toBe(false);
   });
 
-  it('does not block when product family is unknown', () => {
-    expect(coilAndProductMaterialFamiliesConflict('Aluminium', '')).toBe(false);
+  it('allows when families match', () => {
+    expect(procurementCatalogMaterialAlignedWithCoil('aluminium', 'Aluminium')).toBe(true);
+    expect(procurementCatalogMaterialAlignedWithCoil('aluzinc', 'Aluzinc')).toBe(true);
+  });
+
+  it('allows catalogue when coil family unknown', () => {
+    expect(procurementCatalogMaterialAlignedWithCoil(null, 'Aluzinc')).toBe(true);
   });
 });

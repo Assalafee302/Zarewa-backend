@@ -17,6 +17,7 @@
     "db:legacy-demo": "node server/applyLegacyDemoPackCli.js",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:edit-approval": "vitest run server/editApproval.pure.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:sales-refund-finance": "playwright test e2e/sales-refund-finance-checklist.spec.js",

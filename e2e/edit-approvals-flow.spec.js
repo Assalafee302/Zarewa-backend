@@ -50,6 +50,17 @@ test.describe('Edit approvals (second-party token)', () => {
     expect(reqJson.ok).toBe(true);
     const approvalId = reqJson.approvalId;
     expect(approvalId).toBeTruthy();
+    expect(approvalId).toMatch(/^\d{6}$/);
+
+    const dupRes = await page.request.post('/api/edit-approvals/request', {
+      headers: await csrfHeader(page),
+      data: { entityKind: 'purchase_order', entityId: poId },
+    });
+    expect(dupRes.status(), await dupRes.text()).toBe(409);
+    const dupJson = await dupRes.json();
+    expect(dupJson.ok).toBe(false);
+    expect(dupJson.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
+    expect(dupJson.existingApprovalId).toBe(approvalId);
 
     await signOutViaApi(page);
     await signInViaApi(page, 'admin', 'Admin@123');

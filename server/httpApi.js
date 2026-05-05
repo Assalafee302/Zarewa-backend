@@ -56,6 +56,7 @@ import {
   deleteAppUser,
   updateUserProfile,
   userCanApproveEditMutations,
+  userMayEditCoilLotMasterData,
   userHasPermission,
   userMaySelectSessionWorkspaceBranch,
   userMayViewManagementReports,
@@ -3195,6 +3196,31 @@ export function registerHttpApi(app, db) {
   app.patch('/api/coil-lots/:coilNo/location', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = write.setCoilLotLocation(db, req.params.coilNo, req.body?.location, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/coil-lots/:coilNo/master-data', (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
+    }
+    if (!userMayEditCoilLotMasterData(req.user)) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Only an administrator, branch manager, or MD can edit coil master data.',
+        code: 'FORBIDDEN',
+      });
+    }
+    return next();
+  }, (req, res) => {
+    try {
+      const r = write.patchCoilLotMasterData(db, req.params.coilNo, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
       });

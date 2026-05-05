@@ -2491,6 +2491,81 @@ export function setCoilLotLocation(db, coilNo, location, opts = {}) {
 }
 
 /**
+ * Correct coil master data (colour, gauge label, material description, GRN received kg).
+ * Does not change live on-hand kg (`qty_remaining` / `current_weight_kg`); use coil control for mass adjustments.
+ */
+export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
+  const cn = String(coilNo || '').trim();
+  if (!cn) return { ok: false, error: 'Coil number is required.' };
+  const row = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(cn);
+  if (!row) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(row, opts.workspaceBranchId);
+  if (!br.ok) return br;
+
+  const b = body || {};
+  const prev = {
+    colour: row.colour ?? '',
+    gaugeLabel: row.gauge_label ?? '',
+    materialTypeName: row.material_type_name ?? '',
+    qtyReceived: Number(row.qty_received) || 0,
+    weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
+  };
+
+  const sets = [];
+  const args = [];
+  const next = { ...prev };
+
+  if (Object.prototype.hasOwnProperty.call(b, 'colour')) {
+    const v = b.colour == null ? '' : String(b.colour).trim();
+    sets.push('colour = ?');
+    args.push(v || null);
+    next.colour = v;
+  }
+  if (Object.prototype.hasOwnProperty.call(b, 'gaugeLabel') || Object.prototype.hasOwnProperty.call(b, 'gauge')) {
+    const raw = Object.prototype.hasOwnProperty.call(b, 'gaugeLabel') ? b.gaugeLabel : b.gauge;
+    const v = raw == null ? '' : String(raw).trim();
+    sets.push('gauge_label = ?');
+    args.push(v || null);
+    next.gaugeLabel = v;
+  }
+  if (Object.prototype.hasOwnProperty.call(b, 'materialTypeName')) {
+    const v = b.materialTypeName == null ? '' : String(b.materialTypeName).trim();
+    sets.push('material_type_name = ?');
+    args.push(v || null);
+    next.materialTypeName = v;
+  }
+  if (Object.prototype.hasOwnProperty.call(b, 'receivedKg')) {
+    const rk = Number(b.receivedKg);
+    if (!Number.isFinite(rk) || rk < 0) {
+      return { ok: false, error: 'Received kg must be a non-negative number.' };
+    }
+    sets.push('qty_received = ?', 'weight_kg = ?');
+    args.push(rk, rk);
+    next.qtyReceived = rk;
+    next.weightKg = rk;
+  }
+
+  if (!sets.length) {
+    return { ok: false, error: 'No fields to update. Send colour, gaugeLabel, materialTypeName, and/or receivedKg.' };
+  }
+
+  args.push(cn);
+  db.prepare(`UPDATE coil_lots SET ${sets.join(', ')} WHERE coil_no = ?`).run(...args);
+
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'coil.master_data',
+    entityKind: 'coil_lot',
+    entityId: cn,
+    status: 'success',
+    note: 'Coil master data updated',
+    details: { previous: prev, next },
+  });
+
+  return { ok: true, coilNo: cn, ...next };
+}
+
+/**
  * Remove kg from a coil (physical scrap, damage, trim). Reduces raw product stock; optionally credits SCRAP-COIL (or other) SKU.
  */
 export function postCoilScrap(db, payload = {}, opts = {}) {

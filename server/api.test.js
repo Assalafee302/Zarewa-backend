@@ -1770,6 +1770,32 @@ describe.sequential('Zarewa API', () => {
     expect(Number(addEv.kgCoilDelta)).toBeCloseTo(50, 3);
   });
 
+  it('coil-lots PATCH master-data updates metadata for branch manager; sales staff forbidden', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const patch = await mgr.patch(`/api/coil-lots/${encodeURIComponent(coilA)}/master-data`).send({
+      colour: 'RAL 9005',
+      gaugeLabel: '0.50 mm',
+      materialTypeName: 'Alu zinc',
+      receivedKg: 3100,
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body.ok).toBe(true);
+
+    const boot = await mgr.get('/api/bootstrap');
+    const lot = boot.body.coilLots.find((c) => c.coilNo === coilA);
+    expect(lot.colour).toBe('RAL 9005');
+    expect(lot.gaugeLabel).toBe('0.50 mm');
+    expect(lot.materialTypeName).toBe('Alu zinc');
+    expect(Number(lot.qtyReceived)).toBeCloseTo(3100, 2);
+
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const denied = await staff.patch(`/api/coil-lots/${encodeURIComponent(coilA)}/master-data`).send({ colour: 'X' });
+    expect(denied.status).toBe(403);
+  });
+
   it('one coil can back two production jobs with separate allocations', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'Shared Coil Supplier', city: 'Abuja' });
     expect(sup.status).toBe(201);

@@ -1774,3 +1774,296 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
     return { ok: false, error: String(e.message || e) };
   }
 }
+
+function undoSingleCompletedCoilLineTx(db, row, atISO, jobId) {
+  const coilNo = String(row.coil_no ?? '').trim();
+  const opening = safeNumber(row.opening_weight_kg);
+  const consumed = safeNumber(row.consumed_weight_kg);
+  const productId = String(row.product_id ?? '').trim();
+  const coil = coilRow(db, coilNo);
+  if (!coil) throw new Error(`Coil ${coilNo} not found.`);
+  const rem = clampNonNegative(
+    coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
+  );
+  const res = clampNonNegative(coil.qty_reserved ?? 0);
+  const uc = Math.round(Number(coil.unit_cost_ngn_per_kg) || 0);
+  const cogsNgn = uc > 0 ? Math.round(consumed * uc) : null;
+  const prevLanded = Math.round(Number(coil.landed_cost_ngn) || 0);
+  const nextLanded =
+    cogsNgn != null && prevLanded > 0 ? prevLanded + cogsNgn : coil.landed_cost_ngn ?? null;
+  db.prepare(
+    `UPDATE coil_lots SET qty_remaining = ?, qty_reserved = ?, current_weight_kg = ?, landed_cost_ngn = ? WHERE coil_no = ?`
+  ).run(
+    clampNonNegative(rem + consumed),
+    clampNonNegative(res + opening),
+    clampNonNegative(rem + consumed),
+    nextLanded,
+    coilNo
+  );
+  updateCoilDerivedStateTx(db, coilNo);
+  if (productId) adjustProductStockTx(db, productId, consumed);
+  appendStockMovementTx(db, {
+    atISO,
+    type: 'COIL_CONSUMPTION',
+    ref: jobId,
+    productID: productId || null,
+    qty: consumed,
+    detail: `Completion coil correction — restore ${consumed.toFixed(2)} kg to ${coilNo} (${jobId})`,
+    dateISO: atISO,
+    unitPriceNgn: uc || null,
+    valueNgn: cogsNgn,
+  });
+}
+
+function applySingleCompletedCoilLineTx(db, jobId, line, atISO) {
+  const { coilNo, openingWeightKg, consumedWeightKg, metersProduced, productID } = line;
+  const coil = coilRow(db, coilNo);
+  if (!coil) throw new Error(`Coil ${coilNo} not found.`);
+  const qtyRemaining = clampNonNegative(
+    safeNumber(coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received) -
+      consumedWeightKg
+  );
+  const qtyReserved = clampNonNegative(safeNumber(coil.qty_reserved) - openingWeightKg);
+  const uc = Math.round(Number(coil.unit_cost_ngn_per_kg) || 0);
+  const cogsNgn = uc > 0 ? Math.round(consumedWeightKg * uc) : null;
+  const prevLanded = Math.round(Number(coil.landed_cost_ngn) || 0);
+  const nextLanded =
+    cogsNgn != null && prevLanded > 0 ? Math.max(0, prevLanded - cogsNgn) : coil.landed_cost_ngn ?? null;
+  db.prepare(
+    `UPDATE coil_lots SET qty_remaining = ?, qty_reserved = ?, current_weight_kg = ?, landed_cost_ngn = ? WHERE coil_no = ?`
+  ).run(qtyRemaining, qtyReserved, qtyRemaining, nextLanded, coilNo);
+  updateCoilDerivedStateTx(db, coilNo);
+  if (productID) adjustProductStockTx(db, productID, -consumedWeightKg);
+  appendStockMovementTx(db, {
+    atISO,
+    type: 'COIL_CONSUMPTION',
+    ref: jobId,
+    productID: productID || null,
+    qty: -consumedWeightKg,
+    detail: `${coilNo} consumed for ${metersProduced.toFixed(2)} m on ${jobId} (completion correction)`,
+    dateISO: atISO,
+    unitPriceNgn: uc || null,
+    valueNgn: cogsNgn,
+  });
+}
+
+function productionJobHasFinishCoilTailInMovements(db, jobId) {
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM stock_movements WHERE ref = ? AND type = 'COIL_CONSUMPTION' AND detail LIKE ?`
+    )
+    .get(jobId, '%roll finished%');
+  return safeNumber(r?.c) > 0;
+}
+
+/**
+ * After completion, correct recorded coil lines (coil, opening/closing kg, metres) and restate inventory.
+ * Same permission intent as completion-adjustments (release / operations). Does not rewrite GL recognition.
+ * Blocked when the job used “finish roll” tail clearing (stock_movements detail contains roll finished).
+ */
+export function applyCompletedProductionCoilCorrections(db, jobID, payload = {}, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  if (String(job.status ?? '') !== 'Completed') {
+    return { ok: false, error: 'Coil correction applies only to completed jobs.' };
+  }
+  if (jobIsStoneMeter(db, job)) {
+    return { ok: false, error: 'Stone-coated jobs have no coil lines to correct.' };
+  }
+  const note = String(payload.reason ?? payload.note ?? '').trim();
+  if (note.length < 12) {
+    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
+  }
+  if (productionJobHasFinishCoilTailInMovements(db, jobId)) {
+    return {
+      ok: false,
+      error:
+        'This job cleared a roll “tail” on completion. Automated coil correction cannot safely reverse that yet. Use manual stock movements or contact support.',
+    };
+  }
+  const lines = Array.isArray(payload.readings) ? payload.readings : [];
+  if (!lines.length) return { ok: false, error: 'Send corrected readings for each coil line.' };
+
+  const existing = listJobCoilsForJob(db, jobId);
+  if (!existing.length) return { ok: false, error: 'No coil allocations for this job.' };
+  const byAid = new Map(existing.map((r) => [String(r.id ?? '').trim(), r]));
+
+  const parsed = [];
+  for (const raw of lines) {
+    const aid = String(raw?.allocationId ?? raw?.allocation_id ?? '').trim();
+    if (!aid) return { ok: false, error: 'Each line must include allocationId.' };
+    const row = byAid.get(aid);
+    if (!row) return { ok: false, error: `Unknown allocation ${aid}.` };
+    if (String(row.allocation_status ?? '') !== 'Completed') {
+      return { ok: false, error: `Allocation ${aid} is not in Completed state.` };
+    }
+    const nextCoil = String(raw.coilNo ?? raw.coil_no ?? '').trim();
+    if (!nextCoil) return { ok: false, error: 'Each line must have a coil number.' };
+    const nextOpening = safeNumber(raw.openingWeightKg ?? raw.opening_weight_kg);
+    const nextClosing = safeNumber(raw.closingWeightKg ?? raw.closing_weight_kg);
+    const nextMeters = safeNumber(raw.metersProduced ?? raw.meters_produced);
+    if (nextOpening <= 0) return { ok: false, error: `Line ${aid}: opening kg must be greater than 0.` };
+    if (nextClosing < 0 || nextClosing > nextOpening + 0.0001) {
+      return { ok: false, error: `Line ${aid}: closing kg must be between 0 and opening.` };
+    }
+    if (nextMeters <= 0) return { ok: false, error: `Line ${aid}: metres must be greater than 0.` };
+    const nextConsumed = nextOpening - nextClosing;
+    if (nextConsumed <= 0) return { ok: false, error: `Line ${aid}: consumed kg must be greater than 0.` };
+    const newCoilRow = coilRow(db, nextCoil);
+    if (!newCoilRow) return { ok: false, error: `Coil ${nextCoil} not found.` };
+    parsed.push({
+      aid,
+      row,
+      nextCoil,
+      nextOpening,
+      nextClosing,
+      nextMeters,
+      nextConsumed,
+      newProductId: String(newCoilRow.product_id ?? '').trim(),
+      lineNote: String(raw.note ?? '').trim(),
+      specAck: Boolean(raw.specMismatchAcknowledged),
+    });
+  }
+  if (parsed.length !== existing.length) {
+    return {
+      ok: false,
+      error: `Send exactly ${existing.length} coil line(s) for this job (one reading per saved allocation).`,
+    };
+  }
+  const aidsSeen = new Set(parsed.map((p) => p.aid));
+  if (aidsSeen.size !== parsed.length) return { ok: false, error: 'Duplicate allocationId in readings.' };
+  for (const r of existing) {
+    if (!aidsSeen.has(String(r.id ?? '').trim())) {
+      return { ok: false, error: `Missing reading for allocation ${r.id}.` };
+    }
+  }
+
+  try {
+    validateUniqueCoils(parsed.map((p) => ({ coilNo: p.nextCoil })));
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const specChanged = parsed.filter((p) => String(p.nextCoil) !== String(p.row.coil_no ?? '').trim());
+  if (specChanged.length) {
+    const specBlock = validateSpecAcknowledgements(
+      db,
+      job,
+      specChanged.map((p) => ({ coilNo: p.nextCoil, note: '', specMismatchAcknowledged: p.specAck }))
+    );
+    if (specBlock) return specBlock;
+  }
+
+  const oldTotalM = existing.reduce((s, r) => s + safeNumber(r.meters_produced), 0);
+  const newTotalM = parsed.reduce((s, p) => s + p.nextMeters, 0);
+  const newTotalKg = parsed.reduce((s, p) => s + p.nextConsumed, 0);
+  const deltaM = newTotalM - oldTotalM;
+  const productId = String(job.product_id ?? '').trim();
+  const atISO = normalizeIso(payload.atISO || nowIso());
+
+  const updPjc = db.prepare(
+    `UPDATE production_job_coils
+     SET coil_no = ?, product_id = ?, colour = ?, gauge_label = ?, opening_weight_kg = ?, closing_weight_kg = ?,
+         consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?, spec_mismatch = ?, note = ?
+     WHERE id = ? AND job_id = ?`
+  );
+
+  try {
+    assertPeriodOpen(db, atISO, 'Production coil correction date');
+    db.transaction(() => {
+      for (const r of existing) {
+        undoSingleCompletedCoilLineTx(db, r, atISO, jobId);
+      }
+      if (productId && Math.abs(deltaM) > 1e-6) {
+        const prodRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productId);
+        const current = Number(prodRow?.stock_level) || 0;
+        const next = current + deltaM;
+        if (next < -0.0001) {
+          throw new Error(
+            `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m on hand).`
+          );
+        }
+        adjustProductStockTx(db, productId, deltaM);
+        appendStockMovementTx(db, {
+          atISO,
+          type: 'PRODUCTION_FG_ADJUSTMENT',
+          ref: jobId,
+          productID: productId,
+          qty: deltaM,
+          detail: `Coil completion correction ${jobId}: ${note.length > 120 ? `${note.slice(0, 117)}…` : note}`,
+          dateISO: atISO,
+        });
+      }
+
+      const masterDataForCoil = masterDataForCoilColourMatch(db);
+      const alertStates = [];
+      let anyMgr = false;
+      for (const p of parsed) {
+        const act = p.nextConsumed / p.nextMeters;
+        const coilForRef = coilRow(db, p.nextCoil);
+        const references = buildReferenceSet(db, coilForRef, act, jobId);
+        const alert = determineAlertState(act, references);
+        alertStates.push(alert.alertState);
+        if (alert.managerReviewRequired) anyMgr = true;
+        const sm = allocationCoilSpecMismatched(db, job, p.nextCoil, masterDataForCoil);
+        updPjc.run(
+          p.nextCoil,
+          coilForRef?.product_id ?? null,
+          coilForRef?.colour ?? null,
+          coilForRef?.gauge_label ?? null,
+          p.nextOpening,
+          p.nextClosing,
+          p.nextConsumed,
+          p.nextMeters,
+          act,
+          sm.mismatched ? 1 : 0,
+          p.lineNote || null,
+          p.aid,
+          jobId
+        );
+        applySingleCompletedCoilLineTx(
+          db,
+          jobId,
+          {
+            coilNo: p.nextCoil,
+            openingWeightKg: p.nextOpening,
+            consumedWeightKg: p.nextConsumed,
+            metersProduced: p.nextMeters,
+            productID: p.newProductId,
+          },
+          atISO
+        );
+      }
+
+      const aggregated = aggregateAlertState(alertStates);
+      db.prepare(
+        `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ? WHERE job_id = ?`
+      ).run(newTotalM, newTotalKg, aggregated, anyMgr ? 1 : 0, jobId);
+      refreshJobCoilSpecFlagsTx(db, jobId);
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.completion_coil_correct',
+        entityKind: 'production_job',
+        entityId: jobId,
+        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+        details: {
+          reason: note,
+          oldTotalM,
+          newTotalM,
+          deltaM,
+          lines: parsed.map((p) => ({ allocationId: p.aid, coilNo: p.nextCoil })),
+        },
+      });
+    })();
+    return {
+      ok: true,
+      allocations: listProductionJobCoilsForJob(db, jobId),
+      actualMeters: newTotalM,
+      actualWeightKg: newTotalKg,
+    };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}

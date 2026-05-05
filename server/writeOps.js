@@ -503,7 +503,9 @@ function assertNoDuplicateCustomerIdentity(db, branchId, payload, excludeCustome
 
 /** @param {import('better-sqlite3').Database} db */
 export function insertCustomer(db, row, branchId = DEFAULT_BRANCH_ID) {
-  const id = row.customerID || nextCustomerHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  // Always allocate server-side so concurrent creates never reuse the same client-predicted id.
+  const id = nextCustomerHumanId(db, bid);
   assertNoDuplicateCustomerIdentity(
     db,
     branchId,
@@ -4272,7 +4274,7 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   if (!lines.length) return { ok: false, error: 'Add at least one valid cutting line.' };
   const branchId =
     String(quote?.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
-  const id = String(payload.id ?? '').trim() || nextCuttingListHumanId(db, branchId);
+  const id = nextCuttingListHumanId(db, branchId);
   const dateISO = String(payload.dateISO ?? '').trim() || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
   const totalMeters = Number(
@@ -4698,7 +4700,7 @@ export function insertDelivery(db, payload, branchFallback = DEFAULT_BRANCH_ID) 
 
 export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  const expenseID = String(payload.expenseID ?? '').trim() || nextExpenseHumanId(db, bid);
+  const expenseID = nextExpenseHumanId(db, bid);
   const category = String(payload.category ?? '').trim();
   const amountNgn = roundMoney(payload.amountNgn);
   if (!category) return { ok: false, error: 'Expense category is required.' };
@@ -5222,7 +5224,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
   const totalNgn = sumQuotationLinesJson(linesJson);
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  const id = String(payload.id ?? '').trim() || nextQuotationHumanId(db, bid);
+  const id = nextQuotationHumanId(db, bid);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
   const dueDateISO = payload.dueDateISO || '';

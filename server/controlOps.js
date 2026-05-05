@@ -703,9 +703,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
   const amountNgn = roundMoney(payload.amountNgn);
   if (!customerID) return { ok: false, error: 'Customer is required.' };
   if (amountNgn <= 0) return { ok: false, error: 'Refund amount must be positive.' };
-  const refundID =
-    String(payload.refundID ?? '').trim() ||
-    nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
+  const refundID = nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
   const requestedAtISO = String(payload.requestedAtISO ?? '').trim() || nowIso();
   try {
     assertPeriodOpen(db, requestedAtISO, 'Refund request date');

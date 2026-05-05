@@ -282,6 +282,21 @@ export function runMigrations(db) {
     db.exec(`ALTER TABLE production_job_coils ADD COLUMN spec_mismatch INTEGER NOT NULL DEFAULT 0`);
   }
 
+  /** Allow swapping coil numbers between lines on the same job during post-completion correction (app still enforces unique coils). */
+  const hasPjcJobCoilUniq = db
+    .prepare(
+      'SELECT 1 AS `1` FROM information_schema.statistics ' +
+        "WHERE table_schema = DATABASE() AND table_name = 'production_job_coils' AND index_name = ? LIMIT 1"
+    )
+    .get('idx_production_job_coils_job_coil');
+  if (hasPjcJobCoilUniq) {
+    try {
+      db.exec(`ALTER TABLE production_job_coils DROP INDEX idx_production_job_coils_job_coil`);
+    } catch {
+      /* ignore */
+    }
+  }
+
   const refunds = tableCols('customer_refunds');
   // Legacy DBs: refunds table existed before workflow status column (listManagementItems filters on it).
   if (refunds.size > 0 && !refunds.has('status')) {

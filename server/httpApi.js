@@ -150,6 +150,7 @@ import {
 import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from './masterData.js';
 import { parseSupplierProfileJson } from './supplierProfile.js';
 import {
+  applyCompletedProductionCoilCorrections,
   applyProductionCompletionAdjustment,
   cancelProductionJob,
   completeProductionJob,
@@ -2826,6 +2827,22 @@ export function registerHttpApi(app, db) {
         const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
         const r = applyProductionCompletionAdjustment(db, req.params.jobId, req.body || {}, { actor: req.user });
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/production-jobs/:jobId/completion-coil-corrections',
+    requirePermission(productionCorrectionPerms),
+    (req, res) => {
+      try {
+        const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+        if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+        const r = applyCompletedProductionCoilCorrections(db, req.params.jobId, req.body || {}, { actor: req.user });
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error(e);

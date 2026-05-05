@@ -200,6 +200,7 @@ export function stripEditApprovalFromBody(body) {
 }
 
 /**
+ * Shared guard for PATCH/POST bodies that carry `editApprovalId` (single-use token for non-exempt roles).
  * @param {import('express').Response} res
  * @param {import('better-sqlite3').Database} db
  * @param {object} user req.user
@@ -208,7 +209,7 @@ export function stripEditApprovalFromBody(body) {
  * @param {string} entityId
  * @param {(strippedBody: object) => { ok: boolean, error?: string, code?: string }} executeWrite — sync, runs inside transaction
  */
-export function handlePatchWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
+export function handleWriteWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
   if (!editMutationRequiresSecondApproval(user)) {
     const r = executeWrite(stripped);
@@ -236,6 +237,19 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e.message || e) });
   }
+}
+
+/**
+ * @param {import('express').Response} res
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} user req.user
+ * @param {object} body req.body
+ * @param {string} entityKind
+ * @param {string} entityId
+ * @param {(strippedBody: object) => { ok: boolean, error?: string, code?: string }} executeWrite — sync, runs inside transaction
+ */
+export function handlePatchWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
+  return handleWriteWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite);
 }
 
 /**

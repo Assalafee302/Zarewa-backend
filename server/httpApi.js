@@ -105,6 +105,7 @@ import {
   getEditApproval,
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
+  handleWriteWithEditApproval,
   listPendingEditApprovals,
   stripEditApprovalFromBody,
 } from './editApproval.js';
@@ -2824,10 +2825,12 @@ export function registerHttpApi(app, db) {
     requirePermission(productionCorrectionPerms),
     (req, res) => {
       try {
-        const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+        const jid = req.params.jobId;
+        const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        const r = applyProductionCompletionAdjustment(db, req.params.jobId, req.body || {}, { actor: req.user });
-        res.status(r.ok ? 200 : 400).json(r);
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyProductionCompletionAdjustment(db, jid, stripped || {}, { actor: req.user })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -2840,10 +2843,12 @@ export function registerHttpApi(app, db) {
     requirePermission(productionCorrectionPerms),
     (req, res) => {
       try {
-        const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+        const jid = req.params.jobId;
+        const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        const r = applyCompletedProductionCoilCorrections(db, req.params.jobId, req.body || {}, { actor: req.user });
-        res.status(r.ok ? 200 : 400).json(r);
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyCompletedProductionCoilCorrections(db, jid, stripped || {}, { actor: req.user })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });

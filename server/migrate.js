@@ -2367,9 +2367,8 @@ function migrateOrganisationRoles2026(db) {
   }
 
   try {
-    db.prepare(`UPDATE app_users SET role_key = 'md', permissions_json = NULL WHERE role_key = 'ceo'`).run();
     db.prepare(
-      `UPDATE app_users SET role_key = 'sales_staff', permissions_json = NULL WHERE role_key IN ('viewer','hr_officer')`
+      `UPDATE app_users SET role_key = 'sales_staff', permissions_json = NULL WHERE role_key IN ('hr_officer')`
     ).run();
     db.prepare(`UPDATE app_users SET role_key = 'sales_manager', permissions_json = NULL WHERE role_key = 'hr_manager'`).run();
     db.prepare(

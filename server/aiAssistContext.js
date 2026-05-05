@@ -1,5 +1,5 @@
 import { buildBootstrap } from './bootstrap.js';
-import { userHasPermission } from './auth.js';
+import { userHasPermission, userMayViewManagementReports } from './auth.js';
 import { resolveBootstrapBranchScope } from './branchScope.js';
 import {
   canReadFinanceDomain,
@@ -218,7 +218,10 @@ function dashboardNotifications(req, snapshot) {
   return buildWorkspaceNotifications({
     snapshot,
     hasPermission: (permission) => permission === '*' || userHasPermission(req.user, permission),
-    canAccessModule: (moduleKey) => canAccessModuleWithPermissions(permissions, moduleKey),
+    canAccessModule: (moduleKey) => {
+      if (moduleKey === 'reports') return userMayViewManagementReports(req.user);
+      return canAccessModuleWithPermissions(permissions, moduleKey);
+    },
     lowStockSkuCount: lowStockCount(snapshot),
   });
 }

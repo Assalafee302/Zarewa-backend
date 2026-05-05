@@ -58,6 +58,7 @@ import {
   userCanApproveEditMutations,
   userHasPermission,
   userMaySelectSessionWorkspaceBranch,
+  userMayViewManagementReports,
 } from './auth.js';
 import {
   assertCustomerLedgerPostingBranch,
@@ -371,6 +372,29 @@ function normalizeTreasuryLines(body) {
 
 function totalTreasuryLines(lines) {
   return (lines || []).reduce((sum, line) => sum + (Number(line.amountNgn) || 0), 0);
+}
+
+function requireManagementReportsView(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
+  }
+  if (!userMayViewManagementReports(req.user)) {
+    return res.status(403).json({ ok: false, error: 'You do not have permission for this action.', code: 'FORBIDDEN' });
+  }
+  return next();
+}
+
+function requireCoilSnapshotCapture(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
+  }
+  if (!userMayViewManagementReports(req.user)) {
+    return res.status(403).json({ ok: false, error: 'You do not have permission for this action.', code: 'FORBIDDEN' });
+  }
+  if (!userHasPermission(req.user, 'finance.view') && !userHasPermission(req.user, 'reports.view')) {
+    return res.status(403).json({ ok: false, error: 'You do not have permission for this action.', code: 'FORBIDDEN' });
+  }
+  return next();
 }
 
 /**
@@ -1768,7 +1792,7 @@ export function registerHttpApi(app, db) {
   });
 
 
-  app.get('/api/reports/summary', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/summary', requireManagementReportsView, (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const counts = workspaceReportAggregateCounts(db, branchScope);
@@ -1779,7 +1803,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/production-transaction', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/production-transaction', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1797,7 +1821,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/receipts-register', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/receipts-register', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1814,7 +1838,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/revenue-production', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/revenue-production', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1829,7 +1853,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/ar-as-at', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/ar-as-at', requireManagementReportsView, (req, res) => {
     try {
       const asAtDate = String(req.query.asAtDate || req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
@@ -1849,7 +1873,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/sales-bridge', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/sales-bridge', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1867,7 +1891,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/expenses-pack', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/expenses-pack', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1881,7 +1905,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/refunds-pack', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/refunds-pack', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
@@ -1895,7 +1919,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/purchases', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/purchases', requireManagementReportsView, (req, res) => {
     try {
       const cut = String(req.query.cut || 'received').toLowerCase();
       const startDate = String(req.query.startDate || '').slice(0, 10);
@@ -1920,7 +1944,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/reports/stock-coil-as-at', requirePermission('reports.view'), (req, res) => {
+  app.get('/api/reports/stock-coil-as-at', requireManagementReportsView, (req, res) => {
     try {
       const asAtDate = String(req.query.asAtDate || req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
@@ -1957,7 +1981,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/reports/coil-snapshot-capture', requirePermission(['finance.view', 'reports.view']), (req, res) => {
+  app.post('/api/reports/coil-snapshot-capture', requireAuth, requireCoilSnapshotCapture, (req, res) => {
     try {
       const asAtISO = String(req.body?.asAtISO || req.body?.asAtDate || '').slice(0, 10);
       if (!asAtISO) {

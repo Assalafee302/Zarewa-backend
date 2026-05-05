@@ -4,7 +4,7 @@ import { signInViaApi } from './helpers/auth';
 test.describe.configure({ timeout: 90_000 });
 
 test.describe('Role-based access (API + UI)', () => {
-  test('viewer: customers API forbidden; reports summary allowed', async ({ page }) => {
+  test('viewer: customers API forbidden; reports summary forbidden', async ({ page }) => {
     await signInViaApi(page, 'viewer', 'Viewer@123456!');
     const customers = await page.request.get('/api/customers');
     expect(customers.status()).toBe(403);
@@ -12,20 +12,16 @@ test.describe('Role-based access (API + UI)', () => {
     expect(body.code).toBe('FORBIDDEN');
 
     const summary = await page.request.get('/api/reports/summary');
-    expect(summary.status()).toBe(200);
-    const sumJson = await summary.json();
-    expect(sumJson.ok).toBe(true);
-    expect(sumJson.counts).toBeTruthy();
-    expect(typeof sumJson.counts.customersTotal).toBe('number');
+    expect(summary.status()).toBe(403);
+    const sumBody = await summary.json();
+    expect(sumBody.code).toBe('FORBIDDEN');
   });
 
-  test('viewer: Reports shows count-only overview', async ({ page }) => {
+  test('viewer: Reports nav hidden; deep link redirects home', async ({ page }) => {
     await signInViaApi(page, 'viewer', 'Viewer@123456!');
-    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Reports' }).click();
-    await expect(page).toHaveURL(/\/reports$/);
-    await expect(page.getByRole('heading', { name: /count-only overview/i })).toBeVisible({
-      timeout: 20_000,
-    });
+    await expect(page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Reports' })).toHaveCount(0);
+    await page.goto('/reports');
+    await expect(page).toHaveURL(/\//, { timeout: 15_000 });
   });
 
   test('procurement: customers forbidden; suppliers allowed', async ({ page }) => {

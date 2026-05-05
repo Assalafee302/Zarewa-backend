@@ -7,11 +7,13 @@
 export const WORKSPACE_ROLE_KEYS = [
   'admin',
   'md',
+  'ceo',
   'finance_manager',
   'sales_manager',
   'sales_staff',
   'cashier',
   'operations_officer',
+  'viewer',
 ];
 
 const LEGACY_DEPARTMENT_TO_ROLE = {

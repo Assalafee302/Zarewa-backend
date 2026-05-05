@@ -89,7 +89,6 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
-      'reports.view',
       'sales.view',
       'procurement.view',
       'procurement.manage',
@@ -159,13 +158,20 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
-      'reports.view',
       'operations.view',
       'operations.manage',
       'production.manage',
       'production.release',
       'deliveries.manage',
     ],
+  },
+  ceo: {
+    label: 'Chief Executive Officer',
+    permissions: ['exec.dashboard.view', 'dashboard.view', 'office.use', 'reports.view'],
+  },
+  viewer: {
+    label: 'Read-only viewer',
+    permissions: ['dashboard.view'],
   },
 };
 
@@ -225,6 +231,22 @@ const DEFAULT_USERS = [
     roleKey: 'operations_officer',
     department: 'operations_officer',
     password: 'Ops@123',
+  },
+  {
+    id: 'USR-CEO',
+    username: 'ceo',
+    displayName: 'Chief Executive Officer',
+    roleKey: 'ceo',
+    department: 'ceo',
+    password: 'Ceo@1234567890!',
+  },
+  {
+    id: 'USR-VIEW',
+    username: 'viewer',
+    displayName: 'Read-only Viewer',
+    roleKey: 'viewer',
+    department: 'viewer',
+    password: 'Viewer@123456!',
   },
 ];
 
@@ -289,9 +311,23 @@ export function userHasPermission(user, permission) {
   return perms.includes('*') || perms.includes(permission);
 }
 
+/** Roles allowed to open management reports (`/reports`, `/api/reports/*`). */
+export const MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS = new Set(['admin', 'md', 'ceo', 'sales_manager']);
+
+/**
+ * Branch manager, MD, CEO, or administrator. Custom `permissions_json` cannot bypass role for these reports.
+ */
+export function userMayViewManagementReports(user) {
+  if (!user) return false;
+  if (userHasPermission(user, '*')) return true;
+  const rk = String(user.roleKey || '').trim().toLowerCase();
+  if (!MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS.has(rk)) return false;
+  return userHasPermission(user, 'reports.view');
+}
+
 export function canUseAllBranchesRollup(user) {
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
-  return roleKey === 'admin' || roleKey === 'md';
+  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo';
 }
 
 /** Only these roles may PATCH without a prior second-party approval token. */

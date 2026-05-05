@@ -846,7 +846,7 @@ describe('Transactional scenarios (business checklist)', () => {
   );
 
   it(
-    '20. Role-based access — operations can adjust stock; sales cannot',
+    '20. Role-based access — branch manager can adjust stock; sales and operations cannot',
     { timeout: 25_000 },
     async () => {
       const { app } = await adminSession();
@@ -864,9 +864,21 @@ describe('Transactional scenarios (business checklist)', () => {
 
       const ops = request.agent(app);
       await loginAs(ops, 'operations', 'Ops@123');
-      const snap = await ops.get('/api/bootstrap');
+      const opsBlocked = await ops.post('/api/inventory/adjust').send({
+        productID: 'PRD-201',
+        type: 'Decrease',
+        qty: 1,
+        reasonCode: 'Test',
+        note: 'ops should fail',
+        dateISO: '2026-03-29',
+      });
+      expect(opsBlocked.status).toBe(403);
+
+      const mgr = request.agent(app);
+      await loginAs(mgr, 'sales.manager', 'Sales@123');
+      const snap = await mgr.get('/api/bootstrap');
       const before = snap.body.products.find((x) => x.productID === 'PRD-201').stockLevel;
-      const ok = await ops.post('/api/inventory/adjust').send({
+      const ok = await mgr.post('/api/inventory/adjust').send({
         productID: 'PRD-201',
         type: 'Decrease',
         qty: 1,
@@ -875,7 +887,7 @@ describe('Transactional scenarios (business checklist)', () => {
         dateISO: '2026-03-29',
       });
       expect(ok.status).toBe(200);
-      const after = await ops.get('/api/bootstrap');
+      const after = await mgr.get('/api/bootstrap');
       expect(after.body.products.find((x) => x.productID === 'PRD-201').stockLevel).toBe(before - 1);
     }
   );

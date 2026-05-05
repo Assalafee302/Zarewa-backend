@@ -80,6 +80,8 @@ export const ROLE_DEFINITIONS = {
       'pricing.manage',
       'md.price_exception.approve',
       'inter_branch_loan.md_approve',
+      'inventory.receive',
+      'inventory.adjust',
     ],
   },
   finance_manager: {
@@ -160,8 +162,6 @@ export const ROLE_DEFINITIONS = {
       'reports.view',
       'operations.view',
       'operations.manage',
-      'inventory.receive',
-      'inventory.adjust',
       'production.manage',
       'production.release',
       'deliveries.manage',

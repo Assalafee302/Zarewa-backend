@@ -213,7 +213,19 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
   const stripped = stripEditApprovalFromBody(body || {});
   const runWrite = () => {
     const out = executeWrite(stripped, { withinEditApprovalTransaction: true });
-    if (!out || out.ok === false) throw new Error(out?.error || 'Update rejected.');
+    if (!out || out.ok === false) {
+      if (out && out.code === 'PRODUCTION_SPEC_MISMATCH') {
+        const err = new Error(out.error || 'Spec mismatch');
+        err.__clientJson = {
+          ok: false,
+          code: out.code,
+          error: out.error,
+          mismatches: out.mismatches,
+        };
+        throw err;
+      }
+      throw new Error(out?.error || 'Update rejected.');
+    }
     return out;
   };
   if (!editMutationRequiresSecondApproval(user)) {
@@ -222,6 +234,7 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
       if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
       return res.status(200).json(r);
     } catch (e) {
+      if (e && e.__clientJson) return res.status(400).json(e.__clientJson);
       return res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   }
@@ -242,6 +255,7 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
     if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
     return res.status(200).json(r);
   } catch (e) {
+    if (e && e.__clientJson) return res.status(400).json(e.__clientJson);
     return res.status(400).json({ ok: false, error: String(e.message || e) });
   }
 }

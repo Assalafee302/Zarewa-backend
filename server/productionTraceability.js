@@ -863,7 +863,8 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
   const partialPreview = Boolean(opts.partialPreview);
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
-  if ((job.status ?? 'Planned') !== 'Running') {
+  const jobStatus = String(job.status ?? 'Planned');
+  if (jobStatus !== 'Running' && !(partialPreview && jobStatus === 'Completed')) {
     return { ok: false, error: 'Start the production job before completing it.' };
   }
   const existingAllocations = listJobCoilsForJob(db, jobID);
@@ -881,6 +882,7 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
   }
   try {
     const conversionRows = [];
+    const existingById = new Map(existingAllocations.map((a) => [String(a.id ?? '').trim(), a]));
     for (const allocation of existingAllocations) {
       const coilKey = String(allocation.coil_no ?? '').trim();
       const submitted =
@@ -889,18 +891,28 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         if (partialPreview) continue;
         throw new Error(`Provide completion readings for coil ${coilKey || allocation.coil_no}.`);
       }
-      const openingWeightKg = safeNumber(allocation.opening_weight_kg);
+      const hasOpenInPayload =
+        Object.prototype.hasOwnProperty.call(submitted, 'openingWeightKg') ||
+        Object.prototype.hasOwnProperty.call(submitted, 'opening_weight_kg');
+      const openingWeightKg = hasOpenInPayload
+        ? safeNumber(submitted.openingWeightKg ?? submitted.opening_weight_kg)
+        : safeNumber(allocation.opening_weight_kg);
+      const hasCoilInPayload = Object.prototype.hasOwnProperty.call(submitted, 'coilNo');
+      const coilNoForRow = hasCoilInPayload
+        ? String(submitted.coilNo ?? submitted.coil_no ?? '').trim()
+        : coilKey;
       const closingWeightKg = safeNumber(submitted.closingWeightKg);
       const metersProduced = safeNumber(submitted.metersProduced);
       const finishCoil = Boolean(submitted.finishCoil ?? submitted.finish_coil);
+      const rowLabel = coilNoForRow || coilKey || allocation.coil_no;
       if (closingWeightKg < 0 || closingWeightKg > openingWeightKg) {
         if (partialPreview) continue;
-        throw new Error(`Coil ${coilKey} closing kg must be between 0 and ${openingWeightKg}.`);
+        throw new Error(`Coil ${rowLabel} closing kg must be between 0 and ${openingWeightKg}.`);
       }
       if (finishCoil && closingWeightKg >= COIL_TAIL_FINISH_MAX_KG) {
         if (partialPreview) continue;
         throw new Error(
-          `Coil ${coilKey}: “Finish roll” only applies when closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg.`
+          `Coil ${rowLabel}: “Finish roll” only applies when closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg.`
         );
       }
       if (
@@ -910,33 +922,33 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       ) {
         if (partialPreview) continue;
         throw new Error(
-          `Coil ${coilKey}: closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg (typical core/spool tail). Confirm “Finish roll” to clear the remaining tail from coil stock when completing, or raise closing kg if usable steel is still on the roll.`
+          `Coil ${rowLabel}: closing weight is below ${COIL_TAIL_FINISH_MAX_KG} kg (typical core/spool tail). Confirm “Finish roll” to clear the remaining tail from coil stock when completing, or raise closing kg if usable steel is still on the roll.`
         );
       }
       if (metersProduced <= 0) {
         if (partialPreview) continue;
-        throw new Error(`Coil ${coilKey} must produce a positive number of metres.`);
+        throw new Error(`Coil ${rowLabel} must produce a positive number of metres.`);
       }
       const consumedWeightKg = openingWeightKg - closingWeightKg;
       if (consumedWeightKg <= 0) {
         if (partialPreview) continue;
-        throw new Error(`Coil ${coilKey} shows no consumed kg.`);
+        throw new Error(`Coil ${rowLabel} shows no consumed kg.`);
       }
       const actualConversionKgPerM = consumedWeightKg / metersProduced;
-      const coil = coilRow(db, allocation.coil_no);
-      if (!coil) throw new Error(`Coil ${coilKey} was not found.`);
+      const coil = coilRow(db, coilNoForRow);
+      if (!coil) throw new Error(`Coil ${rowLabel} was not found.`);
       const qtyRemaining = clampNonNegative(
         coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
       );
       if (consumedWeightKg > qtyRemaining + 0.0001) {
         if (partialPreview) continue;
-        throw new Error(`Coil ${coilKey} does not have enough remaining kg.`);
+        throw new Error(`Coil ${rowLabel} does not have enough remaining kg.`);
       }
       const references = buildReferenceSet(db, coil, actualConversionKgPerM, jobID);
       const alert = determineAlertState(actualConversionKgPerM, references);
       conversionRows.push({
         allocationId: allocation.id,
-        coilNo: coilKey || allocation.coil_no,
+        coilNo: coilNoForRow || allocation.coil_no,
         productID: coil.product_id ?? '',
         openingWeightKg,
         closingWeightKg,
@@ -949,6 +961,50 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         note: String(submitted.note ?? '').trim(),
         finishCoil,
       });
+    }
+    if (partialPreview && jobStatus === 'Completed') {
+      for (const line of submittedAllocations) {
+        const aid = String(line?.allocationId ?? line?.allocation_id ?? '').trim();
+        const cn = String(line?.coilNo ?? line?.coil_no ?? '').trim();
+        if (!cn) continue;
+        if (aid && existingById.has(aid)) continue;
+        if (!aid && conversionRows.some((r) => String(r.coilNo ?? '').trim() === cn)) continue;
+        const openingWeightKg = safeNumber(line.openingWeightKg ?? line.opening_weight_kg);
+        const closingWeightKg = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
+        const metersProduced = safeNumber(line.metersProduced ?? line.meters_produced);
+        const finishCoil = Boolean(line.finishCoil ?? line.finish_coil);
+        if (openingWeightKg <= 0 || closingWeightKg < 0 || closingWeightKg > openingWeightKg + 0.0001) {
+          continue;
+        }
+        if (finishCoil && closingWeightKg >= COIL_TAIL_FINISH_MAX_KG) continue;
+        if (metersProduced <= 0) continue;
+        const consumedWeightKg = openingWeightKg - closingWeightKg;
+        if (consumedWeightKg <= 0) continue;
+        const coil = coilRow(db, cn);
+        if (!coil) continue;
+        const qtyRemaining = clampNonNegative(
+          coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
+        );
+        if (consumedWeightKg > qtyRemaining + 0.0001) continue;
+        const actualConversionKgPerM = consumedWeightKg / metersProduced;
+        const references = buildReferenceSet(db, coil, actualConversionKgPerM, jobID);
+        const alert = determineAlertState(actualConversionKgPerM, references);
+        conversionRows.push({
+          allocationId: null,
+          coilNo: cn,
+          productID: coil.product_id ?? '',
+          openingWeightKg,
+          closingWeightKg,
+          consumedWeightKg,
+          metersProduced,
+          actualConversionKgPerM,
+          references,
+          alertState: alert.alertState,
+          managerReviewRequired: alert.managerReviewRequired,
+          note: String(line.note ?? '').trim(),
+          finishCoil,
+        });
+      }
     }
     if (conversionRows.length === 0) {
       return {
@@ -971,7 +1027,11 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       managerReviewRequired,
       previewPartial: partialPreview,
       previewCoilCount: partialPreview ? conversionRows.length : undefined,
-      previewCoilsTotal: partialPreview ? existingAllocations.length : undefined,
+      previewCoilsTotal: partialPreview
+        ? jobStatus === 'Completed'
+          ? conversionRows.length
+          : existingAllocations.length
+        : undefined,
     };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };

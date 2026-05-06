@@ -5466,27 +5466,76 @@ export function deleteQuotationIfAllowed(db, quotationId) {
   const row = db.prepare(`SELECT id FROM quotations WHERE id = ?`).get(qid);
   if (!row) return { ok: false, error: 'Quotation not found.' };
 
-  const linkedReceipts = db
-    .prepare(`SELECT COUNT(*) AS c FROM sales_receipts WHERE quotation_ref = ?`)
-    .get(qid)?.c;
-  if (Number(linkedReceipts) > 0) {
-    return { ok: false, error: 'Cannot delete quotation with receipts. Delete linked payments first.' };
-  }
-  const linkedCuts = db
-    .prepare(`SELECT COUNT(*) AS c FROM cutting_lists WHERE quotation_ref = ?`)
-    .get(qid)?.c;
-  if (Number(linkedCuts) > 0) {
-    return { ok: false, error: 'Cannot delete quotation with cutting lists linked to it.' };
-  }
-  const linkedRefunds = db
-    .prepare(`SELECT COUNT(*) AS c FROM customer_refunds WHERE quotation_ref = ?`)
-    .get(qid)?.c;
-  if (Number(linkedRefunds) > 0) {
-    return { ok: false, error: 'Cannot delete quotation with refund records linked to it.' };
+  const producedCut = db
+    .prepare(
+      `SELECT id, status, production_registered, production_register_ref
+       FROM cutting_lists
+       WHERE quotation_ref = ?`
+    )
+    .all(qid)
+    .find((row) => {
+      if (Number(row.production_registered) > 0) return true;
+      const st = String(row.status || '').trim().toLowerCase();
+      if (st === 'finished') return true;
+      const ref = String(row.production_register_ref || '').trim();
+      return Boolean(ref);
+    });
+  if (producedCut) {
+    return {
+      ok: false,
+      error:
+        'Cannot delete this transaction bundle because production already exists on a linked cutting list.',
+    };
   }
 
-  db.prepare(`DELETE FROM quotations WHERE id = ?`).run(qid);
-  return { ok: true, quotationId: qid };
+  const linkedCuts = db
+    .prepare(`SELECT id FROM cutting_lists WHERE quotation_ref = ?`)
+    .all(qid)
+    .map((row) => String(row.id || '').trim())
+    .filter(Boolean);
+
+  const linkedReceipts = db
+    .prepare(`SELECT id, ledger_entry_id FROM sales_receipts WHERE quotation_ref = ?`)
+    .all(qid);
+
+  const deletedReceiptIds = [];
+  const deletedLedgerEntryIds = [];
+  db.transaction(() => {
+    for (const rec of linkedReceipts) {
+      const receiptId = String(rec.id || '').trim();
+      const ledgerId = String(rec.ledger_entry_id || '').trim();
+      db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`).run(
+        receiptId
+      );
+      if (ledgerId) {
+        db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`).run(
+          ledgerId
+        );
+        db.prepare(`DELETE FROM ledger_entries WHERE id = ?`).run(ledgerId);
+        deletedLedgerEntryIds.push(ledgerId);
+      }
+      db.prepare(`DELETE FROM sales_receipts WHERE id = ?`).run(receiptId);
+      deletedReceiptIds.push(receiptId);
+    }
+
+    if (linkedCuts.length > 0) {
+      const delProdByCl = db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`);
+      for (const cutId of linkedCuts) delProdByCl.run(cutId);
+      const delCut = db.prepare(`DELETE FROM cutting_lists WHERE id = ?`);
+      for (const cutId of linkedCuts) delCut.run(cutId);
+    }
+
+    db.prepare(`DELETE FROM customer_refunds WHERE quotation_ref = ?`).run(qid);
+    db.prepare(`DELETE FROM quotations WHERE id = ?`).run(qid);
+  })();
+
+  return {
+    ok: true,
+    quotationId: qid,
+    deletedReceipts: deletedReceiptIds.length,
+    deletedCuttingLists: linkedCuts.length,
+    deletedLedgerEntries: deletedLedgerEntryIds.length,
+  };
 }
 
 export function deleteSalesReceiptIfAllowed(db, receiptOrLedgerId) {
@@ -5504,6 +5553,24 @@ export function deleteSalesReceiptIfAllowed(db, receiptOrLedgerId) {
   const receiptId = String(row.id || '').trim();
   const ledgerId = String(row.ledger_entry_id || '').trim();
   const quotationRef = String(row.quotation_ref || '').trim();
+  const linkedCuts = quotationRef
+    ? db
+        .prepare(`SELECT id, status, production_registered, production_register_ref FROM cutting_lists WHERE quotation_ref = ?`)
+        .all(quotationRef)
+    : [];
+  const producedCut = linkedCuts.find((cut) => {
+    if (Number(cut.production_registered) > 0) return true;
+    const st = String(cut.status || '').trim().toLowerCase();
+    if (st === 'finished') return true;
+    return Boolean(String(cut.production_register_ref || '').trim());
+  });
+  if (producedCut) {
+    return {
+      ok: false,
+      error:
+        'Cannot delete this receipt because a linked cutting list already has production activity.',
+    };
+  }
 
   db.transaction(() => {
     db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`).run(
@@ -5518,10 +5585,44 @@ export function deleteSalesReceiptIfAllowed(db, receiptOrLedgerId) {
     } else {
       db.prepare(`DELETE FROM sales_receipts WHERE id = ?`).run(receiptId);
     }
+    const delProdByCl = db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`);
+    const delCut = db.prepare(`DELETE FROM cutting_lists WHERE id = ?`);
+    for (const cut of linkedCuts) {
+      const cutId = String(cut.id || '').trim();
+      if (!cutId) continue;
+      delProdByCl.run(cutId);
+      delCut.run(cutId);
+    }
     if (quotationRef) syncQuotationPaidFromLedger(db, quotationRef);
   })();
 
-  return { ok: true, receiptId, ledgerEntryId: ledgerId || null };
+  return {
+    ok: true,
+    receiptId,
+    ledgerEntryId: ledgerId || null,
+    deletedCuttingLists: linkedCuts.length,
+  };
+}
+
+export function deleteCuttingListIfAllowed(db, cuttingListId) {
+  const cid = String(cuttingListId || '').trim();
+  if (!cid) return { ok: false, error: 'Cutting list id is required.' };
+  const row = db
+    .prepare(`SELECT id, status, production_registered, production_register_ref FROM cutting_lists WHERE id = ?`)
+    .get(cid);
+  if (!row) return { ok: false, error: 'Cutting list not found.' };
+  const hasProduction =
+    Number(row.production_registered) > 0 ||
+    String(row.status || '').trim().toLowerCase() === 'finished' ||
+    Boolean(String(row.production_register_ref || '').trim());
+  if (hasProduction) {
+    return { ok: false, error: 'Cannot delete a cutting list that already has production activity.' };
+  }
+  db.transaction(() => {
+    db.prepare(`DELETE FROM production_jobs WHERE cutting_list_id = ?`).run(cid);
+    db.prepare(`DELETE FROM cutting_lists WHERE id = ?`).run(cid);
+  })();
+  return { ok: true, cuttingListId: cid };
 }
 
 export function replaceRefunds(db, refunds) {

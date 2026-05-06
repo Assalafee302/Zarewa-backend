@@ -4405,7 +4405,12 @@ export function registerHttpApi(app, db) {
           action: 'quotation.delete',
           entityKind: 'quotation',
           entityId: String(req.params.id || ''),
-          note: 'Quotation deleted from sales screen',
+          note: 'Quotation deleted with linked receipts and cutting lists from sales screen',
+          details: {
+            deletedReceipts: r.deletedReceipts ?? 0,
+            deletedCuttingLists: r.deletedCuttingLists ?? 0,
+            deletedLedgerEntries: r.deletedLedgerEntries ?? 0,
+          },
         });
       }
       res.status(r.ok ? 200 : 400).json(r);
@@ -4824,8 +4829,11 @@ export function registerHttpApi(app, db) {
           action: 'receipt.delete',
           entityKind: 'sales_receipt',
           entityId: String(r.receiptId || req.params.id || ''),
-          note: 'Payment deleted from sales screen',
-          details: { ledgerEntryId: r.ledgerEntryId || null },
+          note: 'Payment deleted with linked cutting lists from sales screen',
+          details: {
+            ledgerEntryId: r.ledgerEntryId || null,
+            deletedCuttingLists: r.deletedCuttingLists ?? 0,
+          },
         });
       }
       res.status(r.ok ? 200 : 400).json(r);
@@ -4834,6 +4842,36 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+
+  app.delete(
+    '/api/cutting-lists/:id',
+    requirePermission(['sales.manage', 'operations.manage', 'quotations.manage']),
+    (req, res) => {
+      try {
+        const rk = String(req.user?.roleKey || '').toLowerCase();
+        if (!['admin', 'md', 'sales_manager', 'branch_manager'].includes(rk)) {
+          return res.status(403).json({
+            ok: false,
+            error: 'Only Admin, MD, or Branch Manager can delete cutting lists.',
+          });
+        }
+        const r = write.deleteCuttingListIfAllowed(db, req.params.id);
+        if (r.ok) {
+          appendAuditLog(db, {
+            actor: req.user,
+            action: 'cutting_list.delete',
+            entityKind: 'cutting_list',
+            entityId: String(r.cuttingListId || req.params.id || ''),
+            note: 'Cutting list deleted from sales screen',
+          });
+        }
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
 
   app.post(
     '/api/ledger/refund-advance',

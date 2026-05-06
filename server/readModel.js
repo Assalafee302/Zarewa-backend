@@ -202,6 +202,15 @@ export function listQuotations(db, branchScope = 'ALL') {
     .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(row)));
 }
 
+/** Lightweight id list for admin bulk jobs (same branch scope as listQuotations). */
+export function listQuotationIds(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'quotations', branchScope);
+  return db
+    .prepare(`SELECT id FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
+    .all(...b.args)
+    .map((row) => row.id);
+}
+
 export function getQuotation(db, id) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(id);
   if (!row) return null;

@@ -168,6 +168,7 @@ import {
   listCustomers,
   getCustomer,
   listQuotations,
+  listQuotationIds,
   getQuotation,
   getCuttingList,
   listLedgerEntries,
@@ -4370,6 +4371,71 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  /**
+   * Bulk-recalculate quotations.paid_ngn from sales_receipts + ADVANCE_APPLIED (current workspace branch).
+   * Requires explicit { confirm: true } in JSON body.
+   */
+  app.post('/api/quotations/recalculate-paid-all', requirePermission('finance.approve'), (req, res) => {
+    try {
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Send JSON body { "confirm": true } to recalculate booked paid for all quotations in this branch.',
+        });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const ids = listQuotationIds(db, branchScope);
+      const failures = [];
+      let paidChangedCount = 0;
+      const changedSample = [];
+      for (const qid of ids) {
+        try {
+          const beforeRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(qid);
+          const before = Math.round(Number(beforeRow?.paid_ngn) || 0);
+          const r = write.syncQuotationPaidFromLedger(db, qid);
+          if (!r.ok) {
+            failures.push({ id: qid, error: r.error || 'Sync failed' });
+            continue;
+          }
+          const after = Math.round(Number(r.paidNgn) || 0);
+          if (before !== after) {
+            paidChangedCount += 1;
+            if (changedSample.length < 25) {
+              changedSample.push({ id: qid, before, after });
+            }
+          }
+        } catch (e) {
+          failures.push({ id: qid, error: String(e.message || e) });
+        }
+      }
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'quotation.bulk_sync_paid',
+        entityKind: 'quotation',
+        entityId: '*',
+        note: `Recalculated booked paid for ${ids.length} quotations (${paidChangedCount} amounts changed).`,
+        details: {
+          branchScope,
+          processed: ids.length,
+          paidChangedCount,
+          failureCount: failures.length,
+        },
+      });
+      res.json({
+        ok: true,
+        branchScope,
+        processed: ids.length,
+        paidChangedCount,
+        failures,
+        changedSample,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
     }
   });
 

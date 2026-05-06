@@ -5460,6 +5460,70 @@ export function reviveQuotation(db, quotationId) {
   return quotationId;
 }
 
+export function deleteQuotationIfAllowed(db, quotationId) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return { ok: false, error: 'Quotation id is required.' };
+  const row = db.prepare(`SELECT id FROM quotations WHERE id = ?`).get(qid);
+  if (!row) return { ok: false, error: 'Quotation not found.' };
+
+  const linkedReceipts = db
+    .prepare(`SELECT COUNT(*) AS c FROM sales_receipts WHERE quotation_ref = ?`)
+    .get(qid)?.c;
+  if (Number(linkedReceipts) > 0) {
+    return { ok: false, error: 'Cannot delete quotation with receipts. Delete linked payments first.' };
+  }
+  const linkedCuts = db
+    .prepare(`SELECT COUNT(*) AS c FROM cutting_lists WHERE quotation_ref = ?`)
+    .get(qid)?.c;
+  if (Number(linkedCuts) > 0) {
+    return { ok: false, error: 'Cannot delete quotation with cutting lists linked to it.' };
+  }
+  const linkedRefunds = db
+    .prepare(`SELECT COUNT(*) AS c FROM customer_refunds WHERE quotation_ref = ?`)
+    .get(qid)?.c;
+  if (Number(linkedRefunds) > 0) {
+    return { ok: false, error: 'Cannot delete quotation with refund records linked to it.' };
+  }
+
+  db.prepare(`DELETE FROM quotations WHERE id = ?`).run(qid);
+  return { ok: true, quotationId: qid };
+}
+
+export function deleteSalesReceiptIfAllowed(db, receiptOrLedgerId) {
+  const token = String(receiptOrLedgerId || '').trim();
+  if (!token) return { ok: false, error: 'Receipt id is required.' };
+  const row = db
+    .prepare(
+      `SELECT id, ledger_entry_id, quotation_ref
+       FROM sales_receipts
+       WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
+    )
+    .get(token, token);
+  if (!row) return { ok: false, error: 'Receipt not found.' };
+
+  const receiptId = String(row.id || '').trim();
+  const ledgerId = String(row.ledger_entry_id || '').trim();
+  const quotationRef = String(row.quotation_ref || '').trim();
+
+  db.transaction(() => {
+    db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`).run(
+      receiptId
+    );
+    if (ledgerId) {
+      db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'LEDGER_RECEIPT' AND source_id = ?`).run(
+        ledgerId
+      );
+      db.prepare(`DELETE FROM sales_receipts WHERE ledger_entry_id = ? OR id = ?`).run(ledgerId, receiptId);
+      db.prepare(`DELETE FROM ledger_entries WHERE id = ?`).run(ledgerId);
+    } else {
+      db.prepare(`DELETE FROM sales_receipts WHERE id = ?`).run(receiptId);
+    }
+    if (quotationRef) syncQuotationPaidFromLedger(db, quotationRef);
+  })();
+
+  return { ok: true, receiptId, ledgerEntryId: ledgerId || null };
+}
+
 export function replaceRefunds(db, refunds) {
   db.prepare(`DELETE FROM customer_refunds`).run();
   const ins = db.prepare(`

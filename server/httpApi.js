@@ -4389,6 +4389,32 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.delete('/api/quotations/:id', requirePermission('quotations.manage'), (req, res) => {
+    try {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (!['admin', 'md', 'sales_manager', 'branch_manager'].includes(rk)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only Admin, MD, or Branch Manager can delete quotations.',
+        });
+      }
+      const r = write.deleteQuotationIfAllowed(db, req.params.id);
+      if (r.ok) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'quotation.delete',
+          entityKind: 'quotation',
+          entityId: String(req.params.id || ''),
+          note: 'Quotation deleted from sales screen',
+        });
+      }
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.post('/api/quotations/:id/revive', requirePermission('quotations.manage'), (req, res) => {
     try {
       const qid = req.params.id;
@@ -4781,6 +4807,33 @@ export function registerHttpApi(app, db) {
     }
   }
   );
+
+  app.delete('/api/receipts/:id', requirePermission('receipts.post'), (req, res) => {
+    try {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (!['admin', 'md', 'sales_manager', 'branch_manager'].includes(rk)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only Admin, MD, or Branch Manager can delete payments.',
+        });
+      }
+      const r = write.deleteSalesReceiptIfAllowed(db, req.params.id);
+      if (r.ok) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'receipt.delete',
+          entityKind: 'sales_receipt',
+          entityId: String(r.receiptId || req.params.id || ''),
+          note: 'Payment deleted from sales screen',
+          details: { ledgerEntryId: r.ledgerEntryId || null },
+        });
+      }
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
 
   app.post(
     '/api/ledger/refund-advance',

@@ -1394,6 +1394,7 @@ function migrateQuotationLineCatalog2026(db) {
     ['SQI-018', 'accessory', 'Repair Kit', 'kit', 111, 'ACC-REPAIR-KIT'],
     ['SQI-019', 'accessory', 'Strapping nail', 'pack', 112, 'ACC-STRAPPING-NAIL-PACK'],
     ['SQI-020', 'accessory', 'Spool', 'pack', 113, 'ACC-SPOOL-PACK'],
+    ['SQI-035', 'accessory', 'Stone nail', 'pack', 114, 'ACC-STONE-NAIL-PACK'],
     ['SQI-009', 'service', 'Commission', 'job', 201, null],
     ['SQI-010', 'service', 'Transportation', 'job', 202, null],
     ['SQI-011', 'service', 'Installation', 'job', 203, null],
@@ -1590,6 +1591,7 @@ function migrateStoneCoatedAndPricingArch(db) {
     ['ACC-REPAIR-KIT', 'Repair Kit', 'kit'],
     ['ACC-STRAPPING-NAIL-PACK', 'Strapping nail (pack)', 'pack'],
     ['ACC-SPOOL-PACK', 'Spool (pack)', 'pack'],
+    ['ACC-STONE-NAIL-PACK', 'Stone nail (pack)', 'pack'],
   ];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
     for (const [pid, pname, unit] of accessoryProducts) {
@@ -1617,6 +1619,7 @@ function migrateStoneCoatedAndPricingArch(db) {
     ['SQI-018', 'Repair Kit', 'ACC-REPAIR-KIT', 'kit'],
     ['SQI-019', 'Strapping nail', 'ACC-STRAPPING-NAIL-PACK', 'pack'],
     ['SQI-020', 'Spool', 'ACC-SPOOL-PACK', 'pack'],
+    ['SQI-035', 'Stone nail', 'ACC-STONE-NAIL-PACK', 'pack'],
   ];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) {
     for (const [itemId, , invPid, unit] of accessoryQuoteLinks) {

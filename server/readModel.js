@@ -684,6 +684,47 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
   });
 }
 
+/**
+ * POs with a quoted transport fee and transporter assigned, where treasury payments are still below the fee.
+ * Used on Finance → Treasury (same pattern as refunds / payment requests awaiting payout).
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  const rows = db
+    .prepare(
+      `SELECT po_id, supplier_name, branch_id, status, procurement_kind,
+              transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
+              transport_amount_ngn, transport_paid_ngn
+       FROM purchase_orders
+       WHERE status != 'Rejected'
+         AND TRIM(COALESCE(transport_agent_id, '')) != ''
+         AND COALESCE(transport_amount_ngn, 0) > COALESCE(transport_paid_ngn, 0)
+         ${b.sql}
+       ORDER BY order_date_iso DESC, po_id DESC`
+    )
+    .all(...b.args);
+  return rows.map((row) => {
+    const total = Number(row.transport_amount_ngn) || 0;
+    const paid = Number(row.transport_paid_ngn) || 0;
+    const outstandingNgn = Math.max(0, total - paid);
+    return {
+      poID: row.po_id,
+      supplierName: row.supplier_name ?? '',
+      branchId: row.branch_id ?? '',
+      status: row.status ?? '',
+      procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+      transportAgentName: row.transport_agent_name ?? '',
+      transportReference: row.transport_reference ?? '',
+      transportFinanceAdvice: row.transport_finance_advice ?? '',
+      transportAmountNgn: total,
+      transportPaidNgn: paid,
+      outstandingNgn,
+    };
+  });
+}
+
 export function listCoilControlEvents(db, branchScope = 'ALL') {
   if (!hasColumn(db, 'coil_control_events', 'branch_id')) return [];
   const b = branchWhere(db, 'coil_control_events', branchScope);

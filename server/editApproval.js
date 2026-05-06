@@ -207,14 +207,23 @@ export function stripEditApprovalFromBody(body) {
  * @param {object} body req.body
  * @param {string} entityKind
  * @param {string} entityId
- * @param {(strippedBody: object) => { ok: boolean, error?: string, code?: string }} executeWrite — sync, runs inside transaction
+ * @param {(strippedBody: object, ctx?: { withinEditApprovalTransaction?: boolean }) => { ok: boolean, error?: string, code?: string }} executeWrite — sync; when ctx.withinEditApprovalTransaction is true, avoid opening nested db.transaction in the callee (MySQL SAVEPOINT stack).
  */
 export function handleWriteWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
+  const runWrite = () => {
+    const out = executeWrite(stripped, { withinEditApprovalTransaction: true });
+    if (!out || out.ok === false) throw new Error(out?.error || 'Update rejected.');
+    return out;
+  };
   if (!editMutationRequiresSecondApproval(user)) {
-    const r = executeWrite(stripped);
-    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
-    return res.status(r.ok ? 200 : 400).json(r);
+    try {
+      const r = db.transaction(runWrite)();
+      if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+      return res.status(200).json(r);
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
   }
   const aid = String(body?.editApprovalId ?? '').trim();
   if (!aid) {
@@ -228,9 +237,7 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
   try {
     const r = db.transaction(() => {
       consumeEditApprovalInTransaction(db, aid, entityKind, entityId);
-      const out = executeWrite(stripped);
-      if (!out || out.ok === false) throw new Error(out?.error || 'Update rejected.');
-      return out;
+      return runWrite();
     })();
     if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
     return res.status(200).json(r);
@@ -246,10 +253,36 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
  * @param {object} body req.body
  * @param {string} entityKind
  * @param {string} entityId
- * @param {(strippedBody: object) => { ok: boolean, error?: string, code?: string }} executeWrite — sync, runs inside transaction
+ * @param {(strippedBody: object, ctx?: { withinEditApprovalTransaction?: boolean }) => { ok: boolean, error?: string, code?: string }} executeWrite — sync; pass ctx.withinEditApprovalTransaction true when callee must not nest db.transaction (edit-approval outer tx on MySQL).
  */
 export function handlePatchWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
-  return handleWriteWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite);
+  const stripped = stripEditApprovalFromBody(body || {});
+  if (!editMutationRequiresSecondApproval(user)) {
+    const r = executeWrite(stripped, { withinEditApprovalTransaction: false });
+    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+    return res.status(r.ok ? 200 : 400).json(r);
+  }
+  const aid = String(body?.editApprovalId ?? '').trim();
+  if (!aid) {
+    return res.status(403).json({
+      ok: false,
+      code: 'EDIT_APPROVAL_REQUIRED',
+      error:
+        'A manager or administrator must approve this change first. Request an approval (Procurement / quotation save panel, or POST /api/edit-approvals/request), have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
+    });
+  }
+  try {
+    const r = db.transaction(() => {
+      consumeEditApprovalInTransaction(db, aid, entityKind, entityId);
+      const out = executeWrite(stripped, { withinEditApprovalTransaction: true });
+      if (!out || out.ok === false) throw new Error(out?.error || 'Update rejected.');
+      return out;
+    })();
+    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+    return res.status(200).json(r);
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e.message || e) });
+  }
 }
 
 /**

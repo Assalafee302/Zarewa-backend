@@ -1744,31 +1744,30 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
     const branchId = job.branch_id ?? null;
     const uid = opts.actor?.id != null ? String(opts.actor.id) : '';
     const name = String(actorName(opts.actor) || opts.actor?.displayName || '').trim() || 'User';
-    db.transaction(() => {
-      db.prepare(
-        `INSERT INTO production_completion_adjustments (
-          id, job_id, branch_id, delta_finished_goods_m, note, at_iso, created_by_user_id, created_by_name
-        ) VALUES (?,?,?,?,?,?,?,?)`
-      ).run(id, jobId, branchId, delta, note, atISO, uid || null, name);
-      adjustProductStockTx(db, productId, delta);
-      appendStockMovementTx(db, {
-        atISO,
-        type: 'PRODUCTION_FG_ADJUSTMENT',
-        ref: jobId,
-        productID: productId,
-        qty: delta,
-        detail: `FG adjustment ${jobId}: ${note.length > 100 ? `${note.slice(0, 97)}…` : note}`,
-        dateISO: atISO,
-      });
-      appendAuditLog(db, {
-        actor: opts.actor,
-        action: 'production.completion_adjustment',
-        entityKind: 'production_job',
-        entityId: jobId,
-        note: `FG metres ${delta >= 0 ? '+' : ''}${delta.toFixed(3)} m`,
-        details: { adjustmentId: id, deltaFinishedGoodsM: delta, productId, note },
-      });
-    })();
+    /** Single outer transaction comes from handleWriteWithEditApproval (MySQL nested SAVEPOINTs are fragile). */
+    db.prepare(
+      `INSERT INTO production_completion_adjustments (
+        id, job_id, branch_id, delta_finished_goods_m, note, at_iso, created_by_user_id, created_by_name
+      ) VALUES (?,?,?,?,?,?,?,?)`
+    ).run(id, jobId, branchId, delta, note, atISO, uid || null, name);
+    adjustProductStockTx(db, productId, delta);
+    appendStockMovementTx(db, {
+      atISO,
+      type: 'PRODUCTION_FG_ADJUSTMENT',
+      ref: jobId,
+      productID: productId,
+      qty: delta,
+      detail: `FG adjustment ${jobId}: ${note.length > 100 ? `${note.slice(0, 97)}…` : note}`,
+      dateISO: atISO,
+    });
+    appendAuditLog(db, {
+      actor: opts.actor,
+      action: 'production.completion_adjustment',
+      entityKind: 'production_job',
+      entityId: jobId,
+      note: `FG metres ${delta >= 0 ? '+' : ''}${delta.toFixed(3)} m`,
+      details: { adjustmentId: id, deltaFinishedGoodsM: delta, productId, note },
+    });
     return { ok: true, adjustmentId: id, deltaFinishedGoodsM: delta, productStockMetersAfter: next };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
@@ -1891,19 +1890,48 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   const byAid = new Map(existing.map((r) => [String(r.id ?? '').trim(), r]));
 
   const parsed = [];
+  let newLineCounter = 0;
   for (const raw of lines) {
     const aid = String(raw?.allocationId ?? raw?.allocation_id ?? '').trim();
-    if (!aid) return { ok: false, error: 'Each line must include allocationId.' };
-    const row = byAid.get(aid);
-    if (!row) return { ok: false, error: `Unknown allocation ${aid}.` };
-    if (String(row.allocation_status ?? '') !== 'Completed') {
-      return { ok: false, error: `Allocation ${aid} is not in Completed state.` };
-    }
     const nextCoil = String(raw.coilNo ?? raw.coil_no ?? '').trim();
     if (!nextCoil) return { ok: false, error: 'Each line must have a coil number.' };
     const nextOpening = safeNumber(raw.openingWeightKg ?? raw.opening_weight_kg);
     const nextClosing = safeNumber(raw.closingWeightKg ?? raw.closing_weight_kg);
     const nextMeters = safeNumber(raw.metersProduced ?? raw.meters_produced);
+    const newCoilRow = coilRow(db, nextCoil);
+    if (!newCoilRow) return { ok: false, error: `Coil ${nextCoil} not found.` };
+
+    if (!aid) {
+      newLineCounter += 1;
+      const label = `New coil line ${newLineCounter}`;
+      if (nextOpening <= 0) return { ok: false, error: `${label}: opening kg must be greater than 0.` };
+      if (nextClosing < 0 || nextClosing > nextOpening + 0.0001) {
+        return { ok: false, error: `${label}: closing kg must be between 0 and opening.` };
+      }
+      if (nextMeters <= 0) return { ok: false, error: `${label}: metres must be greater than 0.` };
+      const nextConsumed = nextOpening - nextClosing;
+      if (nextConsumed <= 0) return { ok: false, error: `${label}: consumed kg must be greater than 0.` };
+      parsed.push({
+        isNew: true,
+        aid: null,
+        row: null,
+        nextCoil,
+        nextOpening,
+        nextClosing,
+        nextMeters,
+        nextConsumed,
+        newProductId: String(newCoilRow.product_id ?? '').trim(),
+        lineNote: String(raw.note ?? '').trim(),
+        specAck: Boolean(raw.specMismatchAcknowledged),
+      });
+      continue;
+    }
+
+    const row = byAid.get(aid);
+    if (!row) return { ok: false, error: `Unknown allocation ${aid}.` };
+    if (String(row.allocation_status ?? '') !== 'Completed') {
+      return { ok: false, error: `Allocation ${aid} is not in Completed state.` };
+    }
     if (nextOpening <= 0) return { ok: false, error: `Line ${aid}: opening kg must be greater than 0.` };
     if (nextClosing < 0 || nextClosing > nextOpening + 0.0001) {
       return { ok: false, error: `Line ${aid}: closing kg must be between 0 and opening.` };
@@ -1911,9 +1939,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     if (nextMeters <= 0) return { ok: false, error: `Line ${aid}: metres must be greater than 0.` };
     const nextConsumed = nextOpening - nextClosing;
     if (nextConsumed <= 0) return { ok: false, error: `Line ${aid}: consumed kg must be greater than 0.` };
-    const newCoilRow = coilRow(db, nextCoil);
-    if (!newCoilRow) return { ok: false, error: `Coil ${nextCoil} not found.` };
     parsed.push({
+      isNew: false,
       aid,
       row,
       nextCoil,
@@ -1926,14 +1953,16 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
       specAck: Boolean(raw.specMismatchAcknowledged),
     });
   }
-  if (parsed.length !== existing.length) {
+
+  const existingParsed = parsed.filter((p) => !p.isNew);
+  if (existingParsed.length !== existing.length) {
     return {
       ok: false,
-      error: `Send exactly ${existing.length} coil line(s) for this job (one reading per saved allocation).`,
+      error: `Send all ${existing.length} saved coil line(s) (each with allocationId), plus optional extra lines with no allocationId for new rolls.`,
     };
   }
-  const aidsSeen = new Set(parsed.map((p) => p.aid));
-  if (aidsSeen.size !== parsed.length) return { ok: false, error: 'Duplicate allocationId in readings.' };
+  const aidsSeen = new Set(existingParsed.map((p) => p.aid));
+  if (aidsSeen.size !== existingParsed.length) return { ok: false, error: 'Duplicate allocationId in readings.' };
   for (const r of existing) {
     if (!aidsSeen.has(String(r.id ?? '').trim())) {
       return { ok: false, error: `Missing reading for allocation ${r.id}.` };
@@ -1946,7 +1975,9 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     return { ok: false, error: String(e.message || e) };
   }
 
-  const specChanged = parsed.filter((p) => String(p.nextCoil) !== String(p.row.coil_no ?? '').trim());
+  const specChanged = parsed.filter(
+    (p) => p.isNew || String(p.nextCoil) !== String(p.row?.coil_no ?? '').trim()
+  );
   if (specChanged.length) {
     const specBlock = validateSpecAcknowledgements(
       db,
@@ -1969,45 +2000,92 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
          consumed_weight_kg = ?, meters_produced = ?, actual_conversion_kg_per_m = ?, spec_mismatch = ?, note = ?
      WHERE id = ? AND job_id = ?`
   );
+  const insPjcCompleted = db.prepare(
+    `INSERT INTO production_job_coils (
+      id, job_id, sequence_no, coil_no, product_id, colour, gauge_label, opening_weight_kg,
+      closing_weight_kg, consumed_weight_kg, meters_produced, actual_conversion_kg_per_m,
+      allocation_status, spec_mismatch, note, allocated_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  );
 
   try {
     assertPeriodOpen(db, atISO, 'Production coil correction date');
-    db.transaction(() => {
-      for (const r of existing) {
-        undoSingleCompletedCoilLineTx(db, r, atISO, jobId);
+    /** Outer transaction from handleWriteWithEditApproval — avoid nested db.transaction for MySQL SAVEPOINTs. */
+    for (const r of existing) {
+      undoSingleCompletedCoilLineTx(db, r, atISO, jobId);
+    }
+    if (productId && Math.abs(deltaM) > 1e-6) {
+      const prodRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productId);
+      const current = Number(prodRow?.stock_level) || 0;
+      const next = current + deltaM;
+      if (next < -0.0001) {
+        throw new Error(
+          `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m on hand).`
+        );
       }
-      if (productId && Math.abs(deltaM) > 1e-6) {
-        const prodRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productId);
-        const current = Number(prodRow?.stock_level) || 0;
-        const next = current + deltaM;
-        if (next < -0.0001) {
+      adjustProductStockTx(db, productId, deltaM);
+      appendStockMovementTx(db, {
+        atISO,
+        type: 'PRODUCTION_FG_ADJUSTMENT',
+        ref: jobId,
+        productID: productId,
+        qty: deltaM,
+        detail: `Coil completion correction ${jobId}: ${note.length > 120 ? `${note.slice(0, 117)}…` : note}`,
+        dateISO: atISO,
+      });
+    }
+
+    const masterDataForCoil = masterDataForCoilColourMatch(db);
+    const alertStates = [];
+    let anyMgr = false;
+    let maxSeq = existing.reduce((m, r) => Math.max(m, Number(r.sequence_no) || 0), 0);
+    for (const p of parsed) {
+      const act = p.nextConsumed / p.nextMeters;
+      const coilForRef = coilRow(db, p.nextCoil);
+      const references = buildReferenceSet(db, coilForRef, act, jobId);
+      const alert = determineAlertState(act, references);
+      alertStates.push(alert.alertState);
+      if (alert.managerReviewRequired) anyMgr = true;
+      const sm = allocationCoilSpecMismatched(db, job, p.nextCoil, masterDataForCoil);
+      if (p.isNew) {
+        const c0 = coilRow(db, p.nextCoil);
+        if (!c0) throw new Error(`Coil ${p.nextCoil} not found.`);
+        const qtyRemaining0 = clampNonNegative(
+          safeNumber(c0.qty_remaining ?? c0.current_weight_kg ?? c0.weight_kg ?? c0.qty_received)
+        );
+        const qtyReserved0 = clampNonNegative(safeNumber(c0.qty_reserved));
+        const availableForThisJob = qtyRemaining0 - qtyReserved0;
+        if (p.nextOpening > availableForThisJob + 0.0001) {
           throw new Error(
-            `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m on hand).`
+            `Coil ${p.nextCoil} only has ${availableForThisJob.toFixed(2)} kg available for allocation.`
           );
         }
-        adjustProductStockTx(db, productId, deltaM);
-        appendStockMovementTx(db, {
-          atISO,
-          type: 'PRODUCTION_FG_ADJUSTMENT',
-          ref: jobId,
-          productID: productId,
-          qty: deltaM,
-          detail: `Coil completion correction ${jobId}: ${note.length > 120 ? `${note.slice(0, 117)}…` : note}`,
-          dateISO: atISO,
-        });
-      }
-
-      const masterDataForCoil = masterDataForCoilColourMatch(db);
-      const alertStates = [];
-      let anyMgr = false;
-      for (const p of parsed) {
-        const act = p.nextConsumed / p.nextMeters;
-        const coilForRef = coilRow(db, p.nextCoil);
-        const references = buildReferenceSet(db, coilForRef, act, jobId);
-        const alert = determineAlertState(act, references);
-        alertStates.push(alert.alertState);
-        if (alert.managerReviewRequired) anyMgr = true;
-        const sm = allocationCoilSpecMismatched(db, job, p.nextCoil, masterDataForCoil);
+        db.prepare(`UPDATE coil_lots SET qty_reserved = ? WHERE coil_no = ?`).run(
+          clampNonNegative(qtyReserved0 + p.nextOpening),
+          p.nextCoil
+        );
+        updateCoilDerivedStateTx(db, p.nextCoil);
+        maxSeq += 1;
+        const newId = nextId('PJC');
+        insPjcCompleted.run(
+          newId,
+          jobId,
+          maxSeq,
+          p.nextCoil,
+          coilForRef?.product_id ?? null,
+          coilForRef?.colour ?? null,
+          coilForRef?.gauge_label ?? null,
+          p.nextOpening,
+          p.nextClosing,
+          p.nextConsumed,
+          p.nextMeters,
+          act,
+          'Completed',
+          sm.mismatched ? 1 : 0,
+          p.lineNote || null,
+          atISO
+        );
+      } else {
         updPjc.run(
           p.nextCoil,
           coilForRef?.product_id ?? null,
@@ -2023,40 +2101,44 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           p.aid,
           jobId
         );
-        applySingleCompletedCoilLineTx(
-          db,
-          jobId,
-          {
-            coilNo: p.nextCoil,
-            openingWeightKg: p.nextOpening,
-            consumedWeightKg: p.nextConsumed,
-            metersProduced: p.nextMeters,
-            productID: p.newProductId,
-          },
-          atISO
-        );
       }
-
-      const aggregated = aggregateAlertState(alertStates);
-      db.prepare(
-        `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ? WHERE job_id = ?`
-      ).run(newTotalM, newTotalKg, aggregated, anyMgr ? 1 : 0, jobId);
-      refreshJobCoilSpecFlagsTx(db, jobId);
-      appendAuditLog(db, {
-        actor: opts.actor,
-        action: 'production.completion_coil_correct',
-        entityKind: 'production_job',
-        entityId: jobId,
-        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
-        details: {
-          reason: note,
-          oldTotalM,
-          newTotalM,
-          deltaM,
-          lines: parsed.map((p) => ({ allocationId: p.aid, coilNo: p.nextCoil })),
+      applySingleCompletedCoilLineTx(
+        db,
+        jobId,
+        {
+          coilNo: p.nextCoil,
+          openingWeightKg: p.nextOpening,
+          consumedWeightKg: p.nextConsumed,
+          metersProduced: p.nextMeters,
+          productID: p.newProductId,
         },
-      });
-    })();
+        atISO
+      );
+    }
+
+    const aggregated = aggregateAlertState(alertStates);
+    db.prepare(
+      `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ? WHERE job_id = ?`
+    ).run(newTotalM, newTotalKg, aggregated, anyMgr ? 1 : 0, jobId);
+    refreshJobCoilSpecFlagsTx(db, jobId);
+    appendAuditLog(db, {
+      actor: opts.actor,
+      action: 'production.completion_coil_correct',
+      entityKind: 'production_job',
+      entityId: jobId,
+      note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+      details: {
+        reason: note,
+        oldTotalM,
+        newTotalM,
+        deltaM,
+        lines: parsed.map((p) => ({
+          allocationId: p.isNew ? null : p.aid,
+          coilNo: p.nextCoil,
+          isNew: p.isNew,
+        })),
+      },
+    });
     return {
       ok: true,
       allocations: listProductionJobCoilsForJob(db, jobId),

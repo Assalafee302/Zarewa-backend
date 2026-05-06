@@ -367,7 +367,12 @@ function defaultVisibilityEntries(payload) {
   return entries;
 }
 
-export function createWorkItem(db, payload) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} payload
+ * @param {{ outerTransaction?: boolean }} [opts] When true, skip db.transaction (caller already in a transaction — avoids broken SAVEPOINT stacks on MySQL).
+ */
+export function createWorkItem(db, payload, opts = {}) {
   if (!workRegistryTablesReady(db)) return { ok: false, error: 'Work registry is not available.' };
   const branchId = String(payload?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const id = String(payload?.id || '').trim() || nextWorkItemHumanId(db, branchId);
@@ -396,7 +401,7 @@ export function createWorkItem(db, payload) {
     }),
     ...(Array.isArray(payload?.visibilityEntries) ? payload.visibilityEntries : []),
   ];
-  db.transaction(() => {
+  const runCreate = () => {
     db.prepare(
       `INSERT INTO work_items (
         id, reference_no, branch_id, office_key, document_class, document_type, status, priority, confidentiality,
@@ -471,7 +476,9 @@ export function createWorkItem(db, payload) {
         now
       );
     }
-  })();
+  };
+  if (opts.outerTransaction) runCreate();
+  else db.transaction(runCreate)();
   if (!payload?.suppressAudit) {
     appendAuditLog(db, {
       actor: payload?.actor,
@@ -517,15 +524,18 @@ export function findPersistedWorkItemBySource(db, sourceKind, sourceId) {
   return row ? mapPersistedWorkItemRow(row, loadWorkItemVisibility(db, row.id)) : null;
 }
 
-export function upsertWorkItemBySource(db, payload) {
+/**
+ * @param {{ outerTransaction?: boolean }} [opts] When true, skip nested db.transaction (caller already in a transaction).
+ */
+export function upsertWorkItemBySource(db, payload, opts = {}) {
   if (!workRegistryTablesReady(db)) return { ok: false, error: 'Work registry is not available.' };
   const sourceKind = String(payload?.sourceKind || '').trim();
   const sourceId = String(payload?.sourceId || '').trim();
-  if (!sourceKind || !sourceId) return createWorkItem(db, payload);
+  if (!sourceKind || !sourceId) return createWorkItem(db, payload, opts);
   const existing = db
     .prepare(`SELECT * FROM work_items WHERE source_kind = ? AND source_id = ? ORDER BY updated_at_iso DESC LIMIT 1`)
     .get(sourceKind, sourceId);
-  if (!existing) return createWorkItem(db, payload);
+  if (!existing) return createWorkItem(db, payload, opts);
 
   const branchId = String(payload?.branchId || existing.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const title = String(payload?.title || existing.title || '').trim();
@@ -552,7 +562,7 @@ export function upsertWorkItemBySource(db, payload) {
     ...(Array.isArray(payload?.visibilityEntries) ? payload.visibilityEntries : []),
   ];
   const links = Array.isArray(payload?.links) ? payload.links : undefined;
-  db.transaction(() => {
+  const runUpsert = () => {
     db.prepare(
       `UPDATE work_items SET
         branch_id = ?, office_key = ?, document_class = ?, document_type = ?, status = ?, priority = ?, confidentiality = ?,
@@ -615,7 +625,9 @@ export function upsertWorkItemBySource(db, payload) {
         updatedAtIso
       );
     }
-  })();
+  };
+  if (opts.outerTransaction) runUpsert();
+  else db.transaction(runUpsert)();
   if (!payload?.suppressAudit) {
     appendAuditLog(db, {
       actor: payload?.actor,
@@ -629,7 +641,10 @@ export function upsertWorkItemBySource(db, payload) {
   return getPersistedWorkItem(db, existing.id);
 }
 
-export function appendWorkItemDecision(db, payload) {
+/**
+ * @param {{ outerTransaction?: boolean }} [opts] When true, skip nested db.transaction (caller already in a transaction).
+ */
+export function appendWorkItemDecision(db, payload, opts = {}) {
   if (!workRegistryTablesReady(db)) return { ok: false, error: 'Work registry is not available.' };
   const workItemId = String(payload?.workItemId || '').trim();
   const row = db.prepare(`SELECT * FROM work_items WHERE id = ?`).get(workItemId);
@@ -647,7 +662,7 @@ export function appendWorkItemDecision(db, payload) {
     note ||
     `${decisionKey}: ${outcomeStatus}`.replace(/_/g, ' ');
   const id = nextWorkItemDecisionHumanId(db);
-  db.transaction(() => {
+  const runDecision = () => {
     db.prepare(
       `INSERT INTO work_item_decisions (
         id, work_item_id, decision_key, outcome_status, note, actor_user_id, actor_display_name,
@@ -680,7 +695,9 @@ export function appendWorkItemDecision(db, payload) {
          WHERE work_item_id = ? AND state = 'pending'`
       ).run(actedAtIso, summary, workItemId);
     }
-  })();
+  };
+  if (opts.outerTransaction) runDecision();
+  else db.transaction(runDecision)();
   appendAuditLog(db, {
     actor,
     action: 'work_item.decision',

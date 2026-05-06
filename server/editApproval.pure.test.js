@@ -66,7 +66,7 @@ describe('editApproval (no MySQL)', () => {
     const body = { status: 'X', editApprovalId: '999999' };
     const executeWrite = vi.fn(() => ({ ok: true }));
     handlePatchWithEditApproval(res, db, admin, body, 'purchase_order', 'PO-1', executeWrite);
-    expect(executeWrite).toHaveBeenCalledWith({ status: 'X' });
+    expect(executeWrite).toHaveBeenCalledWith({ status: 'X' }, { withinEditApprovalTransaction: false });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toEqual({ ok: true });
   });
@@ -96,7 +96,7 @@ describe('editApproval (no MySQL)', () => {
       'PO-1',
       executeWrite
     );
-    expect(executeWrite).toHaveBeenCalledWith({ status: 'Approved' });
+    expect(executeWrite).toHaveBeenCalledWith({ status: 'Approved' }, { withinEditApprovalTransaction: true });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toEqual({ ok: true });
   });

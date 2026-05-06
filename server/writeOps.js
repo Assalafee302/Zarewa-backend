@@ -5444,6 +5444,9 @@ export function updateQuotation(db, quotationId, payload) {
     if (payload.lines) syncQuotationLineRows(db, quotationId, linesJson);
   })();
 
+  /** Booked paid must follow receipts + advance applied, not whatever the client last sent. */
+  syncQuotationPaidFromLedger(db, quotationId);
+
   return quotationId;
 }
 
@@ -5457,6 +5460,7 @@ export function reviveQuotation(db, quotationId) {
   db.prepare(
     `UPDATE quotations SET status = 'Pending', archived = 0, quotation_lifecycle_note = NULL WHERE id = ?`
   ).run(quotationId);
+  syncQuotationPaidFromLedger(db, quotationId);
   return quotationId;
 }
 

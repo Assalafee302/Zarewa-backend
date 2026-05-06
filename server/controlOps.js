@@ -1310,6 +1310,10 @@ export function previewRefundRequest(db, payload) {
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
     return roundMoney(qty * unitPrice) > 0;
   });
+  const hasAnyServiceLine = quoteLines.some((s) => {
+    const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
+    return roundMoney(qty * unitPrice) > 0;
+  });
 
   const eligibleRefundCategories = [];
   for (const cat of REFUND_REASON_CATEGORY_VALUES) {
@@ -1337,7 +1341,7 @@ export function previewRefundRequest(db, payload) {
       continue;
     }
     if (cat === 'Additional services') {
-      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
+      if (suggestedPositiveCategories.has(cat) || hasAnyServiceLine) eligibleRefundCategories.push(cat);
       continue;
     }
     if (cat === 'Accessory shortfall') {
@@ -1523,7 +1527,19 @@ export function getEligibleRefundQuotations(db) {
       )
     ORDER BY q.date_iso DESC
   `;
-  return db.prepare(sql).all();
+  const rows = db.prepare(sql).all();
+  return rows
+    .map((row) => {
+      const preview = previewRefundRequest(db, { quotationRef: row.id });
+      const eligibleRefundCategories = Array.isArray(preview?.preview?.eligibleRefundCategories)
+        ? preview.preview.eligibleRefundCategories
+        : [];
+      return {
+        ...row,
+        eligible_refund_categories: eligibleRefundCategories,
+      };
+    })
+    .filter((row) => row.eligible_refund_categories.length > 0);
 }
 
 function positiveNumber(value) {

@@ -2862,34 +2862,44 @@ export function registerHttpApi(app, db) {
       const jid = req.params.jobId;
       const jg = assertProductionJobIdInWorkspace(db, req, jid);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) => {
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) => {
         const r = signOffProductionManagerReview(db, jid, stripped || {}, { actor: req.user });
         if (r.ok) {
-          const target = upsertWorkItemBySource(db, {
-            actor: req.user,
-            sourceKind: 'conversion_review',
-            sourceId: jid,
-            branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-            officeKey: 'branch_manager',
-            responsibleOfficeKey: 'branch_manager',
-            documentClass: 'approval',
-            documentType: 'conversion_review',
-            status: 'approved',
-            title: `Conversion review ${jid}`,
-            summary: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
-            requiresApproval: true,
-            data: { routePath: '/manager' },
-          });
-          if (target.ok) {
-            appendWorkItemDecision(db, {
-              workItemId: target.item.id,
+          const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
+          const wiOpts = inOuter ? { outerTransaction: true } : {};
+          const target = upsertWorkItemBySource(
+            db,
+            {
               actor: req.user,
-              actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-              decisionKey: 'manager_review_signoff',
-              outcomeStatus: 'approved',
-              nextStatus: 'approved',
-              note: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
-            });
+              sourceKind: 'conversion_review',
+              sourceId: jid,
+              branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              officeKey: 'branch_manager',
+              responsibleOfficeKey: 'branch_manager',
+              documentClass: 'approval',
+              documentType: 'conversion_review',
+              status: 'approved',
+              title: `Conversion review ${jid}`,
+              summary: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
+              requiresApproval: true,
+              data: { routePath: '/manager' },
+            },
+            wiOpts
+          );
+          if (target.ok) {
+            appendWorkItemDecision(
+              db,
+              {
+                workItemId: target.item.id,
+                actor: req.user,
+                actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+                decisionKey: 'manager_review_signoff',
+                outcomeStatus: 'approved',
+                nextStatus: 'approved',
+                note: String(stripped?.remark || '').trim() || 'Conversion review signed off.',
+              },
+              wiOpts
+            );
           }
         }
         return r;

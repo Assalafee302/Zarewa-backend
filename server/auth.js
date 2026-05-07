@@ -72,6 +72,7 @@ export const ROLE_DEFINITIONS = {
       'purchase_orders.manage',
       'operations.view',
       'finance.view',
+      'finance.pay',
       'audit.view',
       'quotations.manage',
       'finance.approve',

@@ -826,7 +826,7 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
         l.gauge ?? '',
         l.metersOffered ?? null,
         l.conversionKgPerM ?? null,
-        l.unitPricePerKgNgn ?? l.unitPriceNgn,
+        l.unitPricePerKgNgn ?? null,
         l.unitPriceNgn,
         l.qtyOrdered,
         l.qtyReceived ?? 0
@@ -957,7 +957,7 @@ export function updatePurchaseOrderCoilDraft(db, poID, payload, branchId = DEFAU
       const prev = prevByKey.get(lk);
       const wasRec = prev ? Number(prev.qty_received) || 0 : 0;
       const qtyRec = Math.min(qtyOrd, wasRec);
-      const perKg = l.unitPricePerKgNgn ?? l.unitPriceNgn;
+      const perKg = l.unitPricePerKgNgn ?? null;
       const unitNgn = l.unitPriceNgn ?? perKg;
       insL.run(
         id,
@@ -1461,6 +1461,19 @@ function conversionRelDiff(a, b) {
   return Math.abs(x - y) / Math.max(x, y);
 }
 
+function isMeterBasisCoilPoLine(line) {
+  const upkg = Number(line?.unit_price_per_kg_ngn ?? line?.unitPricePerKgNgn);
+  const meters = Number(line?.meters_offered ?? line?.metersOffered);
+  const ordered = Number(line?.qty_ordered ?? line?.qtyOrdered);
+  return (
+    (!Number.isFinite(upkg) || upkg <= 0) &&
+    Number.isFinite(meters) &&
+    meters > 0 &&
+    Number.isFinite(ordered) &&
+    Math.abs(ordered - meters) <= 0.001
+  );
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function confirmGrn(
   db,
@@ -1507,6 +1520,16 @@ export function confirmGrn(
           ? /^ACC-/i.test(String(prodRow.product_id || '').trim())
           : /^ACC-/i.test(String(e.productID || '').trim());
       if (isStone || isAcc) continue;
+      const meterBasisLine = isMeterBasisCoilPoLine(line);
+      const wRaw = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
+      const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
+      if (meterBasisLine && w == null) {
+        return {
+          ok: false,
+          error:
+            'This PO line is metres-based. Enter actual weight in kg at receipt to finalize stock and costing.',
+        };
+      }
       const lc = Number(line.conversion_kg_per_m);
       const ec =
         e.supplierConversionKgPerM != null && e.supplierConversionKgPerM !== ''
@@ -1530,8 +1553,6 @@ export function confirmGrn(
           : line.meters_offered != null
             ? Number(line.meters_offered)
             : null;
-      const wRaw = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
-      const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
       const conv = ec != null && Number.isFinite(ec) && ec > 0 ? ec : lc;
       if (
         sm != null &&
@@ -1675,7 +1696,7 @@ export function confirmGrn(
         coilNo,
         e.productID,
         line.line_key,
-        qty,
+        effectiveWeightKg,
         w != null && !Number.isNaN(w) ? w : null,
         String(e.colour ?? line.color ?? '').trim() || null,
         String(e.gaugeLabel ?? line.gauge ?? '').trim() || null,
@@ -1725,7 +1746,20 @@ export function confirmGrn(
 
     const deltaByProduct = {};
     for (const e of entries) {
-      deltaByProduct[e.productID] = (deltaByProduct[e.productID] || 0) + Number(e.qtyReceived);
+      const line = findPoLine(lines, e);
+      const prodRow = products.find((row) => row.product_id === e.productID);
+      const isStone =
+        prodRow != null
+          ? isStoneMeterProductRow(prodRow)
+          : /^STONE-/i.test(String(line?.product_id || e.productID || '').trim());
+      const isAcc =
+        prodRow != null
+          ? /^ACC-/i.test(String(prodRow.product_id || '').trim())
+          : /^ACC-/i.test(String(line?.product_id || e.productID || '').trim());
+      const wRaw = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
+      const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
+      const qtyDelta = isStone || isAcc ? Number(e.qtyReceived) : w != null ? w : Number(e.qtyReceived);
+      deltaByProduct[e.productID] = (deltaByProduct[e.productID] || 0) + qtyDelta;
     }
     for (const pid of Object.keys(deltaByProduct)) {
       const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(pid);

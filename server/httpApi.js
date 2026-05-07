@@ -88,6 +88,7 @@ import {
   insertRefundRequest,
   lockAccountingPeriod,
   previewRefundRequest,
+  updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   getEligibleRefundQuotations,
   reviewQuotation,
@@ -3877,6 +3878,21 @@ export function registerHttpApi(app, db) {
         return;
       }
       res.json({ ok: true, request });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/payment-requests/:requestId', requireAuth, (req, res) => {
+    try {
+      const canEdit = userHasPermission(req.user, 'finance.post') || userHasPermission(req.user, 'finance.approve');
+      if (!canEdit) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const r = updatePaymentRequest(db, req.params.requestId, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

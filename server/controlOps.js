@@ -620,6 +620,105 @@ export function insertPaymentRequest(db, payload, actor) {
   return { ok: false, error: String(lastErr?.message || lastErr || 'Could not create payment request.') };
 }
 
+export function updatePaymentRequest(db, requestID, payload, actor) {
+  const rid = String(requestID || '').trim();
+  if (!rid) return { ok: false, error: 'Payment request ID is required.' };
+  const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+  const approvalStatus = String(row.approval_status || 'Pending').trim();
+  if (!['Pending', 'Submitted', 'Awaiting approval', '', 'Rejected'].includes(approvalStatus)) {
+    return { ok: false, error: 'Only pending or rejected requests can be edited.' };
+  }
+
+  const requestDate = String(payload.requestDate ?? row.request_date ?? '').trim() || nowIso().slice(0, 10);
+  const description = String(payload.description ?? row.description ?? '').trim() || '—';
+  const requestReference = String(payload.requestReference ?? payload.reference ?? row.request_reference ?? '').trim();
+  const lineItems = normalizePaymentRequestLineItems(payload.lineItems ?? payload.items);
+  const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
+  const { name: attName, mime: attMime, b64: attB64Raw } = parsePaymentRequestAttachment(payload);
+  let attB64 = attB64Raw;
+  if (attB64) {
+    const allowed = attMime.startsWith('image/') || attMime === 'application/pdf';
+    if (!allowed) {
+      return { ok: false, error: 'Attachment must be a PDF or image file.' };
+    }
+    if (attB64.length > MAX_PAYREQ_ATTACHMENT_B64_LEN) {
+      return { ok: false, error: 'Attachment is too large (max about 2.5 MB).' };
+    }
+  }
+
+  if (!expenseCategory) return { ok: false, error: 'Expense category is required.' };
+  if (!isAllowedExpenseCategory(expenseCategory)) {
+    return { ok: false, error: 'Expense category must be chosen from the standard list.' };
+  }
+  if (!lineItems.length) {
+    return { ok: false, error: 'Add at least one line with description, quantity, and unit price.' };
+  }
+  const amountRequestedNgn = lineItems.reduce((s, x) => s + x.lineTotalNgn, 0);
+  if (amountRequestedNgn <= 0) {
+    return { ok: false, error: 'Line items must total a positive amount.' };
+  }
+  const lineItemsJson = JSON.stringify(lineItems);
+
+  try {
+    assertPeriodOpen(db, requestDate, 'Payment request date');
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE payment_requests
+         SET amount_requested_ngn = ?,
+             request_date = ?,
+             approval_status = 'Pending',
+             description = ?,
+             approved_by = '',
+             approved_at_iso = '',
+             approval_note = '',
+             request_reference = ?,
+             line_items_json = ?,
+             attachment_name = ?,
+             attachment_mime = ?,
+             attachment_data_b64 = ?
+         WHERE request_id = ?`
+      ).run(
+        amountRequestedNgn,
+        requestDate,
+        description,
+        requestReference || '',
+        lineItemsJson,
+        attB64 ? attName : String(row.attachment_name || ''),
+        attB64 ? attMime : String(row.attachment_mime || ''),
+        attB64 ? attB64 : String(row.attachment_data_b64 || ''),
+        rid
+      );
+
+      const expenseId = String(row.expense_id || '').trim();
+      if (expenseId) {
+        db.prepare(
+          `UPDATE expenses
+           SET amount_ngn = ?, date = ?, category = ?, reference = ?
+           WHERE expense_id = ?`
+        ).run(amountRequestedNgn, requestDate, expenseCategory, requestReference || rid, expenseId);
+      }
+
+      appendAuditLog(db, {
+        actor,
+        action: 'payment_request.update',
+        entityKind: 'payment_request',
+        entityId: rid,
+        note: `Payment request ${rid} edited`,
+        details: {
+          amountRequestedNgn,
+          expenseCategory,
+          lineItemCount: lineItems.length,
+          approvalStatusBefore: approvalStatus || 'Pending',
+        },
+      });
+    })();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 export function decidePaymentRequest(db, requestID, payload, actor) {
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
   if (!row) return { ok: false, error: 'Payment request not found.' };

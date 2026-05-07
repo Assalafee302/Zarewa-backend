@@ -4777,6 +4777,10 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   const expenseID = nextExpenseHumanId(db, bid);
   const category = String(payload.category ?? '').trim();
+  const expenseType = String(payload.expenseType ?? '').trim();
+  const paymentMethod = String(payload.paymentMethod ?? '').trim();
+  const reference = String(payload.reference ?? '').trim();
+  const expenseDate = String(payload.date ?? '').trim() || new Date().toISOString().slice(0, 10);
   const amountNgn = roundMoney(payload.amountNgn);
   if (!category) return { ok: false, error: 'Expense category is required.' };
   if (!isAllowedExpenseCategory(category)) {
@@ -4784,19 +4788,43 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   }
   if (amountNgn <= 0) return { ok: false, error: 'Expense amount must be positive.' };
   try {
-    assertPeriodOpen(db, payload.date || new Date().toISOString().slice(0, 10), 'Expense date');
+    assertPeriodOpen(db, expenseDate, 'Expense date');
+    const latestBranchExpense = db
+      .prepare(
+        `SELECT expense_type, amount_ngn, date, category, payment_method, reference
+         FROM expenses
+         WHERE branch_id = ?
+         ORDER BY rowid DESC
+         LIMIT 1`
+      )
+      .get(bid);
+    if (latestBranchExpense) {
+      const sameAsLatest =
+        roundMoney(latestBranchExpense.amount_ngn) === amountNgn &&
+        String(latestBranchExpense.date || '').trim() === expenseDate &&
+        String(latestBranchExpense.category || '').trim().toLowerCase() === category.toLowerCase() &&
+        String(latestBranchExpense.expense_type || '').trim().toLowerCase() === expenseType.toLowerCase() &&
+        String(latestBranchExpense.payment_method || '').trim().toLowerCase() === paymentMethod.toLowerCase() &&
+        String(latestBranchExpense.reference || '').trim().toLowerCase() === reference.toLowerCase();
+      if (sameAsLatest) {
+        return {
+          ok: false,
+          error: 'Duplicate expense detected. This entry matches the last saved expense, so it was not recorded twice.',
+        };
+      }
+    }
     db.transaction(() => {
       db.prepare(
         `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
          VALUES (?,?,?,?,?,?,?,?)`
       ).run(
         expenseID,
-        payload.expenseType ?? '',
+        expenseType,
         amountNgn,
-        payload.date || new Date().toISOString().slice(0, 10),
+        expenseDate,
         category,
-        payload.paymentMethod ?? '',
-        payload.reference ?? '',
+        paymentMethod,
+        reference,
         bid
       );
       if (payload.treasuryAccountId) {

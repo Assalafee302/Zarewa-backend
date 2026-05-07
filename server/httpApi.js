@@ -81,6 +81,8 @@ import {
 import {
   appendAuditLog,
   assertPeriodOpen,
+  cancelApprovedPaymentRequestBeforePay,
+  cancelApprovedRefundBeforePay,
   decidePaymentRequest,
   decideRefundRequest,
   deleteTreasuryAccount,
@@ -2426,6 +2428,7 @@ export function registerHttpApi(app, db) {
     requirePermission(['purchase_orders.manage', 'finance.pay']),
     (req, res) => {
     try {
+      const poId = req.params.poId;
       const body = req.body || {};
       const amt = Number(body.amountNgn);
       const acct = Number(body.treasuryAccountId);
@@ -2436,21 +2439,23 @@ export function registerHttpApi(app, db) {
           error: 'Recording haulage against treasury requires finance.pay permission.',
         });
       }
-      const r = write.postPurchaseOrderTransport(db, req.params.poId, {
-        treasuryAccountId: body.treasuryAccountId,
-        amountNgn: body.amountNgn,
-        reference: body.reference,
-        dateISO: body.dateISO,
-        postedAtISO: body.postedAtISO,
-        note: body.note,
-        createdBy: body.createdBy || req.user.displayName,
-        actor: req.user,
+      return handleWriteWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped) => {
+        const r = write.postPurchaseOrderTransport(db, poId, {
+          treasuryAccountId: stripped?.treasuryAccountId,
+          amountNgn: stripped?.amountNgn,
+          reference: stripped?.reference,
+          dateISO: stripped?.dateISO,
+          postedAtISO: stripped?.postedAtISO,
+          note: stripped?.note,
+          createdBy: stripped?.createdBy || req.user.displayName,
+          actor: req.user,
+        });
+        if (r.ok) {
+          syncFinancePoTransportWorkItem(db, poId, req.user);
+          syncInTransitLoadFromTransportPost(db, poId, req.user);
+        }
+        return r;
       });
-      if (r.ok) {
-        syncFinancePoTransportWorkItem(db, req.params.poId, req.user);
-        syncInTransitLoadFromTransportPost(db, req.params.poId, req.user);
-      }
-      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -3682,6 +3687,20 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post(
+    '/api/refunds/:refundId/cancel-before-pay',
+    requirePermission(['refunds.approve', 'finance.approve', 'finance.pay']),
+    (req, res) => {
+      try {
+        const r = cancelApprovedRefundBeforePay(db, req.params.refundId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.get('/api/setup', requirePermission('settings.view'), (_req, res) => {
     try {
       res.json({ ok: true, masterData: listMasterData(db) });
@@ -3975,6 +3994,20 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+
+  app.post(
+    '/api/payment-requests/:requestId/cancel-before-pay',
+    requirePermission(['finance.approve', 'finance.pay']),
+    (req, res) => {
+      try {
+        const r = cancelApprovedPaymentRequestBeforePay(db, req.params.requestId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
 
   app.put('/api/finance/core', requirePermission('settings.view'), (req, res) => {
     try {

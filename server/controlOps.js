@@ -797,6 +797,52 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
   }
 }
 
+export function cancelApprovedPaymentRequestBeforePay(db, requestID, payload, actor) {
+  const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+  if (String(row.approval_status || '').trim() !== 'Approved') {
+    return { ok: false, error: 'Only approved requests can be cancelled from payout queue.' };
+  }
+  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
+  if (paidAmountNgn > 0) {
+    return { ok: false, error: 'This request already has payout entries and cannot be cancelled.' };
+  }
+  const note = String(payload.note ?? '').trim();
+  const actedAtISO = String(payload.actedAtISO ?? '').trim() || nowIso().slice(0, 10);
+  try {
+    assertPeriodOpen(db, actedAtISO, 'Payment request cancellation date');
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE payment_requests
+         SET approval_status = 'Cancelled',
+             approval_note = ?,
+             paid_amount_ngn = 0,
+             paid_at_iso = '',
+             paid_by = ''
+         WHERE request_id = ?`
+      ).run(note, requestID);
+      appendAuditLog(db, {
+        actor,
+        action: 'payment_request.cancel_before_pay',
+        entityKind: 'payment_request',
+        entityId: requestID,
+        note: note || `Payment request ${requestID} cancelled before payout`,
+        details: { previousStatus: 'Approved', paidAmountNgn },
+      });
+    })();
+    const actorLabel = actorName(actor);
+    const notePart = note ? ` Note: ${note}` : '';
+    appendPaymentRequestTimelineToOfficeThreads(
+      db,
+      requestID,
+      `Accounts: payment request ${requestID} was cancelled before payout by ${actorLabel}.${notePart}`
+    );
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   const amountNgn = roundMoney(payload.amountNgn);
@@ -1066,6 +1112,46 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       });
     })();
     return { ok: true, warnings: refundWarnings };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundID);
+  if (!row) return { ok: false, error: 'Refund request not found.' };
+  if (String(row.status || '').trim() !== 'Approved') {
+    return { ok: false, error: 'Only approved refunds can be cancelled from payout queue.' };
+  }
+  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
+  if (paidAmountNgn > 0) {
+    return { ok: false, error: 'This refund already has payout entries and cannot be cancelled.' };
+  }
+  const note = String(payload.note ?? payload.managerComments ?? '').trim();
+  const actedAtISO = String(payload.actedAtISO ?? '').trim() || nowIso().slice(0, 10);
+  try {
+    assertPeriodOpen(db, actedAtISO, 'Refund cancellation date');
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE customer_refunds
+         SET status = 'Cancelled',
+             manager_comments = ?,
+             paid_amount_ngn = 0,
+             paid_at_iso = '',
+             paid_by = '',
+             payment_note = ''
+         WHERE refund_id = ?`
+      ).run(note, refundID);
+      appendAuditLog(db, {
+        actor,
+        action: 'refund.cancel_before_pay',
+        entityKind: 'refund',
+        entityId: refundID,
+        note: note || `Refund ${refundID} cancelled before payout`,
+        details: { previousStatus: 'Approved', paidAmountNgn },
+      });
+    })();
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

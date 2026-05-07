@@ -707,7 +707,7 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
               transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
               transport_amount_ngn, transport_paid_ngn
        FROM purchase_orders
-       WHERE status != 'Rejected'
+       WHERE LOWER(TRIM(COALESCE(status, ''))) IN ('approved', 'on loading', 'in transit')
          AND TRIM(COALESCE(transport_agent_id, '')) != ''
          AND COALESCE(transport_amount_ngn, 0) > COALESCE(transport_paid_ngn, 0)
          ${b.sql}

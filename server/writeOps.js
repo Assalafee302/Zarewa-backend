@@ -1008,6 +1008,30 @@ export function sumTransportPaymentsForPo(db, poID) {
   return roundMoney(row?.paid);
 }
 
+function normalizePoTransitStatus(status) {
+  return String(status ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+const PO_TRANSIT_SOURCE_STATUSES = new Set(['approved', 'on loading']);
+const PO_TRANSIT_PAYABLE_STATUSES = new Set(['approved', 'on loading', 'in transit']);
+
+function formatPoStatusLabel(status) {
+  const normalized = normalizePoTransitStatus(status);
+  if (normalized === 'on loading') return 'On loading';
+  if (normalized === 'in transit') return 'In Transit';
+  if (normalized === 'approved') return 'Approved';
+  return String(status ?? '').trim() || 'Unknown';
+}
+
+function poStatusGateError(actionLabel, currentStatus, allowedStatuses) {
+  const allowed = allowedStatuses.map((s) => formatPoStatusLabel(s)).join(', ');
+  return `${actionLabel} failed: PO status is "${formatPoStatusLabel(
+    currentStatus
+  )}". Allowed status(es): ${allowed}.`;
+}
+
 /**
  * Derives PO status, transport_paid, transport_paid_ngn from cumulative TRANSPORT_PAYMENT movements.
  * Advance threshold (transport_advance_ngn, defaulting to full quoted fee) moves the PO to In Transit.
@@ -1032,8 +1056,8 @@ export function syncPurchaseOrderTransportPaymentState(db, poID, actor = null) {
   let nextStatus = prevStatus;
 
   if (total <= 0) {
-    if (prevStatus === 'Approved' || prevStatus === 'On loading') nextStatus = 'In Transit';
-  } else if (advanceMet && (prevStatus === 'Approved' || prevStatus === 'On loading')) {
+    if (PO_TRANSIT_SOURCE_STATUSES.has(normalizePoTransitStatus(prevStatus))) nextStatus = 'In Transit';
+  } else if (advanceMet && PO_TRANSIT_SOURCE_STATUSES.has(normalizePoTransitStatus(prevStatus))) {
     nextStatus = 'In Transit';
   }
 
@@ -1069,6 +1093,8 @@ export function syncPurchaseOrderTransportPaymentState(db, poID, actor = null) {
  * @param {import('better-sqlite3').Database} db
  */
 export function linkTransport(db, poID, transportAgentId, transportAgentName, opts = {}) {
+  const normalizedTransportAgentId = String(transportAgentId ?? '').trim();
+  const normalizedTransportAgentName = String(transportAgentName ?? '').trim();
   const transportReference = String(opts.transportReference ?? '').trim();
   const transportNote = String(opts.transportNote ?? '').trim();
   const transportFinanceAdvice = String(opts.transportFinanceAdvice ?? '').trim();
@@ -1082,8 +1108,17 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
-  if (!['Approved', 'On loading'].includes(row.status)) {
-    return { ok: false, error: 'PO not found or not ready for transit linking.' };
+  if (!PO_TRANSIT_SOURCE_STATUSES.has(normalizePoTransitStatus(row.status))) {
+    return {
+      ok: false,
+      error: poStatusGateError('Transport linking', row.status, ['approved', 'on loading']),
+    };
+  }
+  if (!normalizedTransportAgentId || !normalizedTransportAgentName) {
+    return {
+      ok: false,
+      error: 'Transport linking failed: select a valid transport agent (ID and name are required).',
+    };
   }
 
   try {
@@ -1103,8 +1138,8 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
           postedAtISO: opts.postedAtISO || new Date().toISOString(),
           reference,
           counterpartyKind: 'TRANSPORT_AGENT',
-          counterpartyId: String(transportAgentId ?? '').trim() || null,
-          counterpartyName: String(transportAgentName ?? '').trim() || null,
+          counterpartyId: normalizedTransportAgentId || null,
+          counterpartyName: normalizedTransportAgentName || null,
           sourceKind: 'PURCHASE_ORDER',
           sourceId: poID,
           note: noteMerged,
@@ -1138,8 +1173,8 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
          WHERE po_id = ? AND status IN ('Approved', 'On loading')`
       );
       const r = u.run(
-        transportAgentId,
-        transportAgentName,
+        normalizedTransportAgentId,
+        normalizedTransportAgentName,
         transportReference || null,
         transportNote || null,
         transportFinanceAdvice || null,
@@ -1150,7 +1185,12 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
         nextStatus,
         poID
       );
-      if (r.changes === 0) throw new Error('PO not found or not ready for transit linking.');
+      if (r.changes === 0) {
+        const latest = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(poID);
+        throw new Error(
+          poStatusGateError('Transport linking', latest?.status, ['approved', 'on loading'])
+        );
+      }
 
       appendMovementTx(db, {
         type: 'PO_TRANSPORT_LINK',
@@ -1186,10 +1226,10 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 export function postPurchaseOrderTransport(db, poID, opts = {}) {
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
-  if (!['Approved', 'On loading', 'In Transit'].includes(row.status)) {
+  if (!PO_TRANSIT_PAYABLE_STATUSES.has(normalizePoTransitStatus(row.status))) {
     return {
       ok: false,
-      error: 'PO must be Approved, On loading, or In transit with transport assigned.',
+      error: poStatusGateError('Transport payment', row.status, ['approved', 'on loading', 'in transit']),
     };
   }
   if (!String(row.transport_agent_id ?? '').trim()) {
@@ -1433,8 +1473,11 @@ export function confirmGrn(
 ) {
   const po = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!po) return { ok: false, error: 'Purchase order not found.' };
-  if (!['On loading', 'In Transit', 'Approved'].includes(po.status)) {
-    return { ok: false, error: 'PO not in receivable status.' };
+  if (!PO_TRANSIT_PAYABLE_STATUSES.has(normalizePoTransitStatus(po.status))) {
+    return {
+      ok: false,
+      error: poStatusGateError('Store receipt', po.status, ['approved', 'on loading', 'in transit']),
+    };
   }
 
   const lines = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);

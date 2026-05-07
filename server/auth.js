@@ -163,6 +163,8 @@ export const ROLE_DEFINITIONS = {
       'operations.manage',
       'production.manage',
       'production.release',
+      'inventory.receive',
+      'inventory.adjust',
       'deliveries.manage',
     ],
   },

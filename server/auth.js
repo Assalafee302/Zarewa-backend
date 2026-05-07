@@ -159,6 +159,10 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
+      'procurement.view',
+      'procurement.manage',
+      'purchase_orders.manage',
+      'suppliers.manage',
       'operations.view',
       'operations.manage',
       'production.manage',
@@ -385,6 +389,19 @@ export function publicUserFromRow(row) {
     } catch {
       /* fallback to role default */
     }
+  }
+  if (String(roleKey || '').trim().toLowerCase() === 'operations_officer') {
+    if (!permissions.includes('procurement.view')) permissions.push('procurement.view');
+    if (!permissions.includes('procurement.manage')) permissions.push('procurement.manage');
+    if (!permissions.includes('purchase_orders.manage')) permissions.push('purchase_orders.manage');
+    if (!permissions.includes('suppliers.manage')) permissions.push('suppliers.manage');
+    if (!permissions.includes('operations.view')) permissions.push('operations.view');
+    if (!permissions.includes('operations.manage')) permissions.push('operations.manage');
+    if (!permissions.includes('production.manage')) permissions.push('production.manage');
+    if (!permissions.includes('production.release')) permissions.push('production.release');
+    if (!permissions.includes('inventory.receive')) permissions.push('inventory.receive');
+    if (!permissions.includes('inventory.adjust')) permissions.push('inventory.adjust');
+    if (!permissions.includes('deliveries.manage')) permissions.push('deliveries.manage');
   }
   return {
     id: row.id,

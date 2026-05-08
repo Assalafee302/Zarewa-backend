@@ -212,6 +212,12 @@ import {
   procurementPayablesAging,
   procurementCoilRisk,
   procurementAlerts,
+  salesDashboardSummary,
+  salesDashboardRevenueTrend,
+  salesDashboardReceivablesAging,
+  salesDashboardTopCustomers,
+  salesDashboardDemandMix,
+  salesDashboardAlerts,
 } from './readModel.js';
 import {
   approveMdPriceExceptionForQuotation,
@@ -2296,6 +2302,68 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load procurement alerts.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/summary', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { from, to } = req.query || {};
+      return res.json(salesDashboardSummary(db, branchScope, { from, to }));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales dashboard summary.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/revenue-trend', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { from, to } = req.query || {};
+      return res.json(salesDashboardRevenueTrend(db, branchScope, { from, to }));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales revenue trend.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/receivables-aging', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(salesDashboardReceivablesAging(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales receivables aging.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/top-customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(salesDashboardTopCustomers(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales top customers.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/demand-mix', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(salesDashboardDemandMix(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales demand mix.' });
+    }
+  });
+
+  app.get('/api/sales/dashboard/alerts', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(salesDashboardAlerts(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales alerts.' });
     }
   });
 

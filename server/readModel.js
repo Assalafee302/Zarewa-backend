@@ -2309,6 +2309,157 @@ export function procurementAlerts(db, branchScope = 'ALL') {
   return { ok: true, rows: alerts };
 }
 
+function normalizeSalesDashboardStatus(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return 'requested';
+  if (['draft', 'pending', 'requested'].includes(s)) return 'requested';
+  if (['approved'].includes(s)) return 'approved';
+  if (['paid', 'partial'].includes(s)) return 'paid';
+  if (['delivered', 'closed', 'completed'].includes(s)) return 'delivered';
+  if (['expired', 'void', 'cancelled', 'canceled', 'rejected'].includes(s)) return 'cancelled';
+  return 'requested';
+}
+
+export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
+  const fromIso = String(opts?.from || '').trim();
+  const toIso = String(opts?.to || '').trim();
+  const quotations = listQuotations(db, branchScope);
+  const receipts = listSalesReceipts(db, branchScope);
+  const refunds = listRefunds(db, branchScope);
+  const cuttingLists = listCuttingLists(db, branchScope);
+  const productionJobs = listProductionJobs(db, branchScope);
+  const qInRange = quotations.filter((q) => {
+    const d = String(q?.dateISO || q?.date || '').slice(0, 10);
+    if (!d) return false;
+    if (fromIso && d < fromIso) return false;
+    if (toIso && d > toIso) return false;
+    return true;
+  });
+  const rInRange = receipts.filter((r) => {
+    const d = String(r?.dateISO || r?.date || '').slice(0, 10);
+    if (!d) return false;
+    if (fromIso && d < fromIso) return false;
+    if (toIso && d > toIso) return false;
+    return true;
+  });
+  const kpis = {
+    salesMtdNgn: qInRange.reduce((s, q) => s + (Number(q?.totalNgn) || 0), 0),
+    receiptsMtdNgn: rInRange.reduce((s, r) => s + (Number(r?.amountNgn) || 0), 0),
+    outstandingReceivablesNgn: quotations.reduce(
+      (s, q) => s + Math.max(0, (Number(q?.totalNgn) || 0) - (Number(q?.paidNgn) || 0)),
+      0
+    ),
+    pendingQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'requested').length,
+    approvedQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'approved').length,
+    paidQuotations: quotations.filter((q) => ['paid', 'partial'].includes(String(q?.paymentStatus || '').toLowerCase())).length,
+    refundsAwaitingPayout: refunds.filter(
+      (r) =>
+        String(r?.status || '').toLowerCase() === 'approved' &&
+        Math.max(0, (Number(r?.amountNgn) || 0) - (Number(r?.paidAmountNgn) || 0)) > 0
+    ).length,
+    cuttingWaiting: cuttingLists.filter((c) => !c?.productionRegistered || c?.productionReleasePending).length,
+    producedMeters: productionJobs.reduce((s, j) => s + (Number(j?.actualMeters || j?.plannedMeters || 0) || 0), 0),
+  };
+  return { ok: true, kpis };
+}
+
+export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
+  const fromIso = String(opts?.from || '').trim();
+  const toIso = String(opts?.to || '').trim();
+  const rows = new Map();
+  listQuotations(db, branchScope).forEach((q) => {
+    const d = String(q?.dateISO || q?.date || '').slice(0, 10);
+    if (!d) return;
+    if (fromIso && d < fromIso) return;
+    if (toIso && d > toIso) return;
+    const key = d.slice(0, 7);
+    const curr = rows.get(key) || { key, salesNgn: 0, receiptsNgn: 0 };
+    curr.salesNgn += Number(q?.totalNgn) || 0;
+    rows.set(key, curr);
+  });
+  listSalesReceipts(db, branchScope).forEach((r) => {
+    const d = String(r?.dateISO || r?.date || '').slice(0, 10);
+    if (!d) return;
+    if (fromIso && d < fromIso) return;
+    if (toIso && d > toIso) return;
+    const key = d.slice(0, 7);
+    const curr = rows.get(key) || { key, salesNgn: 0, receiptsNgn: 0 };
+    curr.receiptsNgn += Number(r?.amountNgn) || 0;
+    rows.set(key, curr);
+  });
+  return { ok: true, rows: [...rows.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+export function salesDashboardReceivablesAging(db, branchScope = 'ALL') {
+  const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
+  const now = new Date();
+  listQuotations(db, branchScope).forEach((q) => {
+    const due = new Date(String(q?.dateISO || q?.date || ''));
+    if (Number.isNaN(due.getTime())) return;
+    const outstanding = Math.max(0, (Number(q?.totalNgn) || 0) - (Number(q?.paidNgn) || 0));
+    if (!(outstanding > 0)) return;
+    const days = Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 30) out['0_30'] += outstanding;
+    else if (days <= 60) out['31_60'] += outstanding;
+    else if (days <= 90) out['61_90'] += outstanding;
+    else out.over_90 += outstanding;
+  });
+  return { ok: true, buckets: out };
+}
+
+export function salesDashboardTopCustomers(db, branchScope = 'ALL') {
+  const byCustomer = new Map();
+  listQuotations(db, branchScope).forEach((q) => {
+    const id = String(q?.customerID || q?.customer_id || q?.customer || '').trim();
+    if (!id) return;
+    const curr = byCustomer.get(id) || { customerID: id, customerName: q?.customer || id, valueNgn: 0, quoteCount: 0 };
+    curr.valueNgn += Number(q?.totalNgn) || 0;
+    curr.quoteCount += 1;
+    byCustomer.set(id, curr);
+  });
+  return { ok: true, rows: [...byCustomer.values()].sort((a, b) => b.valueNgn - a.valueNgn).slice(0, 20) };
+}
+
+export function salesDashboardDemandMix(db, branchScope = 'ALL') {
+  const byKey = new Map();
+  listProductionJobs(db, branchScope).forEach((j) => {
+    const key = String(j?.materialType || j?.productType || j?.productID || 'Other');
+    const curr = byKey.get(key) || { key, metres: 0, valueNgn: 0 };
+    curr.metres += Number(j?.actualMeters || j?.plannedMeters || 0) || 0;
+    curr.valueNgn += Number(j?.revenueNgn || 0) || 0;
+    byKey.set(key, curr);
+  });
+  return { ok: true, rows: [...byKey.values()].sort((a, b) => b.valueNgn - a.valueNgn).slice(0, 30) };
+}
+
+export function salesDashboardAlerts(db, branchScope = 'ALL') {
+  const summary = salesDashboardSummary(db, branchScope, {});
+  const alerts = [];
+  if ((summary.kpis?.outstandingReceivablesNgn || 0) > 0) {
+    alerts.push({
+      severity: 'medium',
+      type: 'receivables',
+      message: 'Outstanding receivables require collection follow-up.',
+      amountNgn: summary.kpis.outstandingReceivablesNgn,
+    });
+  }
+  if ((summary.kpis?.refundsAwaitingPayout || 0) > 0) {
+    alerts.push({
+      severity: 'medium',
+      type: 'refund_payout',
+      message: `${summary.kpis.refundsAwaitingPayout} approved refund(s) awaiting payout`,
+    });
+  }
+  if ((summary.kpis?.cuttingWaiting || 0) > 0) {
+    alerts.push({
+      severity: 'low',
+      type: 'production_wait',
+      message: `${summary.kpis.cuttingWaiting} cutting list(s) waiting for material/production release`,
+    });
+  }
+  return { ok: true, rows: alerts };
+}
+
 /**
  * Org-wide aggregates for executive (CEO) dashboard — no row payloads.
  * @param {import('better-sqlite3').Database} db

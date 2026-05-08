@@ -2412,12 +2412,22 @@ export function salesDashboardTopCustomers(db, branchScope = 'ALL') {
   listQuotations(db, branchScope).forEach((q) => {
     const id = String(q?.customerID || q?.customer_id || q?.customer || '').trim();
     if (!id) return;
-    const curr = byCustomer.get(id) || { customerID: id, customerName: q?.customer || id, valueNgn: 0, quoteCount: 0 };
-    curr.valueNgn += Number(q?.totalNgn) || 0;
+    const curr = byCustomer.get(id) || {
+      customerID: id,
+      customerName: q?.customer || id,
+      paidNgn: 0,
+      metres: 0,
+      quoteCount: 0,
+    };
+    curr.paidNgn += Number(q?.paidNgn ?? q?.paid_ngn) || 0;
+    curr.metres += Number(q?.totalMeters ?? q?.meters ?? q?.total_meters) || 0;
     curr.quoteCount += 1;
     byCustomer.set(id, curr);
   });
-  return { ok: true, rows: [...byCustomer.values()].sort((a, b) => b.valueNgn - a.valueNgn).slice(0, 20) };
+  const ranked = [...byCustomer.values()];
+  const rowsByPaid = [...ranked].sort((a, b) => b.paidNgn - a.paidNgn).slice(0, 20);
+  const rowsByMeters = [...ranked].sort((a, b) => b.metres - a.metres).slice(0, 20);
+  return { ok: true, rows: rowsByPaid, rowsByPaid, rowsByMeters };
 }
 
 export function salesDashboardDemandMix(db, branchScope = 'ALL') {

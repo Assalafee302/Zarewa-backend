@@ -73,6 +73,7 @@ import {
   assertProductionJobIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
+import { receiptDuplicateSignalsFromLedgerRows } from './receiptPostingGuards.js';
 import {
   DEFAULT_BRANCH_ID,
   getBranch,
@@ -392,6 +393,31 @@ function normalizeTreasuryLines(body) {
 
 function totalTreasuryLines(lines) {
   return (lines || []).reduce((sum, line) => sum + (Number(line.amountNgn) || 0), 0);
+}
+
+/** Top-level bankReference or, when absent, joined payment line references (API / scripts compatibility). */
+function effectiveReceiptBankReference(body) {
+  const direct = String(body?.bankReference ?? '').trim();
+  if (direct) return direct;
+  const lines = normalizeTreasuryLines(body || {});
+  const parts = lines.map((l) => String(l.reference || '').trim()).filter(Boolean);
+  if (parts.length) return parts.join(' | ');
+  return '';
+}
+
+function recentReceiptDuplicateSignals(db, { customerID, quotationId, amountNgn, bankReference }) {
+  const amount = Math.round(Number(amountNgn) || 0);
+  if (!(customerID && quotationId && amount > 0)) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, amount_ngn, at_iso, bank_reference
+       FROM ledger_entries
+       WHERE type = 'RECEIPT' AND customer_id = ? AND quotation_ref = ?
+       ORDER BY at_iso DESC
+       LIMIT 40`
+    )
+    .all(customerID, quotationId);
+  return receiptDuplicateSignalsFromLedgerRows(rows, { amountNgn, bankReference });
 }
 
 function requireManagementReportsView(req, res, next) {
@@ -4978,9 +5004,11 @@ export function registerHttpApi(app, db) {
         quotationId,
         amountNgn,
         paymentMethod,
-        bankReference,
         dateISO,
+        forceDuplicatePost,
+        duplicateOverrideReason,
       } = req.body || {};
+      const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
       if (!customerID || !quotationId) {
         return res.status(400).json({ ok: false, error: 'customerID and quotationId are required' });
       }
@@ -4993,6 +5021,34 @@ export function registerHttpApi(app, db) {
       if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       if (qt.customerID !== customerID) {
         return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
+      }
+      if (!resolvedBankReference) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Reference / remarks is required for receipt posting (voucher reference or each payment line reference).',
+          code: 'MISSING_REFERENCE',
+        });
+      }
+      const duplicateSignals = recentReceiptDuplicateSignals(db, {
+        customerID,
+        quotationId,
+        amountNgn,
+        bankReference: resolvedBankReference,
+      });
+      if (duplicateSignals.length > 0 && !forceDuplicatePost) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Possible duplicate receipt detected.',
+          code: 'POSSIBLE_DUPLICATE_RECEIPT',
+          duplicateSignals,
+        });
+      }
+      if (duplicateSignals.length > 0 && forceDuplicatePost && !String(duplicateOverrideReason || '').trim()) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Duplicate override reason is required when forcing a duplicate-like post.',
+          code: 'DUPLICATE_OVERRIDE_REASON_REQUIRED',
+        });
       }
 
       try {
@@ -5012,7 +5068,7 @@ export function registerHttpApi(app, db) {
         quotationRow: qt,
         amountNgn,
         paymentMethod,
-        bankReference,
+        bankReference: resolvedBankReference,
         dateISO,
       });
       if (!plan.ok) return res.status(400).json(plan);
@@ -5045,7 +5101,7 @@ export function registerHttpApi(app, db) {
             customerID,
             customerName: customerName || cust.name,
             dateISO,
-            reference: bankReference,
+            reference: resolvedBankReference,
             note: parsed.overpay ? `Receipt ${qt.id} with overpayment to advance` : `Receipt ${qt.id}`,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
@@ -5073,6 +5129,14 @@ export function registerHttpApi(app, db) {
             receiptEntryId: parsed.receipt?.id ?? '',
             overpayEntryId: parsed.overpay?.id ?? '',
             amountNgn: Math.round(Number(amountNgn) || 0),
+            duplicateOverride:
+              duplicateSignals.length > 0
+                ? {
+                    forced: Boolean(forceDuplicatePost),
+                    reason: String(duplicateOverrideReason || '').trim(),
+                    signals: duplicateSignals,
+                  }
+                : null,
           },
         });
         write.syncQuotationPaidFromLedger(db, quotationId);

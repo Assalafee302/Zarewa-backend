@@ -713,6 +713,7 @@ describe.sequential('Zarewa API', () => {
       quotationId: 'QT-2026-004',
       amountNgn: 650_000,
       paymentMethod: 'Cash',
+      bankReference: 'RCP-1 — cash receipt',
       dateISO: '2026-03-28',
       treasuryAccountId,
       paymentLines: [{ treasuryAccountId, amountNgn: 650_000, reference: 'RCP-1' }],
@@ -749,6 +750,7 @@ describe.sequential('Zarewa API', () => {
       quotationId,
       amountNgn: 100_000,
       paymentMethod: 'Transfer',
+      bankReference: 'TRF-REVERSAL-TEST-001',
       dateISO: '2026-03-29',
     });
     expect(receipt.status).toBe(201);

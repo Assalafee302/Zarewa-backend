@@ -156,7 +156,9 @@ function jobIsStoneMeter(db, job) {
 }
 
 function completionModeFromPayload(payload) {
-  const mode = String(payload?.completeMode ?? payload?.completionMode ?? '').trim().toLowerCase();
+  const mode = String(payload?.startMode ?? payload?.completeMode ?? payload?.completionMode ?? '')
+    .trim()
+    .toLowerCase();
   return mode === 'offcut' || mode === 'accessories_only' || mode === 'accessory_only' ? 'offcut' : 'coil';
 }
 

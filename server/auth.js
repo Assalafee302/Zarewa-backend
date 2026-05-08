@@ -1105,24 +1105,40 @@ function findUserByIdentifier(db, identifier) {
     .get(lower, lower);
 }
 
+function issuePasswordResetTokenForUserId(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return null;
+  const row = db.prepare(`SELECT * FROM app_users WHERE id = ? AND status = 'active'`).get(uid);
+  if (!row) return null;
+  const createdAtISO = nowIso();
+  const expiresAtISO = addMinutesToIso(createdAtISO, RESET_TOKEN_TTL_MINUTES);
+  db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at_iso IS NULL`).run(row.id);
+  const plain = crypto.randomBytes(RESET_TOKEN_BYTES).toString('base64url');
+  const tokenHash = hashResetToken(plain);
+  const id = `PRT-${crypto.randomBytes(12).toString('hex')}`;
+  db.prepare(
+    `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at_iso, expires_at_iso, used_at_iso)
+     VALUES (?,?,?,?,?,NULL)`
+  ).run(id, row.id, tokenHash, createdAtISO, expiresAtISO);
+  return {
+    token: plain,
+    expiresAtISO,
+    userId: String(row.id || ''),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+  };
+}
+
 /**
  * Creates a reset token. Always returns the same public shape (no user enumeration).
  * @returns {{ ok: true, devResetToken?: string }}
  */
 export function requestPasswordReset(db, identifier) {
   const row = findUserByIdentifier(db, identifier);
-  const createdAtISO = nowIso();
-  const expiresAtISO = addMinutesToIso(createdAtISO, RESET_TOKEN_TTL_MINUTES);
 
   if (row) {
-    db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at_iso IS NULL`).run(row.id);
-    const plain = crypto.randomBytes(RESET_TOKEN_BYTES).toString('base64url');
-    const tokenHash = hashResetToken(plain);
-    const id = `PRT-${crypto.randomBytes(12).toString('hex')}`;
-    db.prepare(
-      `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at_iso, expires_at_iso, used_at_iso)
-       VALUES (?,?,?,?,?,NULL)`
-    ).run(id, row.id, tokenHash, createdAtISO, expiresAtISO);
+    const issued = issuePasswordResetTokenForUserId(db, row.id);
+    const plain = issued?.token || '';
 
     const expose =
       process.env.NODE_ENV !== 'production' &&
@@ -1133,6 +1149,24 @@ export function requestPasswordReset(db, identifier) {
   }
 
   return { ok: true };
+}
+
+/**
+ * Admin helper: issue a one-time reset code directly from Team & Access.
+ * @returns {{ ok: true, resetToken: string, expiresAtISO: string, identifier: string } | { ok: false, error: string }}
+ */
+export function issuePasswordResetForAdmin(db, userId) {
+  const issued = issuePasswordResetTokenForUserId(db, userId);
+  if (!issued?.token) {
+    return { ok: false, error: 'Active user not found.' };
+  }
+  const preferredIdentifier = issued.email || issued.username;
+  return {
+    ok: true,
+    resetToken: issued.token,
+    expiresAtISO: issued.expiresAtISO,
+    identifier: preferredIdentifier,
+  };
 }
 
 function addMinutesToIso(iso, minutes) {

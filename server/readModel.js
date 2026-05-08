@@ -2151,6 +2151,164 @@ export function dashboardSummary(db, branchScope = 'ALL', opts = {}) {
   };
 }
 
+function normalizeProcurementStatus(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return 'requested';
+  if (['draft', 'pending', 'pending approval', 'requested'].includes(s)) return 'requested';
+  if (['approved'].includes(s)) return 'approved';
+  if (['ordered'].includes(s)) return 'ordered';
+  if (['on loading', 'in transit', 'dispatched'].includes(s)) return 'dispatched';
+  if (['received'].includes(s)) return 'received';
+  if (['closed'].includes(s)) return 'closed';
+  if (['cancelled', 'canceled'].includes(s)) return 'cancelled';
+  if (['rejected'].includes(s)) return 'rejected';
+  return 'ordered';
+}
+
+function poOrderedValue(po) {
+  const lines = Array.isArray(po?.lines) ? po.lines : [];
+  return lines.reduce((s, line) => {
+    const qty = Number(line?.qtyOrdered) || 0;
+    const unit = Number(line?.unitPriceNgn) || Number(line?.unitPricePerKgNgn) || 0;
+    return s + qty * unit;
+  }, 0);
+}
+
+export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) {
+  const fromIso = String(opts?.from || '').trim();
+  const toIso = String(opts?.to || '').trim();
+  const pos = listPurchaseOrders(db, branchScope);
+  const aps = listAccountsPayable(db, branchScope);
+  const suppliers = listSuppliers(db, branchScope);
+  const loads = listInTransitLoads(db, branchScope);
+  const products = listProducts(db, branchScope);
+  const inWindow = pos.filter((po) => {
+    const d = String(po?.orderDateISO || '').slice(0, 10);
+    if (fromIso && d < fromIso) return false;
+    if (toIso && d > toIso) return false;
+    return true;
+  });
+  const nonRejected = inWindow.filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
+  const now = new Date().toISOString().slice(0, 10);
+  const kpis = {
+    totalPurchasesNgn: nonRejected.reduce((s, po) => s + poOrderedValue(po), 0),
+    pendingPoCount: nonRejected.filter((po) => normalizeProcurementStatus(po.status) === 'requested').length,
+    approvedPoCount: nonRejected.filter((po) => normalizeProcurementStatus(po.status) === 'approved').length,
+    outstandingSupplierPaymentsNgn: nonRejected.reduce((s, po) => {
+      const paid = Number(po?.supplierPaidNgn) || 0;
+      return s + Math.max(0, poOrderedValue(po) - paid);
+    }, 0),
+    activeSuppliers: new Set(nonRejected.map((po) => String(po?.supplierID || '')).filter(Boolean)).size,
+    goodsInTransitCount: loads.filter((l) =>
+      ['in_transit', 'loading_confirmed', 'on_loading'].includes(String(l?.status || '').toLowerCase())
+    ).length,
+    lowStockItemsCount: products.filter((p) => Number(p?.stockLevel) < 1).length,
+    posCreatedToday: nonRejected.filter((po) => String(po?.orderDateISO || '').slice(0, 10) === now).length,
+    payablesOutstandingNgn: aps.reduce((s, ap) => s + Math.max(0, (Number(ap?.amountNgn) || 0) - (Number(ap?.paidNgn) || 0)), 0),
+  };
+  return { ok: true, kpis };
+}
+
+export function procurementSpendTrend(db, branchScope = 'ALL', opts = {}) {
+  const fromIso = String(opts?.from || '').trim();
+  const toIso = String(opts?.to || '').trim();
+  const pos = listPurchaseOrders(db, branchScope).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
+  const m = new Map();
+  pos.forEach((po) => {
+    const d = String(po?.orderDateISO || '').slice(0, 10);
+    if (!d) return;
+    if (fromIso && d < fromIso) return;
+    if (toIso && d > toIso) return;
+    const key = d.slice(0, 7);
+    m.set(key, (m.get(key) || 0) + poOrderedValue(po));
+  });
+  const rows = [...m.entries()].map(([key, value]) => ({ key, value })).sort((a, b) => a.key.localeCompare(b.key));
+  return { ok: true, rows };
+}
+
+export function procurementSupplierScorecard(db, branchScope = 'ALL') {
+  const pos = listPurchaseOrders(db, branchScope).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
+  const byId = new Map();
+  pos.forEach((po) => {
+    const id = String(po?.supplierID || '').trim();
+    if (!id) return;
+    const curr = byId.get(id) || { supplierID: id, spendNgn: 0, poCount: 0 };
+    curr.spendNgn += poOrderedValue(po);
+    curr.poCount += 1;
+    byId.set(id, curr);
+  });
+  const suppliers = listSuppliers(db, branchScope);
+  const rows = [...byId.values()]
+    .map((r) => {
+      const s = suppliers.find((x) => String(x?.supplierID || '') === r.supplierID);
+      const quality = Number(s?.qualityScore) || 70;
+      const reliabilityScore = Math.round(0.4 * quality + 0.6 * Math.min(100, 50 + r.poCount * 2));
+      return { ...r, supplierName: s?.name || r.supplierID, reliabilityScore };
+    })
+    .sort((a, b) => b.spendNgn - a.spendNgn);
+  return { ok: true, rows };
+}
+
+export function procurementPayablesAging(db, branchScope = 'ALL') {
+  const aps = listAccountsPayable(db, branchScope);
+  const now = new Date();
+  const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
+  aps.forEach((ap) => {
+    const outstanding = Math.max(0, (Number(ap?.amountNgn) || 0) - (Number(ap?.paidNgn) || 0));
+    if (!(outstanding > 0)) return;
+    const due = new Date(String(ap?.dueDateISO || ap?.dueDate || ap?.invoiceDateISO || ''));
+    if (Number.isNaN(due.getTime())) return;
+    const days = Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 30) out['0_30'] += outstanding;
+    else if (days <= 60) out['31_60'] += outstanding;
+    else if (days <= 90) out['61_90'] += outstanding;
+    else out.over_90 += outstanding;
+  });
+  return { ok: true, buckets: out };
+}
+
+export function procurementCoilRisk(db, branchScope = 'ALL') {
+  const products = listProducts(db, branchScope).filter((p) => String(p?.unit || '').toLowerCase() === 'kg');
+  const rows = products
+    .map((p) => {
+      const attrs = p.dashboardAttrs || {};
+      const stockKg = Number(p?.stockLevel) || 0;
+      const avgDailyKg = Math.max(1, Number(attrs?.avgDailyConsumptionKg) || 3);
+      const daysCover = stockKg / avgDailyKg;
+      return {
+        productID: p.productID,
+        color: attrs.colour || attrs.color || '—',
+        gauge: attrs.gauge || '—',
+        stockKg,
+        avgDailyKg,
+        daysCover,
+      };
+    })
+    .sort((a, b) => a.daysCover - b.daysCover)
+    .slice(0, 100);
+  return { ok: true, rows };
+}
+
+export function procurementAlerts(db, branchScope = 'ALL') {
+  const summary = procurementDashboardSummary(db, branchScope, {});
+  const alerts = [];
+  if ((summary.kpis?.lowStockItemsCount || 0) > 0) {
+    alerts.push({ severity: 'high', type: 'low_stock', message: `${summary.kpis.lowStockItemsCount} item(s) below threshold` });
+  }
+  if ((summary.kpis?.pendingPoCount || 0) > 0) {
+    alerts.push({ severity: 'medium', type: 'pending_po', message: `${summary.kpis.pendingPoCount} PO(s) awaiting approval` });
+  }
+  if ((summary.kpis?.payablesOutstandingNgn || 0) > 0) {
+    alerts.push({
+      severity: 'medium',
+      type: 'payable_due',
+      message: 'Outstanding supplier obligations need planning',
+      amountNgn: summary.kpis.payablesOutstandingNgn,
+    });
+  }
+  return { ok: true, rows: alerts };
+}
+
 /**
  * Org-wide aggregates for executive (CEO) dashboard — no row payloads.
  * @param {import('better-sqlite3').Database} db

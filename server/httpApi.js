@@ -44,6 +44,7 @@ import {
   loginWithFirebaseIdToken,
   logoutSession,
   patchAppUserWorkspaceDepartment,
+  issuePasswordResetForAdmin,
   requestPasswordReset,
   requireAuth,
   requirePermission,
@@ -205,6 +206,12 @@ import {
   listSalesReceipts,
   enrichSalesReceiptRowsWithCashFromLedger,
   listTreasuryMovements,
+  procurementDashboardSummary,
+  procurementSpendTrend,
+  procurementSupplierScorecard,
+  procurementPayablesAging,
+  procurementCoilRisk,
+  procurementAlerts,
 } from './readModel.js';
 import {
   approveMdPriceExceptionForQuotation,
@@ -1636,6 +1643,30 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/users/:id/password-reset-code', requirePermission('settings.view'), (req, res) => {
+    try {
+      const roleKey = String(req.user?.roleKey || '').toLowerCase();
+      if (roleKey !== 'admin' && roleKey !== 'md') {
+        return res.status(403).json({ ok: false, error: 'Only Admin or MD can generate reset codes.' });
+      }
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ ok: false, error: 'User id is required.' });
+      const r = issuePasswordResetForAdmin(db, id);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'session.password_reset_code_issued',
+        entityKind: 'user',
+        entityId: id,
+        note: 'Admin generated one-time reset code from Team & access',
+      });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate reset code.' });
+    }
+  });
+
   app.get('/api/roles', requirePermission('settings.view'), (_req, res) => {
     try {
       const roles = Object.entries(ROLE_DEFINITIONS).map(([key, v]) => ({
@@ -2203,6 +2234,68 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load suppliers' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/summary', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { from, to } = req.query || {};
+      return res.json(procurementDashboardSummary(db, branchScope, { from, to }));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load procurement dashboard summary.' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/spend-trend', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { from, to } = req.query || {};
+      return res.json(procurementSpendTrend(db, branchScope, { from, to }));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load procurement spend trend.' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/supplier-scorecard', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(procurementSupplierScorecard(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load supplier scorecard.' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/payables-aging', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(procurementPayablesAging(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load payables aging.' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/coil-risk', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(procurementCoilRisk(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load coil risk.' });
+    }
+  });
+
+  app.get('/api/procurement/dashboard/alerts', requirePermission(PROCUREMENT_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      return res.json(procurementAlerts(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load procurement alerts.' });
     }
   });
 

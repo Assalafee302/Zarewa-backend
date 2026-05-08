@@ -155,6 +155,18 @@ function jobIsStoneMeter(db, job) {
   return isStoneMeterQuotationLinesJson(db, j);
 }
 
+function completionModeFromPayload(payload) {
+  const mode = String(payload?.completeMode ?? payload?.completionMode ?? '').trim().toLowerCase();
+  return mode === 'offcut' || mode === 'accessories_only' || mode === 'accessory_only' ? 'offcut' : 'coil';
+}
+
+function offcutMetersFromPayload(payload) {
+  return safeNumber(
+    payload?.offcutMetersProduced ?? payload?.offcutMeters ?? payload?.metersProduced ?? payload?.totalMeters,
+    0
+  );
+}
+
 function updateCoilDerivedStateTx(db, coilNo) {
   const row = coilRow(db, coilNo);
   if (!row) return;
@@ -804,7 +816,8 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
     }
   }
   const allocations = listJobCoilsForJob(db, jobID);
-  if (!allocations.length && !jobIsStoneMeter(db, job)) {
+  const startMode = completionModeFromPayload(payload);
+  if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut') {
     return { ok: false, error: 'Allocate at least one coil before starting production.' };
   }
   const startedAtISO = normalizeIso(payload.startedAtISO || job.start_date_iso || nowIso());
@@ -826,7 +839,7 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
         entityKind: 'production_job',
         entityId: jobID,
         note: `Production started on ${jobID}`,
-        details: { startedAtISO, coilCount: allocations.length, by: actorName(opts.actor) },
+        details: { startedAtISO, coilCount: allocations.length, startMode, by: actorName(opts.actor) },
       });
     })();
     return { ok: true };
@@ -1043,6 +1056,26 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
  */
 export function previewProductionConversion(db, jobID, payload = {}) {
   const jobRow = productionJobRow(db, jobID);
+  if (!jobRow) return { ok: false, error: 'Production job not found.' };
+  if (completionModeFromPayload(payload) === 'offcut') {
+    const metres = offcutMetersFromPayload(payload);
+    if (metres < 0) {
+      return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
+    }
+    const acc = planAccessoryCompletion(db, jobRow, payload);
+    if (!acc.ok) return { ok: false, error: acc.error };
+    return {
+      ok: true,
+      offcutMode: true,
+      rows: [],
+      aggregatedAlertState: 'OK',
+      managerReviewRequired: false,
+      totalMeters: metres,
+      totalWeightKg: 0,
+      accessoryPlan: acc.plannedLines,
+      accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
+    };
+  }
   if (jobRow && jobIsStoneMeter(db, jobRow)) {
     const acc = planAccessoryCompletion(db, jobRow, payload);
     if (!acc.ok) return { ok: false, error: acc.error };
@@ -1365,6 +1398,100 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   }
 }
 
+function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
+  const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
+  const metres = offcutMetersFromPayload(payload);
+  if (!Number.isFinite(metres) || metres < 0) {
+    return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
+  }
+  let accessoryStockWarnings = [];
+  try {
+    assertPeriodOpen(db, completedAtISO, 'Production completion date');
+    db.transaction(() => {
+      const accPlan = planAccessoryCompletion(db, job, payload);
+      if (!accPlan.ok) throw new Error(accPlan.error);
+      accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
+
+      const allocations = listJobCoilsForJob(db, jobID);
+      for (const row of allocations) {
+        const coilNo = String(row.coil_no ?? '').trim();
+        if (!coilNo) continue;
+        const openingKg = clampNonNegative(safeNumber(row.opening_weight_kg));
+        const coil = coilRow(db, coilNo);
+        if (coil) {
+          const nextReserved = clampNonNegative(safeNumber(coil.qty_reserved) - openingKg);
+          db.prepare(`UPDATE coil_lots SET qty_reserved = ? WHERE coil_no = ?`).run(nextReserved, coilNo);
+          updateCoilDerivedStateTx(db, coilNo);
+        }
+        db.prepare(
+          `UPDATE production_job_coils
+           SET closing_weight_kg = ?, consumed_weight_kg = 0, meters_produced = 0, actual_conversion_kg_per_m = NULL,
+               allocation_status = 'Completed', note = COALESCE(NULLIF(note,''), ?)
+           WHERE id = ?`
+        ).run(openingKg, 'Completed from offcut/accessories mode.', row.id);
+      }
+
+      if (job.product_id && metres > 0) {
+        adjustProductStockTx(db, job.product_id, metres);
+        appendStockMovementTx(db, {
+          atISO: completedAtISO,
+          type: 'FINISHED_GOODS_RECEIPT',
+          ref: jobID,
+          productID: job.product_id,
+          qty: metres,
+          detail: `${jobID} completed from offcut/accessories mode (${job.product_name || job.product_id})`,
+        });
+      }
+      db.prepare(
+        `UPDATE production_jobs
+         SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+             conversion_alert_state = ?, manager_review_required = ?
+         WHERE job_id = ?`
+      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, jobID);
+      if (job.cutting_list_id) {
+        db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
+      }
+      applyAccessoryCompletionTx(
+        db,
+        jobID,
+        String(job.quotation_ref ?? '').trim(),
+        completedAtISO,
+        accPlan.plannedLines,
+        adjustProductStockTx,
+        appendStockMovementTx
+      );
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.complete_offcut',
+        entityKind: 'production_job',
+        entityId: jobID,
+        note: `Production completed on ${jobID} (offcut/accessories mode)`,
+        details: { totalMeters: metres, releasedCoilLines: allocations.length },
+      });
+      const glRec = tryPostProductionRecognitionGlTx(db, {
+        jobID,
+        quotationRef: String(job.quotation_ref ?? '').trim(),
+        actualMeters: metres,
+        totalCogsNgn: 0,
+        completedAtISO,
+        branchId: job.branch_id ?? null,
+        createdByUserId: opts.actor?.id != null ? String(opts.actor.id) : null,
+      });
+      if (!glRec.ok) throw new Error(glRec.error || 'Production recognition GL failed.');
+    })();
+    return {
+      ok: true,
+      actualMeters: metres,
+      actualWeightKg: 0,
+      alertState: 'OK',
+      managerReviewRequired: false,
+      accessoryStockWarnings,
+    };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+}
+
 export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
@@ -1373,6 +1500,9 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   if (jobIsStoneMeter(db, job)) {
     return completeProductionJobStone(db, job, jobID, payload, opts);
+  }
+  if (completionModeFromPayload(payload) === 'offcut') {
+    return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
   try {

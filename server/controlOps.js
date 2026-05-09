@@ -1026,7 +1026,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
     const sumRow = db
       .prepare(
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-         WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) != 'rejected' AND refund_id != ?`
+         WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled') AND refund_id != ?`
       )
       .get(qref, refundID);
     const sumOthersNgn = roundMoney(sumRow?.s ?? 0);
@@ -1192,7 +1192,11 @@ export function previewRefundRequest(db, payload) {
     : [];
 
   const existingRefunds = quotationRef
-    ? db.prepare(`SELECT * FROM customer_refunds WHERE quotation_ref = ? AND status != 'Rejected'`).all(quotationRef)
+    ? db
+        .prepare(
+          `SELECT * FROM customer_refunds WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+        )
+        .all(quotationRef)
     : [];
 
   const refundedCategories = new Set();
@@ -1591,8 +1595,8 @@ function refundReasonCategoriesIncludeOrderCancellation(reasonCategoryField) {
 }
 
 /**
- * Any non-rejected refund whose categories include “Order cancellation”.
- * Production must not proceed while this is on file (prevents produce-after-cancel).
+ * Any refund that still counts toward quotation rules (not rejected / not cancel-before-pay)
+ * whose categories include “Order cancellation”. Production must not proceed while this is on file.
  */
 export function quotationHasNonRejectedOrderCancellationRefund(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
@@ -1601,7 +1605,7 @@ export function quotationHasNonRejectedOrderCancellationRefund(db, quotationRef)
     .prepare(
       `SELECT reason_category FROM customer_refunds
        WHERE quotation_ref = ?
-         AND TRIM(COALESCE(LOWER(status), '')) != 'rejected'`
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
     )
     .all(ref);
   return rows.some((r) => refundReasonCategoriesIncludeOrderCancellation(r.reason_category));
@@ -1627,7 +1631,7 @@ function quotationHasOpenProductionJob(db, quotationRef) {
 
 /**
  * Single-quotation checks aligned with {@link getEligibleRefundQuotations} listing rules, plus
- * remaining headroom: paid_ngn minus non-rejected refund totals.
+ * remaining headroom: paid_ngn minus refund totals (excluding rejected and cancel-before-pay).
  */
 export function quotationMeetsRefundEligibility(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
@@ -1641,7 +1645,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
   const sumRow = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-       WHERE quotation_ref = ? AND status != 'Rejected'`
+       WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
     )
     .get(ref);
   const totalRefundedNgn = roundMoney(sumRow?.s ?? 0);
@@ -1687,13 +1691,13 @@ export function getEligibleRefundQuotations(db) {
     SELECT q.*,
       COALESCE((
         SELECT SUM(amount_ngn) FROM customer_refunds
-        WHERE quotation_ref = q.id AND status != 'Rejected'
+        WHERE quotation_ref = q.id AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
       ), 0) AS total_refunded
     FROM quotations q
     WHERE q.paid_ngn > 0
       AND COALESCE((
         SELECT SUM(amount_ngn) FROM customer_refunds
-        WHERE quotation_ref = q.id AND status != 'Rejected'
+        WHERE quotation_ref = q.id AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
       ), 0) < q.paid_ngn
       AND NOT EXISTS (
         SELECT 1 FROM production_jobs j2

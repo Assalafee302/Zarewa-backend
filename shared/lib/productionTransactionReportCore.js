@@ -24,7 +24,8 @@ function refundsPaidOnQuotationNgn(refunds, quotationRef) {
   for (const r of refunds || []) {
     const qr = String(r.quotationRef ?? r.quotation_ref ?? '').trim();
     if (qr !== q) continue;
-    if (String(r.status || '') === 'Rejected') continue;
+    const st = String(r.status || '').trim().toLowerCase();
+    if (st === 'rejected' || st === 'cancelled') continue;
     sum += Math.round(Number(r.paidAmountNgn ?? r.paid_amount_ngn) || 0);
   }
   return sum;

@@ -5,7 +5,7 @@
 
 const STORAGE_KEY = 'zarewa.sales.refunds';
 
-/** @typedef {'Pending'|'Approved'|'Rejected'|'Paid'} RefundStatus */
+/** @typedef {'Pending'|'Approved'|'Rejected'|'Cancelled'|'Paid'} RefundStatus */
 
 function normalizeLine(line) {
   return {
@@ -62,7 +62,10 @@ export function normalizeRefund(r) {
     previewSnapshot:
       r.previewSnapshot != null && typeof r.previewSnapshot === 'object' ? r.previewSnapshot : null,
     calculationNotes: r.calculationNotes ?? '',
-    status: r.status === 'Paid' || r.status === 'Rejected' || r.status === 'Approved' ? r.status : 'Pending',
+    status:
+      r.status === 'Paid' || r.status === 'Rejected' || r.status === 'Cancelled' || r.status === 'Approved'
+        ? r.status
+        : 'Pending',
     requestedBy: r.requestedBy ?? '—',
     requestedAtISO: r.requestedAtISO ?? '',
     approvalDate: r.approvalDate ?? '',

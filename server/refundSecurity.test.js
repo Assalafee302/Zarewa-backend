@@ -472,6 +472,34 @@ describe('Refund Security & Substitution Logic', () => {
     expect(rows.some((r) => r.id === 'QT-RFS-CANC-JOB')).toBe(true);
   });
 
+  it('getEligibleRefundQuotations treats Cancelled refund like Rejected (headroom restored)', () => {
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)
+       VALUES ('QT-RFS-REF-CANC','CUS-001','John Doe',50000,50000,'Finished','{}')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-RC','QT-RFS-REF-CANC',0,'Cancelled','2026-04-01T10:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,
+        amount_ngn, calculation_lines_json, status, requested_by, requested_at_iso,
+        approval_date, approved_by, approved_amount_ngn, manager_comments,
+        paid_amount_ngn, branch_id
+      ) VALUES (
+        'RF-RFS-RC-001','CUS-001','John Doe','QT-RFS-REF-CANC','—','[]','test',
+        30000,'[]','Cancelled','Tester','2026-04-01T10:00:00Z',
+        '','',0,'',0,'BR-KD'
+      )`
+    ).run();
+
+    const rows = getEligibleRefundQuotations(db);
+    const row = rows.find((r) => r.id === 'QT-RFS-REF-CANC');
+    expect(row).toBeTruthy();
+    expect(Number(row.total_refunded)).toBe(0);
+  });
+
   it('preview counts actual metres from Cancelled production jobs', async () => {
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)

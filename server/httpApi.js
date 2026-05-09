@@ -100,6 +100,7 @@ import {
   unlockAccountingPeriod,
   upsertTreasuryAccount,
 } from './controlOps.js';
+import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
   ADMIN_DATA_RESET_PRESETS,
@@ -3761,8 +3762,25 @@ export function registerHttpApi(app, db) {
         preview?.ok && Array.isArray(preview?.preview?.eligibleRefundCategories)
           ? preview.preview.eligibleRefundCategories
           : [];
-      const MIN_UI_NGN = 1000;
       const remainingNgn = meets.ok ? meets.remainingNgn : 0;
+      const qRow = db.prepare(`SELECT id, paid_ngn, total_ngn, status FROM quotations WHERE id = ?`).get(quotationRef);
+      const paidBooked = qRow != null ? Math.round(Number(qRow.paid_ngn) || 0) : null;
+      const totalBooked = qRow != null ? Math.round(Number(qRow.total_ngn) || 0) : null;
+      const orderOutstandingNgn =
+        qRow != null && totalBooked != null && totalBooked > 0 ? Math.max(0, totalBooked - (paidBooked || 0)) : null;
+      const isOrderFullySettledForPicker =
+        qRow == null ? null : totalBooked <= 0 ? true : (paidBooked || 0) >= totalBooked;
+      const productionJobs = db
+        .prepare(
+          `SELECT job_id, status FROM production_jobs WHERE quotation_ref = ? ORDER BY job_id ASC`
+        )
+        .all(quotationRef);
+      const refundsOnFile = db
+        .prepare(
+          `SELECT refund_id, status, amount_ngn, paid_amount_ngn FROM customer_refunds WHERE quotation_ref = ? ORDER BY requested_at_iso DESC`
+        )
+        .all(quotationRef);
+
       const blockingReasons = [];
       if (!meets.ok) {
         blockingReasons.push(meets.error || 'Does not meet refund listing rules.');
@@ -3772,13 +3790,21 @@ export function registerHttpApi(app, db) {
           'Refund preview returned no eligible refund categories (quotations are dropped from GET /api/refunds/eligible-quotations when this list is empty).'
         );
       }
-      if (meets.ok && remainingNgn > 0 && remainingNgn < MIN_UI_NGN) {
+      if (meets.ok && totalBooked > 0 && (paidBooked || 0) < totalBooked) {
         blockingReasons.push(
-          `Remaining refundable amount ₦${remainingNgn} is below the refund modal dropdown minimum (₦${MIN_UI_NGN}).`
+          `Order still has ₦${orderOutstandingNgn.toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations: booked paid ≥ order total).`
+        );
+      }
+      if (meets.ok && remainingNgn > 0 && remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) {
+        blockingReasons.push(
+          `Remaining refundable amount ₦${remainingNgn.toLocaleString('en-NG')} must be greater than ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} for the dropdown.`
         );
       }
       const wouldAppearInPicklist =
-        meets.ok && categories.length > 0 && remainingNgn >= MIN_UI_NGN;
+        meets.ok &&
+        categories.length > 0 &&
+        remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        isOrderFullySettledForPicker === true;
       res.json({
         ok: true,
         quotationRef,
@@ -3795,6 +3821,26 @@ export function registerHttpApi(app, db) {
         blockingReasons,
         previewOk: Boolean(preview?.ok),
         previewError: preview?.ok ? null : preview?.error || null,
+        diagnostics: {
+          quotationId: qRow?.id ?? null,
+          quotationStatus: qRow?.status ?? null,
+          bookedPaidNgn: paidBooked,
+          orderTotalNgn: totalBooked,
+          orderOutstandingNgn,
+          isOrderFullyPaidForDropdown: isOrderFullySettledForPicker,
+          remainingRefundableNgn: meets.ok ? meets.remainingNgn : null,
+          minRemainingRequiredNgn: MIN_REFUND_QUOTATION_REMAINING_NGN,
+          productionJobs: productionJobs.map((j) => ({
+            jobId: j.job_id,
+            status: j.status,
+          })),
+          refundsOnFile: refundsOnFile.map((r) => ({
+            refundId: r.refund_id,
+            status: r.status,
+            amountNgn: r.amount_ngn,
+            paidOutNgn: r.paid_amount_ngn,
+          })),
+        },
       });
     } catch (e) {
       console.error(e);

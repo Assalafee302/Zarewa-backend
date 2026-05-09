@@ -4,6 +4,9 @@
  */
 export const REFUND_PREVIEW_VERSION = 2;
 
+/** Refund quotation picker: remaining refundable must be strictly greater than this (₦). */
+export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
+
 export const REFUND_REASON_CATEGORY_VALUES = [
   'Order cancellation',
   'Overpayment',

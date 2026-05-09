@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeRefundReasonCategoriesForApi, REFUND_PREVIEW_VERSION } from './refundConstants.js';
+import {
+  normalizeRefundReasonCategoriesForApi,
+  REFUND_PREVIEW_VERSION,
+  MIN_REFUND_QUOTATION_REMAINING_NGN,
+} from './refundConstants.js';
 
 describe('refundConstants', () => {
   it('normalizes legacy category labels to canonical values', () => {
@@ -21,5 +25,9 @@ describe('refundConstants', () => {
   it('exposes preview engine version', () => {
     expect(typeof REFUND_PREVIEW_VERSION).toBe('number');
     expect(REFUND_PREVIEW_VERSION).toBeGreaterThan(0);
+  });
+
+  it('exposes refund picker remaining floor', () => {
+    expect(MIN_REFUND_QUOTATION_REMAINING_NGN).toBe(1000);
   });
 });

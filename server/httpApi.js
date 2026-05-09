@@ -95,6 +95,7 @@ import {
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   getEligibleRefundQuotations,
+  quotationMeetsRefundEligibility,
   reviewQuotation,
   unlockAccountingPeriod,
   upsertTreasuryAccount,
@@ -3744,6 +3745,60 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to fetch eligible quotations' });
+    }
+  });
+
+  /** Why a quotation is missing from the refund pick list (backend rules + preview categories + UI floor). */
+  app.get('/api/refunds/eligibility-check', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
+    try {
+      const quotationRef = String(req.query.quotationRef || '').trim();
+      if (!quotationRef) {
+        return res.status(400).json({ ok: false, error: 'quotationRef query parameter is required (exact quotation id, e.g. QT-…).' });
+      }
+      const meets = quotationMeetsRefundEligibility(db, quotationRef);
+      const preview = previewRefundRequest(db, { quotationRef });
+      const categories =
+        preview?.ok && Array.isArray(preview?.preview?.eligibleRefundCategories)
+          ? preview.preview.eligibleRefundCategories
+          : [];
+      const MIN_UI_NGN = 1000;
+      const remainingNgn = meets.ok ? meets.remainingNgn : 0;
+      const blockingReasons = [];
+      if (!meets.ok) {
+        blockingReasons.push(meets.error || 'Does not meet refund listing rules.');
+      }
+      if (meets.ok && categories.length === 0) {
+        blockingReasons.push(
+          'Refund preview returned no eligible refund categories (quotations are dropped from GET /api/refunds/eligible-quotations when this list is empty).'
+        );
+      }
+      if (meets.ok && remainingNgn > 0 && remainingNgn < MIN_UI_NGN) {
+        blockingReasons.push(
+          `Remaining refundable amount ₦${remainingNgn} is below the refund modal dropdown minimum (₦${MIN_UI_NGN}).`
+        );
+      }
+      const wouldAppearInPicklist =
+        meets.ok && categories.length > 0 && remainingNgn >= MIN_UI_NGN;
+      res.json({
+        ok: true,
+        quotationRef,
+        meetsBackendRules: meets.ok,
+        backendDetail: meets.ok
+          ? {
+              paidNgn: meets.paidNgn,
+              totalRefundedNgn: meets.totalRefundedNgn,
+              remainingNgn: meets.remainingNgn,
+            }
+          : { error: meets.error },
+        eligibleRefundCategories: categories,
+        wouldAppearInRefundQuotationDropdown: wouldAppearInPicklist,
+        blockingReasons,
+        previewOk: Boolean(preview?.ok),
+        previewError: preview?.ok ? null : preview?.error || null,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to check refund eligibility.' });
     }
   });
 

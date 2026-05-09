@@ -239,8 +239,8 @@ export function runFinanceImport(db, plan, branchId, opts = {}) {
 
   // --- Treasury accounts (acc_no = ZIMP:<key> for stable re-import) ---
   const insTa = db.prepare(`
-    INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no)
-    VALUES (?,?,?,?,?)
+    INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, opening_balance_ngn)
+    VALUES (?,?,?,?,?,?)
   `);
   const selTa = db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = ?`);
   const updTa = db.prepare(`UPDATE treasury_accounts SET name = ?, bank_name = ?, type = ? WHERE id = ?`);
@@ -257,7 +257,7 @@ export function runFinanceImport(db, plan, branchId, opts = {}) {
 
     let id = selTa.get(accNo)?.id;
     if (id == null) {
-      const insRes = insTa.run(name, bankName, 0, typ, accNo);
+      const insRes = insTa.run(name, bankName, 0, typ, accNo, Math.max(0, opening));
       id = Number(insRes.lastInsertRowid);
       if (opening > 0) {
         insertTreasuryMovementTx(db, {

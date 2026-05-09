@@ -32,6 +32,19 @@ export function runMigrations(db) {
     if (!taCols.has('notes')) {
       db.exec(`ALTER TABLE treasury_accounts ADD COLUMN notes TEXT`);
     }
+    if (!taCols.has('opening_balance_ngn')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN opening_balance_ngn INTEGER NOT NULL DEFAULT 0`);
+      const accounts = db.prepare(`SELECT id, balance FROM treasury_accounts`).all();
+      const sumStmt = db.prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM treasury_movements WHERE treasury_account_id = ?`
+      );
+      const upd = db.prepare(`UPDATE treasury_accounts SET opening_balance_ngn = ? WHERE id = ?`);
+      for (const a of accounts) {
+        const mv = Number(sumStmt.get(a.id)?.s) || 0;
+        const implied = Math.round(Number(a.balance) || 0) - mv;
+        upd.run(Math.max(0, implied), a.id);
+      }
+    }
   }
 
   const q = tableCols('quotations');

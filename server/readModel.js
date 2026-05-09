@@ -1313,6 +1313,7 @@ export function listTreasuryAccounts(db) {
       name: row.name,
       bankName: row.bank_name,
       balance: row.balance,
+      openingBalanceNgn: row.opening_balance_ngn ?? 0,
       type: row.type,
       accNo: row.acc_no,
       accountOfficerName: row.account_officer_name ?? '',

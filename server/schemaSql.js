@@ -587,6 +587,7 @@ CREATE TABLE IF NOT EXISTS treasury_accounts (
   name TEXT NOT NULL,
   bank_name TEXT,
   balance INTEGER NOT NULL DEFAULT 0,
+  opening_balance_ngn INTEGER NOT NULL DEFAULT 0,
   type TEXT NOT NULL,
   acc_no TEXT,
   account_officer_name TEXT,

@@ -3161,12 +3161,13 @@ export function acknowledgeCoilRequest(db, id) {
 
 export function replaceTreasuryAccounts(db, accounts) {
   const ins = db.prepare(
-    `INSERT INTO treasury_accounts (id, name, bank_name, balance, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO treasury_accounts (id, name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        bank_name = excluded.bank_name,
        balance = excluded.balance,
+       opening_balance_ngn = excluded.opening_balance_ngn,
        type = excluded.type,
        acc_no = excluded.acc_no,
        account_officer_name = excluded.account_officer_name,
@@ -3177,11 +3178,17 @@ export function replaceTreasuryAccounts(db, accounts) {
   );
   db.transaction(() => {
     for (const a of accounts) {
+      const bal = Number(a.balance) || 0;
+      const opening =
+        a.openingBalanceNgn !== undefined && a.openingBalanceNgn !== null
+          ? Math.round(Number(a.openingBalanceNgn)) || 0
+          : bal;
       ins.run(
         a.id,
         a.name,
         a.bankName ?? '',
-        Number(a.balance) || 0,
+        bal,
+        opening,
         a.type ?? 'Bank',
         a.accNo ?? 'N/A',
         String(a.accountOfficerName ?? '').trim(),

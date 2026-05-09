@@ -1740,6 +1740,16 @@ export function upsertTreasuryAccount(db, payload, actor) {
   const name = String(payload.name ?? '').trim();
   if (!name) return { ok: false, error: 'Account name is required.' };
   const balance = roundMoney(payload.balance);
+  const hasOpeningKey = Object.prototype.hasOwnProperty.call(payload, 'openingBalanceNgn');
+  let openingBalanceNgn;
+  if (payload.id && !hasOpeningKey) {
+    const ex = db
+      .prepare(`SELECT opening_balance_ngn FROM treasury_accounts WHERE id = ?`)
+      .get(Number(payload.id));
+    openingBalanceNgn = roundMoney(ex?.opening_balance_ngn);
+  } else {
+    openingBalanceNgn = hasOpeningKey ? roundMoney(payload.openingBalanceNgn) : balance;
+  }
   const accountOfficerName = String(payload.accountOfficerName ?? '').trim();
   const accountOfficerPhone = String(payload.accountOfficerPhone ?? '').trim();
   const bankBranch = String(payload.bankBranch ?? '').trim();
@@ -1751,13 +1761,14 @@ export function upsertTreasuryAccount(db, payload, actor) {
       if (payload.id) {
         db.prepare(
           `UPDATE treasury_accounts
-           SET name = ?, bank_name = ?, balance = ?, type = ?, acc_no = ?,
+           SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
                account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?
            WHERE id = ?`
         ).run(
           name,
           String(payload.bankName ?? '').trim(),
           balance,
+          openingBalanceNgn,
           String(payload.type ?? 'Bank').trim() || 'Bank',
           String(payload.accNo ?? '').trim() || 'N/A',
           accountOfficerName,
@@ -1769,12 +1780,13 @@ export function upsertTreasuryAccount(db, payload, actor) {
         );
       } else {
         db.prepare(
-          `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO treasury_accounts (name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           name,
           String(payload.bankName ?? '').trim(),
           balance,
+          openingBalanceNgn,
           String(payload.type ?? 'Bank').trim() || 'Bank',
           String(payload.accNo ?? '').trim() || 'N/A',
           accountOfficerName,
@@ -1794,7 +1806,7 @@ export function upsertTreasuryAccount(db, payload, actor) {
         entityKind: 'treasury_account',
         entityId: String(row?.id ?? payload.id ?? ''),
         note: `${name} saved in treasury controls`,
-        details: { balance },
+        details: { balance, openingBalanceNgn },
       });
     })();
     return { ok: true, id: savedId };

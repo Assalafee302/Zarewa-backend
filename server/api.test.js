@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 
 describe.sequential('Zarewa API', () => {
   let app;
@@ -1283,6 +1284,7 @@ describe.sequential('Zarewa API', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const createRefund = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -1338,6 +1340,7 @@ describe.sequential('Zarewa API', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const createRefund = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -2470,6 +2473,7 @@ describe.sequential('Zarewa API', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-002',
       customer: 'Test Customer',
       quotationRef: 'QT-2026-002',

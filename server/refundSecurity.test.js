@@ -3,8 +3,7 @@ import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { getEligibleRefundQuotations } from './controlOps.js';
-
-const REFUND_PAYEE = { payeeName: 'Refund Beneficiary', payeeAccountNo: '0123456789', payeeBankName: 'Test Bank PLC' };
+import { REFUND_PAYEE } from './refundTestPayee.js';
 
 /** Isolated quotation IDs so rows are not merged with totals from `seedEverything()`. */
 function seedData(db) {
@@ -182,6 +181,7 @@ describe('Refund Security & Substitution Logic', () => {
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
       amountNgn: 1000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 1000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
     expect(res1.status).toBe(201);
@@ -191,6 +191,7 @@ describe('Refund Security & Substitution Logic', () => {
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
       amountNgn: 1000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 1000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
     expect(res2.status).toBe(400);
@@ -621,5 +622,46 @@ describe('Refund Security & Substitution Logic', () => {
     const res = await agent.get('/api/refunds/eligibility-check');
     expect(res.status).toBe(400);
     expect(res.body.ok).toBe(false);
+  });
+
+  it('rejects POST /api/refunds when amountNgn does not match sum of included calculation lines', async () => {
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+    const res = await agent.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-OVR-001',
+      reasonCategory: ['Overpayment'],
+      amountNgn: 19_999,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 20_000, category: 'Overpayment' }],
+      ...REFUND_PAYEE,
+    });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error || '')).toMatch(/sum of included breakdown lines/i);
+  });
+
+  it('rejects approval when payload calculationLines sum ≠ approvedAmountNgn', async () => {
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-OVR-001',
+      reasonCategory: ['Overpayment'],
+      amountNgn: 5000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 5000, category: 'Overpayment' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const bad = await mgr.post(`/api/refunds/${encodeURIComponent(create.body.refundID)}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 1000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 5000, category: 'Overpayment' }],
+    });
+    expect(bad.status).toBe(400);
+    expect(String(bad.body.error || '')).toMatch(/sum of included breakdown lines/i);
   });
 });

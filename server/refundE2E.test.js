@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 
 /**
  * HTTP-level refund journeys: eligibility after production cancel, void quotes,
@@ -90,6 +91,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(elig.body.quotations.some((row) => row.id === quotationRef)).toBe(true);
 
     const createRefund = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef,
@@ -163,6 +165,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(elig.body.quotations.some((row) => row.id === quotationRef)).toBe(true);
 
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-002',
       customer: 'Test Customer',
       quotationRef,
@@ -195,6 +198,7 @@ describe('Refund E2E (HTTP)', () => {
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
 
     const first = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -217,6 +221,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(reject.status).toBe(200);
 
     const second = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -233,6 +238,7 @@ describe('Refund E2E (HTTP)', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -259,6 +265,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(payBlocked.status).toBe(400);
 
     const dup = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -270,6 +277,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(dup.status).toBe(201);
 
     const dup2 = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -286,6 +294,7 @@ describe('Refund E2E (HTTP)', () => {
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
 
     const zero = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       quotationRef: 'QT-2026-001',
       reasonCategory: 'Overpayment',
@@ -298,6 +307,7 @@ describe('Refund E2E (HTTP)', () => {
     const financeNoRequest = request.agent(app);
     await loginAs(financeNoRequest, 'finance.manager', 'Finance@123');
     const forbidden = await financeNoRequest.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       quotationRef: 'QT-2026-001',
       reasonCategory: 'Overpayment',
@@ -308,6 +318,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(forbidden.status).toBe(403);
 
     const createRefund = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       quotationRef: 'QT-2026-001',
       reasonCategory: 'Material shortage',
@@ -348,6 +359,7 @@ describe('Refund E2E (HTTP)', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       quotationRef: 'QT-2026-001',
       reasonCategory: 'Substitution pricing',
@@ -385,6 +397,7 @@ describe('Refund E2E (HTTP)', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       quotationRef: 'QT-2026-001',
       reasonCategory: ['Transport refund', 'Accessory refund'],
@@ -447,6 +460,7 @@ describe('Refund E2E (HTTP)', () => {
     expect(elig.body.quotations.some((row) => row.id === quotationRef)).toBe(false);
 
     const create = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef,
@@ -463,6 +477,7 @@ describe('Refund E2E (HTTP)', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const res = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',
@@ -479,6 +494,7 @@ describe('Refund E2E (HTTP)', () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
+      ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef: 'QT-2026-001',

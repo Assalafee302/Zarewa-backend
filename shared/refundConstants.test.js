@@ -3,6 +3,7 @@ import {
   normalizeRefundReasonCategoriesForApi,
   REFUND_PREVIEW_VERSION,
   MIN_REFUND_QUOTATION_REMAINING_NGN,
+  REFUND_AMOUNT_LINE_TOLERANCE_NGN,
 } from './refundConstants.js';
 
 describe('refundConstants', () => {
@@ -30,5 +31,9 @@ describe('refundConstants', () => {
 
   it('exposes refund picker remaining floor', () => {
     expect(MIN_REFUND_QUOTATION_REMAINING_NGN).toBe(1000);
+  });
+
+  it('exposes amount vs lines tolerance', () => {
+    expect(REFUND_AMOUNT_LINE_TOLERANCE_NGN).toBe(1);
   });
 });

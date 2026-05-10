@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
+import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 
@@ -578,6 +579,7 @@ describe('Transactional scenarios (business checklist)', () => {
       const sales = request.agent(app);
       await loginAs(sales, 'sales.staff', 'Sales@123');
       const created = await sales.post('/api/refunds').send({
+        ...REFUND_TEST_PAYEE,
         customerID: 'CUS-TX-11',
         customer: 'Cancel Customer',
         quotationRef: qid,

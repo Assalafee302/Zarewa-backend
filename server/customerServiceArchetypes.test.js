@@ -22,6 +22,7 @@ import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vites
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 
 const openDbs = [];
 
@@ -545,6 +546,7 @@ function buildArchetypes() {
         });
         await cancelProductionJobForRefundEligibility(agent, job11.jobID);
         const rf = await agent.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Short-sheet client',
           quotationRef: q.quotationId,
@@ -724,6 +726,7 @@ function buildArchetypes() {
         });
         await cancelProductionJobForRefundEligibility(admin, j17.jobID);
         const rf = await admin.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Refund target',
           quotationRef: q17.quotationId,
@@ -787,6 +790,7 @@ function buildArchetypes() {
         });
         await cancelProductionJobForRefundEligibility(agent, j18.jobID);
         const rf = await agent.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Pending approval',
           quotationRef: q18.quotationId,
@@ -1125,6 +1129,7 @@ function buildArchetypes() {
         });
         await cancelProductionJobForRefundEligibility(agent, j29.jobID);
         const rf = await agent.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Split refund',
           quotationRef: q29.quotationId,
@@ -1276,6 +1281,7 @@ function buildArchetypes() {
         const staff = request.agent(app);
         await loginAs(staff, 'sales.staff', 'Sales@123');
         const rf = await staff.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Walk-in refund story',
           quotationRef: q31.quotationId,
@@ -1361,6 +1367,7 @@ function buildArchetypes() {
         const staff = request.agent(app);
         await loginAs(staff, 'sales.staff', 'Sales@123');
         const rf = await staff.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'No self-approval',
           quotationRef: q33.quotationId,
@@ -1386,6 +1393,7 @@ function buildArchetypes() {
         const fin = request.agent(app);
         await loginAs(fin, 'finance.manager', 'Finance@123');
         const res = await fin.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: 'CUS-001',
           customer: 'Seeded',
           quotationRef: 'QT-2026-001',
@@ -1438,6 +1446,7 @@ function buildArchetypes() {
         });
         await cancelProductionJobForRefundEligibility(agent, j35.jobID);
         const rf = await agent.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'Rejected payout',
           quotationRef: q35.quotationId,
@@ -1684,6 +1693,7 @@ function buildArchetypes() {
         const staff = request.agent(app);
         await loginAs(staff, 'sales.staff', 'Sales@123');
         const rf = await staff.post('/api/refunds').send({
+          ...REFUND_TEST_PAYEE,
           customerID: cid,
           customer: 'CFO approval line',
           quotationRef: q44.quotationId,

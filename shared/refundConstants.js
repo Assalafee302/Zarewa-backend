@@ -7,6 +7,9 @@ export const REFUND_PREVIEW_VERSION = 4;
 /** Refund quotation picker: remaining refundable must be strictly greater than this (₦). */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
 
+/** Allowed absolute difference (₦) between refund header amount and sum of included breakdown lines (rounding). */
+export const REFUND_AMOUNT_LINE_TOLERANCE_NGN = 1;
+
 export const REFUND_REASON_CATEGORY_VALUES = [
   'Order cancellation',
   'Unproduced meterage',

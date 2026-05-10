@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
+import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 
@@ -210,7 +211,7 @@ async function payPaymentRequest(agent, requestID, payload) {
 }
 
 async function createRefund(agent, payload) {
-  const res = await agent.post('/api/refunds').send(payload);
+  const res = await agent.post('/api/refunds').send({ ...REFUND_TEST_PAYEE, ...payload });
   expect(res.status).toBe(201);
   expect(res.body.ok).toBe(true);
   return res.body;

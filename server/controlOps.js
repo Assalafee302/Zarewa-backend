@@ -11,6 +11,7 @@ import {
 import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import {
   normalizeRefundReasonCategoriesForApi,
+  REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
@@ -26,6 +27,23 @@ import { pricingPolicyNumbersForServiceLine } from './pricingPolicyResolve.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
+}
+
+function refundLineAmountNgnFromPayload(line) {
+  const raw = line?.amountNgn ?? line?.amount_ngn;
+  const n = Number(String(raw ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) ? roundMoney(n) : 0;
+}
+
+/** Sum of included breakdown lines (`include !== false`). Matches RefundModal included-line rules. */
+export function sumIncludedRefundCalculationLinesNgn(lines) {
+  if (!Array.isArray(lines)) return 0;
+  let s = 0;
+  for (const l of lines) {
+    if (l?.include === false) continue;
+    s += refundLineAmountNgnFromPayload(l);
+  }
+  return roundMoney(s);
 }
 
 function nowIso() {
@@ -903,6 +921,19 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       };
     }
 
+    const calcLinesRaw = Array.isArray(payload.calculationLines) ? payload.calculationLines : [];
+    const lineSumNgn = sumIncludedRefundCalculationLinesNgn(calcLinesRaw);
+    if (Math.abs(lineSumNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+      return {
+        ok: false,
+        error: `Requested refund amount (₦${amountNgn.toLocaleString(
+          'en-NG'
+        )}) must match the sum of included breakdown lines (₦${lineSumNgn.toLocaleString(
+          'en-NG'
+        )}). Adjust line amounts or use Apply total.`,
+      };
+    }
+
     if (quotationRef) {
       const existingRefunds = db.prepare(
         `SELECT reason_category FROM customer_refunds
@@ -937,7 +968,6 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         };
       }
 
-      const calcLinesRaw = Array.isArray(payload.calculationLines) ? payload.calculationLines : [];
       const commissionRefundSum = calcLinesRaw
         .filter((l) => String(l.category || '').trim() === 'Customer commission')
         .reduce((s, l) => s + roundMoney(l.amountNgn), 0);
@@ -1074,6 +1104,22 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       : 0;
   if (status === 'Approved' && approvedAmountNgn <= 0) {
     return { ok: false, error: 'Approved refund amount must be positive.' };
+  }
+  if (status === 'Approved') {
+    const decideCalcLines = Array.isArray(payload.calculationLines) ? payload.calculationLines : null;
+    if (decideCalcLines && decideCalcLines.length > 0) {
+      const lineSumApprove = sumIncludedRefundCalculationLinesNgn(decideCalcLines);
+      if (Math.abs(lineSumApprove - approvedAmountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+        return {
+          ok: false,
+          error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
+            'en-NG'
+          )}) must match the sum of included breakdown lines (₦${lineSumApprove.toLocaleString(
+            'en-NG'
+          )}).`,
+        };
+      }
+    }
   }
   const requestedAmountNgn = roundMoney(row.amount_ngn);
   if (status === 'Approved' && approvedAmountNgn > requestedAmountNgn) {

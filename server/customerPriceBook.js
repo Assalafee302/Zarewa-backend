@@ -43,19 +43,50 @@ export function buildCustomerPriceBookHtml(db) {
   const stoneRows = items.filter((it) => normMt(it.materialTypeKey) === 'stone-coated');
   const coilRows = items.filter((it) => normMt(it.materialTypeKey) !== 'stone-coated');
 
-  const sortedCoil = [...coilRows].sort((a, b) => {
-    const g = String(a.gaugeKey).localeCompare(String(b.gaugeKey));
-    if (g !== 0) return g;
-    return String(a.designKey).localeCompare(String(b.designKey));
-  });
+  const sortCoil = (rows) =>
+    [...rows].sort((a, b) => {
+      const g = String(a.gaugeKey).localeCompare(String(b.gaugeKey));
+      if (g !== 0) return g;
+      return String(a.designKey).localeCompare(String(b.designKey));
+    });
 
-  const coilRowsHtml = sortedCoil
-    .map((it) => {
-      const base = Math.round(Number(it.unitPricePerMeterNgn) || 0);
-      const prem = premiumProfilePriceFromBase(base);
-      return `<tr><td>${esc(it.materialTypeKey || '—')}</td><td>${esc(it.gaugeKey)}</td><td>${esc(it.designKey)}</td><td class="num">${esc(fmtNgn(base))}</td><td class="num">${esc(fmtNgn(prem))}</td></tr>`;
-    })
-    .join('');
+  const isAluMt = (m) => {
+    const x = normMt(m);
+    return x === 'alu' || x === 'aluminium' || x === 'aluminum' || x === '';
+  };
+  const isAluzincMt = (m) => {
+    const x = normMt(m);
+    return x === 'aluzinc' || x === 'ppgi' || x.includes('aluzinc') || x.includes('zinc');
+  };
+
+  const aluCoil = sortCoil(coilRows.filter((it) => isAluMt(it.materialTypeKey)));
+  const aluzincCoil = sortCoil(coilRows.filter((it) => isAluzincMt(it.materialTypeKey)));
+  const otherCoil = sortCoil(
+    coilRows.filter((it) => !isAluMt(it.materialTypeKey) && !isAluzincMt(it.materialTypeKey))
+  );
+
+  const coilSectionHtml = (title, rows) => {
+    const body = rows
+      .map((it) => {
+        const base = Math.round(Number(it.unitPricePerMeterNgn) || 0);
+        const prem = premiumProfilePriceFromBase(base);
+        return `<tr><td>${esc(it.materialTypeKey || '—')}</td><td>${esc(it.gaugeKey)}</td><td>${esc(it.designKey)}</td><td class="num">${esc(fmtNgn(base))}</td><td class="num">${esc(fmtNgn(prem))}</td></tr>`;
+      })
+      .join('');
+    return `
+  <h2>${esc(title)}</h2>
+  <table>
+    <thead><tr><th>Material</th><th>Gauge</th><th>Design</th><th class="num">Base ₦/m</th><th class="num">Premium profile ₦/m</th></tr></thead>
+    <tbody>${body || '<tr><td colspan="5">No rows.</td></tr>'}</tbody>
+  </table>`;
+  };
+
+  const coilRowsHtml =
+    coilSectionHtml('Aluminium (published floors)', aluCoil) +
+    coilSectionHtml('Aluzinc / PPGI (published floors)', aluzincCoil) +
+    (otherCoil.length
+      ? coilSectionHtml('Other coil / sheet (published floors)', otherCoil)
+      : '');
 
   const stoneSorted = [...stoneRows].sort((a, b) => String(a.gaugeKey).localeCompare(String(b.gaugeKey)));
   const stoneHtml = stoneSorted
@@ -85,15 +116,15 @@ export function buildCustomerPriceBookHtml(db) {
   <meta charset="utf-8"/>
   <title>Zarewa price list — ${esc(effectiveLabel)}</title>
   <style>
-    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 24px; }
-    h1 { font-size: 1.25rem; color: #134e4a; }
-    h2 { font-size: 1rem; margin-top: 1.5rem; color: #134e4a; }
-    .muted { color: #64748b; font-size: 0.85rem; }
-    table { border-collapse: collapse; width: 100%; max-width: 960px; margin-top: 8px; font-size: 0.9rem; }
-    th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
-    th { background: #f8fafc; font-weight: 700; }
+    body { font-family: 'Segoe UI', system-ui, Roboto, sans-serif; color: #0f172a; margin: 24px; max-width: 1000px; }
+    h1 { font-size: 1.35rem; color: #134e4a; border-bottom: 2px solid #134e4a; padding-bottom: 8px; }
+    h2 { font-size: 1.05rem; margin-top: 1.75rem; color: #0f766e; page-break-after: avoid; }
+    .muted { color: #64748b; font-size: 0.88rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 6px; margin-bottom: 4px; font-size: 0.88rem; }
+    th, td { border: 1px solid #94a3b8; padding: 7px 9px; text-align: left; }
+    th { background: #e2e8f0; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
     .num { text-align: right; font-variant-numeric: tabular-nums; }
-    @media print { body { margin: 12px; } }
+    @media print { body { margin: 12px; } h2 { break-after: avoid; } }
   </style>
 </head>
 <body>
@@ -101,11 +132,8 @@ export function buildCustomerPriceBookHtml(db) {
   <p class="muted">Effective ${esc(effectiveLabel)} · All roofing rates in Naira per running metre unless noted.
   Metcoppo / Steptiles column is <strong>3.5%</strong> above base (rounded: &lt; ₦5,000 → nearest ₦50; ≥ ₦5,000 → nearest ₦100).</p>
 
-  <h2>Coil &amp; sheet floors (published)</h2>
-  <table>
-    <thead><tr><th>Material</th><th>Gauge</th><th>Design</th><th class="num">Base ₦/m</th><th class="num">Premium profile ₦/m</th></tr></thead>
-    <tbody>${coilRowsHtml || '<tr><td colspan="5">No price list rows yet.</td></tr>'}</tbody>
-  </table>
+  <p class="muted">Sections follow material family (Aluminium, Aluzinc, other coil, stone-coated, accessories). Premium column = 3.5% on base + rounding rule.</p>
+  ${coilRowsHtml || '<h2>Coil &amp; sheet</h2><p class="muted">No non–stone-coated price list rows yet.</p>'}
 
   <h2>Stone-coated (published floors)</h2>
   <table>

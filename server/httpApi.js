@@ -227,8 +227,11 @@ import {
   deletePriceListItem,
   listPriceListItems,
   priceListItemsToCsv,
+  quotationPriceViolations,
   upsertPriceListItem,
 } from './pricingOps.js';
+import { getPricingPolicyBundle, patchPricingPolicyBundle } from './pricingPolicyOps.js';
+import { buildCustomerPriceBookHtml } from './customerPriceBook.js';
 import {
   listMaterialPricingEvents,
   listMaterialPricingSheet,
@@ -2183,6 +2186,57 @@ export function registerHttpApi(app, db) {
       }
     }
   );
+
+  app.get('/api/pricing/policy', requirePermission(['pricing.manage', 'md.price_exception.approve', 'pricing.policy.manage']), (req, res) => {
+    try {
+      res.json({ ok: true, ...getPricingPolicyBundle(db) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load pricing policy.' });
+    }
+  });
+
+  app.patch('/api/pricing/policy', requirePermission('pricing.policy.manage'), (req, res) => {
+    try {
+      const r = patchPricingPolicyBundle(db, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save pricing policy.' });
+    }
+  });
+
+  app.get(
+    '/api/pricing/customer-price-book.html',
+    requirePermission(['pricing.manage', 'md.price_exception.approve', 'pricing.policy.manage']),
+    (req, res) => {
+      try {
+        const html = buildCustomerPriceBookHtml(db);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+      } catch (e) {
+        console.error(e);
+        res.status(500).send('Could not build price book.');
+      }
+    }
+  );
+
+  app.get('/api/quotations/:id/pricing-violations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const qid = String(req.params.id || '').trim();
+      const raw = db.prepare(`SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
+      if (!raw) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      const v = quotationPriceViolations(db, raw);
+      res.json({
+        ok: true,
+        ...v,
+        mdPriceExceptionApprovedAtISO: raw.md_price_exception_approved_at_iso ?? null,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not compute pricing violations.' });
+    }
+  });
 
   app.patch(
     '/api/sales-receipts/:receiptId/bank-confirmation',
@@ -4703,7 +4757,13 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const allEntries = listLedgerEntries(db, branchScope);
       const amountDueNgn = amountDueOnQuotationFromEntries(allEntries, row);
-      res.json({ ok: true, quotation: row, amountDueNgn });
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(req.params.id);
+      const pv = quotationPriceViolations(db, rawPv);
+      res.json({
+        ok: true,
+        quotation: { ...row, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+        amountDueNgn,
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load quotation' });
@@ -4714,7 +4774,13 @@ export function registerHttpApi(app, db) {
     try {
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       const quotation = getQuotation(db, id);
-      res.status(201).json({ ok: true, quotationId: id, quotation });
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(id);
+      const pv = quotationPriceViolations(db, rawPv);
+      res.status(201).json({
+        ok: true,
+        quotationId: id,
+        quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -4794,7 +4860,10 @@ export function registerHttpApi(app, db) {
       }
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
         write.updateQuotation(db, qid, stripped || {});
-        return getQuotation(db, qid);
+        const quotation = getQuotation(db, qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
+        const pv = quotationPriceViolations(db, rawPv);
+        return { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows };
       });
     } catch (e) {
       console.error(e);

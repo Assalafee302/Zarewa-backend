@@ -21,6 +21,7 @@ import {
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
+import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -199,6 +200,29 @@ function quotedProductNamesLower(linesJson) {
     .filter(Boolean);
 }
 
+/** First product line with gauge + design/colour — for substitution list hints (quoted vs supplied gauge). */
+function firstQuotedProductGaugeDesign(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      return null;
+    }
+  }
+  const prods = payload?.products;
+  if (!Array.isArray(prods)) return null;
+  for (const p of prods) {
+    if (!String(p?.name ?? '').trim()) continue;
+    const gauge = String(p?.materialGauge ?? p?.gauge ?? '').trim();
+    const design = String(
+      p?.materialDesign ?? p?.design ?? p?.materialColor ?? p?.colour ?? p?.color ?? ''
+    ).trim();
+    if (gauge && design) return { gauge, design };
+  }
+  return null;
+}
+
 function normKeyPriceList(s) {
   return String(s ?? '')
     .trim()
@@ -213,6 +237,15 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
   if (!g || !d) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
   try {
+    const scored = resolvePriceListItemFloorNgn(db, {
+      gaugeLabel: g,
+      designLabel: d,
+      colourName: d,
+      profileName: '',
+      materialTypeName: '',
+      branchId: bid,
+    });
+    if (scored?.unitPricePerMeterNgn) return scored.unitPricePerMeterNgn;
     const row = db
       .prepare(
         `SELECT unit_price_per_meter_ngn FROM price_list_items
@@ -1261,6 +1294,48 @@ export function previewRefundRequest(db, payload) {
     });
   }
 
+  // 1b. Customer commission — post-payment concession vs saved recommended ₦/m snapshots (capped by remaining refundable)
+  if (
+    quotationRef &&
+    !refundedCategories.has('Customer commission') &&
+    quotationCashInNgn > 0 &&
+    quote?.lines_json
+  ) {
+    const el = quotationMeetsRefundEligibility(db, quotationRef);
+    if (el.ok) {
+      try {
+        const j = typeof quote.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
+        const lines = [...(j?.products || []), ...(j?.services || [])];
+        let totalConcession = 0;
+        for (const line of lines) {
+          const rec = Number(line?.recommendedPricePerMeter);
+          const up = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0);
+          const m = Number(line?.qty ?? line?.meters ?? line?.qtyMeters ?? 0);
+          if (!Number.isFinite(rec) || rec <= 0 || !Number.isFinite(up) || !Number.isFinite(m) || m <= 0) continue;
+          if (up >= rec - 0.001) continue;
+          totalConcession += roundMoney((rec - up) * m);
+        }
+        totalConcession = roundMoney(totalConcession);
+        if (totalConcession > 0) {
+          const amountNgn = roundMoney(Math.min(totalConcession, Math.max(0, el.remainingNgn)));
+          if (amountNgn >= 1) {
+            const cappedNote =
+              amountNgn < totalConcession
+                ? ` (capped from computed ₦${totalConcession.toLocaleString('en-NG')} to remaining refundable)`
+                : '';
+            suggestedLines.push({
+              label: `Customer commission / agreed price concession after payment: up to ₦${amountNgn.toLocaleString('en-NG')}${cappedNote}`,
+              amountNgn,
+              category: 'Customer commission',
+            });
+          }
+        }
+      } catch {
+        /* ignore malformed lines_json */
+      }
+    }
+  }
+
   // 2. Unproduced / Substituted Meterage (blocked after customer delivery is recorded)
   if (quotedMeters > 0 && pricePerMeter) {
     const unproducedPotential = Math.max(0, quotedMeters - actualMeters);
@@ -1376,6 +1451,10 @@ export function previewRefundRequest(db, payload) {
     if (qNames.length && productionJobs.length) {
       const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
       const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);
+      const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+      const quotedListPpm = quotedGd
+        ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
+        : null;
       let totalCredit = 0;
       let anyMismatch = false;
       const missingListPriceLabels = [];
@@ -1415,6 +1494,9 @@ export function previewRefundRequest(db, payload) {
           meters: m,
           quotedPricePerMeterNgn: Math.round(pricePerMeter),
           producedListPricePerMeterNgn: producedPpm,
+          quotedGaugeDesignLabel:
+            quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
+          quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
           deltaPerMeterNgn: Math.round(deltaPpm),
           creditNgn: credit,
         });
@@ -1543,6 +1625,10 @@ export function previewRefundRequest(db, payload) {
     }
     if (cat === 'Substitution Difference') {
       if (suggestedAnyCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Customer commission') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
       continue;
     }
     if (cat === 'Other') {

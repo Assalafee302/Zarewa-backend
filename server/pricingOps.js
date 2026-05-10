@@ -1,12 +1,14 @@
 import crypto from 'node:crypto';
 import { appendAuditLog } from './controlOps.js';
 import { actorName } from './auth.js';
+import {
+  floorNgnForServiceLine,
+  normKey as policyNormKey,
+  pricingPolicyNumbersForServiceLine,
+} from './pricingPolicyResolve.js';
 
 function normKey(s) {
-  return String(s ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+  return policyNormKey(s);
 }
 
 /** @param {string | null | undefined} s */
@@ -169,28 +171,84 @@ export function quotationPriceViolations(db, quoteRow) {
   } catch {
     return { violations, hasFloorRows: true };
   }
+  const headerGauge = String(parsed?.materialGauge ?? '').trim();
+  const headerColour = String(parsed?.materialColor ?? '').trim();
+  const headerDesign = String(parsed?.materialDesign ?? '').trim();
+  const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
-  services.forEach((line, idx) => {
+
+  const withHeader = (line, cat, idx) => ({
+    ...line,
+    _pricingCat: cat,
+    _pricingIdx: idx,
+    gauge: line?.gauge ?? line?.gaugeLabel ?? headerGauge,
+    colour: line?.colour ?? line?.color ?? headerColour,
+    color: line?.color ?? line?.colour ?? headerColour,
+    design: line?.design ?? headerDesign,
+    profile: line?.profile ?? line?.profileName ?? line?.profileKey ?? headerDesign,
+  });
+
+  const linesToCheck = [
+    ...products.map((line, idx) => withHeader(line, 'products', idx)),
+    ...services.map((line, idx) => withHeader(line, 'services', idx)),
+  ];
+
+  linesToCheck.forEach((line) => {
+    const idx = line._pricingIdx;
+    const cat = line._pricingCat;
     const gauge = normKey(line?.gauge ?? line?.gaugeLabel ?? '');
-    const design = normKey(line?.colour ?? line?.color ?? line?.design ?? '');
-    if (!gauge || !design) return;
-    const floor = floorPricePerMeterForGaugeDesign(db, gauge, design, branchId);
+    if (!gauge) return;
+    const lineKind = String(line?.lineKind ?? 'roofing')
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, '_');
+    const designRaw = normKey(line?.colour ?? line?.color ?? line?.design ?? '');
+    const profileRaw = normKey(line?.profile ?? line?.profileName ?? line?.profileKey ?? '');
+    if (lineKind !== 'stone_coated' && !designRaw && !profileRaw) return;
+
+    const floor = floorNgnForServiceLine(db, line, branchId);
     if (floor == null || floor <= 0) return;
-    const meters = Number(line?.meters ?? line?.qtyMeters ?? 0) || 0;
+    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId);
+    const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
     let effectivePerMeter = unit;
     if (effectivePerMeter <= 0 && meters > 0) {
       const total = Number(line?.lineTotalNgn ?? line?.totalNgn ?? line?.amountNgn ?? 0) || 0;
       if (total > 0) effectivePerMeter = total / meters;
     }
-    if (effectivePerMeter > 0 && effectivePerMeter + 0.0001 < floor) {
+    if (effectivePerMeter <= 0) return;
+
+    const design = nums.designKey || designRaw || profileRaw || gauge;
+    const minAllowed = nums.minAllowed;
+
+    if (effectivePerMeter + 0.0001 < floor) {
       violations.push({
+        code: 'below_floor',
+        lineCategory: cat,
         lineIndex: idx,
         gauge,
         design,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
         floorPerMeter: floor,
+        recommendedPerMeter: nums.recommended ?? floor,
+        bandNgn: nums.band,
+        minAllowedPerMeter: minAllowed,
+      });
+      return;
+    }
+    if (minAllowed != null && effectivePerMeter + 0.0001 < minAllowed) {
+      violations.push({
+        code: 'below_trading_band',
+        lineCategory: cat,
+        lineIndex: idx,
+        gauge,
+        design,
+        quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
+        floorPerMeter: floor,
+        recommendedPerMeter: nums.recommended ?? floor,
+        bandNgn: nums.band,
+        minAllowedPerMeter: minAllowed,
       });
     }
   });

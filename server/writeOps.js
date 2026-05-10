@@ -7,6 +7,26 @@ import {
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
 import { ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
+import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
+
+function enrichQuotationLinesWithMaterialHeader(linesJson) {
+  if (!linesJson || typeof linesJson !== 'object') return;
+  const hg = String(linesJson.materialGauge ?? '').trim();
+  const hc = String(linesJson.materialColor ?? '').trim();
+  const hd = String(linesJson.materialDesign ?? '').trim();
+  const enrich = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const line of arr) {
+      if (!line || typeof line !== 'object') continue;
+      if (!line.gauge && !line.gaugeLabel && hg) line.gauge = hg;
+      if (!line.colour && !line.color && hc) line.colour = hc;
+      if (!line.design && hd) line.design = hd;
+      if (!line.profile && !line.profileName && !line.profileKey && hd) line.profile = hd;
+    }
+  };
+  enrich(linesJson.products);
+  enrich(linesJson.services);
+}
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
@@ -5409,8 +5429,11 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
-  const totalNgn = sumQuotationLinesJson(linesJson);
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  enrichQuotationLinesWithMaterialHeader(linesJson);
+  applyPricingSnapshotsToServices(db, linesJson.products, bid);
+  applyPricingSnapshotsToServices(db, linesJson.services, bid);
+  const totalNgn = sumQuotationLinesJson(linesJson);
   const id = nextQuotationHumanId(db, bid);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
@@ -5481,6 +5504,13 @@ export function updateQuotation(db, quotationId, payload) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
+
+  if (payload.lines) {
+    const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim();
+    enrichQuotationLinesWithMaterialHeader(linesJson);
+    applyPricingSnapshotsToServices(db, linesJson.products, bidUpd);
+    applyPricingSnapshotsToServices(db, linesJson.services, bidUpd);
+  }
 
   const totalNgn = payload.lines != null ? sumQuotationLinesJson(linesJson) : existing.total_ngn;
   const customerID =

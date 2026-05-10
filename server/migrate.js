@@ -701,6 +701,7 @@ export function runMigrations(db) {
   migrateProcurementCoilMaterials(db);
   migrateCoilSkuProductsBranchGlobal(db);
   migrateMaterialPricingWorkbook(db);
+  migratePricingPolicy2026(db);
   migrateUserProfileAndPasswordReset(db);
   migrateOrganisationRoles2026(db);
   migrateHrStaffProfileColumns(db);
@@ -2975,4 +2976,60 @@ function migrateMaterialPricingWorkbook(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_mpse_material_time ON material_pricing_sheet_events(material_key, changed_at_iso DESC);
   `);
+}
+
+/** Trading bands, ridge add-ons, profile→design aliases; customer price book support. */
+function migratePricingPolicy2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pricing_policy (
+      id TEXT PRIMARY KEY,
+      default_trading_band_ngn INTEGER NOT NULL DEFAULT 50,
+      updated_at_iso TEXT,
+      updated_by_user_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS pricing_trading_band_tiers (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      gauge_min_mm REAL NOT NULL DEFAULT 0,
+      gauge_max_mm REAL NOT NULL DEFAULT 999,
+      band_ngn INTEGER NOT NULL DEFAULT 50
+    );
+    CREATE INDEX IF NOT EXISTS idx_pricing_band_tiers_sort ON pricing_trading_band_tiers(sort_order ASC);
+    CREATE TABLE IF NOT EXISTS pricing_ridge_add_ons (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      girth_mm REAL NOT NULL,
+      material_family TEXT NOT NULL DEFAULT '',
+      add_on_ngn INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_pricing_ridge_girth ON pricing_ridge_add_ons(girth_mm, material_family);
+    CREATE TABLE IF NOT EXISTS pricing_profile_aliases (
+      id TEXT PRIMARY KEY,
+      alias_key TEXT NOT NULL UNIQUE,
+      canonical_design_key TEXT NOT NULL DEFAULT '',
+      canonical_profile_key TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  const hasPolicy = db.prepare(`SELECT 1 FROM pricing_policy WHERE id = 'default'`).get();
+  if (!hasPolicy) {
+    db.prepare(`INSERT INTO pricing_policy (id, default_trading_band_ngn) VALUES ('default', 50)`).run();
+  }
+  const tierCount = Number(db.prepare(`SELECT COUNT(*) AS c FROM pricing_trading_band_tiers`).get()?.c) || 0;
+  if (tierCount === 0) {
+    db.prepare(
+      `INSERT INTO pricing_trading_band_tiers (id, sort_order, gauge_min_mm, gauge_max_mm, band_ngn) VALUES ('PT-LO', 1, 0, 0.499, 50)`
+    ).run();
+    db.prepare(
+      `INSERT INTO pricing_trading_band_tiers (id, sort_order, gauge_min_mm, gauge_max_mm, band_ngn) VALUES ('PT-HI', 2, 0.5, 999, 100)`
+    ).run();
+  }
+  const aliasCount = Number(db.prepare(`SELECT COUNT(*) AS c FROM pricing_profile_aliases`).get()?.c) || 0;
+  if (aliasCount === 0) {
+    db.prepare(
+      `INSERT INTO pricing_profile_aliases (id, alias_key, canonical_design_key, canonical_profile_key) VALUES ('PA-MET', 'metcoppo', 'metcoppo & steptiles', '')`
+    ).run();
+    db.prepare(
+      `INSERT INTO pricing_profile_aliases (id, alias_key, canonical_design_key, canonical_profile_key) VALUES ('PA-STE', 'steptiles', 'metcoppo & steptiles', '')`
+    ).run();
+  }
 }

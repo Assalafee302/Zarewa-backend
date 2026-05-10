@@ -2592,6 +2592,61 @@ describe.sequential('Zarewa API', () => {
 
 
 
+  it('GET /api/pricing/policy (auth); md PATCH; customer book; pricing-violations for under-floor quote', async () => {
+    const pol = await agent.get('/api/pricing/policy');
+    expect(pol.status).toBe(200);
+    expect(pol.body.ok).toBe(true);
+    expect(pol.body.policy).toBeTruthy();
+
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    expect((await staff.get('/api/pricing/policy')).status).toBe(403);
+    expect((await staff.patch('/api/pricing/policy').send({ defaultTradingBandNgn: 99 })).status).toBe(403);
+
+    const md = request.agent(app);
+    await loginAs(md, 'md', 'Md@1234567890!');
+    const patch = await md.patch('/api/pricing/policy').send({ defaultTradingBandNgn: 77 });
+    expect(patch.status).toBe(200);
+    expect(patch.body.ok).toBe(true);
+
+    const book = await agent.get('/api/pricing/customer-price-book.html');
+    expect(book.status).toBe(200);
+    expect(String(book.headers['content-type'] || '')).toMatch(/html/i);
+    expect(book.text.length).toBeGreaterThan(100);
+
+    const pl = await agent.post('/api/pricing/price-list').send({
+      gaugeKey: '0.55mm',
+      designKey: 'milano',
+      unitPricePerMeterNgn: 4000,
+      effectiveFromIso: '2026-01-01',
+    });
+    expect(pl.status).toBe(201);
+    expect(pl.body.ok).toBe(true);
+
+    const q = await agent.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'Pricing policy API test',
+      dateISO: '2026-03-29',
+      lines: {
+        materialGauge: '0.55mm',
+        materialDesign: 'milano',
+        products: [{ name: 'Roof', qty: '10', unitPrice: '500' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(q.status).toBe(201);
+    const qid = q.body.quotationId;
+    const v = await staff.get(`/api/quotations/${encodeURIComponent(qid)}/pricing-violations`);
+    expect(v.status).toBe(200);
+    expect(v.body.ok).toBe(true);
+    expect(Array.isArray(v.body.violations)).toBe(true);
+    expect(v.body.violations.length).toBeGreaterThan(0);
+    expect(v.body.violations.some((x) => x.code === 'below_floor' || x.code === 'below_trading_band')).toBe(
+      true
+    );
+  });
+
   it('GET /api/gl/journals, journal lines, and activity return ok for admin', async () => {
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);

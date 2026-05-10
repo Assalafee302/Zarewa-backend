@@ -79,6 +79,7 @@ export const ROLE_DEFINITIONS = {
       'refunds.approve',
       'production.release',
       'pricing.manage',
+      'pricing.policy.manage',
       'md.price_exception.approve',
       'inter_branch_loan.md_approve',
       'inventory.receive',

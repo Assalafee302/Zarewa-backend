@@ -2,7 +2,7 @@
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 2;
+export const REFUND_PREVIEW_VERSION = 3;
 
 /** Refund quotation picker: remaining refundable must be strictly greater than this (₦). */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
@@ -16,6 +16,7 @@ export const REFUND_REASON_CATEGORY_VALUES = [
   'Accessory shortfall',
   'Calculation error',
   'Substitution Difference',
+  'Customer commission',
   'Other',
 ];
 
@@ -24,6 +25,8 @@ export const REFUND_CATEGORY_LEGACY_ALIASES = {
   'transport refund': 'Transport issue',
   'accessory refund': 'Accessory shortfall',
   'substitution pricing': 'Substitution Difference',
+  'agent commission': 'Customer commission',
+  commission: 'Customer commission',
   adjustment: 'Other',
   'material shortage': 'Other',
 };

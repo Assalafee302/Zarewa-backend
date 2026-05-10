@@ -1298,6 +1298,9 @@ export function listRefunds(db, branchScope = 'ALL') {
         paidAtISO: row.paid_at_iso,
         paidBy: row.paid_by,
         paymentNote: row.payment_note ?? '',
+        payeeName: row.payee_name ?? '',
+        payeeAccountNo: row.payee_account_no ?? '',
+        payeeBankName: row.payee_bank_name ?? '',
         payoutHistory,
         branchId: row.branch_id ?? '',
       };

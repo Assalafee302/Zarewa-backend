@@ -2,13 +2,14 @@
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 3;
+export const REFUND_PREVIEW_VERSION = 4;
 
 /** Refund quotation picker: remaining refundable must be strictly greater than this (₦). */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
 
 export const REFUND_REASON_CATEGORY_VALUES = [
   'Order cancellation',
+  'Unproduced meterage',
   'Overpayment',
   'Transport issue',
   'Installation issue',
@@ -22,6 +23,9 @@ export const REFUND_REASON_CATEGORY_VALUES = [
 
 /** Map legacy / test strings to canonical categories (duplicate detection + preview). */
 export const REFUND_CATEGORY_LEGACY_ALIASES = {
+  'unproduced metres': 'Unproduced meterage',
+  'unproduced meters': 'Unproduced meterage',
+  'meterage shortfall': 'Unproduced meterage',
   'transport refund': 'Transport issue',
   'accessory refund': 'Accessory shortfall',
   'substitution pricing': 'Substitution Difference',

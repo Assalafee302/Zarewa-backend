@@ -4,6 +4,8 @@ import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { getEligibleRefundQuotations } from './controlOps.js';
 
+const REFUND_PAYEE = { payeeName: 'Refund Beneficiary', payeeAccountNo: '0123456789', payeeBankName: 'Test Bank PLC' };
+
 /** Isolated quotation IDs so rows are not merged with totals from `seedEverything()`. */
 function seedData(db) {
   const linesOvr = JSON.stringify({
@@ -180,6 +182,7 @@ describe('Refund Security & Substitution Logic', () => {
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
       amountNgn: 1000,
+      ...REFUND_PAYEE,
     });
     expect(res1.status).toBe(201);
 
@@ -188,6 +191,7 @@ describe('Refund Security & Substitution Logic', () => {
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
       amountNgn: 1000,
+      ...REFUND_PAYEE,
     });
     expect(res2.status).toBe(400);
     expect(res2.body.error).toMatch(/already exists/i);
@@ -202,6 +206,8 @@ describe('Refund Security & Substitution Logic', () => {
       quotationRef: 'QT-RFS-SELF-002',
       reasonCategory: ['Order cancellation'],
       amountNgn: 5000,
+      calculationLines: [{ label: 'Cancellation', amountNgn: 5000, category: 'Order cancellation' }],
+      ...REFUND_PAYEE,
     });
     expect(create.status).toBe(201);
     const refundID = create.body.refundID;
@@ -227,6 +233,7 @@ describe('Refund Security & Substitution Logic', () => {
       reasonCategory: ['Calculation error'],
       amountNgn: 100,
       calculationLines: [{ label: 'Header vs lines', amountNgn: 100, category: 'Calculation error' }],
+      ...REFUND_PAYEE,
     });
     expect(create.status).toBe(201);
     const refundID = create.body.refundID;
@@ -274,6 +281,7 @@ describe('Refund Security & Substitution Logic', () => {
     const lines = preview.body.preview.suggestedLines;
     const unproduced = lines.find((l) => l.label.includes('Unproduced'));
     expect(unproduced).toBeDefined();
+    expect(unproduced.category).toBe('Unproduced meterage');
     expect(unproduced.amountNgn).toBe(100000);
     expect(preview.body.preview.suggestedAmountNgn).toBe(100000);
   });
@@ -398,6 +406,7 @@ describe('Refund Security & Substitution Logic', () => {
       reasonCategory: ['Overpayment'],
       amountNgn: 500,
       calculationLines: [{ label: 'Overpayment', amountNgn: 500, category: 'Overpayment' }],
+      ...REFUND_PAYEE,
     });
     expect(first.status).toBe(201);
 
@@ -408,6 +417,7 @@ describe('Refund Security & Substitution Logic', () => {
       reasonCategory: ['Transport issue'],
       amountNgn: 300,
       calculationLines: [{ label: 'Transport', amountNgn: 300, category: 'Transport issue' }],
+      ...REFUND_PAYEE,
     });
     expect(second.status).toBe(201);
   });
@@ -446,6 +456,7 @@ describe('Refund Security & Substitution Logic', () => {
     });
     expect(preview.status).toBe(200);
     expect(preview.body.preview.blockedRefundCategories).toContain('Order cancellation');
+    expect(preview.body.preview.blockedRefundCategories).toContain('Unproduced meterage');
 
     const create = await agent.post('/api/refunds').send({
       customerID: 'CUS-001',
@@ -454,6 +465,7 @@ describe('Refund Security & Substitution Logic', () => {
       reasonCategory: ['Order cancellation'],
       amountNgn: 1000,
       calculationLines: [{ label: 'Cancel', amountNgn: 1000, category: 'Order cancellation' }],
+      ...REFUND_PAYEE,
     });
     expect(create.status).toBe(400);
     expect(String(create.body.error || '')).toMatch(/delivered/i);

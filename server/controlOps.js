@@ -22,6 +22,7 @@ import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequ
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
+import { pricingPolicyNumbersForServiceLine } from './pricingPolicyResolve.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -892,6 +893,16 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       return { ok: false, error: 'Select at least one refund reason category.' };
     }
 
+    const payeeName = String(payload.payeeName ?? payload.payee_name ?? '').trim();
+    const payeeAccountNo = String(payload.payeeAccountNo ?? payload.payee_account_no ?? '').trim();
+    const payeeBankName = String(payload.payeeBankName ?? payload.payee_bank_name ?? '').trim();
+    if (!payeeName || !payeeAccountNo || !payeeBankName) {
+      return {
+        ok: false,
+        error: 'Pay to: enter beneficiary name, account number, and bank name so finance can pay the refund.',
+      };
+    }
+
     if (quotationRef) {
       const existingRefunds = db.prepare(
         `SELECT reason_category FROM customer_refunds
@@ -917,6 +928,36 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         return {
           ok: false,
           error: 'Order cancellation is not allowed after material has been delivered for this quotation.',
+        };
+      }
+      if (requestedCats.includes('Unproduced meterage') && quotationHasCompletedDelivery(db, quotationRef)) {
+        return {
+          ok: false,
+          error: 'Unproduced meterage refunds are not allowed after material has been delivered for this quotation.',
+        };
+      }
+
+      const calcLinesRaw = Array.isArray(payload.calculationLines) ? payload.calculationLines : [];
+      const commissionRefundSum = calcLinesRaw
+        .filter((l) => String(l.category || '').trim() === 'Customer commission')
+        .reduce((s, l) => s + roundMoney(l.amountNgn), 0);
+      if (commissionRefundSum > 0) {
+        const { maxNgn } = maxCustomerCommissionRefundNgn(db, quotationRef);
+        if (commissionRefundSum > maxNgn) {
+          return {
+            ok: false,
+            error: `Customer commission refund (₦${commissionRefundSum.toLocaleString(
+              'en-NG'
+            )}) exceeds the maximum allowed (₦${maxNgn.toLocaleString(
+              'en-NG'
+            )}) for this quotation given minimum selling prices and refundable headroom.`,
+          };
+        }
+      }
+      if (requestedCats.includes('Customer commission') && commissionRefundSum <= 0) {
+        return {
+          ok: false,
+          error: 'Customer commission is selected but no calculation line carries a positive amount for that category.',
         };
       }
 
@@ -956,8 +997,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         `INSERT INTO customer_refunds (
           refund_id, customer_id, customer_name, quotation_ref, cutting_list_ref, product, reason_category, reason,
           amount_ngn, calculation_lines_json, suggested_lines_json, preview_snapshot_json, calculation_notes, status, requested_by, requested_by_user_id, requested_at_iso,
-          approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note, branch_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note,
+          payee_name, payee_account_no, payee_bank_name, branch_id
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         refundID,
         customerID,
@@ -983,7 +1025,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         0,
         '',
         '',
-        '',
+        payeeName,
+        payeeAccountNo,
+        payeeBankName,
         String(branchId || DEFAULT_BRANCH_ID).trim()
       );
       appendAuditLog(db, {
@@ -1223,6 +1267,10 @@ export function previewRefundRequest(db, payload) {
         .prepare(`SELECT * FROM production_jobs WHERE quotation_ref = ? AND status IN ('Completed', 'Cancelled')`)
         .all(quotationRef)
     : [];
+  const hasCancelledProductionJob = productionJobs.some(
+    (j) => String(j.status || '').trim().toLowerCase() === 'cancelled'
+  );
+  const includeCustomerCommission = Boolean(payload.includeCustomerCommission);
 
   const existingRefunds = quotationRef
     ? db
@@ -1266,8 +1314,9 @@ export function previewRefundRequest(db, payload) {
   const blockedRefundCategories = [];
   if (materialDelivered) {
     blockedRefundCategories.push('Order cancellation');
+    blockedRefundCategories.push('Unproduced meterage');
     warnings.push(
-      'Material has been marked delivered for this quotation; order cancellation refunds are not allowed.'
+      'Material has been marked delivered for this quotation; order cancellation and unproduced-meterage refunds are not allowed.'
     );
   }
 
@@ -1294,8 +1343,9 @@ export function previewRefundRequest(db, payload) {
     });
   }
 
-  // 1b. Customer commission — post-payment concession vs saved recommended ₦/m snapshots (capped by remaining refundable)
+  // 1b. Customer commission — only when explicitly requested; capped by minimum selling ₦/m and remaining refundable.
   if (
+    includeCustomerCommission &&
     quotationRef &&
     !refundedCategories.has('Customer commission') &&
     quotationCashInNgn > 0 &&
@@ -1303,51 +1353,32 @@ export function previewRefundRequest(db, payload) {
   ) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
     if (el.ok) {
-      try {
-        const j = typeof quote.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
-        const lines = [...(j?.products || []), ...(j?.services || [])];
-        let totalConcession = 0;
-        for (const line of lines) {
-          const rec = Number(line?.recommendedPricePerMeter);
-          const up = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0);
-          const m = Number(line?.qty ?? line?.meters ?? line?.qtyMeters ?? 0);
-          if (!Number.isFinite(rec) || rec <= 0 || !Number.isFinite(up) || !Number.isFinite(m) || m <= 0) continue;
-          if (up >= rec - 0.001) continue;
-          totalConcession += roundMoney((rec - up) * m);
-        }
-        totalConcession = roundMoney(totalConcession);
-        if (totalConcession > 0) {
-          const amountNgn = roundMoney(Math.min(totalConcession, Math.max(0, el.remainingNgn)));
-          if (amountNgn >= 1) {
-            const cappedNote =
-              amountNgn < totalConcession
-                ? ` (capped from computed ₦${totalConcession.toLocaleString('en-NG')} to remaining refundable)`
-                : '';
-            suggestedLines.push({
-              label: `Customer commission / agreed price concession after payment: up to ₦${amountNgn.toLocaleString('en-NG')}${cappedNote}`,
-              amountNgn,
-              category: 'Customer commission',
-            });
-          }
-        }
-      } catch {
-        /* ignore malformed lines_json */
+      const { maxNgn, warnings: commissionWarnings } = maxCustomerCommissionRefundNgn(db, quotationRef);
+      for (const w of commissionWarnings) {
+        warnings.push(w);
+      }
+      if (maxNgn >= 1) {
+        suggestedLines.push({
+          label: `Customer commission / agreed price concession (recommended vs quoted, capped by minimum selling ₦/m): up to ₦${maxNgn.toLocaleString('en-NG')}`,
+          amountNgn: maxNgn,
+          category: 'Customer commission',
+        });
       }
     }
   }
 
-  // 2. Unproduced / Substituted Meterage (blocked after customer delivery is recorded)
+  // 2. Quoted vs produced shortfall (not the same as order cancellation — see eligible categories)
   if (quotedMeters > 0 && pricePerMeter) {
     const unproducedPotential = Math.max(0, quotedMeters - actualMeters);
     if (
       unproducedPotential > 0 &&
-      !refundedCategories.has('Order cancellation') &&
+      !refundedCategories.has('Unproduced meterage') &&
       !materialDelivered
     ) {
       suggestedLines.push({
         label: `Unproduced metres (${unproducedPotential.toFixed(2)}m @ ₦${Math.round(pricePerMeter).toLocaleString()})`,
         amountNgn: Math.round(unproducedPotential * pricePerMeter),
-        category: 'Order cancellation',
+        category: 'Unproduced meterage',
       });
     }
   }
@@ -1591,7 +1622,11 @@ export function previewRefundRequest(db, payload) {
     if (refundedCategories.has(cat)) continue;
     if (blockedRefundCategories.includes(cat)) continue;
     if (cat === 'Order cancellation') {
-      eligibleRefundCategories.push(cat);
+      if (hasCancelledProductionJob) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Unproduced meterage') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
       continue;
     }
     if (cat === 'Overpayment') {
@@ -1765,6 +1800,57 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
     };
   }
   return { ok: true, paidNgn, totalRefundedNgn, remainingNgn };
+}
+
+/**
+ * Maximum “customer commission” refund: (recommended − quoted) × metres per line, capped so the implied
+ * effective selling ₦/m after refund would not fall below {@link pricingPolicyNumbersForServiceLine} minAllowed.
+ */
+export function maxCustomerCommissionRefundNgn(db, quotationRef) {
+  const ref = String(quotationRef ?? '').trim();
+  const warnings = [];
+  if (!ref) return { maxNgn: 0, warnings };
+  const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(ref);
+  if (!quote?.lines_json) return { maxNgn: 0, warnings };
+  const el = quotationMeetsRefundEligibility(db, ref);
+  if (!el.ok) return { maxNgn: 0, warnings };
+  const branchId = quote.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  let linesParsed;
+  try {
+    linesParsed = typeof quote.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
+  } catch {
+    return { maxNgn: 0, warnings };
+  }
+  const lines = [...(linesParsed?.products || []), ...(linesParsed?.services || [])];
+  let totalConcession = 0;
+  for (const line of lines) {
+    const rec = Number(line?.recommendedPricePerMeter);
+    const up = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0);
+    const m = Number(line?.qty ?? line?.meters ?? line?.qtyMeters ?? 0);
+    if (!Number.isFinite(rec) || rec <= 0 || !Number.isFinite(up) || !Number.isFinite(m) || m <= 0) continue;
+    if (up >= rec - 0.001) continue;
+    const rawConcession = roundMoney((rec - up) * m);
+    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId);
+    const minAllowed = nums.minAllowed;
+    let capped = rawConcession;
+    if (minAllowed != null && Number.isFinite(minAllowed)) {
+      if (up <= minAllowed + 0.001) {
+        capped = 0;
+      } else {
+        const maxByFloor = roundMoney(Math.max(0, (up - minAllowed) * m));
+        if (maxByFloor + 0.01 < rawConcession) {
+          capped = maxByFloor;
+          warnings.push(
+            `Customer commission capped: refund cannot imply an effective price below the minimum allowed ₦/m (≈₦${Math.round(minAllowed).toLocaleString('en-NG')}/m) for a quoted line.`
+          );
+        }
+      }
+    }
+    totalConcession += capped;
+  }
+  totalConcession = roundMoney(totalConcession);
+  const amountNgn = roundMoney(Math.min(totalConcession, Math.max(0, el.remainingNgn)));
+  return { maxNgn: amountNgn, warnings };
 }
 
 /**

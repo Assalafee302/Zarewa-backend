@@ -333,6 +333,15 @@ export function runMigrations(db) {
   if (!refunds.has('preview_snapshot_json')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN preview_snapshot_json TEXT`);
   }
+  if (!refunds.has('payee_name')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN payee_name TEXT`);
+  }
+  if (!refunds.has('payee_account_no')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN payee_account_no TEXT`);
+  }
+  if (!refunds.has('payee_bank_name')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN payee_bank_name TEXT`);
+  }
   // Legacy index blocked multiple refund requests per quotation (product defaulted to "—").
   const hasRefundPendingIdx = db
     .prepare(

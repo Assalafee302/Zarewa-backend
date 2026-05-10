@@ -444,6 +444,9 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   paid_at_iso TEXT,
   paid_by TEXT,
   payment_note TEXT,
+  payee_name TEXT,
+  payee_account_no TEXT,
+  payee_bank_name TEXT,
   branch_id TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );

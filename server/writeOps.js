@@ -5777,8 +5777,9 @@ export function replaceRefunds(db, refunds) {
     INSERT INTO customer_refunds (
       refund_id, customer_id, customer_name, quotation_ref, cutting_list_ref, product, reason_category, reason,
       amount_ngn, calculation_lines_json, suggested_lines_json, calculation_notes, status, requested_by, requested_at_iso,
-      approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note, branch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note,
+      payee_name, payee_account_no, payee_bank_name, branch_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.transaction(() => {
     for (const r of refunds) {
@@ -5806,6 +5807,9 @@ export function replaceRefunds(db, refunds) {
         r.paidAtISO,
         r.paidBy,
         r.paymentNote ?? '',
+        String(r.payeeName ?? r.payee_name ?? '').trim(),
+        String(r.payeeAccountNo ?? r.payee_account_no ?? '').trim(),
+        String(r.payeeBankName ?? r.payee_bank_name ?? '').trim(),
         String(r.branchId || DEFAULT_BRANCH_ID).trim()
       );
     }

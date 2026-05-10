@@ -24,6 +24,12 @@ function fmtNgn(n) {
   return `₦${Math.round(Number(n) || 0).toLocaleString('en-NG')}`;
 }
 
+/** Workbook UI rows: primary line or duplicate line (wb-*) */
+function isWorkbookDesignKey(dk) {
+  const s = String(dk ?? '').trim();
+  return s === '' || s.startsWith('wb-');
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchId
@@ -75,11 +81,18 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
 
   const coilTable = (sheet) => {
     const isStone = Boolean(sheet.isStoneCoatedWorkbook);
-    const gauges = sheet.gauges || [];
     const rows = sheet.rows || [];
-    const body = gauges
-      .map((g) => {
-        const row = rows.find((r) => r.gaugeMm === g && !String(r.designKey || '').trim());
+    const workbookRows = rows
+      .filter((r) => isWorkbookDesignKey(r.designKey))
+      .sort((a, b) => {
+        const ga = String(a.gaugeMm || '');
+        const gb = String(b.gaugeMm || '');
+        if (ga !== gb) return ga.localeCompare(gb);
+        return String(a.designKey || '').localeCompare(String(b.designKey || ''));
+      });
+    const body = workbookRows
+      .map((row) => {
+        const g = String(row.gaugeMm || '').trim();
         const rv = sheet.resolvedByGauge?.[g] || {};
         const used = rv.used != null && Number.isFinite(Number(rv.used)) ? Number(rv.used) : null;
         const ck = row?.costPerKgNgn != null ? Number(row.costPerKgNgn) : null;
@@ -101,8 +114,12 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
         const listCell = listP > 0 ? esc(fmtNgn(listP)) : '—';
         const ckCell =
           !isStone && ck != null && Number.isFinite(ck) && ck >= 0 ? esc(fmtNgn(ck)) : '—';
+        const custLab = String(row.gaugeCustomerLabel || '').trim();
+        const gaugeCell = custLab
+          ? `<strong>${esc(g)}</strong> mm<br/><span style="font-size:0.78rem;color:#64748b;">${esc(custLab)}</span>`
+          : `<strong>${esc(g)}</strong> mm`;
         return `<tr>
-  <td><strong>${esc(g)}</strong> mm</td>
+  <td>${gaugeCell}</td>
   <td class="num">${esc(fmtConv2(rv.std))}</td>
   <td class="num">${esc(fmtConv2(rv.ref))}</td>
   <td class="num">${esc(fmtConv2(rv.hist))}</td>
@@ -133,7 +150,7 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
         <th class="num">List ₦/m</th>
       </tr>
     </thead>
-    <tbody>${body || '<tr><td colspan="10">No gauges.</td></tr>'}</tbody>
+    <tbody>${body || '<tr><td colspan="10">No workbook lines yet.</td></tr>'}</tbody>
   </table>`;
   };
 

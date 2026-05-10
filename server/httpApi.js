@@ -234,6 +234,7 @@ import { getPricingPolicyBundle, patchPricingPolicyBundle } from './pricingPolic
 import { buildCustomerPriceBookHtml } from './customerPriceBook.js';
 import { buildMaterialWorkbookAllHtml } from './materialWorkbookAllHtml.js';
 import {
+  deleteMaterialPricingSheetRow,
   listMaterialPricingEvents,
   listMaterialPricingSheet,
   upsertMaterialPricingSheetRow,
@@ -2207,6 +2208,21 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not save material pricing row.' });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/pricing/material-sheet/rows/:id',
+    requirePermission(['pricing.manage', 'md.price_exception.approve']),
+    (req, res) => {
+      try {
+        const id = String(req.params.id || '').trim();
+        const r = deleteMaterialPricingSheetRow(db, id, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not delete material pricing row.' });
       }
     }
   );

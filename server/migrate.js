@@ -2990,6 +2990,9 @@ function migrateMaterialPricingWorkbook(db) {
     if (cols.length && !cols.some((c) => c.name === 'commission_ngn_per_m')) {
       db.exec(`ALTER TABLE material_pricing_sheet_rows ADD COLUMN commission_ngn_per_m REAL NOT NULL DEFAULT 0`);
     }
+    if (cols.length && !cols.some((c) => c.name === 'gauge_customer_label')) {
+      db.exec(`ALTER TABLE material_pricing_sheet_rows ADD COLUMN gauge_customer_label TEXT`);
+    }
   } catch {
     /* ignore */
   }

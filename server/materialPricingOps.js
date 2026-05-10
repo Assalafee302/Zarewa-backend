@@ -15,6 +15,7 @@ export const MATERIAL_PRICING_STANDARD_GAUGES_MM = [
   '0.45',
   '0.50',
   '0.55',
+  '0.70',
 ];
 
 const STRIP_WIDTH_M = 1.2;
@@ -338,6 +339,7 @@ function mapRow(row) {
     minimumPricePerMeterNgn: minimum,
     commissionNgnPerM: commission,
     publishedListPriceNgn,
+    gaugeCustomerLabel: String(row.gauge_customer_label ?? '').trim().slice(0, 120),
     notes: row.notes ?? '',
     updatedAtIso: row.updated_at_iso ?? null,
     updatedByUserId: row.updated_by_user_id ?? null,
@@ -527,6 +529,18 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   if (materialKey === 'stone-coated' && !STONE_COATED_GAUGES.includes(String(gaugeMm).trim())) {
     return { ok: false, error: `Stone-coated workbook only supports gauges: ${STONE_COATED_GAUGES.join(', ')}.` };
   }
+  if (materialKey !== 'stone-coated') {
+    const gm = String(gaugeMm).trim();
+    if (!MATERIAL_PRICING_STANDARD_GAUGES_MM.includes(gm)) {
+      return {
+        ok: false,
+        error: `Coil workbook gauge must be one of: ${MATERIAL_PRICING_STANDARD_GAUGES_MM.join(', ')}.`,
+      };
+    }
+  }
+
+  const gaugeCustomerLabel =
+    body?.gaugeCustomerLabel != null ? String(body.gaugeCustomerLabel).trim().slice(0, 120) : '';
 
   const existing = db
     .prepare(
@@ -584,17 +598,32 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       `UPDATE material_pricing_sheet_rows SET
         conversion_standard_kg_per_m = ?, conversion_reference_kg_per_m = ?, conversion_history_kg_per_m = ?,
         conversion_used_kg_per_m = ?, cost_per_kg_ngn = ?, overhead_ngn_per_m = ?, profit_ngn_per_m = ?,
-        minimum_price_per_m_ngn = ?, commission_ngn_per_m = ?, notes = ?, updated_at_iso = ?, updated_by_user_id = ?
+        minimum_price_per_m_ngn = ?, commission_ngn_per_m = ?, gauge_customer_label = ?, notes = ?, updated_at_iso = ?, updated_by_user_id = ?
        WHERE id = ?`
-    ).run(std, ref, hist, used, costPerKg, overhead, profit, minimum, commission, notes || null, now, actor?.id ?? null, id);
+    ).run(
+      std,
+      ref,
+      hist,
+      used,
+      costPerKg,
+      overhead,
+      profit,
+      minimum,
+      commission,
+      gaugeCustomerLabel || null,
+      notes || null,
+      now,
+      actor?.id ?? null,
+      id
+    );
   } else {
     db.prepare(
       `INSERT INTO material_pricing_sheet_rows (
         id, material_key, gauge_mm, branch_id, design_key,
         conversion_standard_kg_per_m, conversion_reference_kg_per_m, conversion_history_kg_per_m,
         conversion_used_kg_per_m, cost_per_kg_ngn, overhead_ngn_per_m, profit_ngn_per_m,
-        minimum_price_per_m_ngn, commission_ngn_per_m, notes, updated_at_iso, updated_by_user_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        minimum_price_per_m_ngn, commission_ngn_per_m, gauge_customer_label, notes, updated_at_iso, updated_by_user_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       materialKey,
@@ -610,6 +639,7 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       profit,
       minimum,
       commission,
+      gaugeCustomerLabel || null,
       notes || null,
       now,
       actor?.id ?? null
@@ -674,4 +704,28 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   }
 
   return { ok: true, id, row: after, priceListSync };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} rowId
+ * @param {object} actor
+ */
+export function deleteMaterialPricingSheetRow(db, rowId, actor) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
+    return { ok: false, error: 'Pricing workbook tables are not available.' };
+  }
+  const id = String(rowId || '').trim();
+  if (!id) return { ok: false, error: 'Row id is required.' };
+  const existing = db.prepare(`SELECT * FROM material_pricing_sheet_rows WHERE id = ?`).get(id);
+  if (!existing) return { ok: false, error: 'Row not found.' };
+  db.prepare(`DELETE FROM material_pricing_sheet_rows WHERE id = ?`).run(id);
+  appendAuditLog(db, {
+    actor,
+    action: 'pricing.material_sheet_delete',
+    entityKind: 'material_pricing_sheet_row',
+    entityId: id,
+    note: `${existing.material_key} · ${existing.gauge_mm} mm · ${existing.branch_id}`,
+  });
+  return { ok: true };
 }

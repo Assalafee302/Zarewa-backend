@@ -622,6 +622,35 @@ describe('Refund Security & Substitution Logic', () => {
     expect(Array.isArray(res.body.dataQualityIssues)).toBe(true);
   });
 
+  it('GET /api/refunds/intelligence: quoted vs produced gauge mismatch when FG names match quotation', async () => {
+    const linesJson = JSON.stringify({
+      materialGauge: '0.22mm',
+      materialColor: 'Blue',
+      materialDesign: 'Longspan',
+      products: [{ name: 'Longspan roofing', qty: 10, unitPrice: 5000 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-GG-MIS','CUS-001','John Doe',50000,50000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-GG-MIS','Longspan roofing',0,'m','BR-KD','0.18mm','Blue','Aluminium')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-GG','QT-RFS-GG-MIS','FG-GG-MIS','Longspan roofing',10,'Completed','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+    const res = await agent.get('/api/refunds/intelligence').query({ quotationRef: 'QT-RFS-GG-MIS' });
+    expect(res.status).toBe(200);
+    expect(res.body.dataQualityIssues.some((x) => x.code === 'quoted_vs_produced_gauge')).toBe(true);
+  });
+
   it('getEligibleRefundQuotations includes paid Void quotations without a production job', () => {
     const linesVoidPaid = JSON.stringify({
       products: [{ name: 'R', qty: 10, unitPrice: 2000 }],

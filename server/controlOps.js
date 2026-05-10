@@ -350,6 +350,54 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
   }
 }
 
+/** First numeric gauge in mm from labels like "0.22mm" (aligned with frontend `firstGaugeNumber`). */
+function firstGaugeMmFromLabel(label) {
+  const m = String(label ?? '').match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1], 10) : null;
+}
+
+function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
+  const a = firstGaugeMmFromLabel(quotedLabel);
+  const b = firstGaugeMmFromLabel(producedLabel);
+  if (a == null || b == null) return false;
+  return Math.abs(a - b) > tolMm;
+}
+
+function parseQuotedMaterialGaugeFromLinesJson(linesJson) {
+  try {
+    const j = typeof linesJson === 'string' ? JSON.parse(linesJson || '{}') : linesJson;
+    if (j && typeof j.materialGauge === 'string') return String(j.materialGauge).trim();
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+/** Finished-good gauge label from inventory product (for quote vs production audit). */
+function productGaugeLabelFromStock(db, productId) {
+  const pid = String(productId ?? '').trim();
+  if (!pid) return '';
+  let row;
+  try {
+    row = db
+      .prepare(`SELECT gauge, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`)
+      .get(pid);
+  } catch {
+    return '';
+  }
+  if (!row) return '';
+  let g = String(row.gauge || '').trim();
+  if (!g) {
+    try {
+      const extra = JSON.parse(row.dashboard_attrs_json || '{}');
+      g = String(extra.gauge || '').trim();
+    } catch {
+      g = '';
+    }
+  }
+  return g;
+}
+
 /** Resolve list ₦/m for the FG `products` row (gauge + colour / design). */
 function listPricePerMeterForProducedProduct(db, productId, branchId) {
   const pid = String(productId ?? '').trim();
@@ -404,26 +452,52 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   } catch {
     return [];
   }
+  if (!productionJobs.length) return [];
+
+  const quotedGaugeRaw = parseQuotedMaterialGaugeFromLinesJson(quote?.lines_json ?? '');
   const qNames = quotedProductNamesLower(quote?.lines_json ?? '');
-  if (!qNames.length || !productionJobs.length) return [];
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const issues = [];
-  for (const j of productionJobs) {
-    const pn = String(j.product_name ?? '').trim().toLowerCase();
-    if (!pn) continue;
-    const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
-    if (match) continue;
-    const m = Number(j.actual_meters) || 0;
-    if (m <= 0) continue;
-    const ppm = listPricePerMeterForProducedProduct(db, j.product_id, branchId);
-    if (ppm == null || ppm <= 0) {
+
+  if (quotedGaugeRaw && qNames.length) {
+    for (const j of productionJobs) {
+      const pn = String(j.product_name ?? '').trim().toLowerCase();
+      if (!pn) continue;
+      const nameMatch = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
+      if (!nameMatch) continue;
       const pid = String(j.product_id ?? '').trim();
-      issues.push({
-        code: 'substitution_list_price',
-        jobId: String(j.job_id ?? '').trim() || undefined,
-        productId: pid || undefined,
-        message: `Substitution credit needs list ₦/m for produced “${String(j.product_name || j.job_id).trim()}”${pid ? ` (FG ${pid})` : ''}. Add gauge and colour (or design) on the FG product and a matching price list row.`,
-      });
+      if (!pid) continue;
+      const fgGaugeRaw = productGaugeLabelFromStock(db, pid);
+      if (!fgGaugeRaw) continue;
+      if (gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
+        issues.push({
+          code: 'quoted_vs_produced_gauge',
+          jobId: String(j.job_id ?? '').trim() || undefined,
+          productId: pid,
+          message: `Quoted gauge (${quotedGaugeRaw}) differs from produced finished-good gauge (${fgGaugeRaw}) on job “${String(j.product_name || j.job_id).trim()}”. Substitution credit does not run when product names match — use “Substitution Difference” or “Other” with manual amounts if the customer paid for heavier gauge than supplied.`,
+        });
+      }
+    }
+  }
+
+  if (qNames.length) {
+    for (const j of productionJobs) {
+      const pn = String(j.product_name ?? '').trim().toLowerCase();
+      if (!pn) continue;
+      const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
+      if (match) continue;
+      const m = Number(j.actual_meters) || 0;
+      if (m <= 0) continue;
+      const ppm = listPricePerMeterForProducedProduct(db, j.product_id, branchId);
+      if (ppm == null || ppm <= 0) {
+        const pid = String(j.product_id ?? '').trim();
+        issues.push({
+          code: 'substitution_list_price',
+          jobId: String(j.job_id ?? '').trim() || undefined,
+          productId: pid || undefined,
+          message: `Substitution credit needs list ₦/m for produced “${String(j.product_name || j.job_id).trim()}”${pid ? ` (FG ${pid})` : ''}. Add gauge and colour (or design) on the FG product and a matching price list row.`,
+        });
+      }
     }
   }
   const ppmQuote = quotedAmountPerMeter(quote?.lines_json);
@@ -1440,6 +1514,12 @@ export function previewRefundRequest(db, payload) {
     warnings.push(
       'Material has been marked delivered for this quotation; order cancellation and unproduced-meterage refunds are not allowed.'
     );
+  }
+
+  if (quotationRef) {
+    for (const iss of refundSubstitutionDataQualityIssues(db, quotationRef)) {
+      if (iss.code === 'quoted_vs_produced_gauge') warnings.push(iss.message);
+    }
   }
 
   const requestedPpm = positiveNumber(payload.pricePerMeterNgn);

@@ -2663,6 +2663,10 @@ describe.sequential('Zarewa API', () => {
     expect(mps.body.ok).toBe(true);
     expect(Array.isArray(mps.body.gauges)).toBe(true);
     expect(mps.body.gauges.length).toBeGreaterThan(0);
+    expect(mps.body).toHaveProperty('purchaseAvgConversionByGauge');
+    expect(mps.body).toHaveProperty('gaugeHistoryAvgConversionByGauge');
+    expect(typeof mps.body.purchaseAvgConversionByGauge).toBe('object');
+    expect(typeof mps.body.gaugeHistoryAvgConversionByGauge).toBe('object');
 
     const mpsSave = await agent.post('/api/pricing/material-sheet/rows').send({
       materialKey: 'alu',

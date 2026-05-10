@@ -62,6 +62,110 @@ export function catalogStandardKgPerM(db, productId, gaugeMm) {
   return v > 0 ? v : null;
 }
 
+/** Match productionTraceability gauge parsing for workbook hints. */
+function parseGaugeMmFromLabel(value) {
+  const match = String(value ?? '')
+    .replace(/,/g, '.')
+    .match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const next = Number(match[1]);
+  return Number.isFinite(next) && next > 0 ? next : null;
+}
+
+/** Map a thickness in mm to a standard workbook gauge key, or null. */
+function standardGaugeKeyForMm(mm) {
+  if (!Number.isFinite(mm) || mm <= 0) return null;
+  for (const g of MATERIAL_PRICING_STANDARD_GAUGES_MM) {
+    if (Math.abs(parseFloat(g, 10) - mm) < 1e-4) return g;
+  }
+  return null;
+}
+
+/**
+ * Mean supplier kg/m on received coils for this product, grouped by standard gauge key.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} productId
+ * @returns {Record<string, number>}
+ */
+export function purchaseAvgConversionKgPerMByGauge(db, productId) {
+  const out = {};
+  const pid = String(productId || '').trim();
+  if (!pid) return out;
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()) return out;
+  const rows = db
+    .prepare(
+      `SELECT gauge_label, supplier_conversion_kg_per_m FROM coil_lots
+       WHERE product_id = ?
+         AND supplier_conversion_kg_per_m IS NOT NULL
+         AND supplier_conversion_kg_per_m > 0`
+    )
+    .all(pid);
+  /** @type {Record<string, number[]>} */
+  const buckets = {};
+  for (const r of rows) {
+    const mm = parseGaugeMmFromLabel(r.gauge_label);
+    const key = standardGaugeKeyForMm(mm);
+    if (!key) continue;
+    const v = Number(r.supplier_conversion_kg_per_m);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(v);
+  }
+  for (const g of Object.keys(buckets)) {
+    const vals = buckets[g];
+    if (!vals.length) continue;
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    if (Number.isFinite(avg) && avg > 0) out[g] = avg;
+  }
+  return out;
+}
+
+/**
+ * Mean posted actual kg/m from production conversion checks for this product’s coils, by standard gauge key.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} productId
+ * @returns {Record<string, number>}
+ */
+export function gaugeHistoryAvgConversionKgPerMByGauge(db, productId) {
+  const out = {};
+  const pid = String(productId || '').trim();
+  if (!pid) return out;
+  if (
+    !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_conversion_checks'`).get() ||
+    !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()
+  ) {
+    return out;
+  }
+  const rows = db
+    .prepare(
+      `SELECT c.gauge_label, c.actual_conversion_kg_per_m
+       FROM production_conversion_checks c
+       INNER JOIN coil_lots cl ON cl.coil_no = c.coil_no
+       WHERE cl.product_id = ?
+         AND c.actual_conversion_kg_per_m IS NOT NULL
+         AND c.actual_conversion_kg_per_m > 0`
+    )
+    .all(pid);
+  /** @type {Record<string, number[]>} */
+  const buckets = {};
+  for (const r of rows) {
+    const mm = parseGaugeMmFromLabel(r.gauge_label);
+    const key = standardGaugeKeyForMm(mm);
+    if (!key) continue;
+    const v = Number(r.actual_conversion_kg_per_m);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(v);
+  }
+  for (const g of Object.keys(buckets)) {
+    const vals = buckets[g];
+    if (!vals.length) continue;
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    if (Number.isFinite(avg) && avg > 0) out[g] = avg;
+  }
+  return out;
+}
+
 /**
  * @param {number | null | undefined} a
  * @param {number | null | undefined} b
@@ -143,6 +247,9 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
     return { ok: false, error: 'materialKey must be alu or aluzinc.' };
   }
   if (!bid) return { ok: false, error: 'branchId is required.' };
+  const pid = productIdForMaterialKey(mk);
+  const purchaseAvgConversionByGauge = purchaseAvgConversionKgPerMByGauge(db, pid);
+  const gaugeHistoryAvgConversionByGauge = gaugeHistoryAvgConversionKgPerMByGauge(db, pid);
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
     return {
       ok: true,
@@ -151,10 +258,11 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
       gauges: [...MATERIAL_PRICING_STANDARD_GAUGES_MM],
       theoreticalStandardByGauge: {},
       catalogHintByGauge: {},
+      purchaseAvgConversionByGauge,
+      gaugeHistoryAvgConversionByGauge,
       rows: [],
     };
   }
-  const pid = productIdForMaterialKey(mk);
   const theoreticalStandardByGauge = {};
   const catalogHintByGauge = {};
   for (const g of MATERIAL_PRICING_STANDARD_GAUGES_MM) {
@@ -179,6 +287,8 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
     gauges: [...MATERIAL_PRICING_STANDARD_GAUGES_MM],
     theoreticalStandardByGauge,
     catalogHintByGauge,
+    purchaseAvgConversionByGauge,
+    gaugeHistoryAvgConversionByGauge,
     rows: dbRows,
   };
 }

@@ -472,10 +472,15 @@ describe('Refund Security & Substitution Logic', () => {
   });
 
   it('getEligibleRefundQuotations includes quotations with Cancelled production job', () => {
+    const linesJson = JSON.stringify({
+      products: [{ name: 'R', qty: 20, unitPrice: 2500 }],
+      accessories: [],
+      services: [],
+    });
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)
-       VALUES ('QT-RFS-CANC-JOB','CUS-001','John Doe',50000,50000,'Finished','{}')`
-    ).run();
+       VALUES ('QT-RFS-CANC-JOB','CUS-001','John Doe',50000,50000,'Finished',?)`
+    ).run(linesJson);
     db.prepare(
       `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
        VALUES ('JOB-RFS-CANC','QT-RFS-CANC-JOB',0,'Cancelled','2026-04-01T10:00:00Z')`
@@ -545,9 +550,76 @@ describe('Refund Security & Substitution Logic', () => {
   it('getEligibleRefundQuotations includes paid Void quotations without a production job', () => {
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, archived, lines_json)
-       VALUES ('QT-RFS-VOID-PAID','CUS-001','John Doe',30000,30000,'Void',1,'{}')`
+       VALUES ('QT-RFS-VOID-PAID','CUS-001','John Doe',20000,30000,'Void',1,'{}')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-VP','CUS-001','John Doe','QT-RFS-VOID-PAID',30000,'Confirmed','2026-04-01')`
     ).run();
     const rows = getEligibleRefundQuotations(db);
     expect(rows.some((r) => r.id === 'QT-RFS-VOID-PAID')).toBe(true);
+  });
+
+  it('GET /api/refunds/eligibility-check: positive automatic preview → appears in dropdown; manual-only path false', async () => {
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+    const res = await agent.get('/api/refunds/eligibility-check').query({ quotationRef: 'QT-RFS-OVR-001' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.meetsBackendRules).toBe(true);
+    expect(res.body.previewOk).toBe(true);
+    expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(true);
+    expect(res.body.manualEntryRefundAllowed).toBe(false);
+    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThan(0);
+  });
+
+  it('GET /api/refunds/eligibility-check: ₦0 automatic preview but otherwise valid → manualEntryRefundAllowed; excluded from eligible list', async () => {
+    const linesJson = JSON.stringify({
+      products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-MAN-ZERO','CUS-001','John Doe',50000,50000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-MZ','CUS-001','John Doe','QT-RFS-MAN-ZERO',50000,'Confirmed','2026-04-01')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-MZ','QT-RFS-MAN-ZERO',10,'Cancelled','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+
+    const previewRes = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-MAN-ZERO' });
+    expect(previewRes.status).toBe(200);
+    expect(previewRes.body.preview.suggestedAmountNgn).toBe(0);
+
+    const res = await agent.get('/api/refunds/eligibility-check').query({ quotationRef: 'QT-RFS-MAN-ZERO' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.meetsBackendRules).toBe(true);
+    expect(res.body.previewOk).toBe(true);
+    expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(false);
+    expect(res.body.manualEntryRefundAllowed).toBe(true);
+    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(0);
+    expect(Array.isArray(res.body.eligibleRefundCategories)).toBe(true);
+    expect(res.body.eligibleRefundCategories.length).toBeGreaterThan(0);
+    expect(res.body.blockingReasons.some((r) => /automatic preview|₦0/i.test(String(r)))).toBe(true);
+
+    const rows = getEligibleRefundQuotations(db);
+    expect(rows.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(false);
+  });
+
+  it('GET /api/refunds/eligibility-check: missing quotationRef → 400', async () => {
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+    const res = await agent.get('/api/refunds/eligibility-check');
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
   });
 });

@@ -1856,6 +1856,8 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef) {
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
+ * Also requires refund preview {@link previewRefundRequest} to produce a **positive** sum of suggested lines
+ * (automatic hints); quotations that only qualify via open-ended categories with ₦0 preview total are omitted.
  * Logic mirrors {@link quotationMeetsRefundEligibility} per row.
  */
 export function getEligibleRefundQuotations(db) {
@@ -1895,12 +1897,17 @@ export function getEligibleRefundQuotations(db) {
       const eligibleRefundCategories = Array.isArray(preview?.preview?.eligibleRefundCategories)
         ? preview.preview.eligibleRefundCategories
         : [];
+      const suggestedPreviewAmountNgn = roundMoney(preview?.preview?.suggestedAmountNgn ?? 0);
       return {
         ...row,
         eligible_refund_categories: eligibleRefundCategories,
+        suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
       };
     })
-    .filter((row) => row.eligible_refund_categories.length > 0);
+    .filter(
+      (row) =>
+        row.eligible_refund_categories.length > 0 && roundMoney(row.suggested_preview_amount_ngn) > 0
+    );
 }
 
 function positiveNumber(value) {

@@ -3872,6 +3872,10 @@ export function registerHttpApi(app, db) {
         preview?.ok && Array.isArray(preview?.preview?.eligibleRefundCategories)
           ? preview.preview.eligibleRefundCategories
           : [];
+      const suggestedPreviewAmountNgn =
+        preview?.ok && preview.preview?.suggestedAmountNgn != null
+          ? Math.round(Number(preview.preview.suggestedAmountNgn) || 0)
+          : 0;
       const remainingNgn = meets.ok ? meets.remainingNgn : 0;
       const qRow = db.prepare(`SELECT id, paid_ngn, total_ngn, status FROM quotations WHERE id = ?`).get(quotationRef);
       const paidBooked = qRow != null ? Math.round(Number(qRow.paid_ngn) || 0) : null;
@@ -3900,6 +3904,11 @@ export function registerHttpApi(app, db) {
           'Refund preview returned no eligible refund categories (quotations are dropped from GET /api/refunds/eligible-quotations when this list is empty).'
         );
       }
+      if (meets.ok && categories.length > 0 && suggestedPreviewAmountNgn <= 0) {
+        blockingReasons.push(
+          'Refund preview suggested total is ₦0 — the dropdown only lists quotations where automatic preview lines sum to more than ₦0 (manual refunds: click Use quotation id in Create Refund when policy allows).'
+        );
+      }
       if (meets.ok && totalBooked > 0 && (paidBooked || 0) < totalBooked) {
         blockingReasons.push(
           `Order still has ₦${orderOutstandingNgn.toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations: booked paid ≥ order total).`
@@ -3913,6 +3922,15 @@ export function registerHttpApi(app, db) {
       const wouldAppearInPicklist =
         meets.ok &&
         categories.length > 0 &&
+        suggestedPreviewAmountNgn > 0 &&
+        remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        isOrderFullySettledForPicker === true;
+      /** Fully validated sale + preview categories, but automatic line sum is ₦0 — excluded from pick list; manual amounts allowed. */
+      const manualEntryRefundAllowed =
+        meets.ok &&
+        Boolean(preview?.ok) &&
+        categories.length > 0 &&
+        suggestedPreviewAmountNgn <= 0 &&
         remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN &&
         isOrderFullySettledForPicker === true;
       res.json({
@@ -3928,6 +3946,7 @@ export function registerHttpApi(app, db) {
           : { error: meets.error },
         eligibleRefundCategories: categories,
         wouldAppearInRefundQuotationDropdown: wouldAppearInPicklist,
+        manualEntryRefundAllowed,
         blockingReasons,
         previewOk: Boolean(preview?.ok),
         previewError: preview?.ok ? null : preview?.error || null,
@@ -3940,6 +3959,7 @@ export function registerHttpApi(app, db) {
           isOrderFullyPaidForDropdown: isOrderFullySettledForPicker,
           remainingRefundableNgn: meets.ok ? meets.remainingNgn : null,
           minRemainingRequiredNgn: MIN_REFUND_QUOTATION_REMAINING_NGN,
+          suggestedPreviewAmountNgn,
           productionJobs: productionJobs.map((j) => ({
             jobId: j.job_id,
             status: j.status,

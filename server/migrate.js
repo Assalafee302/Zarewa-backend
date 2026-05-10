@@ -2985,6 +2985,14 @@ function migrateMaterialPricingWorkbook(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_mpse_material_time ON material_pricing_sheet_events(material_key, changed_at_iso DESC);
   `);
+  try {
+    const cols = db.prepare(`PRAGMA table_info(material_pricing_sheet_rows)`).all();
+    if (cols.length && !cols.some((c) => c.name === 'commission_ngn_per_m')) {
+      db.exec(`ALTER TABLE material_pricing_sheet_rows ADD COLUMN commission_ngn_per_m REAL NOT NULL DEFAULT 0`);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Trading bands, ridge add-ons, profile→design aliases; customer price book support. */

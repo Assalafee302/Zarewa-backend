@@ -3,6 +3,7 @@
  */
 
 import { listMaterialPricingSheet, suggestedPricePerMeterNgn } from './materialPricingOps.js';
+import { roundPublishedPrice } from './pricingPolicyResolve.js';
 import { listMasterData } from './masterData.js';
 import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 
@@ -89,11 +90,15 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
           sug = suggestedPricePerMeterNgn(used, ck, oh, pr);
         }
         const minimumNgn = Math.round(Number(row?.minimumPricePerMeterNgn) || 0);
+        const comm = Math.max(0, Number(row?.commissionNgnPerM) || 0);
+        const listP = roundPublishedPrice(minimumNgn + comm);
         const displaySug =
           sug != null && sug > 0 ? sug : isStone && minimumNgn > 0 ? minimumNgn : null;
         const sugCell =
           displaySug != null && displaySug > 0 ? esc(fmtNgn(displaySug)) : '—';
         const floorCell = minimumNgn > 0 ? esc(fmtNgn(minimumNgn)) : '—';
+        const commCell = comm > 0 ? esc(fmtNgn(comm)) : '—';
+        const listCell = listP > 0 ? esc(fmtNgn(listP)) : '—';
         const ckCell =
           !isStone && ck != null && Number.isFinite(ck) && ck >= 0 ? esc(fmtNgn(ck)) : '—';
         return `<tr>
@@ -105,6 +110,8 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
   <td class="num">${isStone ? '—' : ckCell}</td>
   <td class="num">${sugCell}</td>
   <td class="num">${floorCell}</td>
+  <td class="num">${commCell}</td>
+  <td class="num">${listCell}</td>
 </tr>`;
       })
       .join('');
@@ -122,9 +129,11 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
         <th class="num">₦/kg</th>
         <th class="num">Suggested ₦/m</th>
         <th class="num">Min floor ₦/m</th>
+        <th class="num">Comm ₦/m</th>
+        <th class="num">List ₦/m</th>
       </tr>
     </thead>
-    <tbody>${body || '<tr><td colspan="8">No gauges.</td></tr>'}</tbody>
+    <tbody>${body || '<tr><td colspan="10">No gauges.</td></tr>'}</tbody>
   </table>`;
   };
 

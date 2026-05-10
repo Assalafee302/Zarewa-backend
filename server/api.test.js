@@ -2743,6 +2743,7 @@ describe.sequential('Zarewa API', () => {
       overheadNgnPerM: 100,
       profitNgnPerM: 50,
       minimumPricePerMeterNgn: 5000,
+      commissionNgnPerM: 200,
     });
     expect(mpsSave.status).toBe(200);
     expect(mpsSave.body.ok).toBe(true);

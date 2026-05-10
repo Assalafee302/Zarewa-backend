@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { appendAuditLog } from './controlOps.js';
 import { upsertPriceListItem } from './pricingOps.js';
-import { STONE_COATED_GAUGES } from './pricingPolicyResolve.js';
+import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
 
 /** @type {readonly string[]} */
 export const MATERIAL_PRICING_STANDARD_GAUGES_MM = [
@@ -317,6 +317,9 @@ function mapRow(row) {
   const oh = Number(row.overhead_ngn_per_m) || 0;
   const pr = Number(row.profit_ngn_per_m) || 0;
   const suggested = suggestedPricePerMeterNgn(used, costKg, oh, pr);
+  const minimum = Math.max(0, Math.round(Number(row.minimum_price_per_m_ngn) || 0));
+  const commission = Math.max(0, Number(row.commission_ngn_per_m) || 0);
+  const publishedListPriceNgn = roundPublishedPrice(minimum + commission);
   return {
     id: row.id,
     materialKey: row.material_key,
@@ -332,7 +335,9 @@ function mapRow(row) {
     overheadNgnPerM: oh,
     profitNgnPerM: pr,
     suggestedPricePerMeterNgn: suggested,
-    minimumPricePerMeterNgn: Math.max(0, Math.round(Number(row.minimum_price_per_m_ngn) || 0)),
+    minimumPricePerMeterNgn: minimum,
+    commissionNgnPerM: commission,
+    publishedListPriceNgn,
     notes: row.notes ?? '',
     updatedAtIso: row.updated_at_iso ?? null,
     updatedByUserId: row.updated_by_user_id ?? null,
@@ -567,7 +572,9 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   const overhead = Math.max(0, Number(body?.overheadNgnPerM) || 0);
   const profit = Math.max(0, Number(body?.profitNgnPerM) || 0);
   const minimum = Math.max(0, Math.round(Number(body?.minimumPricePerMeterNgn) || 0));
+  const commission = Math.max(0, Number(body?.commissionNgnPerM) || 0);
   const notes = body?.notes != null ? String(body.notes).trim().slice(0, 2000) : '';
+  const listPriceForSync = roundPublishedPrice(minimum + commission);
 
   const now = new Date().toISOString();
   const before = existing ? mapRow(existing) : null;
@@ -577,17 +584,17 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       `UPDATE material_pricing_sheet_rows SET
         conversion_standard_kg_per_m = ?, conversion_reference_kg_per_m = ?, conversion_history_kg_per_m = ?,
         conversion_used_kg_per_m = ?, cost_per_kg_ngn = ?, overhead_ngn_per_m = ?, profit_ngn_per_m = ?,
-        minimum_price_per_m_ngn = ?, notes = ?, updated_at_iso = ?, updated_by_user_id = ?
+        minimum_price_per_m_ngn = ?, commission_ngn_per_m = ?, notes = ?, updated_at_iso = ?, updated_by_user_id = ?
        WHERE id = ?`
-    ).run(std, ref, hist, used, costPerKg, overhead, profit, minimum, notes || null, now, actor?.id ?? null, id);
+    ).run(std, ref, hist, used, costPerKg, overhead, profit, minimum, commission, notes || null, now, actor?.id ?? null, id);
   } else {
     db.prepare(
       `INSERT INTO material_pricing_sheet_rows (
         id, material_key, gauge_mm, branch_id, design_key,
         conversion_standard_kg_per_m, conversion_reference_kg_per_m, conversion_history_kg_per_m,
         conversion_used_kg_per_m, cost_per_kg_ngn, overhead_ngn_per_m, profit_ngn_per_m,
-        minimum_price_per_m_ngn, notes, updated_at_iso, updated_by_user_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        minimum_price_per_m_ngn, commission_ngn_per_m, notes, updated_at_iso, updated_by_user_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       materialKey,
@@ -602,6 +609,7 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       overhead,
       profit,
       minimum,
+      commission,
       notes || null,
       now,
       actor?.id ?? null
@@ -638,13 +646,13 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   });
 
   let priceListSync = null;
-  if (body?.syncMinimumToPriceList && minimum > 0) {
+  if (body?.syncMinimumToPriceList && listPriceForSync > 0) {
     let syncDesign = normKey(body?.syncDesignKey ?? body?.priceListDesignKey ?? '');
     if (materialKey === 'stone-coated') {
       syncDesign = syncDesign || 'stone-coated';
     }
     if (!syncDesign) {
-      priceListSync = { ok: false, error: 'syncDesignKey is required to sync minimum into the floor price list.' };
+      priceListSync = { ok: false, error: 'syncDesignKey is required to sync list price into the floor price list.' };
     } else {
       const plId = `PL-MPS-${String(id).replace(/^MPS-/i, '').slice(0, 16)}`;
       const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
@@ -654,9 +662,9 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
           id: plId,
           gaugeKey: gaugeMm,
           designKey: syncDesign,
-          unitPricePerMeterNgn: minimum,
+          unitPricePerMeterNgn: listPriceForSync,
           branchId,
-          notes: `Synced from material pricing (${materialKey}).`,
+          notes: `Synced from material pricing (${materialKey}): floor + commission, published rounding.`,
           materialTypeKey: mtKey,
         },
         actor

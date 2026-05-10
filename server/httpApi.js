@@ -2143,6 +2143,23 @@ export function registerHttpApi(app, db) {
   });
 
   app.get(
+    '/api/pricing/material-workbook-print-extras',
+    requirePermission(['pricing.manage', 'md.price_exception.approve']),
+    (_req, res) => {
+      try {
+        const md = listMasterData(db);
+        const accessories = (md.quoteItems || []).filter(
+          (q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false
+        );
+        res.json({ ok: true, accessories });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load workbook print extras.' });
+      }
+    }
+  );
+
+  app.get(
     '/api/pricing/material-workbook-all.html',
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
     (req, res) => {

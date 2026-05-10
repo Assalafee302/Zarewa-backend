@@ -335,6 +335,75 @@ describe('Refund Security & Substitution Logic', () => {
     expect(preview.body.preview.warnings.some((w) => w.includes('deviates by more than 5%'))).toBe(true);
   });
 
+  it('excludes Corrugation service from refund preview (other services unchanged)', async () => {
+    const linesJson = JSON.stringify({
+      products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
+      accessories: [],
+      services: [
+        { name: 'Corrugation', qty: 1, unit_price_ngn: 50000 },
+        { name: 'Site bending', qty: 1, unit_price_ngn: 5000 },
+      ],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-CORR-SVC','CUS-001','John Doe',105000,105000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-CORR','CUS-001','John Doe','QT-RFS-CORR-SVC',105000,'Confirmed','2026-04-01')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-CORR','QT-RFS-CORR-SVC',10,'Completed','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const preview = await agent.post('/api/refunds/preview').send({
+      quotationRef: 'QT-RFS-CORR-SVC',
+      reasonCategory: ['Additional services'],
+    });
+
+    expect(preview.status).toBe(200);
+    const addl = preview.body.preview.suggestedLines.find((l) => l.category === 'Additional services');
+    expect(addl).toBeDefined();
+    expect(addl.amountNgn).toBe(5000);
+    expect(String(addl.label || '')).not.toMatch(/50000|50,?000/);
+    expect(String(addl.label || '')).toMatch(/bending/i);
+  });
+
+  it('unproduced metre preview uses roofing sheet metres only (ignores Eaves angle trim lines)', async () => {
+    const linesJson = JSON.stringify({
+      products: [
+        { name: 'Roofing Sheet', qty: 20, unitPrice: 5000 },
+        { name: 'Eaves angle', qty: 10, unitPrice: 2000 },
+      ],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-TRIM-M','CUS-001','John Doe',120000,120000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-TRIM','CUS-001','John Doe','QT-RFS-TRIM-M',120000,'Confirmed','2026-04-01')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-TRIM','QT-RFS-TRIM-M',20,'Completed','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-TRIM-M' });
+    expect(preview.status).toBe(200);
+    const unpr = preview.body.preview.suggestedLines.find((l) => l.category === 'Unproduced meterage');
+    expect(unpr).toBeUndefined();
+  });
+
   it('suggests transport refund for delivery-style service names and snake_case prices', async () => {
     const agent = request.agent(app);
     await loginAs(agent);

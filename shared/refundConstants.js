@@ -2,7 +2,7 @@
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 4;
+export const REFUND_PREVIEW_VERSION = 6;
 
 /**
  * Refund quotation picker:

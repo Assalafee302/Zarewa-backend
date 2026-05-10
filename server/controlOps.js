@@ -59,14 +59,81 @@ function parseJsonValue(value) {
   }
 }
 
-function quotedMetersFromQuotationLines(linesJson) {
+/**
+ * Normalized product line name for comparing to master trim sheet names (sales “products” tab).
+ * Trim/cladding lines use metre qty but are not coil-produced roofing sheet — exclude from unproduced-metre math.
+ */
+function normQuoteProductLineName(name) {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/** Matches `setup_quote_items` product rows except Roofing Sheet (see masterData DEFAULT_PRODUCT_ITEMS). */
+const REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES = new Set([
+  'bargeboard',
+  'top end',
+  'gutter',
+  'eaves angle',
+  'eave angle',
+  'wall flashing',
+  'ridge cap',
+  'capping',
+  'bottom eaves',
+  'fascia',
+  'cladding',
+  'flat sheet',
+  'offcut',
+  'wall eaves',
+  'crimp',
+  'coil',
+]);
+
+function productLineIsTrimSheetNotRoofingMetres(line) {
+  const n = normQuoteProductLineName(line?.name);
+  if (!n) return false;
+  return REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES.has(n);
+}
+
+function quotedRoofingSheetMetresFromLines(linesJson) {
   let payload = linesJson;
   if (typeof payload === 'string') {
     payload = parseJsonValue(payload);
   }
   const rows = payload?.products;
   if (!Array.isArray(rows)) return 0;
-  return rows.reduce((sum, line) => sum + (Number(line?.qty) || 0), 0);
+  return rows.reduce((sum, line) => {
+    if (productLineIsTrimSheetNotRoofingMetres(line)) return sum;
+    return sum + (Number(line?.qty) || 0);
+  }, 0);
+}
+
+/** Blended ₦/m from **roofing sheet** product lines only (excludes eaves angle, ridge, gutter, etc.). */
+function quotedRoofingSheetAmountPerMeter(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      payload = null;
+    }
+  }
+  const rows = payload?.products;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const productRows = rows.filter(
+    (line) =>
+      !productLineIsTrimSheetNotRoofingMetres(line) &&
+      Number(line?.qty) > 0 &&
+      Number(line?.unitPrice) > 0
+  );
+  const totalMeters = productRows.reduce((sum, line) => sum + (Number(line?.qty) || 0), 0);
+  if (totalMeters <= 0) return null;
+  const totalValue = productRows.reduce(
+    (sum, line) => sum + (Number(line?.qty) || 0) * (Number(line?.unitPrice) || 0),
+    0
+  );
+  return totalValue > 0 ? totalValue / totalMeters : null;
 }
 
 function quotedAmountPerMeter(linesJson) {
@@ -392,6 +459,13 @@ function matchesInstallationService(nameLower) {
     nameLower.includes('erection') ||
     nameLower.includes('mounting')
   );
+}
+
+/** Only service exclusion from refund preview: corrugation is never suggested or counted as a refundable service line. */
+function matchesCorrugationService(nameLower) {
+  if (!nameLower) return false;
+  const n = String(nameLower).replace(/\s+/g, ' ').trim();
+  return n.includes('corrugation') || n.includes('currugation');
 }
 
 export function periodKeyFromDate(dateISO) {
@@ -1343,7 +1417,7 @@ export function previewRefundRequest(db, payload) {
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
 
   // Quoted vs Actual Produced (optional payload overrides for tools/tests)
-  const quotedMetersFromQuote = quotedMetersFromQuotationLines(quote?.lines_json ?? '');
+  const quotedMetersFromQuote = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
   const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
   const quotedMetersOverride = positiveNumber(payload.quotedMeters);
   const actualMetersOverride = positiveNumber(payload.actualMeters);
@@ -1352,7 +1426,8 @@ export function previewRefundRequest(db, payload) {
   const actualMeters =
     actualMetersOverride != null ? Math.max(0, roundMoney(actualMetersOverride)) : actualMetersFromJobs;
 
-  const derivedPricePerMeter = quotedAmountPerMeter(quote?.lines_json);
+  const derivedPricePerMeter =
+    quotedRoofingSheetAmountPerMeter(quote?.lines_json) ?? quotedAmountPerMeter(quote?.lines_json);
   const pricePerMeter = positiveNumber(payload.pricePerMeterNgn) || derivedPricePerMeter;
 
   const suggestedLines = [];
@@ -1435,6 +1510,7 @@ export function previewRefundRequest(db, payload) {
   const miscServiceLines = [];
   for (const s of quoteLines) {
     const nl = serviceNameLower(s);
+    if (matchesCorrugationService(nl)) continue;
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
     const amt = roundMoney(qty * unitPrice);
     if (amt <= 0) continue;
@@ -1649,17 +1725,21 @@ export function previewRefundRequest(db, payload) {
 
   const hasTransportServiceLine = quoteLines.some((s) => {
     const nl = serviceNameLower(s);
+    if (matchesCorrugationService(nl)) return false;
     if (!matchesTransportService(nl)) return false;
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
     return roundMoney(qty * unitPrice) > 0;
   });
   const hasInstallationServiceLine = quoteLines.some((s) => {
     const nl = serviceNameLower(s);
+    if (matchesCorrugationService(nl)) return false;
     if (!matchesInstallationService(nl)) return false;
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
     return roundMoney(qty * unitPrice) > 0;
   });
   const hasAnyServiceLine = quoteLines.some((s) => {
+    const nl = serviceNameLower(s);
+    if (matchesCorrugationService(nl)) return false;
     const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
     return roundMoney(qty * unitPrice) > 0;
   });

@@ -232,6 +232,7 @@ import {
 } from './pricingOps.js';
 import { getPricingPolicyBundle, patchPricingPolicyBundle } from './pricingPolicyOps.js';
 import { buildCustomerPriceBookHtml } from './customerPriceBook.js';
+import { buildMaterialWorkbookAllHtml } from './materialWorkbookAllHtml.js';
 import {
   listMaterialPricingEvents,
   listMaterialPricingSheet,
@@ -2140,6 +2141,28 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Could not load material pricing sheet.' });
     }
   });
+
+  app.get(
+    '/api/pricing/material-workbook-all.html',
+    requirePermission(['pricing.manage', 'md.price_exception.approve']),
+    (req, res) => {
+      try {
+        const branchId = String(req.query.branchId || '').trim();
+        if (!branchId) {
+          res.status(400).setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send('branchId query parameter is required.');
+          return;
+        }
+        const branchLabel = String(req.query.branchName || req.query.branchLabel || '').trim();
+        const html = buildMaterialWorkbookAllHtml(db, branchId, { branchLabel: branchLabel || undefined });
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+      } catch (e) {
+        console.error(e);
+        res.status(500).send('Could not build workbook printout.');
+      }
+    }
+  );
 
   app.get(
     '/api/pricing/material-sheet/events',

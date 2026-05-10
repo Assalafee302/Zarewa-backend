@@ -256,15 +256,15 @@ export function purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, da
 }
 
 /**
- * Data-driven kg/m conversions (2 dp): std = theory/catalog, ref = purchases (30d), hist = production checks (30d), used = avg.
+ * Data-driven kg/m conversions (2 dp): std = theory/catalog, ref = purchases (30d), hist = production checks (30d), usedSuggested = avg.
  */
 export function resolveCoilConversionsForGauge(db, materialKey, gaugeMm) {
   const mk = normKey(materialKey);
   if (mk === 'stone-coated') {
-    return { std: null, ref: null, hist: null, used: null };
+    return { std: null, ref: null, hist: null, usedSuggested: null };
   }
   const pid = productIdForMaterialKey(mk);
-  if (!pid) return { std: null, ref: null, hist: null, used: null };
+  if (!pid) return { std: null, ref: null, hist: null, usedSuggested: null };
   const since = isoDateDaysAgo(30);
   const mm = parseFloat(String(gaugeMm));
   const th = theoreticalStandardKgPerM(mk, mm);
@@ -278,8 +278,8 @@ export function resolveCoilConversionsForGauge(db, materialKey, gaugeMm) {
   const ref = roundConv2(refRaw);
   const hist = roundConv2(histRaw);
   const usedRaw = averageOfThreeConversions(std, ref, hist);
-  const used = roundConv2(usedRaw);
-  return { std, ref, hist, used };
+  const usedSuggested = roundConv2(usedRaw);
+  return { std, ref, hist, usedSuggested };
 }
 
 /**
@@ -363,12 +363,16 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
     pid && !isStone ? purchaseWeightedAvgCostPerKgLastDays(db, pid, bid, 30) : null;
 
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
-    /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; used: number | null }>} */
+    /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; usedSuggested: number | null; used: number | null }>} */
     const resolvedByGaugeEmpty = {};
     for (const g of gaugeList) {
-      resolvedByGaugeEmpty[g] = isStone
-        ? { std: null, ref: null, hist: null, used: null }
-        : resolveCoilConversionsForGauge(db, mk, g);
+      if (isStone) {
+        resolvedByGaugeEmpty[g] = { std: null, ref: null, hist: null, usedSuggested: null, used: null };
+      } else {
+        const base = resolveCoilConversionsForGauge(db, mk, g);
+        const us = base.usedSuggested;
+        resolvedByGaugeEmpty[g] = { ...base, used: us };
+      }
     }
     return {
       ok: true,
@@ -406,12 +410,26 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
     .all(mk, bid)
     .map((r) => mapRow(r));
 
-  /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; used: number | null }>} */
+  /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; usedSuggested: number | null; used: number | null }>} */
   const resolvedByGauge = {};
   for (const g of gaugeList) {
-    resolvedByGauge[g] = isStone
-      ? { std: null, ref: null, hist: null, used: null }
-      : resolveCoilConversionsForGauge(db, mk, g);
+    if (isStone) {
+      resolvedByGauge[g] = { std: null, ref: null, hist: null, usedSuggested: null, used: null };
+      continue;
+    }
+    const base = resolveCoilConversionsForGauge(db, mk, g);
+    const rowForGauge = dbRows.find((r) => r.gaugeMm === g && !String(r.designKey || '').trim());
+    const stored = rowForGauge?.conversionUsedKgPerM;
+    const storedNum =
+      stored != null && Number.isFinite(Number(stored)) && Number(stored) > 0 ? Number(stored) : null;
+    const usedEff = storedNum != null ? roundConv2(storedNum) : base.usedSuggested;
+    resolvedByGauge[g] = {
+      std: base.std,
+      ref: base.ref,
+      hist: base.hist,
+      usedSuggested: base.usedSuggested,
+      used: usedEff,
+    };
   }
 
   return {
@@ -531,7 +549,19 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
     std = resolved.std;
     ref = resolved.ref;
     hist = resolved.hist;
-    used = resolved.used;
+    const suggested = resolved.usedSuggested;
+    const hasKey = body != null && typeof body === 'object' && 'conversionUsedKgPerM' in body;
+    if (hasKey) {
+      const raw = body.conversionUsedKgPerM;
+      if (raw === null || raw === undefined || raw === '') {
+        used = suggested;
+      } else {
+        const n = Number(raw);
+        used = Number.isFinite(n) && n > 0 ? roundConv2(n) : suggested;
+      }
+    } else {
+      used = suggested;
+    }
   }
   const costPerKg = Math.max(0, Number(body?.costPerKgNgn) || 0);
   const overhead = Math.max(0, Number(body?.overheadNgnPerM) || 0);

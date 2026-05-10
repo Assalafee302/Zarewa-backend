@@ -2722,6 +2722,14 @@ describe.sequential('Zarewa API', () => {
     expect(mps.body).toHaveProperty('gaugeHistoryAvgConversionByGauge');
     expect(typeof mps.body.purchaseAvgConversionByGauge).toBe('object');
     expect(typeof mps.body.gaugeHistoryAvgConversionByGauge).toBe('object');
+    expect(mps.body.resolvedByGauge?.[mps.body.gauges[0]]).toHaveProperty('usedSuggested');
+
+    const mwAll = await agent.get('/api/pricing/material-workbook-all.html').query({ branchId: 'BR-KD' });
+    expect(mwAll.status).toBe(200);
+    expect(String(mwAll.headers['content-type'] || '')).toMatch(/html/i);
+    expect(mwAll.text).toMatch(/Aluminium/i);
+    expect(mwAll.text).toMatch(/Stone-coated/i);
+    expect(mwAll.text).toMatch(/Accessories/i);
 
     const mpsSave = await agent.post('/api/pricing/material-sheet/rows').send({
       materialKey: 'alu',

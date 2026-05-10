@@ -491,10 +491,15 @@ describe('Refund Security & Substitution Logic', () => {
   });
 
   it('getEligibleRefundQuotations treats Cancelled refund like Rejected (headroom restored)', () => {
+    const linesRefCanc = JSON.stringify({
+      products: [{ name: 'R', qty: 20, unitPrice: 2500 }],
+      accessories: [],
+      services: [],
+    });
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)
-       VALUES ('QT-RFS-REF-CANC','CUS-001','John Doe',50000,50000,'Finished','{}')`
-    ).run();
+       VALUES ('QT-RFS-REF-CANC','CUS-001','John Doe',50000,50000,'Finished',?)`
+    ).run(linesRefCanc);
     db.prepare(
       `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
        VALUES ('JOB-RFS-RC','QT-RFS-REF-CANC',0,'Cancelled','2026-04-01T10:00:00Z')`
@@ -549,10 +554,15 @@ describe('Refund Security & Substitution Logic', () => {
   });
 
   it('getEligibleRefundQuotations includes paid Void quotations without a production job', () => {
+    const linesVoidPaid = JSON.stringify({
+      products: [{ name: 'R', qty: 10, unitPrice: 2000 }],
+      accessories: [],
+      services: [],
+    });
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, archived, lines_json)
-       VALUES ('QT-RFS-VOID-PAID','CUS-001','John Doe',20000,30000,'Void',1,'{}')`
-    ).run();
+       VALUES ('QT-RFS-VOID-PAID','CUS-001','John Doe',20000,30000,'Void',1,?)`
+    ).run(linesVoidPaid);
     db.prepare(
       `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
        VALUES ('RCT-RFS-VP','CUS-001','John Doe','QT-RFS-VOID-PAID',30000,'Confirmed','2026-04-01')`
@@ -571,7 +581,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.previewOk).toBe(true);
     expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(true);
     expect(res.body.manualEntryRefundAllowed).toBe(false);
-    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThan(0);
+    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThanOrEqual(1000);
   });
 
   it('GET /api/refunds/eligibility-check: ₦0 automatic preview but otherwise valid → manualEntryRefundAllowed; excluded from eligible list', async () => {
@@ -610,7 +620,9 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(0);
     expect(Array.isArray(res.body.eligibleRefundCategories)).toBe(true);
     expect(res.body.eligibleRefundCategories.length).toBeGreaterThan(0);
-    expect(res.body.blockingReasons.some((r) => /automatic preview|₦0/i.test(String(r)))).toBe(true);
+    expect(res.body.blockingReasons.some((r) => /automatic preview|preview total/i.test(String(r)))).toBe(
+      true
+    );
 
     const rows = getEligibleRefundQuotations(db);
     expect(rows.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(false);

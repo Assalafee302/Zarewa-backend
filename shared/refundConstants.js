@@ -4,7 +4,11 @@
  */
 export const REFUND_PREVIEW_VERSION = 4;
 
-/** Refund quotation picker: remaining refundable must be strictly greater than this (₦). */
+/**
+ * Refund quotation picker:
+ * - remaining refundable must be strictly greater than this (₦), and
+ * - automatic preview suggested total must be at least this (₦).
+ */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
 
 /** Allowed absolute difference (₦) between refund header amount and sum of included breakdown lines (rounding). */

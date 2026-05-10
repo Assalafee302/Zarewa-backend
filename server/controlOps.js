@@ -10,6 +10,7 @@ import {
 } from './humanId.js';
 import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import {
+  MIN_REFUND_QUOTATION_REMAINING_NGN,
   normalizeRefundReasonCategoriesForApi,
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   REFUND_PREVIEW_VERSION,
@@ -1902,8 +1903,8 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef) {
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
- * Also requires refund preview {@link previewRefundRequest} to produce a **positive** sum of suggested lines
- * (automatic hints); quotations that only qualify via open-ended categories with ₦0 preview total are omitted.
+ * Also requires refund preview {@link previewRefundRequest} suggested total ≥ {@link MIN_REFUND_QUOTATION_REMAINING_NGN};
+ * quotations with automatic preview below that floor (including ₦0) are omitted.
  * Logic mirrors {@link quotationMeetsRefundEligibility} per row.
  */
 export function getEligibleRefundQuotations(db) {
@@ -1952,7 +1953,8 @@ export function getEligibleRefundQuotations(db) {
     })
     .filter(
       (row) =>
-        row.eligible_refund_categories.length > 0 && roundMoney(row.suggested_preview_amount_ngn) > 0
+        row.eligible_refund_categories.length > 0 &&
+        roundMoney(row.suggested_preview_amount_ngn) >= MIN_REFUND_QUOTATION_REMAINING_NGN
     );
 }
 

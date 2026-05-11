@@ -4491,6 +4491,32 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  /** Undo recorded treasury debits for a payment request and reset paid_amount (requires finance.reverse). */
+  app.post(
+    '/api/payment-requests/:requestId/reverse-treasury-payout',
+    requirePermission('finance.reverse'),
+    (req, res) => {
+      try {
+        const requestId = String(req.params.requestId || '').trim();
+        if (!requestId) return res.status(400).json({ ok: false, error: 'Request ID is required.' });
+        const r = write.reversePaymentRequestTreasuryPayouts(
+          db,
+          requestId,
+          {
+            ...(req.body || {}),
+            workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+            workspaceViewAll: Boolean(req.workspaceViewAll),
+          },
+          req.user
+        );
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   /** Rollout duplicate cleanup: unpaid payment request and orphan placeholder expense (requires finance approval). */
   app.delete('/api/payment-requests/:requestId/rollout-dup', requirePermission('finance.approve'), (req, res) => {
     try {

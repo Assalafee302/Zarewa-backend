@@ -393,7 +393,9 @@ function insertTreasurySplitTx(db, lines, base) {
   return rows;
 }
 
-function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = '', actor = null) {
+function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = '', actor = null, opts = {}) {
+  const postedAtISO =
+    normalizeIsoTimestamp(String(opts.postedAtISO || '').trim()) || new Date().toISOString();
   const rows = db
     .prepare(
       `SELECT * FROM treasury_movements
@@ -412,7 +414,7 @@ function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = 
         type: reversalType,
         treasuryAccountId: row.treasury_account_id,
         amountNgn: -roundMoney(row.amount_ngn),
-        postedAtISO: new Date().toISOString(),
+        postedAtISO,
         reference: row.reference,
         counterpartyKind: row.counterparty_kind,
         counterpartyId: row.counterparty_id,
@@ -643,6 +645,26 @@ function syncStaffLoanDisbursementOnFullPay(db, paymentRequestId, paidAtISO) {
             ? amountNgn
             : 0,
     };
+    db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), r.id);
+    return;
+  }
+}
+
+/** Undo staff-loan disbursement flags when a linked payment request payout is fully reversed. */
+function syncStaffLoanDisbursementOnPayoutReversal(db, paymentRequestId) {
+  const prId = String(paymentRequestId || '').trim();
+  if (!prId) return;
+  const rows = db
+    .prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
+    .all();
+  for (const r of rows) {
+    const p = parseHrLoanPayloadJson(r.payload_json);
+    if (String(p.financePaymentRequestId || '') !== prId) continue;
+    const merged = { ...p };
+    delete merged.loanDisbursedAtIso;
+    merged.deductionsActive = false;
+    merged.disbursementQueueStatus = 'Pending';
+    delete merged.principalOutstandingNgn;
     db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), r.id);
     return;
   }
@@ -4223,7 +4245,9 @@ export function reverseReceiptEntry(db, entryId, note = '', actor = null) {
         target.branch_id || null
       )[0];
       db.prepare(`UPDATE sales_receipts SET status = 'Reversed' WHERE id = ? OR ledger_entry_id = ?`).run(entryId, entryId);
-      reverseTreasurySourceTx(db, 'LEDGER_RECEIPT', entryId, 'RECEIPT_REVERSAL_OUT', reversalNote, actor);
+      reverseTreasurySourceTx(db, 'LEDGER_RECEIPT', entryId, 'RECEIPT_REVERSAL_OUT', reversalNote, actor, {
+        postedAtISO: `${reversalDateISO}T12:00:00.000Z`,
+      });
       const glRev = tryPostCustomerReceiptReversalGl(db, {
         originalReceiptLedgerId: entryId,
         reversalLedgerId: reversal?.id,
@@ -4292,7 +4316,9 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
 
       db.prepare(`DELETE FROM advance_in_events WHERE ledger_entry_id = ?`).run(entryId);
       if (target.type === 'ADVANCE_IN') {
-        reverseTreasurySourceTx(db, 'LEDGER_ADVANCE', entryId, 'ADVANCE_REVERSAL_OUT', reversalNote, actor);
+        reverseTreasurySourceTx(db, 'LEDGER_ADVANCE', entryId, 'ADVANCE_REVERSAL_OUT', reversalNote, actor, {
+          postedAtISO: `${reversalDateISO}T12:00:00.000Z`,
+        });
       }
       const glAdvRev = tryPostCustomerAdvanceReversalGl(db, {
         originalAdvanceLedgerId: entryId,
@@ -4963,6 +4989,126 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   }
 }
 
+function assertPaymentRequestPayoutReversalBranchGate(db, requestId, workspaceBranchId, workspaceViewAll, actor) {
+  const sid = String(requestId || '').trim();
+  const r = db
+    .prepare(
+      `SELECT COALESCE(e.branch_id, '') AS branch_id
+       FROM payment_requests pr
+       LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+       WHERE pr.request_id = ?`
+    )
+    .get(sid);
+  if (!r) return { ok: false, error: 'Payment request not found.' };
+  const wb = String(workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+  const viewOk = Boolean(workspaceViewAll) && canUseAllBranchesRollup(actor);
+  const cross =
+    actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.cross_branch_post'));
+  const bid = String(r.branch_id || '').trim();
+  if (bid && bid !== wb && !viewOk && !cross) {
+    return { ok: false, error: 'Switch workspace branch to reverse this payout.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * finance.reverse: Post compensating treasury lines for every unreversed PAYMENT_REQUEST_OUT on this request,
+ * reset paid_amount_ngn to zero, and clear linked staff-loan disbursement flags when applicable.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} requestId
+ * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ * @param {object | null} actor
+ */
+export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}, actor = null) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return { ok: false, error: 'Request ID is required.' };
+  const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
+  if (paidAmountNgn <= 0) {
+    return { ok: false, error: 'This request has no recorded treasury payouts to reverse.' };
+  }
+
+  const gate = assertPaymentRequestPayoutReversalBranchGate(
+    db,
+    rid,
+    String(payload?.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+    Boolean(payload?.workspaceViewAll),
+    actor
+  );
+  if (!gate.ok) return gate;
+
+  const anySourceLines = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`
+    )
+    .get(rid);
+  if (!anySourceLines || Number(anySourceLines.c) === 0) {
+    return {
+      ok: false,
+      error:
+        'No treasury payout lines exist for this request, but paid_amount is non-zero. Data needs manual repair.',
+    };
+  }
+
+  const note = String(payload?.note ?? '').trim() || `Treasury payout reversal for ${rid}`;
+  const day =
+    String(payload?.actedAtISO ?? payload?.postedAtISO ?? new Date().toISOString())
+      .trim()
+      .slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const postedAtISO =
+    String(payload?.actedAtISO ?? payload?.postedAtISO ?? '').trim() || `${day}T12:00:00.000Z`;
+
+  try {
+    assertPeriodOpen(db, day, 'Payment request payout reversal date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  let created = [];
+  try {
+    db.transaction(() => {
+      created = reverseTreasurySourceTx(
+        db,
+        'PAYMENT_REQUEST',
+        rid,
+        'PAYMENT_REQUEST_REVERSAL_IN',
+        note,
+        actor,
+        { postedAtISO }
+      );
+      db.prepare(
+        `UPDATE payment_requests
+         SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
+         WHERE request_id = ?`
+      ).run(note, rid);
+      syncStaffLoanDisbursementOnPayoutReversal(db, rid);
+      appendAuditLog(db, {
+        actor,
+        action: 'payment_request.reverse_treasury_payout',
+        entityKind: 'payment_request',
+        entityId: rid,
+        note,
+        details: {
+          reversalMovementIds: created.map((m) => m.id),
+          priorPaidNgn: paidAmountNgn,
+        },
+      });
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const actorLabel = actorName(actor);
+  appendPaymentRequestTimelineToOfficeThreads(
+    db,
+    rid,
+    `Accounts: treasury payout for ${rid} was reversed by ${actorLabel} (compensating credits posted; paid balance reset to zero).${note ? ` Note: ${note}` : ''}`
+  );
+
+  return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
+}
+
 /**
  * Rollout-only cleanup: delete an expense and any linked payment requests that have **no** treasury payout recorded.
  * Removes `EXPENSE` treasury rows for this expense id. Refuses when any linked request has paid_amount_ngn > 0.
@@ -4979,7 +5125,7 @@ export function deleteExpenseRolloutDup(db, expenseId, actor) {
     if (roundMoney(pr.paid_amount_ngn) > 0) {
       return {
         ok: false,
-        error: `Expense ${eid} is linked to ${pr.request_id}, which already has treasury payments. Reversal is required before delete.`,
+        error: `Expense ${eid} is linked to ${pr.request_id}, which already has treasury payouts. On Account → Expenses & requests, use "Reverse payout" on ${pr.request_id} (requires finance.reverse), then retry delete if appropriate.`,
       };
     }
   }

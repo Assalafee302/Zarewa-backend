@@ -1280,6 +1280,58 @@ describe.sequential('Zarewa API', () => {
     ).toHaveLength(2);
   });
 
+  it('POST /api/payment-requests/:requestId/reverse-treasury-payout zeros paid and posts compensating movements', async () => {
+    const before = await agent.get('/api/bootstrap');
+    const cashAccount = before.body.treasuryAccounts[0];
+
+    const expense = await agent.post('/api/expenses').send({
+      expenseType: 'Test reversal',
+      amountNgn: 50_000,
+      date: '2026-03-29',
+      category: 'Maintenance',
+      paymentMethod: 'Cash',
+      reference: 'EXP-REV-PR',
+    });
+    expect(expense.status).toBe(201);
+
+    const requestCreate = await agent.post('/api/payment-requests').send({
+      expenseID: expense.body.expenseID,
+      amountRequestedNgn: 50_000,
+      requestDate: '2026-03-29',
+      description: 'Reversal test payout',
+    });
+    expect(requestCreate.status).toBe(201);
+
+    const approve = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/decision`)
+      .send({ status: 'Approved', note: 'ok' });
+    expect(approve.status).toBe(200);
+
+    const pay = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/pay`)
+      .send({ treasuryAccountId: cashAccount.id, amountNgn: 50_000, note: 'pay out' });
+    expect(pay.status).toBe(201);
+
+    const rev = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/reverse-treasury-payout`)
+      .send({ note: 'wrong batch' });
+    expect(rev.status).toBe(200);
+    expect(rev.body.ok).toBe(true);
+    expect(Array.isArray(rev.body.movements)).toBe(true);
+    expect(rev.body.movements.length).toBe(1);
+
+    const after = await agent.get('/api/bootstrap');
+    const reqRow = after.body.paymentRequests.find((r) => r.requestID === requestCreate.body.requestID);
+    expect(reqRow.paidAmountNgn).toBe(0);
+
+    const lines = after.body.treasuryMovements.filter(
+      (m) => m.sourceKind === 'PAYMENT_REQUEST' && m.sourceId === requestCreate.body.requestID
+    );
+    const reversals = lines.filter((m) => m.type === 'PAYMENT_REQUEST_REVERSAL_IN');
+    expect(reversals.length).toBe(1);
+    expect(Number(reversals[0].amountNgn)).toBeGreaterThan(0);
+  });
+
   it('refund request lifecycle requires approval before payout', async () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');

@@ -39,6 +39,7 @@ import {
   emptyOperationsInventoryAttention,
 } from './readModel.js';
 import { listMasterData } from './masterData.js';
+import { listPriceListItems } from './pricingOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
 import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
@@ -191,12 +192,16 @@ export function buildBootstrap(db, opts = {}) {
       : emptyOperationsInventoryAttention(),
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
     masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
+    /** Floor list (₦/m) synced from material pricing workbook — used by quotations UI for coil products. */
+    priceListItems: salesOk ? listPriceListItems(db) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db) : [],
     treasuryMovements: finOk ? listTreasuryMovements(db) : [],
     expenses: finOk ? listExpenses(db, branchScope) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
-    poTransportAwaitingTreasury: finOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
+    poTransportAwaitingTreasury:
+      finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     coilRequests: coilReqOk ? listCoilRequests(db) : [],
     yardCoilRegister: yardOk ? listYardCoils(db) : [],

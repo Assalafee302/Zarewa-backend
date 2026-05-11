@@ -366,7 +366,16 @@ function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
 function parseQuotedMaterialGaugeFromLinesJson(linesJson) {
   try {
     const j = typeof linesJson === 'string' ? JSON.parse(linesJson || '{}') : linesJson;
-    if (j && typeof j.materialGauge === 'string') return String(j.materialGauge).trim();
+    if (!j) return '';
+    // Top-level field (legacy / header gauge)
+    if (typeof j.materialGauge === 'string' && j.materialGauge.trim()) return j.materialGauge.trim();
+    // Per-product lines (normal case — gauge stored on each product line)
+    if (Array.isArray(j.products)) {
+      for (const p of j.products) {
+        const g = String(p?.materialGauge ?? p?.gauge ?? '').trim();
+        if (g) return g;
+      }
+    }
   } catch {
     /* ignore */
   }

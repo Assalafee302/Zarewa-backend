@@ -159,6 +159,7 @@ import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from '
 import { parseSupplierProfileJson } from './supplierProfile.js';
 import {
   applyCompletedProductionCoilCorrections,
+  applyCompletedProductionAccessoryCorrections,
   applyProductionCompletionAdjustment,
   cancelProductionJob,
   completeProductionJob,
@@ -3189,6 +3190,24 @@ export function registerHttpApi(app, db) {
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
         return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
           applyCompletedProductionCoilCorrections(db, jid, stripped || {}, { actor: req.user })
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/production-jobs/:jobId/completion-accessory-corrections',
+    requirePermission(productionCorrectionPerms),
+    (req, res) => {
+      try {
+        const jid = req.params.jobId;
+        const jg = assertProductionJobIdInWorkspace(db, req, jid);
+        if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyCompletedProductionAccessoryCorrections(db, jid, stripped || {}, { actor: req.user })
         );
       } catch (e) {
         console.error(e);

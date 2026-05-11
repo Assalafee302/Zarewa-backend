@@ -27,7 +27,8 @@ function fmtNgn(n) {
 /** Workbook UI rows: primary line or duplicate line (wb-*) */
 function isWorkbookDesignKey(dk) {
   const s = String(dk ?? '').trim();
-  return s === '' || s.startsWith('wb-');
+  // Back-compat: older clients generated `wb_...`; treat as workbook rows too.
+  return s === '' || s.startsWith('wb-') || s.startsWith('wb_');
 }
 
 /**

@@ -474,7 +474,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
           code: 'quoted_vs_produced_gauge',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid,
-          message: `Quoted gauge (${quotedGaugeRaw}) differs from produced finished-good gauge (${fgGaugeRaw}) on job “${String(j.product_name || j.job_id).trim()}”. Substitution credit does not run when product names match — use “Substitution Difference” or “Other” with manual amounts if the customer paid for heavier gauge than supplied.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) differs from produced finished-good gauge (${fgGaugeRaw}) on job “${String(j.product_name || j.job_id).trim()}”. Ensure the produced FG has correct gauge/colour and a matching price list row so the refund preview can compute a “Substitution Difference” credit automatically.`,
         });
       }
     }
@@ -1678,7 +1678,12 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
-  /** Substitution: credit = max(0, quoted ₦/m − produced list ₦/m) × produced metres (per completed job whose FG name ≠ quoted product names). */
+  /**
+   * Substitution: credit = max(0, quoted ₦/m − produced list ₦/m) × produced metres.
+   * Triggered when the produced FG appears to differ from the quoted roofing line(s):
+   * - product name mismatch, OR
+   * - gauge mismatch (quoted materialGauge vs FG product gauge) beyond tolerance.
+   */
   const substitutionPerMeterBreakdown = [];
   if (quotationRef && !refundedCategories.has('Substitution Difference')) {
     const qNames = quotedProductNamesLower(quote?.lines_json);
@@ -1689,6 +1694,7 @@ export function previewRefundRequest(db, payload) {
       const quotedListPpm = quotedGd
         ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
         : null;
+      const quotedGaugeRaw = parseQuotedMaterialGaugeFromLinesJson(quote?.lines_json ?? '');
       let totalCredit = 0;
       let anyMismatch = false;
       const missingListPriceLabels = [];
@@ -1698,7 +1704,14 @@ export function previewRefundRequest(db, payload) {
         const pn = String(j.product_name ?? '').trim().toLowerCase();
         if (!pn) continue;
         const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
-        if (match) continue;
+        let shouldCompute = !match;
+        if (!shouldCompute && quotedGaugeRaw) {
+          const fgGaugeRaw = productGaugeLabelFromStock(db, j.product_id);
+          if (fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
+            shouldCompute = true;
+          }
+        }
+        if (!shouldCompute) continue;
         anyMismatch = true;
         const m = Number(j.actual_meters) || 0;
         const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();

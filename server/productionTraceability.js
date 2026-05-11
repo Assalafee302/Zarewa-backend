@@ -1,6 +1,10 @@
 import { actorName } from './auth.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
-import { applyAccessoryCompletionTx, planAccessoryCompletion } from './accessoryFulfillment.js';
+import {
+  applyAccessoryCompletionTx,
+  parseQuotationAccessoryLines,
+  resolveAccessoryInventoryProductId,
+} from './accessoryFulfillment.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { getQuotation } from './readModel.js';
@@ -8,6 +12,7 @@ import {
   isStoneMeterQuotationLinesJson,
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
+import { planAccessoryCompletion } from './accessoryFulfillment.js';
 import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
@@ -52,6 +57,89 @@ function clampNonNegative(value) {
 
 function isAccessoryInventoryProductId(productID) {
   return /^ACC-/i.test(String(productID || '').trim());
+}
+
+function sumPriorAccessorySuppliedForLineExcludingJob(db, quotationRef, quoteLineId, excludeJobId) {
+  const ref = String(quotationRef || '').trim();
+  const lid = String(quoteLineId || '').trim();
+  const ex = String(excludeJobId || '').trim();
+  if (!ref || !lid) return 0;
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(u.supplied_qty), 0) AS s
+       FROM production_job_accessory_usage u
+       INNER JOIN production_jobs j ON j.job_id = u.job_id
+       WHERE u.quotation_ref = ? AND u.quote_line_id = ? AND j.status = 'Completed' AND u.job_id != ?`
+    )
+    .get(ref, lid, ex);
+  return Number(row?.s) || 0;
+}
+
+function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
+  const quotationRef = String(jobRow?.quotation_ref ?? '').trim();
+  if (!quotationRef) return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
+  const quote = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
+  if (!quote) return { ok: false, error: 'Quotation not found for accessory validation.' };
+  const accessoryLines = parseQuotationAccessoryLines(quote.lines_json);
+  if (!accessoryLines.length) return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
+
+  const accessoriesSupplied = Array.isArray(payload.accessoriesSupplied) ? payload.accessoriesSupplied : [];
+  const byLineId = new Map();
+  const byName = new Map();
+  for (const e of accessoriesSupplied) {
+    const qid = String(e?.quoteLineId ?? e?.quote_line_id ?? '').trim();
+    const nm = String(e?.name ?? '').trim();
+    const sq = Number(e?.suppliedQty ?? e?.supplied_qty);
+    if (qid) byLineId.set(qid, sq);
+    else if (nm) byName.set(nm, sq);
+  }
+
+  const plannedLines = [];
+  const accessoryStockWarnings = [];
+  const EPS = 1e-6;
+
+  for (const line of accessoryLines) {
+    const lineKey = line.quoteLineId || '';
+    const stableKey = lineKey || `name:${line.name}`;
+    const prior = sumPriorAccessorySuppliedForLineExcludingJob(db, quotationRef, stableKey, jobId);
+    const remaining = Math.max(0, line.orderedQty - prior);
+    let supplied;
+    if (lineKey && byLineId.has(lineKey)) supplied = Number(byLineId.get(lineKey));
+    else if (byLineId.has(stableKey)) supplied = Number(byLineId.get(stableKey));
+    else if (byName.has(line.name)) supplied = Number(byName.get(line.name));
+    else supplied = remaining;
+    if (!Number.isFinite(supplied) || supplied < 0 - EPS) {
+      return { ok: false, error: `Invalid supplied quantity for accessory "${line.name}".` };
+    }
+    if (supplied > remaining + EPS) {
+      return {
+        ok: false,
+        error: `Accessory "${line.name}": supplied ${supplied} exceeds remaining ${remaining.toFixed(2)} (ordered ${line.orderedQty}, already issued ${prior.toFixed(2)}).`,
+      };
+    }
+    const inventoryProductId = resolveAccessoryInventoryProductId(db, lineKey, line.name);
+    if (inventoryProductId) {
+      const p = db.prepare(`SELECT stock_level, name FROM products WHERE product_id = ?`).get(inventoryProductId);
+      if (!p) {
+        return { ok: false, error: `Accessory "${line.name}" maps to unknown stock product ${inventoryProductId}.` };
+      }
+      const stock = Number(p.stock_level) || 0;
+      if (stock + EPS < supplied) {
+        accessoryStockWarnings.push(
+          `"${line.name}" (${p.name || inventoryProductId}): issuing ${supplied} units but only ${stock} on hand — accessory balance will go negative.`
+        );
+      }
+    }
+    plannedLines.push({
+      quoteLineId: stableKey,
+      name: line.name,
+      orderedQty: line.orderedQty,
+      suppliedQty: supplied,
+      unitPriceNgn: line.unitPriceNgn,
+      inventoryProductId,
+    });
+  }
+  return { ok: true, plannedLines, accessoryStockWarnings };
 }
 
 /** Threshold (kg): UI shows “Roll finished” when closing is below this; checking it clears residual tail from coil stock on complete. Not required to complete if steel remains on the roll. */
@@ -2400,6 +2488,79 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
       actualMeters: newTotalM + newOff,
       actualWeightKg: newTotalKg,
     };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * After completion, restate accessory issue quantities for the job (ordered vs supplied on quotation accessories).
+ * Same permission intent as other post-completion corrections; does not rewrite GL recognition.
+ */
+export function applyCompletedProductionAccessoryCorrections(db, jobID, payload = {}, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  if (String(job.status ?? '') !== 'Completed') {
+    return { ok: false, error: 'Accessory correction applies only to completed jobs.' };
+  }
+  const note = String(payload.reason ?? payload.note ?? '').trim();
+  if (note.length < 12) {
+    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
+  }
+  const atISO = normalizeIso(payload.atISO || nowIso());
+
+  try {
+    assertPeriodOpen(db, atISO, 'Production accessory correction date');
+    const accPlan = planAccessoryCorrectionExcludingJob(db, job, jobId, payload);
+    if (!accPlan.ok) return accPlan;
+
+    db.transaction(() => {
+      const quotationRef = String(job.quotation_ref ?? '').trim();
+      const existing = db
+        .prepare(
+          `SELECT inventory_product_id AS inventoryProductId, supplied_qty AS suppliedQty, name
+           FROM production_job_accessory_usage
+           WHERE job_id = ?`
+        )
+        .all(jobId);
+      for (const row of existing) {
+        const pid = String(row.inventoryProductId || '').trim();
+        const qty = safeNumber(row.suppliedQty);
+        if (pid && qty > 0) {
+          adjustProductStockTx(db, pid, qty);
+          appendStockMovementTx(db, {
+            atISO,
+            type: 'ACCESSORY_ISSUE_ADJUSTMENT',
+            ref: jobId,
+            productID: pid,
+            qty,
+            detail: `Accessory correction (restore) · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
+            dateISO: atISO.slice(0, 10),
+          });
+        }
+      }
+      applyAccessoryCompletionTx(db, jobId, quotationRef, atISO, accPlan.plannedLines, adjustProductStockTx, appendStockMovementTx);
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.completion_accessory_correct',
+        entityKind: 'production_job',
+        entityId: jobId,
+        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+        details: {
+          reason: note,
+          accessories: accPlan.plannedLines.map((l) => ({
+            quoteLineId: l.quoteLineId,
+            name: l.name,
+            suppliedQty: l.suppliedQty,
+            inventoryProductId: l.inventoryProductId || null,
+          })),
+        },
+      });
+    })();
+
+    return { ok: true, accessoryStockWarnings: accPlan.accessoryStockWarnings ?? [] };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

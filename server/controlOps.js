@@ -407,6 +407,110 @@ function productGaugeLabelFromStock(db, productId) {
   return g;
 }
 
+/**
+ * Physical coil gauge from job allocations (authoritative when steel came from a roll
+ * whose gauge differs from the FG master product card — e.g. quoted 0.28, coil 0.24).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} jobId
+ */
+function producedGaugeLabelFromJobCoils(db, jobId) {
+  const jid = String(jobId ?? '').trim();
+  if (!jid) return '';
+  let rows = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT COALESCE(NULLIF(TRIM(pjc.gauge_label), ''), NULLIF(TRIM(cl.gauge_label), '')) AS g
+         FROM production_job_coils pjc
+         LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
+         WHERE pjc.job_id = ?
+         ORDER BY pjc.sequence_no ASC, pjc.id ASC`
+      )
+      .all(jid);
+  } catch {
+    return '';
+  }
+  for (const r of rows) {
+    const g = String(r?.g ?? '').trim();
+    if (g) return g;
+  }
+  return '';
+}
+
+/** Prefer coil-lot gauge when allocated; else FG product master gauge. */
+function producedPhysicalGaugeLabelForSubstitution(db, job) {
+  const coilG = producedGaugeLabelFromJobCoils(db, job?.job_id);
+  if (coilG) return coilG;
+  return productGaugeLabelFromStock(db, job?.product_id);
+}
+
+/**
+ * List ₦/m for substitution credit: when allocated coil gauge differs from the FG product
+ * master gauge, look up price using the **coil** gauge + the same design/colour keys as
+ * the FG product (or quotation design / first coil colour as fallbacks).
+ */
+function listPricePerMeterForSubstitutionJob(db, job, branchId, quotedGd, overrideSubPpm) {
+  const ov = positiveNumber(overrideSubPpm);
+  if (ov != null && ov > 0) return ov;
+  const pid = String(job?.product_id ?? '').trim();
+  if (!pid) return null;
+  const base = listPricePerMeterForProducedProduct(db, pid, branchId);
+  const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
+  if (!coilGauge) return base;
+  const prodGauge = productGaugeLabelFromStock(db, pid);
+  if (prodGauge && !gaugesDifferBeyondTolerance(prodGauge, coilGauge)) return base;
+
+  let row;
+  try {
+    row = db
+      .prepare(
+        `SELECT gauge, colour, material_type, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`
+      )
+      .get(pid);
+  } catch {
+    return base;
+  }
+  if (!row) return base;
+  let extra = {};
+  try {
+    extra = JSON.parse(row.dashboard_attrs_json || '{}');
+  } catch {
+    extra = {};
+  }
+  const designFromProduct = String(
+    row.colour || extra.colour || row.material_type || extra.materialType || extra.profile || ''
+  ).trim();
+  if (designFromProduct) {
+    const viaCoil = listPricePerMeterFromGaugeDesign(db, coilGauge, designFromProduct, branchId);
+    if (viaCoil != null && viaCoil > 0) return viaCoil;
+  }
+  const qd = quotedGd && String(quotedGd.design ?? '').trim();
+  if (qd) {
+    const viaQuoteDesign = listPricePerMeterFromGaugeDesign(db, coilGauge, qd, branchId);
+    if (viaQuoteDesign != null && viaQuoteDesign > 0) return viaQuoteDesign;
+  }
+  try {
+    const cl = db
+      .prepare(
+        `SELECT NULLIF(TRIM(cl.colour), '') AS c
+         FROM production_job_coils pjc
+         LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
+         WHERE pjc.job_id = ?
+         ORDER BY pjc.sequence_no ASC, pjc.id ASC
+         LIMIT 1`
+      )
+      .get(String(job?.job_id ?? '').trim());
+    const col = String(cl?.c ?? '').trim();
+    if (col) {
+      const viaLot = listPricePerMeterFromGaugeDesign(db, coilGauge, col, branchId);
+      if (viaLot != null && viaLot > 0) return viaLot;
+    }
+  } catch {
+    /* ignore */
+  }
+  return base;
+}
+
 /** Resolve list ₦/m for the FG `products` row (gauge + colour / design). */
 function listPricePerMeterForProducedProduct(db, productId, branchId) {
   const pid = String(productId ?? '').trim();
@@ -476,14 +580,14 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
       if (!nameMatch) continue;
       const pid = String(j.product_id ?? '').trim();
       if (!pid) continue;
-      const fgGaugeRaw = productGaugeLabelFromStock(db, pid);
+      const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
       if (!fgGaugeRaw) continue;
       if (gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
         issues.push({
           code: 'quoted_vs_produced_gauge',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid,
-          message: `Quoted gauge (${quotedGaugeRaw}) differs from produced finished-good gauge (${fgGaugeRaw}) on job “${String(j.product_name || j.job_id).trim()}”. Ensure the produced FG has correct gauge/colour and a matching price list row so the refund preview can compute a “Substitution Difference” credit automatically.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) differs from physical produced gauge (${fgGaugeRaw}, from coil allocation when set) on job “${String(j.product_name || j.job_id).trim()}”. Ensure price list has a row for that gauge + colour/design so the refund preview can compute a “Substitution Difference” credit automatically.`,
         });
       }
     }
@@ -497,7 +601,8 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
       if (match) continue;
       const m = Number(j.actual_meters) || 0;
       if (m <= 0) continue;
-      const ppm = listPricePerMeterForProducedProduct(db, j.product_id, branchId);
+      const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
+      const ppm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGdIssue, null);
       if (ppm == null || ppm <= 0) {
         const pid = String(j.product_id ?? '').trim();
         issues.push({
@@ -1715,7 +1820,7 @@ export function previewRefundRequest(db, payload) {
         const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
         let shouldCompute = !match;
         if (!shouldCompute && quotedGaugeRaw) {
-          const fgGaugeRaw = productGaugeLabelFromStock(db, j.product_id);
+          const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
           if (fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
             shouldCompute = true;
           }
@@ -1730,7 +1835,7 @@ export function previewRefundRequest(db, payload) {
         }
         if (m <= 0) continue;
 
-        const producedPpm = overrideSubPpm ?? listPricePerMeterForProducedProduct(db, j.product_id, branchId);
+        const producedPpm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGd, overrideSubPpm);
         if (producedPpm == null || producedPpm <= 0) {
           missingListPriceLabels.push(jobLabel);
           continue;

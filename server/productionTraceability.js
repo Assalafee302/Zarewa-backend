@@ -18,6 +18,8 @@ import {
   resolveCoilMaterialFamilyKey,
 } from '../shared/lib/coilMaterialFamily.js';
 import { listMasterData } from './masterData.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
+import { insertProductionOffcutPoolIssueTx } from './writeOps.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -167,6 +169,10 @@ function offcutMetersFromPayload(payload) {
     payload?.offcutMetersProduced ?? payload?.offcutMeters ?? payload?.metersProduced ?? payload?.totalMeters,
     0
   );
+}
+
+function offcutInventoryMetersFromPayload(payload) {
+  return clampNonNegative(safeNumber(payload?.offcutInventoryMeters ?? payload?.offcut_inventory_meters, 0));
 }
 
 function updateCoilDerivedStateTx(db, coilNo) {
@@ -1100,6 +1106,8 @@ export function previewProductionConversion(db, jobID, payload = {}) {
   if (!r.ok) return r;
   const acc = planAccessoryCompletion(db, jobRow, payload);
   if (!acc.ok) return { ok: false, error: acc.error };
+  const offInvPreview = offcutInventoryMetersFromPayload(payload);
+  const totalOutputMeters = r.totalMeters + offInvPreview;
   return {
     ok: true,
     previewPartial: Boolean(r.previewPartial),
@@ -1125,6 +1133,8 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     aggregatedAlertState: r.aggregatedAlertState,
     managerReviewRequired: r.managerReviewRequired,
     totalMeters: r.totalMeters,
+    totalOutputMeters,
+    offcutInventoryMeters: offInvPreview,
     totalWeightKg: r.totalWeightKg,
     accessoryPlan: acc.plannedLines,
   };
@@ -1353,9 +1363,9 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       db.prepare(
         `UPDATE production_jobs
          SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?
+             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
          WHERE job_id = ?`
-      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, jobID);
+      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, 0, jobID);
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }
@@ -1374,7 +1384,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         entityKind: 'production_job',
         entityId: jobID,
         note: `Stone-coated production completed on ${jobID}`,
-        details: { totalMeters: metres, stoneProductId: stonePid },
+        details: { totalMeters: metres, stoneProductId: stonePid, offcutInventoryMeters: 0 },
       });
       const glRec = tryPostProductionRecognitionGlTx(db, {
         jobID,
@@ -1447,9 +1457,9 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       db.prepare(
         `UPDATE production_jobs
          SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?
+             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
          WHERE job_id = ?`
-      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, jobID);
+      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, metres, jobID);
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }
@@ -1468,7 +1478,7 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
         entityKind: 'production_job',
         entityId: jobID,
         note: `Production completed on ${jobID} (offcut/accessories mode)`,
-        details: { totalMeters: metres, releasedCoilLines: allocations.length },
+        details: { totalMeters: metres, releasedCoilLines: allocations.length, offcutInventoryMeters: metres },
       });
       const glRec = tryPostProductionRecognitionGlTx(db, {
         jobID,
@@ -1512,6 +1522,26 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     const computed = computeCompletionConversionRows(db, jobID, payload);
     if (!computed.ok) return computed;
     const { conversionRows, totalMeters, totalWeightKg, aggregatedAlertState, managerReviewRequired } = computed;
+    const offInv = offcutInventoryMetersFromPayload(payload);
+    if (offInv > 0 && totalMeters <= 0) {
+      return {
+        ok: false,
+        error:
+          'Use “Produced from offcut / accessories only” when no metres are produced from coils, or enter coil metres for a mixed run.',
+      };
+    }
+    const outputMeters = totalMeters + offInv;
+    const plannedM = Number(job.planned_meters) || 0;
+    if (plannedM > 0 && outputMeters > plannedM + 0.001) {
+      const remark = String(payload?.meterOverrunRemark ?? '').trim();
+      if (remark.length < 3) {
+        return {
+          ok: false,
+          error:
+            'Output exceeds planned metres. Enter a manager overrun remark (at least 3 characters) or reduce coil/offcut metres.',
+        };
+      }
+    }
     let totalCogsForGl = 0;
     let accessoryStockWarnings = [];
     db.transaction(() => {
@@ -1618,30 +1648,54 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           if (tailCogs != null && tailCogs > 0) totalCogsForGl += tailCogs;
         }
       }
+      const qrefPool = String(job.quotation_ref ?? '').trim();
+      const qMapPool = qrefPool ? getQuotation(db, qrefPool) : null;
+      const gaugeForPool = String(qMapPool?.materialGauge ?? '').trim();
+      const colourForPool = String(qMapPool?.materialColor ?? '').trim();
+      const branchForPool = String(job.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      if (offInv > 0 && gaugeForPool && colourForPool && job.product_id) {
+        insertProductionOffcutPoolIssueTx(
+          db,
+          {
+            branchId: branchForPool,
+            jobID,
+            quotationRef: qrefPool,
+            cuttingListId: String(job.cutting_list_id || '').trim(),
+            productId: String(job.product_id),
+            gaugeLabel: gaugeForPool,
+            colour: colourForPool,
+            meters: offInv,
+            customerName: String(job.customer_name || '').trim(),
+            dateIso: completedAtISO.slice(0, 10),
+          },
+          opts.actor
+        );
+      }
       if (job.product_id) {
-        adjustProductStockTx(db, job.product_id, totalMeters);
+        adjustProductStockTx(db, job.product_id, outputMeters);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'FINISHED_GOODS_RECEIPT',
           ref: jobID,
           productID: job.product_id,
-          qty: totalMeters,
+          qty: outputMeters,
           detail: `${jobID} completed output (${job.product_name || job.product_id})`,
         });
       }
       db.prepare(
         `UPDATE production_jobs
          SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?
+             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
          WHERE job_id = ?`
       ).run(
         'Completed',
         completedAtISO.slice(0, 10),
         completedAtISO,
-        totalMeters,
+        outputMeters,
         totalWeightKg,
         aggregatedAlertState,
         managerReviewRequired ? 1 : 0,
+        offInv,
         jobID
       );
       if (job.cutting_list_id) {
@@ -1666,7 +1720,9 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
             ? `Production completed on ${jobID}`
             : `Production completed on ${jobID} with ${aggregatedAlertState.toLowerCase()} conversion alert`,
         details: {
-          totalMeters,
+          coilMeters: totalMeters,
+          offcutInventoryMeters: offInv,
+          outputMeters,
           totalWeightKg,
           alertState: aggregatedAlertState,
           managerReviewRequired,
@@ -1676,7 +1732,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       const glRec = tryPostProductionRecognitionGlTx(db, {
         jobID,
         quotationRef: String(job.quotation_ref ?? '').trim(),
-        actualMeters: totalMeters,
+        actualMeters: outputMeters,
         totalCogsNgn: totalCogsForGl,
         completedAtISO,
         branchId: job.branch_id ?? null,
@@ -1686,7 +1742,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     })();
     return {
       ok: true,
-      actualMeters: totalMeters,
+      actualMeters: outputMeters,
       actualWeightKg: totalWeightKg,
       alertState: aggregatedAlertState,
       managerReviewRequired,
@@ -2181,8 +2237,13 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
 
   const oldTotalM = existing.reduce((s, r) => s + safeNumber(r.meters_produced), 0);
   const newTotalM = parsed.reduce((s, p) => s + p.nextMeters, 0);
+  const oldOff = clampNonNegative(safeNumber(job.offcut_inventory_meters, 0));
+  const newOff =
+    payload?.offcutInventoryMeters !== undefined || payload?.offcut_inventory_meters !== undefined
+      ? offcutInventoryMetersFromPayload(payload)
+      : oldOff;
   const newTotalKg = parsed.reduce((s, p) => s + p.nextConsumed, 0);
-  const deltaM = newTotalM - oldTotalM;
+  const deltaM = newTotalM - oldTotalM + (newOff - oldOff);
   const productId = String(job.product_id ?? '').trim();
   const atISO = normalizeIso(payload.atISO || nowIso());
 
@@ -2310,8 +2371,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
 
     const aggregated = aggregateAlertState(alertStates);
     db.prepare(
-      `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ? WHERE job_id = ?`
-    ).run(newTotalM, newTotalKg, aggregated, anyMgr ? 1 : 0, jobId);
+      `UPDATE production_jobs SET actual_meters = ?, actual_weight_kg = ?, conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ? WHERE job_id = ?`
+    ).run(newTotalM + newOff, newTotalKg, aggregated, anyMgr ? 1 : 0, newOff, jobId);
     refreshJobCoilSpecFlagsTx(db, jobId);
     appendAuditLog(db, {
       actor: opts.actor,
@@ -2323,6 +2384,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
         reason: note,
         oldTotalM,
         newTotalM,
+        oldOffcutInventoryMeters: oldOff,
+        newOffcutInventoryMeters: newOff,
         deltaM,
         lines: parsed.map((p) => ({
           allocationId: p.isNew ? null : p.aid,
@@ -2334,7 +2397,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     return {
       ok: true,
       allocations: listProductionJobCoilsForJob(db, jobId),
-      actualMeters: newTotalM,
+      actualMeters: newTotalM + newOff,
       actualWeightKg: newTotalKg,
     };
   } catch (e) {

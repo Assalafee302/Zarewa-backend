@@ -6,6 +6,7 @@ import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplie
 import { listBranches } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
+import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { listInTransitLoads } from './inTransitOps.js';
 /** @param {import('better-sqlite3').Database} db */
 
@@ -119,17 +120,19 @@ function groupedFromQuotationLinesTableRows(rows) {
   return out;
 }
 
-function mapQuotationRow(row) {
+function mapQuotationRow(db, row) {
   let quotationLines;
   let materialGauge = '';
   let materialColor = '';
   let materialDesign = '';
   let materialTypeId = '';
+  let linesJsonForStone = null;
   try {
     const raw = row.lines_json;
     if (raw) {
       const j = JSON.parse(raw);
       if (j && typeof j === 'object') {
+        linesJsonForStone = j;
         if (typeof j.materialGauge === 'string') materialGauge = j.materialGauge;
         if (typeof j.materialColor === 'string') materialColor = j.materialColor;
         if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
@@ -150,6 +153,7 @@ function mapQuotationRow(row) {
   } catch {
     /* ignore */
   }
+  const stoneMeterQuote = Boolean(db && linesJsonForStone && isStoneMeterQuotationLinesJson(db, linesJsonForStone));
   return {
     id: row.id,
     customerID: row.customer_id,
@@ -171,6 +175,7 @@ function mapQuotationRow(row) {
     materialColor,
     materialDesign,
     materialTypeId,
+    stoneMeterQuote,
     branchId: row.branch_id ?? '',
     managerProductionApprovedAtISO: row.manager_production_approved_at_iso ?? null,
     managerClearedAtISO: row.manager_cleared_at_iso ?? null,
@@ -199,7 +204,7 @@ export function listQuotations(db, branchScope = 'ALL') {
   return db
     .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
     .all(...b.args)
-    .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(row)));
+    .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(db, row)));
 }
 
 /** Lightweight id list for admin bulk jobs (same branch scope as listQuotations). */
@@ -214,7 +219,7 @@ export function listQuotationIds(db, branchScope = 'ALL') {
 export function getQuotation(db, id) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(id);
   if (!row) return null;
-  return enrichQuotationWithLineTable(db, mapQuotationRow(row));
+  return enrichQuotationWithLineTable(db, mapQuotationRow(db, row));
 }
 
 export function listManagementItems(db, branchScope = 'ALL') {
@@ -1087,6 +1092,7 @@ export function listProductionJobs(db, branchScope = 'ALL') {
         operatorName: row.operator_name ?? '',
         branchId: row.branch_id ?? '',
         coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
+        offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
       };
     });
 }

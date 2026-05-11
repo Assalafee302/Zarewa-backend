@@ -1769,6 +1769,282 @@ describe.sequential('Zarewa API', () => {
     expect(byId.body.rows).toHaveLength(2);
   });
 
+  it('coil completion with offcutInventoryMeters updates FG, actualMeters, and preview totalOutputMeters', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 120 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 120,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+
+    const prev = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/conversion-preview`).send({
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 2,
+    });
+    expect(prev.status).toBe(200);
+    expect(prev.body.totalMeters).toBeCloseTo(100, 3);
+    expect(prev.body.totalOutputMeters).toBeCloseTo(102, 3);
+    expect(prev.body.offcutInventoryMeters).toBeCloseTo(2, 3);
+
+    const bootBefore = await agent.get('/api/bootstrap');
+    const fgBefore = Number(bootBefore.body.products.find((p) => p.productID === 'FG-101')?.stockLevel ?? 0);
+
+    const done = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 2,
+    });
+    expect(done.status).toBe(200);
+    expect(done.body.actualMeters).toBeCloseTo(102, 3);
+
+    const bootAfter = await agent.get('/api/bootstrap');
+    const pj = bootAfter.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.status).toBe('Completed');
+    expect(pj.actualMeters).toBeCloseTo(102, 3);
+    expect(pj.offcutInventoryMeters).toBeCloseTo(2, 3);
+    const fgAfter = Number(bootAfter.body.products.find((p) => p.productID === 'FG-101')?.stockLevel ?? 0);
+    expect(fgAfter).toBeCloseTo(fgBefore + 102, 2);
+  });
+
+  it('rejects offcutInventoryMeters when no coil metres are produced (use offcut-only completion instead)', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 20 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 20,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+
+    const bad = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 800,
+          metersProduced: 0,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 2,
+    });
+    expect(bad.status).toBe(400);
+    /** `computeCompletionConversionRows` rejects zero metres before the mixed-run offcut guard runs. */
+    expect(String(bad.body.error || '')).toMatch(/positive number of metres|offcut|coil/i);
+  });
+
+  it('requires meterOverrunRemark when coil plus offcutInventoryMeters exceeds planned metres', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 12 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 12,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+
+    const overNoRemark = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 3,
+    });
+    expect(overNoRemark.status).toBe(400);
+    expect(String(overNoRemark.body.error || '')).toMatch(/overrun|remark|planned/i);
+
+    const overOk = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 3,
+      meterOverrunRemark: 'Manager approved overrun — site measure exceeded cutting list.',
+    });
+    expect(overOk.status).toBe(200);
+    expect(overOk.body.actualMeters).toBeCloseTo(103, 3);
+  });
+
+  it('completion-coil-corrections sets actual_meters to coil sum plus stored offcutInventoryMeters', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 200 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 200,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 100,
+          finishCoil: false,
+        },
+      ],
+      offcutInventoryMeters: 2,
+    });
+    expect(complete.status).toBe(200);
+
+    const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(list.status).toBe(200);
+    const line = list.body.allocations[0];
+    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+      reason: 'Operator mistyped metre reading on completion form — corrected after yard recount.',
+      readings: [
+        {
+          allocationId: line.id,
+          coilNo: line.coilNo,
+          openingWeightKg: line.openingWeightKg,
+          closingWeightKg: line.closingWeightKg,
+          metersProduced: 90,
+        },
+      ],
+    });
+    expect(corr.status).toBe(200);
+
+    const boot = await agent.get('/api/bootstrap');
+    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj.actualMeters).toBeCloseTo(92, 3);
+    expect(pj.offcutInventoryMeters).toBeCloseTo(2, 3);
+
+    const listAfter = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(listAfter.status).toBe(200);
+    const line2 = listAfter.body.allocations[0];
+    const corrOff = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+      reason: 'Additional offcut stock metres were issued from yard after completion audit.',
+      readings: [
+        {
+          allocationId: line2.id,
+          coilNo: line2.coilNo,
+          openingWeightKg: line2.openingWeightKg,
+          closingWeightKg: line2.closingWeightKg,
+          metersProduced: line2.metersProduced,
+        },
+      ],
+      offcutInventoryMeters: 4,
+    });
+    expect(corrOff.status).toBe(200);
+    const boot2 = await agent.get('/api/bootstrap');
+    const pj2 = boot2.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj2.actualMeters).toBeCloseTo(94, 3);
+    expect(pj2.offcutInventoryMeters).toBeCloseTo(4, 3);
+  });
+
   it('coil split, scrap, and return-material update lots, lineage, and stock movements', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const d = '2026-03-29';

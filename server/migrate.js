@@ -289,6 +289,9 @@ export function runMigrations(db) {
   if (!productionJobs.has('coil_spec_mismatch_pending')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!productionJobs.has('offcut_inventory_meters')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN offcut_inventory_meters REAL NOT NULL DEFAULT 0`);
+  }
 
   const pjc = tableCols('production_job_coils');
   if (pjc.size > 0 && !pjc.has('spec_mismatch')) {
@@ -495,6 +498,7 @@ export function runMigrations(db) {
       manager_review_signed_by_name TEXT,
       manager_review_remark TEXT,
       coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0,
+      offcut_inventory_meters REAL NOT NULL DEFAULT 0,
       FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
     );
 

@@ -65,6 +65,16 @@ function roundMoney(value) {
   return Math.round(Number(value) || 0);
 }
 
+/** Match quotation refs across Word/PDF dash variants (en dash, em dash, minus). */
+function normalizeQuotRefDashKey(s) {
+  return String(s ?? '')
+    .replace(/\u2013/g, '-')
+    .replace(/\u2014/g, '-')
+    .replace(/\u2212/g, '-')
+    .trim()
+    .toLowerCase();
+}
+
 function normalizeCrmTagsJson(row) {
   if (Array.isArray(row?.crmTags)) return JSON.stringify(row.crmTags);
   if (typeof row?.crmTagsJson === 'string' && row.crmTagsJson.trim()) return row.crmTagsJson.trim();
@@ -305,6 +315,55 @@ function insertCoilControlEventTx(db, row) {
     row.actorDisplay != null ? String(row.actorDisplay).trim() || null : null
   );
   return id;
+}
+
+/**
+ * Audited dimensional offcut pool issue tied to a production job (metres from offcut stock).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{
+ *   branchId: string;
+ *   jobID: string;
+ *   quotationRef?: string;
+ *   cuttingListId?: string;
+ *   productId: string;
+ *   gaugeLabel: string;
+ *   colour: string;
+ *   meters: number;
+ *   customerName?: string;
+ *   dateIso: string;
+ * }} p
+ * @param {unknown} actor
+ * @returns {string|null} event id or null if metres not positive
+ */
+export function insertProductionOffcutPoolIssueTx(db, p, actor) {
+  const m = Number(p.meters);
+  if (!Number.isFinite(m) || m <= 0) return null;
+  const gaugeLabel = String(p.gaugeLabel ?? '').trim();
+  const colour = String(p.colour ?? '').trim();
+  if (!gaugeLabel || !colour) return null;
+  const branchId = String(p.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const createdAtIso = new Date().toISOString().slice(0, 19);
+  const dateIso = String(p.dateIso || createdAtIso).slice(0, 10);
+  return insertCoilControlEventTx(db, {
+    branchId,
+    eventKind: 'pool_issue_production',
+    coilNo: null,
+    productId: String(p.productId || '').trim() || null,
+    gaugeLabel,
+    colour,
+    meters: m,
+    kgCoilDelta: 0,
+    kgBook: null,
+    bookRef: String(p.jobID || '').trim(),
+    cuttingListRef: String(p.cuttingListId || '').trim() || null,
+    quotationRef: String(p.quotationRef || '').trim() || null,
+    customerLabel: String(p.customerName || '').trim() || null,
+    note: `Offcut stock used on production ${p.jobID}`,
+    dateIso,
+    createdAtIso,
+    actorUserId: actorId(actor),
+    actorDisplay: actorName(actor),
+  });
 }
 
 function treasuryAccountRow(db, treasuryAccountId) {
@@ -4428,8 +4487,9 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
   }
   const threshold = total * minPaidFrac - 1e-6;
   if (!managerOk && bookPaid < threshold) {
+    const qKey = normalizeQuotRefDashKey(qref);
     const receiptRows = listSalesReceipts(db, 'ALL').filter(
-      (r) => String(r.quotationRef || '').trim() === qref
+      (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
     );
     const ledgerRows = listLedgerEntries(db, 'ALL');
     const enriched = enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerRows);
@@ -4437,12 +4497,11 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
       (sum, r) => sum + Math.round(Number(r.cashReceivedNgn ?? r.amountNgn) || 0),
       0
     );
-    const advRow = db
-      .prepare(
-        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'ADVANCE_APPLIED' AND quotation_ref = ?`
-      )
-      .get(qref);
-    const advanceApplied = Math.round(Number(advRow?.s) || 0);
+    const advanceApplied = ledgerRows.reduce((sum, e) => {
+      if (String(e.type || '') !== 'ADVANCE_APPLIED') return sum;
+      if (normalizeQuotRefDashKey(e.quotationRef) !== qKey) return sum;
+      return sum + Math.round(Number(e.amountNgn) || 0);
+    }, 0);
     const cashPaidTotal = cashFromReceipts + advanceApplied;
     if (cashPaidTotal < threshold) {
       const pct = Math.round(minPaidFrac * 100);
@@ -4454,10 +4513,16 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
   }
   const existing = excludeCuttingListId
     ? db
-        .prepare(`SELECT id FROM cutting_lists WHERE quotation_ref = ? AND id != ?`)
+        .prepare(`SELECT id, branch_id FROM cutting_lists WHERE quotation_ref = ? AND id != ?`)
         .get(qref, excludeCuttingListId)
-    : db.prepare(`SELECT id FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
-  if (existing) return { ok: false, error: 'This quotation already has a cutting list.' };
+    : db.prepare(`SELECT id, branch_id FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
+  if (existing?.id) {
+    const br = String(existing.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+    return {
+      ok: false,
+      error: `This quotation already has cutting list ${existing.id} (branch ${br}). Open Sales → Cutting list and search that ID, or switch workspace branch if it was created elsewhere.`,
+    };
+  }
   return { ok: true };
 }
 
@@ -4685,8 +4750,8 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
         job_id, cutting_list_id, quotation_ref, customer_id, customer_name, product_id, product_name,
         planned_meters, planned_sheets, machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
         status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
-        conversion_alert_state, manager_review_required, branch_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        conversion_alert_state, manager_review_required, branch_id, offcut_inventory_meters
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       jobID,
       cuttingListId || null,
@@ -4709,7 +4774,8 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
       0,
       'Pending',
       0,
-      branchId
+      branchId,
+      0
     );
     if (cuttingListId) {
       db.prepare(
@@ -5890,6 +5956,8 @@ export function updateQuotation(db, quotationId, payload) {
     enrichQuotationLinesWithMaterialHeader(linesJson);
     applyPricingSnapshotsToServices(db, linesJson.products, bidUpd);
     applyPricingSnapshotsToServices(db, linesJson.services, bidUpd);
+  } else {
+    enrichQuotationLinesWithMaterialHeader(linesJson);
   }
 
   const totalNgn = payload.lines != null ? sumQuotationLinesJson(linesJson) : existing.total_ngn;

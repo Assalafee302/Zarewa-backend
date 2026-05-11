@@ -115,6 +115,7 @@ export function coilSpecMismatchIssues(lot, expected, masterData) {
 
 /** Stone-coated quotes use metre stock, not coil lots — skip coil-vs-quote matching. */
 export function quotationExpectsCoilAllocation(quotation) {
+  if (quotation?.stoneMeterQuote === true) return false;
   const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
   if (mid === 'MAT-005') return false;
   return true;

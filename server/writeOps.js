@@ -5016,7 +5016,7 @@ function assertPaymentRequestPayoutReversalBranchGate(db, requestId, workspaceBr
  * reset paid_amount_ngn to zero, and clear linked staff-loan disbursement flags when applicable.
  * @param {import('better-sqlite3').Database} db
  * @param {string} requestId
- * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean }} payload
  * @param {object | null} actor
  */
 export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}, actor = null) {
@@ -5066,35 +5066,40 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   }
 
   let created = [];
+  const runCore = () => {
+    created = reverseTreasurySourceTx(
+      db,
+      'PAYMENT_REQUEST',
+      rid,
+      'PAYMENT_REQUEST_REVERSAL_IN',
+      note,
+      actor,
+      { postedAtISO }
+    );
+    db.prepare(
+      `UPDATE payment_requests
+       SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
+       WHERE request_id = ?`
+    ).run(note, rid);
+    syncStaffLoanDisbursementOnPayoutReversal(db, rid);
+    appendAuditLog(db, {
+      actor,
+      action: 'payment_request.reverse_treasury_payout',
+      entityKind: 'payment_request',
+      entityId: rid,
+      note,
+      details: {
+        reversalMovementIds: created.map((m) => m.id),
+        priorPaidNgn: paidAmountNgn,
+      },
+    });
+  };
   try {
-    db.transaction(() => {
-      created = reverseTreasurySourceTx(
-        db,
-        'PAYMENT_REQUEST',
-        rid,
-        'PAYMENT_REQUEST_REVERSAL_IN',
-        note,
-        actor,
-        { postedAtISO }
-      );
-      db.prepare(
-        `UPDATE payment_requests
-         SET paid_amount_ngn = 0, paid_at_iso = '', paid_by = '', payment_note = ?
-         WHERE request_id = ?`
-      ).run(note, rid);
-      syncStaffLoanDisbursementOnPayoutReversal(db, rid);
-      appendAuditLog(db, {
-        actor,
-        action: 'payment_request.reverse_treasury_payout',
-        entityKind: 'payment_request',
-        entityId: rid,
-        note,
-        details: {
-          reversalMovementIds: created.map((m) => m.id),
-          priorPaidNgn: paidAmountNgn,
-        },
-      });
-    })();
+    if (payload?.skipInnerTransaction) {
+      runCore();
+    } else {
+      db.transaction(runCore)();
+    }
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -5114,7 +5119,7 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
  * Removes `EXPENSE` treasury rows for this expense id. Refuses when any linked request has paid_amount_ngn > 0.
  * @param {import('better-sqlite3').Database} db
  */
-export function deleteExpenseRolloutDup(db, expenseId, actor) {
+export function deleteExpenseRolloutDup(db, expenseId, actor, opts = {}) {
   const eid = String(expenseId || '').trim();
   if (!eid) return { ok: false, error: 'Expense ID is required.' };
   const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(eid);
@@ -5125,7 +5130,7 @@ export function deleteExpenseRolloutDup(db, expenseId, actor) {
     if (roundMoney(pr.paid_amount_ngn) > 0) {
       return {
         ok: false,
-        error: `Expense ${eid} is linked to ${pr.request_id}, which already has treasury payouts. On Account → Expenses & requests, use "Reverse payout" on ${pr.request_id} (requires finance.reverse), then retry delete if appropriate.`,
+        error: `Expense ${eid} is linked to ${pr.request_id}, which already has treasury payouts. On Account → Payments, use "Reverse payout" on ${pr.request_id} (requires finance.reverse), then retry delete if appropriate.`,
       };
     }
   }
@@ -5133,7 +5138,7 @@ export function deleteExpenseRolloutDup(db, expenseId, actor) {
   try {
     const expenseDate = String(exp.date || '').trim() || new Date().toISOString().slice(0, 10);
     assertPeriodOpen(db, expenseDate, 'Delete expense (rollout)');
-    db.transaction(() => {
+    const runCore = () => {
       for (const pr of prs) {
         db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`).run(
           pr.request_id
@@ -5150,7 +5155,12 @@ export function deleteExpenseRolloutDup(db, expenseId, actor) {
         note: 'Temporary rollout delete',
         details: { paymentRequestsRemoved: prs.length },
       });
-    })();
+    };
+    if (opts.skipInnerTransaction) {
+      runCore();
+    } else {
+      db.transaction(runCore)();
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
@@ -5161,7 +5171,7 @@ export function deleteExpenseRolloutDup(db, expenseId, actor) {
  * Rollout-only: delete an unpaid payment request row and its placeholder expense when no other requests reference it.
  * @param {import('better-sqlite3').Database} db
  */
-export function deletePaymentRequestRolloutDup(db, requestId, actor) {
+export function deletePaymentRequestRolloutDup(db, requestId, actor, opts = {}) {
   const rid = String(requestId || '').trim();
   if (!rid) return { ok: false, error: 'Request ID is required.' };
   const pr = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
@@ -5177,7 +5187,7 @@ export function deletePaymentRequestRolloutDup(db, requestId, actor) {
       String(pr.request_date || '').trim() || new Date().toISOString().slice(0, 10),
       'Delete payment request (rollout)'
     );
-    db.transaction(() => {
+    const runCore = () => {
       db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`).run(rid);
       db.prepare(`DELETE FROM payment_requests WHERE request_id = ?`).run(rid);
       if (eid) {
@@ -5195,7 +5205,12 @@ export function deletePaymentRequestRolloutDup(db, requestId, actor) {
         note: 'Temporary rollout delete',
         details: { expenseId: eid || null },
       });
-    })();
+    };
+    if (opts.skipInnerTransaction) {
+      runCore();
+    } else {
+      db.transaction(runCore)();
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

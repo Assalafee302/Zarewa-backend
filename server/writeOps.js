@@ -3,6 +3,7 @@ import {
   tryPostCustomerAdvanceReversalGl,
   tryPostCustomerReceiptReversalGl,
   tryPostCustomerRefundPayoutGlTx,
+  tryPostCustomerRefundPayoutReversalGlTx,
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
@@ -5114,6 +5115,131 @@ export function reversePaymentRequestTreasuryPayouts(db, requestId, payload = {}
   return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
 }
 
+function assertRefundPayoutReversalBranchGate(db, refundId, workspaceBranchId, workspaceViewAll, actor) {
+  const rid = String(refundId || '').trim();
+  const r = db.prepare(`SELECT branch_id FROM customer_refunds WHERE refund_id = ?`).get(rid);
+  if (!r) return { ok: false, error: 'Refund not found.' };
+  const wb = String(workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+  const viewOk = Boolean(workspaceViewAll) && canUseAllBranchesRollup(actor);
+  const cross =
+    actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.cross_branch_post'));
+  const bid = String(r.branch_id || '').trim();
+  if (bid && bid !== wb && !viewOk && !cross) {
+    return { ok: false, error: 'Switch workspace branch to reverse this refund payout.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * finance.reverse: Post compensating treasury lines for every unreversed REFUND_PAYOUT on this refund,
+ * remove REFUND_ADVANCE ledger slices tied to the payout, post a single compensating GL entry (when GL is used),
+ * and reset paid_amount_ngn to zero (status back to Approved when it was Paid).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} refundId
+ * @param {{ note?: string, actedAtISO?: string, postedAtISO?: string, workspaceBranchId?: string, workspaceViewAll?: boolean, skipInnerTransaction?: boolean }} payload
+ * @param {object | null} actor
+ */
+export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor = null) {
+  const rid = String(refundId || '').trim();
+  if (!rid) return { ok: false, error: 'Refund ID is required.' };
+  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Refund not found.' };
+  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
+  if (paidAmountNgn <= 0) {
+    return { ok: false, error: 'This refund has no recorded treasury payouts to reverse.' };
+  }
+
+  const gate = assertRefundPayoutReversalBranchGate(
+    db,
+    rid,
+    String(payload?.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+    Boolean(payload?.workspaceViewAll),
+    actor
+  );
+  if (!gate.ok) return gate;
+
+  const anySourceLines = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM treasury_movements
+       WHERE source_kind = 'REFUND' AND source_id = ? AND type = 'REFUND_PAYOUT'
+         AND (reverses_movement_id IS NULL OR TRIM(COALESCE(reverses_movement_id,'')) = '')`
+    )
+    .get(rid);
+  if (!anySourceLines || Number(anySourceLines.c) === 0) {
+    return {
+      ok: false,
+      error:
+        'No treasury refund payout lines exist for this refund, but paid_amount is non-zero. Data needs manual repair.',
+    };
+  }
+
+  const note = String(payload?.note ?? '').trim() || `Treasury refund payout reversal for ${rid}`;
+  const day =
+    String(payload?.actedAtISO ?? payload?.postedAtISO ?? new Date().toISOString())
+      .trim()
+      .slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const postedAtISO =
+    String(payload?.actedAtISO ?? payload?.postedAtISO ?? '').trim() || `${day}T12:00:00.000Z`;
+
+  try {
+    assertPeriodOpen(db, day, 'Refund payout reversal date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  let created = [];
+  const runCore = () => {
+    created = reverseTreasurySourceTx(db, 'REFUND', rid, 'REFUND_PAYOUT_REVERSAL_IN', note, actor, {
+      postedAtISO,
+    });
+    db.prepare(`DELETE FROM ledger_entries WHERE type = 'REFUND_ADVANCE' AND bank_reference = ?`).run(rid);
+    const glRev = tryPostCustomerRefundPayoutReversalGlTx(db, {
+      refundId: rid,
+      reversalAmountNgn: paidAmountNgn,
+      entryDateISO: day,
+      branchId: row.branch_id ?? null,
+      createdByUserId: actor?.id != null ? String(actor.id) : null,
+    });
+    if (!glRev.ok && !glRev.skipped && !glRev.duplicate) {
+      throw new Error(glRev.error || 'Refund payout GL reversal failed.');
+    }
+    db.prepare(
+      `UPDATE customer_refunds
+       SET paid_amount_ngn = 0,
+           paid_at_iso = '',
+           paid_by = '',
+           payment_note = ?,
+           status = CASE
+             WHEN TRIM(LOWER(COALESCE(status, ''))) = 'paid' THEN 'Approved'
+             ELSE status
+           END
+       WHERE refund_id = ?`
+    ).run(note, rid);
+    appendAuditLog(db, {
+      actor,
+      action: 'refund.reverse_treasury_payout',
+      entityKind: 'refund',
+      entityId: rid,
+      note,
+      details: {
+        reversalMovementIds: created.map((m) => m.id),
+        priorPaidNgn: paidAmountNgn,
+      },
+    });
+  };
+  try {
+    if (payload?.skipInnerTransaction) {
+      runCore();
+    } else {
+      db.transaction(runCore)();
+    }
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  return { ok: true, movements: created, priorPaidAmountNgn: paidAmountNgn };
+}
+
 /**
  * Rollout-only cleanup: delete an expense and any linked payment requests that have **no** treasury payout recorded.
  * Removes `EXPENSE` treasury rows for this expense id. Refuses when any linked request has paid_amount_ngn > 0.
@@ -6339,6 +6465,9 @@ function assertExpenseOutflowBranchGate(db, row, workspaceBranchId, workspaceVie
       )
       .get(sid);
     bid = String(r?.branch_id || '').trim();
+  } else if (t === 'REFUND_PAYOUT' && sk === 'REFUND') {
+    const r = db.prepare(`SELECT COALESCE(branch_id, '') AS branch_id FROM customer_refunds WHERE refund_id = ?`).get(sid);
+    bid = String(r?.branch_id || '').trim();
   } else {
     return { ok: false, error: 'This treasury line cannot be corrected from the expense pay-from flow.' };
   }
@@ -6369,11 +6498,13 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   const t = String(row.type || '');
   const sk = String(row.source_kind || '');
   const allowed =
-    (t === 'EXPENSE' && sk === 'EXPENSE') || (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST');
+    (t === 'EXPENSE' && sk === 'EXPENSE') ||
+    (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST') ||
+    (t === 'REFUND_PAYOUT' && sk === 'REFUND');
   if (!allowed) {
     return {
       ok: false,
-      error: 'Only direct expense debits or payment-request payout lines can be corrected here.',
+      error: 'Only expense, payment-request, or customer-refund payout lines can be corrected here.',
     };
   }
 
@@ -6468,12 +6599,37 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
      WHERE id = ?`
   ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
 
+  if (t === 'REFUND_PAYOUT' && sk === 'REFUND' && oldAmt !== nextAmt) {
+    const rid = String(row.source_id || '').trim();
+    if (rid) {
+      const refundRow = db
+        .prepare(
+          `SELECT paid_amount_ngn, approved_amount_ngn, amount_ngn FROM customer_refunds WHERE refund_id = ?`
+        )
+        .get(rid);
+      if (refundRow) {
+        const prevPaid = roundMoney(refundRow.paid_amount_ngn);
+        const approvedAmt = roundMoney(
+          refundRow.approved_amount_ngn != null ? refundRow.approved_amount_ngn : refundRow.amount_ngn
+        );
+        let nextPaid = roundMoney(prevPaid + (oldAmt - nextAmt));
+        if (nextPaid < 0) nextPaid = 0;
+        const nextStatus = approvedAmt > 0 && nextPaid >= approvedAmt ? 'Paid' : 'Approved';
+        db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, status = ? WHERE refund_id = ?`).run(
+          nextPaid,
+          nextStatus,
+          rid
+        );
+      }
+    }
+  }
+
   appendAuditLog(db, {
     actor,
     action: 'treasury.expense_out_correct',
     entityKind: 'treasury_movement',
     entityId: mid,
-    note: `Expense pay-from corrected · ${sk} ${String(row.source_id || '')}`,
+    note: `Treasury payout corrected · ${sk} ${String(row.source_id || '')}`,
     details: {
       movementId: mid,
       sourceKind: sk,

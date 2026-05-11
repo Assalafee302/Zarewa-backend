@@ -437,6 +437,33 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
   });
 }
 
+/**
+ * Full reversal of recorded customer-refund treasury payouts: undo GL accrual (2500/1000) for the net paid amount.
+ * Idempotent via `source_id = refundId:full` (second call returns duplicate).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ refundId: string, reversalAmountNgn: number, entryDateISO: string, branchId?: string|null, createdByUserId?: string|null }} payload
+ */
+export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
+  const refundId = String(payload.refundId || '').trim();
+  const amt = Math.round(Number(payload.reversalAmountNgn) || 0);
+  if (!refundId || amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL reversal date.' };
+  ensureSupplementalGlAccounts(db);
+  return postBalancedJournalTx(db, {
+    entryDateISO: date,
+    memo: `Reverse customer refund payout ${refundId}`,
+    sourceKind: 'CUSTOMER_REFUND_PAYOUT_REVERSAL_GL',
+    sourceId: `${refundId}:full`,
+    branchId: payload.branchId ?? null,
+    createdByUserId: payload.createdByUserId ?? null,
+    lines: [
+      { accountCode: '2500', creditNgn: amt, memo: refundId },
+      { accountCode: '1000', debitNgn: amt, memo: refundId },
+    ],
+  });
+}
+
 export function listGlJournalEntries(db, startDate, endDate) {
   seedDefaultGlAccounts(db);
   const sd = String(startDate || '').slice(0, 10);

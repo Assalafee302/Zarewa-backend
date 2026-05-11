@@ -30,7 +30,7 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
-import { actorId, actorName, userHasPermission } from './auth.js';
+import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { mergeSupplierProfilePatch, validateAndNormalizeSupplierProfile } from './supplierProfile.js';
 import {
@@ -6138,6 +6138,208 @@ export function patchLedgerReceiptTreasuryMovement(db, movementId, payload, acto
   try {
     db.transaction(() => {
       const r = ledgerReceiptTreasuryMovementCorrectTx(db, movementId, payload, actor, {});
+      result = r;
+      if (!r.ok) {
+        throw new Error(r.error || 'Correction failed.');
+      }
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  return result;
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} row treasury_movements row
+ * @param {string} workspaceBranchId
+ * @param {boolean} workspaceViewAll
+ * @param {object | null} actor
+ */
+function assertExpenseOutflowBranchGate(db, row, workspaceBranchId, workspaceViewAll, actor) {
+  const wb = String(workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+  const viewOk = Boolean(workspaceViewAll) && canUseAllBranchesRollup(actor);
+  const cross =
+    actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.cross_branch_post'));
+  const t = String(row.type || '');
+  const sk = String(row.source_kind || '');
+  const sid = String(row.source_id || '').trim();
+  let bid = '';
+  if (t === 'EXPENSE' && sk === 'EXPENSE') {
+    const e = db.prepare(`SELECT branch_id FROM expenses WHERE expense_id = ?`).get(sid);
+    bid = String(e?.branch_id || '').trim();
+  } else if (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST') {
+    const r = db
+      .prepare(
+        `SELECT COALESCE(e.branch_id, '') AS branch_id
+         FROM payment_requests pr
+         LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+         WHERE pr.request_id = ?`
+      )
+      .get(sid);
+    bid = String(r?.branch_id || '').trim();
+  } else {
+    return { ok: false, error: 'This treasury line cannot be corrected from the expense pay-from flow.' };
+  }
+  if (bid && bid !== wb && !viewOk && !cross) {
+    return { ok: false, error: 'Switch workspace branch to correct this treasury line.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Finance: change bank/cash account (and optionally amount/date/note) for an expense or payment-request payout line.
+ * Outflows are stored as negative `amount_ngn`. Accepts positive amounts in payload as magnitude of spend.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ treasuryAccountId?: number, amountNgn?: number, postedAtISO?: string, note?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ * @param {object | null} actor
+ */
+export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload, actor = null) {
+  const mid = String(movementId || '').trim();
+  if (!mid) return { ok: false, error: 'Movement id required.' };
+
+  const row = db.prepare(`SELECT * FROM treasury_movements WHERE id = ?`).get(mid);
+  if (!row) return { ok: false, error: 'Treasury movement not found.' };
+  if (row.reverses_movement_id) {
+    return { ok: false, error: 'Cannot correct a reversal or adjustment line.' };
+  }
+
+  const t = String(row.type || '');
+  const sk = String(row.source_kind || '');
+  const allowed =
+    (t === 'EXPENSE' && sk === 'EXPENSE') || (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST');
+  if (!allowed) {
+    return {
+      ok: false,
+      error: 'Only direct expense debits or payment-request payout lines can be corrected here.',
+    };
+  }
+
+  const gate = assertExpenseOutflowBranchGate(
+    db,
+    row,
+    String(payload?.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID,
+    Boolean(payload?.workspaceViewAll),
+    actor
+  );
+  if (!gate.ok) return gate;
+
+  const oldAmt = roundMoney(row.amount_ngn);
+  if (oldAmt >= 0) {
+    return { ok: false, error: 'Expected a treasury outflow (negative amount) for this correction.' };
+  }
+
+  const hasAmount = payload?.amountNgn !== undefined && payload?.amountNgn !== null;
+  const hasAccount = payload?.treasuryAccountId !== undefined && payload?.treasuryAccountId !== null;
+  const hasPosted = payload?.postedAtISO !== undefined && String(payload?.postedAtISO || '').trim() !== '';
+
+  let nextAmt = hasAmount ? roundMoney(payload.amountNgn) : oldAmt;
+  if (hasAmount && nextAmt > 0) nextAmt = -Math.abs(nextAmt);
+  if (!hasAmount) nextAmt = oldAmt;
+
+  const nextAcc = hasAccount ? Number(payload.treasuryAccountId) : Number(row.treasury_account_id);
+  const nextPostedRaw = hasPosted ? String(payload.postedAtISO).trim() : String(row.posted_at_iso || '');
+  const nextPosted = normalizeIsoTimestamp(nextPostedRaw);
+
+  if (!nextAcc || Number.isNaN(nextAcc)) {
+    return { ok: false, error: 'Treasury account is required.' };
+  }
+  if (nextAmt >= 0) {
+    return { ok: false, error: 'Amount must remain an outflow (negative), matching a bank/cash debit.' };
+  }
+
+  const accRow = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(nextAcc);
+  if (!accRow) return { ok: false, error: 'Treasury account not found.' };
+
+  const oldAcc = Number(row.treasury_account_id);
+  const dateForLock = String(nextPosted || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, dateForLock, 'Expense pay-from correction date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const noteExtra = payload?.note != null ? String(payload.note).trim() : '';
+  const baseNote = row.note != null ? String(row.note) : '';
+  const mergedNote = (() => {
+    if (noteExtra) {
+      if (baseNote && baseNote.includes(noteExtra)) return baseNote;
+      if (baseNote) return `${baseNote} — Finance correction: ${noteExtra}`;
+      return `Finance correction: ${noteExtra}`;
+    }
+    return baseNote;
+  })();
+
+  const sameNumbers = nextAcc === oldAcc && nextAmt === oldAmt && nextPosted === String(row.posted_at_iso || '');
+  if (sameNumbers && !noteExtra) {
+    return { ok: true, noOp: true };
+  }
+  if (sameNumbers && noteExtra) {
+    db.prepare(`UPDATE treasury_movements SET note = ? WHERE id = ?`).run(mergedNote, mid);
+    appendAuditLog(db, {
+      actor,
+      action: 'treasury.expense_out_correct',
+      entityKind: 'treasury_movement',
+      entityId: mid,
+      note: `Expense / pay-req split note updated · ${sk} ${String(row.source_id || '')}`,
+      details: { movementId: mid, sourceKind: sk, sourceId: row.source_id, noteOnly: true },
+    });
+    return { ok: true };
+  }
+
+  if (oldAcc === nextAcc) {
+    const delta = nextAmt - oldAmt;
+    if (delta !== 0) {
+      adjustTreasuryBalanceTx(db, oldAcc, delta, { allowNegativeBalance: false });
+    }
+  } else {
+    adjustTreasuryBalanceTx(db, oldAcc, -oldAmt, { allowNegativeBalance: false });
+    adjustTreasuryBalanceTx(db, nextAcc, nextAmt, { allowNegativeBalance: false });
+  }
+
+  db.prepare(
+    `UPDATE treasury_movements SET
+      treasury_account_id = ?,
+      amount_ngn = ?,
+      posted_at_iso = ?,
+      note = ?
+     WHERE id = ?`
+  ).run(nextAcc, nextAmt, nextPosted, mergedNote || null, mid);
+
+  appendAuditLog(db, {
+    actor,
+    action: 'treasury.expense_out_correct',
+    entityKind: 'treasury_movement',
+    entityId: mid,
+    note: `Expense pay-from corrected · ${sk} ${String(row.source_id || '')}`,
+    details: {
+      movementId: mid,
+      sourceKind: sk,
+      sourceId: row.source_id,
+      oldAmountNgn: oldAmt,
+      newAmountNgn: nextAmt,
+      oldTreasuryAccountId: oldAcc,
+      newTreasuryAccountId: nextAcc,
+      oldPostedAtISO: row.posted_at_iso,
+      newPostedAtISO: nextPosted,
+    },
+  });
+
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} movementId
+ * @param {{ treasuryAccountId?: number, amountNgn?: number, postedAtISO?: string, note?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ * @param {object | null} actor
+ */
+export function patchExpenseOutflowTreasuryMovement(db, movementId, payload, actor = null) {
+  let result = { ok: false };
+  try {
+    db.transaction(() => {
+      const r = expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload, actor);
       result = r;
       if (!r.ok) {
         throw new Error(r.error || 'Correction failed.');

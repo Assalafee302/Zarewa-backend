@@ -4963,6 +4963,99 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   }
 }
 
+/**
+ * Rollout-only cleanup: delete an expense and any linked payment requests that have **no** treasury payout recorded.
+ * Removes `EXPENSE` treasury rows for this expense id. Refuses when any linked request has paid_amount_ngn > 0.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function deleteExpenseRolloutDup(db, expenseId, actor) {
+  const eid = String(expenseId || '').trim();
+  if (!eid) return { ok: false, error: 'Expense ID is required.' };
+  const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(eid);
+  if (!exp) return { ok: false, error: 'Expense not found.' };
+
+  const prs = db.prepare(`SELECT * FROM payment_requests WHERE expense_id = ?`).all(eid);
+  for (const pr of prs) {
+    if (roundMoney(pr.paid_amount_ngn) > 0) {
+      return {
+        ok: false,
+        error: `Expense ${eid} is linked to ${pr.request_id}, which already has treasury payments. Reversal is required before delete.`,
+      };
+    }
+  }
+
+  try {
+    const expenseDate = String(exp.date || '').trim() || new Date().toISOString().slice(0, 10);
+    assertPeriodOpen(db, expenseDate, 'Delete expense (rollout)');
+    db.transaction(() => {
+      for (const pr of prs) {
+        db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`).run(
+          pr.request_id
+        );
+        db.prepare(`DELETE FROM payment_requests WHERE request_id = ?`).run(pr.request_id);
+      }
+      db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`).run(eid);
+      db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);
+      appendAuditLog(db, {
+        actor,
+        action: 'expense.delete_rollout',
+        entityKind: 'expense',
+        entityId: eid,
+        note: 'Temporary rollout delete',
+        details: { paymentRequestsRemoved: prs.length },
+      });
+    })();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Rollout-only: delete an unpaid payment request row and its placeholder expense when no other requests reference it.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function deletePaymentRequestRolloutDup(db, requestId, actor) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return { ok: false, error: 'Request ID is required.' };
+  const pr = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
+  if (!pr) return { ok: false, error: 'Payment request not found.' };
+  if (roundMoney(pr.paid_amount_ngn) > 0) {
+    return { ok: false, error: 'This request has treasury payouts and cannot be deleted here.' };
+  }
+  const eid = String(pr.expense_id || '').trim();
+
+  try {
+    assertPeriodOpen(
+      db,
+      String(pr.request_date || '').trim() || new Date().toISOString().slice(0, 10),
+      'Delete payment request (rollout)'
+    );
+    db.transaction(() => {
+      db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'PAYMENT_REQUEST' AND source_id = ?`).run(rid);
+      db.prepare(`DELETE FROM payment_requests WHERE request_id = ?`).run(rid);
+      if (eid) {
+        const others = db.prepare(`SELECT COUNT(*) AS c FROM payment_requests WHERE expense_id = ?`).get(eid);
+        if (!others || Number(others.c) === 0) {
+          db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`).run(eid);
+          db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);
+        }
+      }
+      appendAuditLog(db, {
+        actor,
+        action: 'payment_request.delete_rollout',
+        entityKind: 'payment_request',
+        entityId: rid,
+        note: 'Temporary rollout delete',
+        details: { expenseId: eid || null },
+      });
+    })();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 export function transferTreasuryFunds(db, payload) {
   const fromId = Number(payload.fromId);
   const toId = Number(payload.toId);

@@ -3816,6 +3816,30 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Rollout duplicate cleanup: unpaid expense + linked requests only (requires finance approval). */
+  app.delete('/api/expenses/:expenseId', requirePermission('finance.approve'), (req, res) => {
+    try {
+      const expenseId = String(req.params.expenseId || '').trim();
+      if (!expenseId) return res.status(400).json({ ok: false, error: 'Expense ID is required.' });
+      const row = db.prepare(`SELECT branch_id FROM expenses WHERE expense_id = ?`).get(expenseId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Expense not found.' });
+      const bid = String(row.branch_id || '').trim();
+      const wb = String(req.workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+      if (
+        bid &&
+        bid !== wb &&
+        !(Boolean(req.workspaceViewAll) && canUseAllBranchesRollup(req.user))
+      ) {
+        return res.status(403).json({ ok: false, error: 'Switch workspace branch to delete this expense.' });
+      }
+      const r = write.deleteExpenseRolloutDup(db, expenseId, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.put('/api/refunds', requirePermission('settings.view'), (req, res) => {
     try {
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'refunds_bulk', 'bulk', (stripped) => {
@@ -4431,6 +4455,37 @@ export function registerHttpApi(app, db) {
       }
     }
   );
+
+  /** Rollout duplicate cleanup: unpaid payment request and orphan placeholder expense (requires finance approval). */
+  app.delete('/api/payment-requests/:requestId/rollout-dup', requirePermission('finance.approve'), (req, res) => {
+    try {
+      const requestId = String(req.params.requestId || '').trim();
+      if (!requestId) return res.status(400).json({ ok: false, error: 'Request ID is required.' });
+      const row = db
+        .prepare(
+          `SELECT COALESCE(e.branch_id, '') AS branch_id
+           FROM payment_requests pr
+           LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+           WHERE pr.request_id = ?`
+        )
+        .get(requestId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Payment request not found.' });
+      const bid = String(row.branch_id || '').trim();
+      const wb = String(req.workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+      if (
+        bid &&
+        bid !== wb &&
+        !(Boolean(req.workspaceViewAll) && canUseAllBranchesRollup(req.user))
+      ) {
+        return res.status(403).json({ ok: false, error: 'Switch workspace branch to delete this request.' });
+      }
+      const r = write.deletePaymentRequestRolloutDup(db, requestId, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
 
   app.put('/api/finance/core', requirePermission('settings.view'), (req, res) => {
     try {

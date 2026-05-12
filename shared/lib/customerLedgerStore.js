@@ -157,6 +157,7 @@ export function recordReceiptWithQuotation({
   paymentMethod,
   bankReference,
   dateISO,
+  fullAmountAsReceipt,
 }) {
   const plan = planReceiptWithQuotation(loadLedgerEntries(), {
     customerID,
@@ -166,6 +167,7 @@ export function recordReceiptWithQuotation({
     paymentMethod,
     bankReference,
     dateISO,
+    fullAmountAsReceipt,
   });
   if (!plan.ok) return plan;
 

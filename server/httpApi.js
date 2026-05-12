@@ -5505,6 +5505,9 @@ export function registerHttpApi(app, db) {
         forceDuplicatePost,
         duplicateOverrideReason,
       } = req.body || {};
+      const fullAmountAsReceipt = Boolean(
+        req.body?.fullAmountAsReceipt ?? req.body?.full_amount_as_receipt
+      );
       const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
       if (!customerID || !quotationId) {
         return res.status(400).json({ ok: false, error: 'customerID and quotationId are required' });
@@ -5577,6 +5580,7 @@ export function registerHttpApi(app, db) {
         paymentMethod,
         bankReference: resolvedBankReference,
         dateISO,
+        fullAmountAsReceipt,
       });
       if (!plan.ok) return res.status(400).json(plan);
 
@@ -5636,6 +5640,7 @@ export function registerHttpApi(app, db) {
             receiptEntryId: parsed.receipt?.id ?? '',
             overpayEntryId: parsed.overpay?.id ?? '',
             amountNgn: Math.round(Number(amountNgn) || 0),
+            fullAmountAsReceipt,
             duplicateOverride:
               duplicateSignals.length > 0
                 ? {

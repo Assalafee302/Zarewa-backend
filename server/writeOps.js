@@ -2671,7 +2671,8 @@ export function setCoilLotLocation(db, coilNo, location, opts = {}) {
 
 /**
  * Correct coil master data (colour, gauge label, material description, GRN received kg).
- * Does not change live on-hand kg (`qty_remaining` / `current_weight_kg`); use coil control for mass adjustments.
+ * Optional `currentWeightKg` / `currentKg` sets absolute on-hand mass and applies the same raw SKU
+ * stock delta and coil-control events as ledger adjustments (when the value actually changes).
  */
 export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   const cn = String(coilNo || '').trim();
@@ -2682,12 +2683,15 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   if (!br.ok) return br;
 
   const b = body || {};
+  const prevRem0 = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
   const prev = {
     colour: row.colour ?? '',
     gaugeLabel: row.gauge_label ?? '',
     materialTypeName: row.material_type_name ?? '',
     qtyReceived: Number(row.qty_received) || 0,
     weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
+    qtyRemaining: prevRem0,
+    currentWeightKg: prevRem0,
   };
 
   const sets = [];
@@ -2724,12 +2728,117 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     next.weightKg = rk;
   }
 
-  if (!sets.length) {
-    return { ok: false, error: 'No fields to update. Send colour, gaugeLabel, materialTypeName, and/or receivedKg.' };
+  const wantsCurrent =
+    Object.prototype.hasOwnProperty.call(b, 'currentWeightKg') ||
+    Object.prototype.hasOwnProperty.call(b, 'currentKg');
+  let targetCurrent = null;
+  let massDelta = 0;
+  if (wantsCurrent) {
+    const raw = Object.prototype.hasOwnProperty.call(b, 'currentWeightKg') ? b.currentWeightKg : b.currentKg;
+    targetCurrent = Number(raw);
+    if (!Number.isFinite(targetCurrent) || targetCurrent < 0) {
+      return { ok: false, error: 'Current on-hand kg must be a non-negative number.' };
+    }
+    const qtyRes = Math.max(0, Number(row.qty_reserved) || 0);
+    if (targetCurrent + 1e-9 < qtyRes) {
+      return {
+        ok: false,
+        error: `Current on-hand kg cannot be below reserved kg (${qtyRes.toFixed(2)} kg).`,
+      };
+    }
+    massDelta = targetCurrent - prevRem0;
+    next.qtyRemaining = targetCurrent;
+    next.currentWeightKg = targetCurrent;
   }
 
-  args.push(cn);
-  db.prepare(`UPDATE coil_lots SET ${sets.join(', ')} WHERE coil_no = ?`).run(...args);
+  const didMass = wantsCurrent && Math.abs(massDelta) > 1e-9;
+
+  if (!sets.length && !wantsCurrent) {
+    return {
+      ok: false,
+      error: 'No fields to update. Send colour, gaugeLabel, materialTypeName, receivedKg, and/or currentWeightKg.',
+    };
+  }
+  if (!sets.length && wantsCurrent && !didMass) {
+    return { ok: true, coilNo: cn, ...next };
+  }
+
+  const dateISO = String(b.dateISO || '').trim() || new Date().toISOString().slice(0, 10);
+  if (didMass) {
+    try {
+      assertPeriodOpen(db, dateISO, 'Coil on-hand kg correction date');
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
+  }
+
+  try {
+    db.transaction(() => {
+      if (sets.length) {
+        db.prepare(`UPDATE coil_lots SET ${sets.join(', ')} WHERE coil_no = ?`).run(...args, cn);
+      }
+
+      if (didMass) {
+        const productID = String(row.product_id || '').trim();
+        if (!productID) throw new Error('Coil product id missing.');
+
+        db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
+          targetCurrent,
+          targetCurrent,
+          cn
+        );
+        finalizeCoilLotStateTx(db, cn);
+
+        if (massDelta > 0) {
+          db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(massDelta, productID);
+          appendMovementTx(db, {
+            type: 'COIL_RETURN',
+            productID,
+            qty: massDelta,
+            ref: cn,
+            dateISO,
+            detail: `Master data: on-hand kg +${massDelta.toFixed(3)} kg`,
+          });
+        } else {
+          const rem = -massDelta;
+          db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(rem, productID);
+          const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
+          if (!p || Number(p.stock_level) < -1e-6) {
+            throw new Error('Raw material product stock would go negative — check coil vs book stock.');
+          }
+          appendMovementTx(db, {
+            type: 'COIL_SCRAP',
+            productID,
+            qty: -rem,
+            ref: cn,
+            dateISO,
+            detail: `Master data: on-hand kg −${rem.toFixed(3)} kg`,
+          });
+        }
+
+        const fr = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(cn);
+        insertCoilControlEventTx(db, {
+          branchId: String(fr.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+          eventKind: massDelta > 0 ? 'adjust_add_kg' : 'adjust_remove_kg',
+          coilNo: cn,
+          productId: productID,
+          gaugeLabel: fr.gauge_label,
+          colour: fr.colour,
+          meters: null,
+          kgCoilDelta: massDelta,
+          scrapReason:
+            massDelta > 0 ? 'Master data: on-hand kg increase' : 'Master data: on-hand kg decrease',
+          note: null,
+          dateIso: dateISO,
+          creditScrapInventory: false,
+          actorUserId: actorId(opts.actor),
+          actorDisplay: actorName(opts.actor),
+        });
+      }
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 
   appendAuditLog(db, {
     actor: opts.actor,

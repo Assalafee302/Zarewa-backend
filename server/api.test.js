@@ -2129,6 +2129,38 @@ describe.sequential('Zarewa API', () => {
     expect(denied.status).toBe(403);
   });
 
+  it('coil-lots PATCH master-data can set current on-hand kg with stock and control events', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const boot0 = await mgr.get('/api/bootstrap');
+    const lot0 = boot0.body.coilLots.find((c) => c.coilNo === coilA);
+    const prod0 = boot0.body.products.find((p) => p.productID === 'COIL-ALU');
+    expect(lot0).toBeTruthy();
+    expect(prod0).toBeTruthy();
+    const stock0 = Number(prod0.stockLevel);
+    const rem0 = Number(lot0.currentWeightKg || lot0.qtyRemaining);
+    const patch = await mgr.patch(`/api/coil-lots/${encodeURIComponent(coilA)}/master-data`).send({
+      colour: lot0.colour,
+      gaugeLabel: lot0.gaugeLabel,
+      materialTypeName: lot0.materialTypeName,
+      currentWeightKg: rem0 - 25,
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body.ok).toBe(true);
+
+    const boot1 = await mgr.get('/api/bootstrap');
+    const lot1 = boot1.body.coilLots.find((c) => c.coilNo === coilA);
+    const prod1 = boot1.body.products.find((p) => p.productID === 'COIL-ALU');
+    expect(Number(lot1.currentWeightKg)).toBeCloseTo(rem0 - 25, 2);
+    expect(Number(prod1.stockLevel)).toBeCloseTo(stock0 - 25, 2);
+    const ev = boot1.body.coilControlEvents.find(
+      (e) => e.eventKind === 'adjust_remove_kg' && e.coilNo === coilA
+    );
+    expect(ev).toBeTruthy();
+    expect(Number(ev.kgCoilDelta)).toBeCloseTo(-25, 2);
+  });
+
   it('one coil can back two production jobs with separate allocations', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'Shared Coil Supplier', city: 'Abuja' });
     expect(sup.status).toBe(201);

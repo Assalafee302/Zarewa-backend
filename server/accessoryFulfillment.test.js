@@ -5,7 +5,11 @@ import { describe, it, expect, afterAll } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
-import { buildAccessorySuppliedLookup, resolveSuppliedQtyFromPayloadMaps } from './accessoryFulfillment.js';
+import {
+  accessoryNameMatchParamVariants,
+  buildAccessorySuppliedLookup,
+  resolveSuppliedQtyFromPayloadMaps,
+} from './accessoryFulfillment.js';
 
 const openDbs = [];
 
@@ -100,6 +104,15 @@ describe('Accessory fulfillment', () => {
   afterAll(() => {
     for (const db of openDbs) db.close();
     openDbs.length = 0;
+  });
+
+  it('name variants cover singular/plural accessory labels for payload + rollup', () => {
+    expect(new Set(accessoryNameMatchParamVariants('Drive screw nail'))).toEqual(
+      new Set(['drive screw nail', 'drive screw nails'])
+    );
+    const maps = buildAccessorySuppliedLookup([{ name: 'Drive screw nails', suppliedQty: 7, quoteLineId: '' }]);
+    const line = { quoteLineId: 'SQI-DS', name: 'Drive screw nail', orderedQty: 12, unitPriceNgn: 100 };
+    expect(resolveSuppliedQtyFromPayloadMaps(line, maps, 0)).toBe(7);
   });
 
   it('payload maps: stale quoteLineId still resolves supplied qty by accessory name (case-insensitive)', () => {

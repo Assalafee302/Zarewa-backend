@@ -53,6 +53,22 @@ export function normAccessoryNameKey(s) {
 }
 
 /**
+ * SQL equality params for `LOWER(TRIM(u.name))` so minor label drift still rolls up
+ * (e.g. "Drive screw nail" on quote vs "Drive screw nails" on usage rows).
+ */
+export function accessoryNameMatchParamVariants(name) {
+  const base = normAccessoryNameKey(name);
+  if (!base) return [];
+  const v = new Set([base]);
+  if (base.length > 2 && base.endsWith('s') && !base.endsWith('ss')) {
+    v.add(base.slice(0, -1));
+  } else if (base.length > 0 && !base.endsWith('s')) {
+    v.add(base + 's');
+  }
+  return [...v];
+}
+
+/**
  * Indexes `accessoriesSupplied` from completion / correction payloads.
  * When both `quoteLineId` and `name` are present, **both** are registered so a stale
  * client line id cannot prevent resolving the quantity by accessory name.
@@ -66,7 +82,11 @@ export function buildAccessorySuppliedLookup(accessoriesSupplied) {
     const sq = Number(e?.suppliedQty ?? e?.supplied_qty);
     if (!Number.isFinite(sq)) continue;
     if (qid) byLineId.set(qid, sq);
-    if (nm) byNameKey.set(normAccessoryNameKey(nm), sq);
+    if (nm) {
+      for (const vk of accessoryNameMatchParamVariants(nm)) {
+        byNameKey.set(vk, sq);
+      }
+    }
   }
   return { byLineId, byNameKey };
 }
@@ -80,10 +100,11 @@ export function resolveSuppliedQtyFromPayloadMaps(line, maps, remainingDefault) 
   const lineKey = line.quoteLineId || '';
   const stableKey = lineKey || `name:${line.name}`;
   const { byLineId, byNameKey } = maps;
-  const nk = normAccessoryNameKey(line.name);
   if (lineKey && byLineId.has(lineKey)) return Number(byLineId.get(lineKey));
   if (byLineId.has(stableKey)) return Number(byLineId.get(stableKey));
-  if (nk && byNameKey.has(nk)) return Number(byNameKey.get(nk));
+  for (const variant of accessoryNameMatchParamVariants(line.name)) {
+    if (variant && byNameKey.has(variant)) return Number(byNameKey.get(variant));
+  }
   return remainingDefault;
 }
 
@@ -112,8 +133,11 @@ export function sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey, op
     params.push(lineKey);
   }
   if (name) {
-    parts.push('LOWER(TRIM(u.name)) = LOWER(?)');
-    params.push(name);
+    const variants = accessoryNameMatchParamVariants(name);
+    if (variants.length) {
+      parts.push(`(${variants.map(() => 'LOWER(TRIM(u.name)) = ?').join(' OR ')})`);
+      params.push(...variants);
+    }
   }
 
   let sql = `SELECT COALESCE(SUM(u.supplied_qty), 0) AS s

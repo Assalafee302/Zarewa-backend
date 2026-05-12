@@ -565,7 +565,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
           code: 'substitution_list_price',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid || undefined,
-          message: `Quoted gauge (${quotedGaugeRaw}) vs coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}” — add a workbook (price list) row for that coil gauge + colour/design, or set substitutePricePerMeterNgn in preview.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. Add a **price list / workbook** row for the **coil** gauge (${coilGauge}) plus the design/colour the matcher uses (first product line on the quote, else FG product, else coil lot). Procurement → Material pricing workbook (sync to list), or Price list admin. Or use the refund form’s optional “Workbook ₦/m override” and refresh preview.`,
         });
       }
     }

@@ -36,6 +36,7 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { mergeSupplierProfilePatch, validateAndNormalizeSupplierProfile } from './supplierProfile.js';
 import {
   enrichSalesReceiptRowsWithCashFromLedger,
+  getQuotation,
   listLedgerEntries,
   listSalesReceipts,
   listCoilLots,
@@ -4362,6 +4363,161 @@ export function insertAdvanceInEvent(db, entry) {
 
 function reversalMarker(targetEntryId) {
   return `REVERSAL_OF:${targetEntryId}`;
+}
+
+/**
+ * Find OVERPAY_ADVANCE row posted with the same till metadata as a RECEIPT (split payment pair).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id: string, customer_id?: string, quotation_ref?: string, payment_method?: string|null, bank_reference?: string|null, at_iso?: string|null }} receiptRow
+ * @param {string} [explicitOverpayId]
+ */
+function resolveOverpaySiblingId(db, receiptRow, explicitOverpayId) {
+  const ex = String(explicitOverpayId || '').trim();
+  if (ex) {
+    const row = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'OVERPAY_ADVANCE'`).get(ex);
+    if (!row) return null;
+    if (String(row.customer_id || '') !== String(receiptRow.customer_id || '')) return null;
+    if (String(row.quotation_ref || '') !== String(receiptRow.quotation_ref || '')) return null;
+    return String(row.id);
+  }
+  const cid = String(receiptRow.customer_id || '').trim();
+  const qref = String(receiptRow.quotation_ref || '').trim();
+  const pm = String(receiptRow.payment_method ?? '').trim();
+  const br = String(receiptRow.bank_reference ?? '').trim();
+  const day = String(receiptRow.at_iso || '').slice(0, 10);
+  if (!cid || !qref || !day) return null;
+  const rows = db
+    .prepare(
+      `SELECT id, amount_ngn FROM ledger_entries
+       WHERE type = 'OVERPAY_ADVANCE' AND customer_id = ? AND quotation_ref = ?
+         AND TRIM(COALESCE(payment_method,'')) = ? AND TRIM(COALESCE(bank_reference,'')) = ?
+         AND substr(at_iso,1,10) = ?
+       ORDER BY id ASC`
+    )
+    .all(cid, qref, pm, br, day);
+  if (rows.length === 1) return String(rows[0].id);
+  return null;
+}
+
+/**
+ * Adjust RECEIPT vs OVERPAY_ADVANCE amounts for one split-till posting (cash total unchanged).
+ * Re-syncs quotation paid from receipts. Does not modify treasury movements.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ receiptLedgerId: string, overpayLedgerId?: string|null, newReceiptAmountNgn: number, actor?: object|null }} opts
+ */
+export function correctReceiptOverpaySplit(db, opts) {
+  const receiptLedgerId = String(opts?.receiptLedgerId || '').trim();
+  const newReceiptAmountNgn = roundMoney(opts?.newReceiptAmountNgn);
+  if (!receiptLedgerId) return { ok: false, error: 'receiptLedgerId is required.' };
+  if (!(newReceiptAmountNgn > 0)) return { ok: false, error: 'newReceiptAmountNgn must be a positive integer.' };
+
+  const receipt = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(receiptLedgerId);
+  if (!receipt) return { ok: false, error: 'RECEIPT ledger row not found.' };
+
+  const rev = db
+    .prepare(
+      `SELECT id FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL' AND (bank_reference = ? OR note LIKE ?)`
+    )
+    .get(reversalMarker(receiptLedgerId), `%${receiptLedgerId}%`);
+  if (rev) return { ok: false, error: 'This receipt has been reversed; do not adjust the split.' };
+
+  const qref = String(receipt.quotation_ref || '').trim();
+  if (!qref) return { ok: false, error: 'Receipt has no quotation_ref.' };
+
+  const overpayId = resolveOverpaySiblingId(db, receipt, opts?.overpayLedgerId);
+  if (!overpayId) {
+    return {
+      ok: false,
+      error:
+        'Could not find a unique OVERPAY_ADVANCE sibling for this receipt. Pass overpayLedgerId in the request body.',
+    };
+  }
+  const overRow = db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'OVERPAY_ADVANCE'`).get(overpayId);
+  if (!overRow) return { ok: false, error: 'OVERPAY_ADVANCE row not found.' };
+
+  const oldRec = roundMoney(receipt.amount_ngn);
+  const oldOver = roundMoney(overRow.amount_ngn);
+  const bundleTotal = oldRec + oldOver;
+  if (bundleTotal <= 0) return { ok: false, error: 'Invalid existing split amounts.' };
+
+  const newOver = roundMoney(bundleTotal - newReceiptAmountNgn);
+  if (newOver < 0) return { ok: false, error: 'newReceiptAmountNgn exceeds the combined RECEIPT + overpay total.' };
+
+  const qt = getQuotation(db, qref);
+  if (!qt) return { ok: false, error: 'Quotation not found.' };
+
+  const otherPaidRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND id != ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
+    )
+    .get(qref, receiptLedgerId);
+  const otherPaid = roundMoney(otherPaidRow?.s);
+  const totalQuote = roundMoney(qt.totalNgn);
+  const maxReceiptOnQuote = Math.max(0, totalQuote - otherPaid);
+  if (newReceiptAmountNgn > maxReceiptOnQuote) {
+    return {
+      ok: false,
+      error: `newReceiptAmountNgn ${newReceiptAmountNgn} exceeds what can be booked on this quotation (max ${maxReceiptOnQuote} after other receipts).`,
+    };
+  }
+
+  const adjDate = new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, adjDate, 'Receipt split correction');
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+
+  db.transaction(() => {
+    db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newReceiptAmountNgn, receiptLedgerId);
+    db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newOver, overpayId);
+    const freshRec = db.prepare(`SELECT * FROM ledger_entries WHERE id = ?`).get(receiptLedgerId);
+    upsertSalesReceiptForLedgerEntry(
+      db,
+      {
+        id: freshRec.id,
+        type: 'RECEIPT',
+        customerID: freshRec.customer_id,
+        customerName: freshRec.customer_name,
+        amountNgn: newReceiptAmountNgn,
+        atISO: freshRec.at_iso,
+        quotationRef: freshRec.quotation_ref,
+        paymentMethod: freshRec.payment_method,
+        branchId: freshRec.branch_id,
+      },
+      {
+        id: qt.id,
+        customer: qt.customer,
+        customer_name: qt.customer,
+        branchId: qt.branchId,
+      },
+      freshRec.branch_id || null
+    );
+    syncQuotationPaidFromLedger(db, qref);
+    appendAuditLog(db, {
+      actor: opts.actor,
+      action: 'ledger.correct_receipt_split',
+      entityKind: 'ledger_entry',
+      entityId: receiptLedgerId,
+      note: `Adjusted RECEIPT vs OVERPAY split for ${receiptLedgerId} (receipt ${oldRec}→${newReceiptAmountNgn}, overpay ${oldOver}→${newOver}).`,
+      details: { overpayLedgerId: overpayId, bundleTotal, quotationRef: qref },
+    });
+  })();
+
+  return {
+    ok: true,
+    receiptLedgerId,
+    overpayLedgerId: overpayId,
+    newReceiptAmountNgn,
+    newOverpayAmountNgn: newOver,
+    bundleTotal,
+    quotationRef: qref,
+    glNote:
+      'If CUSTOMER_RECEIPT_GL was posted for this receipt id, AR/cash journal amounts may need a manual adjusting entry to match the new receipt allocation.',
+  };
 }
 
 function parseReversalTarget(value) {

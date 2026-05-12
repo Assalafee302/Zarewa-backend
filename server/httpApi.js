@@ -5537,11 +5537,21 @@ export function registerHttpApi(app, db) {
         });
       }
 
+      // Recompute quotations.paid_ngn from sales_receipts + ADVANCE_APPLIED before planning
+      // RECEIPT vs OVERPAY_ADVANCE split. Otherwise a stale paid_ngn (manual patch, import drift,
+      // or missed sync) shrinks "balance due" and posts a smaller RECEIPT leg than operators expect.
+      write.syncQuotationPaidFromLedger(db, quotationId);
+      const qtSynced = getQuotation(db, quotationId);
+      if (!qtSynced) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      if (qtSynced.customerID !== customerID) {
+        return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
+      }
+
       const entries = listLedgerEntries(db, branchScope);
       const plan = planReceiptWithQuotation(entries, {
         customerID,
         customerName: customerName || cust.name,
-        quotationRow: qt,
+        quotationRow: qtSynced,
         amountNgn,
         paymentMethod,
         bankReference: resolvedBankReference,
@@ -5567,7 +5577,7 @@ export function registerHttpApi(app, db) {
         );
         for (const row of posted) {
           if (row.type === 'RECEIPT') {
-            write.upsertSalesReceiptForLedgerEntry(db, row, qt, wb);
+            write.upsertSalesReceiptForLedgerEntry(db, row, qtSynced, wb);
           }
         }
         const parsed = receiptResultFromSavedRows(posted);
@@ -5578,7 +5588,7 @@ export function registerHttpApi(app, db) {
             customerName: customerName || cust.name,
             dateISO,
             reference: resolvedBankReference,
-            note: parsed.overpay ? `Receipt ${qt.id} with overpayment to advance` : `Receipt ${qt.id}`,
+            note: parsed.overpay ? `Receipt ${qtSynced.id} with overpayment to advance` : `Receipt ${qtSynced.id}`,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
           });
@@ -5800,6 +5810,37 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Failed to reverse receipt' });
     }
   });
+
+  /**
+   * Finance: fix RECEIPT vs OVERPAY_ADVANCE split for one till posting (total cash unchanged).
+   * Example: move receipt from ₦2,662,800 to ₦3,336,000 and overpay from ₦2,337,200 to ₦1,664,000 on a ₦5M bundle.
+   */
+  app.post(
+    '/api/ledger/correct-receipt-split',
+    requirePermission(['finance.reverse', 'finance.approve']),
+    (req, res) => {
+      try {
+        if (req.body?.confirm !== true) {
+          return res.status(400).json({
+            ok: false,
+            error:
+              'Send JSON { "confirm": true, "receiptLedgerId": "LE-…", "newReceiptAmountNgn": 3336000 } (optional overpayLedgerId if multiple siblings).',
+          });
+        }
+        const { receiptLedgerId, newReceiptAmountNgn, overpayLedgerId } = req.body || {};
+        const r = write.correctReceiptOverpaySplit(db, {
+          receiptLedgerId: String(receiptLedgerId || '').trim(),
+          overpayLedgerId: overpayLedgerId != null ? String(overpayLedgerId).trim() : null,
+          newReceiptAmountNgn: Math.round(Number(newReceiptAmountNgn) || 0),
+          actor: req.user,
+        });
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e?.message || e) });
+      }
+    }
+  );
 
   app.post('/api/ledger/reverse-advance', requirePermission('finance.reverse'), (req, res) => {
     try {

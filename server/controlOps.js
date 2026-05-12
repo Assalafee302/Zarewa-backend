@@ -1532,34 +1532,35 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           payee_name, payee_account_no, payee_bank_name, branch_id
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
-        refundID,
-        customerID,
-        String(payload.customer ?? payload.customerName ?? quotationCustomerName ?? '').trim(),
-        quotationRef,
-        String(payload.cuttingListRef ?? '').trim(),
-        product,
-        reasonCategory,
-        String(payload.reason ?? '').trim(),
-        amountNgn,
-        JSON.stringify(payload.calculationLines || []),
-        JSON.stringify(payload.suggestedLines || payload.calculationLines || []),
-        previewSnapshotJson,
-        String(payload.calculationNotes ?? '').trim(),
-        'Pending',
-        actorName(actor),
-        actorId(actor),
-        requestedAtISO,
-        '',
-        '',
-        0,
-        '',
-        0,
-        '',
-        '',
-        payeeName,
-        payeeAccountNo,
-        payeeBankName,
-        String(branchId || DEFAULT_BRANCH_ID).trim()
+        refundID,                                                                                                  // refund_id
+        customerID,                                                                                                // customer_id
+        String(payload.customer ?? payload.customerName ?? quotationCustomerName ?? '').trim(),                    // customer_name
+        quotationRef,                                                                                              // quotation_ref
+        String(payload.cuttingListRef ?? '').trim(),                                                               // cutting_list_ref
+        product,                                                                                                   // product
+        reasonCategory,                                                                                            // reason_category
+        String(payload.reason ?? '').trim(),                                                                       // reason
+        amountNgn,                                                                                                 // amount_ngn
+        JSON.stringify(payload.calculationLines || []),                                                            // calculation_lines_json
+        JSON.stringify(payload.suggestedLines || payload.calculationLines || []),                                  // suggested_lines_json
+        previewSnapshotJson,                                                                                       // preview_snapshot_json
+        String(payload.calculationNotes ?? '').trim(),                                                             // calculation_notes
+        'Pending',                                                                                                 // status
+        actorName(actor),                                                                                          // requested_by
+        actorId(actor),                                                                                            // requested_by_user_id
+        requestedAtISO,                                                                                            // requested_at_iso
+        '',                                                                                                        // approval_date
+        '',                                                                                                        // approved_by
+        0,                                                                                                         // approved_amount_ngn
+        '',                                                                                                        // manager_comments
+        0,                                                                                                         // paid_amount_ngn
+        '',                                                                                                        // paid_at_iso
+        '',                                                                                                        // paid_by
+        '',                                                                                                        // payment_note
+        payeeName,                                                                                                 // payee_name
+        payeeAccountNo,                                                                                            // payee_account_no
+        payeeBankName,                                                                                             // payee_bank_name
+        String(branchId || DEFAULT_BRANCH_ID).trim()                                                               // branch_id
       );
       appendAuditLog(db, {
         actor,

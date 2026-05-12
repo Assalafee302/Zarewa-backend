@@ -32,7 +32,7 @@ import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequ
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
-import { pricingPolicyNumbersForServiceLine } from './pricingPolicyResolve.js';
+import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -347,56 +347,86 @@ function normKeyPriceList(s) {
     .replace(/\s+/g, ' ');
 }
 
+/**
+ * Workbook / material sheet sync often stores `gauge_key` as numeric mm (`0.24`); coils use `0.24mm`.
+ * Return normalized keys to try against `price_list_items.gauge_key`.
+ */
+function gaugeKeyLookupCandidates(gaugeRaw) {
+  const seen = new Set();
+  const add = (x) => {
+    const k = normKeyPriceList(String(x ?? '').trim());
+    if (k) seen.add(k);
+  };
+  const raw = String(gaugeRaw ?? '').trim();
+  if (!raw) return [];
+  add(raw);
+  const mm = firstGaugeMmFromLabel(raw);
+  if (mm != null && Number.isFinite(mm)) {
+    add(`${mm}mm`);
+    add(`${mm} mm`);
+    add(String(mm));
+  }
+  return [...seen];
+}
+
 /** Published list ₦/m for gauge + design (same rules as `pricingOps.floorPricePerMeterForGaugeDesign`; inlined to avoid circular imports). */
 function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
-  const g = normKeyPriceList(gaugeRaw);
   const d = normKeyPriceList(designRaw);
-  if (!g || !d) return null;
+  if (!d) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
-  try {
-    const scored = resolvePriceListItemFloorNgn(db, {
-      gaugeLabel: g,
-      designLabel: d,
-      colourName: d,
-      profileName: '',
-      materialTypeName: '',
-      branchId: bid,
-    });
-    if (scored?.unitPricePerMeterNgn) return scored.unitPricePerMeterNgn;
-  } catch {
-    /* Floor resolver must not block direct price_list_items lookup (e.g. legacy DB quirks). */
+  const gaugeKeys = gaugeKeyLookupCandidates(gaugeRaw);
+  if (!gaugeKeys.length) return null;
+
+  for (const g of gaugeKeys) {
+    try {
+      const scored = resolvePriceListItemFloorNgn(db, {
+        gaugeLabel: g,
+        designLabel: d,
+        colourName: d,
+        profileName: '',
+        materialTypeName: '',
+        branchId: bid,
+      });
+      if (scored?.unitPricePerMeterNgn) return scored.unitPricePerMeterNgn;
+    } catch {
+      /* Floor resolver must not block direct price_list_items lookup (e.g. legacy DB quirks). */
+    }
+    try {
+      const row = db
+        .prepare(
+          `SELECT unit_price_per_meter_ngn FROM price_list_items
+           WHERE gauge_key = ? AND design_key = ? AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)
+           ORDER BY CASE WHEN branch_id IS NOT NULL THEN 0 ELSE 1 END,
+                    COALESCE(effective_from_iso, '') DESC,
+                    sort_order ASC
+           LIMIT 1`
+        )
+        .get(g, d, bid, bid);
+      if (row) {
+        const n = Math.round(Number(row.unit_price_per_meter_ngn) || 0);
+        if (n > 0) return n;
+      }
+    } catch {
+      /* ignore */
+    }
   }
-  try {
-    const row = db
-      .prepare(
-        `SELECT unit_price_per_meter_ngn FROM price_list_items
-         WHERE gauge_key = ? AND design_key = ? AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)
-         ORDER BY CASE WHEN branch_id IS NOT NULL THEN 0 ELSE 1 END,
-                  COALESCE(effective_from_iso, '') DESC,
-                  sort_order ASC
-         LIMIT 1`
-      )
-      .get(g, d, bid, bid);
-    if (!row) return null;
-    return Math.round(Number(row.unit_price_per_meter_ngn) || 0) || null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /** Minimum workbook ₦/m for a gauge across all design_key rows (branch filter). Used when design/colour strings do not match any design_key. */
 function listPricePerMeterMinForGaugeAcrossDesigns(db, gaugeRaw, branchId) {
-  const g = normKeyPriceList(gaugeRaw);
-  if (!g) return null;
+  const gaugeKeys = gaugeKeyLookupCandidates(gaugeRaw);
+  if (!gaugeKeys.length) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
+  const placeholders = gaugeKeys.map(() => '?').join(', ');
   try {
     const row = db
       .prepare(
         `SELECT MIN(unit_price_per_meter_ngn) AS m FROM price_list_items
-         WHERE gauge_key = ? AND COALESCE(unit_price_per_meter_ngn, 0) > 0
+         WHERE gauge_key IN (${placeholders}) AND COALESCE(unit_price_per_meter_ngn, 0) > 0
            AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)`
       )
-      .get(g, bid, bid, bid);
+      .get(...gaugeKeys, bid, bid, bid);
     const m = row?.m != null ? Math.round(Number(row.m) || 0) : 0;
     return m > 0 ? m : null;
   } catch {
@@ -466,6 +496,29 @@ function producedGaugeLabelFromJobCoils(db, jobId) {
   return '';
 }
 
+/** Include `pricing_profile_aliases` canonical design when resolving workbook rows. */
+function expandedDesignKeysForWorkbook(db, designLabelRaw) {
+  const seen = new Set();
+  const out = [];
+  const add = (s) => {
+    const k = normKeyPriceList(String(s ?? '').trim());
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(k);
+  };
+  add(designLabelRaw);
+  const base = normKeyPriceList(String(designLabelRaw ?? '').trim());
+  if (base) {
+    try {
+      const canon = resolveAliasForDesign(db, base);
+      if (canon) add(canon);
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
+}
+
 /**
  * Workbook list ₦/m for steel actually used: **allocated coil gauge** + design/colour
  * (quotation header/lines + first line gauge/design, then FG product card, then allocation colour). No product-name logic.
@@ -477,9 +530,11 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
   if (!coilGauge) return null;
 
-  for (const d of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
-    const v = listPricePerMeterFromGaugeDesign(db, coilGauge, d, branchId);
-    if (v != null && v > 0) return v;
+  for (const dRaw of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
+    for (const dKey of expandedDesignKeysForWorkbook(db, dRaw)) {
+      const v = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+      if (v != null && v > 0) return v;
+    }
   }
 
   const pid = String(job?.product_id ?? '').trim();
@@ -505,8 +560,10 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
         row.colour || extra.colour || row.material_type || extra.materialType || extra.profile || ''
       ).trim();
       if (designFromProduct) {
-        const v = listPricePerMeterFromGaugeDesign(db, coilGauge, designFromProduct, branchId);
-        if (v != null && v > 0) return v;
+        for (const dKey of expandedDesignKeysForWorkbook(db, designFromProduct)) {
+          const v = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+          if (v != null && v > 0) return v;
+        }
       }
     }
   }
@@ -523,8 +580,10 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
       .get(String(job?.job_id ?? '').trim());
     const col = String(cl?.c ?? '').trim();
     if (col) {
-      const viaLot = listPricePerMeterFromGaugeDesign(db, coilGauge, col, branchId);
-      if (viaLot != null && viaLot > 0) return viaLot;
+      for (const dKey of expandedDesignKeysForWorkbook(db, col)) {
+        const viaLot = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+        if (viaLot != null && viaLot > 0) return viaLot;
+      }
     }
   } catch {
     /* ignore */

@@ -11,7 +11,7 @@ function normKey(s) {
 }
 
 /** Portable check (SQLite + MySQL); avoid sqlite_master on MySQL. */
-function canReadPriceListItems(db) {
+export function canReadPriceListItems(db) {
   try {
     db.prepare(`SELECT 1 FROM price_list_items LIMIT 1`).get();
     return true;

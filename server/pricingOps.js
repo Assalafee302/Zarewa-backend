@@ -6,6 +6,7 @@ import {
   normKey as policyNormKey,
   pricingPolicyNumbersForServiceLine,
 } from './pricingPolicyResolve.js';
+import { canReadPriceListItems } from './pricingResolve.js';
 
 function normKey(s) {
   return policyNormKey(s);
@@ -50,7 +51,7 @@ export function defaultPriceListEffectiveFromIso() {
  * @param {string | null} excludeId
  */
 export function findDuplicatePriceListItem(db, keys, excludeId) {
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list_items'`).get()) {
+  if (!canReadPriceListItems(db)) {
     return null;
   }
   const ex = excludeId && String(excludeId).trim() ? String(excludeId).trim() : null;
@@ -259,7 +260,7 @@ export function quotationPriceViolations(db, quoteRow) {
  * @param {import('better-sqlite3').Database} db
  */
 export function listPriceListItems(db) {
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list_items'`).get()) {
+  if (!canReadPriceListItems(db)) {
     return [];
   }
   return db

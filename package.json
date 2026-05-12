@@ -8,6 +8,7 @@
     "server": "node server/index.js",
     "start": "node server/index.js",
     "start:lan": "node scripts/start-lan.mjs",
+    "diagnose:substitution": "node scripts/diagnose-substitution-trace.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:sync-opening-coils": "node scripts/sync-opening-coil-register-mysql.mjs",
     "db:wipe": "node scripts/wipe-local-mysql.mjs",

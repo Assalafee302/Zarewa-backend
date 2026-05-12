@@ -305,7 +305,7 @@ function firstQuotedProductGaugeDesign(linesJson) {
   if (!Array.isArray(prods)) return null;
   for (const p of prods) {
     if (!String(p?.name ?? '').trim()) continue;
-    const gauge = String(p?.materialGauge ?? p?.gauge ?? '').trim();
+    const gauge = String(p?.materialGauge ?? p?.material_gauge ?? p?.gauge ?? '').trim();
     const design = String(
       p?.materialDesign ?? p?.design ?? p?.materialColor ?? p?.colour ?? p?.color ?? ''
     ).trim();
@@ -1522,6 +1522,87 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
   }
 }
 
+/**
+ * Explains substitution preview per production job (same branching as {@link previewRefundRequest}).
+ * Used when `payload.substitutionDiagnosis` is true — not returned over HTTP by default callers.
+ */
+function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm) {
+  const qNames = quotedProductNamesLower(quote?.lines_json ?? '');
+  const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+  const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
+  const jobs = [];
+  for (const j of productionJobs) {
+    const pn = String(j.product_name ?? '').trim().toLowerCase();
+    const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
+    const match = pn ? qNames.some((qn) => pn.includes(qn) || qn.includes(pn)) : false;
+    let shouldCompute = !match;
+    if (!shouldCompute && quotedGaugeRaw && fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
+      shouldCompute = true;
+    }
+    const m = Number(j.actual_meters) || 0;
+    const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
+
+    let outcome = 'UNKNOWN';
+    let producedPpm = null;
+    let deltaPpm = null;
+
+    if (!pn) {
+      outcome = 'SKIP_EMPTY_JOB_PRODUCT_NAME';
+    } else if (!shouldCompute) {
+      outcome =
+        'SKIP_NAME_MATCHES_QUOTE_AND_GAUGE_OK — production FG name matches a quotation product line name, and (no quoted gauge or physical gauge unknown or gauges within 0.02mm).';
+    } else if (!pricePerMeter) {
+      outcome =
+        'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice on roof lines), and no pricePerMeterNgn override.';
+    } else if (m <= 0) {
+      outcome =
+        'SKIP_ZERO_ACTUAL_METRES — job.actual_meters is 0 (if metres were corrected post-completion, check completion adjustments / effective metres on the job row in your DB build).';
+    } else {
+      const ppm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGd, overrideSubPpm);
+      producedPpm = ppm;
+      if (ppm == null || ppm <= 0) {
+        outcome =
+          'SKIP_NO_LIST_PRICE_FOR_PRODUCED — workbook list ₦/m could not be resolved for this FG + coil gauge/colour (see price_list_items and product gauge/colour).';
+      } else {
+        deltaPpm = pricePerMeter - ppm;
+        if (deltaPpm <= 0) {
+          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above produced list ₦/m (${ppm}); automatic credit is zero.`;
+        } else {
+          outcome = `CREDIT — Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
+        }
+      }
+    }
+
+    jobs.push({
+      jobId: j.job_id,
+      jobLabel,
+      productName: j.product_name ?? '',
+      productId: j.product_id ?? '',
+      jobStatus: j.status ?? '',
+      actualMetersOnJobRow: m,
+      quoteProductNameMatch: match,
+      quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
+      producedPhysicalGauge: fgGaugeRaw || null,
+      gaugeDiffersBeyondTolerance0p02mm: Boolean(
+        quotedGaugeRaw && fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)
+      ),
+      shouldEnterSubstitutionCreditPath: shouldCompute,
+      quotedBlendedPpmRounded: pricePerMeter != null ? Math.round(pricePerMeter) : null,
+      producedListPpm: producedPpm,
+      deltaPpm: deltaPpm != null ? Math.round(deltaPpm) : null,
+      outcome,
+    });
+  }
+  return {
+    quotedProductNamesLower: qNames,
+    quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
+    firstQuotedProductGaugeDesign: quotedGd,
+    branchId,
+    jobs,
+  };
+}
+
 export function previewRefundRequest(db, payload) {
   const quotationRef = String(payload.quotationRef ?? '').trim();
   const quote = quotationRef
@@ -1984,6 +2065,70 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
+  let substitutionDiagnosis = null;
+  if (Boolean(payload.substitutionDiagnosis) && quotationRef && quote) {
+    let cuttingLists = [];
+    try {
+      cuttingLists = db
+        .prepare(`SELECT * FROM cutting_lists WHERE quotation_ref = ? ORDER BY date_iso DESC`)
+        .all(quotationRef);
+    } catch {
+      cuttingLists = [];
+    }
+    const lj = String(quote.lines_json || '');
+    substitutionDiagnosis = {
+      quotationId: quotationRef,
+      customerId: quote.customer_id,
+      customerName: quote.customer_name,
+      quotationStatus: quote.status,
+      paymentStatus: quote.payment_status,
+      totalNgn: quote.total_ngn,
+      paidNgn: quote.paid_ngn,
+      branchId: quote.branch_id,
+      linesJsonChars: lj.length,
+      linesJsonPreview: lj.length > 6000 ? `${lj.slice(0, 6000)}…` : lj,
+      materialDelivered,
+      blockedRefundCategoriesSnapshot: [...blockedRefundCategories],
+      substitutionCategoryAlreadyInRefund: refundedCategories.has('Substitution Difference'),
+      receipts: receipts.map((r) => ({
+        id: r.id,
+        amountNgn: roundMoney(r.amount_ngn),
+        status: r.status,
+        dateIso: r.date_iso,
+      })),
+      cuttingLists,
+      refunds: existingRefunds.map((r) => ({
+        refundId: r.refund_id,
+        status: r.status,
+        amountNgn: r.amount_ngn,
+        reasonCategory: r.reason_category,
+      })),
+      terminalProductionJobCount: productionJobs.length,
+      previewPricePerMeterUsed: pricePerMeter != null ? Math.round(pricePerMeter) : null,
+      blendedRoofingSheetPpmOnly: (() => {
+        const x = quotedRoofingSheetAmountPerMeter(quote?.lines_json);
+        return x != null ? Math.round(x) : null;
+      })(),
+      blendedAllProductLinesPpm: (() => {
+        const x = quotedAmountPerMeter(quote?.lines_json);
+        return x != null ? Math.round(x) : null;
+      })(),
+      substitution: buildSubstitutionJobDiagnosis(
+        db,
+        quote,
+        productionJobs,
+        pricePerMeter,
+        positiveNumber(payload.substitutePricePerMeterNgn)
+      ),
+      substitutionPerMeterBreakdown,
+      suggestedLinesSubstitution: suggestedLines.filter((l) => l.category === 'Substitution Difference'),
+      warningsSubstitutionRelated: warnings.filter(
+        (w) => /substitution/i.test(w) || /gauge/i.test(w) || /list ₦\/m/i.test(w)
+      ),
+      dataQualityIssues: refundSubstitutionDataQualityIssues(db, quotationRef),
+    };
+  }
+
   return {
     ok: true,
     preview: {
@@ -2006,6 +2151,7 @@ export function previewRefundRequest(db, payload) {
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,
       eligibleRefundCategories,
+      ...(substitutionDiagnosis ? { substitutionDiagnosis } : {}),
     },
   };
 }

@@ -21,6 +21,17 @@ describe('quotedGaugeForSubstitution', () => {
     expect(quotedGaugeLabelForSubstitutionComparison(lines)).toBe('0.22mm');
   });
 
+  it('reads material_gauge (snake_case) like CuttingListModal', () => {
+    const lines = {
+      products: [
+        { name: 'Longspan', qty: '10', unitPrice: '5000', material_gauge: '0.28mm' },
+      ],
+      accessories: [],
+      services: [],
+    };
+    expect(quotedGaugeLabelForSubstitutionComparison(lines)).toBe('0.28mm');
+  });
+
   it('firstGaugeMmFromLabel parses leading number', () => {
     expect(firstGaugeMmFromLabel('0.24mm')).toBeCloseTo(0.24, 5);
     expect(firstGaugeMmFromLabel('')).toBe(null);

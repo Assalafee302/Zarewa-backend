@@ -10,6 +10,13 @@ export function firstGaugeMmFromLabel(label) {
   return m ? parseFloat(m[1]) : null;
 }
 
+/** Same field precedence as CuttingListModal / sales UI (camelCase + legacy snake_case). */
+export function gaugeLabelFromQuotationJsonNode(node) {
+  if (!node || typeof node !== 'object') return '';
+  const g = String(node.materialGauge ?? node.material_gauge ?? node.gauge ?? '').trim();
+  return g;
+}
+
 /**
  * @param {unknown} linesJson — object or JSON string (quotation `lines_json` shape)
  * @returns {string} best-effort gauge label, or '' if none
@@ -19,10 +26,11 @@ export function quotedGaugeLabelForSubstitutionComparison(linesJson) {
   try {
     const j = typeof linesJson === 'string' ? JSON.parse(linesJson || '{}') : linesJson;
     if (!j || typeof j !== 'object') return '';
-    if (typeof j.materialGauge === 'string' && j.materialGauge.trim()) labels.push(j.materialGauge.trim());
+    const headerG = gaugeLabelFromQuotationJsonNode(j);
+    if (headerG) labels.push(headerG);
     if (Array.isArray(j.products)) {
       for (const p of j.products) {
-        const g = String(p?.materialGauge ?? p?.gauge ?? '').trim();
+        const g = gaugeLabelFromQuotationJsonNode(p);
         if (g) labels.push(g);
       }
     }

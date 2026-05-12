@@ -1147,7 +1147,6 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const payload = dashboardSummary(db, branchScope, { recentLimit: 12 });
       const etag = `W/"${Buffer.from(JSON.stringify(payload)).toString('base64').slice(0, 64)}"`;
-      res.setHeader('Cache-Control', 'private, no-store');
       if (String(req.headers['if-none-match'] || '') === etag) {
         return res.status(304).end();
       }
@@ -1542,7 +1541,6 @@ export function registerHttpApi(app, db) {
               includeUsers,
               branchScope,
             });
-      res.setHeader('Cache-Control', 'private, no-store');
       res.json(payload);
     } catch (e) {
       console.error(e);

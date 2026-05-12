@@ -45,22 +45,43 @@ export function parseQuotationAccessoryLines(linesJson) {
 }
 
 /**
+ * Sum supplied accessory qty across completed jobs for a quotation line.
+ * Matches `quote_line_id` (stable key or legacy id) **or** the persisted usage `name`
+ * when ids on the quotation were regenerated but the label stayed the same.
+ *
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationRef
- * @param {string} quoteLineId
+ * @param {string} stableKey `quoteLineId` or `name:${name}` from the quotation JSON
+ * @param {{ lineKey?: string; name?: string; excludeJobId?: string }} [opts]
  */
-export function sumPriorAccessorySuppliedForLine(db, quotationRef, quoteLineId) {
+export function sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey, opts = {}) {
   const ref = String(quotationRef || '').trim();
-  const lid = String(quoteLineId || '').trim();
-  if (!ref || !lid) return 0;
-  const row = db
-    .prepare(
-      `SELECT COALESCE(SUM(u.supplied_qty), 0) AS s
-       FROM production_job_accessory_usage u
-       INNER JOIN production_jobs j ON j.job_id = u.job_id
-       WHERE u.quotation_ref = ? AND u.quote_line_id = ? AND j.status = 'Completed'`
-    )
-    .get(ref, lid);
+  const sk = String(stableKey || '').trim();
+  if (!ref || !sk) return 0;
+  const lineKey = String(opts.lineKey ?? '').trim();
+  const name = String(opts.name ?? '').trim();
+  const excludeJobId = String(opts.excludeJobId ?? '').trim();
+
+  const parts = ['u.quote_line_id = ?'];
+  const params = [ref, sk];
+  if (lineKey && lineKey !== sk) {
+    parts.push('u.quote_line_id = ?');
+    params.push(lineKey);
+  }
+  if (name) {
+    parts.push('LOWER(TRIM(u.name)) = LOWER(?)');
+    params.push(name);
+  }
+
+  let sql = `SELECT COALESCE(SUM(u.supplied_qty), 0) AS s
+     FROM production_job_accessory_usage u
+     INNER JOIN production_jobs j ON j.job_id = u.job_id
+     WHERE u.quotation_ref = ? AND j.status = 'Completed' AND (${parts.join(' OR ')})`;
+  if (excludeJobId) {
+    sql += ' AND u.job_id != ?';
+    params.push(excludeJobId);
+  }
+  const row = db.prepare(sql).get(...params);
   return Number(row?.s) || 0;
 }
 
@@ -130,7 +151,10 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
   for (const line of accessoryLines) {
     const lineKey = line.quoteLineId || '';
     const stableKey = lineKey || `name:${line.name}`;
-    const prior = sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey);
+    const prior = sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey, {
+      lineKey,
+      name: line.name,
+    });
     const remaining = Math.max(0, line.orderedQty - prior);
     let supplied;
     if (lineKey && byLineId.has(lineKey)) {
@@ -249,7 +273,10 @@ export function accessoryFulfillmentSummaryForQuotation(db, quotationRef) {
   for (const line of lines) {
     const lineKey = line.quoteLineId || '';
     const stableKey = lineKey || `name:${line.name}`;
-    const supplied = sumPriorAccessorySuppliedForLine(db, ref, stableKey);
+    const supplied = sumPriorAccessorySuppliedForLine(db, ref, stableKey, {
+      lineKey,
+      name: line.name,
+    });
     const shortfall = Math.max(0, line.orderedQty - supplied);
     out.push({
       quoteLineId: stableKey,

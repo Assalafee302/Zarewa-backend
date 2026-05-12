@@ -268,4 +268,77 @@ describe('Accessory fulfillment', () => {
     expect(bad.status).toBe(400);
     expect(String(bad.body.error || '')).toMatch(/exceeds remaining/i);
   });
+
+  it('refund intelligence: supplied rolls up by accessory name when quote line id changes after completion', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+    await agent.patch('/api/setup/quote-items/SQI-005').send({
+      itemType: 'accessory',
+      name: 'Tapping Screw',
+      unit: 'box',
+      defaultUnitPriceNgn: 0,
+      active: true,
+      sortOrder: 10,
+    });
+    await seedOneCoil(agent, 'CL-ACC-MIG', 2000);
+    const qref = await freshPaidQuotationWithAccessory(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: qref,
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-04-01',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 5 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 50,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: 'CL-ACC-MIG', openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-04-01' });
+    const allocId = alloc.body.allocations?.[0]?.id;
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-04-01',
+      allocations: [
+        {
+          allocationId: allocId,
+          coilNo: 'CL-ACC-MIG',
+          closingWeightKg: 400,
+          metersProduced: 100,
+          note: '',
+        },
+      ],
+      accessoriesSupplied: [{ quoteLineId: 'SQI-005', name: 'Tapping Screw', suppliedQty: 12 }],
+    });
+    expect(complete.status).toBe(200);
+
+    const patch = await agent.patch(`/api/quotations/${encodeURIComponent(qref)}`).send({
+      lines: {
+        products: [{ name: 'Roof line', qty: '10', unitPrice: '50000' }],
+        accessories: [{ id: 'LINE-NEW-ID', name: 'Tapping Screw', qty: '17', unitPrice: '1000' }],
+        services: [],
+      },
+    });
+    expect(patch.status).toBe(200);
+
+    const intel = await agent.get(`/api/refunds/intelligence?quotationRef=${encodeURIComponent(qref)}`);
+    expect(intel.status).toBe(200);
+    const lines = intel.body.summary?.accessoriesSummary?.lines || [];
+    const screw = lines.find((l) => String(l.name).includes('Tapping'));
+    expect(screw).toBeDefined();
+    expect(screw.supplied).toBe(12);
+    expect(screw.shortfall).toBe(5);
+  });
 });

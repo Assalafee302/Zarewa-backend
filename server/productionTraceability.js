@@ -3,7 +3,9 @@ import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
 import {
   applyAccessoryCompletionTx,
   parseQuotationAccessoryLines,
+  planAccessoryCompletion,
   resolveAccessoryInventoryProductId,
+  sumPriorAccessorySuppliedForLine,
 } from './accessoryFulfillment.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
@@ -12,7 +14,6 @@ import {
   isStoneMeterQuotationLinesJson,
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
-import { planAccessoryCompletion } from './accessoryFulfillment.js';
 import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
@@ -59,22 +60,6 @@ function isAccessoryInventoryProductId(productID) {
   return /^ACC-/i.test(String(productID || '').trim());
 }
 
-function sumPriorAccessorySuppliedForLineExcludingJob(db, quotationRef, quoteLineId, excludeJobId) {
-  const ref = String(quotationRef || '').trim();
-  const lid = String(quoteLineId || '').trim();
-  const ex = String(excludeJobId || '').trim();
-  if (!ref || !lid) return 0;
-  const row = db
-    .prepare(
-      `SELECT COALESCE(SUM(u.supplied_qty), 0) AS s
-       FROM production_job_accessory_usage u
-       INNER JOIN production_jobs j ON j.job_id = u.job_id
-       WHERE u.quotation_ref = ? AND u.quote_line_id = ? AND j.status = 'Completed' AND u.job_id != ?`
-    )
-    .get(ref, lid, ex);
-  return Number(row?.s) || 0;
-}
-
 function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
   const quotationRef = String(jobRow?.quotation_ref ?? '').trim();
   if (!quotationRef) return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
@@ -101,7 +86,11 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
   for (const line of accessoryLines) {
     const lineKey = line.quoteLineId || '';
     const stableKey = lineKey || `name:${line.name}`;
-    const prior = sumPriorAccessorySuppliedForLineExcludingJob(db, quotationRef, stableKey, jobId);
+    const prior = sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey, {
+      excludeJobId: jobId,
+      lineKey,
+      name: line.name,
+    });
     const remaining = Math.max(0, line.orderedQty - prior);
     let supplied;
     if (lineKey && byLineId.has(lineKey)) supplied = Number(byLineId.get(lineKey));

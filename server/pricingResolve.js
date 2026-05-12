@@ -10,6 +10,16 @@ function normKey(s) {
     .replace(/\s+/g, ' ');
 }
 
+/** Portable check (SQLite + MySQL); avoid sqlite_master on MySQL. */
+function canReadPriceListItems(db) {
+  try {
+    db.prepare(`SELECT 1 FROM price_list_items LIMIT 1`).get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {{
@@ -61,7 +71,7 @@ export function resolveSetupPriceListUnitNgn(db, ctx) {
  * @param {import('better-sqlite3').Database} db
  */
 export function resolvePriceListItemFloorNgn(db, ctx) {
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list_items'`).get()) {
+  if (!canReadPriceListItems(db)) {
     return null;
   }
   const g = normKey(ctx.gaugeLabel || ctx.gaugeId);

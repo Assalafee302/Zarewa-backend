@@ -78,7 +78,7 @@ function normQuoteProductLineName(name) {
     .replace(/\s+/g, ' ');
 }
 
-/** Matches `setup_quote_items` product rows except Roofing Sheet (see masterData DEFAULT_PRODUCT_ITEMS). */
+/** Matches `setup_quote_items` product rows except main roofing sheet metre lines (trim/accessories). Flat sheet is treated as main sheet metreage for refunds. */
 const REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES = new Set([
   'bargeboard',
   'top end',
@@ -91,7 +91,6 @@ const REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES = new Set([
   'bottom eaves',
   'fascia',
   'cladding',
-  'flat sheet',
   'offcut',
   'wall eaves',
   'crimp',
@@ -364,6 +363,10 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
       branchId: bid,
     });
     if (scored?.unitPricePerMeterNgn) return scored.unitPricePerMeterNgn;
+  } catch {
+    /* Floor resolver must not block direct price_list_items lookup (e.g. legacy DB quirks). */
+  }
+  try {
     const row = db
       .prepare(
         `SELECT unit_price_per_meter_ngn FROM price_list_items
@@ -376,6 +379,26 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
       .get(g, d, bid, bid);
     if (!row) return null;
     return Math.round(Number(row.unit_price_per_meter_ngn) || 0) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Minimum workbook ₦/m for a gauge across all design_key rows (branch filter). Used when design/colour strings do not match any design_key. */
+function listPricePerMeterMinForGaugeAcrossDesigns(db, gaugeRaw, branchId) {
+  const g = normKeyPriceList(gaugeRaw);
+  if (!g) return null;
+  const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT MIN(unit_price_per_meter_ngn) AS m FROM price_list_items
+         WHERE gauge_key = ? AND COALESCE(unit_price_per_meter_ngn, 0) > 0
+           AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)`
+      )
+      .get(g, bid, bid, bid);
+    const m = row?.m != null ? Math.round(Number(row.m) || 0) : 0;
+    return m > 0 ? m : null;
   } catch {
     return null;
   }
@@ -506,6 +529,8 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   } catch {
     /* ignore */
   }
+  const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId);
+  if (minAcross != null && minAcross > 0) return minAcross;
   return null;
 }
 

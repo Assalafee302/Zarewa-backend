@@ -130,7 +130,17 @@ function seedData(db) {
   ).run();
 
   const linesSub = JSON.stringify({
-    products: [{ name: 'Roofing Premium', qty: 20, unitPrice: 5000 }],
+    materialGauge: '0.28mm',
+    materialDesign: 'IV',
+    products: [
+      {
+        name: 'Roofing Premium',
+        qty: 20,
+        unitPrice: 5000,
+        gauge: '0.28mm',
+        design: 'IV',
+      },
+    ],
     accessories: [],
     services: [],
   });
@@ -148,6 +158,20 @@ function seedData(db) {
     `INSERT OR REPLACE INTO production_jobs (
       job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso
     ) VALUES ('JOB-RFS-SUB', 'QT-RFS-SUB-001', 'SUB-FG-TEST', 'Longspan economy', 10, 'Completed', '2026-04-01T10:00:00Z')`
+  ).run();
+  db.prepare(
+    `INSERT OR REPLACE INTO coil_lots (
+      coil_no, product_id, qty_received, qty_remaining, current_weight_kg, current_status, gauge_label, colour
+    ) VALUES ('CL-RFS-SUB-1', 'SUB-FG-TEST', 1000, 1000, 1000, 'Available', '0.24mm', 'IV')`
+  ).run();
+  db.prepare(
+    `INSERT OR REPLACE INTO production_job_coils (
+      id, job_id, sequence_no, coil_no, gauge_label, opening_weight_kg, closing_weight_kg, consumed_weight_kg,
+      meters_produced, allocation_status, allocated_at_iso
+    ) VALUES (
+      'PJC-RFS-SUB-1', 'JOB-RFS-SUB', 1, 'CL-RFS-SUB-1', '0.24mm',
+      100, 0, 100, 10, 'Completed', '2026-04-01T10:00:00Z'
+    )`
   ).run();
 }
 
@@ -622,7 +646,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(Array.isArray(res.body.dataQualityIssues)).toBe(true);
   });
 
-  it('GET /api/refunds/intelligence: quoted vs produced gauge mismatch when FG names match quotation', async () => {
+  it('GET /api/refunds/intelligence: substitution data quality when quoted gauge set but job has no coil allocations', async () => {
     const linesJson = JSON.stringify({
       materialGauge: '0.22mm',
       materialColor: 'Blue',
@@ -648,7 +672,7 @@ describe('Refund Security & Substitution Logic', () => {
     await loginAs(agent, 'sales.staff', 'Sales@123');
     const res = await agent.get('/api/refunds/intelligence').query({ quotationRef: 'QT-RFS-GG-MIS' });
     expect(res.status).toBe(200);
-    expect(res.body.dataQualityIssues.some((x) => x.code === 'quoted_vs_produced_gauge')).toBe(true);
+    expect(res.body.dataQualityIssues.some((x) => x.code === 'substitution_coil_gauge_missing')).toBe(true);
   });
 
   it('getEligibleRefundQuotations includes paid Void quotations without a production job', () => {

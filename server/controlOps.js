@@ -281,43 +281,6 @@ function sumQuotationLinesJsonFlexible(linesJson) {
   return roundMoney(s);
 }
 
-function quotedProductNamesLower(linesJson) {
-  let payload = linesJson;
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload || '{}');
-    } catch {
-      return [];
-    }
-  }
-  const prods = payload?.products;
-  if (!Array.isArray(prods)) return [];
-  return prods
-    .map((p) => String(p?.name ?? '').trim().toLowerCase())
-    .filter(Boolean);
-}
-
-/** When `lines_json` has no product names, use synced `quotation_lines` (same as writeOps sync). */
-function quotedProductNamesLowerWithFallback(db, quotationId, linesJson) {
-  const fromJson = quotedProductNamesLower(linesJson);
-  if (fromJson.length) return fromJson;
-  const qid = String(quotationId ?? '').trim();
-  if (!qid || !db) return [];
-  try {
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT TRIM(name) AS n FROM quotation_lines
-         WHERE quotation_id = ? AND category = 'products' AND TRIM(COALESCE(name, '')) != ''`
-      )
-      .all(qid);
-    return rows
-      .map((r) => String(r?.n ?? '').trim().toLowerCase())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 /** First product line with gauge + design/colour — for substitution list hints (quoted vs supplied gauge). */
 function firstQuotedProductGaugeDesign(linesJson) {
   let payload = linesJson;
@@ -445,57 +408,48 @@ function producedGaugeLabelFromJobCoils(db, jobId) {
   return '';
 }
 
-/** Prefer coil-lot gauge when allocated; else FG product master gauge. */
-function producedPhysicalGaugeLabelForSubstitution(db, job) {
-  const coilG = producedGaugeLabelFromJobCoils(db, job?.job_id);
-  if (coilG) return coilG;
-  return productGaugeLabelFromStock(db, job?.product_id);
-}
-
 /**
- * List ₦/m for substitution credit: when allocated coil gauge differs from the FG product
- * master gauge, look up price using the **coil** gauge + the same design/colour keys as
- * the FG product (or quotation design / first coil colour as fallbacks).
+ * Workbook list ₦/m for steel actually used: **allocated coil gauge** + design/colour
+ * (quotation line design, then FG product card, then first coil lot colour). No product-name logic.
+ * Returns null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
-function listPricePerMeterForSubstitutionJob(db, job, branchId, quotedGd, overrideSubPpm) {
+function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm) {
   const ov = positiveNumber(overrideSubPpm);
   if (ov != null && ov > 0) return ov;
-  const pid = String(job?.product_id ?? '').trim();
-  if (!pid) return null;
-  const base = listPricePerMeterForProducedProduct(db, pid, branchId);
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
-  if (!coilGauge) return base;
-  const prodGauge = productGaugeLabelFromStock(db, pid);
-  if (prodGauge && !gaugesDifferBeyondTolerance(prodGauge, coilGauge)) return base;
-
-  let row;
-  try {
-    row = db
-      .prepare(
-        `SELECT gauge, colour, material_type, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`
-      )
-      .get(pid);
-  } catch {
-    return base;
-  }
-  if (!row) return base;
-  let extra = {};
-  try {
-    extra = JSON.parse(row.dashboard_attrs_json || '{}');
-  } catch {
-    extra = {};
-  }
-  const designFromProduct = String(
-    row.colour || extra.colour || row.material_type || extra.materialType || extra.profile || ''
-  ).trim();
-  if (designFromProduct) {
-    const viaCoil = listPricePerMeterFromGaugeDesign(db, coilGauge, designFromProduct, branchId);
-    if (viaCoil != null && viaCoil > 0) return viaCoil;
-  }
+  if (!coilGauge) return null;
   const qd = quotedGd && String(quotedGd.design ?? '').trim();
   if (qd) {
-    const viaQuoteDesign = listPricePerMeterFromGaugeDesign(db, coilGauge, qd, branchId);
-    if (viaQuoteDesign != null && viaQuoteDesign > 0) return viaQuoteDesign;
+    const viaQuote = listPricePerMeterFromGaugeDesign(db, coilGauge, qd, branchId);
+    if (viaQuote != null && viaQuote > 0) return viaQuote;
+  }
+  const pid = String(job?.product_id ?? '').trim();
+  if (pid) {
+    let row;
+    try {
+      row = db
+        .prepare(
+          `SELECT gauge, colour, material_type, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`
+        )
+        .get(pid);
+    } catch {
+      row = null;
+    }
+    if (row) {
+      let extra = {};
+      try {
+        extra = JSON.parse(row.dashboard_attrs_json || '{}');
+      } catch {
+        extra = {};
+      }
+      const designFromProduct = String(
+        row.colour || extra.colour || row.material_type || extra.materialType || extra.profile || ''
+      ).trim();
+      if (designFromProduct) {
+        const v = listPricePerMeterFromGaugeDesign(db, coilGauge, designFromProduct, branchId);
+        if (v != null && v > 0) return v;
+      }
+    }
   }
   try {
     const cl = db
@@ -516,7 +470,7 @@ function listPricePerMeterForSubstitutionJob(db, job, branchId, quotedGd, overri
   } catch {
     /* ignore */
   }
-  return base;
+  return null;
 }
 
 /** Resolve list ₦/m for the FG `products` row (gauge + colour / design). */
@@ -549,7 +503,7 @@ function listPricePerMeterForProducedProduct(db, productId, branchId) {
 }
 
 /**
- * Produced FG differs from quoted roofing but list ₦/m cannot be resolved — fix gauge/colour + price list.
+ * Quoted roofing gauge vs **allocated coil gauge** — workbook list ₦/m must exist when they differ.
  * @returns {{ code: string; message: string; jobId?: string; productId?: string }[]}
  */
 export function refundSubstitutionDataQualityIssues(db, quotationRef) {
@@ -576,52 +530,47 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   if (!productionJobs.length) return [];
 
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
-  const qNames = quotedProductNamesLowerWithFallback(db, ref, quote?.lines_json ?? '');
+  const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const issues = [];
 
-  if (quotedGaugeRaw && qNames.length) {
-    for (const j of productionJobs) {
-      const pn = String(j.product_name ?? '').trim().toLowerCase();
-      if (!pn) continue;
-      const nameMatch = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
-      if (!nameMatch) continue;
-      const pid = String(j.product_id ?? '').trim();
-      if (!pid) continue;
-      const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
-      if (!fgGaugeRaw) continue;
-      if (gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
-        issues.push({
-          code: 'quoted_vs_produced_gauge',
-          jobId: String(j.job_id ?? '').trim() || undefined,
-          productId: pid,
-          message: `Quoted gauge (${quotedGaugeRaw}) differs from physical produced gauge (${fgGaugeRaw}, from coil allocation when set) on job “${String(j.product_name || j.job_id).trim()}”. Ensure price list has a row for that gauge + colour/design so the refund preview can compute a “Substitution Difference” credit automatically.`,
-        });
-      }
-    }
+  const hasPositiveMetres = productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0);
+  if (hasPositiveMetres && !quotedGaugeRaw) {
+    issues.push({
+      code: 'quoted_gauge_missing',
+      message:
+        'Substitution (gauge vs coil): quotation has no gauge on header or product lines — add gauge to compute automatic credit vs allocated coils.',
+    });
   }
 
-  if (qNames.length) {
+  if (quotedGaugeRaw) {
     for (const j of productionJobs) {
-      const pn = String(j.product_name ?? '').trim().toLowerCase();
-      if (!pn) continue;
-      const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
-      if (match) continue;
       const m = Number(j.actual_meters) || 0;
       if (m <= 0) continue;
-      const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
-      const ppm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGdIssue, null);
+      const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
+      if (!coilGauge) {
+        issues.push({
+          code: 'substitution_coil_gauge_missing',
+          jobId: String(j.job_id ?? '').trim() || undefined,
+          productId: String(j.product_id ?? '').trim() || undefined,
+          message: `Job “${String(j.product_name || j.job_id).trim()}” has metres but no coil gauge on allocations — link coils so gauge vs quotation can be compared.`,
+        });
+        continue;
+      }
+      if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
+      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGdIssue, null);
       if (ppm == null || ppm <= 0) {
         const pid = String(j.product_id ?? '').trim();
         issues.push({
           code: 'substitution_list_price',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid || undefined,
-          message: `Substitution credit needs list ₦/m for produced “${String(j.product_name || j.job_id).trim()}”${pid ? ` (FG ${pid})` : ''}. Add gauge and colour (or design) on the FG product and a matching price list row.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) vs coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}” — add a workbook (price list) row for that coil gauge + colour/design, or set substitutePricePerMeterNgn in preview.`,
         });
       }
     }
   }
+
   const ppmQuote = quotedAmountPerMeter(quote?.lines_json);
   if ((!ppmQuote || ppmQuote <= 0) && productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0)) {
     issues.push({
@@ -1552,24 +1501,16 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
 }
 
 /**
- * Explains substitution preview per production job (same branching as {@link previewRefundRequest}).
+ * Explains substitution preview per production job (gauge on quotation vs gauge on allocated coil; workbook ₦/m).
  * Used when `payload.substitutionDiagnosis` is true — not returned over HTTP by default callers.
  */
 function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm) {
-  const qid = String(quote?.id ?? '').trim();
-  const qNames = quotedProductNamesLowerWithFallback(db, qid, quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const jobs = [];
   for (const j of productionJobs) {
-    const pn = String(j.product_name ?? '').trim().toLowerCase();
-    const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
-    const match = pn ? qNames.some((qn) => pn.includes(qn) || qn.includes(pn)) : false;
-    let shouldCompute = !match;
-    if (!shouldCompute && quotedGaugeRaw && fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
-      shouldCompute = true;
-    }
+    const coilGaugeRaw = producedGaugeLabelFromJobCoils(db, j.job_id);
     const m = Number(j.actual_meters) || 0;
     const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
 
@@ -1577,29 +1518,32 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
     let producedPpm = null;
     let deltaPpm = null;
 
-    if (!pn) {
-      outcome = 'SKIP_EMPTY_JOB_PRODUCT_NAME';
-    } else if (!shouldCompute) {
-      outcome =
-        'SKIP_NAME_MATCHES_QUOTE_AND_GAUGE_OK — production FG name matches a quotation product line name, and (no quoted gauge or physical gauge unknown or gauges within 0.02mm).';
-    } else if (!pricePerMeter) {
-      outcome =
-        'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice on roof lines), and no pricePerMeterNgn override.';
+    if (!quotedGaugeRaw) {
+      outcome = 'SKIP_NO_QUOTED_GAUGE — add gauge on quotation header or product lines.';
     } else if (m <= 0) {
       outcome =
-        'SKIP_ZERO_ACTUAL_METRES — job.actual_meters is 0 (if metres were corrected post-completion, check completion adjustments / effective metres on the job row in your DB build).';
+        'SKIP_ZERO_ACTUAL_METRES — job.actual_meters is 0 (if metres were corrected post-completion, check completion adjustments on the job row).';
+    } else if (!coilGaugeRaw) {
+      outcome =
+        'SKIP_NO_COIL_GAUGE — production_job_coils / coil_lots have no gauge for this job; allocate coils with gauge labels.';
+    } else if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)) {
+      outcome =
+        'SKIP_SAME_GAUGE — coil gauge matches quoted gauge within 0.02mm; no substitution credit.';
+    } else if (!pricePerMeter) {
+      outcome =
+        'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
     } else {
-      const ppm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGd, overrideSubPpm);
+      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm);
       producedPpm = ppm;
       if (ppm == null || ppm <= 0) {
         outcome =
-          'SKIP_NO_LIST_PRICE_FOR_PRODUCED — workbook list ₦/m could not be resolved for this FG + coil gauge/colour (see price_list_items and product gauge/colour).';
+          'SKIP_NO_WORKBOOK_LIST_PRICE — no price_list_items row for this coil gauge + design/colour (or pass substitutePricePerMeterNgn).';
       } else {
         deltaPpm = pricePerMeter - ppm;
         if (deltaPpm <= 0) {
-          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above produced list ₦/m (${ppm}); automatic credit is zero.`;
+          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above workbook list for coil (${ppm}).`;
         } else {
-          outcome = `CREDIT — Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
+          outcome = `CREDIT — quoted ${quotedGaugeRaw} vs coil ${coilGaugeRaw}: Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
         }
       }
     }
@@ -1611,13 +1555,18 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
       productId: j.product_id ?? '',
       jobStatus: j.status ?? '',
       actualMetersOnJobRow: m,
-      quoteProductNameMatch: match,
       quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
-      producedPhysicalGauge: fgGaugeRaw || null,
+      coilGaugeFromAllocations: coilGaugeRaw || null,
       gaugeDiffersBeyondTolerance0p02mm: Boolean(
-        quotedGaugeRaw && fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)
+        quotedGaugeRaw && coilGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)
       ),
-      shouldEnterSubstitutionCreditPath: shouldCompute,
+      shouldEnterSubstitutionCreditPath: Boolean(
+        quotedGaugeRaw &&
+          coilGaugeRaw &&
+          m > 0 &&
+          gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw) &&
+          pricePerMeter
+      ),
       quotedBlendedPpmRounded: pricePerMeter != null ? Math.round(pricePerMeter) : null,
       producedListPpm: producedPpm,
       deltaPpm: deltaPpm != null ? Math.round(deltaPpm) : null,
@@ -1625,7 +1574,7 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
     });
   }
   return {
-    quotedProductNamesLower: qNames,
+    substitutionModel: 'quoted_gauge_vs_coil_gauge_workbook',
     quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
     firstQuotedProductGaugeDesign: quotedGd,
     branchId,
@@ -1724,8 +1673,14 @@ export function previewRefundRequest(db, payload) {
   }
 
   if (quotationRef) {
+    const substitutionPreviewWarningCodes = new Set([
+      'substitution_list_price',
+      'substitution_coil_gauge_missing',
+      'quoted_gauge_missing',
+      'quoted_blend_rate',
+    ]);
     for (const iss of refundSubstitutionDataQualityIssues(db, quotationRef)) {
-      if (iss.code === 'quoted_vs_produced_gauge') warnings.push(iss.message);
+      if (substitutionPreviewWarningCodes.has(iss.code)) warnings.push(iss.message);
     }
   }
 
@@ -1886,111 +1841,124 @@ export function previewRefundRequest(db, payload) {
   }
 
   /**
-   * Substitution: credit = max(0, quoted ₦/m − produced list ₦/m) × produced metres.
-   * Triggered when the produced FG appears to differ from the quoted roofing line(s):
-   * - product name mismatch, OR
-   * - gauge mismatch (quoted materialGauge vs FG product gauge) beyond tolerance.
+   * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (0.02mm tolerance).
+   * Credit = max(0, quoted blended ₦/m − workbook list ₦/m for **coil** gauge + design/colour) × actual metres per job.
+   * Does not use job product name or FG card gauge for the comparison trigger.
    */
   const substitutionPerMeterBreakdown = [];
-  if (quotationRef && !refundedCategories.has('Substitution Difference')) {
-    const qNames = quotedProductNamesLowerWithFallback(db, quotationRef, quote?.lines_json);
-    if (qNames.length && productionJobs.length) {
-      const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
-      const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);
-      const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
-      const quotedListPpm = quotedGd
-        ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
-        : null;
-      const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
-      let totalCredit = 0;
-      let anyMismatch = false;
-      const missingListPriceLabels = [];
-      let noPositiveDelta = false;
+  if (quotationRef && !refundedCategories.has('Substitution Difference') && productionJobs.length) {
+    const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+    const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);
+    const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+    const quotedListPpm = quotedGd
+      ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
+      : null;
+    const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
+    let totalCredit = 0;
+    let anyGaugeVsCoilCase = false;
+    const missingListPriceLabels = [];
+    const missingCoilGaugeLabels = [];
+    let noPositiveDelta = false;
 
-      for (const j of productionJobs) {
-        const pn = String(j.product_name ?? '').trim().toLowerCase();
-        if (!pn) continue;
-        const match = qNames.some((qn) => pn.includes(qn) || qn.includes(pn));
-        let shouldCompute = !match;
-        if (!shouldCompute && quotedGaugeRaw) {
-          const fgGaugeRaw = producedPhysicalGaugeLabelForSubstitution(db, j);
-          if (fgGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, fgGaugeRaw)) {
-            shouldCompute = true;
-          }
-        }
-        if (!shouldCompute) continue;
-        anyMismatch = true;
-        const m = Number(j.actual_meters) || 0;
-        const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
+    if (productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0) && !quotedGaugeRaw) {
+      warnings.push(
+        'Substitution (gauge vs coil): quotation has no gauge on header or product lines — add gauge to compute automatic credit.'
+      );
+    }
 
-        if (!pricePerMeter) {
-          continue;
-        }
-        if (m <= 0) continue;
+    for (const j of productionJobs) {
+      const m = Number(j.actual_meters) || 0;
+      const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
+      if (m <= 0) continue;
+      if (!quotedGaugeRaw) continue;
 
-        const producedPpm = listPricePerMeterForSubstitutionJob(db, j, branchId, quotedGd, overrideSubPpm);
-        if (producedPpm == null || producedPpm <= 0) {
-          missingListPriceLabels.push(jobLabel);
-          continue;
-        }
-
-        const deltaPpm = pricePerMeter - producedPpm;
-        if (deltaPpm <= 0) {
-          noPositiveDelta = true;
-          continue;
-        }
-
-        const credit = roundMoney(deltaPpm * m);
-        totalCredit += credit;
-        substitutionPerMeterBreakdown.push({
-          jobId: j.job_id,
-          productName: String(j.product_name || '').trim(),
-          meters: m,
-          quotedPricePerMeterNgn: Math.round(pricePerMeter),
-          producedListPricePerMeterNgn: producedPpm,
-          quotedGaugeDesignLabel:
-            quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
-          quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
-          deltaPerMeterNgn: Math.round(deltaPpm),
-          creditNgn: credit,
-        });
+      const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
+      if (!coilGauge) {
+        missingCoilGaugeLabels.push(jobLabel);
+        continue;
+      }
+      if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) {
+        continue;
       }
 
-      if (anyMismatch) {
-        const fmtN = (n) => `₦${Math.round(n).toLocaleString('en-NG')}`;
-        let label;
-        if (substitutionPerMeterBreakdown.length > 0) {
-          const parts = substitutionPerMeterBreakdown.map(
-            (b) => `${b.meters.toFixed(2)}m × ${fmtN(b.deltaPerMeterNgn)}/m (${String(b.productName || 'FG').trim()})`
-          );
-          label = `Substitution credit (quoted ${fmtN(pricePerMeter)}/m minus produced list rate × metres): ${parts.join('; ')}`;
-        } else if (!pricePerMeter) {
-          label =
-            'Produced FG may differ from quoted roofing lines — add product lines with qty and unitPrice to derive quoted ₦/m, or enter credit manually';
-        } else {
-          label =
-            'Produced FG may differ from quoted roofing lines — no automatic credit (set substitutePricePerMeterNgn, add price list + gauge/colour on FG product, or enter amount manually)';
-        }
-        suggestedLines.push({
-          label,
-          amountNgn: totalCredit,
-          category: 'Substitution Difference',
-        });
-        if (!pricePerMeter) {
-          warnings.push(
-            'Substitution: cannot compute per-metre delta without a quotation blended ₦/m (product lines with qty and unitPrice), or pass pricePerMeterNgn in preview.'
-          );
-        } else if (missingListPriceLabels.length > 0 && !overrideSubPpm) {
-          const uniq = [...new Set(missingListPriceLabels)];
-          warnings.push(
-            `Substitution: could not resolve list ₦/m for ${uniq.join(', ')}. Add gauge/colour on the FG product and a matching price list row, or pass substitutePricePerMeterNgn when calling preview.`
-          );
-        }
-        if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && pricePerMeter && !missingListPriceLabels.length) {
-          warnings.push(
-            'Substitution: produced list rate is not below the quotation blended ₦/m — per-metre delta credit is zero.'
-          );
-        }
+      anyGaugeVsCoilCase = true;
+
+      if (!pricePerMeter) {
+        continue;
+      }
+
+      const producedPpm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm);
+      if (producedPpm == null || producedPpm <= 0) {
+        missingListPriceLabels.push(jobLabel);
+        continue;
+      }
+
+      const deltaPpm = pricePerMeter - producedPpm;
+      if (deltaPpm <= 0) {
+        noPositiveDelta = true;
+        continue;
+      }
+
+      const credit = roundMoney(deltaPpm * m);
+      totalCredit += credit;
+      substitutionPerMeterBreakdown.push({
+        jobId: j.job_id,
+        productName: String(j.product_name || '').trim(),
+        meters: m,
+        quotedPricePerMeterNgn: Math.round(pricePerMeter),
+        producedListPricePerMeterNgn: producedPpm,
+        quotedGaugeDesignLabel:
+          quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
+        quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
+        deltaPerMeterNgn: Math.round(deltaPpm),
+        creditNgn: credit,
+        quotedGaugeForComparison: quotedGaugeRaw,
+        coilGaugeFromAllocations: coilGauge,
+      });
+    }
+
+    if (anyGaugeVsCoilCase || missingCoilGaugeLabels.length > 0) {
+      const fmtN = (n) => `₦${Math.round(n).toLocaleString('en-NG')}`;
+      let label;
+      if (substitutionPerMeterBreakdown.length > 0) {
+        const parts = substitutionPerMeterBreakdown.map(
+          (b) =>
+            `${b.meters.toFixed(2)}m × ${fmtN(b.deltaPerMeterNgn)}/m (quote ${b.quotedGaugeForComparison || 'gauge'} vs coil ${b.coilGaugeFromAllocations || '—'}; ${String(b.productName || 'job').trim()})`
+        );
+        label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fmtN(pricePerMeter)}/m minus workbook coil rate × metres): ${parts.join('; ')}`;
+      } else if (!pricePerMeter) {
+        label =
+          'Gauge on quotation differs from allocated coil gauge — add product lines with qty and unitPrice to derive quoted ₦/m, or enter credit manually';
+      } else if (missingCoilGaugeLabels.length > 0) {
+        label = `Quoted gauge ${quotedGaugeRaw} vs coil: missing coil gauge on job(s) — allocate coils with gauge, or enter credit manually`;
+      } else {
+        label =
+          'Quoted gauge vs coil: no automatic credit (add workbook row for coil gauge + design, set substitutePricePerMeterNgn, or enter amount manually)';
+      }
+      suggestedLines.push({
+        label,
+        amountNgn: totalCredit,
+        category: 'Substitution Difference',
+      });
+      if (!pricePerMeter) {
+        warnings.push(
+          'Substitution: cannot compute per-metre delta without a quotation blended ₦/m (product lines with qty and unitPrice), or pass pricePerMeterNgn in preview.'
+        );
+      } else if (missingCoilGaugeLabels.length > 0 && !overrideSubPpm) {
+        const uniq = [...new Set(missingCoilGaugeLabels)];
+        warnings.push(
+          `Substitution: no coil gauge on allocations for: ${uniq.join(', ')}. Link production coils so workbook lookup can use the actual roll gauge.`
+        );
+      } else if (missingListPriceLabels.length > 0 && !overrideSubPpm) {
+        const uniq = [...new Set(missingListPriceLabels)];
+        warnings.push(
+          `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add price_list_items for coil gauge + colour/design, or pass substitutePricePerMeterNgn when calling preview.`
+        );
+      }
+      if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && pricePerMeter && !missingListPriceLabels.length) {
+        warnings.push(
+          'Substitution: workbook list rate for the coil is not below the quotation blended ₦/m — per-metre delta credit is zero.'
+        );
       }
     }
   }

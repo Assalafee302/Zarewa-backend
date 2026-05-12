@@ -13,7 +13,9 @@ export function firstGaugeMmFromLabel(label) {
 /** Same field precedence as CuttingListModal / sales UI (camelCase + legacy snake_case). */
 export function gaugeLabelFromQuotationJsonNode(node) {
   if (!node || typeof node !== 'object') return '';
-  const g = String(node.materialGauge ?? node.material_gauge ?? node.gauge ?? '').trim();
+  const g = String(
+    node.materialGauge ?? node.material_gauge ?? node.gauge ?? node.gaugeLabel ?? ''
+  ).trim();
   return g;
 }
 

@@ -21,6 +21,10 @@ import {
   quotedGaugeLabelForSubstitutionComparison,
 } from '../shared/lib/quotedGaugeForSubstitution.js';
 import {
+  quotationLineQtyNumber,
+  quotationLineUnitPriceNumber,
+} from '../shared/lib/quotationLineNumericForRefund.js';
+import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
 } from '../shared/workspaceGovernance.js';
@@ -109,7 +113,7 @@ function quotedRoofingSheetMetresFromLines(linesJson) {
   if (!Array.isArray(rows)) return 0;
   return rows.reduce((sum, line) => {
     if (productLineIsTrimSheetNotRoofingMetres(line)) return sum;
-    return sum + (Number(line?.qty) || 0);
+    return sum + quotationLineQtyNumber(line);
   }, 0);
 }
 
@@ -128,13 +132,13 @@ function quotedRoofingSheetAmountPerMeter(linesJson) {
   const productRows = rows.filter(
     (line) =>
       !productLineIsTrimSheetNotRoofingMetres(line) &&
-      Number(line?.qty) > 0 &&
-      Number(line?.unitPrice) > 0
+      quotationLineQtyNumber(line) > 0 &&
+      quotationLineUnitPriceNumber(line) > 0
   );
-  const totalMeters = productRows.reduce((sum, line) => sum + (Number(line?.qty) || 0), 0);
+  const totalMeters = productRows.reduce((sum, line) => sum + quotationLineQtyNumber(line), 0);
   if (totalMeters <= 0) return null;
   const totalValue = productRows.reduce(
-    (sum, line) => sum + (Number(line?.qty) || 0) * (Number(line?.unitPrice) || 0),
+    (sum, line) => sum + quotationLineQtyNumber(line) * quotationLineUnitPriceNumber(line),
     0
   );
   return totalValue > 0 ? totalValue / totalMeters : null;
@@ -151,11 +155,13 @@ function quotedAmountPerMeter(linesJson) {
   }
   const rows = payload?.products;
   if (!Array.isArray(rows) || rows.length === 0) return null;
-  const productRows = rows.filter((line) => Number(line?.qty) > 0 && Number(line?.unitPrice) > 0);
-  const totalMeters = productRows.reduce((sum, line) => sum + (Number(line?.qty) || 0), 0);
+  const productRows = rows.filter(
+    (line) => quotationLineQtyNumber(line) > 0 && quotationLineUnitPriceNumber(line) > 0
+  );
+  const totalMeters = productRows.reduce((sum, line) => sum + quotationLineQtyNumber(line), 0);
   if (totalMeters <= 0) return null;
   const totalValue = productRows.reduce(
-    (sum, line) => sum + (Number(line?.qty) || 0) * (Number(line?.unitPrice) || 0),
+    (sum, line) => sum + quotationLineQtyNumber(line) * quotationLineUnitPriceNumber(line),
     0
   );
   return totalValue > 0 ? totalValue / totalMeters : null;
@@ -291,6 +297,27 @@ function quotedProductNamesLower(linesJson) {
     .filter(Boolean);
 }
 
+/** When `lines_json` has no product names, use synced `quotation_lines` (same as writeOps sync). */
+function quotedProductNamesLowerWithFallback(db, quotationId, linesJson) {
+  const fromJson = quotedProductNamesLower(linesJson);
+  if (fromJson.length) return fromJson;
+  const qid = String(quotationId ?? '').trim();
+  if (!qid || !db) return [];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT TRIM(name) AS n FROM quotation_lines
+         WHERE quotation_id = ? AND category = 'products' AND TRIM(COALESCE(name, '')) != ''`
+      )
+      .all(qid);
+    return rows
+      .map((r) => String(r?.n ?? '').trim().toLowerCase())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** First product line with gauge + design/colour — for substitution list hints (quoted vs supplied gauge). */
 function firstQuotedProductGaugeDesign(linesJson) {
   let payload = linesJson;
@@ -305,7 +332,9 @@ function firstQuotedProductGaugeDesign(linesJson) {
   if (!Array.isArray(prods)) return null;
   for (const p of prods) {
     if (!String(p?.name ?? '').trim()) continue;
-    const gauge = String(p?.materialGauge ?? p?.material_gauge ?? p?.gauge ?? '').trim();
+    const gauge = String(
+      p?.materialGauge ?? p?.material_gauge ?? p?.gauge ?? p?.gaugeLabel ?? ''
+    ).trim();
     const design = String(
       p?.materialDesign ?? p?.design ?? p?.materialColor ?? p?.colour ?? p?.color ?? ''
     ).trim();
@@ -547,7 +576,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   if (!productionJobs.length) return [];
 
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
-  const qNames = quotedProductNamesLower(quote?.lines_json ?? '');
+  const qNames = quotedProductNamesLowerWithFallback(db, ref, quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const issues = [];
 
@@ -1527,7 +1556,8 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
  * Used when `payload.substitutionDiagnosis` is true — not returned over HTTP by default callers.
  */
 function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm) {
-  const qNames = quotedProductNamesLower(quote?.lines_json ?? '');
+  const qid = String(quote?.id ?? '').trim();
+  const qNames = quotedProductNamesLowerWithFallback(db, qid, quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
@@ -1633,7 +1663,10 @@ export function previewRefundRequest(db, payload) {
 
   const productionJobs = quotationRef
     ? db
-        .prepare(`SELECT * FROM production_jobs WHERE quotation_ref = ? AND status IN ('Completed', 'Cancelled')`)
+        .prepare(
+          `SELECT * FROM production_jobs WHERE quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')`
+        )
         .all(quotationRef)
     : [];
   const hasCancelledProductionJob = productionJobs.some(
@@ -1860,7 +1893,7 @@ export function previewRefundRequest(db, payload) {
    */
   const substitutionPerMeterBreakdown = [];
   if (quotationRef && !refundedCategories.has('Substitution Difference')) {
-    const qNames = quotedProductNamesLower(quote?.lines_json);
+    const qNames = quotedProductNamesLowerWithFallback(db, quotationRef, quote?.lines_json);
     if (qNames.length && productionJobs.length) {
       const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
       const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);

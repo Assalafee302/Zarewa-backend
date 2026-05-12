@@ -32,6 +32,15 @@ describe('quotedGaugeForSubstitution', () => {
     expect(quotedGaugeLabelForSubstitutionComparison(lines)).toBe('0.28mm');
   });
 
+  it('reads gaugeLabel on product line', () => {
+    const lines = {
+      products: [{ name: 'Roof', qty: '10', unitPrice: '5000', gaugeLabel: '0.30mm' }],
+      accessories: [],
+      services: [],
+    };
+    expect(quotedGaugeLabelForSubstitutionComparison(lines)).toBe('0.30mm');
+  });
+
   it('firstGaugeMmFromLabel parses leading number', () => {
     expect(firstGaugeMmFromLabel('0.24mm')).toBeCloseTo(0.24, 5);
     expect(firstGaugeMmFromLabel('')).toBe(null);

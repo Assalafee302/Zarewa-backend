@@ -171,7 +171,7 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
 }
 
 /**
- * Customer advance / overpay credit from ledger only (matches `advanceBalanceFromEntries` in customerLedgerCore.js).
+ * Customer deposit advance from ledger only (matches `advanceBalanceFromEntries` in customerLedgerCore.js).
  * @param {import('better-sqlite3').Database} db
  */
 export function advanceBalanceNgnForCustomerDb(db, customerID) {
@@ -183,12 +183,34 @@ export function advanceBalanceNgnForCustomerDb(db, customerID) {
     const n = roundMoney(e.amount_ngn);
     switch (String(e.type || '')) {
       case 'ADVANCE_IN':
-      case 'OVERPAY_ADVANCE':
         s += n;
         break;
       case 'ADVANCE_APPLIED':
       case 'REFUND_ADVANCE':
       case 'ADVANCE_REVERSAL':
+        s -= n;
+        break;
+      default:
+        break;
+    }
+  }
+  return s;
+}
+
+/** Overpayment credit on quotations (OVERPAY_ADVANCE), separate from deposit advance (ADVANCE_IN). */
+export function overpayCreditNgnForCustomerDb(db, customerID) {
+  const id = String(customerID || '').trim();
+  if (!id) return 0;
+  const rows = db.prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ?`).all(id);
+  let s = 0;
+  for (const e of rows) {
+    const n = roundMoney(e.amount_ngn);
+    switch (String(e.type || '')) {
+      case 'OVERPAY_ADVANCE':
+        s += n;
+        break;
+      case 'OVERPAY_REVERSAL':
+      case 'REFUND_OVERPAY':
         s -= n;
         break;
       default:
@@ -4609,7 +4631,9 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
   if (!target) return { ok: false, error: 'Advance entry not found.' };
 
   const existing = db
-    .prepare(`SELECT id FROM ledger_entries WHERE type = 'ADVANCE_REVERSAL' AND (bank_reference = ? OR note LIKE ?)`)
+    .prepare(
+      `SELECT id FROM ledger_entries WHERE type IN ('ADVANCE_REVERSAL','OVERPAY_REVERSAL') AND (bank_reference = ? OR note LIKE ?)`
+    )
     .get(reversalMarker(entryId), `%${entryId}%`);
   if (existing) return { ok: false, error: 'Advance already reversed.' };
 
@@ -4623,7 +4647,7 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
         db,
         [
           {
-            type: 'ADVANCE_REVERSAL',
+            type: target.type === 'OVERPAY_ADVANCE' ? 'OVERPAY_REVERSAL' : 'ADVANCE_REVERSAL',
             customerID: target.customer_id,
             customerName: target.customer_name,
             amountNgn: target.amount_ngn,
@@ -4645,16 +4669,18 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
           postedAtISO: `${reversalDateISO}T12:00:00.000Z`,
         });
       }
-      const glAdvRev = tryPostCustomerAdvanceReversalGl(db, {
-        originalAdvanceLedgerId: entryId,
-        reversalLedgerId: reversal?.id,
-        amountNgn: target.amount_ngn,
-        entryDateISO: reversalDateISO,
-        branchId: target.branch_id || null,
-        createdByUserId: actor?.id ?? null,
-      });
-      if (!glAdvRev.ok && !glAdvRev.skipped) {
-        throw new Error(glAdvRev.error || 'GL reversal failed for advance.');
+      if (target.type === 'ADVANCE_IN') {
+        const glAdvRev = tryPostCustomerAdvanceReversalGl(db, {
+          originalAdvanceLedgerId: entryId,
+          reversalLedgerId: reversal?.id,
+          amountNgn: target.amount_ngn,
+          entryDateISO: reversalDateISO,
+          branchId: target.branch_id || null,
+          createdByUserId: actor?.id ?? null,
+        });
+        if (!glAdvRev.ok && !glAdvRev.skipped) {
+          throw new Error(glAdvRev.error || 'GL reversal failed for advance.');
+        }
       }
       appendAuditLog(db, {
         actor,
@@ -6036,30 +6062,44 @@ export function payRefundEntry(db, refundId, payload) {
       const cid = String(row.customer_id || '').trim();
       if (cid && payoutAmountNgn > 0) {
         const advBal = advanceBalanceNgnForCustomerDb(db, cid);
-        const refundAdvanceAmt = Math.min(payoutAmountNgn, Math.max(0, advBal));
-        if (refundAdvanceAmt > 0) {
-          const wb = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-          insertLedgerRows(
-            db,
-            [
-              {
-                type: 'REFUND_ADVANCE',
-                customerID: cid,
-                customerName: String(row.customer_name || '').trim() || null,
-                amountNgn: refundAdvanceAmt,
-                quotationRef: '',
-                paymentMethod: null,
-                bankReference: refundId,
-                purpose: 'Sales refund payout',
-                note: `Refund ${refundId} — reduces customer advance/overpay credit (₦${refundAdvanceAmt.toLocaleString()} of ₦${payoutAmountNgn.toLocaleString()} payout).`,
-                atISO: normalizeIsoTimestamp(paidAtISO),
-                createdByUserId: payload.actor?.id ?? null,
-                createdByName: paidBy,
-              },
-            ],
-            wb
-          );
+        const overBal = overpayCreditNgnForCustomerDb(db, cid);
+        const fromAdv = Math.min(payoutAmountNgn, Math.max(0, advBal));
+        const fromOver = Math.min(Math.max(0, payoutAmountNgn - fromAdv), Math.max(0, overBal));
+        const wb = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+        const rows = [];
+        if (fromAdv > 0) {
+          rows.push({
+            type: 'REFUND_ADVANCE',
+            customerID: cid,
+            customerName: String(row.customer_name || '').trim() || null,
+            amountNgn: fromAdv,
+            quotationRef: '',
+            paymentMethod: null,
+            bankReference: refundId,
+            purpose: 'Sales refund payout',
+            note: `Refund ${refundId} — reduces customer deposit advance (₦${fromAdv.toLocaleString()} of ₦${payoutAmountNgn.toLocaleString()} payout).`,
+            atISO: normalizeIsoTimestamp(paidAtISO),
+            createdByUserId: payload.actor?.id ?? null,
+            createdByName: paidBy,
+          });
         }
+        if (fromOver > 0) {
+          rows.push({
+            type: 'REFUND_OVERPAY',
+            customerID: cid,
+            customerName: String(row.customer_name || '').trim() || null,
+            amountNgn: fromOver,
+            quotationRef: '',
+            paymentMethod: null,
+            bankReference: refundId,
+            purpose: 'Sales refund payout',
+            note: `Refund ${refundId} — reduces overpayment credit (₦${fromOver.toLocaleString()} of ₦${payoutAmountNgn.toLocaleString()} payout).`,
+            atISO: normalizeIsoTimestamp(paidAtISO),
+            createdByUserId: payload.actor?.id ?? null,
+            createdByName: paidBy,
+          });
+        }
+        if (rows.length > 0) insertLedgerRows(db, rows, wb);
       }
       return { movements, nextPaidAmountNgn, fullyPaid };
     })();

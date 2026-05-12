@@ -1,6 +1,6 @@
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
- * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'REFUND_ADVANCE'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
+ * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
  */
 
 /**
@@ -33,11 +33,33 @@ export function advanceBalanceFromEntries(entries, customerID) {
       const n = Number(e.amountNgn) || 0;
       switch (e.type) {
         case 'ADVANCE_IN':
-        case 'OVERPAY_ADVANCE':
           return s + n;
         case 'ADVANCE_APPLIED':
         case 'REFUND_ADVANCE':
         case 'ADVANCE_REVERSAL':
+          return s - n;
+        default:
+          return s;
+      }
+    }, 0);
+}
+
+/**
+ * Credit from quotation overpayments (split-till OVERPAY_ADVANCE), separate from voluntary deposits (ADVANCE_IN).
+ * Reduced by OVERPAY_REVERSAL and by REFUND_OVERPAY when sales refunds pay out against this pool.
+ * @param {Array<{ customerID: string, type: string, amountNgn?: number }>} entries
+ */
+export function overpayCreditBalanceFromEntries(entries, customerID) {
+  if (!customerID) return 0;
+  return (entries || [])
+    .filter((e) => e.customerID === customerID)
+    .reduce((s, e) => {
+      const n = Number(e.amountNgn) || 0;
+      switch (e.type) {
+        case 'OVERPAY_ADVANCE':
+          return s + n;
+        case 'OVERPAY_REVERSAL':
+        case 'REFUND_OVERPAY':
           return s - n;
         default:
           return s;
@@ -155,7 +177,7 @@ export function planReceiptWithQuotation(entries, {
           quotationRef: quotationRow.id,
           paymentMethod,
           bankReference,
-          note: `Quote ${quotationRow.id} already settled in records — full payment to customer advance`,
+          note: `Quote ${quotationRow.id} already settled in records — excess to overpayment credit (not deposit advance)`,
           atISO: ts,
         },
       ],
@@ -205,7 +227,7 @@ export function planReceiptWithQuotation(entries, {
         quotationRef: quotationRow.id,
         paymentMethod,
         bankReference,
-        note: `Overpayment vs remaining balance on ${quotationRow.id} → advance`,
+          note: `Overpayment vs remaining balance on ${quotationRow.id} → customer credit (refund via Sales refunds, not advance deposit)`,
         atISO: ts,
       },
     ],

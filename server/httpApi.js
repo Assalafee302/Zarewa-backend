@@ -1,5 +1,6 @@
 import {
   advanceBalanceFromEntries,
+  overpayCreditBalanceFromEntries,
   amountDueOnQuotationFromEntries,
   ledgerReceiptTotalFromEntries,
   planAdvanceIn,
@@ -5021,6 +5022,7 @@ export function registerHttpApi(app, db) {
       if (!customer) return res.status(404).json({ ok: false, error: 'Customer not found' });
       const entries = listLedgerEntriesForCustomer(db, id, branchScope);
       const advanceNgn = advanceBalanceFromEntries(entries, id);
+      const overpayCreditNgn = overpayCreditBalanceFromEntries(entries, id);
       const receiptTotalNgn = ledgerReceiptTotalFromEntries(entries, id);
 
       const quotations = listQuotations(db, branchScope).filter((q) => q.customerID === id);
@@ -5036,6 +5038,7 @@ export function registerHttpApi(app, db) {
         ok: true,
         customerId: id,
         advanceNgn,
+        overpayCreditNgn,
         receiptTotalNgn,
         entries,
         outstandingByQuotation,
@@ -5588,7 +5591,7 @@ export function registerHttpApi(app, db) {
             customerName: customerName || cust.name,
             dateISO,
             reference: resolvedBankReference,
-            note: parsed.overpay ? `Receipt ${qtSynced.id} with overpayment to advance` : `Receipt ${qtSynced.id}`,
+            note: parsed.overpay ? `Receipt ${qtSynced.id} with overpayment credit (not deposit advance)` : `Receipt ${qtSynced.id}`,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
           });

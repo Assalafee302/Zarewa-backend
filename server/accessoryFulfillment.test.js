@@ -5,6 +5,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { buildAccessorySuppliedLookup, resolveSuppliedQtyFromPayloadMaps } from './accessoryFulfillment.js';
 
 const openDbs = [];
 
@@ -99,6 +100,14 @@ describe('Accessory fulfillment', () => {
   afterAll(() => {
     for (const db of openDbs) db.close();
     openDbs.length = 0;
+  });
+
+  it('payload maps: stale quoteLineId still resolves supplied qty by accessory name (case-insensitive)', () => {
+    const maps = buildAccessorySuppliedLookup([
+      { quoteLineId: 'wrong-line-id', name: 'Drive screw nails', suppliedQty: 12 },
+    ]);
+    const line = { quoteLineId: 'SQI-020', name: 'Drive Screw Nails', orderedQty: 12, unitPriceNgn: 500 };
+    expect(resolveSuppliedQtyFromPayloadMaps(line, maps, 99)).toBe(12);
   });
 
   it('production complete posts usage, deducts mapped stock, refund preview shows shortfall', async () => {

@@ -2,9 +2,11 @@ import { actorName } from './auth.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
 import {
   applyAccessoryCompletionTx,
+  buildAccessorySuppliedLookup,
   parseQuotationAccessoryLines,
   planAccessoryCompletion,
   resolveAccessoryInventoryProductId,
+  resolveSuppliedQtyFromPayloadMaps,
   sumPriorAccessorySuppliedForLine,
 } from './accessoryFulfillment.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
@@ -69,15 +71,7 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
   if (!accessoryLines.length) return { ok: true, plannedLines: [], accessoryStockWarnings: [] };
 
   const accessoriesSupplied = Array.isArray(payload.accessoriesSupplied) ? payload.accessoriesSupplied : [];
-  const byLineId = new Map();
-  const byName = new Map();
-  for (const e of accessoriesSupplied) {
-    const qid = String(e?.quoteLineId ?? e?.quote_line_id ?? '').trim();
-    const nm = String(e?.name ?? '').trim();
-    const sq = Number(e?.suppliedQty ?? e?.supplied_qty);
-    if (qid) byLineId.set(qid, sq);
-    else if (nm) byName.set(nm, sq);
-  }
+  const maps = buildAccessorySuppliedLookup(accessoriesSupplied);
 
   const plannedLines = [];
   const accessoryStockWarnings = [];
@@ -92,11 +86,7 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
       name: line.name,
     });
     const remaining = Math.max(0, line.orderedQty - prior);
-    let supplied;
-    if (lineKey && byLineId.has(lineKey)) supplied = Number(byLineId.get(lineKey));
-    else if (byLineId.has(stableKey)) supplied = Number(byLineId.get(stableKey));
-    else if (byName.has(line.name)) supplied = Number(byName.get(line.name));
-    else supplied = remaining;
+    const supplied = resolveSuppliedQtyFromPayloadMaps(line, maps, remaining);
     if (!Number.isFinite(supplied) || supplied < 0 - EPS) {
       return { ok: false, error: `Invalid supplied quantity for accessory "${line.name}".` };
     }

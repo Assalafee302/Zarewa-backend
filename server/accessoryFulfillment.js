@@ -44,6 +44,49 @@ export function parseQuotationAccessoryLines(linesJson) {
     .filter((r) => r.name && r.orderedQty > 0);
 }
 
+/** Normalize accessory label for case/whitespace-tolerant payload matching. */
+export function normAccessoryNameKey(s) {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Indexes `accessoriesSupplied` from completion / correction payloads.
+ * When both `quoteLineId` and `name` are present, **both** are registered so a stale
+ * client line id cannot prevent resolving the quantity by accessory name.
+ */
+export function buildAccessorySuppliedLookup(accessoriesSupplied) {
+  const byLineId = new Map();
+  const byNameKey = new Map();
+  for (const e of Array.isArray(accessoriesSupplied) ? accessoriesSupplied : []) {
+    const qid = String(e?.quoteLineId ?? e?.quote_line_id ?? '').trim();
+    const nm = String(e?.name ?? '').trim();
+    const sq = Number(e?.suppliedQty ?? e?.supplied_qty);
+    if (!Number.isFinite(sq)) continue;
+    if (qid) byLineId.set(qid, sq);
+    if (nm) byNameKey.set(normAccessoryNameKey(nm), sq);
+  }
+  return { byLineId, byNameKey };
+}
+
+/**
+ * @param {{ quoteLineId: string; name: string }} line
+ * @param {{ byLineId: Map<string, number>; byNameKey: Map<string, number> }} maps
+ * @param {number} remainingDefault
+ */
+export function resolveSuppliedQtyFromPayloadMaps(line, maps, remainingDefault) {
+  const lineKey = line.quoteLineId || '';
+  const stableKey = lineKey || `name:${line.name}`;
+  const { byLineId, byNameKey } = maps;
+  const nk = normAccessoryNameKey(line.name);
+  if (lineKey && byLineId.has(lineKey)) return Number(byLineId.get(lineKey));
+  if (byLineId.has(stableKey)) return Number(byLineId.get(stableKey));
+  if (nk && byNameKey.has(nk)) return Number(byNameKey.get(nk));
+  return remainingDefault;
+}
+
 /**
  * Sum supplied accessory qty across completed jobs for a quotation line.
  * Matches `quote_line_id` (stable key or legacy id) **or** the persisted usage `name`
@@ -134,15 +177,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
   }
 
   const accessoriesSupplied = Array.isArray(payload.accessoriesSupplied) ? payload.accessoriesSupplied : [];
-  const byLineId = new Map();
-  const byName = new Map();
-  for (const e of accessoriesSupplied) {
-    const qid = String(e?.quoteLineId ?? e?.quote_line_id ?? '').trim();
-    const nm = String(e?.name ?? '').trim();
-    const sq = Number(e?.suppliedQty ?? e?.supplied_qty);
-    if (qid) byLineId.set(qid, sq);
-    else if (nm) byName.set(nm, sq);
-  }
+  const maps = buildAccessorySuppliedLookup(accessoriesSupplied);
 
   const plannedLines = [];
   const accessoryStockWarnings = [];
@@ -156,16 +191,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
       name: line.name,
     });
     const remaining = Math.max(0, line.orderedQty - prior);
-    let supplied;
-    if (lineKey && byLineId.has(lineKey)) {
-      supplied = Number(byLineId.get(lineKey));
-    } else if (byLineId.has(stableKey)) {
-      supplied = Number(byLineId.get(stableKey));
-    } else if (byName.has(line.name)) {
-      supplied = Number(byName.get(line.name));
-    } else {
-      supplied = remaining;
-    }
+    const supplied = resolveSuppliedQtyFromPayloadMaps(line, maps, remaining);
     if (!Number.isFinite(supplied) || supplied < 0 - EPS) {
       return { ok: false, error: `Invalid supplied quantity for accessory "${line.name}".` };
     }

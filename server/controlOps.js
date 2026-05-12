@@ -17,6 +17,10 @@ import {
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import {
+  firstGaugeMmFromLabel,
+  quotedGaugeLabelForSubstitutionComparison,
+} from '../shared/lib/quotedGaugeForSubstitution.js';
+import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
 } from '../shared/workspaceGovernance.js';
@@ -350,36 +354,11 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
   }
 }
 
-/** First numeric gauge in mm from labels like "0.22mm" (aligned with frontend `firstGaugeNumber`). */
-function firstGaugeMmFromLabel(label) {
-  const m = String(label ?? '').match(/(\d+(?:\.\d+)?)/);
-  return m ? parseFloat(m[1], 10) : null;
-}
-
 function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
   const a = firstGaugeMmFromLabel(quotedLabel);
   const b = firstGaugeMmFromLabel(producedLabel);
   if (a == null || b == null) return false;
   return Math.abs(a - b) > tolMm;
-}
-
-function parseQuotedMaterialGaugeFromLinesJson(linesJson) {
-  try {
-    const j = typeof linesJson === 'string' ? JSON.parse(linesJson || '{}') : linesJson;
-    if (!j) return '';
-    // Top-level field (legacy / header gauge)
-    if (typeof j.materialGauge === 'string' && j.materialGauge.trim()) return j.materialGauge.trim();
-    // Per-product lines (normal case — gauge stored on each product line)
-    if (Array.isArray(j.products)) {
-      for (const p of j.products) {
-        const g = String(p?.materialGauge ?? p?.gauge ?? '').trim();
-        if (g) return g;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return '';
 }
 
 /** Finished-good gauge label from inventory product (for quote vs production audit). */
@@ -567,7 +546,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   }
   if (!productionJobs.length) return [];
 
-  const quotedGaugeRaw = parseQuotedMaterialGaugeFromLinesJson(quote?.lines_json ?? '');
+  const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const qNames = quotedProductNamesLower(quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const issues = [];
@@ -1808,7 +1787,7 @@ export function previewRefundRequest(db, payload) {
       const quotedListPpm = quotedGd
         ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
         : null;
-      const quotedGaugeRaw = parseQuotedMaterialGaugeFromLinesJson(quote?.lines_json ?? '');
+      const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
       let totalCredit = 0;
       let anyMismatch = false;
       const missingListPriceLabels = [];

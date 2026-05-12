@@ -4362,6 +4362,22 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
   );
 }
 
+/** Map DB `ledger_entries` row to the camelCase shape expected by `upsertSalesReceiptForLedgerEntry`. */
+export function ledgerReceiptRowToUpsertEntry(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    type: 'RECEIPT',
+    customerID: row.customer_id,
+    customerName: row.customer_name,
+    amountNgn: Math.round(Number(row.amount_ngn) || 0),
+    atISO: row.at_iso,
+    quotationRef: row.quotation_ref,
+    paymentMethod: row.payment_method,
+    branchId: row.branch_id,
+  };
+}
+
 /** Mirror ADVANCE_IN ledger row for reporting / joins (ledger remains source of truth). */
 export function insertAdvanceInEvent(db, entry) {
   if (entry.type !== 'ADVANCE_IN') return;
@@ -4554,6 +4570,57 @@ export function reversedEntryIdsFromRows(rows) {
     if (id) set.add(id);
   }
   return set;
+}
+
+/**
+ * Rebuild `sales_receipts` from active RECEIPT ledger rows for one quotation, then sync `paid_ngn`.
+ * Use when mirrors drifted from the ledger so Sales / receipts and quotation paid match the books.
+ */
+export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return { ok: false, error: 'Quotation id required.' };
+  const qt = getQuotation(db, qid);
+  if (!qt) return { ok: false, error: 'Quotation not found.' };
+
+  return db.transaction(() => {
+    const revRows = db.prepare(`SELECT bank_reference, note FROM ledger_entries WHERE type = 'RECEIPT_REVERSAL'`).all();
+    const reversed = reversedEntryIdsFromRows(revRows);
+
+    const rows = db
+      .prepare(`SELECT * FROM ledger_entries WHERE type = 'RECEIPT' AND quotation_ref = ?`)
+      .all(qid);
+    const keepIds = [];
+    let upserted = 0;
+    for (const row of rows) {
+      if (reversed.has(String(row.id))) continue;
+      const entry = ledgerReceiptRowToUpsertEntry(row);
+      if (!entry || entry.amountNgn <= 0) continue;
+      upsertSalesReceiptForLedgerEntry(db, entry, qt, row.branch_id ?? null);
+      keepIds.push(String(row.id));
+      upserted++;
+    }
+    let deletedMirrors = 0;
+    if (keepIds.length === 0) {
+      deletedMirrors = db.prepare(`DELETE FROM sales_receipts WHERE quotation_ref = ?`).run(qid).changes;
+    } else {
+      const ph = keepIds.map(() => '?').join(',');
+      deletedMirrors = db
+        .prepare(`DELETE FROM sales_receipts WHERE quotation_ref = ? AND id NOT IN (${ph})`)
+        .run(qid, ...keepIds).changes;
+    }
+    const syncR = syncQuotationPaidFromLedger(qid);
+    const qtAfter = getQuotation(db, qid);
+    return {
+      ok: true,
+      quotationId: qid,
+      upserted,
+      deletedMirrors,
+      paidNgn: qtAfter?.paidNgn ?? syncR.paidNgn,
+      paymentStatus: qtAfter?.paymentStatus ?? syncR.paymentStatus,
+      receiptSumNgn: syncR.receiptSumNgn,
+      advanceAppliedNgn: syncR.advanceAppliedNgn,
+    };
+  })();
 }
 
 /** Reverse a posted receipt by creating a compensating ledger row and marking the mirror row reversed. */

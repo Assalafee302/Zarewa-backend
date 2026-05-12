@@ -5246,6 +5246,24 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.post(
+    '/api/quotations/:id/reconcile-receipt-mirrors',
+    requirePermission([
+      'quotations.manage',
+      'finance.post',
+      'finance.approve',
+    ]),
+    (req, res) => {
+      try {
+        const r = write.reconcileSalesReceiptMirrorsForQuotation(db, req.params.id);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.get('/api/advance-deposits', requirePermission(LEDGER_RELATED_PERMS), (req, res) => {
     try {
       res.json({ ok: true, advances: listAdvanceInEvents(db) });

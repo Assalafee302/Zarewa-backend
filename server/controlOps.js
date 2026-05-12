@@ -434,6 +434,147 @@ function listPricePerMeterMinForGaugeAcrossDesigns(db, gaugeRaw, branchId) {
   }
 }
 
+/** Standard coil workbook `gauge_mm` keys (aligned with material pricing sheet). */
+const MATERIAL_SHEET_GAUGE_MM_KEYS = [
+  '0.18',
+  '0.20',
+  '0.22',
+  '0.24',
+  '0.28',
+  '0.30',
+  '0.40',
+  '0.45',
+  '0.50',
+  '0.55',
+  '0.70',
+];
+
+/** Map physical coil label to `material_pricing_sheet_rows.gauge_mm`. */
+function workbookGaugeMmKeyFromCoilLabel(coilGaugeRaw) {
+  const mm = firstGaugeMmFromLabel(coilGaugeRaw);
+  if (mm == null || !Number.isFinite(mm)) return null;
+  for (const g of MATERIAL_SHEET_GAUGE_MM_KEYS) {
+    if (Math.abs(parseFloat(g, 10) - mm) < 1e-4) return g;
+  }
+  return null;
+}
+
+function canReadMaterialPricingSheetRows(db) {
+  try {
+    db.prepare(`SELECT 1 FROM material_pricing_sheet_rows LIMIT 1`).get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `alu` | `aluzinc` from coil lot / job product, else from FG `products` row (e.g. longspan on coil).
+ */
+function materialPricingMaterialKeyFromJob(db, job) {
+  const jid = String(job?.job_id ?? '').trim();
+  if (jid) {
+    try {
+      const row = db
+        .prepare(
+          `SELECT COALESCE(NULLIF(TRIM(cl.product_id), ''), NULLIF(TRIM(pjc.product_id), '')) AS pid
+           FROM production_job_coils pjc
+           LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
+           WHERE pjc.job_id = ?
+           ORDER BY pjc.sequence_no ASC, pjc.id ASC
+           LIMIT 1`
+        )
+        .get(jid);
+      const mk = materialPricingMaterialKeyFromProductId(db, String(row?.pid ?? '').trim());
+      if (mk) return mk;
+    } catch {
+      /* ignore */
+    }
+  }
+  return materialPricingMaterialKeyFromProductId(db, String(job?.product_id ?? '').trim());
+}
+
+function materialPricingMaterialKeyFromProductId(db, productId) {
+  const pid = String(productId ?? '').trim();
+  if (!pid) return null;
+  if (pid === 'COIL-ALU') return 'alu';
+  if (pid === 'PRD-102') return 'aluzinc';
+  try {
+    const row = db
+      .prepare(`SELECT material_type, name, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`)
+      .get(pid);
+    const mt = String(row?.material_type || '').toLowerCase();
+    const nm = String(row?.name || '').toLowerCase();
+    let extra = {};
+    try {
+      extra = JSON.parse(row?.dashboard_attrs_json || '{}');
+    } catch {
+      extra = {};
+    }
+    const comb = `${mt} ${nm} ${String(extra.materialType || '').toLowerCase()}`;
+    if (comb.includes('aluzinc') || comb.includes('ppgi') || comb.includes('galvan')) return 'aluzinc';
+    if (comb.includes('alumin') || comb.includes('alu')) return 'alu';
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Minimum ₦/m from material pricing workbook (excludes commission); branch required on sheet rows. */
+function floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, designKeyNorm, sheetBranchId) {
+  if (!canReadMaterialPricingSheetRows(db)) return null;
+  const mk = String(materialKey || '').trim().toLowerCase();
+  const g = String(gaugeMmKey || '').trim();
+  const bid = String(sheetBranchId || '').trim();
+  if (!mk || !g || !bid) return null;
+  const d = normKeyPriceList(designKeyNorm);
+  try {
+    const row = db
+      .prepare(
+        `SELECT minimum_price_per_m_ngn FROM material_pricing_sheet_rows
+         WHERE material_key = ? AND gauge_mm = ? AND branch_id = ? AND design_key = ?
+         LIMIT 1`
+      )
+      .get(mk, g, bid, d);
+    const n = Math.round(Number(row?.minimum_price_per_m_ngn) || 0);
+    return n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranchId) {
+  if (!canReadMaterialPricingSheetRows(db)) return null;
+  const mk = String(materialKey || '').trim().toLowerCase();
+  const g = String(gaugeMmKey || '').trim();
+  const bid = String(sheetBranchId || '').trim();
+  if (!mk || !g || !bid) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT MIN(minimum_price_per_m_ngn) AS m FROM material_pricing_sheet_rows
+         WHERE material_key = ? AND gauge_mm = ? AND branch_id = ? AND COALESCE(minimum_price_per_m_ngn, 0) > 0`
+      )
+      .get(mk, g, bid);
+    const m = row?.m != null ? Math.round(Number(row.m) || 0) : 0;
+    return m > 0 ? m : null;
+  } catch {
+    return null;
+  }
+}
+
+function workbookFloorPpmForQuotedGaugeDesign(db, materialKey, quotedGd, sheetBranchId) {
+  if (!quotedGd || !materialKey) return null;
+  const gk = workbookGaugeMmKeyFromCoilLabel(quotedGd.gauge);
+  if (!gk) return null;
+  for (const dKey of expandedDesignKeysForWorkbook(db, quotedGd.design)) {
+    const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, dKey, sheetBranchId);
+    if (f != null && f > 0) return f;
+  }
+  const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, '', sheetBranchId);
+  return blank != null && blank > 0 ? blank : null;
+}
+
 function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
   const a = firstGaugeMmFromLabel(quotedLabel);
   const b = firstGaugeMmFromLabel(producedLabel);
@@ -520,8 +661,8 @@ function expandedDesignKeysForWorkbook(db, designLabelRaw) {
 }
 
 /**
- * Workbook list ₦/m for steel actually used: **allocated coil gauge** + design/colour
- * (quotation header/lines + first line gauge/design, then FG product card, then allocation colour). No product-name logic.
+ * Workbook **floor** ₦/m (material pricing `minimum_price_per_m_ngn`) for steel actually used:
+ * **allocated coil gauge** + design/colour, then published list from `price_list_items` if no sheet row.
  * Returns null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
 function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '') {
@@ -530,9 +671,23 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
   if (!coilGauge) return null;
 
+  const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
+  const materialKey = materialPricingMaterialKeyFromJob(db, job);
+  const gaugeMmKey = workbookGaugeMmKeyFromCoilLabel(coilGauge);
+
+  const tryFloorThenList = (dKeyRaw) => {
+    const dKey = dKeyRaw != null ? normKeyPriceList(dKeyRaw) : '';
+    if (materialKey && gaugeMmKey) {
+      const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, dKey, sheetBranch);
+      if (f != null && f > 0) return f;
+    }
+    if (!dKey) return null;
+    return listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+  };
+
   for (const dRaw of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
     for (const dKey of expandedDesignKeysForWorkbook(db, dRaw)) {
-      const v = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+      const v = tryFloorThenList(dKey);
       if (v != null && v > 0) return v;
     }
   }
@@ -561,7 +716,7 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
       ).trim();
       if (designFromProduct) {
         for (const dKey of expandedDesignKeysForWorkbook(db, designFromProduct)) {
-          const v = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+          const v = tryFloorThenList(dKey);
           if (v != null && v > 0) return v;
         }
       }
@@ -581,12 +736,18 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
     const col = String(cl?.c ?? '').trim();
     if (col) {
       for (const dKey of expandedDesignKeysForWorkbook(db, col)) {
-        const viaLot = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+        const viaLot = tryFloorThenList(dKey);
         if (viaLot != null && viaLot > 0) return viaLot;
       }
     }
   } catch {
     /* ignore */
+  }
+  if (materialKey && gaugeMmKey) {
+    const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, '', sheetBranch);
+    if (blank != null && blank > 0) return blank;
+    const floorMin = floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranch);
+    if (floorMin != null && floorMin > 0) return floorMin;
   }
   const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId);
   if (minAcross != null && minAcross > 0) return minAcross;
@@ -623,7 +784,7 @@ function listPricePerMeterForProducedProduct(db, productId, branchId) {
 }
 
 /**
- * Quoted roofing gauge vs **allocated coil gauge** — workbook list ₦/m must exist when they differ.
+ * Quoted roofing gauge vs **allocated coil gauge** — workbook floor (material sheet) or list ₦/m must resolve when they differ.
  * @returns {{ code: string; message: string; jobId?: string; productId?: string }[]}
  */
 export function refundSubstitutionDataQualityIssues(db, quotationRef) {
@@ -685,7 +846,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
           code: 'substitution_list_price',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid || undefined,
-          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. No workbook row matched: the system tries quotation header + line colours/designs, FG product colour, then coil allocation colour (pjc or lot). Add \`price_list_items\` for gauge_key ≈ coil gauge and design_key matching one of those labels, sync workbook, or set substitutePricePerMeterNgn / workbook override in preview.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. No workbook price matched: the system prefers material_pricing_sheet_rows.minimum_price_per_m_ngn (coil gauge + design), then price_list_items. Add material pricing rows for the branch, or price_list_items with gauge_key ≈ coil gauge, or set substitutePricePerMeterNgn / workbook override in preview.`,
         });
       }
     }
@@ -1657,11 +1818,11 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
       producedPpm = ppm;
       if (ppm == null || ppm <= 0) {
         outcome =
-          'SKIP_NO_WORKBOOK_LIST_PRICE — no price_list_items row for this coil gauge + design/colour (or pass substitutePricePerMeterNgn).';
+          'SKIP_NO_WORKBOOK_PRICE — no material pricing floor row or price_list_items match for this coil gauge + design/colour (or pass substitutePricePerMeterNgn).';
       } else {
         deltaPpm = pricePerMeter - ppm;
         if (deltaPpm <= 0) {
-          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above workbook list for coil (${ppm}).`;
+          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above workbook floor/list for coil (${ppm}).`;
         } else {
           outcome = `CREDIT — quoted ${quotedGaugeRaw} vs coil ${coilGaugeRaw}: Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
         }
@@ -1962,17 +2123,29 @@ export function previewRefundRequest(db, payload) {
 
   /**
    * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (0.02mm tolerance).
-   * Credit = max(0, quoted blended ₦/m − workbook list ₦/m for **coil** gauge + design/colour) × actual metres per job.
+   * Credit = max(0, quoted blended ₦/m − workbook **floor** ₦/m (`minimum_price_per_m_ngn`) for coil gauge + design when present,
+   * else published list from `price_list_items`) × actual metres per job.
    * Does not use job product name or FG card gauge for the comparison trigger.
    */
   const substitutionPerMeterBreakdown = [];
   if (quotationRef && !refundedCategories.has('Substitution Difference') && productionJobs.length) {
     const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+    const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
     const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);
     const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
-    const quotedListPpm = quotedGd
-      ? listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId)
-      : null;
+    const ctxJob =
+      productionJobs.find((jj) => (Number(jj.actual_meters) || 0) > 0) || productionJobs[0] || null;
+    const mkQuotedCtx = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
+    let quotedListPpm = null;
+    if (quotedGd) {
+      quotedListPpm =
+        mkQuotedCtx != null
+          ? workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch)
+          : null;
+      if (quotedListPpm == null || quotedListPpm <= 0) {
+        quotedListPpm = listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId);
+      }
+    }
     const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
     let totalCredit = 0;
     let anyGaugeVsCoilCase = false;
@@ -2045,7 +2218,7 @@ export function previewRefundRequest(db, payload) {
           (b) =>
             `${b.meters.toFixed(2)}m × ${fmtN(b.deltaPerMeterNgn)}/m (quote ${b.quotedGaugeForComparison || 'gauge'} vs coil ${b.coilGaugeFromAllocations || '—'}; ${String(b.productName || 'job').trim()})`
         );
-        label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fmtN(pricePerMeter)}/m minus workbook coil rate × metres): ${parts.join('; ')}`;
+        label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fmtN(pricePerMeter)}/m minus workbook floor coil rate × metres): ${parts.join('; ')}`;
       } else if (!pricePerMeter) {
         label =
           'Gauge on quotation differs from allocated coil gauge — add product lines with qty and unitPrice to derive quoted ₦/m, or enter credit manually';
@@ -2072,12 +2245,12 @@ export function previewRefundRequest(db, payload) {
       } else if (missingListPriceLabels.length > 0 && !overrideSubPpm) {
         const uniq = [...new Set(missingListPriceLabels)];
         warnings.push(
-          `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add \`price_list_items\` where gauge_key matches the **coil** gauge and design_key matches quotation header/line colour or design, FG colour, or coil colour (or pass substitutePricePerMeterNgn when calling preview).`
+          `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add material_pricing_sheet_rows (minimum ₦/m) for the branch and coil gauge, or price_list_items where gauge_key matches the coil gauge and design_key matches quotation/FG/coil colour (or pass substitutePricePerMeterNgn when calling preview).`
         );
       }
       if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && pricePerMeter && !missingListPriceLabels.length) {
         warnings.push(
-          'Substitution: workbook list rate for the coil is not below the quotation blended ₦/m — per-metre delta credit is zero.'
+          'Substitution: workbook floor or list rate for the coil is not below the quotation blended ₦/m — per-metre delta credit is zero.'
         );
       }
     }

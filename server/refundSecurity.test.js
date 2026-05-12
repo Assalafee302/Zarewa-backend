@@ -155,6 +155,19 @@ function seedData(db) {
     ) VALUES ('PL-RFS-SUB', '0.24mm', 'iv', 3000, 0, 'test', NULL, '2026-01-01')`
   ).run();
   db.prepare(
+    `INSERT OR REPLACE INTO material_pricing_sheet_rows (
+      id, material_key, gauge_mm, branch_id, design_key,
+      conversion_standard_kg_per_m, conversion_reference_kg_per_m, conversion_history_kg_per_m, conversion_used_kg_per_m,
+      cost_per_kg_ngn, overhead_ngn_per_m, profit_ngn_per_m,
+      minimum_price_per_m_ngn, commission_ngn_per_m, gauge_customer_label, notes, updated_at_iso, updated_by_user_id
+    ) VALUES (
+      'MPS-RFS-SUB', 'alu', '0.24', 'BR-KD', 'iv',
+      NULL, NULL, NULL, NULL,
+      0, 0, 0,
+      2200, 800, NULL, 'refund test: floor below list', '2026-01-01', NULL
+    )`
+  ).run();
+  db.prepare(
     `INSERT OR REPLACE INTO production_jobs (
       job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso
     ) VALUES ('JOB-RFS-SUB', 'QT-RFS-SUB-001', 'SUB-FG-TEST', 'Longspan economy', 10, 'Completed', '2026-04-01T10:00:00Z')`
@@ -322,12 +335,12 @@ describe('Refund Security & Substitution Logic', () => {
     expect(preview.status).toBe(200);
     const sub = preview.body.preview.suggestedLines.find((l) => l.category === 'Substitution Difference');
     expect(sub).toBeDefined();
-    expect(sub.amountNgn).toBe(20_000);
+    expect(sub.amountNgn).toBe(28_000);
     const bd = preview.body.preview.substitutionPerMeterBreakdown;
     expect(Array.isArray(bd)).toBe(true);
     expect(bd).toHaveLength(1);
-    expect(bd[0].deltaPerMeterNgn).toBe(2000);
-    expect(bd[0].creditNgn).toBe(20_000);
+    expect(bd[0].deltaPerMeterNgn).toBe(2800);
+    expect(bd[0].creditNgn).toBe(28_000);
     expect(bd[0].meters).toBe(10);
   });
 

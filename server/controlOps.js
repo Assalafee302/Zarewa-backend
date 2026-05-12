@@ -306,6 +306,41 @@ function firstQuotedProductGaugeDesign(linesJson) {
   return null;
 }
 
+/** Ordered design/colour strings from quotation JSON for workbook keys (deduped). */
+function quotedDesignCandidatesForSubstitution(linesJson, quotedGd) {
+  const out = [];
+  const seen = new Set();
+  const push = (s) => {
+    const t = String(s ?? '').trim();
+    if (!t) return;
+    const k = normKeyPriceList(t);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  if (quotedGd?.design) push(quotedGd.design);
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      payload = null;
+    }
+  }
+  if (payload && typeof payload === 'object') {
+    push(payload.materialDesign);
+    push(payload.materialColor);
+    push(payload.materialColour);
+    if (Array.isArray(payload.products)) {
+      for (const p of payload.products) {
+        push(p?.materialDesign ?? p?.design ?? p?.profile ?? p?.profileName);
+        push(p?.materialColor ?? p?.colour ?? p?.color);
+      }
+    }
+  }
+  return out;
+}
+
 function normKeyPriceList(s) {
   return String(s ?? '')
     .trim()
@@ -410,19 +445,20 @@ function producedGaugeLabelFromJobCoils(db, jobId) {
 
 /**
  * Workbook list ₦/m for steel actually used: **allocated coil gauge** + design/colour
- * (quotation line design, then FG product card, then first coil lot colour). No product-name logic.
+ * (quotation header/lines + first line gauge/design, then FG product card, then allocation colour). No product-name logic.
  * Returns null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
-function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm) {
+function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '') {
   const ov = positiveNumber(overrideSubPpm);
   if (ov != null && ov > 0) return ov;
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
   if (!coilGauge) return null;
-  const qd = quotedGd && String(quotedGd.design ?? '').trim();
-  if (qd) {
-    const viaQuote = listPricePerMeterFromGaugeDesign(db, coilGauge, qd, branchId);
-    if (viaQuote != null && viaQuote > 0) return viaQuote;
+
+  for (const d of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
+    const v = listPricePerMeterFromGaugeDesign(db, coilGauge, d, branchId);
+    if (v != null && v > 0) return v;
   }
+
   const pid = String(job?.product_id ?? '').trim();
   if (pid) {
     let row;
@@ -454,7 +490,7 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   try {
     const cl = db
       .prepare(
-        `SELECT NULLIF(TRIM(cl.colour), '') AS c
+        `SELECT COALESCE(NULLIF(TRIM(pjc.colour), ''), NULLIF(TRIM(cl.colour), '')) AS c
          FROM production_job_coils pjc
          LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
          WHERE pjc.job_id = ?
@@ -558,14 +594,14 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
         continue;
       }
       if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
-      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGdIssue, null);
+      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGdIssue, null, quote?.lines_json ?? '');
       if (ppm == null || ppm <= 0) {
         const pid = String(j.product_id ?? '').trim();
         issues.push({
           code: 'substitution_list_price',
           jobId: String(j.job_id ?? '').trim() || undefined,
           productId: pid || undefined,
-          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. Add a **price list / workbook** row for the **coil** gauge (${coilGauge}) plus the design/colour the matcher uses (first product line on the quote, else FG product, else coil lot). Procurement → Material pricing workbook (sync to list), or Price list admin. Or use the refund form’s optional “Workbook ₦/m override” and refresh preview.`,
+          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. No workbook row matched: the system tries quotation header + line colours/designs, FG product colour, then coil allocation colour (pjc or lot). Add \`price_list_items\` for gauge_key ≈ coil gauge and design_key matching one of those labels, sync workbook, or set substitutePricePerMeterNgn / workbook override in preview.`,
         });
       }
     }
@@ -1533,7 +1569,7 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
       outcome =
         'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
     } else {
-      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm);
+      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm, quote?.lines_json ?? '');
       producedPpm = ppm;
       if (ppm == null || ppm <= 0) {
         outcome =
@@ -1887,7 +1923,7 @@ export function previewRefundRequest(db, payload) {
         continue;
       }
 
-      const producedPpm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm);
+      const producedPpm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm, quote?.lines_json ?? '');
       if (producedPpm == null || producedPpm <= 0) {
         missingListPriceLabels.push(jobLabel);
         continue;
@@ -1952,7 +1988,7 @@ export function previewRefundRequest(db, payload) {
       } else if (missingListPriceLabels.length > 0 && !overrideSubPpm) {
         const uniq = [...new Set(missingListPriceLabels)];
         warnings.push(
-          `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add price_list_items for coil gauge + colour/design, or pass substitutePricePerMeterNgn when calling preview.`
+          `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add \`price_list_items\` where gauge_key matches the **coil** gauge and design_key matches quotation header/line colour or design, FG colour, or coil colour (or pass substitutePricePerMeterNgn when calling preview).`
         );
       }
       if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && pricePerMeter && !missingListPriceLabels.length) {

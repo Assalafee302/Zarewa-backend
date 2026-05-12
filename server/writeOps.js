@@ -38,6 +38,7 @@ import {
   enrichSalesReceiptRowsWithCashFromLedger,
   getQuotation,
   listLedgerEntries,
+  listQuotationIds,
   listSalesReceipts,
   listCoilLots,
 } from './readModel.js';
@@ -4608,7 +4609,7 @@ export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
         .prepare(`DELETE FROM sales_receipts WHERE quotation_ref = ? AND id NOT IN (${ph})`)
         .run(qid, ...keepIds).changes;
     }
-    const syncR = syncQuotationPaidFromLedger(qid);
+    const syncR = syncQuotationPaidFromLedger(db, qid);
     const qtAfter = getQuotation(db, qid);
     return {
       ok: true,
@@ -4621,6 +4622,50 @@ export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
       advanceAppliedNgn: syncR.advanceAppliedNgn,
     };
   })();
+}
+
+/**
+ * Admin maintenance: for every quotation in branch scope, rebuild `sales_receipts` from active ledger RECEIPT
+ * rows (same rules as per-quote reconcile) and refresh `paid_ngn` / `payment_status` from receipts + ADVANCE_APPLIED.
+ * Does not change ledger, cutting lists, or inventory — only denormalized sales/payment mirrors.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ */
+export function reconcileAllSalesDerivedDataForBranchScope(db, branchScope = 'ALL') {
+  const ids = listQuotationIds(db, branchScope);
+  const failures = [];
+  let processed = 0;
+  let totalUpserted = 0;
+  let totalDeletedMirrors = 0;
+  let quotationsPaidChanged = 0;
+  for (const qid of ids) {
+    try {
+      const beforeRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(qid);
+      const beforePaid = Math.round(Number(beforeRow?.paid_ngn) || 0);
+      const r = reconcileSalesReceiptMirrorsForQuotation(db, qid);
+      if (!r.ok) {
+        failures.push({ id: qid, error: r.error || 'Reconcile failed.' });
+        continue;
+      }
+      processed += 1;
+      totalUpserted += Math.round(Number(r.upserted) || 0);
+      totalDeletedMirrors += Math.round(Number(r.deletedMirrors) || 0);
+      const afterPaid = Math.round(Number(r.paidNgn) || 0);
+      if (beforePaid !== afterPaid) quotationsPaidChanged += 1;
+    } catch (e) {
+      failures.push({ id: qid, error: String(e?.message || e) });
+    }
+  }
+  return {
+    ok: true,
+    branchScope,
+    quotationIds: ids.length,
+    processed,
+    failures,
+    totalUpserted,
+    totalDeletedMirrors,
+    quotationsPaidChanged,
+  };
 }
 
 /** Reverse a posted receipt by creating a compensating ledger row and marking the mirror row reversed. */

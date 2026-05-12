@@ -1769,6 +1769,50 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /**
+   * Rebuild sales_receipt mirrors from ledger RECEIPT rows and recalculate quotations.paid_ngn for all quotes
+   * in the current workspace branch scope. Administrator only; does not alter ledger entries.
+   */
+  app.post('/api/admin/reconcile-sales-derived', requireAuth, (req, res) => {
+    try {
+      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only the administrator role can run this maintenance job.',
+        });
+      }
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Send JSON body { "confirm": true } to rebuild sales receipt rows from the ledger and recalculate booked paid on every quotation in this branch scope.',
+        });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const r = write.reconcileAllSalesDerivedDataForBranchScope(db, branchScope);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'admin.reconcile_sales_derived',
+        entityKind: 'system',
+        entityId: 'sales_derived',
+        note: `Sales denormalized data reconcile (${r.quotationIds} quotations, branch scope ${branchScope})`,
+        details: {
+          branchScope,
+          quotationIds: r.quotationIds,
+          processed: r.processed,
+          failures: r.failures?.length ?? 0,
+          totalUpserted: r.totalUpserted,
+          totalDeletedMirrors: r.totalDeletedMirrors,
+          quotationsPaidChanged: r.quotationsPaidChanged,
+        },
+      });
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.patch('/api/users/:id/status', requirePermission('settings.view'), (req, res) => {
     try {
       const id = req.params.id;

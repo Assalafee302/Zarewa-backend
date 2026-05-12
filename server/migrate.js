@@ -345,6 +345,9 @@ export function runMigrations(db) {
   if (!refunds.has('payee_bank_name')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN payee_bank_name TEXT`);
   }
+  if (refunds.size > 0 && !refunds.has('branch_id')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN branch_id TEXT`);
+  }
   // Legacy index blocked multiple refund requests per quotation (product defaulted to "—").
   const hasRefundPendingIdx = db
     .prepare(

@@ -39,6 +39,68 @@ function splitSqlStatements(sql) {
   return out;
 }
 
+/**
+ * Count `?` placeholders in `sql`, ignoring `?` that appear inside
+ * quoted string / identifier literals. mysql2 silently leaves unmatched
+ * `?` in the SQL when `args` is short, which becomes the MariaDB error
+ * `near '?' at line N` — this helper lets us catch the mismatch first.
+ */
+function countQueryPlaceholders(sql) {
+  const s = String(sql || '');
+  let count = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if ((inSingle || inDouble) && c === '\\') {
+      i += 1;
+      continue;
+    }
+    if (c === "'" && !inDouble && !inBacktick) inSingle = !inSingle;
+    else if (c === '"' && !inSingle && !inBacktick) inDouble = !inDouble;
+    else if (c === '`' && !inSingle && !inDouble) inBacktick = !inBacktick;
+    else if (c === '?' && !inSingle && !inDouble && !inBacktick) count += 1;
+  }
+  return count;
+}
+
+/** Compact SQL for inclusion in error messages (single-line, capped length). */
+function sqlForError(sql) {
+  return String(sql || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function annotateSqlError(err, sql, args) {
+  const baseMessage = err?.sqlMessage || err?.message || String(err);
+  const argsLen = Array.isArray(args) ? args.length : 0;
+  const placeholders = countQueryPlaceholders(sql);
+  if (!err || typeof err !== 'object') {
+    return new Error(
+      `${baseMessage} | sql="${sqlForError(sql)}" | binds=${argsLen}/${placeholders}`
+    );
+  }
+  try {
+    err.message = `${baseMessage} | sql="${sqlForError(sql)}" | binds=${argsLen}/${placeholders}`;
+  } catch {
+    /* read-only message — fall back to wrapping. */
+    return new Error(
+      `${baseMessage} | sql="${sqlForError(sql)}" | binds=${argsLen}/${placeholders}`
+    );
+  }
+  return err;
+}
+
+function assertBindCount(sql, args) {
+  const placeholders = countQueryPlaceholders(sql);
+  const actual = Array.isArray(args) ? args.length : 0;
+  if (placeholders > 0 && actual !== placeholders) {
+    throw new Error(
+      `SQL bind mismatch: ${placeholders} placeholder(s) but ${actual} value(s) ` +
+        `provided. MariaDB would reject this with "near '?'" — sql="${sqlForError(sql)}"`
+    );
+  }
+}
+
 function isDuplicateIndexNameError(e) {
   const errno = /** @type {{ errno?: number }} */ (e).errno;
   const code = /** @type {{ code?: string }} */ (e).code;
@@ -136,9 +198,14 @@ async function execRaw(sql) {
 
 async function runStatement(sql, args) {
   const { sql: sql2, args: a2 } = adaptSqlForMysql(sql, args);
+  assertBindCount(sql2, a2);
   const conn = execTarget();
-  const [res] = await conn.query(sql2, a2);
-  return res;
+  try {
+    const [res] = await conn.query(sql2, a2);
+    return res;
+  } catch (e) {
+    throw annotateSqlError(e, sql2, a2);
+  }
 }
 
 runAsWorker(async (payload) => {
@@ -193,17 +260,27 @@ runAsWorker(async (payload) => {
 
   if (op === 'get') {
     const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
+    assertBindCount(sql, args);
     const conn = execTarget();
-    const [rows] = await conn.query(sql, args);
-    const list = /** @type {Record<string, unknown>[]} */ (rows);
-    return list[0] ?? undefined;
+    try {
+      const [rows] = await conn.query(sql, args);
+      const list = /** @type {Record<string, unknown>[]} */ (rows);
+      return list[0] ?? undefined;
+    } catch (e) {
+      throw annotateSqlError(e, sql, args);
+    }
   }
 
   if (op === 'all') {
     const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
+    assertBindCount(sql, args);
     const conn = execTarget();
-    const [rows] = await conn.query(sql, args);
-    return /** @type {Record<string, unknown>[]} */ (rows);
+    try {
+      const [rows] = await conn.query(sql, args);
+      return /** @type {Record<string, unknown>[]} */ (rows);
+    } catch (e) {
+      throw annotateSqlError(e, sql, args);
+    }
   }
 
   if (op === 'txBegin') {

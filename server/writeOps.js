@@ -9,6 +9,7 @@ import {
 } from './glOps.js';
 import { ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
+import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 
 function enrichQuotationLinesWithMaterialHeader(linesJson) {
   if (!linesJson || typeof linesJson !== 'object') return;
@@ -4836,6 +4837,32 @@ function normalizeCuttingListLines(lines) {
   return out;
 }
 
+function quotationHasPositiveProductLines(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      payload = {};
+    }
+  }
+  const arr = payload?.products;
+  if (!Array.isArray(arr)) return false;
+  return arr.some((row) => {
+    const name = String(row?.name ?? '').trim();
+    const qty = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
+    return name && qty > 0;
+  });
+}
+
+function quotationIsAccessoriesOnlyForProduction(db, quotationRef) {
+  const qref = String(quotationRef ?? '').trim();
+  if (!qref) return false;
+  const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
+  if (!row) return false;
+  return parseQuotationAccessoryLines(row.lines_json).length > 0 && !quotationHasPositiveProductLines(row.lines_json);
+}
+
 function syncCuttingListLineRows(db, cuttingListId, lines) {
   db.prepare(`DELETE FROM cutting_list_lines WHERE cutting_list_id = ?`).run(cuttingListId);
   const ins = db.prepare(
@@ -4945,7 +4972,8 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const qCheck = validateQuotationForCuttingList(db, quotationRef, null);
   if (!qCheck.ok) return qCheck;
   const lines = normalizeCuttingListLines(payload.lines);
-  if (!lines.length) return { ok: false, error: 'Add at least one valid cutting line.' };
+  const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
+  if (!lines.length && !accessoriesOnly) return { ok: false, error: 'Add at least one valid cutting line.' };
   const branchId =
     String(quote?.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
   const id = nextCuttingListHumanId(db, branchId);
@@ -4957,8 +4985,8 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const sheetsToCut = Number(
     payload.sheetsToCut ?? lines.reduce((sum, line) => sum + line.sheets, 0)
   );
-  const productID = String(payload.productID ?? '').trim();
-  const productName = String(payload.productName ?? '').trim();
+  const productID = accessoriesOnly ? '' : String(payload.productID ?? '').trim();
+  const productName = accessoriesOnly ? 'Accessories only' : String(payload.productName ?? '').trim();
   const machineName = String(payload.machineName ?? '').trim();
   const status = 'Waiting';
   const handledBy = String(payload.handledBy ?? '').trim() || 'Sales';
@@ -5059,7 +5087,10 @@ export function updateCuttingList(db, cuttingListId, payload) {
           totalM: Number(row.total_m) || 0,
           lineType: row.line_type || 'Roof',
         }));
-  if (!lines.length) return { ok: false, error: 'Cutting list must keep at least one valid line.' };
+  const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
+  if (!lines.length && !accessoriesOnly) {
+    return { ok: false, error: 'Cutting list must keep at least one valid line.' };
+  }
   const dateISO = payload.dateISO ?? existing.date_iso;
   const totalMeters =
     payload.totalMeters !== undefined
@@ -5070,11 +5101,17 @@ export function updateCuttingList(db, cuttingListId, payload) {
       ? Number(payload.sheetsToCut) || 0
       : lines.reduce((sum, line) => sum + line.sheets, 0);
   const productID =
-    payload.productID !== undefined ? String(payload.productID ?? '').trim() : existing.product_id ?? '';
+    accessoriesOnly
+      ? ''
+      : payload.productID !== undefined
+        ? String(payload.productID ?? '').trim()
+        : existing.product_id ?? '';
   const productName =
-    payload.productName !== undefined
-      ? String(payload.productName ?? '').trim()
-      : existing.product_name ?? '';
+    accessoriesOnly
+      ? 'Accessories only'
+      : payload.productName !== undefined
+        ? String(payload.productName ?? '').trim()
+        : existing.product_name ?? '';
   const machineName =
     payload.machineName !== undefined
       ? String(payload.machineName ?? '').trim()

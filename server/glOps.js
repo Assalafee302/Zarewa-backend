@@ -35,12 +35,22 @@ export function ensureGlSchema(db) {
       debit_ngn INTEGER NOT NULL DEFAULT 0,
       credit_ngn INTEGER NOT NULL DEFAULT 0,
       memo TEXT,
+      cost_center TEXT,
       FOREIGN KEY (journal_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,
       FOREIGN KEY (account_id) REFERENCES gl_accounts(id)
     );
     CREATE INDEX IF NOT EXISTS idx_gl_lines_journal ON gl_journal_lines(journal_id);
     CREATE INDEX IF NOT EXISTS idx_gl_lines_account ON gl_journal_lines(account_id);
   `);
+  try {
+    const cols = db.prepare(`PRAGMA table_info(gl_journal_lines)`).all();
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('cost_center')) {
+      db.exec(`ALTER TABLE gl_journal_lines ADD COLUMN cost_center TEXT`);
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_gl_journal_source ON gl_journal_entries(source_kind, source_id) WHERE source_kind IS NOT NULL AND source_id IS NOT NULL AND TRIM(source_id) != '';`
@@ -112,11 +122,11 @@ export function postBalancedJournalTx(db, payload) {
     deb += Math.round(Number(l.debitNgn) || 0);
     cred += Math.round(Number(l.creditNgn) || 0);
   }
-  if (deb !== cred) return { ok: false, error: 'Journal debits and credits must balance.' };
-  if (deb <= 0) return { ok: false, error: 'Journal total must be positive.' };
+  if (deb !== cred) return { ok: false, error: 'Journal debits and credits must balance.', code: 'GL_NOT_BALANCED' };
+  if (deb <= 0) return { ok: false, error: 'Journal total must be positive.', code: 'GL_AMOUNT' };
 
   const entryDate = String(payload.entryDateISO || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) return { ok: false, error: 'Invalid entry date.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) return { ok: false, error: 'Invalid entry date.', code: 'GL_DATE' };
 
   try {
     assertPeriodOpen(db, entryDate, 'GL journal date');
@@ -143,7 +153,7 @@ export function postBalancedJournalTx(db, payload) {
      VALUES (?,?,?,?,?,?,?,?,?)`
   );
   const insL = db.prepare(
-    `INSERT INTO gl_journal_lines (id, journal_id, account_id, debit_ngn, credit_ngn, memo) VALUES (?,?,?,?,?,?)`
+    `INSERT INTO gl_journal_lines (id, journal_id, account_id, debit_ngn, credit_ngn, memo, cost_center) VALUES (?,?,?,?,?,?,?)`
   );
 
   insJ.run(
@@ -165,7 +175,8 @@ export function postBalancedJournalTx(db, payload) {
     if (d < 0 || c < 0) throw new Error('Amounts must be non-negative.');
     if ((d === 0) === (c === 0)) throw new Error('Each line needs either debit or credit.');
     if (d > 0 && c > 0) throw new Error('Line cannot have both debit and credit.');
-    insL.run(nextGlJournalLineHumanId(db, branchForJe), jid, aid, d, c, l.memo ?? null);
+    const cc = l.costCenter != null ? String(l.costCenter ?? '').trim().slice(0, 64) : '';
+    insL.run(nextGlJournalLineHumanId(db, branchForJe), jid, aid, d, c, l.memo ?? null, cc || null);
   }
   return { ok: true, journalId: jid };
 }
@@ -179,15 +190,20 @@ export function postBalancedJournal(db, payload) {
     let result;
     db.transaction(() => {
       result = postBalancedJournalTx(db, payload);
-      if (!result.ok) throw new Error(result.error);
+      if (!result.ok) {
+        const err = new Error(result.error);
+        err.glResult = result;
+        throw err;
+      }
     })();
     return result;
   } catch (e) {
+    if (e && typeof e === 'object' && e.glResult) return e.glResult;
     const msg = String(e.message || e);
     if (msg.includes('Unknown GL account') || msg.includes('Journal') || msg.includes('Invalid')) {
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, code: 'GL_ERROR' };
     }
-    return { ok: false, error: msg };
+    return { ok: false, error: msg, code: 'GL_ERROR' };
   }
 }
 
@@ -250,8 +266,9 @@ export function listGlAccounts(db) {
 
 /**
  * Trial balance: sum lines for journals with entry_date in [startDate, endDate] inclusive.
+ * @param {{ costCenter?: string }} [opts] When costCenter is set, only journal lines with that cost center tag are included.
  */
-export function trialBalanceRows(db, startDate, endDate) {
+export function trialBalanceRows(db, startDate, endDate, opts = {}) {
   ensureGlSchema(db);
   seedDefaultGlAccounts(db);
   const sd = String(startDate || '').slice(0, 10);
@@ -259,6 +276,9 @@ export function trialBalanceRows(db, startDate, endDate) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) {
     return { ok: false, error: 'startDate and endDate must be YYYY-MM-DD.' };
   }
+  const costCenter = String(opts?.costCenter || '').trim();
+  const ccSql = costCenter ? ` AND TRIM(COALESCE(l.cost_center, '')) = ?` : '';
+  const params = costCenter ? [sd, ed, costCenter] : [sd, ed];
   const rows = db
     .prepare(
       `SELECT a.code AS accountCode, a.name AS accountName, a.type AS accountType,
@@ -269,13 +289,13 @@ export function trialBalanceRows(db, startDate, endDate) {
          SELECT l.account_id, l.debit_ngn, l.credit_ngn
          FROM gl_journal_lines l
          INNER JOIN gl_journal_entries j ON j.id = l.journal_id
-         WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?
+         WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}
        ) x ON x.account_id = a.id
        WHERE a.is_active = 1
        GROUP BY a.id
        ORDER BY a.sort_order, a.code`
     )
-    .all(sd, ed);
+    .all(...params);
   const detail = rows.map((r) => {
     const d = Math.round(Number(r.debitNgn) || 0);
     const c = Math.round(Number(r.creditNgn) || 0);
@@ -296,7 +316,7 @@ export function trialBalanceRows(db, startDate, endDate) {
     },
     { debitNgn: 0, creditNgn: 0 }
   );
-  return { ok: true, rows: detail, totals, startDate: sd, endDate: ed };
+  return { ok: true, rows: detail, totals, startDate: sd, endDate: ed, costCenter: costCenter || null };
 }
 
 /** Dr Cash, Cr AR — posted when customer receipt hits treasury (idempotent on ledger entry id). */
@@ -504,7 +524,8 @@ export function listGlJournalLinesForJournal(db, journalId) {
   const rows = db
     .prepare(
       `SELECT l.id AS lineId, a.code AS accountCode, a.name AS accountName,
-        l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS lineMemo
+        l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS lineMemo,
+        TRIM(COALESCE(l.cost_center, '')) AS costCenter
        FROM gl_journal_lines l
        JOIN gl_accounts a ON a.id = l.account_id
        WHERE l.journal_id = ?
@@ -526,7 +547,8 @@ export function listGlActivityLines(db, startDate, endDate) {
       `SELECT j.entry_date_iso AS entryDateISO, j.id AS journalId, j.memo AS journalMemo,
         j.source_kind AS sourceKind, j.source_id AS sourceId,
         a.code AS accountCode, a.name AS accountName,
-        l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS lineMemo
+        l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS lineMemo,
+        TRIM(COALESCE(l.cost_center, '')) AS costCenter
        FROM gl_journal_lines l
        JOIN gl_journal_entries j ON j.id = l.journal_id
        JOIN gl_accounts a ON a.id = l.account_id

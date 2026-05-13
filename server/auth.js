@@ -107,6 +107,8 @@ export const ROLE_DEFINITIONS = {
       'audit.view',
       'period.manage',
       'settings.view',
+      /** Management reports (`/api/reports/*`, `/reports`) — same gate as `userMayViewManagementReports`. */
+      'reports.view',
     ],
   },
   cashier: {
@@ -132,6 +134,8 @@ export const ROLE_DEFINITIONS = {
       'customers.manage',
       'quotations.manage',
       'receipts.post',
+      /** Direct expense rows + treasury debit (same POST as finance.post); excludes GL/bank-rec workflows. */
+      'expenses.create',
       'refunds.approve',
       'operations.view',
       'operations.manage',
@@ -152,6 +156,7 @@ export const ROLE_DEFINITIONS = {
       'customers.manage',
       'quotations.manage',
       'receipts.post',
+      'expenses.create',
       'refunds.request',
     ],
   },
@@ -320,10 +325,16 @@ export function userHasPermission(user, permission) {
 }
 
 /** Roles allowed to open management reports (`/reports`, `/api/reports/*`). */
-export const MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS = new Set(['admin', 'md', 'ceo', 'sales_manager']);
+export const MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS = new Set([
+  'admin',
+  'md',
+  'ceo',
+  'sales_manager',
+  'finance_manager',
+]);
 
 /**
- * Branch manager, MD, CEO, or administrator. Custom `permissions_json` cannot bypass role for these reports.
+ * Branch manager, MD, CEO, finance manager, or administrator. Custom `permissions_json` cannot bypass role for these reports.
  */
 export function userMayViewManagementReports(user) {
   if (!user) return false;

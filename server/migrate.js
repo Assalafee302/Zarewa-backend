@@ -740,7 +740,24 @@ export function runMigrations(db) {
   migrateUnifiedWorkspaceRegistry(db);
   migrateOperationsMaintenanceWorkspace(db);
   migrateOfficeOperations2026(db);
+  migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
+}
+
+/** Read-only integration API keys (Bearer auth for automation). */
+function migrateIntegrationApiKeys(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS integration_api_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      secret_hash TEXT NOT NULL,
+      secret_suffix TEXT NOT NULL,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      last_used_at_iso TEXT,
+      revoked_at_iso TEXT
+    );
+  `);
 }
 
 /** Point-in-time coil balances for month-end stock reports (optional capture). */
@@ -2107,6 +2124,7 @@ function migrateAccountingLayer(db) {
       debit_ngn INTEGER NOT NULL DEFAULT 0,
       credit_ngn INTEGER NOT NULL DEFAULT 0,
       memo TEXT,
+      cost_center TEXT,
       FOREIGN KEY (journal_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,
       FOREIGN KEY (account_id) REFERENCES gl_accounts(id)
     );
@@ -2122,6 +2140,11 @@ function migrateAccountingLayer(db) {
   }
 
   seedDefaultGlAccounts(db);
+  const gllCols = db.prepare(`PRAGMA table_info(gl_journal_lines)`).all();
+  const gllNames = new Set(gllCols.map((c) => c.name));
+  if (gllNames.size && !gllNames.has('cost_center')) {
+    db.exec(`ALTER TABLE gl_journal_lines ADD COLUMN cost_center TEXT`);
+  }
 }
 
 /** Extra columns on hr_staff_profiles (idempotent). */

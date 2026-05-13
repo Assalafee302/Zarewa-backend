@@ -807,16 +807,17 @@ CREATE TABLE IF NOT EXISTS gl_journal_entries (
   branch_id TEXT
 );
 
-CREATE TABLE IF NOT EXISTS gl_journal_lines (
-  id TEXT PRIMARY KEY,
-  journal_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  debit_ngn INTEGER NOT NULL DEFAULT 0,
-  credit_ngn INTEGER NOT NULL DEFAULT 0,
-  memo TEXT,
-  FOREIGN KEY (journal_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,
-  FOREIGN KEY (account_id) REFERENCES gl_accounts(id)
-);
+    CREATE TABLE IF NOT EXISTS gl_journal_lines (
+      id TEXT PRIMARY KEY,
+      journal_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      debit_ngn INTEGER NOT NULL DEFAULT 0,
+      credit_ngn INTEGER NOT NULL DEFAULT 0,
+      memo TEXT,
+      cost_center TEXT,
+      FOREIGN KEY (journal_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES gl_accounts(id)
+    );
 
 CREATE INDEX IF NOT EXISTS idx_gl_lines_journal ON gl_journal_lines(journal_id);
 CREATE INDEX IF NOT EXISTS idx_gl_lines_account ON gl_journal_lines(account_id);

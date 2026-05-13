@@ -5,7 +5,7 @@ import {
   FINANCE_WORK_ITEM_SOURCE_KINDS,
 } from './financeWorkItemConstants.js';
 import { sumTransportPaymentsForPo } from './writeOps.js';
-import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady } from './workItems.js';
+import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady, createWorkItem } from './workItems.js';
 
 /**
  * Upsert one work item per branch summarising bank lines still in Review or PendingManager.
@@ -160,5 +160,34 @@ export function syncFinancePoTransportWorkItem(db, poID, actor) {
       transportAmountNgn: total,
       transportPaidNgn: paid,
     },
+  });
+}
+
+/**
+ * Manual collections reminder — visible on Office / work items for finance.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function createCollectionsFollowUpWorkItem(db, { actor, branchId, customerId, customerName, note }) {
+  const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
+  const cid = String(customerId || '').trim();
+  const title = `Collections follow-up: ${String(customerName || cid || 'Customer').slice(0, 120)}`;
+  const body = String(note || '').trim() || 'Review receivables and agree next payment date.';
+  return createWorkItem(db, {
+    branchId: bid,
+    title,
+    summary: cid ? `Customer ${cid}` : 'Customer follow-up',
+    body,
+    documentClass: 'request',
+    documentType: FINANCE_WORK_ITEM_DOCUMENT_TYPES.COLLECTIONS_FOLLOWUP,
+    officeKey: 'finance',
+    responsibleOfficeKey: 'finance',
+    senderUserId: actor?.id,
+    senderDisplayName: actor?.displayName || actor?.username,
+    senderRoleKey: actor?.roleKey,
+    priority: 'normal',
+    requiresResponse: true,
+    sourceKind: FINANCE_WORK_ITEM_SOURCE_KINDS.COLLECTIONS_FOLLOWUP,
+    sourceId: cid || `collections-${Date.now()}`,
+    data: { routePath: '/customers', customerId: cid || null },
   });
 }

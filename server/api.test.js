@@ -2783,6 +2783,15 @@ describe.sequential('Zarewa API', () => {
     expect(Array.isArray(ar.body.rows)).toBe(true);
   });
 
+  it('GET /api/reports/ar-as-at allows finance_manager (management reports)', async () => {
+    const fin = request.agent(app);
+    await loginAs(fin, 'finance.manager', 'Finance@123');
+    const ar = await fin.get('/api/reports/ar-as-at?asAtDate=2026-12-31');
+    expect(ar.status).toBe(200);
+    expect(ar.body.ok).toBe(true);
+    expect(Array.isArray(ar.body.rows)).toBe(true);
+  });
+
   it('POST /api/coil-lots/import upserts spreadsheet rows', async () => {
     const admin = request.agent(app);
     await loginAs(admin);

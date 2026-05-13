@@ -5,9 +5,11 @@
 export const FINANCE_WORK_ITEM_SOURCE_KINDS = {
   BANK_RECON_EXCEPTIONS: 'finance_bank_recon',
   PO_TRANSPORT: 'finance_po_transport',
+  COLLECTIONS_FOLLOWUP: 'finance_collections_followup',
 };
 
 export const FINANCE_WORK_ITEM_DOCUMENT_TYPES = {
   BANK_RECON_EXCEPTIONS: 'bank_recon_exceptions',
   PO_TRANSPORT: 'po_transport_payment',
+  COLLECTIONS_FOLLOWUP: 'collections_followup',
 };

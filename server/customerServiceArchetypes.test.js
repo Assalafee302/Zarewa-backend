@@ -5,7 +5,7 @@
  * - Segregation of duties: sales can request refunds; manager/finance approves; only finance pays out.
  * - Treasury discipline: split receipt lines must equal the header amount (catches typos and skimming).
  * - Quotation ownership: advance cannot be applied to another customer’s quote (blocks mis-allocation).
- * - Role boundaries: procurement cannot post expenses; sales cannot pay refunds (limits insider abuse).
+ * - Role boundaries: procurement cannot post expenses; sales may record branch expenses (`expenses.create`); sales cannot pay refunds (limits insider abuse).
  * - Approval before cash-out: payment requests and refunds must be approved before treasury debit.
  * - Period close: back-dated postings in locked months are rejected (stops backdating fraud).
  * - Privileged corrections: receipt/advance reversals require finance.reverse (not everyday cashier roles).
@@ -1721,7 +1721,7 @@ function buildArchetypes() {
     },
     {
       id: 'ARC-45',
-      title: 'Sales officer cannot post expenses (403) — petty cash stays in finance',
+      title: 'Sales officer can post expenses (201) with expenses.create — treasury discipline unchanged',
       run: async () => {
         const app = createApp(createDatabase(':memory:'));
         const staff = request.agent(app);
@@ -1735,7 +1735,9 @@ function buildArchetypes() {
           treasuryAccountId: 1,
           reference: 'BAD',
         });
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(201);
+        expect(res.body?.ok).toBe(true);
+        expect(String(res.body?.expenseID || '')).toMatch(/^EXP-/);
       },
     },
   ];

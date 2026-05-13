@@ -98,6 +98,7 @@ export function buildBootstrap(db, opts = {}) {
   const procOk = canReadProcurementDomain(user);
   const opsOk = canReadOperationsDomain(user);
   const finOk = canReadFinanceDomain(user);
+  const expensesSnapshotOk = finOk || userHasPermission(user, 'expenses.create');
   const ledgerOk = canReadLedgerRelated(user);
   const treasuryOk = canListTreasuryAccounts(user);
   const refundsOk = canSeeRefundsList(user);
@@ -196,7 +197,7 @@ export function buildBootstrap(db, opts = {}) {
     priceListItems: salesOk ? listPriceListItems(db) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db) : [],
     treasuryMovements: finOk ? listTreasuryMovements(db) : [],
-    expenses: finOk ? listExpenses(db, branchScope) : [],
+    expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */

@@ -12,6 +12,12 @@ Source of truth in code: [src/lib/moduleAccess.js](src/lib/moduleAccess.js) (`MO
 | `operations` | `operations.view`, `production.manage` |
 | `finance` | `finance.view`, `finance.post`, `finance.pay`, `finance.approve`, `finance.reverse`, `treasury.manage` |
 | `reports` | `reports.view` |
+
+### Management reports (server + AI context)
+
+`GET /api/reports/*` and the AI reports module use `userMayViewManagementReports` ([`server/auth.js`](server/auth.js)): the user’s role must be in `MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS` **and** they must have `reports.view`.
+
+**`finance_manager`** includes `reports.view` and is in that role set so finance staff can open `/reports` and management report APIs without being branch manager or MD.
 | `edit_approvals` | `dashboard.view` (plus role filtering in workspace context) |
 | `settings` | `settings.view`, `period.manage` |
 | `office` | `office.use` |

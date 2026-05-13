@@ -1430,7 +1430,31 @@ export function registerHttpApi(app, db) {
       const bodyMt = body.managerTargets && typeof body.managerTargets === 'object' ? body.managerTargets : {};
       const naira = Number(bodyMt.nairaTargetPerMonth);
       const met = Number(bodyMt.meterTargetPerMonth);
+      const prevOnb =
+        prev.onboardingPlanAG && typeof prev.onboardingPlanAG === 'object' ? prev.onboardingPlanAG : {};
+      const bodyOnb =
+        body.onboardingPlanAG && typeof body.onboardingPlanAG === 'object' ? body.onboardingPlanAG : null;
+      let onboardingPlanAG = prevOnb;
+      if (bodyOnb) {
+        onboardingPlanAG = {
+          dismissed: Boolean(prevOnb.dismissed) || bodyOnb.dismissed === true,
+          items: {
+            ...(typeof prevOnb.items === 'object' ? prevOnb.items : {}),
+            ...(typeof bodyOnb.items === 'object' ? bodyOnb.items : {}),
+          },
+        };
+      } else if (!Object.keys(prevOnb).length) {
+        onboardingPlanAG = {
+          dismissed: false,
+          items: {
+            rbacReportsOk: false,
+            dailyBankQueue: false,
+            glCostCenter: false,
+          },
+        };
+      }
       const next = {
+        ...prev,
         showCharts: body.showCharts !== false,
         showReportsStrip: body.showReportsStrip !== false,
         showAlertBanner: body.showAlertBanner !== false,
@@ -1451,6 +1475,7 @@ export function registerHttpApi(app, db) {
                 ? Number(prevMt.meterTargetPerMonth)
                 : 250_000,
         },
+        onboardingPlanAG,
       };
       setJsonBlob(db, `user_dashboard_prefs:${req.user.id}`, next);
       return res.json({ ok: true, dashboardPrefs: next });
@@ -1870,7 +1895,8 @@ export function registerHttpApi(app, db) {
   app.get('/api/gl/trial-balance', requirePermission('finance.view'), (req, res) => {
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
-    const r = trialBalanceRows(db, startDate, endDate);
+    const costCenter = String(req.query.costCenter || '').trim();
+    const r = trialBalanceRows(db, startDate, endDate, { costCenter });
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
@@ -3897,7 +3923,7 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  app.post('/api/expenses', requirePermission('finance.post'), (req, res) => {
+  app.post('/api/expenses', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
       const r = write.insertExpenseEntry(
         db,

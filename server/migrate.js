@@ -3082,4 +3082,12 @@ function migratePricingPolicy2026(db) {
       `INSERT INTO pricing_profile_aliases (id, alias_key, canonical_design_key, canonical_profile_key) VALUES ('PA-STE', 'steptiles', 'metcoppo & steptiles', '')`
     ).run();
   }
+  try {
+    const ridgeCols = db.prepare(`PRAGMA table_info(pricing_ridge_add_ons)`).all();
+    if (ridgeCols.length && !ridgeCols.some((c) => c.name === 'list_add_on_ngn')) {
+      db.exec(`ALTER TABLE pricing_ridge_add_ons ADD COLUMN list_add_on_ngn INTEGER`);
+    }
+  } catch {
+    /* ignore */
+  }
 }

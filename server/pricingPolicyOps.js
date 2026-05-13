@@ -20,9 +20,18 @@ export function getPricingPolicyBundle(db) {
     .all();
   const ridgeAddOns = db
     .prepare(
-      `SELECT id, sort_order AS sortOrder, girth_mm AS girthMm, material_family AS materialFamily, add_on_ngn AS addOnNgn FROM pricing_ridge_add_ons ORDER BY sort_order ASC`
+      `SELECT id, sort_order AS sortOrder, girth_mm AS girthMm, material_family AS materialFamily, add_on_ngn AS addOnNgn,
+              list_add_on_ngn AS listAddOnNgn
+       FROM pricing_ridge_add_ons ORDER BY sort_order ASC`
     )
-    .all();
+    .all()
+    .map((row) => ({
+      ...row,
+      listAddOnNgn:
+        row.listAddOnNgn != null && Number.isFinite(Number(row.listAddOnNgn))
+          ? Math.max(0, Math.round(Number(row.listAddOnNgn)))
+          : null,
+    }));
   const profileAliases = db
     .prepare(
       `SELECT id, alias_key AS aliasKey, canonical_design_key AS canonicalDesignKey, canonical_profile_key AS canonicalProfileKey FROM pricing_profile_aliases ORDER BY alias_key ASC`
@@ -41,6 +50,14 @@ export function getPricingPolicyBundle(db) {
   };
 }
 
+/** Customer price list / PDF: optional list add-on; falls back to internal add-on. */
+export function customerRidgeListAddOnNgn(row) {
+  if (row?.listAddOnNgn != null && row.listAddOnNgn !== '' && Number.isFinite(Number(row.listAddOnNgn))) {
+    return Math.max(0, Math.round(Number(row.listAddOnNgn)));
+  }
+  return Math.max(0, Math.round(Number(row?.addOnNgn) || 0));
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} body
@@ -48,9 +65,21 @@ export function getPricingPolicyBundle(db) {
  */
 export function patchPricingPolicyBundle(db, body, actor) {
   const now = new Date().toISOString();
-  const defBand = Math.max(0, Math.round(Number(body?.defaultTradingBandNgn) ?? NaN));
-  if (!Number.isFinite(defBand)) {
-    return { ok: false, error: 'defaultTradingBandNgn is required (non-negative integer).' };
+  const existing = getPricingPolicyBundle(db);
+  const hasDef =
+    body &&
+    Object.prototype.hasOwnProperty.call(body, 'defaultTradingBandNgn') &&
+    body.defaultTradingBandNgn !== undefined &&
+    body.defaultTradingBandNgn !== null &&
+    body.defaultTradingBandNgn !== '';
+  let defBand;
+  if (hasDef) {
+    defBand = Math.max(0, Math.round(Number(body.defaultTradingBandNgn)));
+    if (!Number.isFinite(defBand)) {
+      return { ok: false, error: 'defaultTradingBandNgn is required (non-negative integer).' };
+    }
+  } else {
+    defBand = Math.max(0, Math.round(Number(existing?.policy?.defaultTradingBandNgn) || 50));
   }
 
   db.transaction(() => {
@@ -88,9 +117,13 @@ export function patchPricingPolicyBundle(db, body, actor) {
         if (!Number.isFinite(girth)) continue;
         const mf = String(r?.materialFamily ?? r?.material_family ?? '').trim();
         const add = Math.max(0, Math.round(Number(r?.addOnNgn ?? r?.add_on_ngn) || 0));
+        const listRaw = r?.listAddOnNgn ?? r?.list_add_on_ngn;
+        const listHas =
+          listRaw !== undefined && listRaw !== null && listRaw !== '' && Number.isFinite(Number(listRaw));
+        const listAdd = listHas ? Math.max(0, Math.round(Number(listRaw))) : null;
         db.prepare(
-          `INSERT INTO pricing_ridge_add_ons (id, sort_order, girth_mm, material_family, add_on_ngn) VALUES (?,?,?,?,?)`
-        ).run(id, ord, girth, mf, add);
+          `INSERT INTO pricing_ridge_add_ons (id, sort_order, girth_mm, material_family, add_on_ngn, list_add_on_ngn) VALUES (?,?,?,?,?,?)`
+        ).run(id, ord, girth, mf, add, listAdd);
       }
     }
 

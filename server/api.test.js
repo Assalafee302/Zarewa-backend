@@ -2982,6 +2982,18 @@ describe.sequential('Zarewa API', () => {
     expect(patch.status).toBe(200);
     expect(patch.body.ok).toBe(true);
 
+    const ridgeOnly = await md.patch('/api/pricing/policy').send({
+      ridgeAddOns: [{ girthMm: 300, materialFamily: 'alu', addOnNgn: 100, listAddOnNgn: 120 }],
+    });
+    expect(ridgeOnly.status).toBe(200);
+    expect(ridgeOnly.body.ok).toBe(true);
+    expect(ridgeOnly.body.policy.defaultTradingBandNgn).toBe(77);
+    expect(Array.isArray(ridgeOnly.body.ridgeAddOns)).toBe(true);
+    const r300 = ridgeOnly.body.ridgeAddOns.find((x) => Number(x.girthMm) === 300);
+    expect(r300).toBeTruthy();
+    expect(r300.addOnNgn).toBe(100);
+    expect(r300.listAddOnNgn).toBe(120);
+
     const book = await agent.get('/api/pricing/customer-price-book.html');
     expect(book.status).toBe(200);
     expect(String(book.headers['content-type'] || '')).toMatch(/html/i);

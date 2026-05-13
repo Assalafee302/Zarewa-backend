@@ -4,7 +4,7 @@
 
 import { listPriceListItems } from './pricingOps.js';
 import { listMasterData } from './masterData.js';
-import { getPricingPolicyBundle } from './pricingPolicyOps.js';
+import { customerRidgeListAddOnNgn, getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { premiumProfilePriceFromBase } from './pricingPolicyResolve.js';
 
 function esc(s) {
@@ -106,7 +106,9 @@ export function buildCustomerPriceBookHtml(db) {
   const ridgeRows = (policy.ridgeAddOns || [])
     .map(
       (r) =>
-        `<tr><td>${esc(String(r.girthMm))}</td><td>${esc(r.materialFamily || '—')}</td><td class="num">${esc(fmtNgn(r.addOnNgn))}</td></tr>`
+        `<tr><td>${esc(String(r.girthMm))}</td><td>${esc(r.materialFamily || '—')}</td><td class="num">${esc(
+          fmtNgn(customerRidgeListAddOnNgn(r))
+        )}</td></tr>`
     )
     .join('');
 
@@ -142,7 +144,7 @@ export function buildCustomerPriceBookHtml(db) {
   </table>
 
   <h2>Ridge / flashing add-ons (₦ per metre, after sheet split)</h2>
-  <p class="muted">Ridge floor at quote time may combine sheet floor ÷ (1200 ÷ girth mm) plus the add-on below.</p>
+  <p class="muted">Ridge floor at quote time may combine sheet floor ÷ (1200 ÷ girth mm) plus the add-on below. When a separate customer list add-on is set in pricing policy, this table shows that published figure.</p>
   <table>
     <thead><tr><th>Girth mm</th><th>Material family</th><th class="num">Add-on ₦/m</th></tr></thead>
     <tbody>${ridgeRows || '<tr><td colspan="3">No ridge add-ons configured (Settings → Pricing policy).</td></tr>'}</tbody>

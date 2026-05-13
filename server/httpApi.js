@@ -246,12 +246,17 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneProduct } from './stoneInventory.js';
 import * as write from './writeOps.js';
-import { syncFinancePoTransportWorkItem } from './financeWorkItems.js';
+import crypto from 'node:crypto';
+import {
+  syncFinancePoTransportWorkItem,
+  syncFinanceBankReconExceptionWorkItem,
+  createCollectionsFollowUpWorkItem,
+} from './financeWorkItems.js';
 import {
   buildBankReconFingerprintSetForBranch,
   partitionBankReconImportRows,
 } from './bankReconImportCore.js';
-import { syncFinanceBankReconExceptionWorkItem } from './financeWorkItems.js';
+import { registerIntegrationReadApi, hashToken as hashIntegrationToken } from './integrationReadApi.js';
 import {
   createInterBranchLoan,
   getInterBranchLoan,
@@ -1918,7 +1923,8 @@ export function registerHttpApi(app, db) {
   app.get('/api/gl/activity', requirePermission('finance.view'), (req, res) => {
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
-    const r = listGlActivityLines(db, startDate, endDate);
+    const costCenter = String(req.query.costCenter || '').trim();
+    const r = listGlActivityLines(db, startDate, endDate, { costCenter });
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
@@ -1930,7 +1936,7 @@ export function registerHttpApi(app, db) {
         memo: req.body?.memo,
         sourceKind: req.body?.sourceKind,
         sourceId: req.body?.sourceId,
-        branchId: req.workspaceBranchId,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         createdByUserId: req.user?.id,
         lines: req.body?.lines || [],
       });
@@ -5947,6 +5953,94 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to reverse advance' });
+    }
+  });
+
+  registerIntegrationReadApi(app, db);
+
+  app.post('/api/finance/collections-follow-up', requirePermission('finance.post'), (req, res) => {
+    try {
+      const customerId = String(req.body?.customerId || '').trim();
+      const customerName = String(req.body?.customerName || '').trim();
+      const note = String(req.body?.note || '').trim();
+      if (!customerId) return res.status(400).json({ ok: false, error: 'customerId is required.' });
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const r = createCollectionsFollowUpWorkItem(db, { actor: req.user, branchId, customerId, customerName, note });
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.get('/api/settings/integration-api-keys', requirePermission('settings.view'), (req, res) => {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT id, name, secret_suffix AS secretSuffix, created_at_iso AS createdAtISO,
+                  last_used_at_iso AS lastUsedAtISO, revoked_at_iso AS revokedAtISO
+           FROM integration_api_keys ORDER BY created_at_iso DESC`
+        )
+        .all();
+      return res.json({ ok: true, keys: rows });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/settings/integration-api-keys', requirePermission('settings.view'), (req, res) => {
+    try {
+      const name = String(req.body?.name || 'API key').trim().slice(0, 120);
+      const id = `IKEY-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+      const token = crypto.randomBytes(32).toString('base64url');
+      const secretHash = hashIntegrationToken(token);
+      const secretSuffix = token.slice(-6);
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO integration_api_keys (id, name, secret_hash, secret_suffix, created_at_iso, created_by_user_id)
+         VALUES (?,?,?,?,?,?)`
+      ).run(id, name, secretHash, secretSuffix, now, req.user?.id || null);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'integration_api_key.create',
+        entityKind: 'integration_api_key',
+        entityId: id,
+        note: name,
+        status: 'success',
+      });
+      return res.status(201).json({
+        ok: true,
+        id,
+        name,
+        token,
+        secretSuffix,
+        warning: 'Store the token now; it cannot be retrieved again.',
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.patch('/api/settings/integration-api-keys/:id/revoke', requirePermission('settings.view'), (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ ok: false, error: 'id is required.' });
+      const now = new Date().toISOString();
+      const info = db.prepare(`UPDATE integration_api_keys SET revoked_at_iso = ? WHERE id = ? AND revoked_at_iso IS NULL`).run(now, id);
+      if (info.changes === 0) return res.status(404).json({ ok: false, error: 'Key not found or already revoked.' });
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'integration_api_key.revoke',
+        entityKind: 'integration_api_key',
+        entityId: id,
+        status: 'success',
+      });
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
 

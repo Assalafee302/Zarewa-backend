@@ -313,5 +313,30 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
     }
   }
 
+  if (perm('finance.view')) {
+    const n = room();
+    if (n > 0) {
+      const bp = branchPredicate(db, 'gl_journal_entries', branchScope, 'j');
+      const rows = db
+        .prepare(
+          `SELECT j.id, j.entry_date_iso, IFNULL(j.memo,'') AS memo, IFNULL(j.source_id,'') AS source_id
+           FROM gl_journal_entries j WHERE 1=1${bp.sql}
+           AND (j.id LIKE ? ESCAPE '\\' OR IFNULL(j.memo,'') LIKE ? ESCAPE '\\' OR IFNULL(j.source_id,'') LIKE ? ESCAPE '\\')
+           ORDER BY j.entry_date_iso DESC, j.id DESC LIMIT ?`
+        )
+        .all(...bp.args, likeArg, likeArg, likeArg, n);
+      for (const row of rows) {
+        push({
+          kind: 'gl_journal',
+          id: row.id,
+          label: row.id,
+          sublabel: [row.entry_date_iso, row.memo || row.source_id].filter(Boolean).join(' · ') || 'GL journal',
+          path: '/accounts',
+          state: { accountsTab: 'audit', highlightGlJournalId: row.id },
+        });
+      }
+    }
+  }
+
   return results;
 }

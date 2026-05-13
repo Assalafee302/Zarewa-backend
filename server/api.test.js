@@ -3246,4 +3246,59 @@ describe.sequential('Zarewa API', () => {
     const after = db.prepare('SELECT COUNT(*) as c FROM human_id_sequences').get();
     expect(Number(after.c)).toBe(0);
   });
+
+  it('POST /api/settings/integration-api-keys then Bearer GET /api/integration/v1/trial-balance', async () => {
+    const cre = await agent.post('/api/settings/integration-api-keys').send({ name: 'vitest' });
+    expect(cre.status).toBe(201);
+    expect(cre.body.ok).toBe(true);
+    expect(cre.body.token).toBeTruthy();
+    const token = cre.body.token;
+    const tb = await request(app)
+      .get('/api/integration/v1/trial-balance?startDate=2026-01-01&endDate=2026-01-31')
+      .set('Authorization', `Bearer ${token}`);
+    expect(tb.status).toBe(200);
+    expect(tb.body.ok).toBe(true);
+    const row = db.prepare('SELECT id FROM integration_api_keys WHERE revoked_at_iso IS NULL LIMIT 1').get();
+    expect(row?.id).toBeTruthy();
+    const rev = await agent.patch(`/api/settings/integration-api-keys/${encodeURIComponent(row.id)}/revoke`).send({});
+    expect(rev.status).toBe(200);
+    const tb2 = await request(app)
+      .get('/api/integration/v1/trial-balance?startDate=2026-01-01&endDate=2026-01-31')
+      .set('Authorization', `Bearer ${token}`);
+    expect(tb2.status).toBe(401);
+  });
+
+  it('POST /api/finance/collections-follow-up creates work item', async () => {
+    const fin = request.agent(app);
+    await loginAs(fin, 'finance.manager', 'Finance@123');
+    const res = await fin.post('/api/finance/collections-follow-up').send({
+      customerId: 'CUST-UAT-1',
+      customerName: 'UAT Customer',
+      note: 'Call back Friday',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.item?.id).toBeTruthy();
+  });
+
+  it('GET /api/gl/activity accepts optional costCenter filter', async () => {
+    const j = await agent.post('/api/gl/journal').send({
+      entryDateISO: '2030-06-15',
+      memo: 'vitest cost center',
+      lines: [
+        { accountCode: '6100', debitNgn: 1000, memo: 'line', costCenter: 'UAT-CC' },
+        { accountCode: '1000', creditNgn: 1000, memo: 'line', costCenter: 'UAT-CC' },
+      ],
+    });
+    expect(j.status).toBe(201);
+    expect(j.body.ok).toBe(true);
+    const filtered = await agent.get('/api/gl/activity?startDate=2030-06-01&endDate=2030-06-30&costCenter=UAT-CC');
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.ok).toBe(true);
+    expect(Array.isArray(filtered.body.lines)).toBe(true);
+    expect(filtered.body.lines.length).toBeGreaterThan(0);
+    for (const l of filtered.body.lines) {
+      expect(String(l.costCenter || '').trim()).toBe('UAT-CC');
+    }
+  });
 });

@@ -535,13 +535,16 @@ export function listGlJournalLinesForJournal(db, journalId) {
   return { ok: true, lines: rows };
 }
 
-export function listGlActivityLines(db, startDate, endDate) {
+export function listGlActivityLines(db, startDate, endDate, opts = {}) {
   seedDefaultGlAccounts(db);
   const sd = String(startDate || '').slice(0, 10);
   const ed = String(endDate || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) {
     return { ok: false, error: 'startDate and endDate must be YYYY-MM-DD.' };
   }
+  const costCenter = String(opts?.costCenter || '').trim();
+  const ccSql = costCenter ? ` AND TRIM(COALESCE(l.cost_center, '')) = ?` : '';
+  const params = costCenter ? [sd, ed, costCenter] : [sd, ed];
   const rows = db
     .prepare(
       `SELECT j.entry_date_iso AS entryDateISO, j.id AS journalId, j.memo AS journalMemo,
@@ -552,9 +555,9 @@ export function listGlActivityLines(db, startDate, endDate) {
        FROM gl_journal_lines l
        JOIN gl_journal_entries j ON j.id = l.journal_id
        JOIN gl_accounts a ON a.id = l.account_id
-       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?
+       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}
        ORDER BY j.entry_date_iso, j.id, l.id`
     )
-    .all(sd, ed);
-  return { ok: true, lines: rows, startDate: sd, endDate: ed };
+    .all(...params);
+  return { ok: true, lines: rows, startDate: sd, endDate: ed, costCenter: costCenter || null };
 }

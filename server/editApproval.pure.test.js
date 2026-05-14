@@ -124,7 +124,7 @@ describe('editApproval (no MySQL)', () => {
     const finance = { roleKey: 'finance_manager' };
     const quotation = { id: 'Q-1', status: 'Pending' };
     handlePatchWithEditApprovalQuotation(res, db, finance, { lines: {}, editApprovalId: '123456' }, 'Q-1', () => quotation);
-    expect(res.payload).toEqual({ ok: true, quotation });
+    expect(res.payload).toEqual({ ok: true, quotation, autoOverpayAppliedNgn: 0 });
   });
 
   it('consumeEditApprovalInTransaction throws when UPDATE affects 0 rows', () => {

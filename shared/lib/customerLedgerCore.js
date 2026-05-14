@@ -1,6 +1,6 @@
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
- * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
+ * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_APPLIED'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
  */
 
 /**
@@ -17,9 +17,10 @@ export function ledgerAttributedPaidNgnForQuotation(entries, quotationId) {
   const id = String(quotationId || '').trim();
   if (!id) return 0;
   const applied = sumForQuotationInEntries(entries, id, 'ADVANCE_APPLIED');
+  const overpayApplied = sumForQuotationInEntries(entries, id, 'OVERPAY_APPLIED');
   const receipts = sumForQuotationInEntries(entries, id, 'RECEIPT');
   const receiptReversals = sumForQuotationInEntries(entries, id, 'RECEIPT_REVERSAL');
-  return Math.round(applied + receipts - receiptReversals);
+  return Math.round(applied + overpayApplied + receipts - receiptReversals);
 }
 
 /**
@@ -69,7 +70,7 @@ export function overpayCreditBalanceFromEntries(entries, customerID) {
 
 /**
  * Amount still due on a quotation. Uses the quotation row only: `paidNgn` is maintained from **sales receipts**
- * (plus applied advances rolled into the same field on the server). The `entries` argument is unused but kept
+ * plus **ADVANCE_APPLIED** and **OVERPAY_APPLIED** on the server. The `entries` argument is unused but kept
  * so call sites stay stable.
  * @param {unknown} _entries
  * @param {{ id: string, totalNgn?: number, paidNgn?: number }} q

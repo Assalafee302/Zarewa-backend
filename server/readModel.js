@@ -1167,6 +1167,7 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
         quotationCashInNgn: 0,
         receiptAllocatedSumNgn: 0,
         advanceAppliedNgn: 0,
+        overpayAppliedNgn: 0,
       },
     };
   }
@@ -1184,6 +1185,12 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     )
     .get(ref, ...lb.args);
   const advanceAppliedNgn = Math.round(Number(advAppliedRow?.s) || 0);
+  const overpayAppliedRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'OVERPAY_APPLIED' AND quotation_ref = ?${lb.sql}`
+    )
+    .get(ref, ...lb.args);
+  const overpayAppliedNgn = Math.round(Number(overpayAppliedRow?.s) || 0);
   const qb = branchWhere(db, 'quotations', branchScope);
   const qPaidRow = db
     .prepare(`SELECT paid_ngn FROM quotations WHERE id = ?${qb.sql}`)
@@ -1227,8 +1234,10 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
       quotationCashInNgn: bookedOnQuotationNgn + overpayAdvanceNgn,
       /** Sum of `sales_receipts.amount_ngn` toward this quote (what each receipt line shows). */
       receiptAllocatedSumNgn,
-      /** Deposit / advance moved onto this quote (`ADVANCE_APPLIED`); included in `bookedOnQuotationNgn` with receipts. */
+      /** Deposit advance moved onto this quote (`ADVANCE_APPLIED`). */
       advanceAppliedNgn,
+      /** Overpayment credit moved onto this quote (`OVERPAY_APPLIED`). */
+      overpayAppliedNgn,
     },
   };
 }

@@ -996,7 +996,7 @@ function sumAdvanceAppliedNgnForQuotation(ledgerEntries, quotationId) {
   if (!id) return 0;
   let s = 0;
   for (const e of ledgerEntries || []) {
-    if (e.type !== 'ADVANCE_APPLIED') continue;
+    if (e.type !== 'ADVANCE_APPLIED' && e.type !== 'OVERPAY_APPLIED') continue;
     const ref = String(e.quotationRef || '').trim();
     if (ref !== id) continue;
     s += Number(e.amountNgn) || 0;
@@ -1005,7 +1005,7 @@ function sumAdvanceAppliedNgnForQuotation(ledgerEntries, quotationId) {
 }
 
 /**
- * Quotations where `paidNgn` ≠ sum of **sales receipts** for that quote + `ADVANCE_APPLIED` on the ledger
+ * Quotations where `paidNgn` ≠ sum of **sales receipts** for that quote + ledger applications (`ADVANCE_APPLIED`, `OVERPAY_APPLIED`)
  * (matches server `syncQuotationPaidFromReceipts`).
  */
 export function quotationPaidNgnReceiptDiscrepancies(

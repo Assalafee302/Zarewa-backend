@@ -8,6 +8,7 @@ import {
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
 import { ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
+import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 
@@ -224,7 +225,8 @@ export function overpayCreditNgnForCustomerDb(db, customerID) {
 
 /**
  * Set quotations.paid_ngn and payment_status from **sales receipts** (what you record in Sales → Receipts).
- * Optionally adds ADVANCE_APPLIED ledger rows for the same quote (customer deposit applied to this job)
+ * Optionally adds ADVANCE_APPLIED or OVERPAY_APPLIED ledger rows for the same quote (deposit applied to this job,
+ * or overpayment credit moved onto the quote when the total is revised upward).
  * so one “paid” number drives cutting lists, production gates, refunds, and AR.
  * Bank reconciliation matches treasury to those receipt lines; it does not define quotation paid.
  * @param {import('better-sqlite3').Database} db
@@ -253,7 +255,15 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
     .get(qid);
   const advanceApplied = Math.round(Number(r2?.s) || 0);
 
-  const paidTotal = receiptSum + advanceApplied;
+  const r3 = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE type = 'OVERPAY_APPLIED' AND quotation_ref = ?`
+    )
+    .get(qid);
+  const overpayApplied = Math.round(Number(r3?.s) || 0);
+
+  const paidTotal = receiptSum + advanceApplied + overpayApplied;
   const total = Math.round(Number(row.total_ngn) || 0);
   let paymentStatus;
   if (paidTotal <= 0) paymentStatus = 'Unpaid';
@@ -264,7 +274,14 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
     paymentStatus,
     qid
   );
-  return { ok: true, paidNgn: paidTotal, paymentStatus, receiptSumNgn: receiptSum, advanceAppliedNgn: advanceApplied };
+  return {
+    ok: true,
+    paidNgn: paidTotal,
+    paymentStatus,
+    receiptSumNgn: receiptSum,
+    advanceAppliedNgn: advanceApplied,
+    overpayAppliedNgn: overpayApplied,
+  };
 }
 
 /** @deprecated Use syncQuotationPaidFromReceipts — kept name for existing API routes. */
@@ -4621,6 +4638,7 @@ export function reconcileSalesReceiptMirrorsForQuotation(db, quotationId) {
       paymentStatus: qtAfter?.paymentStatus ?? syncR.paymentStatus,
       receiptSumNgn: syncR.receiptSumNgn,
       advanceAppliedNgn: syncR.advanceAppliedNgn,
+      overpayAppliedNgn: syncR.overpayAppliedNgn ?? 0,
     };
   })();
 }
@@ -4928,7 +4946,8 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
       0
     );
     const advanceApplied = ledgerRows.reduce((sum, e) => {
-      if (String(e.type || '') !== 'ADVANCE_APPLIED') return sum;
+      const t = String(e.type || '');
+      if (t !== 'ADVANCE_APPLIED' && t !== 'OVERPAY_APPLIED') return sum;
       if (normalizeQuotRefDashKey(e.quotationRef) !== qKey) return sum;
       return sum + Math.round(Number(e.amountNgn) || 0);
     }, 0);
@@ -6330,6 +6349,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   applyPricingSnapshotsToServices(db, linesJson.products, bid);
   applyPricingSnapshotsToServices(db, linesJson.services, bid);
@@ -6385,7 +6405,96 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   return id;
 }
 
-export function updateQuotation(db, quotationId, payload) {
+/**
+ * When a quotation total increases, apply customer overpayment credit (OVERPAY_ADVANCE pool) up to the new
+ * balance gap so operators are not asked for a new receipt for cash already taken as overpay on this customer.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @param {{ oldTotalNgn: number, newTotalNgn: number, customerId: string, customerName: string, dateISO: string, branchId: string }} ctx
+ * @param {unknown} [actor]
+ * @returns {number} Amount applied (₦)
+ */
+export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, ctx, actor = null) {
+  const qid = String(quotationId || '').trim();
+  const oldTotal = roundMoney(ctx.oldTotalNgn);
+  const newTotal = roundMoney(ctx.newTotalNgn);
+  const customerID = String(ctx.customerId || '').trim();
+  if (!qid || !customerID || newTotal <= oldTotal) return 0;
+
+  const paidRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(qid);
+  const paidNow = roundMoney(paidRow?.paid_ngn);
+  const gap = Math.max(0, newTotal - paidNow);
+  if (gap <= 0) return 0;
+
+  const overpayPool = overpayCreditNgnForCustomerDb(db, customerID);
+  const applyAmt = Math.min(gap, overpayPool);
+  if (applyAmt <= 0) return 0;
+
+  const lockDay = String(ctx.dateISO || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, lockDay, 'Apply overpayment to quotation');
+  } catch {
+    return 0;
+  }
+
+  const bid = String(ctx.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const atIso = lockDay.includes('T') ? lockDay : `${lockDay}T12:00:00.000Z`;
+  const refToken = `OVERPAY_APPLY:${qid}:${Date.now()}`;
+  const customerName = String(ctx.customerName || '').trim() || null;
+
+  try {
+    db.transaction(() => {
+      insertLedgerRows(
+        db,
+        [
+          {
+            type: 'OVERPAY_REVERSAL',
+            customerID,
+            customerName,
+            amountNgn: applyAmt,
+            quotationRef: qid,
+            paymentMethod: 'Internal',
+            bankReference: refToken,
+            createdByUserId: actorId(actor),
+            createdByName: actorName(actor),
+            note: `Auto: reduce overpayment pool after quote total increased (was ₦${oldTotal.toLocaleString('en-NG')}, now ₦${newTotal.toLocaleString('en-NG')}).`,
+            atISO: atIso,
+          },
+          {
+            type: 'OVERPAY_APPLIED',
+            customerID,
+            customerName,
+            amountNgn: applyAmt,
+            quotationRef: qid,
+            paymentMethod: 'Internal',
+            bankReference: refToken,
+            createdByUserId: actorId(actor),
+            createdByName: actorName(actor),
+            note: `Auto: apply overpayment credit to ${qid} (no new cash receipt).`,
+            atISO: atIso,
+          },
+        ],
+        bid
+      );
+      syncQuotationPaidFromReceipts(db, qid);
+    })();
+  } catch {
+    return 0;
+  }
+
+  appendAuditLog(db, {
+    actor,
+    action: 'quotation.overpay_auto_applied',
+    entityKind: 'quotation',
+    entityId: qid,
+    note: `Applied ₦${applyAmt.toLocaleString('en-NG')} overpayment credit after total increase.`,
+    details: { customerID, applyAmtNgn: applyAmt, oldTotalNgn: oldTotal, newTotalNgn: newTotal },
+  });
+
+  return applyAmt;
+}
+
+export function updateQuotation(db, quotationId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationId);
   if (!existing) throw new Error('Quotation not found.');
   const st0 = String(existing.status || '').trim();
@@ -6404,6 +6513,8 @@ export function updateQuotation(db, quotationId, payload) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
+
+  assertQuotationMaterialRules(db, linesJson);
 
   if (payload.lines) {
     const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim();
@@ -6491,7 +6602,23 @@ export function updateQuotation(db, quotationId, payload) {
   /** Booked paid must follow receipts + advance applied, not whatever the client last sent. */
   syncQuotationPaidFromLedger(db, quotationId);
 
-  return quotationId;
+  const oldTotalNgn = roundMoney(existing.total_ngn);
+  const newTotalNgn = roundMoney(totalNgn);
+  const autoOverpayAppliedNgn = tryAutoApplyOverpayWhenQuotationTotalIncreased(
+    db,
+    quotationId,
+    {
+      oldTotalNgn,
+      newTotalNgn,
+      customerId: customerID,
+      customerName,
+      dateISO,
+      branchId: String(existing.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+    },
+    actor
+  );
+
+  return { quotationId, autoOverpayAppliedNgn };
 }
 
 export function reviveQuotation(db, quotationId) {

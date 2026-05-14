@@ -46,7 +46,7 @@ export function quotationHasCommitment(db, row) {
       `SELECT 1 AS x FROM ledger_entries 
        WHERE TRIM(COALESCE(quotation_ref,'')) = ? 
          AND amount_ngn > 0 
-         AND type IN ('RECEIPT','RECEIPT_IN','ADVANCE_APPLIED','ADVANCE_IN','OVERPAY_ADVANCE')
+         AND type IN ('RECEIPT','RECEIPT_IN','ADVANCE_APPLIED','ADVANCE_IN','OVERPAY_ADVANCE','OVERPAY_APPLIED')
        LIMIT 1`
     )
     .get(id);

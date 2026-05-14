@@ -5168,6 +5168,14 @@ export function registerHttpApi(app, db) {
       });
     } catch (e) {
       console.error(e);
+      if (e?.statusCode === 422 && e?.code) {
+        return res.status(422).json({
+          ok: false,
+          error: String(e.message || ''),
+          code: e.code,
+          details: e.details,
+        });
+      }
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
@@ -5244,11 +5252,18 @@ export function registerHttpApi(app, db) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
-        write.updateQuotation(db, qid, stripped || {});
+        const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
         const quotation = getQuotation(db, qid);
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
-        return { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows };
+        return {
+          quotation: {
+            ...quotation,
+            pricingViolations: pv.violations,
+            pricingHasFloorRows: pv.hasFloorRows,
+          },
+          autoOverpayAppliedNgn: autoOverpayAppliedNgn ?? 0,
+        };
       });
     } catch (e) {
       console.error(e);

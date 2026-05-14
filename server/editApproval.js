@@ -300,15 +300,33 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
 }
 
 /**
- * Quotations PATCH returns { ok: true, quotation } not { ok } from write — use adapter.
+ * Quotations PATCH returns `{ ok: true, quotation, autoOverpayAppliedNgn }` (overpay field is 0 when nothing applied).
  */
+function quotationPatchResultPayload(result) {
+  if (result && typeof result === 'object' && result.quotation != null) {
+    return {
+      quotation: result.quotation,
+      autoOverpayAppliedNgn: Number(result.autoOverpayAppliedNgn) || 0,
+    };
+  }
+  return { quotation: result, autoOverpayAppliedNgn: 0 };
+}
+
 export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotationId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
   if (!editMutationRequiresSecondApproval(user)) {
     try {
-      const quotation = executeWrite(stripped);
-      return res.json({ ok: true, quotation });
+      const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(executeWrite(stripped));
+      return res.json({ ok: true, quotation, autoOverpayAppliedNgn });
     } catch (e) {
+      if (e?.statusCode === 422 && e?.code) {
+        return res.status(422).json({
+          ok: false,
+          error: String(e.message || ''),
+          code: e.code,
+          details: e.details,
+        });
+      }
       return res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   }
@@ -322,12 +340,21 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
     });
   }
   try {
-    const quotation = db.transaction(() => {
+    const raw = db.transaction(() => {
       consumeEditApprovalInTransaction(db, aid, 'quotation', String(quotationId).trim());
       return executeWrite(stripped);
     })();
-    return res.json({ ok: true, quotation });
+    const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(raw);
+    return res.json({ ok: true, quotation, autoOverpayAppliedNgn });
   } catch (e) {
+    if (e?.statusCode === 422 && e?.code) {
+      return res.status(422).json({
+        ok: false,
+        error: String(e.message || ''),
+        code: e.code,
+        details: e.details,
+      });
+    }
     return res.status(400).json({ ok: false, error: String(e.message || e) });
   }
 }

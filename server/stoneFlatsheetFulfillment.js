@@ -7,6 +7,7 @@ import {
   productLineKey,
   resolveStoneFlatsheetLengthM,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { quotationLineUnitPriceNumber } from '../shared/lib/quotationLineNumericForRefund.js';
 import { ensureStoneFlatsheetProduct } from './stoneInventory.js';
 
 /**
@@ -302,4 +303,120 @@ export function applyStoneFlatsheetCompletionTx(
       });
     }
   });
+}
+
+/**
+ * Refund preview lines: quoted stone flatsheet m² minus supplied and deduction on completed/cancelled jobs.
+ * Requires at least one persisted usage row for this quotation (avoids treating “not yet produced” as full shortfall).
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {unknown} linesJson quotation `lines_json`
+ * @returns {{ quoteLineId: string; name: string; lengthM: number; shortfallM2: number; unitPriceNgn: number; amountNgn: number }[]}
+ */
+export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, linesJson) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return [];
+
+  let quoteProducts = [];
+  try {
+    let j = linesJson;
+    if (typeof j === 'string') j = JSON.parse(j || '{}');
+    quoteProducts = Array.isArray(j?.products) ? j.products : [];
+  } catch {
+    quoteProducts = [];
+  }
+
+  const fromQuote = parseQuotationStoneFlatsheetLines(linesJson);
+  if (!fromQuote.length) return [];
+
+  try {
+    if (
+      !db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_job_stone_flatsheet_usage'`)
+        .get()
+    ) {
+      return [];
+    }
+  } catch {
+    return [];
+  }
+
+  const hasAnyUsage = db
+    .prepare(
+      `SELECT 1 AS x FROM production_job_stone_flatsheet_usage u
+       INNER JOIN production_jobs j ON j.job_id = u.job_id
+       WHERE j.quotation_ref = ?
+         AND LOWER(TRIM(COALESCE(j.status, ''))) IN ('completed', 'cancelled')
+       LIMIT 1`
+    )
+    .get(ref);
+  if (!hasAnyUsage) return [];
+
+  let aggRows;
+  try {
+    aggRows = db
+      .prepare(
+        `SELECT u.quote_line_id AS quote_line_id,
+                u.name AS name,
+                u.length_m AS length_m,
+                MAX(u.ordered_m2) AS ordered_m2,
+                SUM(u.supplied_m2) AS supplied_m2,
+                SUM(u.deduction_m2) AS deduction_m2
+         FROM production_job_stone_flatsheet_usage u
+         INNER JOIN production_jobs j ON j.job_id = u.job_id
+         INNER JOIN quotations q ON q.id = j.quotation_ref
+         WHERE j.quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(j.status, ''))) IN ('completed', 'cancelled')
+         GROUP BY u.quote_line_id, u.name, u.length_m`
+      )
+      .all(ref);
+  } catch {
+    return [];
+  }
+
+  const roundMoney = (v) => Math.round(Number(v) || 0);
+
+  function matchAgg(line) {
+    const lid = String(line.quoteLineId || '').trim();
+    if (lid) {
+      const byId = aggRows.find((r) => String(r.quote_line_id || '').trim() === lid);
+      if (byId) return byId;
+    }
+    const nk = normQuoteItemKey(line.name);
+    const len = line.lengthM;
+    return aggRows.find((r) => {
+      if (normQuoteItemKey(r.name) !== nk) return false;
+      return Math.abs(Number(r.length_m) - len) < 1e-3;
+    });
+  }
+
+  const out = [];
+  for (const line of fromQuote) {
+    const merged = matchAgg(line);
+    const supplied = Number(merged?.supplied_m2) || 0;
+    const deduction = Number(merged?.deduction_m2) || 0;
+    const ordered = line.orderedM2;
+    const shortM2 = Math.max(0, ordered - supplied - deduction);
+    if (shortM2 <= 0) continue;
+    const lid = String(line.quoteLineId || '').trim();
+    const raw =
+      (lid && quoteProducts.find((p) => String(p?.id ?? '').trim() === lid)) ||
+      quoteProducts.find((p) => {
+        if (productLineKey(p?.name) !== 'stone flatsheet') return false;
+        return resolveStoneFlatsheetLengthM(p) === line.lengthM;
+      });
+    const unitR = Math.round(quotationLineUnitPriceNumber(raw));
+    const amountNgn = roundMoney(shortM2 * unitR);
+    if (amountNgn <= 0) continue;
+    out.push({
+      quoteLineId: lid,
+      name: line.name,
+      lengthM: line.lengthM,
+      shortfallM2: shortM2,
+      unitPriceNgn: unitR,
+      amountNgn,
+    });
+  }
+  return out;
 }

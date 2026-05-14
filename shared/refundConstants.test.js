@@ -8,9 +8,10 @@ import {
 
 describe('refundConstants', () => {
   it('normalizes legacy category labels to canonical values', () => {
-    expect(normalizeRefundReasonCategoriesForApi(['Transport refund', 'Accessory refund'])).toEqual([
+    expect(normalizeRefundReasonCategoriesForApi(['Transport refund', 'Accessory refund', 'stone shortfall'])).toEqual([
       'Transport issue',
       'Accessory shortfall',
+      'Stone flatsheet shortfall',
     ]);
     expect(normalizeRefundReasonCategoriesForApi('Substitution pricing')).toEqual(['Substitution Difference']);
     expect(normalizeRefundReasonCategoriesForApi('Agent commission')).toEqual(['Customer commission']);

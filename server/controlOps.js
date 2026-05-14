@@ -35,6 +35,7 @@ import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -2122,6 +2123,20 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
+  if (quotationRef && quote?.lines_json && !refundedCategories.has('Stone flatsheet shortfall')) {
+    for (const s of stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, quote.lines_json)) {
+      const m2 = Number(s.shortfallM2) || 0;
+      const up = Math.round(Number(s.unitPriceNgn) || 0);
+      const amountNgn = roundMoney(s.amountNgn);
+      if (amountNgn <= 0) continue;
+      suggestedLines.push({
+        label: `Stone flatsheet shortfall: ${s.name} (${s.lengthM} m) — ${m2.toFixed(2)} m² × ₦${up.toLocaleString('en-NG')}`,
+        amountNgn,
+        category: 'Stone flatsheet shortfall',
+      });
+    }
+  }
+
   if (quote && quotationRef && !refundedCategories.has('Calculation error')) {
     const lineSum = sumQuotationLinesJsonFlexible(quote.lines_json);
     if (lineSum > 0) {
@@ -2363,6 +2378,10 @@ export function previewRefundRequest(db, payload) {
       continue;
     }
     if (cat === 'Accessory shortfall') {
+      if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
+      continue;
+    }
+    if (cat === 'Stone flatsheet shortfall') {
       if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
       continue;
     }

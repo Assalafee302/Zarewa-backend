@@ -5135,6 +5135,26 @@ export function updateCuttingList(db, cuttingListId, payload) {
   if (isCuttingListProductionCompleted(db, existing)) {
     return { ok: false, error: 'Cutting list cannot be edited after production is completed.' };
   }
+  if (Number(existing.production_registered)) {
+    const regRef = String(existing.production_register_ref ?? '').trim();
+    let jobGate = regRef
+      ? db.prepare(`SELECT job_id, status FROM production_jobs WHERE job_id = ?`).get(regRef)
+      : null;
+    if (!jobGate) {
+      jobGate = db
+        .prepare(
+          `SELECT job_id, status FROM production_jobs WHERE cutting_list_id = ? ORDER BY created_at_iso DESC, job_id DESC LIMIT 1`
+        )
+        .get(cuttingListId);
+    }
+    if (jobGate && String(jobGate.status || '').trim().toLowerCase() === 'running') {
+      return {
+        ok: false,
+        error:
+          'Cannot edit this cutting list while production is Running. Finish or roll back the job on the production screen first, or use the documented production correction flow if amounts need to change.',
+      };
+    }
+  }
   const quotationRef =
     payload.quotationRef !== undefined ? String(payload.quotationRef ?? '').trim() : existing.quotation_ref || '';
   const prevRef = String(existing.quotation_ref ?? '').trim();

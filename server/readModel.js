@@ -1184,6 +1184,52 @@ export function listProductionJobStoneFlatsheetUsage(db, branchScope = 'ALL') {
   }));
 }
 
+/**
+ * Stone flatsheet m² from completed/cancelled jobs (production_job_stone_flatsheet_usage).
+ * Used by refund intelligence — not the same as coil `actual_meters`.
+ */
+function stoneFlatsheetRefundIntelSummary(db, quotationRef, branchScope) {
+  const empty = { totalSuppliedM2: 0, totalDeductionM2: 0, lines: [] };
+  try {
+    if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_job_stone_flatsheet_usage'`).get()) {
+      return empty;
+    }
+    const ref = String(quotationRef || '').trim();
+    if (!ref) return empty;
+    const b = branchWhere(db, 'production_jobs', branchScope);
+    const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+    const rows = db
+      .prepare(
+        `SELECT u.quote_line_id AS quote_line_id,
+                u.name AS name,
+                u.length_m AS length_m,
+                MAX(u.ordered_m2) AS ordered_m2,
+                SUM(u.supplied_m2) AS supplied_m2,
+                SUM(u.deduction_m2) AS deduction_m2
+         FROM production_job_stone_flatsheet_usage u
+         INNER JOIN production_jobs j ON j.job_id = u.job_id
+         WHERE u.quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(j.status, ''))) IN ('completed', 'cancelled')${branchSql}
+         GROUP BY u.quote_line_id, u.name, u.length_m
+         ORDER BY u.name COLLATE NOCASE`
+      )
+      .all(ref, ...b.args);
+    const lines = rows.map((row) => ({
+      quoteLineId: row.quote_line_id ?? '',
+      name: row.name ?? '',
+      lengthM: Number(row.length_m) || 0,
+      orderedM2: Number(row.ordered_m2) || 0,
+      suppliedM2: Number(row.supplied_m2) || 0,
+      deductionM2: Number(row.deduction_m2) || 0,
+    }));
+    const totalSuppliedM2 = lines.reduce((s, l) => s + (Number(l.suppliedM2) || 0), 0);
+    const totalDeductionM2 = lines.reduce((s, l) => s + (Number(l.deductionM2) || 0), 0);
+    return { totalSuppliedM2, totalDeductionM2, lines };
+  } catch {
+    return empty;
+  }
+}
+
 /** Receipts, cutting lists, and produced metres for the refund modal “Transaction Intelligence” panel. */
 export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope = 'ALL') {
   const ref = String(quotationRef || '').trim();
@@ -1194,6 +1240,7 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
       summary: {
         producedMeters: 0,
         accessoriesSummary: { lines: [] },
+        stoneFlatsheetSummary: { totalSuppliedM2: 0, totalDeductionM2: 0, lines: [] },
         overpayAdvanceNgn: 0,
         bookedOnQuotationNgn: 0,
         quotationCashInNgn: 0,
@@ -1255,12 +1302,14 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     0
   );
   const accLines = accessoryFulfillmentSummaryForQuotation(db, ref);
+  const stoneFlatsheetSummary = stoneFlatsheetRefundIntelSummary(db, ref, branchScope);
   return {
     receipts,
     cuttingLists,
     summary: {
       producedMeters,
       accessoriesSummary: { lines: accLines },
+      stoneFlatsheetSummary,
       overpayAdvanceNgn,
       bookedOnQuotationNgn,
       quotationCashInNgn: bookedOnQuotationNgn + overpayAdvanceNgn,

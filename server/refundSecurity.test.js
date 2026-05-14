@@ -441,6 +441,68 @@ describe('Refund Security & Substitution Logic', () => {
     expect(unpr).toBeUndefined();
   });
 
+  it('unproduced metre preview ignores stone flatsheet qty (not coil roofing metres)', async () => {
+    const linesJson = JSON.stringify({
+      products: [{ name: 'Stone flatsheet 1.5', qty: 15, unitPrice: 80000 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-SF-ONLY','CUS-001','John Doe',1200000,1200000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-SF','CUS-001','John Doe','QT-RFS-SF-ONLY',1200000,'Confirmed','2026-04-01')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-SF','QT-RFS-SF-ONLY',0,'Completed','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-SF-ONLY' });
+    expect(preview.status).toBe(200);
+    const unpr = preview.body.preview.suggestedLines.find((l) => l.category === 'Unproduced meterage');
+    expect(unpr).toBeUndefined();
+  });
+
+  it('roofing unproduced preview uses only coil roofing lines for metres and blended ₦/m (excludes stone flatsheet)', async () => {
+    const linesJson = JSON.stringify({
+      products: [
+        { name: 'Roofing Sheet', qty: 10, unitPrice: 5000 },
+        { name: 'Stone flatsheet 1.4', qty: 15, unitPrice: 80000 },
+      ],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-SF-MIX','CUS-001','John Doe',1250000,1250000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-SFM','CUS-001','John Doe','QT-RFS-SF-MIX',1250000,'Confirmed','2026-04-01')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-SFM','QT-RFS-SF-MIX',0,'Completed','2026-04-01T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-SF-MIX' });
+    expect(preview.status).toBe(200);
+    const unpr = preview.body.preview.suggestedLines.find((l) => l.category === 'Unproduced meterage');
+    expect(unpr).toBeDefined();
+    expect(unpr.amountNgn).toBe(50000);
+    expect(String(unpr.label || '')).toMatch(/10\.00/);
+    expect(String(unpr.label || '')).toMatch(/5,?000/);
+  });
+
   it('suggests transport refund for delivery-style service names and snake_case prices', async () => {
     const agent = request.agent(app);
     await loginAs(agent);

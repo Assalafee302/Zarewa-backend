@@ -16,6 +16,7 @@ import {
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
+import { productLineKey } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
@@ -78,7 +79,7 @@ function normQuoteProductLineName(name) {
     .replace(/\s+/g, ' ');
 }
 
-/** Matches `setup_quote_items` product rows except main roofing sheet metre lines (trim/accessories). Flat sheet is treated as main sheet metreage for refunds. */
+/** Matches `setup_quote_items` product rows except main roofing sheet metre lines (trim/accessories). Flat sheet is treated as main sheet metreage for refunds. Stone flatsheet is excluded separately (m² / sheet, not coil metres). */
 const REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES = new Set([
   'bargeboard',
   'top end',
@@ -103,6 +104,11 @@ function productLineIsTrimSheetNotRoofingMetres(line) {
   return REFUND_NON_ROOFING_SHEET_PRODUCT_NAMES.has(n);
 }
 
+/** Stone flatsheet lines are m² / sheet pricing — never coil roofing metres for unproduced-metre preview. */
+function productLineIsStoneFlatsheetNotRoofingMetres(line) {
+  return productLineKey(line?.name) === 'stone flatsheet';
+}
+
 function quotedRoofingSheetMetresFromLines(linesJson) {
   let payload = linesJson;
   if (typeof payload === 'string') {
@@ -111,7 +117,7 @@ function quotedRoofingSheetMetresFromLines(linesJson) {
   const rows = payload?.products;
   if (!Array.isArray(rows)) return 0;
   return rows.reduce((sum, line) => {
-    if (productLineIsTrimSheetNotRoofingMetres(line)) return sum;
+    if (productLineIsTrimSheetNotRoofingMetres(line) || productLineIsStoneFlatsheetNotRoofingMetres(line)) return sum;
     return sum + quotationLineQtyNumber(line);
   }, 0);
 }
@@ -131,6 +137,7 @@ function quotedRoofingSheetAmountPerMeter(linesJson) {
   const productRows = rows.filter(
     (line) =>
       !productLineIsTrimSheetNotRoofingMetres(line) &&
+      !productLineIsStoneFlatsheetNotRoofingMetres(line) &&
       quotationLineQtyNumber(line) > 0 &&
       quotationLineUnitPriceNumber(line) > 0
   );

@@ -6609,51 +6609,61 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
 }
 
 /**
- * When a quotation total increases, apply **this quotation's** split-till overpayment credit only
- * (`OVERPAY_ADVANCE` on this quote minus `OVERPAY_REVERSAL` on this quote) up to the new balance gap,
- * so operators are not asked for a new receipt for cash already taken as overpay on **this** job.
- * Other quotations' overpay buckets are not used.
+ * Remove internal auto-apply bundles for this quotation (`OVERPAY_APPLY:*` bank_reference).
+ * @returns {number} Rows deleted
+ */
+function deleteAutoOverpayApplyBundlesForQuotation(db, quotationId) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return 0;
+  const r = db
+    .prepare(
+      `DELETE FROM ledger_entries
+       WHERE quotation_ref = ?
+         AND bank_reference LIKE 'OVERPAY_APPLY:%'
+         AND type IN ('OVERPAY_APPLIED', 'OVERPAY_REVERSAL')`
+    )
+    .run(qid);
+  return Number(r?.changes) || 0;
+}
+
+/**
+ * After any quotation update: drop existing auto overpay-apply rows for this quote, resync paid from ledger,
+ * then re-apply up to **min(quotation balance gap, this quotation's split-till overpay pool)**.
+ * Runs on every save so totals, edits, or corrections recompute the correct applied amount (including 0).
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationId
- * @param {{ oldTotalNgn: number, newTotalNgn: number, customerId: string, customerName: string, dateISO: string, branchId: string }} ctx
+ * @param {{ customerId: string, customerName: string, branchId: string }} ctx
  * @param {unknown} [actor]
- * @returns {number} Amount applied (₦)
+ * @returns {{ appliedNgn: number, deletedRows: number }}
  */
-export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, ctx, actor = null) {
+export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, actor = null) {
   const qid = String(quotationId || '').trim();
-  const oldTotal = roundMoney(ctx.oldTotalNgn);
-  const newTotal = roundMoney(ctx.newTotalNgn);
   const customerID = String(ctx.customerId || '').trim();
-  if (!qid || !customerID || newTotal <= oldTotal) return 0;
-
-  const paidRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(qid);
-  const paidNow = roundMoney(paidRow?.paid_ngn);
-  const gap = Math.max(0, newTotal - paidNow);
-  if (gap <= 0) return 0;
-
-  const overpayPool = overpayCreditRemainingOnQuotationDb(db, customerID, qid);
-  const applyAmt = Math.min(gap, overpayPool);
-  if (applyAmt <= 0) return 0;
-
-  /**
-   * Period lock must use **today** (when the quote is amended), not the quotation’s original `date_iso`.
-   * Otherwise a quote dated in an already-locked month blocks this internal move even though the user is
-   * editing in the current open period — and they get a false “balance due” instead of auto-pool apply.
-   */
-  const postingDay = new Date().toISOString().slice(0, 10);
-  try {
-    assertPeriodOpen(db, postingDay, 'Apply overpayment to quotation');
-  } catch {
-    return 0;
-  }
-
-  const bid = String(ctx.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const atIso = `${postingDay}T12:00:00.000Z`;
-  const refToken = `OVERPAY_APPLY:${qid}:${Date.now()}`;
-  const customerName = String(ctx.customerName || '').trim() || null;
+  if (!qid || !customerID) return { appliedNgn: 0, deletedRows: 0 };
 
   try {
-    db.transaction(() => {
+    const out = db.transaction(() => {
+      const deletedRows = deleteAutoOverpayApplyBundlesForQuotation(db, qid);
+      syncQuotationPaidFromLedger(db, qid);
+
+      const qrow = db.prepare(`SELECT total_ngn, paid_ngn FROM quotations WHERE id = ?`).get(qid);
+      const total = roundMoney(qrow?.total_ngn);
+      const paid = roundMoney(qrow?.paid_ngn);
+      const gap = Math.max(0, total - paid);
+      const pool = overpayCreditRemainingOnQuotationDb(db, customerID, qid);
+      const applyAmt = Math.min(gap, pool);
+      if (applyAmt <= 0) {
+        return { appliedNgn: 0, deletedRows };
+      }
+
+      const postingDay = new Date().toISOString().slice(0, 10);
+      assertPeriodOpen(db, postingDay, 'Apply overpayment to quotation');
+
+      const bid = String(ctx.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const atIso = `${postingDay}T12:00:00.000Z`;
+      const refToken = `OVERPAY_APPLY:${qid}:${Date.now()}`;
+      const customerName = String(ctx.customerName || '').trim() || null;
+
       insertLedgerRows(
         db,
         [
@@ -6667,7 +6677,7 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
             bankReference: refToken,
             createdByUserId: actorId(actor),
             createdByName: actorName(actor),
-            note: `Auto: reduce this quotation's split-till overpay pool after total increased (was ₦${oldTotal.toLocaleString('en-NG')}, now ₦${newTotal.toLocaleString('en-NG')}).`,
+            note: `Auto: reduce this quotation's split-till overpay pool (reconcile after quotation update).`,
             atISO: atIso,
           },
           {
@@ -6686,22 +6696,25 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
         ],
         bid
       );
-      syncQuotationPaidFromReceipts(db, qid);
+      syncQuotationPaidFromLedger(db, qid);
+      return { appliedNgn: applyAmt, deletedRows };
     })();
+
+    if (out.deletedRows > 0 || out.appliedNgn > 0) {
+      appendAuditLog(db, {
+        actor,
+        action: 'quotation.overpay_auto_reconciled',
+        entityKind: 'quotation',
+        entityId: qid,
+        note: `Auto overpay reconcile: removed ${out.deletedRows} ledger row(s); applied ₦${out.appliedNgn.toLocaleString('en-NG')}.`,
+        details: { customerID, deletedRows: out.deletedRows, appliedNgn: out.appliedNgn },
+      });
+    }
+
+    return out;
   } catch {
-    return 0;
+    return { appliedNgn: 0, deletedRows: 0 };
   }
-
-  appendAuditLog(db, {
-    actor,
-    action: 'quotation.overpay_auto_applied',
-    entityKind: 'quotation',
-    entityId: qid,
-    note: `Applied ₦${applyAmt.toLocaleString('en-NG')} overpayment credit for this quotation after total increase (not from other quotes).`,
-    details: { customerID, applyAmtNgn: applyAmt, oldTotalNgn: oldTotal, newTotalNgn: newTotal, quotationId: qid },
-  });
-
-  return applyAmt;
 }
 
 export function updateQuotation(db, quotationId, payload, actor = null) {
@@ -6812,17 +6825,12 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   /** Booked paid must follow receipts + advance applied, not whatever the client last sent. */
   syncQuotationPaidFromLedger(db, quotationId);
 
-  const oldTotalNgn = roundMoney(existing.total_ngn);
-  const newTotalNgn = roundMoney(totalNgn);
-  const autoOverpayAppliedNgn = tryAutoApplyOverpayWhenQuotationTotalIncreased(
+  const { appliedNgn: autoOverpayAppliedNgn } = reconcileAutoOverpayApplyForQuotation(
     db,
     quotationId,
     {
-      oldTotalNgn,
-      newTotalNgn,
       customerId: customerID,
       customerName,
-      dateISO,
       branchId: String(existing.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
     },
     actor

@@ -34,6 +34,7 @@ import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
+import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -817,6 +818,10 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   }
   if (!productionJobs.length) return [];
 
+  let linesPayloadForStone = parseJsonValue(quote?.lines_json);
+  if (typeof linesPayloadForStone !== 'object' || !linesPayloadForStone) linesPayloadForStone = {};
+  const stoneMeterQuote = isStoneMeterQuotationLinesJson(db, linesPayloadForStone);
+
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
@@ -837,12 +842,14 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
       if (m <= 0) continue;
       const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
       if (!coilGauge) {
-        issues.push({
-          code: 'substitution_coil_gauge_missing',
-          jobId: String(j.job_id ?? '').trim() || undefined,
-          productId: String(j.product_id ?? '').trim() || undefined,
-          message: `Job “${String(j.product_name || j.job_id).trim()}” has metres but no coil gauge on allocations — link coils so gauge vs quotation can be compared.`,
-        });
+        if (!stoneMeterQuote) {
+          issues.push({
+            code: 'substitution_coil_gauge_missing',
+            jobId: String(j.job_id ?? '').trim() || undefined,
+            productId: String(j.product_id ?? '').trim() || undefined,
+            message: `Job “${String(j.product_name || j.job_id).trim()}” has metres but no coil gauge on allocations — link coils so gauge vs quotation can be compared.`,
+          });
+        }
         continue;
       }
       if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
@@ -2137,6 +2144,9 @@ export function previewRefundRequest(db, payload) {
    */
   const substitutionPerMeterBreakdown = [];
   if (quotationRef && !refundedCategories.has('Substitution Difference') && productionJobs.length) {
+    let linesPayloadForSub = parseJsonValue(quote?.lines_json);
+    if (typeof linesPayloadForSub !== 'object' || !linesPayloadForSub) linesPayloadForSub = {};
+    const stoneMeterQuoteForSub = isStoneMeterQuotationLinesJson(db, linesPayloadForSub);
     const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
     const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
     const overrideSubPpm = positiveNumber(payload.substitutePricePerMeterNgn);
@@ -2161,7 +2171,11 @@ export function previewRefundRequest(db, payload) {
     const missingCoilGaugeLabels = [];
     let noPositiveDelta = false;
 
-    if (productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0) && !quotedGaugeRaw) {
+    if (
+      productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0) &&
+      !quotedGaugeRaw &&
+      !stoneMeterQuoteForSub
+    ) {
       warnings.push(
         'Substitution (gauge vs coil): quotation has no gauge on header or product lines — add gauge to compute automatic credit.'
       );
@@ -2175,7 +2189,9 @@ export function previewRefundRequest(db, payload) {
 
       const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
       if (!coilGauge) {
-        missingCoilGaugeLabels.push(jobLabel);
+        if (!stoneMeterQuoteForSub) {
+          missingCoilGaugeLabels.push(jobLabel);
+        }
         continue;
       }
       if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) {

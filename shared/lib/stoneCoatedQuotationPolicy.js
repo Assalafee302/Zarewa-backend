@@ -50,20 +50,37 @@ export const STONE_DEFAULT_COLOUR_KEYS = new Set(
 export function productLineKey(name) {
   const k = normQuoteItemKey(name);
   if (k === 'flatsheet') return 'flat sheet';
+  if (k === 'stone flatsheet' || k.startsWith('stone flatsheet ')) return 'stone flatsheet';
   return k;
 }
 
 /**
  * Valid stone flatsheet stock lengths (m). Used on quotation lines and inventory SKUs.
  * @param {unknown} raw — from `stoneFlatsheetLengthM` / `lengthM` on a quote line
- * @returns {1.4 | 2 | null}
+ * @returns {1.4 | 1.5 | 2 | null}
  */
 export function normalizeStoneFlatsheetLengthM(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
   if (Math.abs(n - 1.4) < 1e-6) return 1.4;
+  if (Math.abs(n - 1.5) < 1e-6) return 1.5;
   if (Math.abs(n - 2) < 1e-6 || Math.abs(n - 2.0) < 1e-6) return 2;
   return null;
+}
+
+/**
+ * Length for a stone flatsheet quote line: explicit fields first, then suffix on product name
+ * (e.g. "Stone flatsheet 1.4").
+ * @param {{ name?: string; stoneFlatsheetLengthM?: unknown; lengthM?: unknown } | null | undefined} row
+ * @returns {1.4 | 1.5 | 2 | null}
+ */
+export function resolveStoneFlatsheetLengthM(row) {
+  const fromFields = normalizeStoneFlatsheetLengthM(row?.stoneFlatsheetLengthM ?? row?.lengthM);
+  if (fromFields != null) return fromFields;
+  const k = normQuoteItemKey(row?.name);
+  const m = k.match(/^stone flatsheet\s+(\d+(?:\.\d+)?)\s*$/);
+  if (!m) return null;
+  return normalizeStoneFlatsheetLengthM(m[1]);
 }
 
 /**
@@ -297,7 +314,7 @@ export function validateQuotationMaterialRules(db, linesJson) {
     if (!n || productLineKey(n) !== 'stone flatsheet') continue;
     const qty = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
     if (qty <= 0) continue;
-    const lm = normalizeStoneFlatsheetLengthM(row?.stoneFlatsheetLengthM ?? row?.lengthM);
+    const lm = resolveStoneFlatsheetLengthM(row);
     if (lm == null) stoneFlatsheetLengthMissing.push(n);
   }
 
@@ -321,7 +338,7 @@ export function validateQuotationMaterialRules(db, linesJson) {
   }
   if (stoneFlatsheetLengthMissing.length) {
     parts.push(
-      'Stone flatsheet lines with quantity must select length 1.4 m or 2 m (per line on the quote).'
+      'Stone flatsheet lines with quantity must include length 1.4 m, 1.5 m, or 2 m (product name or length field per line).'
     );
   }
   if (invalidProfile) parts.push('Profile is not valid for this material type.');

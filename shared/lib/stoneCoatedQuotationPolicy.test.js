@@ -6,6 +6,7 @@ import {
   productLineAllowedForStone,
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
+  resolveStoneFlatsheetLengthM,
   validateQuotationMaterialRules,
 } from './stoneCoatedQuotationPolicy.js';
 
@@ -73,6 +74,13 @@ function createPolicyTestDb(overrides = {}) {
 }
 
 describe('stoneCoatedQuotationPolicy — line rules', () => {
+  it('allows stone flatsheet 1.4 / 1.5 product names', () => {
+    expect(productLineAllowedForStone('Stone flatsheet 1.4', false)).toBe(true);
+    expect(productLineAllowedForStone('Stone flatsheet 1.5', false)).toBe(true);
+    expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 1.5', stoneFlatsheetLengthM: '' })).toBe(1.5);
+    expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet', stoneFlatsheetLengthM: 1.4 })).toBe(1.4);
+  });
+
   it('allows stone products and ridge cap', () => {
     expect(productLineAllowedForStone('Roofing Sheet', false)).toBe(true);
     expect(productLineAllowedForStone('Stone flatsheet', false)).toBe(true);
@@ -116,6 +124,19 @@ describe('validateQuotationMaterialRules', () => {
       materialColor: 'Black',
       materialDesign: 'Milano',
       products: [{ name: 'Roofing Sheet' }],
+      accessories: [{ name: 'Stone nail' }],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('passes stone flatsheet when length is encoded in the product name', () => {
+    const db = createPolicyTestDb();
+    const r = validateQuotationMaterialRules(db, {
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.45mm',
+      materialColor: 'Black',
+      materialDesign: 'Milano',
+      products: [{ name: 'Stone flatsheet 1.5', qty: '10' }],
       accessories: [{ name: 'Stone nail' }],
     });
     expect(r.ok).toBe(true);

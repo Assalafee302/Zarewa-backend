@@ -4,14 +4,14 @@
 
 import {
   normQuoteItemKey,
-  normalizeStoneFlatsheetLengthM,
   productLineKey,
+  resolveStoneFlatsheetLengthM,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { ensureStoneFlatsheetProduct } from './stoneInventory.js';
 
 /**
  * @param {unknown} linesJson
- * @returns {{ quoteLineId: string; name: string; orderedM2: number; lengthM: 1.4 | 2; colourLabel: string }[]}
+ * @returns {{ quoteLineId: string; name: string; orderedM2: number; lengthM: 1.4 | 1.5 | 2; colourLabel: string }[]}
  */
 export function parseQuotationStoneFlatsheetLines(linesJson) {
   let j = linesJson;
@@ -30,7 +30,7 @@ export function parseQuotationStoneFlatsheetLines(linesJson) {
     const name = String(row?.name ?? '').trim();
     if (productLineKey(name) !== 'stone flatsheet') continue;
     const orderedM2 = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
-    const lengthM = normalizeStoneFlatsheetLengthM(row?.stoneFlatsheetLengthM ?? row?.lengthM);
+    const lengthM = resolveStoneFlatsheetLengthM(row);
     const quoteLineId = String(row?.id ?? '').trim();
     if (orderedM2 <= 0) continue;
     if (lengthM == null) continue;
@@ -65,7 +65,7 @@ export function quotationHasStoneFlatsheetWithQtyButMissingLength(linesJson) {
     if (productLineKey(name) !== 'stone flatsheet') continue;
     const orderedM2 = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
     if (orderedM2 <= 0) continue;
-    const lengthM = normalizeStoneFlatsheetLengthM(row?.stoneFlatsheetLengthM ?? row?.lengthM);
+    const lengthM = resolveStoneFlatsheetLengthM(row);
     if (lengthM == null) return true;
   }
   return false;
@@ -159,7 +159,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
     return {
       ok: false,
       error:
-        'Stone flatsheet lines on this quotation are missing length (1.4 m or 2 m). Update the quotation before completing production.',
+        'Stone flatsheet lines on this quotation are missing length (1.4 m, 1.5 m, or 2 m). Update the quotation before completing production.',
     };
   }
 

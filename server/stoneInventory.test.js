@@ -38,6 +38,7 @@ describe('stoneInventory', () => {
 
   it('stoneFlatsheetProductIdFromSpec builds stable id', () => {
     expect(stoneFlatsheetProductIdFromSpec('Black', 1.4)).toBe('STONE-FS-black-1p4m');
+    expect(stoneFlatsheetProductIdFromSpec('Black', 1.5)).toBe('STONE-FS-black-1p5m');
     expect(stoneFlatsheetProductIdFromSpec('Ivory Beige', 2)).toBe('STONE-FS-ivory-beige-2m');
   });
 

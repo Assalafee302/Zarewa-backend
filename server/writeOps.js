@@ -7,7 +7,12 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
-import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
+import {
+  ensureStoneFlatsheetProduct,
+  ensureStoneProduct,
+  isStoneMeterProductRow,
+  isStoneMeterQuotationLinesJson,
+} from './stoneInventory.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
@@ -4914,6 +4919,49 @@ function normalizeCuttingListLines(lines) {
   return out;
 }
 
+function parseQuotationLinesJsonForStone(db, quotationRef) {
+  const qref = String(quotationRef ?? '').trim();
+  if (!qref || !db) return null;
+  const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
+  if (!row?.lines_json) return null;
+  try {
+    return JSON.parse(String(row.lines_json));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Planned metres/sheets for the production job: for stone_meter quotations, only roofing (`Roof`) lines
+ * count toward the coil run plan. Stone flatsheet (`Cladding`) and optional coil flat (`Flatsheet`) remain on the cutting list for print and allocation UX.
+ */
+function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  const qj = parseQuotationLinesJsonForStone(db, quotationRef);
+  const stone = Boolean(db && qj && isStoneMeterQuotationLinesJson(db, qj));
+  if (!stone) {
+    return {
+      plannedMeters: list.reduce((s, line) => s + (Number(line.totalM) || 0), 0),
+      plannedSheets: list.reduce((s, line) => s + (Number(line.sheets) || 0), 0),
+    };
+  }
+  let plannedMeters = 0;
+  let plannedSheets = 0;
+  for (const line of list) {
+    const lt = String(line.lineType ?? line.line_type ?? 'Roof').trim();
+    if (lt !== 'Roof') continue;
+    const sheets = Number(line.sheets) || 0;
+    const len = Number(line.lengthM ?? line.length_m) || 0;
+    const tm = Number(line.totalM);
+    const addM = Number.isFinite(tm) && tm > 0 ? tm : sheets > 0 && len > 0 ? Number((sheets * len).toFixed(4)) : 0;
+    if (addM > 0) {
+      plannedMeters += addM;
+      plannedSheets += sheets;
+    }
+  }
+  return { plannedMeters, plannedSheets };
+}
+
 function quotationHasPositiveProductLines(linesJson) {
   let payload = linesJson;
   if (typeof payload === 'string') {
@@ -5257,6 +5305,7 @@ export function updateCuttingList(db, cuttingListId, payload) {
     if (jobRow?.job_id) {
       const st = String(jobRow.status || '').trim();
       if (st !== 'Completed' && st !== 'Cancelled') {
+        const planTotals = productionPlannedTotalsForCuttingList(db, quotationRef, lines);
         db.prepare(
           `UPDATE production_jobs SET
              quotation_ref = ?, customer_id = ?, customer_name = ?,
@@ -5266,8 +5315,8 @@ export function updateCuttingList(db, cuttingListId, payload) {
           quotationRef || null,
           customer.customer_id,
           customer.name,
-          totalMeters,
-          sheetsToCut,
+          planTotals.plannedMeters,
+          planTotals.plannedSheets,
           productID || null,
           productName || null,
           jobRow.job_id
@@ -5300,8 +5349,24 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
   const customerName = String(payload.customerName ?? cuttingList?.customer_name ?? '').trim();
   const productID = String(payload.productID ?? cuttingList?.product_id ?? '').trim();
   const productName = String(payload.productName ?? cuttingList?.product_name ?? '').trim();
-  const plannedMeters = Number(payload.plannedMeters ?? cuttingList?.total_meters ?? 0) || 0;
-  const plannedSheets = Number(payload.plannedSheets ?? cuttingList?.sheets_to_cut ?? 0) || 0;
+  let plannedMeters = Number(payload.plannedMeters ?? cuttingList?.total_meters ?? 0) || 0;
+  let plannedSheets = Number(payload.plannedSheets ?? cuttingList?.sheets_to_cut ?? 0) || 0;
+  if (cuttingListId && cuttingList) {
+    const lineRows = db
+      .prepare(
+        `SELECT sheets, length_m, total_m, line_type FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`
+      )
+      .all(cuttingListId);
+    const mapped = lineRows.map((row) => ({
+      sheets: Number(row.sheets) || 0,
+      lengthM: Number(row.length_m) || 0,
+      totalM: Number(row.total_m) || 0,
+      lineType: row.line_type || 'Roof',
+    }));
+    const p = productionPlannedTotalsForCuttingList(db, quotationRef, mapped);
+    plannedMeters = p.plannedMeters;
+    plannedSheets = p.plannedSheets;
+  }
   const machineName = String(payload.machineName ?? cuttingList?.machine_name ?? '').trim();
   const startDateISO = String(payload.startDateISO ?? '').trim();
   const endDateISO = String(payload.endDateISO ?? '').trim();

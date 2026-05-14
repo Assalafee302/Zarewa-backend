@@ -6489,15 +6489,20 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
   const applyAmt = Math.min(gap, overpayPool);
   if (applyAmt <= 0) return 0;
 
-  const lockDay = String(ctx.dateISO || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  /**
+   * Period lock must use **today** (when the quote is amended), not the quotation’s original `date_iso`.
+   * Otherwise a quote dated in an already-locked month blocks this internal move even though the user is
+   * editing in the current open period — and they get a false “balance due” instead of auto-pool apply.
+   */
+  const postingDay = new Date().toISOString().slice(0, 10);
   try {
-    assertPeriodOpen(db, lockDay, 'Apply overpayment to quotation');
+    assertPeriodOpen(db, postingDay, 'Apply overpayment to quotation');
   } catch {
     return 0;
   }
 
   const bid = String(ctx.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const atIso = lockDay.includes('T') ? lockDay : `${lockDay}T12:00:00.000Z`;
+  const atIso = `${postingDay}T12:00:00.000Z`;
   const refToken = `OVERPAY_APPLY:${qid}:${Date.now()}`;
   const customerName = String(ctx.customerName || '').trim() || null;
 

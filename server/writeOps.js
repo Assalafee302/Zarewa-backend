@@ -5222,6 +5222,38 @@ export function updateCuttingList(db, cuttingListId, payload) {
       cuttingListId
     );
     syncCuttingListLineRows(db, cuttingListId, lines);
+
+    const regRef = String(existing.production_register_ref ?? '').trim();
+    let jobRow = regRef
+      ? db.prepare(`SELECT job_id, status FROM production_jobs WHERE job_id = ?`).get(regRef)
+      : null;
+    if (!jobRow) {
+      jobRow = db
+        .prepare(
+          `SELECT job_id, status FROM production_jobs WHERE cutting_list_id = ? ORDER BY created_at_iso DESC, job_id DESC LIMIT 1`
+        )
+        .get(cuttingListId);
+    }
+    if (jobRow?.job_id) {
+      const st = String(jobRow.status || '').trim();
+      if (st !== 'Completed' && st !== 'Cancelled') {
+        db.prepare(
+          `UPDATE production_jobs SET
+             quotation_ref = ?, customer_id = ?, customer_name = ?,
+             planned_meters = ?, planned_sheets = ?, product_id = ?, product_name = ?
+           WHERE job_id = ?`
+        ).run(
+          quotationRef || null,
+          customer.customer_id,
+          customer.name,
+          totalMeters,
+          sheetsToCut,
+          productID || null,
+          productName || null,
+          jobRow.job_id
+        );
+      }
+    }
   })();
 
   return { ok: true, id: cuttingListId };

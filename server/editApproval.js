@@ -300,7 +300,8 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
 }
 
 /**
- * Quotations PATCH returns `{ ok: true, quotation, autoOverpayAppliedNgn }` (overpay field is 0 when nothing applied).
+ * Quotations PATCH returns `{ ok: true, quotation, autoOverpayAppliedNgn }` (overpay field is 0 when nothing applied;
+ * when positive, amount was taken only from OVERPAY_ADVANCE on that quotation, not other jobs' pools).
  */
 function quotationPatchResultPayload(result) {
   if (result && typeof result === 'object' && result.quotation != null) {

@@ -46,8 +46,10 @@ export function advanceBalanceFromEntries(entries, customerID) {
 }
 
 /**
- * Credit from quotation overpayments (split-till OVERPAY_ADVANCE), separate from voluntary deposits (ADVANCE_IN).
+ * Customer-wide credit from quotation overpayments (split-till OVERPAY_ADVANCE), separate from voluntary deposits (ADVANCE_IN).
  * Reduced by OVERPAY_REVERSAL and by REFUND_OVERPAY when sales refunds pay out against this pool.
+ * For **per-quotation** remaining split-till credit (used when a quote total increases), use
+ * {@link overpayCreditRemainingOnQuotationFromEntries}.
  * @param {Array<{ customerID: string, type: string, amountNgn?: number }>} entries
  */
 export function overpayCreditBalanceFromEntries(entries, customerID) {
@@ -66,6 +68,28 @@ export function overpayCreditBalanceFromEntries(entries, customerID) {
           return s;
       }
     }, 0);
+}
+
+/**
+ * Split-till overpayment credit **remaining on one quotation**: OVERPAY_ADVANCE on that quote minus
+ * OVERPAY_REVERSAL on the same quote (e.g. auto-apply when total was raised). Does not include other
+ * quotations' OVERPAY_ADVANCE rows for the same customer.
+ * @param {Array<{ customerID: string, quotationRef?: string, type: string, amountNgn?: number }>} entries
+ */
+export function overpayCreditRemainingOnQuotationFromEntries(entries, customerID, quotationId) {
+  const cid = String(customerID || '').trim();
+  const qid = String(quotationId || '').trim();
+  if (!cid || !qid) return 0;
+  let adv = 0;
+  let rev = 0;
+  for (const e of entries || []) {
+    if (String(e.customerID || '').trim() !== cid) continue;
+    if (String(e.quotationRef || '').trim() !== qid) continue;
+    const n = Math.round(Number(e.amountNgn) || 0);
+    if (e.type === 'OVERPAY_ADVANCE') adv += n;
+    else if (e.type === 'OVERPAY_REVERSAL') rev += n;
+  }
+  return Math.max(0, adv - rev);
 }
 
 /**

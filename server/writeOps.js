@@ -229,9 +229,36 @@ export function overpayCreditNgnForCustomerDb(db, customerID) {
 }
 
 /**
+ * Split-till overpayment credit **remaining on this quotation only** (not the customer's other jobs):
+ * sum `OVERPAY_ADVANCE` with this `quotation_ref` minus sum `OVERPAY_REVERSAL` on the same quotation
+ * (e.g. prior auto-apply when the total was raised). Used when a quote total increases so we do not
+ * pull from another quote's overpay bucket.
+ */
+export function overpayCreditRemainingOnQuotationDb(db, customerID, quotationId) {
+  const cid = String(customerID || '').trim();
+  const qid = String(quotationId || '').trim();
+  if (!cid || !qid) return 0;
+  const advRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE customer_id = ? AND quotation_ref = ? AND type = 'OVERPAY_ADVANCE'`
+    )
+    .get(cid, qid);
+  const revRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE customer_id = ? AND quotation_ref = ? AND type = 'OVERPAY_REVERSAL'`
+    )
+    .get(cid, qid);
+  const adv = roundMoney(advRow?.s);
+  const rev = roundMoney(revRow?.s);
+  return Math.max(0, adv - rev);
+}
+
+/**
  * Set quotations.paid_ngn and payment_status from **sales receipts** (what you record in Sales → Receipts).
  * Optionally adds ADVANCE_APPLIED or OVERPAY_APPLIED ledger rows for the same quote (deposit applied to this job,
- * or overpayment credit moved onto the quote when the total is revised upward).
+ * or **this quotation's** split-till overpayment credit moved onto the quote when the total is revised upward).
  * so one “paid” number drives cutting lists, production gates, refunds, and AR.
  * Bank reconciliation matches treasury to those receipt lines; it does not define quotation paid.
  * @param {import('better-sqlite3').Database} db
@@ -6582,8 +6609,10 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
 }
 
 /**
- * When a quotation total increases, apply customer overpayment credit (OVERPAY_ADVANCE pool) up to the new
- * balance gap so operators are not asked for a new receipt for cash already taken as overpay on this customer.
+ * When a quotation total increases, apply **this quotation's** split-till overpayment credit only
+ * (`OVERPAY_ADVANCE` on this quote minus `OVERPAY_REVERSAL` on this quote) up to the new balance gap,
+ * so operators are not asked for a new receipt for cash already taken as overpay on **this** job.
+ * Other quotations' overpay buckets are not used.
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationId
  * @param {{ oldTotalNgn: number, newTotalNgn: number, customerId: string, customerName: string, dateISO: string, branchId: string }} ctx
@@ -6602,7 +6631,7 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
   const gap = Math.max(0, newTotal - paidNow);
   if (gap <= 0) return 0;
 
-  const overpayPool = overpayCreditNgnForCustomerDb(db, customerID);
+  const overpayPool = overpayCreditRemainingOnQuotationDb(db, customerID, qid);
   const applyAmt = Math.min(gap, overpayPool);
   if (applyAmt <= 0) return 0;
 
@@ -6638,7 +6667,7 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
             bankReference: refToken,
             createdByUserId: actorId(actor),
             createdByName: actorName(actor),
-            note: `Auto: reduce overpayment pool after quote total increased (was ₦${oldTotal.toLocaleString('en-NG')}, now ₦${newTotal.toLocaleString('en-NG')}).`,
+            note: `Auto: reduce this quotation's split-till overpay pool after total increased (was ₦${oldTotal.toLocaleString('en-NG')}, now ₦${newTotal.toLocaleString('en-NG')}).`,
             atISO: atIso,
           },
           {
@@ -6668,8 +6697,8 @@ export function tryAutoApplyOverpayWhenQuotationTotalIncreased(db, quotationId, 
     action: 'quotation.overpay_auto_applied',
     entityKind: 'quotation',
     entityId: qid,
-    note: `Applied ₦${applyAmt.toLocaleString('en-NG')} overpayment credit after total increase.`,
-    details: { customerID, applyAmtNgn: applyAmt, oldTotalNgn: oldTotal, newTotalNgn: newTotal },
+    note: `Applied ₦${applyAmt.toLocaleString('en-NG')} overpayment credit for this quotation after total increase (not from other quotes).`,
+    details: { customerID, applyAmtNgn: applyAmt, oldTotalNgn: oldTotal, newTotalNgn: newTotal, quotationId: qid },
   });
 
   return applyAmt;

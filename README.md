@@ -58,7 +58,7 @@ npm run server
 
 The server listens on **`http://127.0.0.1:8787`** by default (`PORT` overrides this). The default database file is **`data/zarewa.sqlite`** (created automatically).
 
-**Smoke check:** `GET /api/health` should return a simple OK payload.
+**Smoke check:** `GET /api/health` returns **`200`** with **`ok: true`** when the database connected. If startup failed (for example MySQL not reachable), the API listens in **degraded** mode: **`503`** on `/api/health` with **`bootError`** in the JSON explains the failure (other `/api/*` routes also return **`503`** until fixed).
 
 ---
 

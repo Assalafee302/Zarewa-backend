@@ -29,7 +29,8 @@ try {
   app = express();
   app.disable('x-powered-by');
   app.get('/api/health', (_req, res) => {
-    res.status(200).json({
+    /** 503 so load balancers and `curl -f` treat startup failure as unhealthy; body still explains why. */
+    res.status(503).json({
       ok: false,
       service: 'zarewa-api',
       degraded: true,

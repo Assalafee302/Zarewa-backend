@@ -3238,8 +3238,8 @@ export function registerHttpApi(app, db) {
   });
 
   const managerReviewSignoffPerms = ['production.release', 'operations.manage', 'production.manage'];
-  /** Stricter than day-to-day production.manage — undo start / post-completion FG corrections. */
-  const productionCorrectionPerms = ['production.release', 'operations.manage'];
+  /** Who may post completion corrections (coil / accessories / stone flatsheet FG restatements). */
+  const productionCorrectionPerms = ['production.release', 'operations.manage', 'production.manage'];
   const returnToPlannedPerms = ['production.release', 'operations.manage', 'production.manage'];
 
   app.post('/api/production-jobs/:jobId/return-to-planned', requirePermission(returnToPlannedPerms), (req, res) => {

@@ -69,18 +69,31 @@ export function normalizeStoneFlatsheetLengthM(raw) {
 }
 
 /**
- * Length for a stone flatsheet quote line: explicit fields first, then suffix on product name
- * (e.g. "Stone flatsheet 1.4").
+ * Length for a stone flatsheet quote line: `stoneFlatsheetLengthM` on generic "Stone flatsheet" rows;
+ * for suffixed names ("Stone flatsheet 2"), the name encodes length and wins if it disagrees with a stale field.
  * @param {{ name?: string; stoneFlatsheetLengthM?: unknown; lengthM?: unknown } | null | undefined} row
  * @returns {1.4 | 1.5 | 2 | null}
  */
 export function resolveStoneFlatsheetLengthM(row) {
-  const fromFields = normalizeStoneFlatsheetLengthM(row?.stoneFlatsheetLengthM ?? row?.lengthM);
-  if (fromFields != null) return fromFields;
   const k = normQuoteItemKey(row?.name);
   const m = k.match(/^stone flatsheet\s+(\d+(?:\.\d+)?)\s*$/);
-  if (!m) return null;
-  return normalizeStoneFlatsheetLengthM(m[1]);
+  const fromNameSuffix = m ? normalizeStoneFlatsheetLengthM(m[1]) : null;
+
+  const rawSfl = row?.stoneFlatsheetLengthM;
+  const hasSfl = rawSfl !== undefined && rawSfl !== null && rawSfl !== '';
+  const fromSfl = hasSfl ? normalizeStoneFlatsheetLengthM(rawSfl) : null;
+
+  if (k === 'stone flatsheet') {
+    if (fromSfl != null) return fromSfl;
+    return normalizeStoneFlatsheetLengthM(row?.lengthM);
+  }
+
+  if (fromNameSuffix != null && fromSfl != null && fromNameSuffix !== fromSfl) {
+    return fromNameSuffix;
+  }
+  if (fromSfl != null) return fromSfl;
+  if (fromNameSuffix != null) return fromNameSuffix;
+  return normalizeStoneFlatsheetLengthM(row?.lengthM);
 }
 
 /**

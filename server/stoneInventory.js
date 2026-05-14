@@ -78,6 +78,18 @@ export function isStoneMeterProductId(db, productId) {
 }
 
 /**
+ * Stone-coated roofing **metre** raw stock (design / colour / gauge), not stone flatsheet m² SKUs.
+ * Stock for this class may go negative when production posts consumption without enough on-hand metres.
+ */
+export function isStoneCoatedMetreProductId(db, productId) {
+  const row = db.prepare(`SELECT * FROM products WHERE product_id = ?`).get(productId);
+  if (!row) return false;
+  const attrs = parseProductDashboardAttrs(row);
+  if (attrs.stoneFlatsheet) return false;
+  return isStoneMeterProductRow(row);
+}
+
+/**
  * Ensure a metre-based stone product exists; returns product_id.
  * @param {import('better-sqlite3').Database} db
  * @param {{ designLabel: string, colourLabel: string, gaugeLabel: string, branchId?: string }} spec

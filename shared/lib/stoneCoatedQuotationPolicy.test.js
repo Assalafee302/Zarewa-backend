@@ -81,6 +81,15 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet', stoneFlatsheetLengthM: 1.4 })).toBe(1.4);
   });
 
+  it('prefers length encoded in product name when it disagrees with stoneFlatsheetLengthM (stale field)', () => {
+    expect(
+      resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 2', stoneFlatsheetLengthM: 1.5 })
+    ).toBe(2);
+    expect(
+      resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 2.0', stoneFlatsheetLengthM: 1.5 })
+    ).toBe(2);
+  });
+
   it('allows stone products and ridge cap', () => {
     expect(productLineAllowedForStone('Roofing Sheet', false)).toBe(true);
     expect(productLineAllowedForStone('Stone flatsheet', false)).toBe(true);

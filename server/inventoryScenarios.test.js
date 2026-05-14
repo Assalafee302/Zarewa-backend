@@ -7,7 +7,8 @@
  *   can create drift if they post arbitrary SKU adjustments while coils are the operational truth.
  * - `transfer-to-production` / WIP / manual FG is a parallel path to coil traceability; using both for the same
  *   physical mass without discipline can double-count or confuse WIP vs coil remaining.
- * - `adjustProductStockTx` clamps at zero — severe negative deltas wipe to 0 instead of failing loudly.
+ * - `adjustProductStockTx` clamps non-accessory / non–stone-metre SKUs at zero; accessories and stone-coated
+ *   **metre** raw SKUs (not stone flatsheet m²) may go negative when production consumes without enough on hand.
  * - Multi-branch: coil ops enforce branch; older flows may differ — always confirm workspace branch matches coil.
  * - Cutting lists require ≥70% paid toward the quote: the gate uses `quotations.paid_ngn`, rolled up from
  *   **sales_receipts** (+ ADVANCE_APPLIED on the ledger) when receipts are posted or reversed.

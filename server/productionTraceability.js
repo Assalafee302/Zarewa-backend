@@ -17,6 +17,7 @@ import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { getQuotation } from './readModel.js';
 import {
+  isStoneCoatedMetreProductId,
   isStoneMeterQuotationLinesJson,
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
@@ -170,7 +171,9 @@ function adjustProductStockTx(db, productID, delta) {
   const row = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
   if (!row) return;
   const raw = Number(row.stock_level) + Number(delta || 0);
-  const next = isAccessoryInventoryProductId(productID) ? raw : clampNonNegative(raw);
+  const allowNegative =
+    isAccessoryInventoryProductId(productID) || isStoneCoatedMetreProductId(db, productID);
+  const next = allowNegative ? raw : clampNonNegative(raw);
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, productID);
 }
 
@@ -1390,8 +1393,12 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   const metres = safeNumber(
     payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? payload.totalMeters
   );
-  if (metres <= 0) {
-    return { ok: false, error: 'Enter stone metres consumed for this completion.' };
+  if (!Number.isFinite(metres) || Math.abs(metres) < 1e-9) {
+    return {
+      ok: false,
+      error:
+        'Enter stone metres consumed as a non-zero number (positive draws stock; negative returns metres to stock).',
+    };
   }
   const qref = String(job.quotation_ref ?? '').trim();
   const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
@@ -1401,11 +1408,6 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       ok: false,
       error: 'Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).',
     };
-  }
-  const stockRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(stonePid);
-  const stock = safeNumber(stockRow?.stock_level);
-  if (stock < metres - 0.0001) {
-    return { ok: false, error: `Insufficient stone-coated metres in stock (have ${stock.toFixed(2)} m).` };
   }
   let totalCogsForGl = 0;
   try {
@@ -1426,9 +1428,12 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         ref: jobID,
         productID: stonePid,
         qty: -metres,
-        detail: `${jobID} stone-coated ${metres.toFixed(2)} m`,
+        detail:
+          metres < 0
+            ? `${jobID} stone-coated return ${Math.abs(metres).toFixed(2)} m`
+            : `${jobID} stone-coated ${metres.toFixed(2)} m`,
       });
-      if (job.product_id) {
+      if (job.product_id && metres > 0) {
         adjustProductStockTx(db, job.product_id, metres);
         appendStockMovementTx(db, {
           atISO: completedAtISO,

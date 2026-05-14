@@ -35,8 +35,11 @@ try {
   app = express();
   app.disable('x-powered-by');
   app.get('/api/health', (_req, res) => {
-    /** 503 so load balancers and `curl -f` treat startup failure as unhealthy; body still explains why. */
-    res.status(503).json({
+    /**
+     * HTTP 200 (not 503) so uptime checks that only look at status stay unchanged from pre-2026-05 behaviour.
+     * Use `ok: false` + `degraded: true` + `bootError` / `mysqlTarget` to detect failure; all other routes stay 503.
+     */
+    res.status(200).json({
       ok: false,
       service: 'zarewa-api',
       degraded: true,

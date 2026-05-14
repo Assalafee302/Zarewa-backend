@@ -53,7 +53,17 @@ try {
      */
     res.status(200).json(degradedProbeJson());
   };
-  for (const p of ['/api/health', '/health', '/livez', '/readyz', '/status']) {
+  for (const p of [
+    '/api/health',
+    '/api/readyz',
+    '/api/livez',
+    '/api/status',
+    '/health',
+    '/healthz',
+    '/livez',
+    '/readyz',
+    '/status',
+  ]) {
     app.get(p, degradedProbeHandler);
   }
   app.use((_req, res) => {
@@ -71,7 +81,7 @@ try {
 function onListen() {
   if (bootDegraded) {
     console.log(
-      `[zarewa] listening DEGRADED on port ${port}${listenHost ? ` host=${listenHost}` : ''} — probes: /api/health /health /livez /readyz /status (see bootError in JSON)`
+      `[zarewa] listening DEGRADED on port ${port}${listenHost ? ` host=${listenHost}` : ''} — probes: /api/health /api/readyz … /readyz /status (see bootError in JSON)`
     );
     return;
   }

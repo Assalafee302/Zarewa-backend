@@ -463,7 +463,17 @@ function requireCoilSnapshotCapture(req, res, next) {
  * @param {import('better-sqlite3').Database} db
  */
 export function registerHttpApi(app, db) {
-  const livenessPaths = ['/api/health', '/health', '/livez', '/readyz', '/status'];
+  const livenessPaths = [
+    '/api/health',
+    '/api/readyz',
+    '/api/livez',
+    '/api/status',
+    '/health',
+    '/healthz',
+    '/livez',
+    '/readyz',
+    '/status',
+  ];
   const sendLiveness = (_req, res) => {
     res.json({
       ok: true,

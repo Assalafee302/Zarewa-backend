@@ -99,7 +99,7 @@ All application routes are prefixed with **`/api`**. Implementation is centraliz
 
 ### Public / bootstrap
 
-- **`GET /api/health`** — Liveness (same JSON on **`/health`**, **`/livez`**, **`/readyz`**, **`/status`** for probes / load balancers).
+- **`GET /api/health`** — Liveness (same JSON on **`/api/readyz`**, **`/api/livez`**, **`/api/status`**, **`/health`**, **`/healthz`**, **`/livez`**, **`/readyz`**, **`/status`** for probes / load balancers).
 - **`GET /api/bootstrap`** — Workspace bootstrap payload (branches, permissions context, etc.; used by the SPA).
 - **`GET /api/session`** — Current session (or anonymous).
 

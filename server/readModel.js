@@ -1196,8 +1196,9 @@ function stoneFlatsheetRefundIntelSummary(db, quotationRef, branchScope) {
     }
     const ref = String(quotationRef || '').trim();
     if (!ref) return empty;
-    const b = branchWhere(db, 'production_jobs', branchScope);
-    const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+    /** Scope by quotation only: usage rows must tie to a completed/cancelled job for this quote. Do not filter on
+     * `production_jobs.branch_id` — jobs can have empty or legacy branch while the quote is valid, which hid all m². */
+    const qb = branchWhere(db, 'quotations', branchScope);
     const rows = db
       .prepare(
         `SELECT u.quote_line_id AS quote_line_id,
@@ -1208,12 +1209,14 @@ function stoneFlatsheetRefundIntelSummary(db, quotationRef, branchScope) {
                 SUM(u.deduction_m2) AS deduction_m2
          FROM production_job_stone_flatsheet_usage u
          INNER JOIN production_jobs j ON j.job_id = u.job_id
-         WHERE u.quotation_ref = ?
-           AND LOWER(TRIM(COALESCE(j.status, ''))) IN ('completed', 'cancelled')${branchSql}
+         INNER JOIN quotations q ON q.id = j.quotation_ref
+         WHERE j.quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(j.status, ''))) IN ('completed', 'cancelled')
+           ${qb.sql.replace(/\bbranch_id\b/g, 'q.branch_id')}
          GROUP BY u.quote_line_id, u.name, u.length_m
          ORDER BY u.name COLLATE NOCASE`
       )
-      .all(ref, ...b.args);
+      .all(ref, ...qb.args);
     const lines = rows.map((row) => ({
       quoteLineId: row.quote_line_id ?? '',
       name: row.name ?? '',

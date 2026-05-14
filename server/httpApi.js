@@ -3298,8 +3298,11 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
-          applyCompletedProductionAccessoryCorrections(db, jid, stripped || {}, { actor: req.user })
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionAccessoryCorrections(db, jid, stripped || {}, {
+            actor: req.user,
+            outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+          })
         );
       } catch (e) {
         console.error(e);
@@ -3316,8 +3319,11 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
-          applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, { actor: req.user })
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, {
+            actor: req.user,
+            outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+          })
         );
       } catch (e) {
         console.error(e);

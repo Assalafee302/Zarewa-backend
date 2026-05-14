@@ -2501,6 +2501,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
 /**
  * After completion, restate accessory issue quantities for the job (ordered vs supplied on quotation accessories).
  * Same permission intent as other post-completion corrections; does not rewrite GL recognition.
+ * @param {{ actor?: object, outerTransaction?: boolean }} [opts] When `outerTransaction` is true, skip `db.transaction`
+ * (caller is already inside one — e.g. `handleWriteWithEditApproval` on MySQL SAVEPOINT stack).
  */
 export function applyCompletedProductionAccessoryCorrections(db, jobID, payload = {}, opts = {}) {
   const jobId = String(jobID ?? '').trim();
@@ -2521,7 +2523,7 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
     const accPlan = planAccessoryCorrectionExcludingJob(db, job, jobId, payload);
     if (!accPlan.ok) return accPlan;
 
-    db.transaction(() => {
+    const runBody = () => {
       const quotationRef = String(job.quotation_ref ?? '').trim();
       const existing = db
         .prepare(
@@ -2563,7 +2565,9 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
           })),
         },
       });
-    })();
+    };
+    if (opts.outerTransaction) runBody();
+    else db.transaction(runBody)();
 
     return { ok: true, accessoryStockWarnings: accPlan.accessoryStockWarnings ?? [] };
   } catch (e) {
@@ -2578,6 +2582,8 @@ function planStoneFlatsheetCorrectionExcludingJob(db, jobRow, jobId, payload = {
 /**
  * After completion, restate stone flatsheet m² issued for the job (ordered vs supplied/deduction on quotation lines).
  * Same permission intent as post-completion accessory corrections; does not rewrite GL recognition.
+ * @param {{ actor?: object, outerTransaction?: boolean }} [opts] When `outerTransaction` is true, skip `db.transaction`
+ * (caller is already inside one — e.g. `handleWriteWithEditApproval` on MySQL SAVEPOINT stack).
  */
 export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, payload = {}, opts = {}) {
   const jobId = String(jobID ?? '').trim();
@@ -2598,7 +2604,7 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
     const sfPlan = planStoneFlatsheetCorrectionExcludingJob(db, job, jobId, payload);
     if (!sfPlan.ok) return sfPlan;
 
-    db.transaction(() => {
+    const runBody = () => {
       const quotationRef = String(job.quotation_ref ?? '').trim();
       const existing = db
         .prepare(
@@ -2651,7 +2657,9 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
           })),
         },
       });
-    })();
+    };
+    if (opts.outerTransaction) runBody();
+    else db.transaction(runBody)();
 
     return { ok: true, stoneFlatsheetStockWarnings: sfPlan.stoneFlatsheetStockWarnings ?? [] };
   } catch (e) {

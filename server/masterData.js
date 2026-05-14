@@ -410,6 +410,7 @@ const MASTER_DATA_CONFIG = {
       { id: 'PROF-008', name: 'Bond', active: true, sortOrder: 90, materialTypeId: 'MAT-005' },
       { id: 'PROF-007', name: 'Milano', active: true, sortOrder: 100, materialTypeId: 'MAT-005' },
       { id: 'PROF-009', name: 'Classic', active: true, sortOrder: 110, materialTypeId: 'MAT-005' },
+      { id: 'PROF-016', name: 'Single', active: true, sortOrder: 115, materialTypeId: 'MAT-005' },
       { id: 'PROF-010', name: 'Shingle', active: true, sortOrder: 120, materialTypeId: 'MAT-005' },
       { id: 'PROF-011', name: 'Roman', active: true, sortOrder: 130, materialTypeId: 'MAT-005' },
       { id: 'PROF-015', name: 'Crimp curve', active: true, sortOrder: 140, materialTypeId: 'MAT-002' },

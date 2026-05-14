@@ -1722,6 +1722,7 @@ function migrateRoofingProfileCatalog2026(db) {
     ['PROF-008', 'Bond', 'MAT-005', 90],
     ['PROF-007', 'Milano', 'MAT-005', 100],
     ['PROF-009', 'Classic', 'MAT-005', 110],
+    ['PROF-016', 'Single', 'MAT-005', 115],
     ['PROF-010', 'Shingle', 'MAT-005', 120],
     ['PROF-011', 'Roman', 'MAT-005', 130],
     ['PROF-015', 'Crimp curve', 'MAT-002', 140],

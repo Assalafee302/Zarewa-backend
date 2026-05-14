@@ -159,8 +159,9 @@ import {
 import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from './masterData.js';
 import { parseSupplierProfileJson } from './supplierProfile.js';
 import {
-  applyCompletedProductionCoilCorrections,
   applyCompletedProductionAccessoryCorrections,
+  applyCompletedProductionCoilCorrections,
+  applyCompletedProductionStoneFlatsheetCorrections,
   applyProductionCompletionAdjustment,
   cancelProductionJob,
   completeProductionJob,
@@ -244,7 +245,7 @@ import {
 import { workspaceQuickSearch } from './workspaceSearchOps.js';
 import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
-import { ensureStoneProduct } from './stoneInventory.js';
+import { ensureStoneFlatsheetProduct, ensureStoneProduct } from './stoneInventory.js';
 import * as write from './writeOps.js';
 import crypto from 'node:crypto';
 import {
@@ -462,7 +463,8 @@ function requireCoilSnapshotCapture(req, res, next) {
  * @param {import('better-sqlite3').Database} db
  */
 export function registerHttpApi(app, db) {
-  app.get('/api/health', (_req, res) => {
+  const livenessPaths = ['/api/health', '/health', '/livez', '/readyz', '/status'];
+  const sendLiveness = (_req, res) => {
     res.json({
       ok: true,
       service: 'zarewa-api',
@@ -474,7 +476,10 @@ export function registerHttpApi(app, db) {
         officeDesk: true,
       },
     });
-  });
+  };
+  for (const p of livenessPaths) {
+    app.get(p, sendLiveness);
+  }
 
   app.get('/api/ai/status', requireAuth, (req, res) => {
     res.json(readAiStatusForRequest(req, readAiAssistConfig().enabled));
@@ -3293,6 +3298,24 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.post(
+    '/api/production-jobs/:jobId/completion-stone-flatsheet-corrections',
+    requirePermission(productionCorrectionPerms),
+    (req, res) => {
+      try {
+        const jid = req.params.jobId;
+        const jg = assertProductionJobIdInWorkspace(db, req, jid);
+        if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, { actor: req.user })
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.patch('/api/production-jobs/:jobId/manager-review-signoff', requirePermission(managerReviewSignoffPerms), (req, res) => {
     try {
       const jid = req.params.jobId;
@@ -3404,6 +3427,18 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/inventory/stone-flatsheet-receipt', requirePermission('inventory.receive'), (req, res) => {
+    try {
+      const r = write.postStoneFlatsheetInventoryReceipt(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.post('/api/inventory/accessory-receipt', requirePermission('inventory.receive'), (req, res) => {
     try {
       const r = write.postAccessoryInventoryReceipt(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
@@ -3439,6 +3474,25 @@ export function registerHttpApi(app, db) {
         designLabel,
         colourLabel,
         gaugeLabel,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      res.json({ ok: true, productId });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/inventory/ensure-stone-flatsheet-product', requirePermission('purchase_orders.manage'), (req, res) => {
+    try {
+      const colourLabel = String(req.body?.colourLabel ?? '').trim();
+      const lengthM = req.body?.lengthM ?? req.body?.stoneFlatsheetLengthM;
+      if (!colourLabel) {
+        return res.status(400).json({ ok: false, error: 'colourLabel is required.' });
+      }
+      const productId = ensureStoneFlatsheetProduct(db, {
+        colourLabel,
+        lengthM,
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
       });
       res.json({ ok: true, productId });

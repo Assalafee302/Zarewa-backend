@@ -2048,6 +2048,24 @@ function migrateAccessoryOperations(db) {
       ON production_job_accessory_usage(quotation_ref, quote_line_id);
     CREATE INDEX IF NOT EXISTS idx_prod_job_acc_usage_job
       ON production_job_accessory_usage(job_id);
+    CREATE TABLE IF NOT EXISTS production_job_stone_flatsheet_usage (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      quotation_ref TEXT,
+      quote_line_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      length_m REAL NOT NULL,
+      ordered_m2 REAL NOT NULL DEFAULT 0,
+      supplied_m2 REAL NOT NULL DEFAULT 0,
+      deduction_m2 REAL NOT NULL DEFAULT 0,
+      inventory_product_id TEXT,
+      posted_at_iso TEXT NOT NULL,
+      FOREIGN KEY (job_id) REFERENCES production_jobs(job_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_prod_job_sf_usage_quotation
+      ON production_job_stone_flatsheet_usage(quotation_ref, quote_line_id);
+    CREATE INDEX IF NOT EXISTS idx_prod_job_sf_usage_job
+      ON production_job_stone_flatsheet_usage(job_id);
   `);
 }
 

@@ -46,7 +46,17 @@ describe.sequential('Zarewa API', () => {
     expect(res.body.capabilities?.officeDesk).toBe(true);
   });
 
-  it('GET /api/ai/status reports disabled when no AI key is set', async () => {
+  it('GET /readyz matches /api/health liveness payload', async () => {
+    const res = await request(app).get('/readyz');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        service: 'zarewa-api',
+        capabilities: expect.objectContaining({ officeDesk: true }),
+      })
+    );
+  });
     const res = await agent.get('/api/ai/status');
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
@@ -851,6 +861,52 @@ describe.sequential('Zarewa API', () => {
     expect(patch.status).toBe(200);
     expect(patch.body.quotation.customerFeedback).toBe('Approved on site');
     expect(patch.body.quotation.status).toBe('Approved');
+  });
+
+  it('POST /api/quotations returns 422 when stone-coated quote has Coil without Flat sheet', async () => {
+    const g = db.prepare(`SELECT label FROM setup_gauges WHERE active = 1 LIMIT 1`).get();
+    const gaugeLabel = g?.label || '0.45mm';
+    const res = await agent.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'Stone coil rule',
+      dateISO: '2026-03-29',
+      materialTypeId: 'MAT-005',
+      materialGauge: gaugeLabel,
+      materialColor: 'HM Blue',
+      materialDesign: 'Milano',
+      lines: {
+        products: [{ name: 'Coil', qty: '1', unitPrice: '1000' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('QUOTATION_MATERIAL_RULES');
+    expect(res.body.details?.invalidProductNames).toContain('Coil');
+  });
+
+  it('POST /api/quotations allows stone-coated Coil when Flat sheet present', async () => {
+    const g = db.prepare(`SELECT label FROM setup_gauges WHERE active = 1 LIMIT 1`).get();
+    const gaugeLabel = g?.label || '0.45mm';
+    const res = await agent.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'Stone hybrid',
+      dateISO: '2026-03-29',
+      materialTypeId: 'MAT-005',
+      materialGauge: gaugeLabel,
+      materialColor: 'HM Blue',
+      materialDesign: 'Milano',
+      lines: {
+        products: [
+          { name: 'Flat sheet', qty: '2', unitPrice: '1000' },
+          { name: 'Coil', qty: '1', unitPrice: '500' },
+        ],
+        accessories: [{ name: 'Stone nail', qty: '1', unitPrice: '100' }],
+        services: [],
+      },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.quotationId).toMatch(/^QT-/);
   });
 
   it('POST /api/suppliers then bootstrap lists it', async () => {

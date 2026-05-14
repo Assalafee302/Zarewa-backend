@@ -45,6 +45,7 @@ export const ADMIN_DATA_RESET_PRESETS = [
       'Deletes customers, quotations, cutting lists, production, POs, stock movements, and customer cashbook ledger rows. Does not remove app users, catalog products, master price lists, or coil lots — use the separate “Coil lots & coil stock” option to clear yard/coil book data.',
     tables: [
       'production_completion_adjustments',
+      'production_job_stone_flatsheet_usage',
       'production_job_accessory_usage',
       'production_jobs',
       'cutting_list_lines',

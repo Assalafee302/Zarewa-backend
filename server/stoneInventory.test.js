@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import {
+  ensureStoneFlatsheetProduct,
   ensureStoneProduct,
   isStoneMeterQuotationLinesJson,
+  stoneFlatsheetProductIdFromSpec,
   stoneProductIdFromSpec,
 } from './stoneInventory.js';
 
@@ -32,5 +34,18 @@ describe('stoneInventory', () => {
   it('isStoneMeterQuotationLinesJson detects MAT-005', () => {
     expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-005' })).toBe(true);
     expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-002' })).toBe(false);
+  });
+
+  it('stoneFlatsheetProductIdFromSpec builds stable id', () => {
+    expect(stoneFlatsheetProductIdFromSpec('Black', 1.4)).toBe('STONE-FS-black-1p4m');
+    expect(stoneFlatsheetProductIdFromSpec('Ivory Beige', 2)).toBe('STONE-FS-ivory-beige-2m');
+  });
+
+  it('ensureStoneFlatsheetProduct inserts m² SKU', () => {
+    const pid = ensureStoneFlatsheetProduct(db, { colourLabel: 'Red', lengthM: 1.4 });
+    expect(pid).toBe('STONE-FS-red-1p4m');
+    const row = db.prepare(`SELECT unit, gauge FROM products WHERE product_id = ?`).get(pid);
+    expect(row.unit).toBe('m2');
+    expect(String(row.gauge || '').trim()).toBe('');
   });
 });

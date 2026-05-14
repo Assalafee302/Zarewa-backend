@@ -1152,6 +1152,38 @@ export function listProductionJobAccessoryUsage(db, branchScope = 'ALL') {
   }));
 }
 
+export function listProductionJobStoneFlatsheetUsage(db, branchScope = 'ALL') {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_job_stone_flatsheet_usage'`).get()) {
+    return [];
+  }
+  const b = branchWhere(db, 'production_jobs', branchScope);
+  const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+  const rows = db
+    .prepare(
+      `SELECT u.id AS id, u.job_id AS job_id, u.quotation_ref AS quotation_ref, u.quote_line_id AS quote_line_id,
+              u.name AS name, u.length_m AS length_m, u.ordered_m2 AS ordered_m2, u.supplied_m2 AS supplied_m2,
+              u.deduction_m2 AS deduction_m2, u.inventory_product_id AS inventory_product_id, u.posted_at_iso AS posted_at_iso
+       FROM production_job_stone_flatsheet_usage u
+       INNER JOIN production_jobs j ON j.job_id = u.job_id
+       WHERE 1=1${branchSql}
+       ORDER BY u.posted_at_iso DESC`
+    )
+    .all(...b.args);
+  return rows.map((row) => ({
+    id: row.id,
+    jobID: row.job_id,
+    quotationRef: row.quotation_ref ?? '',
+    quoteLineId: row.quote_line_id ?? '',
+    name: row.name ?? '',
+    lengthM: Number(row.length_m) || 0,
+    orderedM2: Number(row.ordered_m2) || 0,
+    suppliedM2: Number(row.supplied_m2) || 0,
+    deductionM2: Number(row.deduction_m2) || 0,
+    inventoryProductId: row.inventory_product_id ?? '',
+    postedAtISO: row.posted_at_iso ?? '',
+  }));
+}
+
 /** Receipts, cutting lists, and produced metres for the refund modal “Transaction Intelligence” panel. */
 export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope = 'ALL') {
   const ref = String(quotationRef || '').trim();

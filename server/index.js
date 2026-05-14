@@ -34,24 +34,28 @@ try {
   dbPath = '(not connected)';
   app = express();
   app.disable('x-powered-by');
-  app.get('/api/health', (_req, res) => {
-    /**
-     * HTTP 200 (not 503) so uptime checks that only look at status stay unchanged from pre-2026-05 behaviour.
-     * Use `ok: false` + `degraded: true` + `bootError` / `mysqlTarget` to detect failure; all other routes stay 503.
-     */
-    res.status(200).json({
-      ok: false,
-      service: 'zarewa-api',
-      degraded: true,
-      database: false,
-      bootError: errMsg,
-      mysqlTarget,
-      mysqlUser: cfg.user,
-      fixHint:
-        'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke',
-      time: new Date().toISOString(),
-    });
+  const degradedProbeJson = () => ({
+    ok: false,
+    service: 'zarewa-api',
+    degraded: true,
+    database: false,
+    bootError: errMsg,
+    mysqlTarget,
+    mysqlUser: cfg.user,
+    fixHint:
+      'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke',
+    time: new Date().toISOString(),
   });
+  const degradedProbeHandler = (_req, res) => {
+    /**
+     * HTTP 200 so probes that only check status see UP; use `ok: false` + `degraded` in JSON for real state.
+     * Paths mirror common K8s / LB checks (see also /api/health).
+     */
+    res.status(200).json(degradedProbeJson());
+  };
+  for (const p of ['/api/health', '/health', '/livez', '/readyz', '/status']) {
+    app.get(p, degradedProbeHandler);
+  }
   app.use((_req, res) => {
     res.status(503).json({
       ok: false,
@@ -67,7 +71,7 @@ try {
 function onListen() {
   if (bootDegraded) {
     console.log(
-      `[zarewa] listening DEGRADED on port ${port}${listenHost ? ` host=${listenHost}` : ''} — check bootError from GET /api/health`
+      `[zarewa] listening DEGRADED on port ${port}${listenHost ? ` host=${listenHost}` : ''} — probes: /api/health /health /livez /readyz /status (see bootError in JSON)`
     );
     return;
   }

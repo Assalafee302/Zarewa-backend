@@ -30,6 +30,7 @@ import {
   listProductionJobs,
   listProductionCompletionAdjustments,
   listProductionJobAccessoryUsage,
+  listProductionJobStoneFlatsheetUsage,
   listAppUsers,
   listPeriodLocks,
   listApprovalActions,
@@ -176,6 +177,7 @@ export function buildBootstrap(db, opts = {}) {
     cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope) : [],
     productionJobs: prodRollupOk ? listProductionJobs(db, branchScope) : [],
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
+    productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
     productionMetrics: productionOk
       ? computeProductionMetricsRollup(db, branchScope)
       : {

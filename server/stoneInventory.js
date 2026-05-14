@@ -3,6 +3,7 @@
  */
 
 import { INVENTORY_MODEL, STONE_COATED_MATERIAL_TYPE_ID } from './inventoryConstants.js';
+import { normalizeStoneFlatsheetLengthM } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 
 function slugPart(s) {
   return String(s ?? '')
@@ -62,6 +63,7 @@ export function inventoryModelForProductId(db, productId) {
 export function isStoneMeterProductRow(productRow) {
   if (!productRow) return false;
   const attrs = parseProductDashboardAttrs(productRow);
+  if (attrs.stoneFlatsheet) return true;
   if (attrs.inventoryModel === INVENTORY_MODEL.STONE_METER) return true;
   if (String(productRow.unit || '').toLowerCase() === 'm' && attrs.stoneDesign) return true;
   return String(productRow.product_id || '').startsWith('STONE-');
@@ -108,6 +110,60 @@ export function ensureStoneProduct(db, spec) {
     0,
     0,
     gaugeLabel,
+    colourLabel,
+    'Stone coated',
+    dash,
+    branchId
+  );
+  return id;
+}
+
+/**
+ * Stable product_id for stone flatsheet (m² stock) by colour + length (1.4 m or 2 m).
+ * @param {string} colourLabel
+ * @param {1.4 | 2} lengthNormalized
+ */
+export function stoneFlatsheetProductIdFromSpec(colourLabel, lengthNormalized) {
+  const a = slugPart(colourLabel) || 'x';
+  const slug = lengthNormalized === 1.4 ? '1p4m' : '2m';
+  return `STONE-FS-${a}-${slug}`;
+}
+
+/**
+ * Ensure a stone flatsheet SKU exists (m² unit, colour + length only).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ colourLabel: string, lengthM: unknown, branchId?: string }} spec
+ */
+export function ensureStoneFlatsheetProduct(db, spec) {
+  const colourLabel = String(spec.colourLabel || '').trim();
+  const lengthM = normalizeStoneFlatsheetLengthM(spec.lengthM);
+  if (!colourLabel || lengthM == null) {
+    throw new Error('Stone flatsheet requires colour and length (1.4 m or 2 m).');
+  }
+  const id = stoneFlatsheetProductIdFromSpec(colourLabel, lengthM);
+  const existing = db.prepare(`SELECT product_id FROM products WHERE product_id = ?`).get(id);
+  if (existing) return id;
+
+  const name = `Stone flatsheet ${colourLabel} / ${lengthM} m`.replace(/\s+/g, ' ').trim();
+  const dash = JSON.stringify({
+    inventoryModel: INVENTORY_MODEL.STONE_METER,
+    stoneFlatsheet: true,
+    stoneFlatsheetLengthM: lengthM,
+    stoneFlatsheetColour: colourLabel,
+    materialTypeId: STONE_COATED_MATERIAL_TYPE_ID,
+  });
+  const branchId = String(spec.branchId ?? '').trim() || '';
+  db.prepare(
+    `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    name,
+    0,
+    'm2',
+    0,
+    0,
+    '',
     colourLabel,
     'Stone coated',
     dash,

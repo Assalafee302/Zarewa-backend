@@ -1,4 +1,5 @@
 import { stockRowMatchesColourFilter } from './stockCheckMasterOptions.js';
+import { quotationHasCoilLine, quotationHasFlatSheetLine } from './stoneCoatedQuotationPolicy.js';
 
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
 export function firstGaugeNumber(value) {
@@ -113,11 +114,22 @@ export function coilSpecMismatchIssues(lot, expected, masterData) {
   return { issues, hasExpected: true };
 }
 
-/** Stone-coated quotes use metre stock, not coil lots — skip coil-vs-quote matching. */
+/** @param {Record<string, unknown> | null | undefined} quotation */
+function quotationProductsFromQuotation(quotation) {
+  const q = quotation?.quotationLines?.products;
+  return Array.isArray(q) ? q : [];
+}
+
+/** Stone metre quotes expect coil matching only when Flat sheet and/or Coil lines are present (hybrid jobs). */
 export function quotationExpectsCoilAllocation(quotation) {
-  if (quotation?.stoneMeterQuote === true) return false;
+  const products = quotationProductsFromQuotation(quotation);
+  if (quotation?.stoneMeterQuote === true) {
+    return quotationHasFlatSheetLine(products) || quotationHasCoilLine(products);
+  }
   const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
-  if (mid === 'MAT-005') return false;
+  if (mid === 'MAT-005') {
+    return quotationHasFlatSheetLine(products) || quotationHasCoilLine(products);
+  }
   return true;
 }
 

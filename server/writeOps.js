@@ -7,7 +7,7 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
-import { ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
+import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterProductRow } from './stoneInventory.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
@@ -1964,6 +1964,65 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_
       if (landed && glS && glS.ok === false) throw new Error(glS.error || 'GL failed.');
     })();
     return { ok: true, productId, metresReceived: metres };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Direct stone flatsheet receipt (m²) without a PO — optional supplier for traceability.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback = DEFAULT_BRANCH_ID, opts = {}) {
+  const colourLabel = String(payload?.colourLabel ?? '').trim();
+  const lengthMRaw = payload?.lengthM ?? payload?.stoneFlatsheetLengthM;
+  const m2 = Number(payload?.m2Received ?? payload?.qtyReceived ?? payload?.metresReceived);
+  if (!colourLabel) {
+    return { ok: false, error: 'Colour is required.' };
+  }
+  if (!Number.isFinite(m2) || m2 <= 0) {
+    return { ok: false, error: 'Enter a valid m² received.' };
+  }
+  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  let productId;
+  try {
+    productId = ensureStoneFlatsheetProduct(db, { colourLabel, lengthM: lengthMRaw, branchId: bid });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  const upM2 = Math.round(Number(payload?.unitPricePerM2Ngn) || 0);
+  const landed = upM2 > 0 ? Math.round(m2 * upM2) : null;
+  const dateISO = String(payload?.dateISO || new Date().toISOString()).slice(0, 10);
+  const glUserId = opts?.actor?.id != null ? String(opts.actor.id) : null;
+  const supplierNote = String(payload?.supplierName ?? payload?.supplier_name ?? '').trim();
+  const detail = [supplierNote || 'Stone flatsheet receipt', `${m2} m²`].filter(Boolean).join(' · ');
+
+  try {
+    db.transaction(() => {
+      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(m2, productId);
+      appendMovementTx(db, {
+        type: 'STORE_STONE_FLATSHEET_DIRECT',
+        ref: String(payload?.refNote ?? '').trim() || 'DIRECT',
+        productID: productId,
+        qty: m2,
+        detail,
+        dateISO,
+        unitPriceNgn: upM2 || null,
+        valueNgn: landed,
+      });
+      const src = `STONE-FS-DIR-${productId}-${dateISO}-${Date.now()}`;
+      const glS = tryPostInventoryReceiptJournal(db, {
+        entryDateISO: dateISO,
+        sourceKind: 'STONE_FLATSHEET_RECEIPT',
+        sourceId: src,
+        landedCostNgn: landed,
+        branchId: bid,
+        createdByUserId: glUserId,
+        memo: `Stone flatsheet receipt ${productId}`,
+      });
+      if (landed && glS && glS.ok === false) throw new Error(glS.error || 'GL failed.');
+    })();
+    return { ok: true, productId, m2Received: m2 };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

@@ -9,6 +9,10 @@ import {
   resolveSuppliedQtyFromPayloadMaps,
   sumPriorAccessorySuppliedForLine,
 } from './accessoryFulfillment.js';
+import {
+  applyStoneFlatsheetCompletionTx,
+  planStoneFlatsheetFulfillment,
+} from './stoneFlatsheetFulfillment.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { getQuotation } from './readModel.js';
@@ -1154,6 +1158,8 @@ export function previewProductionConversion(db, jobID, payload = {}) {
   if (jobRow && jobIsStoneMeter(db, jobRow)) {
     const acc = planAccessoryCompletion(db, jobRow, payload);
     if (!acc.ok) return { ok: false, error: acc.error };
+    const sf = planStoneFlatsheetFulfillment(db, jobRow, payload, {});
+    if (!sf.ok) return { ok: false, error: sf.error };
     return {
       ok: true,
       stoneMeterJob: true,
@@ -1164,6 +1170,8 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       totalWeightKg: 0,
       accessoryPlan: acc.plannedLines,
       accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
+      stoneFlatsheetPlan: sf.plannedLines,
+      stoneFlatsheetStockWarnings: sf.stoneFlatsheetStockWarnings ?? [],
     };
   }
   const r = computeCompletionConversionRows(db, jobID, payload, {
@@ -1400,13 +1408,17 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
     return { ok: false, error: `Insufficient stone-coated metres in stock (have ${stock.toFixed(2)} m).` };
   }
   let totalCogsForGl = 0;
-  let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
+    const accPlan = planAccessoryCompletion(db, job, payload);
+    if (!accPlan.ok) return { ok: false, error: accPlan.error };
+    const sfPlan = planStoneFlatsheetFulfillment(db, job, payload, {});
+    if (!sfPlan.ok) return { ok: false, error: sfPlan.error };
+    const accessoryStockWarnings = [
+      ...(accPlan.accessoryStockWarnings ?? []),
+      ...(sfPlan.stoneFlatsheetStockWarnings ?? []),
+    ];
     db.transaction(() => {
-      const accPlan = planAccessoryCompletion(db, job, payload);
-      if (!accPlan.ok) throw new Error(accPlan.error);
-      accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
       adjustProductStockTx(db, stonePid, -metres);
       appendStockMovementTx(db, {
         atISO: completedAtISO,
@@ -1442,6 +1454,15 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         qref,
         completedAtISO,
         accPlan.plannedLines,
+        adjustProductStockTx,
+        appendStockMovementTx
+      );
+      applyStoneFlatsheetCompletionTx(
+        db,
+        jobID,
+        qref,
+        completedAtISO,
+        sfPlan.plannedLines,
         adjustProductStockTx,
         appendStockMovementTx
       );
@@ -2540,6 +2561,94 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
     })();
 
     return { ok: true, accessoryStockWarnings: accPlan.accessoryStockWarnings ?? [] };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+function planStoneFlatsheetCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
+  return planStoneFlatsheetFulfillment(db, jobRow, payload, { excludeJobId: jobId });
+}
+
+/**
+ * After completion, restate stone flatsheet m² issued for the job (ordered vs supplied/deduction on quotation lines).
+ * Same permission intent as post-completion accessory corrections; does not rewrite GL recognition.
+ */
+export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, payload = {}, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  if (String(job.status ?? '') !== 'Completed') {
+    return { ok: false, error: 'Stone flatsheet correction applies only to completed jobs.' };
+  }
+  const note = String(payload.reason ?? payload.note ?? '').trim();
+  if (note.length < 12) {
+    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
+  }
+  const atISO = normalizeIso(payload.atISO || nowIso());
+
+  try {
+    assertPeriodOpen(db, atISO, 'Production stone flatsheet correction date');
+    const sfPlan = planStoneFlatsheetCorrectionExcludingJob(db, job, jobId, payload);
+    if (!sfPlan.ok) return sfPlan;
+
+    db.transaction(() => {
+      const quotationRef = String(job.quotation_ref ?? '').trim();
+      const existing = db
+        .prepare(
+          `SELECT inventory_product_id AS inventoryProductId,
+                  supplied_m2 AS suppliedM2,
+                  deduction_m2 AS deductionM2,
+                  name AS name
+           FROM production_job_stone_flatsheet_usage WHERE job_id = ?`
+        )
+        .all(jobId);
+      for (const row of existing) {
+        const pid = String(row.inventoryProductId || '').trim();
+        const restore = safeNumber(row.suppliedM2) + safeNumber(row.deductionM2);
+        if (pid && restore > 0) {
+          adjustProductStockTx(db, pid, restore);
+          appendStockMovementTx(db, {
+            atISO,
+            type: 'STONE_FLATSHEET_ISSUE_ADJUSTMENT',
+            ref: jobId,
+            productID: pid,
+            qty: restore,
+            detail: `Stone flatsheet correction (restore) · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
+            dateISO: atISO.slice(0, 10),
+          });
+        }
+      }
+      applyStoneFlatsheetCompletionTx(
+        db,
+        jobId,
+        quotationRef,
+        atISO,
+        sfPlan.plannedLines,
+        adjustProductStockTx,
+        appendStockMovementTx
+      );
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.completion_stone_flatsheet_correct',
+        entityKind: 'production_job',
+        entityId: jobId,
+        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+        details: {
+          reason: note,
+          stoneFlatsheet: sfPlan.plannedLines.map((l) => ({
+            quoteLineId: l.quoteLineId,
+            name: l.name,
+            suppliedM2: l.suppliedM2,
+            deductionM2: l.deductionM2,
+            inventoryProductId: l.inventoryProductId || null,
+          })),
+        },
+      });
+    })();
+
+    return { ok: true, stoneFlatsheetStockWarnings: sfPlan.stoneFlatsheetStockWarnings ?? [] };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

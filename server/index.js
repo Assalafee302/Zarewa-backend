@@ -4,6 +4,7 @@ import { readAiAssistConfig } from './aiAssist.js';
 import { createDatabase, defaultDbPath } from './db.js';
 import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
+import { mysqlConfigFromEnv } from './mysqlDatabase.js';
 
 loadProjectEnv();
 
@@ -25,6 +26,11 @@ try {
   const errMsg = String(e?.message || e || 'unknown');
   console.error('[zarewa] Startup failed — minimal HTTP only until fixed:', errMsg);
   console.error(e);
+  const cfg = mysqlConfigFromEnv();
+  const mysqlTarget = `${cfg.host}:${cfg.port}/${cfg.database}`;
+  console.error(
+    `[zarewa] Expected MySQL at ${mysqlTarget} (user=${cfg.user}). If this is wrong, set ZAREWA_MYSQL_* in repo-root .env — see .env.example`
+  );
   dbPath = '(not connected)';
   app = express();
   app.disable('x-powered-by');
@@ -36,6 +42,10 @@ try {
       degraded: true,
       database: false,
       bootError: errMsg,
+      mysqlTarget,
+      mysqlUser: cfg.user,
+      fixHint:
+        'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke',
       time: new Date().toISOString(),
     });
   });
@@ -44,6 +54,9 @@ try {
       ok: false,
       error: 'Server failed during startup.',
       bootError: errMsg,
+      mysqlTarget,
+      fixHint:
+        'See GET /api/health for mysqlTarget and bootError. Run: npm run mysql:smoke',
     });
   });
 }

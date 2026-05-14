@@ -30,6 +30,19 @@ export function normQuoteItemKey(s) {
     .replace(/\s+/g, ' ');
 }
 
+/** Quotation UI: when setup_price_lists and workbook list no stone colours, narrow the picker to these keys (see migrate stone colour seed). */
+export const STONE_DEFAULT_COLOUR_KEYS = new Set(
+  [
+    'black',
+    'coffee brown',
+    'red',
+    'red mix black',
+    'red patch black',
+    'black patch white',
+    'coffee mix black',
+  ].map((k) => normQuoteItemKey(k))
+);
+
 /**
  * Map display / legacy names to a whitelist key.
  * @param {string | null | undefined} name
@@ -96,6 +109,23 @@ export function productLineAllowedForStone(name, hasFlatSheet) {
 }
 
 /**
+ * Map `setup_material_types` row → `price_list_items.material_type_key` (workbook / floor rows).
+ * @param {{ id?: string; material_type_id?: string; name?: string } | null | undefined} row
+ */
+export function priceListMaterialKeyFromMaterialTypeRow(row) {
+  if (!row) return '';
+  const id = String(row.id ?? row.material_type_id ?? '').trim();
+  if (id === 'MAT-001') return 'alu';
+  if (id === 'MAT-002') return 'aluzinc';
+  if (id === 'MAT-005') return 'stone-coated';
+  const n = normQuoteItemKey(row.name);
+  if (n.includes('aluzinc')) return 'aluzinc';
+  if (n.includes('alumin')) return 'alu';
+  if (n.includes('stone')) return 'stone-coated';
+  return '';
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {string} materialTypeId
  * @returns {Set<string>} normalized profile keys
@@ -136,7 +166,8 @@ export function gaugeLabelActiveInMaster(db, gaugeLabel) {
 }
 
 /**
- * Stone colour must appear on at least one active price list row for this material type (if any such rows exist).
+ * Stone header colour: allowed if listed on setup_price_lists (colour_id) and/or on price_list_items
+ * (colour_key + material_type_key) for this material. If neither source constrains colours, any active colour passes.
  * @param {import('better-sqlite3').Database} db
  * @param {string} materialTypeId
  * @param {string} colourName — quotation header display name
@@ -146,19 +177,48 @@ export function stoneColourAllowedByPriceList(db, materialTypeId, colourName) {
   const cname = String(colourName || '').trim();
   if (!mid || !cname || !db) return true;
   try {
+    const mtRow = db
+      .prepare(
+        `SELECT material_type_id AS id, name FROM setup_material_types WHERE material_type_id = ? AND active = 1`
+      )
+      .get(mid);
+    const mtKey = priceListMaterialKeyFromMaterialTypeRow(mtRow);
+
     const priceRows = db
       .prepare(
         `SELECT DISTINCT colour_id FROM setup_price_lists WHERE active = 1 AND material_type_id = ? AND colour_id IS NOT NULL AND trim(colour_id) != ''`
       )
       .all(mid);
-    if (!priceRows.length) return true;
-    const allowedIds = new Set(priceRows.map((r) => String(r.colour_id || '').trim()).filter(Boolean));
+    const allowedSetupIds = new Set(priceRows.map((r) => String(r.colour_id || '').trim()).filter(Boolean));
+
+    const workbookKeys = new Set();
+    if (mtKey) {
+      const pliRows = db
+        .prepare(
+          `SELECT DISTINCT colour_key FROM price_list_items WHERE lower(trim(material_type_key)) = lower(trim(?)) AND colour_key IS NOT NULL AND trim(colour_key) != '' AND COALESCE(unit_price_per_meter_ngn, 0) > 0`
+        )
+        .all(mtKey);
+      for (const r of pliRows || []) {
+        const k = normQuoteItemKey(r.colour_key);
+        if (k) workbookKeys.add(k);
+      }
+    }
+
     const col = db
       .prepare(`SELECT colour_id FROM setup_colours WHERE active = 1 AND name = ?`)
       .get(cname);
     const cid = col?.colour_id != null ? String(col.colour_id).trim() : '';
-    if (!cid) return false;
-    return allowedIds.has(cid);
+    const cnameKey = normQuoteItemKey(cname);
+
+    const hasSetup = allowedSetupIds.size > 0;
+    const hasWb = workbookKeys.size > 0;
+    if (!hasSetup && !hasWb) return true;
+
+    const okSetup = hasSetup && Boolean(cid) && allowedSetupIds.has(cid);
+    const okWb = hasWb && workbookKeys.has(cnameKey);
+    if (hasSetup && hasWb) return okSetup || okWb;
+    if (hasSetup) return okSetup;
+    return okWb;
   } catch {
     return true;
   }

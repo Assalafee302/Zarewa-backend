@@ -10,25 +10,39 @@ import {
 } from './stoneCoatedQuotationPolicy.js';
 
 /** Minimal db stub matching better-sqlite3 prepare().get/.all API used by the policy. */
-function createPolicyTestDb() {
+function createPolicyTestDb(overrides = {}) {
   const state = {
     materialTypes: [
-      { material_type_id: 'MAT-005', inventory_model: 'stone_meter', active: 1 },
-      { material_type_id: 'MAT-002', inventory_model: 'coil_kg', active: 1 },
+      { material_type_id: 'MAT-005', name: 'Stone coated', inventory_model: 'stone_meter', active: 1 },
+      { material_type_id: 'MAT-002', name: 'Aluzinc', inventory_model: 'coil_kg', active: 1 },
     ],
     gauges: [{ label: '0.45mm', active: 1 }],
-    colours: [{ colour_id: 'C1', name: 'Black', active: 1 }],
+    colours: [
+      { colour_id: 'C1', name: 'Black', active: 1 },
+      { colour_id: 'C2', name: 'HM Blue', active: 1 },
+    ],
     profiles: [{ name: 'Milano', active: 1, material_type_id: 'MAT-005' }],
-    priceColourIds: ['C1'],
+    priceColourIds: overrides.priceColourIds !== undefined ? overrides.priceColourIds : ['C1'],
+    priceListWorkbookColours: overrides.priceListWorkbookColours ?? [],
   };
   return {
     prepare(sql) {
       const s = String(sql || '');
       return {
         get(...args) {
-          if (s.includes('setup_material_types') && s.includes('inventory_model')) {
+          if (s.includes('setup_material_types')) {
             const id = args[0];
-            return state.materialTypes.find((r) => r.material_type_id === id) || null;
+            const row = state.materialTypes.find((r) => r.material_type_id === id);
+            if (!row) return null;
+            if (s.includes('inventory_model') && !s.includes(' AS id')) {
+              return { inventory_model: row.inventory_model };
+            }
+            return {
+              id: row.material_type_id,
+              name: row.name,
+              material_type_id: row.material_type_id,
+              inventory_model: row.inventory_model,
+            };
           }
           if (s.includes('setup_gauges')) {
             const label = args[0];
@@ -41,6 +55,9 @@ function createPolicyTestDb() {
           return null;
         },
         all(...args) {
+          if (s.includes('price_list_items') && s.includes('colour_key')) {
+            return state.priceListWorkbookColours;
+          }
           if (s.includes('setup_price_lists') && s.includes('colour_id')) {
             return state.priceColourIds.map((colour_id) => ({ colour_id }));
           }
@@ -102,6 +119,33 @@ describe('validateQuotationMaterialRules', () => {
       accessories: [{ name: 'Stone nail' }],
     });
     expect(r.ok).toBe(true);
+  });
+
+  it('allows stone header colour from workbook when setup omits colour_id', () => {
+    const db = createPolicyTestDb({ priceColourIds: [], priceListWorkbookColours: [{ colour_key: 'Black' }] });
+    const r = validateQuotationMaterialRules(db, {
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.45mm',
+      materialColor: 'Black',
+      materialDesign: 'Milano',
+      products: [{ name: 'Roofing Sheet' }],
+      accessories: [{ name: 'Stone nail' }],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects stone header colour not on workbook when setup omits colour_id', () => {
+    const db = createPolicyTestDb({ priceColourIds: [], priceListWorkbookColours: [{ colour_key: 'black' }] });
+    const r = validateQuotationMaterialRules(db, {
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.45mm',
+      materialColor: 'HM Blue',
+      materialDesign: 'Milano',
+      products: [{ name: 'Roofing Sheet' }],
+      accessories: [{ name: 'Stone nail' }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.details?.invalidHeader?.colour).toBe(true);
   });
 
   it('rejects coil without flat sheet', () => {

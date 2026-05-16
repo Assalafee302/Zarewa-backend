@@ -1,79 +1,71 @@
 import { describe, it, expect } from 'vitest';
 import {
-  capSuggestedRefundLinesToHeadroom,
   quotationActualCashInNgn,
+  quotationIndependentRefundLinesSumNgn,
   quotationOverpaymentExcessNgn,
-  quotationRefundHeadroomNgn,
+  quotationRefundHardCapNgn,
+  quotationRemainingRefundableNgn,
+  validateRefundCalculationLinesNgn,
 } from './refundQuotationMoney.js';
 
 describe('refundQuotationMoney', () => {
   it('overpayment excess is cash in minus quote total', () => {
     expect(
-      quotationOverpaymentExcessNgn({ cashInNgn: 460_000, quoteTotalNgn: 172_800 })
-    ).toBe(287_200);
-    expect(
-      quotationOverpaymentExcessNgn({ cashInNgn: 172_800, quoteTotalNgn: 172_800 })
-    ).toBe(0);
+      quotationOverpaymentExcessNgn({ cashInNgn: 5_150_000, quoteTotalNgn: 3_934_200 })
+    ).toBe(1_215_800);
   });
 
-  it('refund headroom when overpaid is cash in minus quote total minus refunds', () => {
-    expect(
-      quotationRefundHeadroomNgn({
-        cashInNgn: 460_000,
-        quoteTotalNgn: 172_800,
-        totalRefundedNgn: 0,
-      })
-    ).toBe(287_200);
-    expect(
-      quotationRefundHeadroomNgn({
-        cashInNgn: 460_000,
-        quoteTotalNgn: 172_800,
-        totalRefundedNgn: 50_000,
-      })
-    ).toBe(237_200);
+  it('remaining refundable adds overpayment and independent category lines', () => {
+    const lines = [
+      { category: 'Overpayment', amountNgn: 1_215_800 },
+      { category: 'Unproduced meterage', amountNgn: 335_820 },
+    ];
+    expect(quotationRemainingRefundableNgn({
+      cashInNgn: 5_150_000,
+      quoteTotalNgn: 3_934_200,
+      totalRefundedNgn: 0,
+      suggestedLines: lines,
+    })).toBe(1_551_620);
   });
 
-  it('refund headroom when not overpaid is cash in minus refunds', () => {
-    expect(
-      quotationRefundHeadroomNgn({
-        cashInNgn: 172_800,
-        quoteTotalNgn: 172_800,
-        totalRefundedNgn: 0,
-      })
-    ).toBe(172_800);
-    expect(
-      quotationRefundHeadroomNgn({
-        cashInNgn: 100_000,
-        quoteTotalNgn: 172_800,
-        totalRefundedNgn: 0,
-      })
-    ).toBe(100_000);
+  it('hard cap limits total when overpay excess plus independent lines exceed cash received', () => {
+    const lines = [
+      { category: 'Overpayment', amountNgn: 400_000 },
+      { category: 'Unproduced meterage', amountNgn: 900_000 },
+    ];
+    expect(quotationRemainingRefundableNgn({
+      cashInNgn: 1_200_000,
+      quoteTotalNgn: 800_000,
+      totalRefundedNgn: 0,
+      suggestedLines: lines,
+    })).toBe(1_200_000);
   });
 
-  it('allocates contractual lines before overpayment when sharing headroom', () => {
-    const { lines } = capSuggestedRefundLinesToHeadroom(
-      [
-        { label: 'Overpayment', amountNgn: 1_215_800, category: 'Overpayment' },
-        { label: 'Unproduced', amountNgn: 335_820, category: 'Unproduced meterage' },
+  it('remaining is sum of lines when below hard cap', () => {
+    const lines = [
+      { category: 'Overpayment', amountNgn: 400_000 },
+      { category: 'Unproduced meterage', amountNgn: 500_000 },
+    ];
+    expect(quotationRemainingRefundableNgn({
+      cashInNgn: 1_200_000,
+      quoteTotalNgn: 800_000,
+      totalRefundedNgn: 0,
+      suggestedLines: lines,
+    })).toBe(900_000);
+  });
+
+  it('validates overpayment line cannot exceed payment minus quote', () => {
+    const r = validateRefundCalculationLinesNgn({
+      cashInNgn: 5_150_000,
+      quoteTotalNgn: 3_934_200,
+      totalRefundedNgn: 0,
+      calculationLines: [
+        { category: 'Overpayment', amountNgn: 1_300_000 },
+        { category: 'Unproduced meterage', amountNgn: 100_000 },
       ],
-      1_215_800
-    );
-    expect(lines).toHaveLength(2);
-    expect(lines.find((l) => l.category === 'Unproduced meterage')?.amountNgn).toBe(335_820);
-    expect(lines.find((l) => l.category === 'Overpayment')?.amountNgn).toBe(879_980);
-    expect(lines.reduce((s, l) => s + l.amountNgn, 0)).toBe(1_215_800);
-  });
-
-  it('returns all lines unchanged when total is within headroom', () => {
-    const { lines, warnings } = capSuggestedRefundLinesToHeadroom(
-      [
-        { label: 'Unproduced', amountNgn: 100_000, category: 'Unproduced meterage' },
-        { label: 'Transport', amountNgn: 50_000, category: 'Transport issue' },
-      ],
-      200_000
-    );
-    expect(lines).toHaveLength(2);
-    expect(warnings).toHaveLength(0);
+    });
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/Overpayment/i);
   });
 
   it('dedupes settled-quote repeat overpay when receipt cash is already on file', () => {
@@ -86,11 +78,8 @@ describe('refundQuotationMoney', () => {
     });
     expect(cashIn).toBe(580_400);
     expect(
-      quotationRefundHeadroomNgn({
-        cashInNgn: cashIn,
-        quoteTotalNgn: 564_540,
-        totalRefundedNgn: 0,
-      })
-    ).toBe(15_860);
+      quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: 0 })
+    ).toBe(580_400);
+    expect(quotationIndependentRefundLinesSumNgn([])).toBe(0);
   });
 });

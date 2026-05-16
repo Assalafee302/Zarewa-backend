@@ -31,14 +31,14 @@ describe('quotation refund headroom (cash on quote − quote total)', () => {
     expect(quotationCashInNgn(db, 'QT-OVR-SPLIT')).toBe(460_000);
   });
 
-  it('remaining refundable is cash in minus quote total minus refunds', () => {
+  it('eligibility hard cap is full cash received on quote', () => {
     const meets = quotationMeetsRefundEligibility(db, 'QT-OVR-SPLIT');
     expect(meets.ok).toBe(true);
-    expect(meets.remainingNgn).toBe(287_200);
+    expect(meets.remainingNgn).toBe(460_000);
     expect(meets.overpaymentExcessNgn).toBe(287_200);
   });
 
-  it('preview suggests overpayment and exposes same remaining headroom', () => {
+  it('preview suggests full overpayment line and matching remaining', () => {
     const prev = previewRefundRequest(db, { quotationRef: 'QT-OVR-SPLIT' });
     expect(prev.ok).toBe(true);
     expect(prev.preview.quotationCashInNgn).toBe(460_000);

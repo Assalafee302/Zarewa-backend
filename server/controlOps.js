@@ -37,9 +37,11 @@ import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pri
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 import {
-  capSuggestedRefundLinesToHeadroom,
   quotationOverpaymentExcessNgn,
+  quotationRefundHardCapNgn,
   quotationRefundHeadroomNgn,
+  quotationRemainingRefundableNgn,
+  validateRefundCalculationLinesNgn,
 } from '../shared/lib/refundQuotationMoney.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
@@ -1516,10 +1518,17 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
 
       const elig = quotationMeetsRefundEligibility(db, quotationRef);
       if (!elig.ok) return elig;
-      if (amountNgn > elig.remainingNgn) {
+      const lineValidation = validateRefundCalculationLinesNgn({
+        cashInNgn: elig.cashInNgn,
+        quoteTotalNgn: elig.quoteTotalNgn,
+        totalRefundedNgn: elig.totalRefundedNgn,
+        calculationLines,
+      });
+      if (!lineValidation.ok) return lineValidation;
+      if (amountNgn > lineValidation.hardCapNgn) {
         return {
           ok: false,
-          error: `Refund amount (₦${amountNgn.toLocaleString('en-NG')}) exceeds remaining refundable balance (₦${elig.remainingNgn.toLocaleString('en-NG')}).`,
+          error: `Refund amount (₦${amountNgn.toLocaleString('en-NG')}) exceeds cash received on this quotation after prior refunds (max ₦${lineValidation.hardCapNgn.toLocaleString('en-NG')}).`,
         };
       }
     }
@@ -1678,9 +1687,8 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       )
       .get(qref, refundID);
     const sumOthersNgn = roundMoney(sumRow?.s ?? 0);
-    const maxApprovableNgn = quotationRefundHeadroomNgn({
+    const maxApprovableNgn = quotationRefundHardCapNgn({
       cashInNgn,
-      quoteTotalNgn,
       totalRefundedNgn: sumOthersNgn,
     });
     if (approvedAmountNgn > maxApprovableNgn) {
@@ -2326,41 +2334,45 @@ export function previewRefundRequest(db, payload) {
   }
 
   let remainingRefundableNgn = null;
+  let refundHardCapNgn = null;
   if (quotationRef) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
-    if (el.ok) remainingRefundableNgn = el.remainingNgn;
+    if (el.ok) {
+      refundHardCapNgn = quotationRefundHardCapNgn({
+        cashInNgn: cashInNgn,
+        totalRefundedNgn: el.totalRefundedNgn,
+      });
+      remainingRefundableNgn = quotationRemainingRefundableNgn({
+        cashInNgn: cashInNgn,
+        quoteTotalNgn,
+        totalRefundedNgn: el.totalRefundedNgn,
+        suggestedLines,
+      });
+    }
   }
 
-  if (quotationRef && remainingRefundableNgn != null && overpaymentExcessNgn > 0 && quoteTotalNgn > 0) {
+  if (quotationRef && overpaymentExcessNgn > 0 && quoteTotalNgn > 0) {
     warnings.push(
-      `Customer paid above the quote total (₦${overpaymentExcessNgn.toLocaleString('en-NG')} excess cash on this quotation). Every applicable refund category shares one cap: remaining refundable ₦${remainingRefundableNgn.toLocaleString('en-NG')} on this quotation only.`
+      `Overpayment (₦${overpaymentExcessNgn.toLocaleString('en-NG')}) is payment received above the quote total. Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
     );
   }
 
-  const uncappedPositiveCategories = new Set(
-    suggestedLines
-      .filter((l) => roundMoney(l.amountNgn) > 0)
-      .map((l) => String(l.category || '').trim())
-      .filter(Boolean)
-  );
-  const uncappedAnyCategories = new Set(
-    suggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
-  );
-
-  const cappedPreview =
-    remainingRefundableNgn != null
-      ? capSuggestedRefundLinesToHeadroom(suggestedLines, remainingRefundableNgn)
-      : { lines: suggestedLines, warnings: [] };
-  for (const w of cappedPreview.warnings) warnings.push(w);
-  const cappedSuggestedLines = cappedPreview.lines;
+  const cappedSuggestedLines = suggestedLines;
 
   const suggestedAmountNgn = cappedSuggestedLines.reduce(
     (sum, line) => sum + roundMoney(line.amountNgn),
     0
   );
 
-  const suggestedPositiveCategories = uncappedPositiveCategories;
-  const suggestedAnyCategories = uncappedAnyCategories;
+  const suggestedPositiveCategories = new Set(
+    suggestedLines
+      .filter((l) => roundMoney(l.amountNgn) > 0)
+      .map((l) => String(l.category || '').trim())
+      .filter(Boolean)
+  );
+  const suggestedAnyCategories = new Set(
+    suggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
+  );
 
   const hasTransportServiceLine = quoteLines.some((s) => {
     const nl = serviceNameLower(s);
@@ -2521,6 +2533,7 @@ export function previewRefundRequest(db, payload) {
       receiptCashNgn,
       overpaymentExcessNgn,
       remainingRefundableNgn,
+      refundHardCapNgn,
       quotedMeters,
       actualMeters,
       pricePerMeterNgn: pricePerMeter ? Math.round(pricePerMeter) : null,
@@ -2620,9 +2633,8 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
     )
     .get(ref);
   const totalRefundedNgn = roundMoney(sumRow?.s ?? 0);
-  const remainingNgn = quotationRefundHeadroomNgn({
+  const remainingNgn = quotationRefundHardCapNgn({
     cashInNgn,
-    quoteTotalNgn,
     totalRefundedNgn,
   });
   if (remainingNgn <= 0) {

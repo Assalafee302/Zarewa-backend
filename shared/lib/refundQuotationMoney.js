@@ -1,7 +1,10 @@
 /**
- * Refund headroom on a quotation: cash received on this quote only (not unrelated customer balance).
- * When cash in exceeds the quote total, refundable excess = cash in − quote total − refunds already reserved.
- * Otherwise refundable headroom = cash in − refunds already reserved.
+ * Refund headroom on a quotation (this quote's cash only — not other customer balance).
+ *
+ * - Overpayment is cash received above the quote total (payment − quotation).
+ * - Other categories (unproduced metreage, substitution, services, etc.) are independent reasons
+ *   with their own calculated amounts from the quote / production facts.
+ * - Total refund cannot exceed cash received on this quotation minus refunds already on file.
  */
 
 export function roundRefundMoney(value) {
@@ -9,22 +12,37 @@ export function roundRefundMoney(value) {
 }
 
 /**
- * @param {{ cashInNgn: number, quoteTotalNgn: number, totalRefundedNgn: number }} p
+ * Hard ceiling: total cash that can still be returned on this quotation.
+ * @param {{ cashInNgn: number, quoteTotalNgn?: number, totalRefundedNgn: number }} p
  * @returns {number}
  */
-export function quotationRefundHeadroomNgn({ cashInNgn, quoteTotalNgn, totalRefundedNgn }) {
+export function quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn }) {
   const cashIn = roundRefundMoney(cashInNgn);
-  const quoteTotal = roundRefundMoney(quoteTotalNgn);
   const refunded = roundRefundMoney(totalRefundedNgn);
   if (cashIn <= 0) return 0;
-  if (quoteTotal > 0 && cashIn > quoteTotal) {
-    return Math.max(0, cashIn - quoteTotal - refunded);
-  }
   return Math.max(0, cashIn - refunded);
 }
 
 /**
- * Excess cash on this quotation above the quote total (before refunds).
+ * @deprecated Use {@link quotationRefundHardCapNgn} for total cap; {@link quotationRemainingRefundableNgn} when preview lines exist.
+ */
+export function quotationRefundHeadroomNgn({ cashInNgn, quoteTotalNgn, totalRefundedNgn, suggestedLines }) {
+  const cashIn = roundRefundMoney(cashInNgn);
+  const refunded = roundRefundMoney(totalRefundedNgn);
+  const hardCap = quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: refunded });
+  if (Array.isArray(suggestedLines) && suggestedLines.length > 0) {
+    return quotationRemainingRefundableNgn({
+      cashInNgn: cashIn,
+      quoteTotalNgn,
+      totalRefundedNgn: refunded,
+      suggestedLines,
+    });
+  }
+  return hardCap;
+}
+
+/**
+ * Excess cash on this quotation above the quote total (Overpayment category limit).
  * @param {{ cashInNgn: number, quoteTotalNgn: number }} p
  * @returns {number}
  */
@@ -36,17 +54,97 @@ export function quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }) {
 }
 
 /**
+ * Sum of non-overpayment suggested/entered lines (independent category entitlements).
+ * @param {Array<{ category?: string, amountNgn?: number }>} suggestedLines
+ */
+export function quotationIndependentRefundLinesSumNgn(suggestedLines) {
+  const lines = Array.isArray(suggestedLines) ? suggestedLines : [];
+  return lines.reduce((sum, line) => {
+    if (String(line?.category || '').trim() === 'Overpayment') return sum;
+    return sum + roundRefundMoney(line?.amountNgn);
+  }, 0);
+}
+
+/**
+ * Remaining refundable for UI / preview: overpayment excess + independent category amounts, capped by cash hard cap.
+ * @param {{
+ *   cashInNgn: number,
+ *   quoteTotalNgn: number,
+ *   totalRefundedNgn: number,
+ *   suggestedLines?: Array<{ category?: string, amountNgn?: number }>,
+ * }} p
+ */
+export function quotationRemainingRefundableNgn({
+  cashInNgn,
+  quoteTotalNgn,
+  totalRefundedNgn,
+  suggestedLines,
+}) {
+  const hardCap = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn });
+  const overpay = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
+  const independent = quotationIndependentRefundLinesSumNgn(suggestedLines);
+  return Math.min(hardCap, overpay + independent);
+}
+
+/**
+ * @param {{
+ *   cashInNgn: number,
+ *   quoteTotalNgn: number,
+ *   totalRefundedNgn: number,
+ *   calculationLines: Array<{ category?: string, amountNgn?: number }>,
+ * }} p
+ * @returns {{ ok: true, hardCapNgn: number, remainingRefundableNgn: number } | { ok: false, error: string }}
+ */
+export function validateRefundCalculationLinesNgn({
+  cashInNgn,
+  quoteTotalNgn,
+  totalRefundedNgn,
+  calculationLines,
+}) {
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  const cashIn = roundRefundMoney(cashInNgn);
+  const quoteTotal = roundRefundMoney(quoteTotalNgn);
+  const refunded = roundRefundMoney(totalRefundedNgn);
+  const hardCap = quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: refunded });
+  const overpayMax = quotationOverpaymentExcessNgn({ cashInNgn: cashIn, quoteTotalNgn: quoteTotal });
+
+  let sum = 0;
+  for (const line of lines) {
+    const amt = roundRefundMoney(line.amountNgn);
+    if (amt <= 0) continue;
+    const cat = String(line.category || '').trim();
+    if (cat === 'Overpayment' && overpayMax >= 0 && amt > overpayMax) {
+      return {
+        ok: false,
+        error: `Overpayment refund cannot exceed ₦${overpayMax.toLocaleString('en-NG')} (payment received minus quote total on this quotation).`,
+      };
+    }
+    sum += amt;
+  }
+
+  if (sum > hardCap) {
+    return {
+      ok: false,
+      error: `Included refund lines total ₦${sum.toLocaleString('en-NG')} exceeds cash received on this quotation after prior refunds (max ₦${hardCap.toLocaleString('en-NG')}).`,
+    };
+  }
+
+  return {
+    ok: true,
+    hardCapNgn: hardCap,
+    remainingRefundableNgn: quotationRemainingRefundableNgn({
+      cashInNgn: cashIn,
+      quoteTotalNgn: quoteTotal,
+      totalRefundedNgn: refunded,
+      suggestedLines: lines,
+    }),
+    overpaymentMaxNgn: overpayMax,
+  };
+}
+
+/**
  * Economic cash on one quotation for refund caps — avoids counting OVERPAY_ADVANCE twice when
  * staff post again on an already-settled quote (companion split overpay is already in receipt cash).
- *
- * @param {{
- *   receiptCashNgn: number,
- *   advanceAppliedNgn?: number,
- *   netOverpayLedgerNgn?: number,
- *   companionOverpayOnQuoteNgn?: number,
- *   settledQuoteFullOverpayNgn?: number,
- * }} p
- * @returns {number}
  */
 export function quotationActualCashInNgn({
   receiptCashNgn,
@@ -67,96 +165,4 @@ export function quotationActualCashInNgn({
   }
 
   return roundRefundMoney(receiptCash + advance + standaloneOverpay);
-}
-
-/**
- * When preview lines exceed remaining refundable headroom, allocate budget in this order.
- * Contractual / shortfall lines first; overpayment excess (cash above quote total) last.
- */
-export const REFUND_LINE_HEADROOM_PRIORITY = [
-  'Order cancellation',
-  'Unproduced meterage',
-  'Substitution Difference',
-  'Accessory shortfall',
-  'Stone flatsheet shortfall',
-  'Transport issue',
-  'Installation issue',
-  'Additional services',
-  'Calculation error',
-  'Customer commission',
-  'Overpayment',
-  'Other',
-];
-
-function headroomPriorityIndex(category) {
-  const c = String(category || '').trim();
-  const i = REFUND_LINE_HEADROOM_PRIORITY.indexOf(c);
-  return i >= 0 ? i : REFUND_LINE_HEADROOM_PRIORITY.length;
-}
-
-/**
- * Cap automatic preview lines so their sum never exceeds quotation refundable headroom.
- * @param {Array<{ label?: string, amountNgn?: number, category?: string, appliesToCategories?: string[] }>} suggestedLines
- * @param {number | null | undefined} remainingNgn
- * @returns {{ lines: typeof suggestedLines, warnings: string[] }}
- */
-export function capSuggestedRefundLinesToHeadroom(suggestedLines, remainingNgn) {
-  const remaining = roundRefundMoney(remainingNgn);
-  const warnings = [];
-  const input = Array.isArray(suggestedLines) ? suggestedLines : [];
-  const positive = input.filter((l) => roundRefundMoney(l?.amountNgn) > 0);
-  if (remaining <= 0) {
-    if (positive.length > 0) {
-      warnings.push(
-        'No refundable headroom remains on this quotation — automatic lines were cleared (existing refunds or no cash on quote).'
-      );
-    }
-    return { lines: [], warnings };
-  }
-
-  const totalWant = positive.reduce((s, l) => s + roundRefundMoney(l.amountNgn), 0);
-  if (totalWant <= remaining) {
-    return { lines: positive, warnings };
-  }
-
-  const sorted = positive
-    .map((line, index) => ({ line, index }))
-    .sort((a, b) => {
-      const pa = headroomPriorityIndex(a.line?.category);
-      const pb = headroomPriorityIndex(b.line?.category);
-      if (pa !== pb) return pa - pb;
-      return a.index - b.index;
-    });
-
-  let budget = remaining;
-  /** @type {typeof suggestedLines} */
-  const lines = [];
-
-  for (const { line } of sorted) {
-    const want = roundRefundMoney(line?.amountNgn);
-    if (want <= 0) continue;
-    const give = Math.min(want, budget);
-    const cat = String(line?.category || 'Other').trim() || 'Other';
-    if (give < want) {
-      warnings.push(
-        `${cat}: ₦${give.toLocaleString('en-NG')} of ₦${want.toLocaleString('en-NG')} (shared refundable cap ₦${remaining.toLocaleString('en-NG')} on this quotation).`
-      );
-    }
-    if (give <= 0) {
-      if (want > 0) {
-        warnings.push(
-          `${cat} not auto-filled: no headroom left after other applicable lines (you may add a manual line within the ₦${remaining.toLocaleString('en-NG')} cap).`
-        );
-      }
-      continue;
-    }
-    lines.push({
-      ...line,
-      amountNgn: give,
-      ...(give < want ? { originalAmountNgn: want } : {}),
-    });
-    budget -= give;
-  }
-
-  return { lines, warnings };
 }

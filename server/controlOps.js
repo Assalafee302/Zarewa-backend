@@ -2910,9 +2910,20 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quoteId);
   if (!row) return { ok: false, error: 'Quotation not found.' };
 
-  const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production'
+  const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production', 'release_payments'
   const note = String(payload.note ?? '').trim();
   const now = new Date().toISOString();
+
+  if (decision === 'clear') {
+    const paid = Math.round(Number(row.paid_ngn) || 0);
+    const total = Math.round(Number(row.total_ngn) || 0);
+    if (total > 0 && paid < total) {
+      return {
+        ok: false,
+        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Post remaining payment before manager clearance.`,
+      };
+    }
+  }
 
   try {
     db.transaction(() => {
@@ -2922,6 +2933,12 @@ export function reviewQuotation(db, quoteId, payload, actor) {
            SET manager_cleared_at_iso = ?, manager_flagged_at_iso = NULL, manager_flag_reason = NULL 
            WHERE id = ?`
         ).run(now, quoteId);
+      } else if (decision === 'release_payments') {
+        db.prepare(
+          `UPDATE quotations 
+           SET manager_cleared_at_iso = NULL, manager_flagged_at_iso = NULL, manager_flag_reason = NULL 
+           WHERE id = ?`
+        ).run(quoteId);
       } else if (decision === 'flag') {
         db.prepare(
           `UPDATE quotations 

@@ -49,3 +49,32 @@ export function receiptDuplicateSignalsFromLedgerRows(rows, { amountNgn, bankRef
 
   return out;
 }
+
+/**
+ * Same customer paid the same amount on another quotation within a short window (duplicate entry risk).
+ * @param {Array<{ quotation_ref?: string, amount_ngn?: number, at_iso?: string }>} rows — RECEIPT rows for this customer (recent)
+ * @param {{ quotationId: string, amountNgn: number, dateISO?: string }} input
+ */
+export function receiptDuplicateAcrossQuotationsSignals(rows, { quotationId, amountNgn, dateISO }) {
+  const out = [];
+  const amount = Math.round(Number(amountNgn) || 0);
+  const qid = String(quotationId || '').trim();
+  const day = String(dateISO || '').slice(0, 10);
+  if (!qid || amount <= 0) return out;
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const otherRef = String(row.quotation_ref || '').trim();
+    if (!otherRef || otherRef === qid) continue;
+    const rowAmount = Math.round(Number(row.amount_ngn) || 0);
+    if (rowAmount !== amount) continue;
+    const rowDay = String(row.at_iso || '').slice(0, 10);
+    if (day && rowDay && rowDay !== day) continue;
+    out.push({
+      code: 'DUPLICATE_AMOUNT_OTHER_QUOTATION',
+      message: `Another quotation (${otherRef}) already has a receipt for ₦${amount.toLocaleString('en-NG')}${day ? ` on ${day}` : ''}.`,
+      relatedQuotationId: otherRef,
+    });
+    break;
+  }
+  return out;
+}

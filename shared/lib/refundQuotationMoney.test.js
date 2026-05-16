@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  quotationActualCashInNgn,
   quotationOverpaymentExcessNgn,
   quotationRefundHeadroomNgn,
 } from './refundQuotationMoney.js';
@@ -46,5 +47,23 @@ describe('refundQuotationMoney', () => {
         totalRefundedNgn: 0,
       })
     ).toBe(100_000);
+  });
+
+  it('dedupes settled-quote repeat overpay when receipt cash is already on file', () => {
+    const cashIn = quotationActualCashInNgn({
+      receiptCashNgn: 580_400,
+      advanceAppliedNgn: 0,
+      netOverpayLedgerNgn: 596_260,
+      companionOverpayOnQuoteNgn: 15_860,
+      settledQuoteFullOverpayNgn: 580_400,
+    });
+    expect(cashIn).toBe(580_400);
+    expect(
+      quotationRefundHeadroomNgn({
+        cashInNgn: cashIn,
+        quoteTotalNgn: 564_540,
+        totalRefundedNgn: 0,
+      })
+    ).toBe(15_860);
   });
 });

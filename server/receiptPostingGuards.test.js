@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeReceiptReferenceToken,
+  receiptDuplicateAcrossQuotationsSignals,
   receiptDuplicateSignalsFromLedgerRows,
 } from './receiptPostingGuards.js';
 
@@ -50,5 +51,22 @@ describe('receiptPostingGuards', () => {
         bankReference: 'OK',
       })
     ).toEqual([]);
+  });
+
+  it('flags duplicate amount on another quotation same day', () => {
+    const rows = [
+      {
+        id: 'LE-OTHER',
+        amount_ngn: 580_400,
+        at_iso: '2026-05-11T12:00:00.000Z',
+        quotation_ref: 'QT-0154',
+      },
+    ];
+    const sig = receiptDuplicateAcrossQuotationsSignals(rows, {
+      quotationId: 'QT-0150',
+      amountNgn: 580_400,
+      dateISO: '2026-05-11',
+    });
+    expect(sig.some((s) => s.code === 'DUPLICATE_AMOUNT_OTHER_QUOTATION')).toBe(true);
   });
 });

@@ -40,6 +40,8 @@ import {
   quotationOverpaymentExcessNgn,
   quotationRefundHeadroomNgn,
 } from '../shared/lib/refundQuotationMoney.js';
+import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
+import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -1949,9 +1951,11 @@ export function previewRefundRequest(db, payload) {
   });
 
   const paidOnQuoteNgn = receipts.reduce((sum, row) => sum + roundMoney(row.amount_ngn), 0);
-  const cashInNgn = quotationRef
-    ? quotationCashInNgn(db, quotationRef)
+  const cashBreakdown = quotationRef ? quotationPaymentCashBreakdown(db, quotationRef) : null;
+  const cashInNgn = cashBreakdown
+    ? cashBreakdown.cashInNgn
     : roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
+  const receiptCashNgn = cashBreakdown?.receiptCashNgn ?? paidOnQuoteNgn;
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
 
   // Quoted vs Actual Produced (optional payload overrides for tools/tests)
@@ -1989,6 +1993,9 @@ export function previewRefundRequest(db, payload) {
     ]);
     for (const iss of refundSubstitutionDataQualityIssues(db, quotationRef)) {
       if (substitutionPreviewWarningCodes.has(iss.code)) warnings.push(iss.message);
+    }
+    for (const iss of refundPaymentIntegrityIssues(db, quotationRef)) {
+      warnings.push(iss.message);
     }
   }
 
@@ -2470,7 +2477,10 @@ export function previewRefundRequest(db, payload) {
       warningsSubstitutionRelated: warnings.filter(
         (w) => /substitution/i.test(w) || /gauge/i.test(w) || /list ₦\/m/i.test(w)
       ),
-      dataQualityIssues: refundSubstitutionDataQualityIssues(db, quotationRef),
+      dataQualityIssues: [
+        ...refundSubstitutionDataQualityIssues(db, quotationRef),
+        ...refundPaymentIntegrityIssues(db, quotationRef),
+      ],
     };
   }
 
@@ -2482,8 +2492,9 @@ export function previewRefundRequest(db, payload) {
       quotationRef,
       quoteTotalNgn,
       paidOnQuoteNgn,
-      overpayAdvanceNgn,
+      overpayAdvanceNgn: cashBreakdown?.netOverpayLedgerNgn ?? overpayAdvanceNgn,
       quotationCashInNgn: cashInNgn,
+      receiptCashNgn,
       overpaymentExcessNgn,
       remainingRefundableNgn,
       quotedMeters,
@@ -2560,24 +2571,7 @@ function quotationHasOpenProductionJob(db, quotationRef) {
  * overpayment credit still parked on this quote (not other jobs or unrelated customer balance).
  */
 export function quotationCashInNgn(db, quotationRef) {
-  const ref = String(quotationRef ?? '').trim();
-  if (!ref) return 0;
-  const qRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(ref);
-  const paidBooked = roundMoney(qRow?.paid_ngn ?? 0);
-  const advRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
-       WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = ?`
-    )
-    .get(ref);
-  const revRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
-       WHERE type = 'OVERPAY_REVERSAL' AND quotation_ref = ?`
-    )
-    .get(ref);
-  const netOverpayOnQuote = Math.max(0, roundMoney(advRow?.s ?? 0) - roundMoney(revRow?.s ?? 0));
-  return roundMoney(paidBooked + netOverpayOnQuote);
+  return quotationPaymentCashBreakdown(db, quotationRef).cashInNgn;
 }
 
 /**

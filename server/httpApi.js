@@ -74,7 +74,16 @@ import {
   assertProductionJobIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
-import { receiptDuplicateSignalsFromLedgerRows } from './receiptPostingGuards.js';
+import {
+  receiptDuplicateAcrossQuotationsSignals,
+  receiptDuplicateSignalsFromLedgerRows,
+} from './receiptPostingGuards.js';
+import {
+  collectCustomerPaymentIntegrityIssues,
+  customerPaymentIntegritySummary,
+  duplicateQuotationCreateSignals,
+  refundPaymentIntegrityIssues,
+} from './customerPaymentIntegrityOps.js';
 import {
   DEFAULT_BRANCH_ID,
   getBranch,
@@ -420,7 +429,7 @@ function effectiveReceiptBankReference(body) {
   return '';
 }
 
-function recentReceiptDuplicateSignals(db, { customerID, quotationId, amountNgn, bankReference }) {
+function recentReceiptDuplicateSignals(db, { customerID, quotationId, amountNgn, bankReference, dateISO }) {
   const amount = Math.round(Number(amountNgn) || 0);
   if (!(customerID && quotationId && amount > 0)) return [];
   const rows = db
@@ -432,7 +441,19 @@ function recentReceiptDuplicateSignals(db, { customerID, quotationId, amountNgn,
        LIMIT 40`
     )
     .all(customerID, quotationId);
-  return receiptDuplicateSignalsFromLedgerRows(rows, { amountNgn, bankReference });
+  const crossRows = db
+    .prepare(
+      `SELECT id, amount_ngn, at_iso, quotation_ref
+       FROM ledger_entries
+       WHERE type = 'RECEIPT' AND customer_id = ?
+       ORDER BY at_iso DESC
+       LIMIT 80`
+    )
+    .all(customerID);
+  return [
+    ...receiptDuplicateSignalsFromLedgerRows(rows, { amountNgn, bankReference }),
+    ...receiptDuplicateAcrossQuotationsSignals(crossRows, { quotationId, amountNgn, dateISO }),
+  ];
 }
 
 function requireManagementReportsView(req, res, next) {
@@ -4248,7 +4269,10 @@ export function registerHttpApi(app, db) {
       }
       const branchScope = resolveBootstrapBranchScope(req);
       const { receipts, cuttingLists, summary } = getRefundIntelligenceForQuotation(db, quotationRef, branchScope);
-      const dataQualityIssues = refundSubstitutionDataQualityIssues(db, quotationRef);
+      const dataQualityIssues = [
+        ...refundSubstitutionDataQualityIssues(db, quotationRef),
+        ...refundPaymentIntegrityIssues(db, quotationRef),
+      ];
       res.json({ ok: true, receipts, cuttingLists, summary, dataQualityIssues });
     } catch (e) {
       console.error(e);
@@ -5198,6 +5222,25 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/customers/:customerId/payment-integrity',
+    requirePermission([...CUSTOMER_AND_AR_READ_PERMS, 'refunds.request', 'refunds.approve']),
+    (req, res) => {
+      try {
+        const id = String(req.params.customerId || '').trim();
+        const branchScope = resolveBootstrapBranchScope(req);
+        const customer = getCustomer(db, id, branchScope);
+        if (!customer) return res.status(404).json({ ok: false, error: 'Customer not found' });
+        const issues = collectCustomerPaymentIntegrityIssues(db, id, branchScope);
+        const summary = customerPaymentIntegritySummary(issues);
+        res.json({ ok: true, customerId: id, ...summary });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to check payment integrity' });
+      }
+    }
+  );
+
   app.get('/api/quotations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
@@ -5234,10 +5277,17 @@ export function registerHttpApi(app, db) {
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
+      const duplicateWarnings = duplicateQuotationCreateSignals(db, {
+        customerID: quotation?.customerID ?? req.body?.customerID,
+        totalNgn: quotation?.totalNgn,
+        dateISO: quotation?.dateISO ?? req.body?.dateISO,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
       res.status(201).json({
         ok: true,
         quotationId: id,
         quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+        duplicateWarnings: duplicateWarnings.length ? duplicateWarnings : undefined,
       });
     } catch (e) {
       console.error(e);
@@ -5698,7 +5748,11 @@ export function registerHttpApi(app, db) {
         quotationId,
         amountNgn,
         bankReference: resolvedBankReference,
+        dateISO,
       });
+      const confirmSettledQuoteOverpay = Boolean(
+        req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay
+      );
       if (duplicateSignals.length > 0 && !forceDuplicatePost) {
         return res.status(409).json({
           ok: false,
@@ -5733,6 +5787,23 @@ export function registerHttpApi(app, db) {
       if (!qtSynced) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       if (qtSynced.customerID !== customerID) {
         return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
+      }
+
+      const quoteTotal = Math.round(Number(qtSynced.totalNgn) || 0);
+      const paidBooked = Math.round(Number(qtSynced.paidNgn) || 0);
+      const dueOnQuote = Math.max(0, quoteTotal - paidBooked);
+      if (
+        dueOnQuote <= 0 &&
+        !fullAmountAsReceipt &&
+        !confirmSettledQuoteOverpay &&
+        !forceDuplicatePost
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            'This quotation is already marked paid in records. Posting again will book the full amount as overpayment credit only (not a second settlement). Confirm to continue, or use Apply customer advance on another quotation instead.',
+          code: 'QUOTATION_ALREADY_SETTLED',
+        });
       }
 
       const entries = listLedgerEntries(db, branchScope);

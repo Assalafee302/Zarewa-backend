@@ -8,6 +8,7 @@ import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { listInTransitLoads } from './inTransitOps.js';
+import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 /** @param {import('better-sqlite3').Database} db */
 
 function hasColumn(db, table, column) {
@@ -19,7 +20,7 @@ function hasColumn(db, table, column) {
 }
 
 /** @param {'ALL' | string} scope */
-function branchWhere(db, table, scope) {
+export function branchWhere(db, table, scope) {
   if (scope === 'ALL' || !scope || !hasColumn(db, table, 'branch_id')) {
     return { sql: '', args: [] };
   }
@@ -1254,19 +1255,8 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     };
   }
   const ledgerRows = listLedgerEntries(db, branchScope);
+  const cash = quotationPaymentCashBreakdown(db, ref);
   const lb = branchWhere(db, 'ledger_entries', branchScope);
-  const overpayRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = ?${lb.sql}`
-    )
-    .get(ref, ...lb.args);
-  const overpayAdvanceNgn = Math.round(Number(overpayRow?.s) || 0);
-  const advAppliedRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'ADVANCE_APPLIED' AND quotation_ref = ?${lb.sql}`
-    )
-    .get(ref, ...lb.args);
-  const advanceAppliedNgn = Math.round(Number(advAppliedRow?.s) || 0);
   const overpayAppliedRow = db
     .prepare(
       `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'OVERPAY_APPLIED' AND quotation_ref = ?${lb.sql}`
@@ -1278,23 +1268,9 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     .prepare(`SELECT paid_ngn FROM quotations WHERE id = ?${qb.sql}`)
     .get(ref, ...qb.args);
   const bookedOnQuotationNgn = Math.round(Number(qPaidRow?.paid_ngn) || 0);
-  const overpayRevRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'OVERPAY_REVERSAL' AND quotation_ref = ?${lb.sql}`
-    )
-    .get(ref, ...lb.args);
-  const netOverpayOnQuoteNgn = Math.max(
-    0,
-    overpayAdvanceNgn - Math.round(Number(overpayRevRow?.s) || 0)
-  );
-  const quotationCashInNgn = bookedOnQuotationNgn + netOverpayOnQuoteNgn;
 
   const rawReceiptRowsForQuote = listSalesReceipts(db, branchScope).filter(
     (r) => String(r.quotationRef || '').trim() === ref
-  );
-  const receiptAllocatedSumNgn = rawReceiptRowsForQuote.reduce(
-    (s, r) => s + Math.round(Number(r.amountNgn) || 0),
-    0
   );
 
   const receipts = enrichSalesReceiptRowsWithCashFromLedger(
@@ -1323,15 +1299,14 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
       producedMeters,
       accessoriesSummary: { lines: accLines },
       stoneFlatsheetSummary,
-      overpayAdvanceNgn,
+      overpayAdvanceNgn: cash.netOverpayLedgerNgn,
       bookedOnQuotationNgn,
-      quotationCashInNgn,
-      /** Sum of `sales_receipts.amount_ngn` toward this quote (what each receipt line shows). */
-      receiptAllocatedSumNgn,
-      /** Deposit advance moved onto this quote (`ADVANCE_APPLIED`). */
-      advanceAppliedNgn,
-      /** Overpayment credit moved onto this quote (`OVERPAY_APPLIED`). */
+      quotationCashInNgn: cash.cashInNgn,
+      receiptCashNgn: cash.receiptCashNgn,
+      receiptAllocatedSumNgn: cash.receiptAllocatedSumNgn,
+      advanceAppliedNgn: cash.advanceAppliedNgn,
       overpayAppliedNgn,
+      settledQuoteFullOverpayNgn: cash.settledQuoteFullOverpayNgn,
     },
   };
 }

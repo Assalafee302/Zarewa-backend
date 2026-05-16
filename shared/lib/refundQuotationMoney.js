@@ -34,3 +34,37 @@ export function quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }) {
   if (quoteTotal <= 0 || cashIn <= quoteTotal) return 0;
   return cashIn - quoteTotal;
 }
+
+/**
+ * Economic cash on one quotation for refund caps — avoids counting OVERPAY_ADVANCE twice when
+ * staff post again on an already-settled quote (companion split overpay is already in receipt cash).
+ *
+ * @param {{
+ *   receiptCashNgn: number,
+ *   advanceAppliedNgn?: number,
+ *   netOverpayLedgerNgn?: number,
+ *   companionOverpayOnQuoteNgn?: number,
+ *   settledQuoteFullOverpayNgn?: number,
+ * }} p
+ * @returns {number}
+ */
+export function quotationActualCashInNgn({
+  receiptCashNgn,
+  advanceAppliedNgn = 0,
+  netOverpayLedgerNgn = 0,
+  companionOverpayOnQuoteNgn = 0,
+  settledQuoteFullOverpayNgn = 0,
+}) {
+  const receiptCash = roundRefundMoney(receiptCashNgn);
+  const advance = roundRefundMoney(advanceAppliedNgn);
+  const companion = Math.max(0, roundRefundMoney(companionOverpayOnQuoteNgn));
+  const netOverpay = Math.max(0, roundRefundMoney(netOverpayLedgerNgn));
+  const settledFull = Math.max(0, roundRefundMoney(settledQuoteFullOverpayNgn));
+
+  let standaloneOverpay = Math.max(0, netOverpay - companion);
+  if (receiptCash > 0 && settledFull > 0) {
+    standaloneOverpay = Math.max(0, standaloneOverpay - settledFull);
+  }
+
+  return roundRefundMoney(receiptCash + advance + standaloneOverpay);
+}

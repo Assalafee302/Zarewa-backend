@@ -37,6 +37,7 @@ import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pri
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 import {
+  capSuggestedRefundLinesToHeadroom,
   quotationOverpaymentExcessNgn,
   quotationRefundHeadroomNgn,
 } from '../shared/lib/refundQuotationMoney.js';
@@ -2324,18 +2325,38 @@ export function previewRefundRequest(db, payload) {
     });
   }
 
-  const suggestedAmountNgn = suggestedLines.reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
   let remainingRefundableNgn = null;
   if (quotationRef) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
     if (el.ok) remainingRefundableNgn = el.remainingNgn;
   }
 
+  if (quotationRef && remainingRefundableNgn != null && overpaymentExcessNgn > 0 && quoteTotalNgn > 0) {
+    warnings.push(
+      `Customer paid above the quote total (₦${overpaymentExcessNgn.toLocaleString('en-NG')} excess cash on this quotation). Refund lines share one cap: remaining refundable ₦${remainingRefundableNgn.toLocaleString('en-NG')} — do not stack overpayment with unproduced-metre or other lines beyond that.`
+    );
+  }
+
+  const cappedPreview =
+    remainingRefundableNgn != null
+      ? capSuggestedRefundLinesToHeadroom(suggestedLines, remainingRefundableNgn)
+      : { lines: suggestedLines, warnings: [] };
+  for (const w of cappedPreview.warnings) warnings.push(w);
+  const cappedSuggestedLines = cappedPreview.lines;
+
+  const suggestedAmountNgn = cappedSuggestedLines.reduce(
+    (sum, line) => sum + roundMoney(line.amountNgn),
+    0
+  );
+
   const suggestedPositiveCategories = new Set(
-    suggestedLines.filter((l) => roundMoney(l.amountNgn) > 0).map((l) => String(l.category || '').trim()).filter(Boolean)
+    cappedSuggestedLines
+      .filter((l) => roundMoney(l.amountNgn) > 0)
+      .map((l) => String(l.category || '').trim())
+      .filter(Boolean)
   );
   const suggestedAnyCategories = new Set(
-    suggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
+    cappedSuggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
   );
 
   const hasTransportServiceLine = quoteLines.some((s) => {
@@ -2503,7 +2524,7 @@ export function previewRefundRequest(db, payload) {
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
       substitutionPerMeterBreakdown,
       suggestedAmountNgn,
-      suggestedLines,
+      suggestedLines: cappedSuggestedLines,
       warnings,
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,

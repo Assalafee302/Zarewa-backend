@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  capSuggestedRefundLinesToHeadroom,
   quotationActualCashInNgn,
   quotationOverpaymentExcessNgn,
   quotationRefundHeadroomNgn,
@@ -47,6 +48,20 @@ describe('refundQuotationMoney', () => {
         totalRefundedNgn: 0,
       })
     ).toBe(100_000);
+  });
+
+  it('caps stacked preview lines to remaining headroom (overpayment wins first)', () => {
+    const { lines, warnings } = capSuggestedRefundLinesToHeadroom(
+      [
+        { label: 'Overpayment', amountNgn: 1_215_800, category: 'Overpayment' },
+        { label: 'Unproduced', amountNgn: 335_820, category: 'Unproduced meterage' },
+      ],
+      1_215_800
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].category).toBe('Overpayment');
+    expect(lines[0].amountNgn).toBe(1_215_800);
+    expect(warnings.some((w) => /Unproduced meterage/i.test(w))).toBe(true);
   });
 
   it('dedupes settled-quote repeat overpay when receipt cash is already on file', () => {

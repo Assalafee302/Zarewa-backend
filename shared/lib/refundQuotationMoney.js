@@ -68,3 +68,83 @@ export function quotationActualCashInNgn({
 
   return roundRefundMoney(receiptCash + advance + standaloneOverpay);
 }
+
+/** Lower index = consumes refundable headroom first when capping preview lines. */
+export const REFUND_LINE_HEADROOM_PRIORITY = [
+  'Order cancellation',
+  'Overpayment',
+  'Unproduced meterage',
+  'Substitution Difference',
+  'Transport issue',
+  'Installation issue',
+  'Calculation error',
+  'Customer commission',
+  'Other',
+];
+
+function headroomPriorityIndex(category) {
+  const c = String(category || '').trim();
+  const i = REFUND_LINE_HEADROOM_PRIORITY.indexOf(c);
+  return i >= 0 ? i : REFUND_LINE_HEADROOM_PRIORITY.length;
+}
+
+/**
+ * Cap automatic preview lines so their sum never exceeds quotation refundable headroom.
+ * @param {Array<{ label?: string, amountNgn?: number, category?: string, appliesToCategories?: string[] }>} suggestedLines
+ * @param {number | null | undefined} remainingNgn
+ * @returns {{ lines: typeof suggestedLines, warnings: string[] }}
+ */
+export function capSuggestedRefundLinesToHeadroom(suggestedLines, remainingNgn) {
+  const remaining = roundRefundMoney(remainingNgn);
+  const warnings = [];
+  const input = Array.isArray(suggestedLines) ? suggestedLines : [];
+  if (remaining <= 0) {
+    if (input.some((l) => roundRefundMoney(l?.amountNgn) > 0)) {
+      warnings.push(
+        'No refundable headroom remains on this quotation — automatic lines were cleared (existing refunds or no cash on quote).'
+      );
+    }
+    return { lines: [], warnings };
+  }
+
+  const sorted = input
+    .map((line, index) => ({ line, index }))
+    .sort((a, b) => {
+      const pa = headroomPriorityIndex(a.line?.category);
+      const pb = headroomPriorityIndex(b.line?.category);
+      if (pa !== pb) return pa - pb;
+      return a.index - b.index;
+    });
+
+  let budget = remaining;
+  /** @type {typeof suggestedLines} */
+  const lines = [];
+
+  for (const { line } of sorted) {
+    const want = roundRefundMoney(line?.amountNgn);
+    if (want <= 0) continue;
+    const give = Math.min(want, budget);
+    const cat = String(line?.category || 'Other').trim() || 'Other';
+    if (give < want) {
+      warnings.push(
+        `${cat} preview capped to ₦${give.toLocaleString('en-NG')} (calculated ₦${want.toLocaleString('en-NG')}) — total refundable on this quotation is ₦${remaining.toLocaleString('en-NG')}.`
+      );
+    }
+    if (give <= 0) {
+      if (want > 0) {
+        warnings.push(
+          `${cat} not included in preview: refundable headroom already used by higher-priority lines (limit ₦${remaining.toLocaleString('en-NG')}).`
+        );
+      }
+      continue;
+    }
+    lines.push({
+      ...line,
+      amountNgn: give,
+      ...(give < want ? { originalAmountNgn: want } : {}),
+    });
+    budget -= give;
+  }
+
+  return { lines, warnings };
+}

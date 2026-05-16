@@ -1522,7 +1522,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         cashInNgn: elig.cashInNgn,
         quoteTotalNgn: elig.quoteTotalNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
-        calculationLines,
+        calculationLines: calcLinesRaw,
       });
       if (!lineValidation.ok) return lineValidation;
       if (amountNgn > lineValidation.hardCapNgn) {

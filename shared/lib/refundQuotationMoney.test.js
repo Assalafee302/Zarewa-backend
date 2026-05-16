@@ -50,18 +50,30 @@ describe('refundQuotationMoney', () => {
     ).toBe(100_000);
   });
 
-  it('caps stacked preview lines to remaining headroom (overpayment wins first)', () => {
-    const { lines, warnings } = capSuggestedRefundLinesToHeadroom(
+  it('allocates contractual lines before overpayment when sharing headroom', () => {
+    const { lines } = capSuggestedRefundLinesToHeadroom(
       [
         { label: 'Overpayment', amountNgn: 1_215_800, category: 'Overpayment' },
         { label: 'Unproduced', amountNgn: 335_820, category: 'Unproduced meterage' },
       ],
       1_215_800
     );
-    expect(lines).toHaveLength(1);
-    expect(lines[0].category).toBe('Overpayment');
-    expect(lines[0].amountNgn).toBe(1_215_800);
-    expect(warnings.some((w) => /Unproduced meterage/i.test(w))).toBe(true);
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.category === 'Unproduced meterage')?.amountNgn).toBe(335_820);
+    expect(lines.find((l) => l.category === 'Overpayment')?.amountNgn).toBe(879_980);
+    expect(lines.reduce((s, l) => s + l.amountNgn, 0)).toBe(1_215_800);
+  });
+
+  it('returns all lines unchanged when total is within headroom', () => {
+    const { lines, warnings } = capSuggestedRefundLinesToHeadroom(
+      [
+        { label: 'Unproduced', amountNgn: 100_000, category: 'Unproduced meterage' },
+        { label: 'Transport', amountNgn: 50_000, category: 'Transport issue' },
+      ],
+      200_000
+    );
+    expect(lines).toHaveLength(2);
+    expect(warnings).toHaveLength(0);
   });
 
   it('dedupes settled-quote repeat overpay when receipt cash is already on file', () => {

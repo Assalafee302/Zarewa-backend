@@ -69,16 +69,22 @@ export function quotationActualCashInNgn({
   return roundRefundMoney(receiptCash + advance + standaloneOverpay);
 }
 
-/** Lower index = consumes refundable headroom first when capping preview lines. */
+/**
+ * When preview lines exceed remaining refundable headroom, allocate budget in this order.
+ * Contractual / shortfall lines first; overpayment excess (cash above quote total) last.
+ */
 export const REFUND_LINE_HEADROOM_PRIORITY = [
   'Order cancellation',
-  'Overpayment',
   'Unproduced meterage',
   'Substitution Difference',
+  'Accessory shortfall',
+  'Stone flatsheet shortfall',
   'Transport issue',
   'Installation issue',
+  'Additional services',
   'Calculation error',
   'Customer commission',
+  'Overpayment',
   'Other',
 ];
 
@@ -98,8 +104,9 @@ export function capSuggestedRefundLinesToHeadroom(suggestedLines, remainingNgn) 
   const remaining = roundRefundMoney(remainingNgn);
   const warnings = [];
   const input = Array.isArray(suggestedLines) ? suggestedLines : [];
+  const positive = input.filter((l) => roundRefundMoney(l?.amountNgn) > 0);
   if (remaining <= 0) {
-    if (input.some((l) => roundRefundMoney(l?.amountNgn) > 0)) {
+    if (positive.length > 0) {
       warnings.push(
         'No refundable headroom remains on this quotation — automatic lines were cleared (existing refunds or no cash on quote).'
       );
@@ -107,7 +114,12 @@ export function capSuggestedRefundLinesToHeadroom(suggestedLines, remainingNgn) 
     return { lines: [], warnings };
   }
 
-  const sorted = input
+  const totalWant = positive.reduce((s, l) => s + roundRefundMoney(l.amountNgn), 0);
+  if (totalWant <= remaining) {
+    return { lines: positive, warnings };
+  }
+
+  const sorted = positive
     .map((line, index) => ({ line, index }))
     .sort((a, b) => {
       const pa = headroomPriorityIndex(a.line?.category);
@@ -127,13 +139,13 @@ export function capSuggestedRefundLinesToHeadroom(suggestedLines, remainingNgn) 
     const cat = String(line?.category || 'Other').trim() || 'Other';
     if (give < want) {
       warnings.push(
-        `${cat} preview capped to ₦${give.toLocaleString('en-NG')} (calculated ₦${want.toLocaleString('en-NG')}) — total refundable on this quotation is ₦${remaining.toLocaleString('en-NG')}.`
+        `${cat}: ₦${give.toLocaleString('en-NG')} of ₦${want.toLocaleString('en-NG')} (shared refundable cap ₦${remaining.toLocaleString('en-NG')} on this quotation).`
       );
     }
     if (give <= 0) {
       if (want > 0) {
         warnings.push(
-          `${cat} not included in preview: refundable headroom already used by higher-priority lines (limit ₦${remaining.toLocaleString('en-NG')}).`
+          `${cat} not auto-filled: no headroom left after other applicable lines (you may add a manual line within the ₦${remaining.toLocaleString('en-NG')} cap).`
         );
       }
       continue;

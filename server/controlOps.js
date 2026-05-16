@@ -2333,9 +2333,19 @@ export function previewRefundRequest(db, payload) {
 
   if (quotationRef && remainingRefundableNgn != null && overpaymentExcessNgn > 0 && quoteTotalNgn > 0) {
     warnings.push(
-      `Customer paid above the quote total (₦${overpaymentExcessNgn.toLocaleString('en-NG')} excess cash on this quotation). Refund lines share one cap: remaining refundable ₦${remainingRefundableNgn.toLocaleString('en-NG')} — do not stack overpayment with unproduced-metre or other lines beyond that.`
+      `Customer paid above the quote total (₦${overpaymentExcessNgn.toLocaleString('en-NG')} excess cash on this quotation). Every applicable refund category shares one cap: remaining refundable ₦${remainingRefundableNgn.toLocaleString('en-NG')} on this quotation only.`
     );
   }
+
+  const uncappedPositiveCategories = new Set(
+    suggestedLines
+      .filter((l) => roundMoney(l.amountNgn) > 0)
+      .map((l) => String(l.category || '').trim())
+      .filter(Boolean)
+  );
+  const uncappedAnyCategories = new Set(
+    suggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
+  );
 
   const cappedPreview =
     remainingRefundableNgn != null
@@ -2349,15 +2359,8 @@ export function previewRefundRequest(db, payload) {
     0
   );
 
-  const suggestedPositiveCategories = new Set(
-    cappedSuggestedLines
-      .filter((l) => roundMoney(l.amountNgn) > 0)
-      .map((l) => String(l.category || '').trim())
-      .filter(Boolean)
-  );
-  const suggestedAnyCategories = new Set(
-    cappedSuggestedLines.map((l) => String(l.category || '').trim()).filter(Boolean)
-  );
+  const suggestedPositiveCategories = uncappedPositiveCategories;
+  const suggestedAnyCategories = uncappedAnyCategories;
 
   const hasTransportServiceLine = quoteLines.some((s) => {
     const nl = serviceNameLower(s);

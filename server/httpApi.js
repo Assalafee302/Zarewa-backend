@@ -4198,6 +4198,9 @@ export function registerHttpApi(app, db) {
         backendDetail: meets.ok
           ? {
               paidNgn: meets.paidNgn,
+              cashInNgn: meets.cashInNgn,
+              quoteTotalNgn: meets.quoteTotalNgn,
+              overpaymentExcessNgn: meets.overpaymentExcessNgn,
               totalRefundedNgn: meets.totalRefundedNgn,
               remainingNgn: meets.remainingNgn,
             }

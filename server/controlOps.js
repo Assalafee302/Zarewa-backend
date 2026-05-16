@@ -36,6 +36,10 @@ import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
+import {
+  quotationOverpaymentExcessNgn,
+  quotationRefundHeadroomNgn,
+} from '../shared/lib/refundQuotationMoney.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -1661,8 +1665,9 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   if (bdR) refundWarnings.push(bdR);
   const qref = String(row.quotation_ref ?? '').trim();
   if (status === 'Approved' && qref) {
-    const qRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(qref);
-    const paidNgn = roundMoney(qRow?.paid_ngn ?? 0);
+    const qRow = db.prepare(`SELECT paid_ngn, total_ngn FROM quotations WHERE id = ?`).get(qref);
+    const cashInNgn = quotationCashInNgn(db, qref);
+    const quoteTotalNgn = roundMoney(qRow?.total_ngn ?? 0);
     const sumRow = db
       .prepare(
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
@@ -1670,7 +1675,11 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       )
       .get(qref, refundID);
     const sumOthersNgn = roundMoney(sumRow?.s ?? 0);
-    const maxApprovableNgn = roundMoney(paidNgn - sumOthersNgn);
+    const maxApprovableNgn = quotationRefundHeadroomNgn({
+      cashInNgn,
+      quoteTotalNgn,
+      totalRefundedNgn: sumOthersNgn,
+    });
     if (approvedAmountNgn > maxApprovableNgn) {
       return {
         ok: false,
@@ -1940,7 +1949,9 @@ export function previewRefundRequest(db, payload) {
   });
 
   const paidOnQuoteNgn = receipts.reduce((sum, row) => sum + roundMoney(row.amount_ngn), 0);
-  const quotationCashInNgn = roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
+  const cashInNgn = quotationRef
+    ? quotationCashInNgn(db, quotationRef)
+    : roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
 
   // Quoted vs Actual Produced (optional payload overrides for tools/tests)
@@ -1992,15 +2003,12 @@ export function previewRefundRequest(db, payload) {
   }
 
   // 1. Overpayment Auto-detection (RECEIPT total + OVERPAY_ADVANCE from split-till posting)
-  if (
-    !refundedCategories.has('Overpayment') &&
-    quotationCashInNgn > quoteTotalNgn &&
-    quoteTotalNgn > 0
-  ) {
+  const overpaymentExcessNgn = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
+  if (!refundedCategories.has('Overpayment') && overpaymentExcessNgn > 0) {
     suggestedLines.push({
       label: `Overpayment on ${quotationRef || 'quotation'}`,
-      amountNgn: quotationCashInNgn - quoteTotalNgn,
-      category: 'Overpayment'
+      amountNgn: overpaymentExcessNgn,
+      category: 'Overpayment',
     });
   }
 
@@ -2009,7 +2017,7 @@ export function previewRefundRequest(db, payload) {
     includeCustomerCommission &&
     quotationRef &&
     !refundedCategories.has('Customer commission') &&
-    quotationCashInNgn > 0 &&
+    cashInNgn > 0 &&
     quote?.lines_json
   ) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
@@ -2359,7 +2367,7 @@ export function previewRefundRequest(db, payload) {
     if (cat === 'Overpayment') {
       if (
         suggestedPositiveCategories.has(cat) ||
-        (quotationCashInNgn > quoteTotalNgn && quoteTotalNgn > 0)
+        (overpaymentExcessNgn > 0)
       ) {
         eligibleRefundCategories.push(cat);
       }
@@ -2475,7 +2483,8 @@ export function previewRefundRequest(db, payload) {
       quoteTotalNgn,
       paidOnQuoteNgn,
       overpayAdvanceNgn,
-      quotationCashInNgn,
+      quotationCashInNgn: cashInNgn,
+      overpaymentExcessNgn,
       remainingRefundableNgn,
       quotedMeters,
       actualMeters,
@@ -2547,16 +2556,43 @@ function quotationHasOpenProductionJob(db, quotationRef) {
 }
 
 /**
+ * Total cash received on this quotation only: booked paid on the quote plus any split-till
+ * overpayment credit still parked on this quote (not other jobs or unrelated customer balance).
+ */
+export function quotationCashInNgn(db, quotationRef) {
+  const ref = String(quotationRef ?? '').trim();
+  if (!ref) return 0;
+  const qRow = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get(ref);
+  const paidBooked = roundMoney(qRow?.paid_ngn ?? 0);
+  const advRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = ?`
+    )
+    .get(ref);
+  const revRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE type = 'OVERPAY_REVERSAL' AND quotation_ref = ?`
+    )
+    .get(ref);
+  const netOverpayOnQuote = Math.max(0, roundMoney(advRow?.s ?? 0) - roundMoney(revRow?.s ?? 0));
+  return roundMoney(paidBooked + netOverpayOnQuote);
+}
+
+/**
  * Single-quotation checks aligned with {@link getEligibleRefundQuotations} listing rules, plus
- * remaining headroom: paid_ngn minus refund totals (excluding rejected and cancel-before-pay).
+ * remaining headroom from cash on this quote minus quote total (when overpaid) or cash minus refunds.
  */
 export function quotationMeetsRefundEligibility(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return { ok: false, error: 'Quotation reference is required.' };
-  const q = db.prepare(`SELECT id, paid_ngn, status FROM quotations WHERE id = ?`).get(ref);
+  const q = db.prepare(`SELECT id, paid_ngn, total_ngn, status FROM quotations WHERE id = ?`).get(ref);
   if (!q) return { ok: false, error: 'Quotation not found.' };
   const paidNgn = roundMoney(q.paid_ngn);
-  if (paidNgn <= 0) {
+  const cashInNgn = quotationCashInNgn(db, ref);
+  const quoteTotalNgn = roundMoney(q.total_ngn);
+  if (cashInNgn <= 0 && paidNgn <= 0) {
     return { ok: false, error: 'This quotation has no recorded payment toward a refund.' };
   }
   const sumRow = db
@@ -2566,7 +2602,11 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
     )
     .get(ref);
   const totalRefundedNgn = roundMoney(sumRow?.s ?? 0);
-  const remainingNgn = roundMoney(paidNgn - totalRefundedNgn);
+  const remainingNgn = quotationRefundHeadroomNgn({
+    cashInNgn,
+    quoteTotalNgn,
+    totalRefundedNgn,
+  });
   if (remainingNgn <= 0) {
     return {
       ok: false,
@@ -2595,7 +2635,15 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
         'Refund requests are only allowed after production is completed or cancelled, or for a paid void quotation.',
     };
   }
-  return { ok: true, paidNgn, totalRefundedNgn, remainingNgn };
+  return {
+    ok: true,
+    paidNgn,
+    cashInNgn,
+    quoteTotalNgn,
+    totalRefundedNgn,
+    remainingNgn,
+    overpaymentExcessNgn: quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }),
+  };
 }
 
 /**
@@ -2665,10 +2713,6 @@ export function getEligibleRefundQuotations(db) {
       ), 0) AS total_refunded
     FROM quotations q
     WHERE q.paid_ngn > 0
-      AND COALESCE((
-        SELECT SUM(amount_ngn) FROM customer_refunds
-        WHERE quotation_ref = q.id AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
-      ), 0) < q.paid_ngn
       AND NOT EXISTS (
         SELECT 1 FROM production_jobs j2
         WHERE j2.quotation_ref = q.id
@@ -2700,11 +2744,12 @@ export function getEligibleRefundQuotations(db) {
         suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
       };
     })
-    .filter(
-      (row) =>
-        row.eligible_refund_categories.length > 0 &&
-        roundMoney(row.suggested_preview_amount_ngn) >= MIN_REFUND_QUOTATION_REMAINING_NGN
-    );
+    .filter((row) => {
+      if (row.eligible_refund_categories.length === 0) return false;
+      if (roundMoney(row.suggested_preview_amount_ngn) < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
+      const meets = quotationMeetsRefundEligibility(db, row.id);
+      return meets.ok && meets.remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN;
+    });
 }
 
 function positiveNumber(value) {

@@ -1278,6 +1278,16 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     .prepare(`SELECT paid_ngn FROM quotations WHERE id = ?${qb.sql}`)
     .get(ref, ...qb.args);
   const bookedOnQuotationNgn = Math.round(Number(qPaidRow?.paid_ngn) || 0);
+  const overpayRevRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE type = 'OVERPAY_REVERSAL' AND quotation_ref = ?${lb.sql}`
+    )
+    .get(ref, ...lb.args);
+  const netOverpayOnQuoteNgn = Math.max(
+    0,
+    overpayAdvanceNgn - Math.round(Number(overpayRevRow?.s) || 0)
+  );
+  const quotationCashInNgn = bookedOnQuotationNgn + netOverpayOnQuoteNgn;
 
   const rawReceiptRowsForQuote = listSalesReceipts(db, branchScope).filter(
     (r) => String(r.quotationRef || '').trim() === ref
@@ -1315,7 +1325,7 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
       stoneFlatsheetSummary,
       overpayAdvanceNgn,
       bookedOnQuotationNgn,
-      quotationCashInNgn: bookedOnQuotationNgn + overpayAdvanceNgn,
+      quotationCashInNgn,
       /** Sum of `sales_receipts.amount_ngn` toward this quote (what each receipt line shows). */
       receiptAllocatedSumNgn,
       /** Deposit advance moved onto this quote (`ADVANCE_APPLIED`). */

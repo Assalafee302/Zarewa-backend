@@ -11,7 +11,39 @@ import { debugBootLog } from './debugBootLog.js';
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
  * @param {import('better-sqlite3').Database} db
  */
+/** Drop broken/legacy material_incident indexes (shared hosting MariaDB). */
+function repairMaterialIncidentIndexesMysql(db) {
+  let hasTable = false;
+  try {
+    hasTable = db.prepare(`PRAGMA table_info(material_incidents)`).all().length > 0;
+  } catch {
+    return;
+  }
+  if (!hasTable) return;
+  for (const idx of ['idx_material_incidents_pool', 'idx_material_incidents_branch_status']) {
+    try {
+      db.exec(`ALTER TABLE material_incidents DROP INDEX ${idx}`);
+    } catch {
+      try {
+        db.exec(`DROP INDEX ${idx} ON material_incidents`);
+      } catch {
+        /* index missing or wrong table */
+      }
+    }
+  }
+  try {
+    db.exec(`ALTER TABLE material_incident_lines DROP INDEX idx_material_incident_lines_incident`);
+  } catch {
+    try {
+      db.exec(`DROP INDEX idx_material_incident_lines_incident ON material_incident_lines`);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export function runMigrations(db) {
+  repairMaterialIncidentIndexesMysql(db);
   ensureEditApprovalTable(db);
   const tableCols = (name) => {
     const rows = db.prepare(`PRAGMA table_info(${name})`).all();
@@ -2667,6 +2699,7 @@ function migrateCoilControlEvents(db) {
 
 /** Material exception & offcut control (incidents, pool balances, approvals). */
 function migrateMaterialIncidents(db) {
+  repairMaterialIncidentIndexesMysql(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS material_incidents (
       id TEXT PRIMARY KEY,
@@ -2716,22 +2749,6 @@ function migrateMaterialIncidents(db) {
       edit_unlocked_by_user_id TEXT,
       edit_unlocked_at_iso TEXT
     );
-    /* Drop legacy/broken indexes from earlier deploys (MySQL prefix-key on REAL columns). */
-    for (const idx of ['idx_material_incidents_pool', 'idx_material_incidents_branch_status']) {
-      try {
-        db.exec(`DROP INDEX ${idx} ON material_incidents`);
-      } catch {
-        /* index may not exist */
-      }
-    }
-    CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
-      ON material_incidents(branch_id, status, date_iso);
-    CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
-      ON material_incidents(branch_id, material_family, gauge_label, colour);
-    CREATE INDEX IF NOT EXISTS idx_material_incidents_quotation
-      ON material_incidents(quotation_ref);
-    CREATE INDEX IF NOT EXISTS idx_material_incidents_job
-      ON material_incidents(production_job_id);
 
     CREATE TABLE IF NOT EXISTS material_incident_lines (
       id TEXT PRIMARY KEY,
@@ -2804,6 +2821,18 @@ function migrateMaterialIncidents(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_material_incident_audit_incident
       ON material_incident_audit(incident_id, at_iso DESC);
+  `);
+
+  repairMaterialIncidentIndexesMysql(db);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
+      ON material_incidents(branch_id, status, date_iso);
+    CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
+      ON material_incidents(branch_id, material_family, gauge_label, colour);
+    CREATE INDEX IF NOT EXISTS idx_material_incidents_quotation
+      ON material_incidents(quotation_ref);
+    CREATE INDEX IF NOT EXISTS idx_material_incidents_job
+      ON material_incidents(production_job_id);
   `);
 
   const cce = db.prepare(`PRAGMA table_info(coil_control_events)`).all();

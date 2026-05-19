@@ -11,6 +11,7 @@
     "diagnose:substitution": "node scripts/diagnose-substitution-trace.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",
     "mysql:smoke": "node scripts/mysql-smoke.mjs",
+    "mysql:repair-material-incidents": "node scripts/repair-material-incident-indexes.mjs",
     "db:sync-opening-coils": "node scripts/sync-opening-coil-register-mysql.mjs",
     "db:wipe": "node scripts/wipe-local-mysql.mjs",
     "db:fresh-empty": "node scripts/fresh-empty-database.mjs",

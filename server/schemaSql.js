@@ -380,10 +380,7 @@ CREATE TABLE IF NOT EXISTS material_incidents (
   edit_unlocked_by_user_id TEXT,
   edit_unlocked_at_iso TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
-  ON material_incidents(branch_id, status, date_iso);
-CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
-  ON material_incidents(branch_id, material_family, gauge_label, colour);
+/* material_incidents indexes: created in migrate.js only (MySQL prefix-key safe). */
 
 CREATE TABLE IF NOT EXISTS material_incident_lines (
   id TEXT PRIMARY KEY,
@@ -395,8 +392,6 @@ CREATE TABLE IF NOT EXISTS material_incident_lines (
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_material_incident_lines_incident
-  ON material_incident_lines(incident_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS material_incident_attachments (
   id TEXT PRIMARY KEY,

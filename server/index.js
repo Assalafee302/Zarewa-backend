@@ -56,6 +56,7 @@ try {
     database: false,
     bootError: errMsg,
     bootPhase: lastBootPhase,
+    bootMarker: 'mex-index-bootstrap-v3',
     mysqlTarget,
     mysqlUser: cfg.user,
     fixHint:
@@ -88,9 +89,10 @@ try {
       error: 'Server failed during startup.',
       bootError: errMsg,
       bootPhase: lastBootPhase,
+      bootMarker: 'mex-index-bootstrap-v3',
       mysqlTarget,
       fixHint:
-        'See GET /api/health for mysqlTarget, bootPhase, and bootError. Run: npm run mysql:smoke',
+        'See GET /api/health for mysqlTarget, bootPhase, bootMarker, and bootError. Run: npm run mysql:smoke',
     });
   });
 }

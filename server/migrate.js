@@ -3,6 +3,7 @@ import { ensureEditApprovalTable } from './editApproval.js';
 import { seedDefaultGlAccounts } from './glOps.js';
 import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
+import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -728,6 +729,7 @@ export function runMigrations(db) {
   migrateProductionCompletionAdjustments(db);
   migrateQuotationLineCatalog2026(db);
   migrateCoilAluzincColours2026(db);
+  migrateMergeDuplicateSetupColours(db);
   migrateStoneCoatedAndPricingArch(db);
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
@@ -1524,6 +1526,7 @@ function migrateCoilAluzincColours2026(db) {
     ['COL-005', 'Zinc Grey', 'ZG', 150],
     ['COL-016', 'Wine Red', 'WR', 160],
     ['COL-017', 'Vandal Grey', 'VG', 170],
+    ['COL-018', 'Dark Grey', 'DG', 175],
   ];
 
   db.transaction(() => {

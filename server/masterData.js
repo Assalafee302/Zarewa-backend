@@ -1,5 +1,6 @@
 import { appendAuditLog } from './controlOps.js';
 import { voidRecentQuotationsAfterMasterPriceChange } from './quotationLifecycleOps.js';
+import { canonicalColourName, normalizeColourKey } from '../shared/lib/colourCanonicalization.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -716,6 +717,42 @@ function getStatements(kind, row) {
   }
 }
 
+function assertNoDuplicateSetupColour(db, row, excludeId) {
+  const rows = db
+    .prepare(`SELECT colour_id, name, abbreviation, active FROM setup_colours WHERE active != 0`)
+    .all();
+  const masterData = {
+    colours: rows.map((r) => ({
+      name: r.name,
+      abbreviation: r.abbreviation,
+      active: r.active !== 0,
+    })),
+  };
+  const newKey = normalizeColourKey(row.name);
+  const newAbbr = String(row.abbreviation || '').trim().toLowerCase();
+  const newCanon = canonicalColourName(masterData, row.name).toLowerCase();
+
+  for (const r of rows) {
+    const rid = String(r.colour_id || '').trim();
+    if (excludeId && rid === excludeId) continue;
+    const name = String(r.name || '').trim();
+    if (normalizeColourKey(name) === newKey) {
+      throw new Error(
+        `Colour “${row.name}” matches existing “${name}” (spelling variant). Edit the existing row instead of adding a duplicate.`
+      );
+    }
+    const abbr = String(r.abbreviation || '').trim().toLowerCase();
+    if (newAbbr && abbr && abbr === newAbbr) {
+      throw new Error(`Abbreviation “${row.abbreviation}” is already used by “${name}”.`);
+    }
+    if (newCanon && canonicalColourName(masterData, name).toLowerCase() === newCanon) {
+      throw new Error(
+        `Colour “${row.name}” is the same catalogue colour as “${name}”. Use “${name}” or deactivate the duplicate.`
+      );
+    }
+  }
+}
+
 export function upsertMasterDataRecord(db, kind, payload, actor) {
   const resolved = resolveKind(kind);
   const cfg = MASTER_DATA_CONFIG[resolved];
@@ -727,6 +764,9 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
   const existing = requestedId
     ? db.prepare(`SELECT ${cfg.idColumn} AS id FROM ${cfg.table} WHERE ${cfg.idColumn} = ?`).get(requestedId)
     : null;
+  if (resolved === 'colours' && row.active) {
+    assertNoDuplicateSetupColour(db, row, existing ? id : null);
+  }
   const stmt = getStatements(resolved, row);
   db.transaction(() => {
     if (existing) {

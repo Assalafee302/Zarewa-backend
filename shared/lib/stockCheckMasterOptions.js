@@ -3,30 +3,9 @@
  * Mirrors frontend `src/lib/stockCheckMasterOptions.js` (Sales stock filters).
  */
 
-/**
- * Map coil/PO abbreviation or alias to Setup master colour name (e.g. IV → Ivory Beige).
- * @param {{ colours?: object[] } | null | undefined} masterData
- * @param {string | null | undefined} rawColour
- * @returns {string}
- */
-export function canonicalColourName(masterData, rawColour) {
-  const raw = String(rawColour ?? '').trim();
-  if (!raw) return '';
-  const colours = masterData?.colours;
-  if (!Array.isArray(colours) || !colours.length) return raw;
-  const tokens = [...new Set([raw, raw.split(/[·,]/)[0].trim()].filter(Boolean))];
-  for (const token of tokens) {
-    const tl = token.toLowerCase();
-    for (const c of colours) {
-      if (c.active === false) continue;
-      const name = String(c.name || '').trim();
-      const abbr = String(c.abbreviation || '').trim();
-      if (!name) continue;
-      if (tl === name.toLowerCase() || (abbr && tl === abbr.toLowerCase())) return name;
-    }
-  }
-  return raw;
-}
+import { canonicalColourName } from './colourCanonicalization.js';
+
+export { canonicalColourName };
 
 /**
  * @param {{ colours?: object[] } | null | undefined} masterData

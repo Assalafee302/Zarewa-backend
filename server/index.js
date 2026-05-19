@@ -56,7 +56,7 @@ try {
     database: false,
     bootError: errMsg,
     bootPhase: lastBootPhase,
-    bootMarker: 'mex-index-bootstrap-v3',
+    bootMarker: 'po-line-type-migrate-v4',
     mysqlTarget,
     mysqlUser: cfg.user,
     fixHint:
@@ -89,7 +89,7 @@ try {
       error: 'Server failed during startup.',
       bootError: errMsg,
       bootPhase: lastBootPhase,
-      bootMarker: 'mex-index-bootstrap-v3',
+      bootMarker: 'po-line-type-migrate-v4',
       mysqlTarget,
       fixHint:
         'See GET /api/health for mysqlTarget, bootPhase, bootMarker, and bootError. Run: npm run mysql:smoke',

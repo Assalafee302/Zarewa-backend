@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS purchase_order_lines (
   unit_price_ngn INTEGER,
   qty_ordered REAL NOT NULL,
   qty_received REAL NOT NULL DEFAULT 0,
+  line_type TEXT,
   PRIMARY KEY (po_id, line_key),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE
 );

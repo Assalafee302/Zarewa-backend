@@ -77,7 +77,7 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
     debugBootLog({ hypothesisId: 'B', location: 'db.js:runMigrations', message: 'migrations start' });
     runMigrations(db);
     setBootPhase('migrations_ok');
-    debugBootLog({ hypothesisId: 'B', location: 'db.js:runMigrations', message: 'migrations ok' });
+    debugBootLog({ hypothesisId: 'B', location: 'db.js:runMigrations', message: 'migrations ok', runId: 'post-fix' });
   } catch (e) {
     setBootPhase('migrations_failed');
     debugBootLog({

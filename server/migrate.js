@@ -767,8 +767,8 @@ export function runMigrations(db) {
   migrateStoneCoatedAndPricingArch(db);
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
-  migrateProcurementOrderKind(db);
   migratePurchaseOrderLineType(db);
+  migrateProcurementOrderKind(db);
   migrateHrExcellence2026(db);
   migrateWorkspaceSearchIndexes(db);
   migrateInterBranchLoans(db);
@@ -1441,6 +1441,12 @@ function migrateProcurementOrderKind(db) {
   const cols = new Set(db.prepare(`PRAGMA table_info(purchase_orders)`).all().map((c) => c.name));
   if (!cols.has('procurement_kind')) {
     db.exec(`ALTER TABLE purchase_orders ADD COLUMN procurement_kind TEXT NOT NULL DEFAULT 'coil'`);
+  }
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
+    const lineCols = new Set(db.prepare(`PRAGMA table_info(purchase_order_lines)`).all().map((c) => c.name));
+    if (!lineCols.has('line_type')) {
+      db.exec(`ALTER TABLE purchase_order_lines ADD COLUMN line_type TEXT`);
+    }
   }
   const pos = db.prepare(`SELECT po_id FROM purchase_orders`).all();
   const lineStmt = db.prepare(

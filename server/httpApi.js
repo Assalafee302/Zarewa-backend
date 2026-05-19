@@ -526,7 +526,7 @@ export function registerHttpApi(app, db) {
         cuttingListRegisterProduction: true,
         /** Confirms this process includes Office Desk routes (e.g. POST /api/office/ai/polish-memo). */
         officeDesk: true,
-        materialIncidentBoot: 'mex-index-bootstrap-v3',
+        materialIncidentBoot: 'po-line-type-migrate-v4',
       },
     });
   };

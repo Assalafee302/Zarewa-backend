@@ -4616,7 +4616,8 @@ export function registerHttpApi(app, db) {
       const can =
         userHasPermission(req.user, 'finance.post') ||
         userHasPermission(req.user, 'finance.approve') ||
-        userHasPermission(req.user, 'finance.pay');
+        userHasPermission(req.user, 'finance.pay') ||
+        userHasPermission(req.user, 'expenses.create');
       if (!can) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
@@ -4635,7 +4636,10 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/payment-requests/:requestId', requireAuth, (req, res) => {
     try {
-      const canEdit = userHasPermission(req.user, 'finance.post') || userHasPermission(req.user, 'finance.approve');
+      const canEdit =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'expenses.create');
       if (!canEdit) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;

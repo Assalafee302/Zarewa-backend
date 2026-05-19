@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ensureSalesDeskPermissions,
   ensureStoreFloorPermissions,
   mergeRoleAndCustomPermissions,
   publicUserFromRow,
@@ -20,6 +21,15 @@ describe('ensureStoreFloorPermissions', () => {
     ensureStoreFloorPermissions(perms, { roleKey: 'sales_staff', department: 'inventory' });
     expect(perms).toContain('production.manage');
     expect(perms).toContain('inventory.receive');
+  });
+});
+
+describe('ensureSalesDeskPermissions', () => {
+  it('grants sales desk perms when department is sales', () => {
+    const perms = ['dashboard.view'];
+    ensureSalesDeskPermissions(perms, { roleKey: 'viewer', department: 'sales' });
+    expect(perms).toContain('expenses.create');
+    expect(perms).toContain('quotations.manage');
   });
 });
 
@@ -45,5 +55,17 @@ describe('publicUserFromRow store floor', () => {
       permissions_json: null,
     });
     expect(user.permissions).toContain('production.manage');
+  });
+
+  it('restores expenses.create for sales_staff with trimmed custom JSON', () => {
+    const user = publicUserFromRow({
+      id: 'U3',
+      username: 'sales1',
+      role_key: 'sales_staff',
+      department: 'sales',
+      permissions_json: JSON.stringify(['dashboard.view', 'office.use']),
+    });
+    expect(user.permissions).toContain('expenses.create');
+    expect(user.permissions).toContain('quotations.manage');
   });
 });

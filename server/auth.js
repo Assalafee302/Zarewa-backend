@@ -386,6 +386,50 @@ export function ensureStoreFloorPermissions(permissions, ctx = {}) {
   }
 }
 
+/** Sales desk permissions — quotations, receipts, expense requests, refunds. */
+export const SALES_DESK_PERMISSION_KEYS = [
+  'dashboard.view',
+  'office.use',
+  'sales.view',
+  'customers.manage',
+  'quotations.manage',
+  'receipts.post',
+  'expenses.create',
+  'refunds.request',
+];
+
+const SALES_DESK_DEPARTMENT_LABELS = new Set([
+  'sales',
+  'customer',
+  'general',
+  'sales_staff',
+  'cashier',
+]);
+
+/**
+ * @param {string[]} permissions — mutated in place
+ * @param {{ roleKey?: string; department?: string }} ctx
+ */
+export function ensureSalesDeskPermissions(permissions, ctx = {}) {
+  if (!Array.isArray(permissions) || permissions.includes('*')) return;
+  const rk = String(ctx.roleKey || '').trim().toLowerCase();
+  const rawDept = String(ctx.department || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
+  const needsSales =
+    rk === 'sales_staff' ||
+    rk === 'cashier' ||
+    SALES_DESK_DEPARTMENT_LABELS.has(rawDept) ||
+    deptRole === 'sales_staff' ||
+    deptRole === 'cashier';
+  if (!needsSales) return;
+  for (const p of SALES_DESK_PERMISSION_KEYS) {
+    if (!permissions.includes(p)) permissions.push(p);
+  }
+}
+
 export function userHasPermission(user, permission) {
   if (!user || !permission) return false;
   const perms = Array.isArray(user.permissions) ? user.permissions : permissionsForRole(user.roleKey);
@@ -480,6 +524,7 @@ export function publicUserFromRow(row) {
     }
   }
   ensureStoreFloorPermissions(permissions, { roleKey, department: storedDepartment });
+  ensureSalesDeskPermissions(permissions, { roleKey, department: storedDepartment });
   if (String(roleKey || '').trim().toLowerCase() === 'operations_officer') {
     if (!permissions.includes('procurement.view')) permissions.push('procurement.view');
     if (!permissions.includes('procurement.manage')) permissions.push('procurement.manage');

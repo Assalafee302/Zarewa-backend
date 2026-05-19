@@ -1283,6 +1283,20 @@ describe.sequential('Zarewa API', () => {
     expect(reqRow.approvedBy).toBeTruthy();
   });
 
+  it('sales officer can POST /api/payment-requests with expenses.create (line-item request)', async () => {
+    const staffAgent = request.agent(app);
+    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
+    const createReq = await staffAgent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Stationery',
+      description: 'Branch stationery top-up',
+      lineItems: [{ description: 'Paper reams', quantity: 2, unitPriceNgn: 5000 }],
+    });
+    expect(createReq.status).toBe(201);
+    expect(createReq.body?.ok).toBe(true);
+    expect(String(createReq.body?.requestID || '')).toMatch(/^PREQ-/);
+  });
+
   it('POST /api/payment-requests/:requestId/pay records split treasury payout after approval', async () => {
     const before = await agent.get('/api/bootstrap');
     const [cashAccount, bankAccount] = before.body.treasuryAccounts.slice(0, 2);

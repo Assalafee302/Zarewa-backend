@@ -58,7 +58,11 @@ export const REFUNDS_VISIBLE_PERMS = [
   'manager.dashboard',
 ];
 
-export const PAYMENT_REQUESTS_VISIBLE_PERMS = [...FINANCE_DOMAIN_PERMS, 'manager.dashboard'];
+export const PAYMENT_REQUESTS_VISIBLE_PERMS = [
+  ...FINANCE_DOMAIN_PERMS,
+  'manager.dashboard',
+  'expenses.create',
+];
 
 export const COIL_REQUESTS_VISIBLE_PERMS = [...OPERATIONS_DOMAIN_PERMS, 'manager.dashboard'];
 

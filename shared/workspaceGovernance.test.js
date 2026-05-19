@@ -32,6 +32,9 @@ describe('workspaceGovernance', () => {
     const has = () => false;
     const hi = REFUND_MD_APPROVAL_THRESHOLD_NGN;
     expect(actorMayApproveRefundAmount({ roleKey: 'sales_manager' }, has, hi + 1)).toBe(false);
+    expect(
+      actorMayApproveRefundAmount({ roleKey: 'sales_manager' }, (p) => p === 'refunds.approve', hi + 1)
+    ).toBe(true);
     expect(actorMayApproveRefundAmount({ roleKey: 'md' }, has, hi + 1)).toBe(true);
     expect(actorMayApproveRefundAmount({ roleKey: 'finance_manager' }, (p) => p === '*', hi + 1)).toBe(true);
     expect(actorMayApproveRefundAmount({ roleKey: 'finance_manager' }, has, hi)).toBe(true);
@@ -45,10 +48,18 @@ describe('workspaceGovernance', () => {
     expect(actorMayApproveRefundAmount({ roleKey: 'md' }, has, 50_001, { refundExecutiveThresholdNgn: 50_000 })).toBe(true);
   });
 
+  it('allows finance manager to approve payment requests with finance.approve', () => {
+    const hasFinance = (p) => p === 'finance.approve';
+    const hi = EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
+    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'finance_manager' }, hasFinance, hi, 'fuel')).toBe(true);
+    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'finance_manager' }, hasFinance, hi + 1, 'fuel')).toBe(
+      true
+    );
+  });
+
   it('requires branch manager or executive for routine expenses under threshold', () => {
     const hasFinance = (p) => p === 'finance.approve';
     const hi = EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
-    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'finance_manager' }, hasFinance, hi, 'fuel')).toBe(false);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi, 'fuel')).toBe(true);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'md' }, hasFinance, hi, 'fuel')).toBe(true);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, () => false, hi, 'fuel')).toBe(false);
@@ -57,7 +68,7 @@ describe('workspaceGovernance', () => {
   it('requires executive above expense threshold', () => {
     const hasFinance = (p) => p === 'finance.approve';
     const hi = EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
-    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi + 1, 'fuel')).toBe(false);
+    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi + 1, 'fuel')).toBe(true);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'md' }, hasFinance, hi + 1, 'fuel')).toBe(true);
   });
 

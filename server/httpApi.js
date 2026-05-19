@@ -56,6 +56,7 @@ import {
   updateAppUserRole,
   updateAppUserStatus,
   deleteAppUser,
+  editMutationRequiresSecondApproval,
   updateUserProfile,
   userCanApproveEditMutations,
   userMayEditCoilLotMasterData,
@@ -118,6 +119,7 @@ import {
 } from './adminDataResetOps.js';
 import {
   approveEditApproval,
+  consumeEditApprovalInTransaction,
   createEditApprovalRequest,
   getEditApproval,
   handlePatchWithEditApproval,
@@ -4565,7 +4567,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/payment-requests', requirePermission('finance.post'), (req, res) => {
+  app.post('/api/payment-requests', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
       res.status(r.ok ? 201 : 400).json(r);
@@ -4580,7 +4582,8 @@ export function registerHttpApi(app, db) {
       const can =
         userHasPermission(req.user, 'finance.post') ||
         userHasPermission(req.user, 'finance.approve') ||
-        userHasPermission(req.user, 'finance.pay');
+        userHasPermission(req.user, 'finance.pay') ||
+        userHasPermission(req.user, 'expenses.create');
       if (!can) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
@@ -5824,7 +5827,30 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'Treasury lines must equal the receipt amount.' });
       }
 
+      const amendSalesReceiptId = String(
+        req.body?.amendSalesReceiptId ?? req.body?.amend_sales_receipt_id ?? ''
+      ).trim();
+      if (amendSalesReceiptId && editMutationRequiresSecondApproval(req.user)) {
+        const aid = String(req.body?.editApprovalId ?? '').trim();
+        if (!aid) {
+          return res.status(403).json({
+            ok: false,
+            code: 'EDIT_APPROVAL_REQUIRED',
+            error:
+              'A manager or administrator must approve this receipt change first. Request an approval, have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
+          });
+        }
+      }
+
       const { saved, receipt, overpay } = db.transaction(() => {
+        if (amendSalesReceiptId && editMutationRequiresSecondApproval(req.user)) {
+          consumeEditApprovalInTransaction(
+            db,
+            String(req.body?.editApprovalId ?? '').trim(),
+            'sales_receipt',
+            amendSalesReceiptId
+          );
+        }
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const posted = insertLedgerRows(
           db,

@@ -31,6 +31,21 @@ export function isBranchExpenseApproverRoleKey(roleKey) {
 }
 
 /**
+ * Branch manager may approve refunds and branch expenses at any amount (within role permissions).
+ * @param {string | null | undefined} roleKey
+ * @returns {boolean}
+ */
+export function isBranchManagerApprovalAuthority(roleKey) {
+  return isBranchExpenseApproverRoleKey(roleKey);
+}
+
+/** Finance desk roles that may approve payment requests when they hold finance.approve. */
+export function isFinanceDeskApproverRoleKey(roleKey) {
+  const rk = String(roleKey || '').trim().toLowerCase();
+  return rk === 'finance_manager' || rk === 'cashier';
+}
+
+/**
  * @param {string | null | undefined} roleKey
  * @returns {boolean}
  */
@@ -72,6 +87,8 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
   if (hasPermission('*')) return true;
   const rk = String(actor?.roleKey || '').trim().toLowerCase();
   if (rk === 'admin') return true;
+  if (isBranchManagerApprovalAuthority(rk) && hasPermission('refunds.approve')) return true;
+  if (isFinanceDeskApproverRoleKey(rk) && hasPermission('finance.approve')) return true;
   return isExecutiveRoleKey(rk);
 }
 
@@ -81,8 +98,9 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
 
 /**
  * True when actor may approve a non-refund-like payment request of this amount.
- * At or below expense threshold: branch manager (or executive) with finance.approve.
- * Above threshold: executive (or admin) with finance.approve.
+ * Finance manager / cashier with finance.approve may approve any amount.
+ * Branch manager with finance.approve may approve any amount.
+ * Above expense threshold for other roles: executive (or admin) with finance.approve.
  * @param {{ roleKey?: string } | null | undefined} actor
  * @param {(perm: string) => boolean} hasPermission
  * @param {number} amountRequestedNgn
@@ -105,6 +123,8 @@ export function actorMayApprovePaymentRequestAmount(
   const rk = String(actor?.roleKey || '').trim().toLowerCase();
   if (rk === 'admin') return true;
   if (!hasPermission('finance.approve')) return false;
+  if (isBranchManagerApprovalAuthority(rk)) return true;
+  if (isFinanceDeskApproverRoleKey(rk)) return true;
   if (amt > expenseT) {
     return isExecutiveRoleKey(rk);
   }

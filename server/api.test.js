@@ -4,6 +4,18 @@ import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 
+function mysqlAvailable() {
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const mysqlOk = mysqlAvailable();
+
 describe.sequential('Zarewa API', () => {
   let app;
   let agent;
@@ -56,13 +68,6 @@ describe.sequential('Zarewa API', () => {
         capabilities: expect.objectContaining({ officeDesk: true }),
       })
     );
-  });
-    const res = await agent.get('/api/ai/status');
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
-    expect(res.body.enabled).toBe(false);
-    expect(Array.isArray(res.body.allowedModes)).toBe(true);
-    expect(res.body.allowedModes).toContain('search');
   });
 
   it('POST /api/ai/chat returns 503 when AI is not configured', async () => {
@@ -618,6 +623,7 @@ describe.sequential('Zarewa API', () => {
     expect(res.body.ok).toBe(true);
     expect(typeof res.body.payrollDraftsAwaitingMd).toBe('number');
     expect(typeof res.body.bankReconciliationLinesInReview).toBe('number');
+    expect(typeof res.body.materialIncidentsPendingApproval).toBe('number');
   });
 
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {
@@ -3443,5 +3449,94 @@ describe.sequential('Zarewa API', () => {
     for (const l of filtered.body.lines) {
       expect(String(l.costCenter || '').trim()).toBe('UAT-CC');
     }
+  });
+
+  it.skipIf(!mysqlOk)('material incident draft submit approve posts pool and tracks balance', async () => {
+    const create = await agent.post('/api/material-incidents').send({
+      incidentType: 'yard_offcut',
+      materialFamily: 'aluminium',
+      productID: 'COIL-ALU',
+      gaugeLabel: '0.45mm',
+      colour: 'Traffic Black',
+      dateISO: '2026-04-01',
+      storekeeperDisplay: 'Store Test',
+      operatorDisplay: 'Op Test',
+      lines: [{ lengthM: 40, quantity: 3, conditionNote: 'Stained sections' }],
+      returnDisposition: 'offcut_pool',
+    });
+    expect(create.status).toBe(201);
+    expect(create.body.ok).toBe(true);
+    const id = create.body.id;
+    expect(id).toMatch(/^MEX-/);
+
+    const submit = await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/submit`).send({});
+    expect(submit.status).toBe(200);
+
+    const approve = await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/approve`).send({
+      managerRemark: 'Approved for yard register',
+    });
+    expect(approve.status).toBe(200);
+    expect(approve.body.incident.status).toBe('posted');
+    expect(approve.body.incident.metersAvailable).toBeCloseTo(120, 2);
+
+    const pool = await agent.get('/api/material-incidents/pool-summary');
+    expect(pool.status).toBe(200);
+    const found = (pool.body.incidents || []).find((i) => i.id === id);
+    expect(found?.metersAvailable).toBeCloseTo(120, 2);
+
+    const print = await agent.get(`/api/material-incidents/${encodeURIComponent(id)}/print-payload`);
+    expect(print.status).toBe(200);
+    expect(print.body.payload.watermark).toBe('OFFICIAL');
+
+    const issue = await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/issue`).send({
+      meters: 30,
+      targetKind: 'scrap',
+      note: 'Test issue',
+    });
+    expect(issue.status).toBe(200);
+    expect(issue.body.incident.metersAvailable).toBeCloseTo(90, 2);
+
+    const overIssue = await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/issue`).send({
+      meters: 500,
+      targetKind: 'scrap',
+    });
+    expect(overIssue.status).toBe(400);
+  });
+
+  it.skipIf(!mysqlOk)('material incident reject leaves pool empty', async () => {
+    const create = await agent.post('/api/material-incidents').send({
+      incidentType: 'yard_offcut',
+      materialFamily: 'aluminium',
+      productID: 'COIL-ALU',
+      gaugeLabel: '0.45mm',
+      colour: 'Traffic Black',
+      dateISO: '2026-04-02',
+      storekeeperDisplay: 'Store Test',
+      operatorDisplay: 'Op Test',
+      lines: [{ lengthM: 10, quantity: 2 }],
+      returnDisposition: 'offcut_pool',
+    });
+    expect(create.status).toBe(201);
+    const id = create.body.id;
+    await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/submit`).send({});
+    const reject = await agent.post(`/api/material-incidents/${encodeURIComponent(id)}/reject`).send({
+      managerRemark: 'Not acceptable',
+    });
+    expect(reject.status).toBe(200);
+    expect(reject.body.incident.status).toBe('rejected');
+    const pool = await agent.get('/api/material-incidents/pool-summary');
+    expect((pool.body.incidents || []).find((i) => i.id === id)).toBeUndefined();
+  });
+
+  it.skipIf(!mysqlOk)('material incident reports loss and aging endpoints', async () => {
+    const loss = await agent.get('/api/material-incidents/reports/loss');
+    expect(loss.status).toBe(200);
+    expect(Array.isArray(loss.body.rows)).toBe(true);
+    const aging = await agent.get('/api/material-incidents/reports/aging');
+    expect(aging.status).toBe(200);
+    expect(Array.isArray(aging.body.rows)).toBe(true);
+    const recon = await agent.get('/api/material-incidents/reports/reconciliation');
+    expect(recon.status).toBe(200);
+    expect(typeof recon.body.totalMetersAvailable).toBe('number');
   });
 });

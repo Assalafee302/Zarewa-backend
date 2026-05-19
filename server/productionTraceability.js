@@ -32,6 +32,7 @@ import {
 } from '../shared/lib/coilMaterialFamily.js';
 import { listMasterData } from './masterData.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
 import { insertProductionOffcutPoolIssueTx } from './writeOps.js';
 
 function nextId(prefix) {
@@ -145,7 +146,7 @@ function toPercentVariance(actual, reference) {
   return ((actual - reference) / reference) * 100;
 }
 
-function appendStockMovementTx(db, payload) {
+export function appendStockMovementTx(db, payload) {
   const id = nextId('MV');
   const atISO = normalizeIso(payload.atISO);
   db.prepare(
@@ -166,7 +167,7 @@ function appendStockMovementTx(db, payload) {
   return id;
 }
 
-function adjustProductStockTx(db, productID, delta) {
+export function adjustProductStockTx(db, productID, delta) {
   if (!productID) return;
   const row = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
   if (!row) return;
@@ -1746,7 +1747,19 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       const gaugeForPool = String(qMapPool?.materialGauge ?? '').trim();
       const colourForPool = String(qMapPool?.materialColor ?? '').trim();
       const branchForPool = String(job.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-      if (offInv > 0 && gaugeForPool && colourForPool && job.product_id) {
+      const offcutSupplyRaw = payload.offcutSupply ?? payload.offcutIssues ?? payload.offcut_supply;
+      const offcutSupplyList = Array.isArray(offcutSupplyRaw) ? offcutSupplyRaw : [];
+      let offcutSupplyJson = null;
+      if (offcutSupplyList.length > 0) {
+        const supply = issueOffcutSupplyForProductionTx(db, job, offcutSupplyList, opts.actor);
+        offcutSupplyJson = JSON.stringify(supply);
+        const sumIssued = supply.reduce((s, x) => s + (Number(x.meters) || 0), 0);
+        if (Math.abs(sumIssued - offInv) > 0.02 && offInv > 0) {
+          throw new Error(
+            `Offcut issue total (${sumIssued.toFixed(2)} m) must match offcut stock metres (${offInv.toFixed(2)} m).`
+          );
+        }
+      } else if (offInv > 0 && gaugeForPool && colourForPool && job.product_id) {
         insertProductionOffcutPoolIssueTx(
           db,
           {
@@ -1775,22 +1788,44 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           detail: `${jobID} completed output (${job.product_name || job.product_id})`,
         });
       }
-      db.prepare(
-        `UPDATE production_jobs
-         SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
-         WHERE job_id = ?`
-      ).run(
-        'Completed',
-        completedAtISO.slice(0, 10),
-        completedAtISO,
-        outputMeters,
-        totalWeightKg,
-        aggregatedAlertState,
-        managerReviewRequired ? 1 : 0,
-        offInv,
-        jobID
-      );
+      const pjColsComplete = db.prepare(`PRAGMA table_info(production_jobs)`).all();
+      const hasOffcutSupplyCol = pjColsComplete.some((c) => c.name === 'offcut_supply_json');
+      if (hasOffcutSupplyCol) {
+        db.prepare(
+          `UPDATE production_jobs
+           SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+               conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?, offcut_supply_json = ?
+           WHERE job_id = ?`
+        ).run(
+          'Completed',
+          completedAtISO.slice(0, 10),
+          completedAtISO,
+          outputMeters,
+          totalWeightKg,
+          aggregatedAlertState,
+          managerReviewRequired ? 1 : 0,
+          offInv,
+          offcutSupplyJson,
+          jobID
+        );
+      } else {
+        db.prepare(
+          `UPDATE production_jobs
+           SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+               conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
+           WHERE job_id = ?`
+        ).run(
+          'Completed',
+          completedAtISO.slice(0, 10),
+          completedAtISO,
+          outputMeters,
+          totalWeightKg,
+          aggregatedAlertState,
+          managerReviewRequired ? 1 : 0,
+          offInv,
+          jobID
+        );
+      }
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }

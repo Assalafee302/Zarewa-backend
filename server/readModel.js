@@ -312,6 +312,18 @@ export function listManagementItems(db, branchScope = 'ALL') {
     LIMIT 50
   `).all(...bJob.args);
 
+  let pendingMaterialIncidents = [];
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
+    const bMex = branchWhere(db, 'material_incidents', branchScope);
+    pendingMaterialIncidents = db
+      .prepare(
+        `SELECT id, incident_type, gauge_label, colour, total_meters, date_iso, storekeeper_remark, branch_id
+         FROM material_incidents WHERE status = 'submitted'${bMex.sql}
+         ORDER BY date_iso DESC LIMIT 50`
+      )
+      .all(...bMex.args);
+  }
+
   return {
     pendingClearance,
     flagged,
@@ -319,6 +331,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingRefunds,
     pendingExpenses,
     pendingConversionReviews,
+    pendingMaterialIncidents,
   };
 }
 
@@ -1132,6 +1145,17 @@ export function listProductionJobs(db, branchScope = 'ALL') {
         branchId: row.branch_id ?? '',
         coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
         offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
+        offcutSupplyJson: row.offcut_supply_json ?? '',
+        offcutSupply: (() => {
+          const raw = row.offcut_supply_json;
+          if (!raw || !String(raw).trim()) return [];
+          try {
+            const parsed = JSON.parse(String(raw));
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })(),
       };
     });
 }
@@ -2651,6 +2675,17 @@ export function execOrgSummary(db) {
         )
         .get()?.c
     ) || 0;
+
+  let materialIncidentsPendingApproval = 0;
+  try {
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
+      materialIncidentsPendingApproval =
+        Number(db.prepare(`SELECT COUNT(*) AS c FROM material_incidents WHERE status = 'submitted'`).get()?.c) || 0;
+    }
+  } catch {
+    /* table missing */
+  }
+
   const branches = listBranches(db).map((b) => ({ id: b.id, name: b.name ?? b.id }));
   return {
     ok: true,
@@ -2662,6 +2697,7 @@ export function execOrgSummary(db) {
     pendingPaymentRequests,
     payrollDraftsAwaitingMd,
     bankReconciliationLinesInReview,
+    materialIncidentsPendingApproval,
   };
 }
 

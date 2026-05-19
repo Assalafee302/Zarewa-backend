@@ -258,6 +258,25 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import {
+  approveMaterialIncident,
+  computePoolSummary,
+  createMaterialIncidentDraft,
+  createRefundFromMaterialIncident,
+  getMaterialIncident,
+  getMaterialIncidentAttachment,
+  getMaterialIncidentPrintPayload,
+  issueMaterialIncidentMeters,
+  listMaterialIncidents,
+  materialIncidentLossReport,
+  materialIncidentAgingReport,
+  materialIncidentPoolReconciliationReport,
+  rejectMaterialIncident,
+  submitMaterialIncident,
+  unlockMaterialIncidentEdit,
+  updateMaterialIncidentDraft,
+  voidMaterialIncident,
+} from './materialIncidentOps.js';
 import crypto from 'node:crypto';
 import {
   syncFinancePoTransportWorkItem,
@@ -3758,6 +3777,217 @@ export function registerHttpApi(app, db) {
   app.patch('/api/coil-lots/:coilNo/location', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = write.setCoilLotLocation(db, req.params.coilNo, req.body?.location, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  const materialIncidentWritePerms = ['inventory.adjust', 'operations.manage', 'production.manage', 'material_incidents.create'];
+  const materialIncidentApprovePerms = ['material_incidents.approve', 'refunds.approve', 'finance.approve'];
+  const materialIncidentReadPerms = [
+    ...materialIncidentWritePerms,
+    'quotations.manage',
+    'sales.view',
+    'operations.view',
+    'reports.view',
+  ];
+
+  app.get('/api/material-incidents/pool-summary', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const summary = computePoolSummary(db, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      res.json({ ok: true, ...summary });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/material-incidents/reports/loss', requirePermission(['reports.view', ...materialIncidentApprovePerms]), (req, res) => {
+    try {
+      res.json({ ok: true, rows: materialIncidentLossReport(db, req.workspaceBranchId || DEFAULT_BRANCH_ID) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/material-incidents/reports/aging', requirePermission(['reports.view', ...materialIncidentReadPerms]), (req, res) => {
+    try {
+      res.json({ ok: true, rows: materialIncidentAgingReport(db, req.workspaceBranchId || DEFAULT_BRANCH_ID) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get(
+    '/api/material-incidents/reports/reconciliation',
+    requirePermission(['reports.view', ...materialIncidentReadPerms]),
+    (req, res) => {
+      try {
+        res.json({
+          ok: true,
+          ...materialIncidentPoolReconciliationReport(db, req.workspaceBranchId || DEFAULT_BRANCH_ID),
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.get('/api/material-incidents', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const rows = listMaterialIncidents(db, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
+        status: req.query.status,
+        incidentType: req.query.incidentType || req.query.type,
+        gaugeLabel: req.query.gauge,
+        colour: req.query.colour,
+        minMeters: req.query.minMeters,
+      });
+      res.json({ ok: true, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/material-incidents/:id', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const incident = getMaterialIncident(db, req.params.id);
+      if (!incident) return res.status(404).json({ ok: false, error: 'Incident not found.' });
+      res.json({ ok: true, incident });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/material-incidents/:id/print-payload', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const payload = getMaterialIncidentPrintPayload(db, req.params.id);
+      if (!payload) return res.status(404).json({ ok: false, error: 'Incident not found.' });
+      res.json({ ok: true, payload });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/material-incidents/:id/attachments/:attachmentId', requirePermission(materialIncidentReadPerms), (req, res) => {
+    try {
+      const att = getMaterialIncidentAttachment(db, req.params.id, req.params.attachmentId);
+      if (!att) return res.status(404).json({ ok: false, error: 'Attachment not found.' });
+      const buf = Buffer.from(att.dataBase64, 'base64');
+      res.setHeader('Content-Type', att.mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${String(att.fileName).replace(/[^\w.-]+/g, '_')}"`);
+      res.send(buf);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents', requirePermission(materialIncidentWritePerms), (req, res) => {
+    try {
+      const r = createMaterialIncidentDraft(db, req.body || {}, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/material-incidents/:id', requirePermission(materialIncidentWritePerms), (req, res) => {
+    try {
+      const r = updateMaterialIncidentDraft(db, req.params.id, req.body || {}, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/submit', requirePermission(materialIncidentWritePerms), (req, res) => {
+    try {
+      const r = submitMaterialIncident(db, req.params.id, { actor: req.user });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/approve', requirePermission(materialIncidentApprovePerms), (req, res) => {
+    try {
+      const r = approveMaterialIncident(db, req.params.id, req.body || {}, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/reject', requirePermission(materialIncidentApprovePerms), (req, res) => {
+    try {
+      const r = rejectMaterialIncident(db, req.params.id, req.body || {}, { actor: req.user });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/unlock-edit', requirePermission(materialIncidentApprovePerms), (req, res) => {
+    try {
+      const r = unlockMaterialIncidentEdit(db, req.params.id, { actor: req.user });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/void', requirePermission(materialIncidentApprovePerms), (req, res) => {
+    try {
+      const r = voidMaterialIncident(db, req.params.id, req.body || {}, { actor: req.user });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/issue', requirePermission(materialIncidentWritePerms), (req, res) => {
+    try {
+      const r = issueMaterialIncidentMeters(db, req.params.id, req.body || {}, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/material-incidents/:id/create-refund', requirePermission(['refunds.request', ...materialIncidentWritePerms]), (req, res) => {
+    try {
+      const r = createRefundFromMaterialIncident(db, req.params.id, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
       });

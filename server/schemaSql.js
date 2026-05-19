@@ -327,7 +327,126 @@ CREATE TABLE IF NOT EXISTS production_jobs (
   manager_review_signed_by_name TEXT,
   manager_review_remark TEXT,
   coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0,
+  offcut_inventory_meters REAL NOT NULL DEFAULT 0,
+  offcut_supply_json TEXT,
   FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
+);
+
+CREATE TABLE IF NOT EXISTS material_incidents (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  incident_type TEXT NOT NULL,
+  material_family TEXT NOT NULL DEFAULT 'aluminium',
+  product_id TEXT,
+  gauge_label TEXT,
+  colour TEXT,
+  profile_label TEXT,
+  coil_no TEXT,
+  quotation_ref TEXT,
+  cutting_list_ref TEXT,
+  production_job_id TEXT,
+  delivery_id TEXT,
+  customer_id TEXT,
+  customer_label TEXT,
+  supplier_id TEXT,
+  before_kg REAL,
+  after_kg REAL,
+  kg_deducted REAL,
+  total_meters REAL NOT NULL DEFAULT 0,
+  conversion_kg_per_m REAL,
+  conversion_source TEXT,
+  return_disposition TEXT,
+  storekeeper_user_id TEXT,
+  storekeeper_display TEXT,
+  operator_display TEXT,
+  created_by_user_id TEXT,
+  approved_by_user_id TEXT,
+  approved_at_iso TEXT,
+  posted_at_iso TEXT,
+  storekeeper_remark TEXT,
+  manager_remark TEXT,
+  reason_code TEXT,
+  reason_text TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  book_ref TEXT,
+  meters_available REAL NOT NULL DEFAULT 0,
+  customer_refund_id TEXT,
+  date_iso TEXT NOT NULL,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL,
+  void_reason TEXT,
+  voided_by_user_id TEXT,
+  voided_at_iso TEXT,
+  edit_unlocked_by_user_id TEXT,
+  edit_unlocked_at_iso TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
+  ON material_incidents(branch_id, status, date_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
+  ON material_incidents(branch_id, material_family, gauge_label, colour, meters_available);
+
+CREATE TABLE IF NOT EXISTS material_incident_lines (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  length_m REAL NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  total_m REAL NOT NULL,
+  condition_note TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_material_incident_lines_incident
+  ON material_incident_lines(incident_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS material_incident_attachments (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  data_b64 TEXT NOT NULL,
+  uploaded_at_iso TEXT NOT NULL,
+  uploaded_by_user_id TEXT,
+  FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS material_incident_stock_links (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  coil_control_event_id TEXT,
+  stock_movement_id TEXT,
+  link_role TEXT NOT NULL,
+  created_at_iso TEXT NOT NULL,
+  FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS material_incident_issues (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  meters REAL NOT NULL,
+  issued_at_iso TEXT NOT NULL,
+  issued_by_user_id TEXT,
+  target_kind TEXT NOT NULL,
+  target_ref TEXT,
+  manager_price_ngn_per_m REAL,
+  manager_price_ngn_total REAL,
+  priced_by_user_id TEXT,
+  priced_at_iso TEXT,
+  coil_control_event_id TEXT,
+  note TEXT,
+  FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS material_incident_audit (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  old_value TEXT,
+  new_value TEXT,
+  actor_user_id TEXT,
+  actor_display TEXT,
+  at_iso TEXT NOT NULL,
+  reason TEXT,
+  FOREIGN KEY (incident_id) REFERENCES material_incidents(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS production_job_coils (

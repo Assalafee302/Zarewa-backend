@@ -44,6 +44,7 @@ import { listPriceListItems } from './pricingOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
 import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
+import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
 import { userHasPermission } from './auth.js';
@@ -168,6 +169,8 @@ export function buildBootstrap(db, opts = {}) {
     purchaseOrders: procOk ? listPurchaseOrders(db, branchScope) : [],
     coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
+    materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
+    materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
     movements: coilMovOk ? listStockMovements(db, branchScope) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     deliveries: opsOk ? listDeliveries(db, branchScope) : [],

@@ -38,6 +38,15 @@ export function buildMdOperationsPack(db, opts) {
     .prepare(`SELECT COUNT(*) AS c FROM customer_refunds WHERE TRIM(LOWER(COALESCE(status,''))) = 'pending'`)
     .get().c;
 
+  let pendingMaterialIncidents = 0;
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
+    const mexBranch = !opts?.viewAll && opts?.branchId ? ` AND branch_id = ?` : '';
+    const mexArgs = mexBranch ? [String(opts.branchId).trim()] : [];
+    pendingMaterialIncidents = db
+      .prepare(`SELECT COUNT(*) AS c FROM material_incidents WHERE status = 'submitted'${mexBranch}`)
+      .get(...mexArgs).c;
+  }
+
   let unfiledSql = `
     SELECT COUNT(*) AS c FROM work_items wi
     LEFT JOIN work_item_filing wf ON wf.work_item_id = wi.id
@@ -74,6 +83,7 @@ export function buildMdOperationsPack(db, opts) {
       refundsPendingInMonth: Number(pendingRefundCount) || 0,
       unfiledWorkItemsIncomplete: Number(unfiledIncompleteCount) || 0,
       interBranchRequestsOpen: Number(interBranchOpen) || 0,
+      materialIncidentsPendingApproval: Number(pendingMaterialIncidents) || 0,
     },
     notes: [
       'Branch manager sign-off for the period can be recorded when period-close workflow is enabled.',

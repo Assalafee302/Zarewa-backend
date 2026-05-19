@@ -84,6 +84,7 @@ export const ROLE_DEFINITIONS = {
       'inter_branch_loan.md_approve',
       'inventory.receive',
       'inventory.adjust',
+      'material_incidents.approve',
     ],
   },
   finance_manager: {
@@ -155,6 +156,7 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'finance.approve',
+      'material_incidents.approve',
     ],
   },
   sales_staff: {
@@ -186,6 +188,7 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'deliveries.manage',
+      'material_incidents.create',
     ],
   },
   ceo: {

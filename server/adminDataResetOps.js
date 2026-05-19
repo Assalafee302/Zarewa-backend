@@ -76,6 +76,12 @@ export const ADMIN_DATA_RESET_PRESETS = [
     warning:
       'Deletes coil_lots (GRN/opening book), yard_coils, coil control events, coil requests, and production rows that reference coil numbers (job coil lines & conversion checks). Run after or without “Sales, production…” — if production jobs still exist, their coil allocation rows are cleared first.',
     tables: [
+      'material_incident_audit',
+      'material_incident_issues',
+      'material_incident_stock_links',
+      'material_incident_attachments',
+      'material_incident_lines',
+      'material_incidents',
       'coil_control_events',
       'production_conversion_checks',
       'production_job_coils',

@@ -43,6 +43,7 @@ const SAFE_TABLES = new Set([
   'maintenance_events',
   'hr_performance_reviews',
   'coil_control_events',
+  'material_incidents',
 ]);
 
 function assertSafeTable(table) {
@@ -212,6 +213,10 @@ export function nextCuttingListHumanId(db, branchId) {
 
 export function nextCoilControlEventHumanId(db, branchId) {
   return allocateHumanId(db, 'CCR', branchId, { table: 'coil_control_events', idColumn: 'id' });
+}
+
+export function nextMaterialIncidentHumanId(db, branchId) {
+  return allocateHumanId(db, 'MEX', branchId, { table: 'material_incidents', idColumn: 'id' });
 }
 
 export function nextQuotationHumanId(db, branchId) {

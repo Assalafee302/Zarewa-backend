@@ -996,6 +996,34 @@ function listLegacyManagementWorkItems(db, scope, user) {
         })
       );
     }
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
+      const bp = branchScope?.viewAll ? { sql: '', args: [] } : { sql: ` AND branch_id = ?`, args: [branchScope?.branchId || DEFAULT_BRANCH_ID] };
+      const mexRows = db
+        .prepare(
+          `SELECT id, incident_type, gauge_label, colour, total_meters, date_iso, storekeeper_remark
+           FROM material_incidents WHERE status = 'submitted'${bp.sql} ORDER BY date_iso DESC LIMIT 80`
+        )
+        .all(...bp.args);
+      for (const row of mexRows) {
+        out.push(
+          legacyWorkItemBase({
+            id: legacyItemId('material-incident', row.id),
+            referenceNo: row.id,
+            branchId: scope?.branchId || DEFAULT_BRANCH_ID,
+            officeKey: 'branch_manager',
+            documentClass: 'approval',
+            documentType: 'material_incident',
+            status: 'pending_review',
+            title: `Material incident ${row.id}`,
+            summary: `${row.incident_type || ''} · ${Number(row.total_meters || 0).toFixed(1)} m · ${row.gauge_label || ''} ${row.colour || ''}`.trim(),
+            createdAtIso: row.date_iso || '',
+            sourceKind: 'material_incident',
+            sourceId: row.id,
+            routePath: '/operations/material-exceptions',
+          })
+        );
+      }
+    }
   }
   if (canRefund) {
     for (const row of queues.pendingRefunds || []) {

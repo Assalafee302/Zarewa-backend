@@ -351,6 +351,50 @@ function insertCoilControlEventTx(db, row) {
   const id = nextCoilControlEventHumanId(db, branchId);
   const createdAtIso = String(row.createdAtIso || new Date().toISOString().slice(0, 19));
   const dateIso = String(row.dateIso || createdAtIso.slice(0, 10)).trim();
+  const hasMexCols = db.prepare(`PRAGMA table_info(coil_control_events)`).all().some((c) => c.name === 'material_incident_id');
+  if (hasMexCols) {
+    db.prepare(
+      `INSERT INTO coil_control_events (
+        id, branch_id, event_kind, coil_no, product_id, gauge_label, colour,
+        meters, kg_coil_delta, kg_book, book_ref, cutting_list_ref, quotation_ref, customer_label,
+        supplier_id, defect_m_from, defect_m_to, supplier_resolution, outbound_destination,
+        credit_scrap_inventory, scrap_product_id, scrap_reason, note,
+        date_iso, created_at_iso, actor_user_id, actor_display,
+        material_incident_id, material_incident_issue_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      id,
+      branchId,
+      String(row.eventKind || '').trim(),
+      row.coilNo != null ? String(row.coilNo).trim() || null : null,
+      row.productId != null ? String(row.productId).trim() || null : null,
+      row.gaugeLabel != null ? String(row.gaugeLabel).trim() || null : null,
+      row.colour != null ? String(row.colour).trim() || null : null,
+      row.meters != null && Number.isFinite(Number(row.meters)) ? Number(row.meters) : null,
+      Number.isFinite(Number(row.kgCoilDelta)) ? Number(row.kgCoilDelta) : 0,
+      row.kgBook != null && Number.isFinite(Number(row.kgBook)) ? Number(row.kgBook) : null,
+      row.bookRef != null ? String(row.bookRef).trim() || null : null,
+      row.cuttingListRef != null ? String(row.cuttingListRef).trim() || null : null,
+      row.quotationRef != null ? String(row.quotationRef).trim() || null : null,
+      row.customerLabel != null ? String(row.customerLabel).trim() || null : null,
+      row.supplierId != null ? String(row.supplierId).trim() || null : null,
+      row.defectMFrom != null && Number.isFinite(Number(row.defectMFrom)) ? Number(row.defectMFrom) : null,
+      row.defectMTo != null && Number.isFinite(Number(row.defectMTo)) ? Number(row.defectMTo) : null,
+      row.supplierResolution != null ? String(row.supplierResolution).trim() || null : null,
+      row.outboundDestination != null ? String(row.outboundDestination).trim() || null : null,
+      row.creditScrapInventory ? 1 : 0,
+      row.scrapProductId != null ? String(row.scrapProductId).trim() || null : null,
+      row.scrapReason != null ? String(row.scrapReason).trim() || null : null,
+      row.note != null ? String(row.note).trim() || null : null,
+      dateIso,
+      createdAtIso,
+      row.actorUserId != null ? String(row.actorUserId).trim() || null : null,
+      row.actorDisplay != null ? String(row.actorDisplay).trim() || null : null,
+      row.materialIncidentId != null ? String(row.materialIncidentId).trim() || null : null,
+      row.materialIncidentIssueId != null ? String(row.materialIncidentIssueId).trim() || null : null
+    );
+    return id;
+  }
   db.prepare(
     `INSERT INTO coil_control_events (
       id, branch_id, event_kind, coil_no, product_id, gauge_label, colour,
@@ -415,10 +459,20 @@ export function insertProductionOffcutPoolIssueTx(db, p, actor) {
   const gaugeLabel = String(p.gaugeLabel ?? '').trim();
   const colour = String(p.colour ?? '').trim();
   if (!gaugeLabel || !colour) return null;
+  const materialIncidentId = String(p.materialIncidentId ?? '').trim() || null;
+  if (materialIncidentId) {
+    const inc = db.prepare(`SELECT meters_available, status FROM material_incidents WHERE id = ?`).get(materialIncidentId);
+    if (!inc) throw new Error('Offcut incident not found.');
+    if (String(inc.status || '') !== 'posted') throw new Error('Offcut incident is not posted.');
+    const avail = Number(inc.meters_available) || 0;
+    if (m > avail + 1e-6) {
+      throw new Error(`Cannot issue ${m} m — only ${avail.toFixed(2)} m available on incident ${materialIncidentId}.`);
+    }
+  }
   const branchId = String(p.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const createdAtIso = new Date().toISOString().slice(0, 19);
   const dateIso = String(p.dateIso || createdAtIso).slice(0, 10);
-  return insertCoilControlEventTx(db, {
+  const eventId = insertCoilControlEventTx(db, {
     branchId,
     eventKind: 'pool_issue_production',
     coilNo: null,
@@ -432,12 +486,23 @@ export function insertProductionOffcutPoolIssueTx(db, p, actor) {
     cuttingListRef: String(p.cuttingListId || '').trim() || null,
     quotationRef: String(p.quotationRef || '').trim() || null,
     customerLabel: String(p.customerName || '').trim() || null,
-    note: `Offcut stock used on production ${p.jobID}`,
+    note: p.note || `Offcut stock used on production ${p.jobID}`,
     dateIso,
     createdAtIso,
     actorUserId: actorId(actor),
     actorDisplay: actorName(actor),
+    materialIncidentId,
+    materialIncidentIssueId: p.materialIncidentIssueId || null,
   });
+  if (materialIncidentId) {
+    const avail = Number(db.prepare(`SELECT meters_available FROM material_incidents WHERE id = ?`).get(materialIncidentId)?.meters_available) || 0;
+    db.prepare(`UPDATE material_incidents SET meters_available = ?, updated_at_iso = ? WHERE id = ?`).run(
+      Math.max(0, avail - m),
+      createdAtIso,
+      materialIncidentId
+    );
+  }
+  return eventId;
 }
 
 function treasuryAccountRow(db, treasuryAccountId) {
@@ -3256,6 +3321,7 @@ export function postOffcutPoolReturnInward(db, payload = {}, opts = {}) {
         dateISO,
         actorUserId: actorId(actor),
         actorDisplay: actorName(actor),
+        materialIncidentId: String(payload.materialIncidentId ?? '').trim() || null,
       });
       appendAuditLog(db, {
         actor,

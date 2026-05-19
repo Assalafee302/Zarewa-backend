@@ -1297,6 +1297,67 @@ describe.sequential('Zarewa API', () => {
     expect(String(createReq.body?.requestID || '')).toMatch(/^PREQ-/);
   });
 
+  it('sales officer can PATCH pending payment request with expenses.create', async () => {
+    const staffAgent = request.agent(app);
+    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
+    const createReq = await staffAgent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Stationery',
+      description: 'Initial draft',
+      lineItems: [{ description: 'Paper reams', quantity: 2, unitPriceNgn: 5000 }],
+    });
+    expect(createReq.status).toBe(201);
+    const rid = createReq.body.requestID;
+    const patch = await staffAgent.patch(`/api/payment-requests/${encodeURIComponent(rid)}`).send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Stationery',
+      description: 'Updated by sales',
+      lineItems: [{ description: 'Paper reams', quantity: 3, unitPriceNgn: 5000 }],
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body?.ok).toBe(true);
+  });
+
+  it('sales officer PATCH cutting list requires edit approval token', async () => {
+    const staffAgent = request.agent(app);
+    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
+    const created = await staffAgent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      operatorName: 'Ibrahim',
+      lines: [{ sheets: 1, lengthM: 6, lineType: 'Roof' }],
+    });
+    expect(created.status).toBe(201);
+    const clId = created.body.id || created.body.cuttingList?.id;
+    const blocked = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
+      machineName: 'Machine 02',
+    });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body?.code).toBe('EDIT_APPROVAL_REQUIRED');
+
+    const mgrAgent = request.agent(app);
+    await loginAs(mgrAgent, 'sales.manager', 'Sales@123');
+    const reqTok = await staffAgent.post('/api/edit-approvals/request').send({
+      entityKind: 'cutting_list',
+      entityId: clId,
+    });
+    expect(reqTok.status).toBe(200);
+    const tokenId = reqTok.body.approval?.id;
+    const approved = await mgrAgent.post(`/api/edit-approvals/${encodeURIComponent(tokenId)}/approve`).send({});
+    expect(approved.status).toBe(200);
+
+    const patched = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
+      machineName: 'Machine 02',
+      editApprovalId: tokenId,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body?.ok).toBe(true);
+  });
+
   it('POST /api/payment-requests/:requestId/pay records split treasury payout after approval', async () => {
     const before = await agent.get('/api/bootstrap');
     const [cashAccount, bankAccount] = before.body.treasuryAccounts.slice(0, 2);

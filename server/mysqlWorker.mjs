@@ -1,6 +1,21 @@
 import mysql from 'mysql2/promise';
 import { runAsWorker } from 'synckit';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sqliteDdlToMysql } from './schemaMysqlTransform.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEBUG_LOG = path.resolve(__dirname, '..', 'debug-5f8d6a.log');
+
+function agentLog(entry) {
+  const line = JSON.stringify({ sessionId: '5f8d6a', timestamp: Date.now(), ...entry });
+  try {
+    fs.appendFileSync(DEBUG_LOG, `${line}\n`, 'utf8');
+  } catch {
+    /* ignore */
+  }
+}
 import { adaptSqlForMysql, adaptExecSqlForMysql } from './mysqlSqlAdapt.js';
 
 /** @type {import('mysql2/promise').Pool | null} */
@@ -150,6 +165,17 @@ async function execBootstrapDdl(ddl) {
         const errno = /** @type {{ errno?: number }} */ (e).errno;
         const code = /** @type {{ code?: string }} */ (e).code;
         if (errno === 1061 || code === 'ER_DUP_KEYNAME') continue;
+        agentLog({
+          hypothesisId: 'A',
+          location: 'mysqlWorker.mjs:execBootstrapDdl',
+          message: 'bootstrap DDL statement failed',
+          data: {
+            errno,
+            code,
+            err: String(e?.sqlMessage || e?.message || e),
+            stmt: String(part).slice(0, 280),
+          },
+        });
         throw e;
       }
     }

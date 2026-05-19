@@ -5,6 +5,7 @@ import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
 import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../shared/lib/poLineTypes.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
+import { debugBootLog } from './debugBootLog.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -746,7 +747,19 @@ export function runMigrations(db) {
   migrateOfficeOperations2026(db);
   migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
-  migrateMaterialIncidents(db);
+  try {
+    debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents start' });
+    migrateMaterialIncidents(db);
+    debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents ok' });
+  } catch (e) {
+    debugBootLog({
+      hypothesisId: 'A',
+      location: 'migrate.js',
+      message: 'migrateMaterialIncidents failed',
+      data: { err: String(e?.message || e), code: e?.code, errno: e?.errno },
+    });
+    throw e;
+  }
 }
 
 /** Read-only integration API keys (Bearer auth for automation). */
@@ -2703,6 +2716,14 @@ function migrateMaterialIncidents(db) {
       edit_unlocked_by_user_id TEXT,
       edit_unlocked_at_iso TEXT
     );
+    /* Drop legacy/broken indexes from earlier deploys (MySQL prefix-key on REAL columns). */
+    for (const idx of ['idx_material_incidents_pool', 'idx_material_incidents_branch_status']) {
+      try {
+        db.exec(`DROP INDEX ${idx} ON material_incidents`);
+      } catch {
+        /* index may not exist */
+      }
+    }
     CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
       ON material_incidents(branch_id, status, date_iso);
     CREATE INDEX IF NOT EXISTS idx_material_incidents_pool

@@ -1,10 +1,11 @@
 import os from 'node:os';
 import express from 'express';
 import { readAiAssistConfig } from './aiAssist.js';
-import { createDatabase, defaultDbPath } from './db.js';
+import { createDatabase, defaultDbPath, lastBootPhase } from './db.js';
 import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv } from './mysqlDatabase.js';
+import { debugBootLog } from './debugBootLog.js';
 
 loadProjectEnv();
 
@@ -24,6 +25,20 @@ try {
 } catch (e) {
   bootDegraded = true;
   const errMsg = String(e?.message || e || 'unknown');
+  // #region agent log
+  debugBootLog({
+    hypothesisId: 'E',
+    location: 'index.js:boot',
+    message: 'startup catch',
+    data: {
+      err: errMsg,
+      code: e?.code,
+      errno: e?.errno,
+      sqlMessage: e?.sqlMessage,
+      stack: String(e?.stack || '').slice(0, 500),
+    },
+  });
+  // #endregion
   console.error('[zarewa] Startup failed — minimal HTTP only until fixed:', errMsg);
   console.error(e);
   const cfg = mysqlConfigFromEnv();
@@ -40,6 +55,7 @@ try {
     degraded: true,
     database: false,
     bootError: errMsg,
+    bootPhase: lastBootPhase,
     mysqlTarget,
     mysqlUser: cfg.user,
     fixHint:
@@ -71,9 +87,10 @@ try {
       ok: false,
       error: 'Server failed during startup.',
       bootError: errMsg,
+      bootPhase: lastBootPhase,
       mysqlTarget,
       fixHint:
-        'See GET /api/health for mysqlTarget and bootError. Run: npm run mysql:smoke',
+        'See GET /api/health for mysqlTarget, bootPhase, and bootError. Run: npm run mysql:smoke',
     });
   });
 }

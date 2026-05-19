@@ -381,9 +381,9 @@ CREATE TABLE IF NOT EXISTS material_incidents (
   edit_unlocked_at_iso TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
-  ON material_incidents(branch_id, status, date_iso DESC);
+  ON material_incidents(branch_id, status, date_iso);
 CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
-  ON material_incidents(branch_id, material_family, gauge_label, colour, meters_available);
+  ON material_incidents(branch_id, material_family, gauge_label, colour);
 
 CREATE TABLE IF NOT EXISTS material_incident_lines (
   id TEXT PRIMARY KEY,

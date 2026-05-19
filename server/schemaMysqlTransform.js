@@ -72,7 +72,7 @@ function indexColumnNeedsPrefix(col) {
   const c = String(col || '').toLowerCase();
   if (c === 'treasury_account_id') return false;
   if (
-    /_ngn$|_kg$|qty|amount|balance|count|sort_order|^active$|^archived$|line_no|precision|version|day_|month_|year_|hour|minute|second|flag|posted|registered|pending|enabled|locked|required/i.test(
+    /_ngn$|_kg$|_m$|meters_|total_meters|length_m|before_kg|after_kg|qty|amount|balance|count|sort_order|^active$|^archived$|line_no|precision|version|day_|month_|year_|hour|minute|second|flag|posted|registered|pending|enabled|locked|required|available$|deducted$|weight|sheets|meters_produced|opening_weight|closing_weight|consumed_weight|planned_meters|actual_meters|offcut/i.test(
       c
     )
   ) {

@@ -2,6 +2,7 @@ import { mapLegacyExpenseCategoryToCanonical, isAllowedExpenseCategory } from '.
 import { ensureEditApprovalTable } from './editApproval.js';
 import { seedDefaultGlAccounts } from './glOps.js';
 import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
+import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../shared/lib/poLineTypes.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 
@@ -734,6 +735,7 @@ export function runMigrations(db) {
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
   migrateProcurementOrderKind(db);
+  migratePurchaseOrderLineType(db);
   migrateHrExcellence2026(db);
   migrateWorkspaceSearchIndexes(db);
   migrateInterBranchLoans(db);
@@ -1396,12 +1398,44 @@ function migrateProcurementOrderKind(db) {
     db.exec(`ALTER TABLE purchase_orders ADD COLUMN procurement_kind TEXT NOT NULL DEFAULT 'coil'`);
   }
   const pos = db.prepare(`SELECT po_id FROM purchase_orders`).all();
-  const lineStmt = db.prepare(`SELECT product_id FROM purchase_order_lines WHERE po_id = ?`);
+  const lineStmt = db.prepare(
+    `SELECT product_id, line_type, meters_offered, qty_ordered, unit_price_per_kg_ngn FROM purchase_order_lines WHERE po_id = ?`
+  );
   const upd = db.prepare(`UPDATE purchase_orders SET procurement_kind = ? WHERE po_id = ?`);
   for (const { po_id } of pos) {
     const lines = lineStmt.all(po_id);
-    const kind = deriveProcurementKindFromProductIds(lines.map((l) => l.product_id));
+    const kind = deriveProcurementKindFromPoLines(
+      lines.map((l) => ({
+        lineType: l.line_type,
+        productID: l.product_id,
+        metersOffered: l.meters_offered,
+        qtyOrdered: l.qty_ordered,
+        unitPricePerKgNgn: l.unit_price_per_kg_ngn,
+      }))
+    );
     upd.run(kind, po_id);
+  }
+}
+
+/** Per-line PO type for unified procurement (coil_kg, stone_meter, etc.). */
+function migratePurchaseOrderLineType(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
+    return;
+  }
+  const cols = new Set(db.prepare(`PRAGMA table_info(purchase_order_lines)`).all().map((c) => c.name));
+  if (!cols.has('line_type')) {
+    db.exec(`ALTER TABLE purchase_order_lines ADD COLUMN line_type TEXT`);
+  }
+  const lines = db.prepare(`SELECT po_id, line_key, product_id, meters_offered, qty_ordered, unit_price_per_kg_ngn, line_type FROM purchase_order_lines`).all();
+  const upd = db.prepare(`UPDATE purchase_order_lines SET line_type = ? WHERE po_id = ? AND line_key = ?`);
+  for (const l of lines) {
+    if (String(l.line_type || '').trim()) continue;
+    const lt = inferLineTypeFromProduct(l.product_id, null, {
+      metersOffered: l.meters_offered,
+      qtyOrdered: l.qty_ordered,
+      unitPricePerKgNgn: l.unit_price_per_kg_ngn,
+    });
+    upd.run(lt, l.po_id, l.line_key);
   }
 }
 
@@ -2670,9 +2704,9 @@ function migrateMaterialIncidents(db) {
       edit_unlocked_at_iso TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_material_incidents_branch_status
-      ON material_incidents(branch_id, status, date_iso DESC);
+      ON material_incidents(branch_id, status, date_iso);
     CREATE INDEX IF NOT EXISTS idx_material_incidents_pool
-      ON material_incidents(branch_id, material_family, gauge_label, colour, meters_available);
+      ON material_incidents(branch_id, material_family, gauge_label, colour);
     CREATE INDEX IF NOT EXISTS idx_material_incidents_quotation
       ON material_incidents(quotation_ref);
     CREATE INDEX IF NOT EXISTS idx_material_incidents_job

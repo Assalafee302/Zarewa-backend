@@ -592,6 +592,108 @@ describe('Inventory scenarios (simulated flows)', () => {
     expect(mov.body.movements.some((m) => m.type === 'STORE_GRN_ACCESSORY')).toBe(true);
   });
 
+  it('S11 — Mixed PO + partial GRN: stone metres, flatsheet sheets→m², accessory units', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const ensStone = await agent.post('/api/inventory/ensure-stone-product').send({
+      designLabel: 'MixedPoStone',
+      colourLabel: 'Charcoal',
+      gaugeLabel: '0.45mm',
+    });
+    expect(ensStone.status).toBe(200);
+    const stonePid = ensStone.body.productId;
+
+    const ensFs = await agent.post('/api/inventory/ensure-stone-flatsheet-product').send({
+      colourLabel: 'Charcoal',
+      lengthM: 2,
+    });
+    expect(ensFs.status).toBe(200);
+    const fsPid = ensFs.body.productId;
+
+    const accPid = 'ACC-TAPPING-SCREW-PCS';
+    const b0 = await agent.get('/api/bootstrap');
+    const stoneStock0 = b0.body.products.find((p) => p.productID === stonePid)?.stockLevel ?? 0;
+    const fsStock0 = b0.body.products.find((p) => p.productID === fsPid)?.stockLevel ?? 0;
+    const accStock0 = b0.body.products.find((p) => p.productID === accPid)?.stockLevel ?? 0;
+
+    const sup = await agent.post('/api/suppliers').send({ name: 'Mixed PO Supplier', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Mixed PO Supplier',
+      orderDateISO: '2026-05-01',
+      status: 'In Transit',
+      lines: [
+        {
+          lineKey: 'L-MIX-ST',
+          lineType: 'stone_meter',
+          productID: stonePid,
+          productName: 'MixedPoStone charcoal',
+          color: 'Charcoal',
+          gauge: '0.45mm',
+          metersOffered: 100,
+          qtyOrdered: 100,
+          unitPriceNgn: 4000,
+          qtyReceived: 0,
+        },
+        {
+          lineKey: 'L-MIX-FS',
+          lineType: 'stone_flatsheet',
+          productID: fsPid,
+          productName: 'Flatsheet charcoal 2m',
+          color: 'Charcoal',
+          gauge: '',
+          metersOffered: 2,
+          qtyOrdered: 50,
+          unitPriceNgn: 4400,
+          qtyReceived: 0,
+        },
+        {
+          lineKey: 'L-MIX-ACC',
+          lineType: 'accessory',
+          productID: accPid,
+          productName: 'Tapping screws',
+          color: '',
+          gauge: '',
+          qtyOrdered: 200,
+          unitPriceNgn: 30,
+          unitPricePerKgNgn: 30,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const poId = po.body.poID;
+
+    const bPo = await agent.get('/api/bootstrap');
+    expect(bPo.body.purchaseOrders.find((p) => p.poID === poId)?.procurementKind).toBe('mixed');
+
+    const grn = await agent.post(`/api/purchase-orders/${encodeURIComponent(poId)}/grn`).send({
+      entries: [
+        { lineKey: 'L-MIX-ST', productID: stonePid, qtyReceived: 40, location: 'Stone bay' },
+        { lineKey: 'L-MIX-FS', productID: fsPid, qtyReceived: 50, location: 'Stone bay' },
+        { lineKey: 'L-MIX-ACC', productID: accPid, qtyReceived: 200, location: 'Parts' },
+      ],
+      supplierID: sup.body.supplierID,
+      supplierName: 'Mixed PO Supplier',
+    });
+    expect(grn.status).toBe(200);
+    expect(grn.body.ok).toBe(true);
+
+    const b1 = await agent.get('/api/bootstrap');
+    const stoneStock1 = b1.body.products.find((p) => p.productID === stonePid).stockLevel;
+    const fsStock1 = b1.body.products.find((p) => p.productID === fsPid).stockLevel;
+    const accStock1 = b1.body.products.find((p) => p.productID === accPid).stockLevel;
+    expect(stoneStock1).toBeCloseTo(stoneStock0 + 40, 2);
+    expect(fsStock1).toBeCloseTo(fsStock0 + 50 * 2 * 1.2, 2);
+    expect(accStock1).toBeCloseTo(accStock0 + 200, 2);
+
+    const movFs = await agent.get(`/api/inventory/product-movements/${encodeURIComponent(fsPid)}`);
+    expect(movFs.body.movements.some((m) => m.type === 'STORE_GRN_STONE_FLATSHEET')).toBe(true);
+  });
+
   it('S10 — Stone production complete: STONE_CONSUMPTION draws metres; FG receipt', async () => {
     const app = makeApp();
     const agent = request.agent(app);

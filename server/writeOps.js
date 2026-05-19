@@ -10,9 +10,12 @@ import {
 import {
   ensureStoneFlatsheetProduct,
   ensureStoneProduct,
+  isStoneCoatedMetreProductId,
+  isStoneFlatsheetProductRow,
   isStoneMeterProductRow,
   isStoneMeterQuotationLinesJson,
 } from './stoneInventory.js';
+import { stoneFlatsheetSheetsToM2 } from '../shared/lib/poLineTypes.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
@@ -36,6 +39,7 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
   enrich(linesJson.services);
 }
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
+import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
@@ -1023,7 +1027,16 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
     status,
     lines,
   } = payload;
-  const kind = deriveProcurementKindFromProductIds((lines || []).map((l) => l.productID));
+  const normLinesIn = lines || [];
+  const kind = deriveProcurementKindFromPoLines(
+    normLinesIn.map((l) => ({
+      lineType: l.lineType,
+      productID: l.productID,
+      metersOffered: l.metersOffered,
+      qtyOrdered: l.qtyOrdered,
+      unitPricePerKgNgn: l.unitPricePerKgNgn,
+    }))
+  );
   const insPo = db.prepare(`
     INSERT INTO purchase_orders (
       po_id, supplier_id, supplier_name, order_date_iso, expected_delivery_iso, status,
@@ -1034,8 +1047,8 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const insL = db.prepare(`
     INSERT INTO purchase_order_lines (
       po_id, line_key, product_id, product_name, color, gauge, meters_offered, conversion_kg_per_m,
-      unit_price_per_kg_ngn, unit_price_ngn, qty_ordered, qty_received
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      unit_price_per_kg_ngn, unit_price_ngn, qty_ordered, qty_received, line_type
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
   db.transaction(() => {
@@ -1057,7 +1070,7 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
       String(branchId || DEFAULT_BRANCH_ID).trim(),
       kind
     );
-    for (const l of lines || []) {
+    for (const l of normLinesIn) {
       insL.run(
         poID,
         l.lineKey,
@@ -1070,13 +1083,14 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
         l.unitPricePerKgNgn ?? null,
         l.unitPriceNgn,
         l.qtyOrdered,
-        l.qtyReceived ?? 0
+        l.qtyReceived ?? 0,
+        l.lineType ?? null
       );
     }
     appendMovementTx(db, {
       type: 'PO_CREATED',
       ref: poID,
-      detail: `${supplierName} · ${(lines || []).length} line(s)`,
+      detail: `${supplierName} · ${normLinesIn.length} line(s)`,
     });
     syncAccountsPayableFromPurchaseOrder(db, poID);
   })();
@@ -1174,11 +1188,19 @@ export function updatePurchaseOrderCoilDraft(db, poID, payload, branchId = DEFAU
   const insL = db.prepare(`
     INSERT INTO purchase_order_lines (
       po_id, line_key, product_id, product_name, color, gauge, meters_offered, conversion_kg_per_m,
-      unit_price_per_kg_ngn, unit_price_ngn, qty_ordered, qty_received
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      unit_price_per_kg_ngn, unit_price_ngn, qty_ordered, qty_received, line_type
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
-  const nextKind = deriveProcurementKindFromProductIds(normLines.map((l) => l.productID));
+  const nextKind = deriveProcurementKindFromPoLines(
+    normLines.map((l) => ({
+      lineType: l.lineType,
+      productID: l.productID,
+      metersOffered: l.metersOffered,
+      qtyOrdered: l.qtyOrdered,
+      unitPricePerKgNgn: l.unitPricePerKgNgn,
+    }))
+  );
 
   db.transaction(() => {
     db.prepare(
@@ -1212,7 +1234,8 @@ export function updatePurchaseOrderCoilDraft(db, poID, payload, branchId = DEFAU
         perKg,
         unitNgn,
         qtyOrd,
-        qtyRec
+        qtyRec,
+        l.lineType ?? null
       );
     }
     appendMovementTx(db, {
@@ -1752,15 +1775,21 @@ export function confirmGrn(
     for (const e of entries) {
       const line = findPoLine(lines, e);
       const prodRow = products.find((row) => row.product_id === e.productID);
-      const isStone =
+      const pid = String(e.productID || '').trim();
+      const isFs =
         prodRow != null
-          ? isStoneMeterProductRow(prodRow)
-          : /^STONE-/i.test(String(e.productID || '').trim());
+          ? isStoneFlatsheetProductRow(prodRow)
+          : /^STONE-FS-/i.test(pid);
+      const isStone =
+        !isFs &&
+        (prodRow != null
+          ? isStoneCoatedMetreProductId(db, pid) || (isStoneMeterProductRow(prodRow) && !isStoneFlatsheetProductRow(prodRow))
+          : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         prodRow != null
           ? /^ACC-/i.test(String(prodRow.product_id || '').trim())
-          : /^ACC-/i.test(String(e.productID || '').trim());
-      if (isStone || isAcc) continue;
+          : /^ACC-/i.test(pid);
+      if (isStone || isFs || isAcc) continue;
       const meterBasisLine = isMeterBasisCoilPoLine(line);
       const wRaw = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
       const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
@@ -1841,14 +1870,53 @@ export function confirmGrn(
       const line = findPoLine(lines, e);
       const qty = Number(e.qtyReceived);
       const product = products.find((row) => row.product_id === e.productID);
-      const isStone =
+      const pid = String(e.productID || '').trim();
+      const isFs =
         product != null
-          ? isStoneMeterProductRow(product)
-          : /^STONE-/i.test(String(e.productID || '').trim());
+          ? isStoneFlatsheetProductRow(product)
+          : /^STONE-FS-/i.test(pid);
+      const isStone =
+        !isFs &&
+        (product != null
+          ? isStoneCoatedMetreProductId(db, pid)
+          : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         product != null
           ? /^ACC-/i.test(String(product.product_id || '').trim())
-          : /^ACC-/i.test(String(e.productID || '').trim());
+          : /^ACC-/i.test(pid);
+
+      if (isFs) {
+        const fsRef = `SF-${String(poID).replace(/[^A-Za-z0-9-]/g, '')}-${String(line.line_key || i)}`;
+        coilNumbers.push(fsRef);
+        const lengthM = Number(line.meters_offered) || 0;
+        const m2 = stoneFlatsheetSheetsToM2(qty, lengthM);
+        const upSheet = Math.round(Number(line.unit_price_ngn) || 0);
+        const landedFs = upSheet > 0 && qty > 0 ? Math.round(qty * upSheet) : null;
+        updLine.run(qty, poID, line.line_key);
+        appendMovementTx(db, {
+          type: 'STORE_GRN_STONE_FLATSHEET',
+          ref: poID,
+          productID: e.productID,
+          qty: m2,
+          detail: `${fsRef} · ${qty} sheets → ${m2.toFixed(2)} m² · ${e.location || 'main store'}`,
+          dateISO: grnDateISO,
+          unitPriceNgn: upSheet || null,
+          valueNgn: landedFs,
+        });
+        const glF = tryPostInventoryReceiptJournal(db, {
+          entryDateISO: grnDateISO,
+          sourceKind: 'STONE_FLATSHEET_GRN',
+          sourceId: fsRef,
+          landedCostNgn: landedFs,
+          branchId: coilBranch,
+          createdByUserId: glUserId,
+          memo: `Stone flatsheet GRN ${fsRef}`,
+        });
+        if (landedFs && glF && glF.ok === false) {
+          throw new Error(glF.error || 'Could not post stone flatsheet GRN to general ledger.');
+        }
+        continue;
+      }
 
       if (isStone) {
         const stoneRef = `ST-${String(poID).replace(/[^A-Za-z0-9-]/g, '')}-${String(line.line_key || i)}`;
@@ -1989,17 +2057,31 @@ export function confirmGrn(
     for (const e of entries) {
       const line = findPoLine(lines, e);
       const prodRow = products.find((row) => row.product_id === e.productID);
-      const isStone =
+      const pid = String(line?.product_id || e.productID || '').trim();
+      const isFs =
         prodRow != null
-          ? isStoneMeterProductRow(prodRow)
-          : /^STONE-/i.test(String(line?.product_id || e.productID || '').trim());
+          ? isStoneFlatsheetProductRow(prodRow)
+          : /^STONE-FS-/i.test(pid);
+      const isStone =
+        !isFs &&
+        (prodRow != null
+          ? isStoneCoatedMetreProductId(db, pid)
+          : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         prodRow != null
           ? /^ACC-/i.test(String(prodRow.product_id || '').trim())
-          : /^ACC-/i.test(String(line?.product_id || e.productID || '').trim());
+          : /^ACC-/i.test(pid);
       const wRaw = e.weightKg != null && e.weightKg !== '' ? Number(e.weightKg) : null;
       const w = wRaw != null && Number.isFinite(wRaw) && wRaw > 0 ? wRaw : null;
-      const qtyDelta = isStone || isAcc ? Number(e.qtyReceived) : w != null ? w : Number(e.qtyReceived);
+      let qtyDelta;
+      if (isFs) {
+        const lengthM = Number(line?.meters_offered) || 0;
+        qtyDelta = stoneFlatsheetSheetsToM2(Number(e.qtyReceived), lengthM);
+      } else if (isStone || isAcc) {
+        qtyDelta = Number(e.qtyReceived);
+      } else {
+        qtyDelta = w != null ? w : Number(e.qtyReceived);
+      }
       deltaByProduct[e.productID] = (deltaByProduct[e.productID] || 0) + qtyDelta;
     }
     for (const pid of Object.keys(deltaByProduct)) {

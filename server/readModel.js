@@ -716,6 +716,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
       procurementKind: procurementKindFromPoRow(row, rawLines),
       lines: rawLines.map((l) => ({
         lineKey: l.line_key,
+        lineType: l.line_type ?? '',
         productID: l.product_id,
         productName: l.product_name,
         color: l.color ?? '',

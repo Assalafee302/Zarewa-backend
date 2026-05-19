@@ -71,7 +71,99 @@ export function buildSetupColourMergePlan(db) {
     });
   }
 
+  const active = rows.filter((r) => r.active !== 0);
+  for (const r of active) {
+    const rName = String(r.name || '').trim().toLowerCase();
+    if (!rName) continue;
+    for (const w of active) {
+      const wAbbr = String(w.abbreviation || '').trim().toLowerCase();
+      const loserId = String(r.colour_id || '').trim();
+      const winnerId = String(w.colour_id || '').trim();
+      if (!wAbbr || loserId === winnerId || mergedLosers.has(loserId)) continue;
+      if (rName === wAbbr) {
+        mergedLosers.add(loserId);
+        merges.push({
+          fromId: loserId,
+          fromName: String(r.name || '').trim(),
+          fromAbbr: String(r.abbreviation || '').trim(),
+          toId: winnerId,
+          toName: String(w.name || '').trim(),
+          toAbbr: String(w.abbreviation || '').trim(),
+        });
+      }
+    }
+  }
+
   return merges;
+}
+
+/**
+ * Rewrite free-text colour fields to canonical catalogue names (coils, PO lines, etc.).
+ * @param {import('better-sqlite3').Database} db
+ */
+export function migrateNormalizeAllColourTextFields(db) {
+  const colourTables = [
+    ['coil_lots', 'colour'],
+    ['purchase_order_lines', 'color'],
+    ['products', 'colour'],
+    ['yard_coils', 'colour'],
+    ['coil_requests', 'colour'],
+    ['material_request_lines', 'colour'],
+    ['production_job_coils', 'colour'],
+    ['inventory_coil_snapshots', 'colour'],
+    ['procurement_catalog', 'color'],
+  ];
+
+  const setupRows = db.prepare(`SELECT colour_id, name, abbreviation, active FROM setup_colours`).all();
+  const masterData = {
+    colours: setupRows.map((r) => ({
+      id: r.colour_id,
+      name: r.name,
+      abbreviation: r.abbreviation,
+      active: r.active !== 0,
+    })),
+  };
+
+  db.transaction(() => {
+    for (const [table, col] of colourTables) {
+      if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table)) continue;
+      const distinct = db
+        .prepare(
+          `SELECT DISTINCT trim(${col}) AS v FROM ${table} WHERE trim(coalesce(${col},'')) != ''`
+        )
+        .all();
+      for (const { v } of distinct) {
+        const canon = canonicalColourName(masterData, v);
+        if (!canon || canon === v) continue;
+        db.prepare(`UPDATE ${table} SET ${col} = ? WHERE trim(${col}) = ?`).run(canon, v);
+      }
+    }
+
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotations'`).get()) {
+      const quotes = db
+        .prepare(`SELECT id, lines_json FROM quotations WHERE lines_json IS NOT NULL AND trim(lines_json) != ''`)
+        .all();
+      const upd = db.prepare(`UPDATE quotations SET lines_json = ? WHERE id = ?`);
+      for (const q of quotes) {
+        try {
+          const j = JSON.parse(q.lines_json);
+          if (!j || typeof j !== 'object') continue;
+          let changed = false;
+          for (const field of ['materialColor', 'materialColour']) {
+            if (typeof j[field] !== 'string') continue;
+            const canon = canonicalColourName(masterData, j[field]);
+            if (canon && canon !== j[field]) {
+              j[field] = canon;
+              changed = true;
+            }
+          }
+          if (changed) upd.run(JSON.stringify(j), q.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  })();
 }
 
 /**
@@ -95,7 +187,10 @@ export function migrateMergeDuplicateSetupColours(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_colours'`).get()) return;
 
   const merges = buildSetupColourMergePlan(db);
-  if (!merges.length) return;
+  if (!merges.length) {
+    migrateNormalizeAllColourTextFields(db);
+    return;
+  }
 
   const allRows = db.prepare(`SELECT colour_id, name, abbreviation FROM setup_colours`).all();
   const masterData = {
@@ -217,4 +312,6 @@ export function migrateMergeDuplicateSetupColours(db) {
       ).run(merge.toName, merge.toAbbr || null, merge.toId);
     }
   })();
+
+  migrateNormalizeAllColourTextFields(db);
 }

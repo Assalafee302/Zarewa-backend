@@ -50,6 +50,8 @@ export const COLOUR_ALIAS_BY_KEY = {
   palegreen: 'Pale Green',
   nb: 'Nut Brown',
   nutbrown: 'Nut Brown',
+  nutbron: 'Nut Brown',
+  nutbronw: 'Nut Brown',
   ng: 'National Green',
   nationalgreen: 'National Green',
   cb: 'Cobalt Blue',
@@ -83,10 +85,122 @@ export function normalizeColourKey(raw) {
   s = s.replace(/\bcolou?rs?\b/g, ' ').replace(/\s+/g, ' ').trim();
   s = s.replace(/\bgray\b/g, 'grey');
   s = s.replace(/\bbege\b/g, 'beige');
+  s = s.replace(/nut\s*bron\b/g, 'nut brown');
   s = s.replace(/\bgreem\b/g, 'green');
   s = s.replace(/\bbleu\b/g, 'blue');
   s = s.replace(/[^a-z0-9]+/g, '');
   return s;
+}
+
+/**
+ * @param {object[]} rows setup_colours or masterData.colours shape
+ * @returns {{ colours: object[] }}
+ */
+export function setupColourRowsToMasterData(rows) {
+  return {
+    colours: (rows || []).map((r) => ({
+      id: r.colour_id ?? r.id,
+      name: r.name,
+      abbreviation: r.abbreviation,
+      active: r.active !== false && r.active !== 0,
+      sortOrder: r.sort_order ?? r.sortOrder,
+    })),
+  };
+}
+
+/**
+ * Stable bucket key for dedupe / merge (HM Blue and HMB → same key).
+ * @param {{ colours?: object[] }} masterData
+ * @param {{ name?: string; abbreviation?: string }} row
+ */
+export function canonicalColourKeyForRow(masterData, row) {
+  const name = String(row?.name ?? '').trim();
+  const abbr = String(row?.abbreviation ?? '').trim();
+  const canon = canonicalColourName(masterData, name || abbr);
+  return normalizeColourKey(canon) || normalizeColourKey(name) || normalizeColourKey(abbr);
+}
+
+function colourRowScore(row, canonName) {
+  let s = 0;
+  const id = String(row.colour_id ?? row.id ?? '').trim();
+  if (PREFERRED_COIL_COLOUR_IDS.has(id)) s += 100;
+  const name = String(row.name ?? '').trim();
+  if (name.toLowerCase() === String(canonName || '').trim().toLowerCase()) s += 50;
+  if (name && !name.includes(' ')) s -= 25;
+  const sort = Number(row.sort_order ?? row.sortOrder);
+  if (Number.isFinite(sort)) s -= sort / 1000;
+  return s;
+}
+
+/**
+ * One row per catalogue colour for dropdowns (drops abbrev-only duplicates like "HMB" when HM Blue exists).
+ * @param {object[]} rows
+ * @param {{ colours?: object[] } | null | undefined} [masterDataIn]
+ * @returns {{ row: object; canon: string }[]}
+ */
+export function dedupeActiveColourRows(rows, masterDataIn = null) {
+  const masterData = masterDataIn || setupColourRowsToMasterData(rows);
+  const active = (rows || []).filter((r) => r.active !== false && r.active !== 0);
+  const byKey = new Map();
+
+  for (const row of active) {
+    const key = canonicalColourKeyForRow(masterData, row);
+    if (!key) continue;
+    const canon = canonicalColourName(masterData, row.name);
+    const existing = byKey.get(key);
+    if (!existing || colourRowScore(row, canon) > colourRowScore(existing.row, canon)) {
+      byKey.set(key, { row, canon });
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * @param {object[]} rows
+ * @param {{ colours?: object[] } | null | undefined} [masterDataIn]
+ */
+export function colourSelectOptionsFromRows(rows, masterDataIn = null) {
+  return dedupeActiveColourRows(rows, masterDataIn)
+    .map(({ row, canon }) => {
+      const abbr = String(row.abbreviation ?? '').trim();
+      return {
+        value: canon,
+        label: abbr ? `${canon} (${abbr})` : canon,
+        id: row.colour_id ?? row.id,
+        name: canon,
+        abbreviation: abbr,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Stock check / Sales sidebar: one option per catalogue colour from Setup + on-hand coils.
+ * @param {{ colours?: object[] } | null | undefined} masterData
+ * @param {Array<{ colour?: string; colourRaw?: string }>} [coilRows]
+ */
+export function mergeStockColourSelectOptions(masterData, coilRows = []) {
+  const md = masterData || {};
+  const byKey = new Map();
+
+  for (const o of colourSelectOptionsFromRows(md.colours || [], md)) {
+    const key = normalizeColourKey(o.value);
+    if (key) byKey.set(key, { value: o.value, label: o.label });
+  }
+
+  for (const row of coilRows || []) {
+    const canon = canonicalColourName(md, row.colourRaw ?? row.colour);
+    if (!canon) continue;
+    const key = normalizeColourKey(canon);
+    if (!key || byKey.has(key)) continue;
+    const match = (md.colours || []).find(
+      (c) => canonicalColourName(md, c.name) === canon || normalizeColourKey(c.name) === key
+    );
+    const abbr = String(match?.abbreviation ?? '').trim();
+    byKey.set(key, { value: canon, label: abbr ? `${canon} (${abbr})` : canon });
+  }
+
+  return [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /**
@@ -111,14 +225,39 @@ export function buildColourLookupMap(masterData) {
     const name = String(c.name || '').trim();
     const abbr = String(c.abbreviation || '').trim();
     if (!name) continue;
-    add(name, name);
-    if (abbr) add(abbr, name);
+    const catalogue = catalogueDisplayNameForSetupRow(c);
+    add(name, catalogue);
+    if (abbr) add(abbr, catalogue);
     for (const part of name.split(/[·,/]/)) {
       const p = part.trim();
-      if (p) add(p, name);
+      if (p) add(p, catalogue);
     }
   }
   return map;
+}
+
+/**
+ * Preferred catalogue label for a setup_colours row (full name, not abbrev-only).
+ * @param {{ name?: string; abbreviation?: string }} row
+ */
+export function catalogueDisplayNameForSetupRow(row) {
+  const name = String(row?.name ?? '').trim();
+  const abbr = String(row?.abbreviation ?? '').trim();
+  const fromAbbr = abbr ? COLOUR_ALIAS_BY_KEY[normalizeColourKey(abbr)] : '';
+  const fromName = COLOUR_ALIAS_BY_KEY[normalizeColourKey(name)] || '';
+  if (fromAbbr) return fromAbbr;
+  if (fromName) return fromName;
+  if (name.includes(' ')) return name;
+  return name;
+}
+
+/**
+ * Label for stock tables and chips (always canonical catalogue name, then shortened).
+ * @param {{ colours?: object[] } | null | undefined} masterData
+ * @param {string | null | undefined} rawColour
+ */
+export function displayColourLabel(masterData, rawColour) {
+  return canonicalColourName(masterData, rawColour) || String(rawColour ?? '').trim();
 }
 
 /**
@@ -144,6 +283,7 @@ export function canonicalColourName(masterData, rawColour) {
  */
 export function clusterDuplicateSetupColours(rows) {
   const active = (rows || []).filter((r) => r.active !== false && r.active !== 0);
+  const masterData = setupColourRowsToMasterData(rows);
   const groups = [];
   const seen = new Set();
 
@@ -166,14 +306,14 @@ export function clusterDuplicateSetupColours(rows) {
     groups.push(uniq);
   };
 
-  const byName = new Map();
+  const byCanon = new Map();
   for (const r of active) {
-    const key = normalizeColourKey(r.name);
+    const key = canonicalColourKeyForRow(masterData, r);
     if (!key) continue;
-    if (!byName.has(key)) byName.set(key, []);
-    byName.get(key).push(r);
+    if (!byCanon.has(key)) byCanon.set(key, []);
+    byCanon.get(key).push(r);
   }
-  for (const list of byName.values()) pushGroup(list);
+  for (const list of byCanon.values()) pushGroup(list);
 
   const byAbbr = new Map();
   for (const r of active) {

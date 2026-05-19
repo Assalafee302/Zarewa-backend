@@ -8,6 +8,7 @@ import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { listInTransitLoads } from './inTransitOps.js';
+import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 /** @param {import('better-sqlite3').Database} db */
 
@@ -798,7 +799,26 @@ export function listCoilControlEvents(db, branchScope = 'ALL') {
     }));
 }
 
+function masterDataColoursFromDb(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_colours'`).get()) {
+    return { colours: [] };
+  }
+  const rows = db
+    .prepare(`SELECT colour_id, name, abbreviation, active FROM setup_colours WHERE active != 0`)
+    .all();
+  return {
+    colours: rows.map((r) => ({
+      colour_id: r.colour_id,
+      id: r.colour_id,
+      name: r.name ?? '',
+      abbreviation: r.abbreviation ?? '',
+      active: r.active !== 0,
+    })),
+  };
+}
+
 export function listCoilLots(db, branchScope = 'ALL') {
+  const masterData = masterDataColoursFromDb(db);
   const b = branchWhere(db, 'coil_lots', branchScope);
   return db
     .prepare(`SELECT * FROM coil_lots WHERE 1=1${b.sql} ORDER BY received_at_iso DESC, coil_no DESC`)
@@ -809,7 +829,7 @@ export function listCoilLots(db, branchScope = 'ALL') {
       lineKey: row.line_key,
       qtyReceived: row.qty_received,
       weightKg: row.weight_kg,
-      colour: row.colour ?? '',
+      colour: canonicalColourName(masterData, row.colour ?? '') || (row.colour ?? ''),
       gaugeLabel: row.gauge_label ?? '',
       materialTypeName: row.material_type_name ?? '',
       supplierExpectedMeters: row.supplier_expected_meters,

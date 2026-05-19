@@ -2467,6 +2467,11 @@ function migrateOrganisationRoles2026(db) {
     db.prepare(
       `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL WHERE role_key = 'procurement_officer'`
     ).run();
+    db.prepare(
+      `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL, department = 'operations_officer'
+       WHERE lower(trim(COALESCE(department, ''))) IN ('inventory', 'production', 'storekeeper', 'store_keeper')
+         AND role_key NOT IN ('admin', 'md', 'operations_officer', 'sales_manager')`
+    ).run();
   } catch {
     /* ignore */
   }

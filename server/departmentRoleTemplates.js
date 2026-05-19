@@ -20,9 +20,11 @@ const LEGACY_DEPARTMENT_TO_ROLE = {
   general: 'sales_staff',
   customer: 'sales_staff',
   sales: 'sales_staff',
-  /** Stock receipts / book adjustments: branch manager+ only (see auth inventory.*). */
-  inventory: 'sales_manager',
+  /** Store floor / stock — operations officer (production register, GRN, adjustments). */
+  inventory: 'operations_officer',
   production: 'operations_officer',
+  storekeeper: 'operations_officer',
+  store_keeper: 'operations_officer',
   purchase: 'md',
   finance: 'finance_manager',
   reports: 'sales_staff',

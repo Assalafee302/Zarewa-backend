@@ -328,6 +328,64 @@ export function permissionsForRole(roleKey) {
   return [...(ROLE_DEFINITIONS[roleKey]?.permissions || [])];
 }
 
+/** Store / production floor permissions — always granted for ops role and store departments. */
+export const STORE_FLOOR_PERMISSION_KEYS = [
+  'operations.view',
+  'operations.manage',
+  'production.manage',
+  'production.release',
+  'inventory.receive',
+  'inventory.adjust',
+  'deliveries.manage',
+];
+
+const STORE_FLOOR_DEPARTMENT_LABELS = new Set([
+  'inventory',
+  'production',
+  'storekeeper',
+  'store_keeper',
+  'operations_officer',
+]);
+
+/**
+ * Union role template permissions with optional custom list (custom adds; does not remove role defaults).
+ * @param {string} roleKey
+ * @param {unknown} customParsed
+ */
+export function mergeRoleAndCustomPermissions(roleKey, customParsed) {
+  const base = permissionsForRole(roleKey);
+  if (!Array.isArray(customParsed) || customParsed.length === 0) return [...base];
+  if (customParsed.includes('*')) return ['*'];
+  const set = new Set(base);
+  for (const p of customParsed) {
+    const s = String(p ?? '').trim();
+    if (s) set.add(s);
+  }
+  return [...set];
+}
+
+/**
+ * @param {string[]} permissions — mutated in place
+ * @param {{ roleKey?: string; department?: string }} ctx
+ */
+export function ensureStoreFloorPermissions(permissions, ctx = {}) {
+  if (!Array.isArray(permissions) || permissions.includes('*')) return;
+  const rk = String(ctx.roleKey || '').trim().toLowerCase();
+  const rawDept = String(ctx.department || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
+  const needsFloor =
+    rk === 'operations_officer' ||
+    STORE_FLOOR_DEPARTMENT_LABELS.has(rawDept) ||
+    deptRole === 'operations_officer';
+  if (!needsFloor) return;
+  for (const p of STORE_FLOOR_PERMISSION_KEYS) {
+    if (!permissions.includes(p)) permissions.push(p);
+  }
+}
+
 export function userHasPermission(user, permission) {
   if (!user || !permission) return false;
   const perms = Array.isArray(user.permissions) ? user.permissions : permissionsForRole(user.roleKey);
@@ -387,7 +445,13 @@ export function userCanApproveEditMutations(user) {
 }
 
 /** Administrator, managing director, or branch manager (`sales_manager`; `branch_manager` reserved). */
-const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set(['admin', 'md', 'sales_manager', 'branch_manager']);
+const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set([
+  'admin',
+  'md',
+  'sales_manager',
+  'branch_manager',
+  'operations_officer',
+]);
 
 /** @param {object|null|undefined} user */
 export function userMayEditCoilLotMasterData(user) {
@@ -401,29 +465,26 @@ export function publicUserFromRow(row) {
   const roleKey = row.role_key ?? row.roleKey;
   const emailRaw = row.email ?? null;
   const avatarRaw = row.avatar_url ?? row.avatarUrl ?? null;
-  const department = normalizeWorkspaceDepartment(roleKey);
+  const storedDepartment = String(row.department ?? row.role_key ?? roleKey ?? '')
+    .trim()
+    .toLowerCase();
+  const department = normalizeWorkspaceDepartment(storedDepartment || roleKey);
   let permissions = permissionsForRole(roleKey);
   const pJson = row.permissions_json ?? row.permissionsJson;
   if (pJson && String(pJson).trim()) {
     try {
       const parsed = JSON.parse(pJson);
-      if (Array.isArray(parsed)) permissions = parsed;
+      permissions = mergeRoleAndCustomPermissions(roleKey, parsed);
     } catch {
       /* fallback to role default */
     }
   }
+  ensureStoreFloorPermissions(permissions, { roleKey, department: storedDepartment });
   if (String(roleKey || '').trim().toLowerCase() === 'operations_officer') {
     if (!permissions.includes('procurement.view')) permissions.push('procurement.view');
     if (!permissions.includes('procurement.manage')) permissions.push('procurement.manage');
     if (!permissions.includes('purchase_orders.manage')) permissions.push('purchase_orders.manage');
     if (!permissions.includes('suppliers.manage')) permissions.push('suppliers.manage');
-    if (!permissions.includes('operations.view')) permissions.push('operations.view');
-    if (!permissions.includes('operations.manage')) permissions.push('operations.manage');
-    if (!permissions.includes('production.manage')) permissions.push('production.manage');
-    if (!permissions.includes('production.release')) permissions.push('production.release');
-    if (!permissions.includes('inventory.receive')) permissions.push('inventory.receive');
-    if (!permissions.includes('inventory.adjust')) permissions.push('inventory.adjust');
-    if (!permissions.includes('deliveries.manage')) permissions.push('deliveries.manage');
   }
   return {
     id: row.id,

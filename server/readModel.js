@@ -397,6 +397,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
     conversionChecks = db
       .prepare(
         `SELECT job_id, coil_no, alert_state, actual_conversion_kg_per_m, standard_conversion_kg_per_m,
+          supplier_conversion_kg_per_m, gauge_history_avg_kg_per_m, coil_history_avg_kg_per_m,
           checked_at_iso, note, gauge_label, material_type_name
          FROM production_conversion_checks
          WHERE job_id IN (${ph})
@@ -405,11 +406,16 @@ export function listManagerQuotationAudit(db, quotationRef) {
       .all(...jobIds);
     jobCoils = db
       .prepare(
-        `SELECT job_id, coil_no, meters_produced, consumed_weight_kg, opening_weight_kg, closing_weight_kg,
-          actual_conversion_kg_per_m, sequence_no
-         FROM production_job_coils
-         WHERE job_id IN (${ph})
-         ORDER BY job_id, sequence_no ASC`
+        `SELECT pjc.job_id, pjc.coil_no, pjc.meters_produced, pjc.consumed_weight_kg, pjc.opening_weight_kg,
+          pjc.closing_weight_kg, pjc.actual_conversion_kg_per_m, pjc.sequence_no,
+          lot.gauge_label AS coil_gauge_label, lot.colour AS coil_colour, lot.material_type_name AS coil_material_type,
+          lot.supplier_conversion_kg_per_m AS coil_supplier_conversion_kg_per_m,
+          lot.landed_cost_ngn AS coil_landed_cost_ngn, lot.unit_cost_ngn_per_kg AS coil_unit_cost_ngn_per_kg,
+          lot.weight_kg AS coil_received_weight_kg, lot.current_weight_kg AS coil_current_weight_kg
+         FROM production_job_coils pjc
+         LEFT JOIN coil_lots lot ON lot.coil_no = pjc.coil_no
+         WHERE pjc.job_id IN (${ph})
+         ORDER BY pjc.job_id, pjc.sequence_no ASC`
       )
       .all(...jobIds);
   }
@@ -423,6 +429,13 @@ export function listManagerQuotationAudit(db, quotationRef) {
        ORDER BY requested_at_iso DESC`
     )
     .all(qid);
+
+  let materialTypeName = '';
+  const mtId = String(quotation?.materialTypeId || '').trim();
+  if (mtId) {
+    const mtRow = db.prepare(`SELECT name FROM setup_material_types WHERE material_type_id = ?`).get(mtId);
+    materialTypeName = String(mtRow?.name || '').trim();
+  }
 
   const orderTotal = Number(qRow?.total_ngn) || 0;
   const bookedPaid = Number(qRow?.paid_ngn) || 0;
@@ -451,6 +464,11 @@ export function listManagerQuotationAudit(db, quotationRef) {
           managerClearedAtIso: qRow.manager_cleared_at_iso,
           managerFlaggedAtIso: qRow.manager_flagged_at_iso,
           managerProductionApprovedAtIso: qRow.manager_production_approved_at_iso,
+          materialTypeId: mtId || null,
+          materialTypeName: materialTypeName || null,
+          materialGauge: quotation?.materialGauge || null,
+          materialColor: quotation?.materialColor || null,
+          materialDesign: quotation?.materialDesign || null,
         }
       : null,
     ledgerEntries,

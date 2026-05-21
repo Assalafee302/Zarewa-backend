@@ -44,7 +44,15 @@ import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { mergeSupplierProfilePatch, validateAndNormalizeSupplierProfile } from './supplierProfile.js';
+import {
+  mergeSupplierProfilePatch,
+  parseSupplierProfileJson,
+  validateAndNormalizeSupplierProfile,
+} from './supplierProfile.js';
+import {
+  assertNoDuplicateSupplierIdentity,
+  findSupplierIdentityConflict,
+} from './supplierDedupe.js';
 import {
   enrichSalesReceiptRowsWithCashFromLedger,
   getQuotation,
@@ -3711,6 +3719,8 @@ export function nextSupplierIdFromDb(db) {
 export function insertSupplier(db, row, branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) throw new Error('Supplier name is required.');
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  assertNoDuplicateSupplierIdentity(db, bid, { name, supplierProfile: row.supplierProfile }, null);
   const id = String(row.supplierID ?? '').trim() || nextSupplierIdFromDb(db);
   let profileJson = null;
   if (row.supplierProfile != null && typeof row.supplierProfile === 'object') {
@@ -3738,12 +3748,45 @@ export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID
   const name = String(row.name ?? '').trim();
   if (!name) return { ok: false, error: 'Supplier name is required.' };
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const curRow = db
+    .prepare(`SELECT name, supplier_profile_json FROM suppliers WHERE supplier_id = ? AND branch_id = ?`)
+    .get(supplierID, bid);
+  if (!curRow) return { ok: false, error: 'Supplier not found.' };
+  let mergedProfileForCheck = parseSupplierProfileJson(curRow.supplier_profile_json);
+  if (row.supplierProfile != null && typeof row.supplierProfile === 'object') {
+    mergedProfileForCheck = mergeSupplierProfilePatch(
+      curRow.supplier_profile_json,
+      row.supplierProfile
+    );
+  }
+  const conflict = findSupplierIdentityConflict(
+    db,
+    bid,
+    { name, supplierProfile: mergedProfileForCheck },
+    supplierID
+  );
+  if (conflict) {
+    const label =
+      conflict.field === 'name'
+        ? 'company name'
+        : conflict.field === 'phone'
+          ? 'phone number'
+          : conflict.field === 'email'
+            ? 'email address'
+            : conflict.field === 'registry'
+              ? 'RC/VAT registration'
+              : 'bank account number';
+    return {
+      ok: false,
+      error: `A supplier with this ${label} is already registered (${conflict.supplierId}).`,
+      code: 'DUPLICATE_SUPPLIER_REGISTRATION',
+      existingSupplierId: conflict.supplierId,
+      conflictField: conflict.field,
+    };
+  }
   let profileJson = undefined;
   if (row.supplierProfile != null && typeof row.supplierProfile === 'object') {
-    const cur = db
-      .prepare(`SELECT supplier_profile_json FROM suppliers WHERE supplier_id = ? AND branch_id = ?`)
-      .get(supplierID, bid);
-    const merged = mergeSupplierProfilePatch(cur?.supplier_profile_json, row.supplierProfile);
+    const merged = mergeSupplierProfilePatch(curRow.supplier_profile_json, row.supplierProfile);
     const v = validateAndNormalizeSupplierProfile(merged);
     if (!v.ok) return { ok: false, error: v.error };
     profileJson = JSON.stringify(v.profile);

@@ -956,6 +956,36 @@ describe.sequential('Zarewa API', () => {
     expect(row.supplierProfile?.bankAccounts?.[0]?.accountNumber).toBe('0011223344');
   });
 
+  it('POST /api/suppliers rejects duplicate name in branch (normalized)', async () => {
+    const first = await agent.post('/api/suppliers').send({
+      name: 'Dup Test Metals Ltd',
+      city: 'Kano',
+    });
+    expect(first.status).toBe(201);
+    const res = await agent.post('/api/suppliers').send({
+      name: 'Dup Test Metals Limited',
+      city: 'Abuja',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('DUPLICATE_SUPPLIER_REGISTRATION');
+    expect(res.body.existingSupplierId).toBe(first.body.supplierID);
+  });
+
+  it('POST /api/suppliers rejects duplicate phone in profile', async () => {
+    const first = await agent.post('/api/suppliers').send({
+      name: 'Phone Dup Alpha',
+      supplierProfile: { phoneMain: '08039998877' },
+    });
+    expect(first.status).toBe(201);
+    const res = await agent.post('/api/suppliers').send({
+      name: 'Phone Dup Beta',
+      supplierProfile: { phoneMain: '+2348039998877' },
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('DUPLICATE_SUPPLIER_REGISTRATION');
+    expect(res.body.conflictField).toBe('phone');
+  });
+
   it('PATCH /api/suppliers/:id updates name and PO supplier_name', async () => {
     const create = await agent.post('/api/suppliers').send({ name: 'Temp Co', city: 'Lagos' });
     const sid = create.body.supplierID;

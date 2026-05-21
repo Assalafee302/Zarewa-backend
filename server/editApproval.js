@@ -231,7 +231,8 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
   if (!editMutationRequiresSecondApproval(user)) {
     try {
       const r = db.transaction(runWrite)();
-      if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+      if (!r.ok && (r.code === 'DUPLICATE_CUSTOMER_REGISTRATION' || r.code === 'DUPLICATE_SUPPLIER_REGISTRATION'))
+        return res.status(409).json(r);
       return res.status(200).json(r);
     } catch (e) {
       if (e && e.__clientJson) return res.status(400).json(e.__clientJson);
@@ -252,7 +253,8 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
       consumeEditApprovalInTransaction(db, aid, entityKind, entityId);
       return runWrite();
     })();
-    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+    if (!r.ok && (r.code === 'DUPLICATE_CUSTOMER_REGISTRATION' || r.code === 'DUPLICATE_SUPPLIER_REGISTRATION'))
+      return res.status(409).json(r);
     return res.status(200).json(r);
   } catch (e) {
     if (e && e.__clientJson) return res.status(400).json(e.__clientJson);
@@ -273,7 +275,8 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
   const stripped = stripEditApprovalFromBody(body || {});
   if (!editMutationRequiresSecondApproval(user)) {
     const r = executeWrite(stripped, { withinEditApprovalTransaction: false });
-    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+    if (!r.ok && (r.code === 'DUPLICATE_CUSTOMER_REGISTRATION' || r.code === 'DUPLICATE_SUPPLIER_REGISTRATION'))
+      return res.status(409).json(r);
     return res.status(r.ok ? 200 : 400).json(r);
   }
   const aid = String(body?.editApprovalId ?? '').trim();
@@ -292,7 +295,8 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
       if (!out || out.ok === false) throw new Error(out?.error || 'Update rejected.');
       return out;
     })();
-    if (!r.ok && r.code === 'DUPLICATE_CUSTOMER_REGISTRATION') return res.status(409).json(r);
+    if (!r.ok && (r.code === 'DUPLICATE_CUSTOMER_REGISTRATION' || r.code === 'DUPLICATE_SUPPLIER_REGISTRATION'))
+      return res.status(409).json(r);
     return res.status(200).json(r);
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e.message || e) });

@@ -2766,6 +2766,15 @@ export function registerHttpApi(app, db) {
       const id = write.insertSupplier(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       res.status(201).json({ ok: true, supplierID: id });
     } catch (e) {
+      if (e?.code === 'DUPLICATE_SUPPLIER_REGISTRATION') {
+        return res.status(409).json({
+          ok: false,
+          error: String(e.message || e),
+          code: e.code,
+          existingSupplierId: e.existingSupplierId,
+          conflictField: e.conflictField,
+        });
+      }
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }

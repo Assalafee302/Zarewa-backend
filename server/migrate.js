@@ -5,6 +5,7 @@ import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
 import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../shared/lib/poLineTypes.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
+import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
 import { debugBootLog } from './debugBootLog.js';
 
 /**
@@ -764,6 +765,7 @@ export function runMigrations(db) {
   migrateQuotationLineCatalog2026(db);
   migrateCoilAluzincColours2026(db);
   migrateMergeDuplicateSetupColours(db);
+  migrateMergeDuplicateSuppliersOnBoot(db);
   migrateStoneCoatedAndPricingArch(db);
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);

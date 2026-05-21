@@ -109,17 +109,49 @@ export function isCoilMeterBasisLine(line) {
   );
 }
 
+/** Weighbridge vs PO paperwork — coil lines within this gap are treated as fully received. */
+export const COIL_RECEIPT_SHORT_KG_MIN = 50;
+export const COIL_RECEIPT_SHORT_PCT = 0.02;
+
+export function coilReceiptShortToleranceKg(qtyOrdered) {
+  const q = Number(qtyOrdered) || 0;
+  if (q <= 0) return COIL_RECEIPT_SHORT_KG_MIN;
+  return Math.max(COIL_RECEIPT_SHORT_KG_MIN, q * COIL_RECEIPT_SHORT_PCT);
+}
+
+/**
+ * Open quantity still receivable on a PO line (0 when coil short-land is within tolerance).
+ * @param {{ lineType?: string; productID?: string; qtyOrdered?: number; qtyReceived?: number }} line
+ * @param {PoLineType} [lineType]
+ */
+export function poLineOpenQtyForReceiving(line, lineType) {
+  const lt = lineType || inferLineTypeFromProduct(line?.productID, null, line);
+  const ordered = Number(line?.qtyOrdered ?? line?.qty_ordered) || 0;
+  const received = Number(line?.qtyReceived ?? line?.qty_received) || 0;
+  const gap = Math.max(0, ordered - received);
+  if (gap <= 0) return 0;
+  if (lt === 'coil_kg' || lt === 'coil_meter') {
+    if (gap <= coilReceiptShortToleranceKg(ordered)) return 0;
+  }
+  return gap;
+}
+
+/** @param {{ lineType?: string; productID?: string; qtyOrdered?: number; qtyReceived?: number }} line */
+export function poLineIsOpenForReceiving(line) {
+  const lt = inferLineTypeFromProduct(line?.productID, null, line);
+  return poLineOpenQtyForReceiving(line, lt) > 0;
+}
+
 /**
  * @param {{ lineType?: string; qtyOrdered?: number; qtyReceived?: number }} line
  * @param {PoLineType} lineType
  */
 export function poLineQtyLabel(line, lineType) {
-  const q = Number(line?.qtyOrdered) || 0;
-  const rec = Number(line?.qtyReceived) || 0;
-  const open = Math.max(0, q - rec);
-  if (lineType === 'stone_meter' || lineType === 'coil_meter') return `${open.toLocaleString()} m open`;
-  if (lineType === 'stone_flatsheet') return `${open.toLocaleString()} sheets open`;
-  if (lineType === 'accessory') return `${open.toLocaleString()} units open`;
+  const lt = lineType || inferLineTypeFromProduct(line?.productID, null, line);
+  const open = poLineOpenQtyForReceiving(line, lt);
+  if (lt === 'stone_meter' || lt === 'coil_meter') return `${open.toLocaleString()} m open`;
+  if (lt === 'stone_flatsheet') return `${open.toLocaleString()} sheets open`;
+  if (lt === 'accessory') return `${open.toLocaleString()} units open`;
   return `${open.toLocaleString()} kg open`;
 }
 

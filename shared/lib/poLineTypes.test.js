@@ -8,6 +8,9 @@ import {
   stoneFlatsheetSheetsToM2,
   grnKindForPoLine,
   STONE_FLATSHEET_WIDTH_M,
+  poLineOpenQtyForReceiving,
+  poLineIsOpenForReceiving,
+  coilReceiptShortToleranceKg,
 } from './poLineTypes.js';
 
 describe('poLineTypes', () => {
@@ -65,5 +68,23 @@ describe('poLineTypes', () => {
     expect(grnKindForPoLine({ lineType: 'stone_flatsheet' })).toBe('stone_flatsheet');
     expect(grnKindForPoLine({ lineType: 'coil_meter' })).toBe('coil');
     expect(PO_LINE_TYPES.length).toBe(5);
+  });
+
+  it('treats coil weighbridge short-land within tolerance as fully received', () => {
+    const line = {
+      lineType: 'coil_kg',
+      productID: 'COIL-ALU',
+      qtyOrdered: 3140,
+      qtyReceived: 3091,
+    };
+    expect(coilReceiptShortToleranceKg(3140)).toBeGreaterThanOrEqual(49);
+    expect(poLineOpenQtyForReceiving(line, 'coil_kg')).toBe(0);
+    expect(poLineIsOpenForReceiving(line)).toBe(false);
+    expect(
+      poLineOpenQtyForReceiving(
+        { lineType: 'coil_kg', productID: 'COIL-ALU', qtyOrdered: 3140, qtyReceived: 3000 },
+        'coil_kg'
+      )
+    ).toBe(140);
   });
 });

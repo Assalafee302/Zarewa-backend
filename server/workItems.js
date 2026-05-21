@@ -169,7 +169,9 @@ function documentTypeDefaultOfficeKey(documentType) {
   if (type === 'payment_request' || type === 'bank_recon_exceptions' || type === 'po_transport_payment') {
     return 'finance';
   }
-  if (type === 'material_request' || type === 'in_transit_load') return 'procurement';
+  if (type === 'material_request' || type === 'in_transit_load' || type === 'coil_grn_short_receipt') {
+    return 'procurement';
+  }
   if (type === 'machine_incident' || type === 'maintenance_work_order' || type === 'maintenance_plan') {
     return 'operations';
   }

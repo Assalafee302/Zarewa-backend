@@ -1,5 +1,6 @@
 import { refundOutstandingAmount } from './refundsStore.js';
 import { workItemShowsOnWorkspaceUnifiedInbox } from './workItemPersonalInbox.js';
+import { userMaySeeManagementApprovalQueues } from './workItemPersonalInbox.js';
 import { workItemNeedsActionForUser } from './workspaceInboxBuckets.js';
 
 /**
@@ -193,6 +194,29 @@ export function buildWorkspaceNotifications({
         state: { focusTab: 'suppliers' },
       });
     }
+  }
+
+  const coilShortReceiptOpen = workItems.filter(
+    (item) =>
+      String(item?.documentType || '').trim().toLowerCase() === 'coil_grn_short_receipt' &&
+      String(item?.status || '').trim().toLowerCase() === 'open'
+  );
+  if (
+    userMaySeeManagementApprovalQueues(roleKey, permissions) &&
+    coilShortReceiptOpen.length > 0
+  ) {
+    const sample = coilShortReceiptOpen[0];
+    items.push({
+      id: 'coil-short-receipt-md',
+      title: 'Coil received under PO weight',
+      detail:
+        coilShortReceiptOpen.length === 1
+          ? sample?.summary || 'A store receipt landed below the ordered kg — review with procurement.'
+          : `${coilShortReceiptOpen.length} coil receipt(s) below ordered kg — review weighbridge variance.`,
+      severity: 'warning',
+      path: '/operations',
+      state: { focusOpsTab: 'inventory' },
+    });
   }
 
   const actionableWorkItems = workItems.filter(

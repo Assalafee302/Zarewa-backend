@@ -7,6 +7,7 @@ export const MANAGER_INBOX_DOCUMENT_TYPES = new Set([
   'production_gate',
   'flagged_transaction',
   'conversion_review',
+  'coil_grn_short_receipt',
 ]);
 
 export function isManagerInboxWorkItemDocType(documentType) {

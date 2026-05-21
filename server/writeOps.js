@@ -15,7 +15,11 @@ import {
   isStoneMeterProductRow,
   isStoneMeterQuotationLinesJson,
 } from './stoneInventory.js';
-import { stoneFlatsheetSheetsToM2 } from '../shared/lib/poLineTypes.js';
+import {
+  coilReceiptShortToleranceKg,
+  inferLineTypeFromProduct,
+  stoneFlatsheetSheetsToM2,
+} from '../shared/lib/poLineTypes.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
@@ -40,6 +44,7 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
 }
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
+import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
@@ -1870,6 +1875,7 @@ export function confirmGrn(
   const coilYy = String(new Date().getFullYear()).slice(-2);
 
   const coilNumbers = [];
+  const mdShortReceiptAlerts = [];
 
   db.transaction(() => {
     let seq = existingLots;
@@ -2033,12 +2039,26 @@ export function confirmGrn(
         econ.landedCostNgn,
         econ.unitCostNgnPerKg
       );
-      updLine.run(qty, poID, line.line_key);
+      const creditQty = w != null ? Math.max(qty, w) : qty;
+      const orderedKg = Number(line.qty_ordered) || 0;
+      const priorReceivedKg = Number(line.qty_received) || 0;
+      const totalReceivedKg = priorReceivedKg + creditQty;
+      if (orderedKg > 0 && totalReceivedKg < orderedKg) {
+        mdShortReceiptAlerts.push({
+          lineKey: line.line_key,
+          productName: line.product_name,
+          coilNo,
+          orderedKg,
+          receivedKg: totalReceivedKg,
+          shortKg: orderedKg - totalReceivedKg,
+        });
+      }
+      updLine.run(creditQty, poID, line.line_key);
       appendMovementTx(db, {
         type: 'STORE_GRN',
         ref: poID,
         productID: e.productID,
-        qty,
+        qty: creditQty,
         detail: `${coilNo} · ${e.location || 'main store'}`,
         dateISO: grnDateISO,
         unitPriceNgn: econ.unitCostNgnPerKg ?? null,
@@ -2056,7 +2076,21 @@ export function confirmGrn(
       }
     }
 
-    const refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
+    const snapShortCoil = db.prepare(
+      `UPDATE purchase_order_lines SET qty_received = qty_ordered WHERE po_id = ? AND line_key = ?`
+    );
+    let refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
+    for (const l of refreshed) {
+      const lt = String(l.line_type || '').trim() || inferLineTypeFromProduct(l.product_id, null, l);
+      if (lt !== 'coil_kg' && lt !== 'coil_meter') continue;
+      const ordered = Number(l.qty_ordered) || 0;
+      const received = Number(l.qty_received) || 0;
+      const gap = ordered - received;
+      if (gap > 0 && gap <= coilReceiptShortToleranceKg(ordered)) {
+        snapShortCoil.run(poID, l.line_key);
+      }
+    }
+    refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
     const allIn = refreshed.every((l) => l.qty_received >= l.qty_ordered);
     const nextStatus = allIn ? 'Received' : po.status;
     db.prepare(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`).run(nextStatus, poID);
@@ -2098,7 +2132,16 @@ export function confirmGrn(
     }
   })();
 
-  return { ok: true, coilNos: coilNumbers };
+  for (const alert of mdShortReceiptAlerts) {
+    notifyMdCoilShortReceipt(db, {
+      poID,
+      ...alert,
+      actor: opts?.actor,
+      branchId: coilBranch,
+    });
+  }
+
+  return { ok: true, coilNos: coilNumbers, mdShortReceiptAlerts };
 }
 
 /**

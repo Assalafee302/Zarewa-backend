@@ -178,6 +178,8 @@ import {
   completeProductionJob,
   listProductionJobCoilsForJob,
   listProductionJobCoils,
+  listCoilProductionHolders,
+  reconcileCoilReservationFromProductionJobs,
   previewProductionConversion,
   saveProductionCoilRunLogDraft,
   returnProductionJobToPlanned,
@@ -3823,6 +3825,46 @@ export function registerHttpApi(app, db) {
   app.patch('/api/coil-lots/:coilNo/location', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = write.setCoilLotLocation(db, req.params.coilNo, req.body?.location, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/coil-lots/:coilNo/production-holders', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const coil = db.prepare(`SELECT coil_no, branch_id, qty_reserved FROM coil_lots WHERE coil_no = ?`).get(coilNo);
+      if (!coil) return res.status(404).json({ ok: false, error: 'Coil not found.' });
+      const br = write.assertCoilInWorkspaceBranch(coil, req.workspaceBranchId);
+      if (!br.ok) return res.status(403).json({ ok: false, error: br.error });
+      const holders = listCoilProductionHolders(db, coilNo);
+      const expectedReserved = holders
+        .filter((h) => h.jobStatus === 'Planned' || h.jobStatus === 'Running')
+        .reduce((s, h) => s + (Number(h.openingWeightKg) || 0), 0);
+      const bookedReserved = Math.max(0, Number(coil.qty_reserved) || 0);
+      res.json({
+        ok: true,
+        coilNo,
+        bookedReservedKg: bookedReserved,
+        expectedReservedKg: expectedReserved,
+        orphanReservedKg: Math.max(0, bookedReserved - expectedReserved),
+        holders,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/coil-lots/:coilNo/reconcile-reservation', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = reconcileCoilReservationFromProductionJobs(db, coilNo, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
       });

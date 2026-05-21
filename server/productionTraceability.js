@@ -33,7 +33,7 @@ import {
 import { listMasterData } from './masterData.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
-import { insertProductionOffcutPoolIssueTx } from './writeOps.js';
+import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -2697,6 +2697,111 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
     else db.transaction(runBody)();
 
     return { ok: true, stoneFlatsheetStockWarnings: sfPlan.stoneFlatsheetStockWarnings ?? [] };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * All production_job_coils rows for a coil (any job status) — for traceability / orphan diagnosis.
+ */
+export function listCoilProductionHolders(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return [];
+  const rows = db
+    .prepare(
+      `SELECT pjc.id, pjc.job_id, pjc.coil_no, pjc.opening_weight_kg, pjc.closing_weight_kg,
+        pjc.consumed_weight_kg, pjc.meters_produced, pjc.allocation_status, pjc.allocated_at_iso,
+        pj.status AS job_status, pj.cutting_list_id, pj.quotation_ref,
+        cl.customer AS cutting_list_customer
+       FROM production_job_coils pjc
+       INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
+       LEFT JOIN cutting_lists cl ON cl.id = pj.cutting_list_id
+       WHERE pjc.coil_no = ?
+       ORDER BY pjc.allocated_at_iso DESC, pjc.sequence_no ASC, pjc.id ASC`
+    )
+    .all(cn);
+  return rows.map((row) => ({
+    id: row.id,
+    jobID: row.job_id,
+    coilNo: row.coil_no,
+    openingWeightKg: safeNumber(row.opening_weight_kg),
+    closingWeightKg: safeNumber(row.closing_weight_kg),
+    consumedWeightKg: safeNumber(row.consumed_weight_kg),
+    metersProduced: safeNumber(row.meters_produced),
+    allocationStatus: row.allocation_status ?? '',
+    allocatedAtISO: row.allocated_at_iso ?? '',
+    jobStatus: row.job_status ?? '',
+    cuttingListId: row.cutting_list_id ?? '',
+    quotationRef: row.quotation_ref ?? '',
+    customer: row.cutting_list_customer ?? '',
+  }));
+}
+
+/** Sum of opening_weight_kg on Planned + Running jobs for one coil. */
+export function expectedCoilReservedKgFromJobs(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return 0;
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(pjc.opening_weight_kg), 0) AS kg
+       FROM production_job_coils pjc
+       INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
+       WHERE pjc.coil_no = ? AND pj.status IN ('Planned', 'Running')`
+    )
+    .get(cn);
+  return clampNonNegative(row?.kg);
+}
+
+/**
+ * Reset coil_lots.qty_reserved to match active (Planned/Running) production allocations.
+ * Fixes orphan reserved kg when no job holds the coil in the UI.
+ */
+export function reconcileCoilReservationFromProductionJobs(db, coilNo, opts = {}) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return { ok: false, error: 'Coil number is required.' };
+  const coil = coilRow(db, cn);
+  if (!coil) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
+  if (!br.ok) return br;
+
+  const expectedReserved = expectedCoilReservedKgFromJobs(db, cn);
+  const beforeReserved = clampNonNegative(coil.qty_reserved);
+
+  if (Math.abs(beforeReserved - expectedReserved) <= 0.0001) {
+    return {
+      ok: true,
+      coilNo: cn,
+      unchanged: true,
+      qtyReservedBefore: beforeReserved,
+      qtyReservedAfter: expectedReserved,
+      expectedReserved,
+      freedKg: 0,
+    };
+  }
+
+  try {
+    db.transaction(() => {
+      db.prepare(`UPDATE coil_lots SET qty_reserved = ? WHERE coil_no = ?`).run(expectedReserved, cn);
+      updateCoilDerivedStateTx(db, cn);
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'coil.reconcile_reservation',
+        entityKind: 'coil_lot',
+        entityId: cn,
+        note: `Reserved kg reconciled: ${beforeReserved.toFixed(2)} → ${expectedReserved.toFixed(2)} (planned/running jobs only)`,
+        details: { coilNo: cn, qtyReservedBefore: beforeReserved, qtyReservedAfter: expectedReserved },
+      });
+    })();
+    return {
+      ok: true,
+      coilNo: cn,
+      unchanged: false,
+      qtyReservedBefore: beforeReserved,
+      qtyReservedAfter: expectedReserved,
+      expectedReserved,
+      freedKg: Math.max(0, beforeReserved - expectedReserved),
+    };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

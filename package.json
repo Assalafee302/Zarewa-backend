@@ -13,6 +13,7 @@
     "mysql:smoke": "node scripts/mysql-smoke.mjs",
     "mysql:repair-material-incidents": "node scripts/repair-material-incident-indexes.mjs",
     "db:sync-opening-coils": "node scripts/sync-opening-coil-register-mysql.mjs",
+    "db:reconcile-coil-reservation": "node scripts/reconcile-coil-reservation.mjs",
     "db:wipe": "node scripts/wipe-local-mysql.mjs",
     "db:fresh-empty": "node scripts/fresh-empty-database.mjs",
     "wipe:e2e-db": "node scripts/wipe-playwright-e2e.mjs",

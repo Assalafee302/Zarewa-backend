@@ -2426,6 +2426,81 @@ describe.sequential('Zarewa API', () => {
     expect(coils.length).toBe(2);
   });
 
+  it('GET production-holders and POST reconcile-reservation fix orphan qty_reserved', async () => {
+    const coilNo = 'CL-API-ORPHAN-RES';
+    const sup = await agent.post('/api/suppliers').send({ name: 'Orphan Res Supplier', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Orphan Res Supplier',
+      orderDateISO: '2026-03-29',
+      expectedDeliveryISO: '',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L-OR',
+          productID: 'COIL-ALU',
+          productName: 'Aluminium coil',
+          qtyOrdered: 5000,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    await agent.post(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/grn`).send({
+      entries: [
+        {
+          lineKey: 'L-OR',
+          productID: 'COIL-ALU',
+          qtyReceived: 5000,
+          weightKg: 5000,
+          coilNo,
+          location: 'Bay',
+        },
+      ],
+      supplierID: sup.body.supplierID,
+      supplierName: 'Orphan Res Supplier',
+    });
+    const cl = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 10 }],
+    });
+    expect(cl.status).toBe(201);
+    const pj = await agent.post('/api/production-jobs').send({
+      cuttingListId: cl.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 10,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(pj.status).toBe(201);
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(pj.body.jobID)}/allocations`).send({
+      allocations: [{ coilNo, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    db.prepare(`UPDATE coil_lots SET qty_reserved = 5000 WHERE coil_no = ?`).run(coilNo);
+    const holders = await agent.get(`/api/coil-lots/${encodeURIComponent(coilNo)}/production-holders`);
+    expect(holders.status).toBe(200);
+    expect(holders.body.orphanReservedKg).toBeGreaterThan(4000);
+    expect(holders.body.expectedReservedKg).toBe(800);
+    const fix = await agent.post(`/api/coil-lots/${encodeURIComponent(coilNo)}/reconcile-reservation`).send({});
+    expect(fix.status).toBe(200);
+    expect(fix.body.freedKg).toBeGreaterThan(4000);
+    expect(fix.body.qtyReservedAfter).toBe(800);
+    const boot = await agent.get('/api/bootstrap');
+    const lot = boot.body.coilLots.find((c) => c.coilNo === coilNo);
+    expect(lot.qtyReserved).toBe(800);
+  });
+
   it('conversion preview flags manager review when actual yield breaches references', async () => {
     const sup = await agent.post('/api/suppliers').send({ name: 'Alert Coil Supplier', city: 'Kano' });
     expect(sup.status).toBe(201);

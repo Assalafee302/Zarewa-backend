@@ -2821,7 +2821,7 @@ export function receiveFinishedGoods(
   return { ok: true };
 }
 
-function assertCoilInWorkspaceBranch(row, workspaceBranchId) {
+export function assertCoilInWorkspaceBranch(row, workspaceBranchId) {
   const expected = String(workspaceBranchId || DEFAULT_BRANCH_ID).trim();
   const got = String(row.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   if (got !== expected) {

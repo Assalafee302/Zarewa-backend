@@ -315,10 +315,12 @@ import {
 } from './inTransitOps.js';
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
+import { runHelpChat } from './helpChat.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
 const bankFinanceImportBuckets = new Map();
 const aiChatBuckets = new Map();
+const helpChatBuckets = new Map();
 
 const STRICT_BRANCH_AUDIT_TABLES = [
   { table: 'customers', idColumn: 'customer_id' },
@@ -575,6 +577,40 @@ export function registerHttpApi(app, db) {
       return res.status(502).json({ ok: false, error: String(e.message || e) });
     }
   }
+  );
+
+  app.get('/api/help/status', requireAuth, (_req, res) => {
+    res.json({ ok: true, available: true });
+  });
+
+  app.post(
+    '/api/help/chat',
+    requireAuth,
+    rateLimitAuthedUser(helpChatBuckets, 'help-chat', 40, 60_000),
+    async (req, res) => {
+      try {
+        const { message, messages, pathname } = req.body || {};
+        const result = await runHelpChat({
+          message: typeof message === 'string' ? message : '',
+          messages,
+          pathname: typeof pathname === 'string' ? pathname : '',
+          userDisplay: req.user?.displayName,
+        });
+        return res.json({
+          ok: true,
+          message: result.content,
+          source: result.source,
+          links: Array.isArray(result.links) ? result.links : [],
+        });
+      } catch (e) {
+        const code = e?.code;
+        if (code === 'HELP_BAD_REQUEST') {
+          return res.status(400).json({ ok: false, error: String(e.message || e) });
+        }
+        console.error('Help chat error', e);
+        return res.status(502).json({ ok: false, error: String(e.message || e) });
+      }
+    }
   );
 
   app.get(

@@ -76,6 +76,19 @@ describe.sequential('Zarewa API', () => {
     expect(res.body.ok).toBe(false);
   });
 
+  it('POST /api/help/chat returns built-in answer for receipt questions', async () => {
+    const helpAgent = request.agent(app);
+    await loginAs(helpAgent, 'sales.staff', 'Sales@123');
+    const res = await helpAgent
+      .post('/api/help/chat')
+      .send({ message: 'How do I add a receipt?', pathname: '/sales' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.source).toBe('kb');
+    expect(String(res.body.message)).toMatch(/payment|receipt/i);
+    expect(Array.isArray(res.body.links)).toBe(true);
+  });
+
   it('GET /api/ai/status reports mode access by role', async () => {
     process.env.ZAREWA_AI_API_KEY = 'test-key';
     const salesAgent = request.agent(app);

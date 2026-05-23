@@ -40,6 +40,7 @@ Prioritize by:
 - Refunds on a quotation are blocked until all receipts on that quote are **Cleared**.
 - Sales cannot “amend” a receipt by re-posting — Finance **reverses** the wrong row, then Sales posts once with the correct amount.
 - Payments of **₦100,000 and above** require the same amount typed twice in Sales (confirm amount).
+- Sales always records the **full bank/cash amount on the quotation** (no RECEIPT/OVERPAY split at post). Finance may adjust allocation later if needed.
 - Sales can identify and propose correction.
 - Finance validates evidence and confirms treasury impact on **Finance & accounts → Receipts**.
 - Manager role approves high-risk reversals where policy requires.

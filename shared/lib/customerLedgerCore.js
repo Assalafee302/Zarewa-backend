@@ -172,7 +172,8 @@ export function planAdvanceApplied(entries, { customerID, customerName, quotatio
 }
 
 /**
- * Plan RECEIPT / OVERPAY_ADVANCE rows for a quotation payment.
+ * Plan a quotation payment as one RECEIPT for the full cash amount (no RECEIPT/OVERPAY split at post time).
+ * Finance may adjust allocation later via receipt split correction.
  * @param {unknown} entries — unused for due calculation (quotation row paid/total is authoritative).
  * @param {{
  *   customerID: string,
@@ -183,7 +184,7 @@ export function planAdvanceApplied(entries, { customerID, customerName, quotatio
  *   bankReference?: string,
  *   dateISO?: string,
  *   fullAmountAsReceipt?: boolean,
- * }} opts — set `fullAmountAsReceipt` to post the full cash amount as one RECEIPT (no OVERPAY split; paid may exceed quote total).
+ * }} opts — `fullAmountAsReceipt` is ignored (kept for API compatibility); always full amount on quote.
  */
 export function planReceiptWithQuotation(entries, {
   customerID,
@@ -193,7 +194,6 @@ export function planReceiptWithQuotation(entries, {
   paymentMethod,
   bankReference,
   dateISO,
-  fullAmountAsReceipt,
 }) {
   const amt = Math.round(Number(amountNgn) || 0);
   if (amt <= 0) return { ok: false, error: 'Enter a positive amount.' };
@@ -201,85 +201,18 @@ export function planReceiptWithQuotation(entries, {
 
   const due = amountDueOnQuotationFromEntries(entries, quotationRow);
   const ts = dateISO ? `${dateISO}T12:00:00.000Z` : undefined;
-  const fullOnQuote = Boolean(fullAmountAsReceipt);
-
+  const qid = quotationRow.id;
+  let note = 'Payment (receipt)';
   if (due <= 0) {
-    if (fullOnQuote) {
-      return {
-        ok: true,
-        rows: [
-          {
-            type: 'RECEIPT',
-            customerID,
-            customerName,
-            amountNgn: amt,
-            quotationRef: quotationRow.id,
-            paymentMethod,
-            bankReference,
-            note: `Payment on ${quotationRow.id} (full amount as one receipt on quotation; not split to overpay credit)`,
-            atISO: ts,
-          },
-        ],
-      };
-    }
-    return {
-      ok: true,
-      rows: [
-        {
-          type: 'OVERPAY_ADVANCE',
-          customerID,
-          customerName,
-          amountNgn: amt,
-          quotationRef: quotationRow.id,
-          paymentMethod,
-          bankReference,
-          note: `Quote ${quotationRow.id} already settled in records — excess to overpayment credit (not deposit advance)`,
-          atISO: ts,
-        },
-      ],
-    };
+    note = `Payment on ${qid} (quote already settled in records; full amount on quotation)`;
+  } else if (amt > due) {
+    note = `Payment on ${qid} (full amount on quotation; may exceed quote total)`;
+  } else if (amt < due) {
+    note = 'Part payment (receipt)';
+  } else {
+    note = 'Full settlement (receipt)';
   }
 
-  if (amt <= due) {
-    return {
-      ok: true,
-      rows: [
-        {
-          type: 'RECEIPT',
-          customerID,
-          customerName,
-          amountNgn: amt,
-          quotationRef: quotationRow.id,
-          paymentMethod,
-          bankReference,
-          note: amt < due ? 'Part payment (receipt)' : 'Full settlement (receipt)',
-          atISO: ts,
-        },
-      ],
-    };
-  }
-
-  if (fullOnQuote) {
-    return {
-      ok: true,
-      rows: [
-        {
-          type: 'RECEIPT',
-          customerID,
-          customerName,
-          amountNgn: amt,
-          quotationRef: quotationRow.id,
-          paymentMethod,
-          bankReference,
-          note: `Full payment amount on ${quotationRow.id} as one receipt line (not split to overpay credit; may exceed quote total)`,
-          atISO: ts,
-        },
-      ],
-    };
-  }
-
-  const receiptPart = due;
-  const over = amt - due;
   return {
     ok: true,
     rows: [
@@ -287,22 +220,11 @@ export function planReceiptWithQuotation(entries, {
         type: 'RECEIPT',
         customerID,
         customerName,
-        amountNgn: receiptPart,
-        quotationRef: quotationRow.id,
+        amountNgn: amt,
+        quotationRef: qid,
         paymentMethod,
         bankReference,
-        note: 'Settlement to quotation balance (receipt)',
-        atISO: ts,
-      },
-      {
-        type: 'OVERPAY_ADVANCE',
-        customerID,
-        customerName,
-        amountNgn: over,
-        quotationRef: quotationRow.id,
-        paymentMethod,
-        bankReference,
-          note: `Overpayment vs remaining balance on ${quotationRow.id} → customer credit (refund via Sales refunds, not advance deposit)`,
+        note,
         atISO: ts,
       },
     ],

@@ -68,6 +68,20 @@ describe('refundQuotationMoney', () => {
     expect(String(r.error)).toMatch(/Overpayment/i);
   });
 
+  it('full receipt on quote counts all cash for refund cap (no split companion)', () => {
+    const cashIn = quotationActualCashInNgn({
+      receiptCashNgn: 650_000,
+      advanceAppliedNgn: 0,
+      netOverpayLedgerNgn: 0,
+      companionOverpayOnQuoteNgn: 0,
+      settledQuoteFullOverpayNgn: 0,
+    });
+    expect(cashIn).toBe(650_000);
+    expect(
+      quotationOverpaymentExcessNgn({ cashInNgn: cashIn, quoteTotalNgn: 620_000 })
+    ).toBe(30_000);
+  });
+
   it('dedupes settled-quote repeat overpay when receipt cash is already on file', () => {
     const cashIn = quotationActualCashInNgn({
       receiptCashNgn: 580_400,

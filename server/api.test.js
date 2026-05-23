@@ -735,7 +735,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(apply.body.entry.type).toBe('ADVANCE_APPLIED');
   });
 
-  it('POST /api/ledger/receipt splits overpayment to advance', async () => {
+  it('POST /api/ledger/receipt records full amount on quotation (no split at post)', async () => {
     const before = await agent.get('/api/bootstrap');
     const treasuryAccountId = before.body.treasuryAccounts[0].id;
     const res = await agent.post('/api/ledger/receipt').send({
@@ -749,15 +749,16 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       paymentLines: [{ treasuryAccountId, amountNgn: 650_000, reference: 'RCP-1' }],
     });
     expect(res.status).toBe(201);
-    expect(res.body.receipt.amountNgn).toBe(620_000);
-    expect(res.body.overpay.amountNgn).toBe(30_000);
+    expect(res.body.receipt.amountNgn).toBe(650_000);
+    expect(res.body.overpay).toBeNull();
 
     const sum = await agent.get('/api/customers/CUS-003/summary');
-    expect(sum.body.advanceNgn).toBe(30_000);
+    expect(sum.body.advanceNgn).toBe(0);
 
     const boot = await agent.get('/api/bootstrap');
     const sr = boot.body.receipts.find((r) => r.id === res.body.receipt.id);
     expect(sr).toBeDefined();
+    expect(sr.amountNgn).toBe(650_000);
     expect(sr.ledgerEntryId).toBe(res.body.receipt.id);
   });
 

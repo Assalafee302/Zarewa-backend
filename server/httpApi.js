@@ -6119,9 +6119,7 @@ export function registerHttpApi(app, db) {
         forceDuplicatePost,
         duplicateOverrideReason,
       } = req.body || {};
-      let fullAmountAsReceipt = Boolean(
-        req.body?.fullAmountAsReceipt ?? req.body?.full_amount_as_receipt
-      );
+      const fullAmountAsReceipt = true;
       const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
       if (!customerID || !quotationId) {
         return res.status(400).json({ ok: false, error: 'customerID and quotationId are required' });
@@ -6190,29 +6188,9 @@ export function registerHttpApi(app, db) {
       const paidBooked = Math.round(Number(qtSynced.paidNgn) || 0);
       const dueOnQuote = Math.max(0, quoteTotal - paidBooked);
       const postAmountNgn = Math.round(Number(amountNgn) || 0);
-      if (postAmountNgn > dueOnQuote) {
-        fullAmountAsReceipt = true;
-      }
-      let confirmSettledQuoteOverpayEffective = Boolean(
-        req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay
-      );
-      if (dueOnQuote <= 0 && postAmountNgn > 0) {
-        fullAmountAsReceipt = true;
-        confirmSettledQuoteOverpayEffective = true;
-      }
-      if (
-        dueOnQuote <= 0 &&
-        !fullAmountAsReceipt &&
-        !confirmSettledQuoteOverpayEffective &&
-        !forceDuplicatePost
-      ) {
-        return res.status(409).json({
-          ok: false,
-          error:
-            'This quotation is already marked paid in records. Posting again will book the full amount as overpayment credit only (not a second settlement). Confirm to continue, or use Apply customer advance on another quotation instead.',
-          code: 'QUOTATION_ALREADY_SETTLED',
-        });
-      }
+      const confirmSettledQuoteOverpayEffective =
+        Boolean(req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay) ||
+        (dueOnQuote <= 0 && postAmountNgn > 0);
 
       const entries = listLedgerEntries(db, branchScope);
       const plan = planReceiptWithQuotation(entries, {

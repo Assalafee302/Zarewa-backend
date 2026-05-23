@@ -108,6 +108,32 @@ export function runMigrations(db) {
   if (!q.has('md_price_exception_approved_by_user_id')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN md_price_exception_approved_by_user_id TEXT`);
   }
+  if (!q.has('bm_price_exception_approved_at_iso')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN bm_price_exception_approved_at_iso TEXT`);
+  }
+  if (!q.has('bm_price_exception_approved_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN bm_price_exception_approved_by_user_id TEXT`);
+  }
+  if (!q.has('price_exception_md_review_required')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_review_required INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!q.has('price_exception_md_confirmed_at_iso')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_confirmed_at_iso TEXT`);
+  }
+  if (!q.has('price_exception_md_confirmed_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_confirmed_by_user_id TEXT`);
+  }
+  if (q.has('md_price_exception_approved_at_iso') && q.has('bm_price_exception_approved_at_iso')) {
+    db.exec(`
+      UPDATE quotations
+      SET bm_price_exception_approved_at_iso = md_price_exception_approved_at_iso,
+          bm_price_exception_approved_by_user_id = md_price_exception_approved_by_user_id,
+          price_exception_md_confirmed_at_iso = COALESCE(price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso),
+          price_exception_md_confirmed_by_user_id = COALESCE(price_exception_md_confirmed_by_user_id, md_price_exception_approved_by_user_id)
+      WHERE TRIM(COALESCE(md_price_exception_approved_at_iso, '')) != ''
+        AND TRIM(COALESCE(bm_price_exception_approved_at_iso, '')) = ''
+    `);
+  }
   if (!q.has('archived')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`);
   }

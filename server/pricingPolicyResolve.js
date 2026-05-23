@@ -3,6 +3,11 @@
  */
 
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
+import {
+  materialKeyFromMaterialTypeId,
+  workbookFloorPerMeterForQuotation,
+} from './materialWorkbookQuotationPrice.js';
+import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
 
 export const STONE_COATED_MATERIAL_KEY = 'stone-coated';
 export const STONE_COATED_DESIGN_KEY = 'stone-coated';
@@ -164,9 +169,28 @@ export function serviceLineToFloorCtx(db, line, branchId) {
  * @param {import('better-sqlite3').Database} db
  * @param {object} line
  * @param {string | null} branchId
+ * @param {{ materialTypeId?: string; materialGauge?: string; materialDesign?: string; productName?: string } | null} [headerCtx]
  * @returns {number | null}
  */
-export function floorNgnForServiceLine(db, line, branchId) {
+export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
+  const productName = String(headerCtx?.productName ?? line?.name ?? '').trim();
+  const isMeterSheet =
+    isMeterSheetProductLine(productName) ||
+    (!String(line?.lineKind ?? '').trim() && isMeterSheetProductLine(line?.name));
+  if (isMeterSheet && headerCtx) {
+    const mk =
+      materialKeyFromMaterialTypeId(db, headerCtx.materialTypeId) ||
+      normKey(line?.materialType ?? line?.materialTypeKey ?? '');
+    const wb = workbookFloorPerMeterForQuotation(db, {
+      materialKey: mk,
+      materialTypeId: headerCtx.materialTypeId,
+      gaugeLabel: headerCtx.materialGauge ?? line?.gauge ?? line?.gaugeLabel,
+      designLabel: headerCtx.materialDesign ?? line?.design ?? line?.profile,
+      branchId,
+    });
+    if (wb != null && wb > 0) return wb;
+  }
+
   const lineKind = String(line?.lineKind ?? 'roofing')
     .trim()
     .toLowerCase()
@@ -209,10 +233,10 @@ function effectiveQuotedPerMeter(line) {
  * @param {object} line
  * @param {string | null} branchId
  */
-export function pricingPolicyNumbersForServiceLine(db, line, branchId) {
+export function pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx = null) {
   const gauge = normKey(line?.gauge ?? line?.gaugeLabel ?? '');
   const design = serviceLineToFloorCtx(db, line, branchId).designLabel;
-  const floor = floorNgnForServiceLine(db, line, branchId);
+  const floor = floorNgnForServiceLine(db, line, branchId, headerCtx);
   const band = gauge ? tradingBandForGauge(db, gauge) : defaultTradingBand(db);
   const recRaw = Number(line?.recommendedPricePerMeter);
   let recommended =
@@ -238,11 +262,11 @@ export function pricingPolicyNumbersForServiceLine(db, line, branchId) {
  * @param {object[]} services
  * @param {string | null} branchId
  */
-export function applyPricingSnapshotsToServices(db, services, branchId) {
+export function applyPricingSnapshotsToServices(db, services, branchId, headerCtx = null) {
   if (!Array.isArray(services)) return;
   for (const line of services) {
     if (!line || typeof line !== 'object') continue;
-    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId);
+    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx);
     if (nums.floor != null) line.floorPricePerMeter = nums.floor;
     if (nums.recommended != null) {
       const had = Number(line.recommendedPricePerMeter);

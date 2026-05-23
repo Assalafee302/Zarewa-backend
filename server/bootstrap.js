@@ -41,6 +41,7 @@ import {
 } from './readModel.js';
 import { listMasterData } from './masterData.js';
 import { listPriceListItems } from './pricingOps.js';
+import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
 import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
@@ -200,6 +201,8 @@ export function buildBootstrap(db, opts = {}) {
     masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
     /** Floor list (₦/m) synced from material pricing workbook — used by quotations UI for coil products. */
     priceListItems: salesOk ? listPriceListItems(db) : [],
+    /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
+    materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db) : [],
     treasuryMovements: finOk ? listTreasuryMovements(db) : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],

@@ -17,6 +17,7 @@ import {
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import { productLineKey } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
@@ -1518,6 +1519,13 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
 
       const elig = quotationMeetsRefundEligibility(db, quotationRef);
       if (!elig.ok) return elig;
+      if (elig.mdReviewPending) {
+        return {
+          ok: false,
+          code: 'MD_PRICE_EXCEPTION_CONFIRM_REQUIRED',
+          error: elig.mdReviewError,
+        };
+      }
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,
         quoteTotalNgn: elig.quoteTotalNgn,
@@ -1905,6 +1913,21 @@ export function previewRefundRequest(db, payload) {
     ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef)
     : null;
 
+  const warnings = [];
+  if (
+    quote &&
+    quotationRefundBlockedPendingMdPriceConfirm({
+      bmPriceExceptionApprovedAtISO: quote.bm_price_exception_approved_at_iso,
+      priceExceptionMdReviewRequired: quote.price_exception_md_review_required,
+      priceExceptionMdConfirmedAtISO: quote.price_exception_md_confirmed_at_iso,
+      mdPriceExceptionApprovedAtISO: quote.md_price_exception_approved_at_iso,
+    })
+  ) {
+    warnings.push(
+      'Below-floor pricing was approved by the branch manager. The Managing Director must confirm that exception after production before any customer refund.'
+    );
+  }
+
   const customerID = String(payload.customerID ?? quote?.customer_id ?? '').trim();
   if (!customerID && !quotationRef) return { ok: false, error: 'Customer or Quotation is required.' };
 
@@ -1982,7 +2005,6 @@ export function previewRefundRequest(db, payload) {
   const pricePerMeter = positiveNumber(payload.pricePerMeterNgn) || derivedPricePerMeter;
 
   const suggestedLines = [];
-  const warnings = [];
   const materialDelivered = quotationRef ? quotationHasCompletedDelivery(db, quotationRef) : false;
   const blockedRefundCategories = [];
   if (materialDelivered) {
@@ -2618,7 +2640,14 @@ export function quotationCashInNgn(db, quotationRef) {
 export function quotationMeetsRefundEligibility(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return { ok: false, error: 'Quotation reference is required.' };
-  const q = db.prepare(`SELECT id, paid_ngn, total_ngn, status FROM quotations WHERE id = ?`).get(ref);
+  const q = db
+    .prepare(
+      `SELECT id, paid_ngn, total_ngn, status,
+              bm_price_exception_approved_at_iso, price_exception_md_review_required,
+              price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso
+       FROM quotations WHERE id = ?`
+    )
+    .get(ref);
   if (!q) return { ok: false, error: 'Quotation not found.' };
   const paidNgn = roundMoney(q.paid_ngn);
   const cashInNgn = quotationCashInNgn(db, ref);
@@ -2663,6 +2692,20 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
       ok: false,
       error:
         'Refund requests are only allowed after production is completed or cancelled, or for a paid void quotation.',
+    };
+  }
+  const priceEx = {
+    bmPriceExceptionApprovedAtISO: q.bm_price_exception_approved_at_iso,
+    priceExceptionMdReviewRequired: q.price_exception_md_review_required,
+    priceExceptionMdConfirmedAtISO: q.price_exception_md_confirmed_at_iso,
+    mdPriceExceptionApprovedAtISO: q.md_price_exception_approved_at_iso,
+  };
+  if (quotationRefundBlockedPendingMdPriceConfirm(priceEx)) {
+    return {
+      ok: false,
+      mdReviewPending: true,
+      mdReviewError:
+        'This quotation had a below-floor price approved by the branch manager. The Managing Director must confirm that exception after production before any customer refund.',
     };
   }
   return {

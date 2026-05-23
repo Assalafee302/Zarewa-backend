@@ -32,7 +32,7 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 - **Branch manager** (role key still `sales_manager`): label and permissions updated for branch duties; holds `refunds.approve` for refund decisions alongside MD and **admin** (`*`).
 - **Receipt bank confirmation**: `PATCH /api/sales-receipts/:receiptId/bank-confirmation` with `{ confirmed: boolean }` — requires `finance.pay` or `receipts.post`; audited as `receipt.bank_confirmation`.
 - **Payroll**: draft runs record `md_approved_at_iso` / `md_approved_by_user_id` via `POST /api/hr/payroll-runs/:runId/md-approve` (permission `hr.payroll.md_approve`). HR cannot **lock** a draft until MD approval is recorded.
-- **Price list & production**: canonical rows in `price_list_items`; starting production can be blocked when a quotation is below list price until MD records a price exception (`PATCH /api/quotations/:id/md-price-exception` with `md.price_exception.approve`).
+- **Price list & production**: canonical rows in `price_list_items` and material pricing workbook floors; starting production can be blocked when a quotation is below floor until a **branch manager** records approval (`PATCH /api/quotations/:id/bm-price-exception` with `refunds.approve` and branch-manager role). That approval is **flagged for MD review**; after production, **MD must confirm** (`PATCH /api/quotations/:id/md-price-exception-confirm` with `md.price_exception.approve`) before customer refunds on that quotation.
 - **HR self-service**: staff profiles include `selfServiceEligible`; leave/loan self-apply on **My profile** is gated on that flag (and the user matching their HR record).
 
 ## HR
@@ -58,7 +58,7 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 | Customer refund | Sales-facing roles (`refunds.request`) | Branch manager or **MD** (`refunds.approve`), or **finance** (`finance.approve` on the same decision API), or **admin** (`*`) | Who acts first is organisational; segregation of duties still requires **Finance** to pay out (`finance.pay` / treasury). Operational checklist: [REFUND_OPERATIONS.md](./REFUND_OPERATIONS.md). |
 | Payment request / expense payout | Requesters per module | `finance.approve` / manager flows | Cashier / finance executes pay after approval. |
 | Payroll lock → export | HR (`hr.payroll.manage`) | MD sign-off (`hr.payroll.md_approve`) | Draft run must have `md_approved_at_iso` before lock (unless `admin` `*`). |
-| Below list price → production | — | MD (`md.price_exception.approve`) | Production start blocked until exception recorded on the quotation. |
+| Below floor price → production | Branch manager (`refunds.approve` + `sales_manager` / `branch_manager` role) | MD confirms after production (`md.price_exception.approve`) | BM approval unblocks production; MD confirm required before refund. |
 | Delivery / produced (authoritative) | — | Operations (`deliveries.manage`, `production.manage`, …) | Sales sees status read-only where enforced. |
 | Bank statement lines | Finance post (`finance.post`) | Same role matches lines | `GET /api/bank-reconciliation` is `finance.view`; bulk paste: `POST /api/bank-reconciliation/import`. |
 | Receipt vs bank | Cashier / poster | `PATCH /api/sales-receipts/:id/bank-confirmation` | `finance.pay` or `receipts.post`. |

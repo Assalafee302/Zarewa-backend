@@ -239,7 +239,8 @@ import {
   salesDashboardAlerts,
 } from './readModel.js';
 import {
-  approveMdPriceExceptionForQuotation,
+  approveBranchManagerPriceExceptionForQuotation,
+  confirmMdPriceExceptionReviewForQuotation,
   deletePriceListItem,
   listPriceListItems,
   priceListItemsToCsv,
@@ -2402,17 +2403,63 @@ export function registerHttpApi(app, db) {
   );
 
   app.patch(
-    '/api/quotations/:quotationId/md-price-exception',
+    '/api/quotations/:quotationId/bm-price-exception',
+    requirePermission('refunds.approve'),
+    (req, res) => {
+      try {
+        const qid = String(req.params.quotationId || '');
+        const r = approveBranchManagerPriceExceptionForQuotation(db, qid, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        const quotation = getQuotation(db, qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
+        const pv = quotationPriceViolations(db, rawPv);
+        return res.json({
+          ok: true,
+          quotation: {
+            ...quotation,
+            pricingViolations: pv.violations,
+            pricingHasFloorRows: pv.hasFloorRows,
+          },
+          mdReviewRequired: true,
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not record branch manager price approval.' });
+      }
+    }
+  );
+
+  app.patch(
+    '/api/quotations/:quotationId/md-price-exception-confirm',
     requirePermission('md.price_exception.approve'),
     (req, res) => {
       try {
         const qid = String(req.params.quotationId || '');
-        return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'quotation', qid, () =>
-          approveMdPriceExceptionForQuotation(db, qid, req.user)
-        );
+        const r = confirmMdPriceExceptionReviewForQuotation(db, qid, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        const quotation = getQuotation(db, qid);
+        return res.json({ ok: true, quotation });
       } catch (e) {
         console.error(e);
-        res.status(500).json({ ok: false, error: 'Could not record MD price approval.' });
+        res.status(500).json({ ok: false, error: 'Could not record MD price review confirmation.' });
+      }
+    }
+  );
+
+  /** @deprecated Use PATCH /api/quotations/:id/bm-price-exception */
+  app.patch(
+    '/api/quotations/:quotationId/md-price-exception',
+    requirePermission('refunds.approve'),
+    (req, res) => {
+      try {
+        const qid = String(req.params.quotationId || '');
+        const r = approveBranchManagerPriceExceptionForQuotation(db, qid, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        const quotation = getQuotation(db, qid);
+        return res.json({ ok: true, quotation, deprecated: true });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not record price exception approval.' });
       }
     }
   );
@@ -5715,6 +5762,14 @@ export function registerHttpApi(app, db) {
       });
     } catch (e) {
       console.error(e);
+      if (e?.statusCode === 422 && e?.code) {
+        return res.status(422).json({
+          ok: false,
+          error: String(e.message || ''),
+          code: e.code,
+          details: e.details,
+        });
+      }
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });

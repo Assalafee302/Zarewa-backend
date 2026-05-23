@@ -22,6 +22,8 @@ import {
 } from '../shared/lib/poLineTypes.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
+import { quotationPriceViolations } from './pricingOps.js';
+import { quotationBmPriceExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 
 function enrichQuotationLinesWithMaterialHeader(linesJson) {
@@ -6747,6 +6749,42 @@ function parseQuotationLinesJsonObject(raw) {
   }
 }
 
+const QUOTATION_BELOW_WORKBOOK_FLOOR_CODE = 'quotation_below_workbook_floor';
+
+/**
+ * Block save when roofing / flat sheet product unit prices are below workbook floor (unless MD exception on file).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} quotationId
+ * @param {object} linesJson
+ * @param {string} branchId
+ */
+function assertQuotationProductWorkbookFloor(db, quotationId, linesJson, branchId) {
+  const qid = String(quotationId || '').trim();
+  if (qid) {
+    const row = db
+      .prepare(
+        `SELECT bm_price_exception_approved_at_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`
+      )
+      .get(qid);
+    if (quotationBmPriceExceptionApproved(row)) return;
+  }
+  const row = {
+    id: qid || 'draft-floor-check',
+    lines_json: JSON.stringify(linesJson),
+    branch_id: branchId,
+  };
+  const { violations } = quotationPriceViolations(db, row);
+  const blocked = violations.filter((v) => v.code === 'below_floor' && v.lineCategory === 'products');
+  if (!blocked.length) return;
+  const err = new Error(
+    'One or more product lines (roofing sheet / flat sheet) are below the material pricing workbook floor. Increase the unit price or ask the branch manager to approve a below-floor price exception.'
+  );
+  err.statusCode = 422;
+  err.code = QUOTATION_BELOW_WORKBOOK_FLOOR_CODE;
+  err.details = { violations: blocked };
+  throw err;
+}
+
 function syncQuotationLineRows(db, quotationId, linesJson) {
   db.prepare(`DELETE FROM quotation_lines WHERE quotation_id = ?`).run(quotationId);
   const ins = db.prepare(`
@@ -6788,8 +6826,14 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
-  applyPricingSnapshotsToServices(db, linesJson.products, bid);
-  applyPricingSnapshotsToServices(db, linesJson.services, bid);
+  const pricingHeaderCtx = {
+    materialTypeId: linesJson.materialTypeId,
+    materialGauge: linesJson.materialGauge,
+    materialDesign: linesJson.materialDesign,
+  };
+  applyPricingSnapshotsToServices(db, linesJson.products, bid, pricingHeaderCtx);
+  applyPricingSnapshotsToServices(db, linesJson.services, bid, pricingHeaderCtx);
+  assertQuotationProductWorkbookFloor(db, null, linesJson, bid);
   const totalNgn = sumQuotationLinesJson(linesJson);
   const id = nextQuotationHumanId(db, bid);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -6976,8 +7020,14 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (payload.lines) {
     const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim();
     enrichQuotationLinesWithMaterialHeader(linesJson);
-    applyPricingSnapshotsToServices(db, linesJson.products, bidUpd);
-    applyPricingSnapshotsToServices(db, linesJson.services, bidUpd);
+    const pricingHeaderCtx = {
+      materialTypeId: linesJson.materialTypeId,
+      materialGauge: linesJson.materialGauge,
+      materialDesign: linesJson.materialDesign,
+    };
+    applyPricingSnapshotsToServices(db, linesJson.products, bidUpd, pricingHeaderCtx);
+    applyPricingSnapshotsToServices(db, linesJson.services, bidUpd, pricingHeaderCtx);
+    assertQuotationProductWorkbookFloor(db, quotationId, linesJson, bidUpd);
   } else {
     enrichQuotationLinesWithMaterialHeader(linesJson);
   }

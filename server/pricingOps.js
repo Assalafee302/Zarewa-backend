@@ -7,6 +7,13 @@ import {
   pricingPolicyNumbersForServiceLine,
 } from './pricingPolicyResolve.js';
 import { canReadPriceListItems } from './pricingResolve.js';
+import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
+import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { isBranchManagerApprovalAuthority } from '../shared/workspaceGovernance.js';
+import {
+  quotationFlaggedForMdPriceReview,
+  quotationMdPriceReviewConfirmed,
+} from '../shared/lib/quotationPriceException.js';
 
 function normKey(s) {
   return policyNormKey(s);
@@ -161,11 +168,28 @@ export function floorPricePerMeterForGaugeDesign(db, gaugeKey, designKey, branch
  * @param {import('better-sqlite3').Database} db
  * @param {{ id?: string; lines_json?: string | null; branch_id?: string | null }} quoteRow
  */
+function quotationHasPricingFloorData(db) {
+  let wb = 0;
+  if (canReadMaterialPricingSheetRows(db)) {
+    wb =
+      Number(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM material_pricing_sheet_rows WHERE COALESCE(minimum_price_per_m_ngn, 0) > 0`
+          )
+          .get()?.c
+      ) || 0;
+  }
+  const pl = canReadPriceListItems(db)
+    ? Number(db.prepare(`SELECT COUNT(*) AS c FROM price_list_items`).get()?.c) || 0
+    : 0;
+  return wb > 0 || pl > 0;
+}
+
 export function quotationPriceViolations(db, quoteRow) {
   const violations = [];
   if (!quoteRow?.id) return { violations, hasFloorRows: false };
-  const floorCount = Number(db.prepare(`SELECT COUNT(*) AS c FROM price_list_items`).get()?.c) || 0;
-  if (floorCount === 0) return { violations, hasFloorRows: false };
+  if (!quotationHasPricingFloorData(db)) return { violations, hasFloorRows: false };
   let parsed;
   try {
     parsed = JSON.parse(String(quoteRow.lines_json || '{}'));
@@ -175,9 +199,15 @@ export function quotationPriceViolations(db, quoteRow) {
   const headerGauge = String(parsed?.materialGauge ?? '').trim();
   const headerColour = String(parsed?.materialColor ?? '').trim();
   const headerDesign = String(parsed?.materialDesign ?? '').trim();
+  const headerMaterialTypeId = String(parsed?.materialTypeId ?? '').trim();
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
+  const headerCtx = {
+    materialTypeId: headerMaterialTypeId,
+    materialGauge: headerGauge,
+    materialDesign: headerDesign,
+  };
 
   const withHeader = (line, cat, idx) => ({
     ...line,
@@ -198,6 +228,9 @@ export function quotationPriceViolations(db, quoteRow) {
   linesToCheck.forEach((line) => {
     const idx = line._pricingIdx;
     const cat = line._pricingCat;
+    const isProductMeterSheet = cat === 'products' && isMeterSheetProductLine(line?.name);
+    if (cat === 'products' && !isProductMeterSheet) return;
+
     const gauge = normKey(line?.gauge ?? line?.gaugeLabel ?? '');
     if (!gauge) return;
     const lineKind = String(line?.lineKind ?? 'roofing')
@@ -206,11 +239,12 @@ export function quotationPriceViolations(db, quoteRow) {
       .replace(/-/g, '_');
     const designRaw = normKey(line?.colour ?? line?.color ?? line?.design ?? '');
     const profileRaw = normKey(line?.profile ?? line?.profileName ?? line?.profileKey ?? '');
-    if (lineKind !== 'stone_coated' && !designRaw && !profileRaw) return;
+    if (!isProductMeterSheet && lineKind !== 'stone_coated' && !designRaw && !profileRaw) return;
 
-    const floor = floorNgnForServiceLine(db, line, branchId);
+    const lineHeaderCtx = { ...headerCtx, productName: line?.name };
+    const floor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
     if (floor == null || floor <= 0) return;
-    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId);
+    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, lineHeaderCtx);
     const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
     let effectivePerMeter = unit;
@@ -228,6 +262,7 @@ export function quotationPriceViolations(db, quoteRow) {
         code: 'below_floor',
         lineCategory: cat,
         lineIndex: idx,
+        lineName: String(line?.name ?? '').trim(),
         gauge,
         design,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
@@ -238,11 +273,13 @@ export function quotationPriceViolations(db, quoteRow) {
       });
       return;
     }
+    if (isProductMeterSheet) return;
     if (minAllowed != null && effectivePerMeter + 0.0001 < minAllowed) {
       violations.push({
         code: 'below_trading_band',
         lineCategory: cat,
         lineIndex: idx,
+        lineName: String(line?.name ?? '').trim(),
         gauge,
         design,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
@@ -431,32 +468,124 @@ export function deletePriceListItem(db, id, actor) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ */
+export function quotationHadClosedProduction(db, quotationRef) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return false;
+  const q = db.prepare(`SELECT status FROM quotations WHERE id = ?`).get(ref);
+  if (String(q?.status || '').trim().toLowerCase() === 'void') return true;
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 AS ok FROM production_jobs
+         WHERE quotation_ref = ? AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')
+         LIMIT 1`
+      )
+      .get(ref)?.ok
+  );
+}
+
+/**
+ * Branch manager approves below-floor pricing so production may start; flags MD review before refund.
+ * @param {import('better-sqlite3').Database} db
  * @param {string} quotationId
  * @param {object} actor
  */
-export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
+export function approveBranchManagerPriceExceptionForQuotation(db, quotationId, actor) {
   const qid = String(quotationId || '').trim();
   if (!qid) return { ok: false, error: 'Quotation id required.' };
+  const roleKey = actor?.roleKey ?? actor?.role_key ?? actor?.role;
+  if (!isBranchManagerApprovalAuthority(roleKey)) {
+    return { ok: false, error: 'Only a branch manager may approve a below-floor price exception.' };
+  }
   const row = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
   if (!row) return { ok: false, error: 'Quotation not found.' };
   const { violations, hasFloorRows } = quotationPriceViolations(db, row);
   if (hasFloorRows && violations.length === 0) {
-    return { ok: false, error: 'No below-list price detected for this quotation.' };
+    return { ok: false, error: 'No below-floor price detected for this quotation.' };
   }
   if (!hasFloorRows) {
-    return { ok: false, error: 'Price list is empty; no exception needed.' };
+    return { ok: false, error: 'Pricing workbook / list is empty; no exception needed.' };
   }
   const now = new Date().toISOString();
   db.prepare(
-    `UPDATE quotations SET md_price_exception_approved_at_iso = ?, md_price_exception_approved_by_user_id = ? WHERE id = ?`
+    `UPDATE quotations SET
+      bm_price_exception_approved_at_iso = ?,
+      bm_price_exception_approved_by_user_id = ?,
+      price_exception_md_review_required = 1
+     WHERE id = ?`
   ).run(now, actor?.id ?? null, qid);
   appendAuditLog(db, {
     actor,
-    action: 'quotation.md_price_exception_approve',
+    action: 'quotation.bm_price_exception_approve',
     entityKind: 'quotation',
     entityId: qid,
     note: actorName(actor),
-    details: { violations },
+    details: { violations, mdReviewRequired: true },
+  });
+  return { ok: true, mdReviewRequired: true };
+}
+
+/**
+ * MD confirms below-floor exception after production — required before customer refund.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ * @param {object} actor
+ */
+export function confirmMdPriceExceptionReviewForQuotation(db, quotationId, actor) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return { ok: false, error: 'Quotation id required.' };
+  const row = db
+    .prepare(
+      `SELECT id, lines_json, branch_id, bm_price_exception_approved_at_iso,
+              price_exception_md_review_required, price_exception_md_confirmed_at_iso,
+              md_price_exception_approved_at_iso
+       FROM quotations WHERE id = ?`
+    )
+    .get(qid);
+  if (!row) return { ok: false, error: 'Quotation not found.' };
+
+  const mapped = {
+    bmPriceExceptionApprovedAtISO: row.bm_price_exception_approved_at_iso,
+    priceExceptionMdReviewRequired: row.price_exception_md_review_required,
+    priceExceptionMdConfirmedAtISO: row.price_exception_md_confirmed_at_iso,
+    mdPriceExceptionApprovedAtISO: row.md_price_exception_approved_at_iso,
+  };
+  if (quotationMdPriceReviewConfirmed(mapped)) {
+    return { ok: false, error: 'MD review is already confirmed for this quotation.' };
+  }
+  if (!quotationFlaggedForMdPriceReview(mapped) && !String(row.bm_price_exception_approved_at_iso || '').trim()) {
+    return {
+      ok: false,
+      error: 'No branch-manager below-floor approval on file. Branch manager must approve before MD confirmation.',
+    };
+  }
+  if (!quotationHadClosedProduction(db, qid)) {
+    return {
+      ok: false,
+      error:
+        'MD confirmation is recorded after production is completed or cancelled. Finish production on this quotation first.',
+    };
+  }
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE quotations SET
+      price_exception_md_confirmed_at_iso = ?,
+      price_exception_md_confirmed_by_user_id = ?
+     WHERE id = ?`
+  ).run(now, actor?.id ?? null, qid);
+  appendAuditLog(db, {
+    actor,
+    action: 'quotation.md_price_exception_confirm',
+    entityKind: 'quotation',
+    entityId: qid,
+    note: actorName(actor),
   });
   return { ok: true };
+}
+
+/** @deprecated Use {@link approveBranchManagerPriceExceptionForQuotation} */
+export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
+  return approveBranchManagerPriceExceptionForQuotation(db, quotationId, actor);
 }

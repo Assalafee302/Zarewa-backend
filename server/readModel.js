@@ -185,6 +185,11 @@ function mapQuotationRow(db, row) {
     managerFlagReason: row.manager_flag_reason ?? '',
     mdPriceExceptionApprovedAtISO: row.md_price_exception_approved_at_iso ?? null,
     mdPriceExceptionApprovedByUserId: row.md_price_exception_approved_by_user_id ?? null,
+    bmPriceExceptionApprovedAtISO: row.bm_price_exception_approved_at_iso ?? null,
+    bmPriceExceptionApprovedByUserId: row.bm_price_exception_approved_by_user_id ?? null,
+    priceExceptionMdReviewRequired: Number(row.price_exception_md_review_required) === 1,
+    priceExceptionMdConfirmedAtISO: row.price_exception_md_confirmed_at_iso ?? null,
+    priceExceptionMdConfirmedByUserId: row.price_exception_md_confirmed_by_user_id ?? null,
     archived: Number(row.archived) === 1,
     lifecycleNote: row.quotation_lifecycle_note ?? '',
   };

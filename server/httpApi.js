@@ -2532,6 +2532,26 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.post(
+    '/api/sales-receipts/reset-clearance',
+    requirePermission('finance.approve'),
+    (req, res) => {
+      try {
+        const r = write.resetAllSalesReceiptFinanceClearance(
+          db,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          req.user,
+          req.body || {}
+        );
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
   app.patch(
     '/api/sales-receipts/:receiptId/finance-settlement',
     requirePermission(['finance.pay', 'finance.post']),
@@ -6099,7 +6119,7 @@ export function registerHttpApi(app, db) {
         forceDuplicatePost,
         duplicateOverrideReason,
       } = req.body || {};
-      const fullAmountAsReceipt = Boolean(
+      let fullAmountAsReceipt = Boolean(
         req.body?.fullAmountAsReceipt ?? req.body?.full_amount_as_receipt
       );
       const resolvedBankReference = effectiveReceiptBankReference(req.body || {});
@@ -6130,9 +6150,6 @@ export function registerHttpApi(app, db) {
         bankReference: resolvedBankReference,
         dateISO,
       });
-      const confirmSettledQuoteOverpay = Boolean(
-        req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay
-      );
       if (duplicateSignals.length > 0 && !forceDuplicatePost) {
         return res.status(409).json({
           ok: false,
@@ -6172,10 +6189,21 @@ export function registerHttpApi(app, db) {
       const quoteTotal = Math.round(Number(qtSynced.totalNgn) || 0);
       const paidBooked = Math.round(Number(qtSynced.paidNgn) || 0);
       const dueOnQuote = Math.max(0, quoteTotal - paidBooked);
+      const postAmountNgn = Math.round(Number(amountNgn) || 0);
+      if (postAmountNgn > dueOnQuote) {
+        fullAmountAsReceipt = true;
+      }
+      let confirmSettledQuoteOverpayEffective = Boolean(
+        req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay
+      );
+      if (dueOnQuote <= 0 && postAmountNgn > 0) {
+        fullAmountAsReceipt = true;
+        confirmSettledQuoteOverpayEffective = true;
+      }
       if (
         dueOnQuote <= 0 &&
         !fullAmountAsReceipt &&
-        !confirmSettledQuoteOverpay &&
+        !confirmSettledQuoteOverpayEffective &&
         !forceDuplicatePost
       ) {
         return res.status(409).json({
@@ -6217,15 +6245,14 @@ export function registerHttpApi(app, db) {
       }
 
       const confirmAmountNgn = Math.round(Number(req.body?.confirmAmountNgn ?? req.body?.confirm_amount_ngn) || 0);
-      const postAmount = Math.round(Number(amountNgn) || 0);
       if (
-        postAmount >= 100_000 &&
-        (!Number.isFinite(confirmAmountNgn) || confirmAmountNgn !== postAmount)
+        postAmountNgn >= 100_000 &&
+        (!Number.isFinite(confirmAmountNgn) || confirmAmountNgn !== postAmountNgn)
       ) {
         return res.status(400).json({
           ok: false,
           code: 'RECEIPT_AMOUNT_CONFIRM_REQUIRED',
-          error: `For amounts of ₦${postAmount.toLocaleString('en-NG')} and above, re-enter the same amount in "Confirm amount" before posting.`,
+          error: `For amounts of ₦${postAmountNgn.toLocaleString('en-NG')} and above, re-enter the same amount in "Confirm amount" before posting.`,
         });
       }
 

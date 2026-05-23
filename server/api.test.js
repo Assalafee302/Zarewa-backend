@@ -16,7 +16,7 @@ function mysqlAvailable() {
 
 const mysqlOk = mysqlAvailable();
 
-describe.sequential('Zarewa API', () => {
+describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   let app;
   let agent;
   let db;
@@ -761,7 +761,7 @@ describe.sequential('Zarewa API', () => {
     expect(sr.ledgerEntryId).toBe(res.body.receipt.id);
   });
 
-  it('POST /api/ledger/receipt rejects amendSalesReceiptId re-post', async () => {
+  it.skipIf(!mysqlOk)('POST /api/ledger/receipt rejects amendSalesReceiptId re-post', async () => {
     const q = await agent.post('/api/quotations').send({
       customerID: 'CUS-002',
       projectName: `Amend block ${Date.now()}`,
@@ -796,7 +796,7 @@ describe.sequential('Zarewa API', () => {
     expect(amend.body.code).toBe('RECEIPT_AMEND_NOT_ALLOWED');
   });
 
-  it('POST /api/ledger/receipt requires confirm amount for large posts', async () => {
+  it.skipIf(!mysqlOk)('POST /api/ledger/receipt requires confirm amount for large posts', async () => {
     const q = await agent.post('/api/quotations').send({
       customerID: 'CUS-002',
       projectName: `Confirm amt ${Date.now()}`,
@@ -831,7 +831,7 @@ describe.sequential('Zarewa API', () => {
     expect(ok.status).toBe(201);
   });
 
-  it('POST /api/ledger/reverse-receipt reverses a posted receipt', async () => {
+  it.skipIf(!mysqlOk)('POST /api/ledger/reverse-receipt reverses a posted receipt', async () => {
     const q = await agent.post('/api/quotations').send({
       customerID: 'CUS-002',
       projectName: `Reverse receipt ${Date.now()}`,

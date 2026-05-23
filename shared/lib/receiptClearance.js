@@ -1,6 +1,9 @@
 /** Threshold (₦) — sales must re-enter amount to confirm posting. */
 export const RECEIPT_AMOUNT_CONFIRM_THRESHOLD_NGN = 100_000;
 
+/** Typed confirmation for bulk reset of finance clearance on sales receipts. */
+export const RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE = 'RESET RECEIPT CLEARANCE';
+
 export const RECEIPT_STATUS_PENDING_CLEARANCE = 'Pending clearance';
 export const RECEIPT_STATUS_CLEARED = 'Cleared';
 export const RECEIPT_STATUS_REVERSED = 'Reversed';

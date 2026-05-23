@@ -61,6 +61,7 @@ import {
   findSupplierIdentityConflict,
 } from './supplierDedupe.js';
 import {
+  branchWhere,
   enrichSalesReceiptRowsWithCashFromLedger,
   getQuotation,
   listLedgerEntries,
@@ -68,6 +69,7 @@ import {
   listSalesReceipts,
   listCoilLots,
 } from './readModel.js';
+import { RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE } from '../shared/lib/receiptClearance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import {
@@ -7964,6 +7966,73 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     },
   });
   return { ok: true };
+}
+
+/**
+ * Move all finance-cleared sales receipts in branch scope back to Pending clearance (treasury/ledger unchanged).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchScope
+ * @param {object | null} actor
+ * @param {{ confirmPhrase?: string }} [options]
+ */
+export function resetAllSalesReceiptFinanceClearance(db, branchScope, actor = null, options = {}) {
+  const phrase = String(options.confirmPhrase || '').trim();
+  if (phrase !== RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE) {
+    return {
+      ok: false,
+      error: `Type ${RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE} to confirm.`,
+    };
+  }
+  const b = branchWhere(db, 'sales_receipts', branchScope);
+  const countRow = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts WHERE 1=1${b.sql}
+       AND finance_reconciliation_saved_at_iso IS NOT NULL
+       AND TRIM(finance_reconciliation_saved_at_iso) != ''
+       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`
+    )
+    .get(...b.args);
+  const resetCount = Number(countRow?.c) || 0;
+  if (resetCount <= 0) {
+    return { ok: true, resetCount: 0 };
+  }
+  const sampleIds = db
+    .prepare(
+      `SELECT id FROM sales_receipts WHERE 1=1${b.sql}
+       AND finance_reconciliation_saved_at_iso IS NOT NULL
+       AND TRIM(finance_reconciliation_saved_at_iso) != ''
+       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')
+       ORDER BY date_iso ASC, id ASC
+       LIMIT 25`
+    )
+    .all(...b.args)
+    .map((r) => r.id);
+
+  db.prepare(
+    `UPDATE sales_receipts SET
+      status = 'Pending clearance',
+      finance_reconciliation_saved_at_iso = NULL,
+      finance_reconciliation_saved_by_user_id = NULL,
+      finance_delivery_cleared_at_iso = NULL,
+      finance_delivery_cleared_by_user_id = NULL,
+      bank_confirmed_at_iso = NULL,
+      bank_confirmed_by_user_id = NULL,
+      bank_received_amount_ngn = NULL
+     WHERE 1=1${b.sql}
+       AND finance_reconciliation_saved_at_iso IS NOT NULL
+       AND TRIM(finance_reconciliation_saved_at_iso) != ''
+       AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`
+  ).run(...b.args);
+
+  appendAuditLog(db, {
+    actor,
+    action: 'receipt.clearance_bulk_reset',
+    entityKind: 'sales_receipt',
+    entityId: '*',
+    note: `Reset finance clearance on ${resetCount} receipt(s) to Pending clearance.`,
+    details: { resetCount, sampleIds, branchScope },
+  });
+  return { ok: true, resetCount, sampleIds };
 }
 
 /**

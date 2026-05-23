@@ -3454,9 +3454,21 @@ describe.sequential('Zarewa API', () => {
       profitNgnPerM: 50,
       minimumPricePerMeterNgn: 5000,
       commissionNgnPerM: 200,
+      syncMinimumToPriceList: true,
+      syncDesignKey: 'longspan',
     });
     expect(mpsSave.status).toBe(200);
     expect(mpsSave.body.ok).toBe(true);
+
+    const mpsReload = await agent
+      .get('/api/pricing/material-sheet')
+      .query({ materialKey: 'alu', branchId: 'BR-KD' });
+    expect(mpsReload.status).toBe(200);
+    const blankDesignRow = (mpsReload.body.rows || []).find(
+      (r) => String(r.gaugeMm) === '0.45' && !String(r.designKey || '').trim()
+    );
+    expect(blankDesignRow?.syncMinimumToPriceList).toBe(true);
+    expect(String(blankDesignRow?.syncDesignKey || '')).toBe('longspan');
 
     const mpsEv = await agent.get('/api/pricing/material-sheet/events').query({ materialKey: 'alu' });
     expect(mpsEv.status).toBe(200);

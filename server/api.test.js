@@ -761,6 +761,76 @@ describe.sequential('Zarewa API', () => {
     expect(sr.ledgerEntryId).toBe(res.body.receipt.id);
   });
 
+  it('POST /api/ledger/receipt rejects amendSalesReceiptId re-post', async () => {
+    const q = await agent.post('/api/quotations').send({
+      customerID: 'CUS-002',
+      projectName: `Amend block ${Date.now()}`,
+      dateISO: '2026-03-29',
+      lines: {
+        products: [{ name: 'Test item', qty: '1', unitPrice: '100000' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(q.status).toBe(201);
+    const quotationId = q.body.quotation?.id || q.body.quotationID || q.body.id;
+    const receipt = await agent.post('/api/ledger/receipt').send({
+      customerID: 'CUS-002',
+      quotationId,
+      amountNgn: 50_000,
+      paymentMethod: 'Transfer',
+      bankReference: 'TRF-AMEND-BLOCK',
+      dateISO: '2026-03-29',
+    });
+    expect(receipt.status).toBe(201);
+    const amend = await agent.post('/api/ledger/receipt').send({
+      customerID: 'CUS-002',
+      quotationId,
+      amountNgn: 50_000,
+      paymentMethod: 'Transfer',
+      bankReference: 'TRF-AMEND-BLOCK-2',
+      dateISO: '2026-03-29',
+      amendSalesReceiptId: receipt.body.receipt.id,
+    });
+    expect(amend.status).toBe(400);
+    expect(amend.body.code).toBe('RECEIPT_AMEND_NOT_ALLOWED');
+  });
+
+  it('POST /api/ledger/receipt requires confirm amount for large posts', async () => {
+    const q = await agent.post('/api/quotations').send({
+      customerID: 'CUS-002',
+      projectName: `Confirm amt ${Date.now()}`,
+      dateISO: '2026-03-29',
+      lines: {
+        products: [{ name: 'Test item', qty: '1', unitPrice: '500000' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(q.status).toBe(201);
+    const quotationId = q.body.quotation?.id || q.body.quotationID || q.body.id;
+    const bad = await agent.post('/api/ledger/receipt').send({
+      customerID: 'CUS-002',
+      quotationId,
+      amountNgn: 148_000,
+      paymentMethod: 'Transfer',
+      bankReference: 'TRF-NO-CONFIRM',
+      dateISO: '2026-03-29',
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.code).toBe('RECEIPT_AMOUNT_CONFIRM_REQUIRED');
+    const ok = await agent.post('/api/ledger/receipt').send({
+      customerID: 'CUS-002',
+      quotationId,
+      amountNgn: 148_000,
+      confirmAmountNgn: 148_000,
+      paymentMethod: 'Transfer',
+      bankReference: 'TRF-WITH-CONFIRM',
+      dateISO: '2026-03-29',
+    });
+    expect(ok.status).toBe(201);
+  });
+
   it('POST /api/ledger/reverse-receipt reverses a posted receipt', async () => {
     const q = await agent.post('/api/quotations').send({
       customerID: 'CUS-002',

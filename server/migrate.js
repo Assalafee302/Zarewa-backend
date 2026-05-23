@@ -167,6 +167,21 @@ export function runMigrations(db) {
     db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_reconciliation_saved_by_user_id TEXT`);
   }
 
+  if (r.size) {
+    db.exec(
+      `UPDATE sales_receipts SET status = 'Cleared'
+       WHERE finance_reconciliation_saved_at_iso IS NOT NULL
+         AND TRIM(finance_reconciliation_saved_at_iso) != ''
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared'))`
+    );
+    db.exec(
+      `UPDATE sales_receipts SET status = 'Pending clearance'
+       WHERE (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')
+         AND (status IS NULL OR TRIM(LOWER(status)) IN ('posted', ''))
+         AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')`
+    );
+  }
+
   const ledger = tableCols('ledger_entries');
   if (!ledger.has('created_by_user_id')) {
     db.exec(`ALTER TABLE ledger_entries ADD COLUMN created_by_user_id TEXT`);
@@ -3317,6 +3332,29 @@ function migrateMaterialPricingWorkbook(db) {
     }
     if (cols.length && !cols.some((c) => c.name === 'gauge_customer_label')) {
       db.exec(`ALTER TABLE material_pricing_sheet_rows ADD COLUMN gauge_customer_label TEXT`);
+    }
+    if (cols.length && !cols.some((c) => c.name === 'sync_minimum_to_price_list')) {
+      db.exec(
+        `ALTER TABLE material_pricing_sheet_rows ADD COLUMN sync_minimum_to_price_list INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+    if (cols.length && !cols.some((c) => c.name === 'sync_design_key')) {
+      db.exec(`ALTER TABLE material_pricing_sheet_rows ADD COLUMN sync_design_key TEXT NOT NULL DEFAULT ''`);
+    }
+    if (
+      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list_items'`).get() &&
+      cols.some((c) => c.name === 'sync_minimum_to_price_list')
+    ) {
+      const mpsRows = db.prepare(`SELECT id FROM material_pricing_sheet_rows`).all();
+      const upd = db.prepare(
+        `UPDATE material_pricing_sheet_rows SET sync_minimum_to_price_list = 1, sync_design_key = ? WHERE id = ? AND COALESCE(sync_minimum_to_price_list, 0) = 0`
+      );
+      for (const r of mpsRows) {
+        const plId = `PL-MPS-${String(r.id).replace(/^MPS-/i, '').slice(0, 16)}`;
+        const pl = db.prepare(`SELECT design_key FROM price_list_items WHERE id = ?`).get(plId);
+        const dk = String(pl?.design_key ?? '').trim();
+        if (dk) upd.run(dk, r.id);
+      }
     }
   } catch {
     /* ignore */

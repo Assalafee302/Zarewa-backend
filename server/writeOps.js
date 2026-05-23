@@ -4686,7 +4686,10 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
       amount_display = excluded.amount_display,
       amount_ngn = excluded.amount_ngn,
       method = excluded.method,
-      status = excluded.status,
+      status = CASE
+        WHEN TRIM(LOWER(COALESCE(sales_receipts.status, ''))) IN ('cleared', 'reversed') THEN sales_receipts.status
+        ELSE excluded.status
+      END,
       handled_by = excluded.handled_by,
       ledger_entry_id = excluded.ledger_entry_id,
       branch_id = excluded.branch_id
@@ -4701,11 +4704,26 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
     display,
     entry.amountNgn,
     entry.paymentMethod ?? '—',
-    'Posted',
+    'Pending clearance',
     '—',
     entry.id,
     bid
   );
+}
+
+/** True when quotation has sales receipts not yet cleared by Finance (blocks refunds). */
+export function quotationHasUnclearedReceipts(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return false;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))
+         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+    )
+    .get(qid);
+  return Number(row?.c) > 0;
 }
 
 /** Map DB `ledger_entries` row to the camelCase shape expected by `upsertSalesReceiptForLedgerEntry`. */
@@ -7865,6 +7883,14 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     if (n < 0) return { ok: false, error: 'Bank received amount cannot be negative.' };
     nextBankReceived = n;
   }
+  if (!finalized && (!hasBankAmt || nextBankReceived == null || nextBankReceived <= 0)) {
+    return {
+      ok: false,
+      code: 'BANK_RECEIVED_REQUIRED',
+      error:
+        'Enter the amount actually received in bank or cash before clearing this receipt. Finance must confirm the payment matches real money.',
+    };
+  }
 
   const corrections = Array.isArray(payload?.paymentLineCorrections) ? payload.paymentLineCorrections : [];
 
@@ -7904,14 +7930,15 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           bank_confirmed_at_iso = ?,
           bank_confirmed_by_user_id = ?,
           finance_reconciliation_saved_at_iso = ?,
-          finance_reconciliation_saved_by_user_id = ?
+          finance_reconciliation_saved_by_user_id = ?,
+          status = 'Cleared'
          WHERE id = ?`
       ).run(
         nextBankReceived,
         clearForDelivery ? now : null,
         clearForDelivery ? uid : null,
-        clearForDelivery ? now : null,
-        clearForDelivery ? uid : null,
+        now,
+        uid,
         now,
         uid,
         id

@@ -1421,6 +1421,20 @@ export function cancelApprovedPaymentRequestBeforePay(db, requestID, payload, ac
   }
 }
 
+function quotationHasUnclearedReceipts(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return false;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))
+         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+    )
+    .get(qid);
+  return Number(row?.c) > 0;
+}
+
 export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   const amountNgn = roundMoney(payload.amountNgn);
@@ -1461,6 +1475,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     }
 
     if (quotationRef) {
+      if (quotationHasUnclearedReceipts(db, quotationRef)) {
+        return {
+          ok: false,
+          code: 'RECEIPT_CLEARANCE_REQUIRED',
+          error:
+            'All customer receipts on this quotation must be cleared by Finance (cashier/accountant) before a refund can be requested.',
+        };
+      }
+
       const existingRefunds = db.prepare(
         `SELECT reason_category FROM customer_refunds
          WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`
@@ -1914,6 +1937,11 @@ export function previewRefundRequest(db, payload) {
     : null;
 
   const warnings = [];
+  if (quotationRef && quotationHasUnclearedReceipts(db, quotationRef)) {
+    warnings.push(
+      'One or more receipts on this quotation are pending Finance clearance. Clear them on Finance & accounts before requesting a refund.'
+    );
+  }
   if (
     quote &&
     quotationRefundBlockedPendingMdPriceConfirm({

@@ -321,12 +321,16 @@ function mapRow(row) {
   const minimum = Math.max(0, Math.round(Number(row.minimum_price_per_m_ngn) || 0));
   const commission = Math.max(0, Number(row.commission_ngn_per_m) || 0);
   const publishedListPriceNgn = roundPublishedPrice(minimum + commission);
+  const syncMinimumToPriceList = Number(row.sync_minimum_to_price_list) === 1;
+  const syncDesignKey = String(row.sync_design_key ?? '').trim();
   return {
     id: row.id,
     materialKey: row.material_key,
     gaugeMm: row.gauge_mm,
     branchId: row.branch_id,
     designKey: row.design_key ?? '',
+    syncMinimumToPriceList,
+    syncDesignKey,
     conversionStandardKgPerM: Number.isFinite(std) && std > 0 ? std : null,
     conversionReferenceKgPerM: Number.isFinite(ref) && ref > 0 ? ref : null,
     conversionHistoryKgPerM: Number.isFinite(hist) && hist > 0 ? hist : null,
@@ -588,6 +592,12 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   const minimum = Math.max(0, Math.round(Number(body?.minimumPricePerMeterNgn) || 0));
   const commission = Math.max(0, Number(body?.commissionNgnPerM) || 0);
   const notes = body?.notes != null ? String(body.notes).trim().slice(0, 2000) : '';
+  const syncMinimumToPriceList = body?.syncMinimumToPriceList ? 1 : 0;
+  let syncDesignKeyStored = normKey(body?.syncDesignKey ?? body?.priceListDesignKey ?? '');
+  if (materialKey === 'stone-coated' && !syncDesignKeyStored) {
+    syncDesignKeyStored = 'stone-coated';
+  }
+  syncDesignKeyStored = syncDesignKeyStored.slice(0, 120);
   const listPriceForSync = roundPublishedPrice(minimum + commission);
 
   const now = new Date().toISOString();
@@ -598,7 +608,8 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       `UPDATE material_pricing_sheet_rows SET
         conversion_standard_kg_per_m = ?, conversion_reference_kg_per_m = ?, conversion_history_kg_per_m = ?,
         conversion_used_kg_per_m = ?, cost_per_kg_ngn = ?, overhead_ngn_per_m = ?, profit_ngn_per_m = ?,
-        minimum_price_per_m_ngn = ?, commission_ngn_per_m = ?, gauge_customer_label = ?, notes = ?, updated_at_iso = ?, updated_by_user_id = ?
+        minimum_price_per_m_ngn = ?, commission_ngn_per_m = ?, gauge_customer_label = ?, notes = ?,
+        sync_minimum_to_price_list = ?, sync_design_key = ?, updated_at_iso = ?, updated_by_user_id = ?
        WHERE id = ?`
     ).run(
       std,
@@ -612,6 +623,8 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       commission,
       gaugeCustomerLabel || null,
       notes || null,
+      syncMinimumToPriceList,
+      syncDesignKeyStored,
       now,
       actor?.id ?? null,
       id
@@ -622,8 +635,9 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
         id, material_key, gauge_mm, branch_id, design_key,
         conversion_standard_kg_per_m, conversion_reference_kg_per_m, conversion_history_kg_per_m,
         conversion_used_kg_per_m, cost_per_kg_ngn, overhead_ngn_per_m, profit_ngn_per_m,
-        minimum_price_per_m_ngn, commission_ngn_per_m, gauge_customer_label, notes, updated_at_iso, updated_by_user_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        minimum_price_per_m_ngn, commission_ngn_per_m, gauge_customer_label, notes,
+        sync_minimum_to_price_list, sync_design_key, updated_at_iso, updated_by_user_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       materialKey,
@@ -641,6 +655,8 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
       commission,
       gaugeCustomerLabel || null,
       notes || null,
+      syncMinimumToPriceList,
+      syncDesignKeyStored,
       now,
       actor?.id ?? null
     );
@@ -676,8 +692,8 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
   });
 
   let priceListSync = null;
-  if (body?.syncMinimumToPriceList && listPriceForSync > 0) {
-    let syncDesign = normKey(body?.syncDesignKey ?? body?.priceListDesignKey ?? '');
+  if (syncMinimumToPriceList && listPriceForSync > 0) {
+    let syncDesign = syncDesignKeyStored || normKey(body?.syncDesignKey ?? body?.priceListDesignKey ?? '');
     if (materialKey === 'stone-coated') {
       syncDesign = syncDesign || 'stone-coated';
     }

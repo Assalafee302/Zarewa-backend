@@ -36,8 +36,12 @@ Prioritize by:
 
 ## 4) Approval controls
 
+- Every new receipt posts as **Pending clearance** until Finance saves settlement with the **bank/cash received** amount.
+- Refunds on a quotation are blocked until all receipts on that quote are **Cleared**.
+- Sales cannot “amend” a receipt by re-posting — Finance **reverses** the wrong row, then Sales posts once with the correct amount.
+- Payments of **₦100,000 and above** require the same amount typed twice in Sales (confirm amount).
 - Sales can identify and propose correction.
-- Finance validates evidence and confirms treasury impact.
+- Finance validates evidence and confirms treasury impact on **Finance & accounts → Receipts**.
 - Manager role approves high-risk reversals where policy requires.
 
 ## 5) Posting discipline (operator checklist)

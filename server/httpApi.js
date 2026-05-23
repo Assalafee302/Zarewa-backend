@@ -6207,27 +6207,29 @@ export function registerHttpApi(app, db) {
       const amendSalesReceiptId = String(
         req.body?.amendSalesReceiptId ?? req.body?.amend_sales_receipt_id ?? ''
       ).trim();
-      if (amendSalesReceiptId && editMutationRequiresSecondApproval(req.user)) {
-        const aid = String(req.body?.editApprovalId ?? '').trim();
-        if (!aid) {
-          return res.status(403).json({
-            ok: false,
-            code: 'EDIT_APPROVAL_REQUIRED',
-            error:
-              'A manager or administrator must approve this receipt change first. Request an approval, have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
-          });
-        }
+      if (amendSalesReceiptId) {
+        return res.status(400).json({
+          ok: false,
+          code: 'RECEIPT_AMEND_NOT_ALLOWED',
+          error:
+            'Receipts cannot be corrected by re-posting. Ask Finance to reverse the mistaken receipt on Finance & accounts, then post a new receipt with the correct amount.',
+        });
+      }
+
+      const confirmAmountNgn = Math.round(Number(req.body?.confirmAmountNgn ?? req.body?.confirm_amount_ngn) || 0);
+      const postAmount = Math.round(Number(amountNgn) || 0);
+      if (
+        postAmount >= 100_000 &&
+        (!Number.isFinite(confirmAmountNgn) || confirmAmountNgn !== postAmount)
+      ) {
+        return res.status(400).json({
+          ok: false,
+          code: 'RECEIPT_AMOUNT_CONFIRM_REQUIRED',
+          error: `For amounts of ₦${postAmount.toLocaleString('en-NG')} and above, re-enter the same amount in "Confirm amount" before posting.`,
+        });
       }
 
       const { saved, receipt, overpay } = db.transaction(() => {
-        if (amendSalesReceiptId && editMutationRequiresSecondApproval(req.user)) {
-          consumeEditApprovalInTransaction(
-            db,
-            String(req.body?.editApprovalId ?? '').trim(),
-            'sales_receipt',
-            amendSalesReceiptId
-          );
-        }
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const posted = insertLedgerRows(
           db,
@@ -6463,7 +6465,10 @@ export function registerHttpApi(app, db) {
   }
   );
 
-  app.post('/api/ledger/reverse-receipt', requirePermission('finance.reverse'), (req, res) => {
+  app.post(
+    '/api/ledger/reverse-receipt',
+    requirePermission(['finance.reverse', 'finance.pay']),
+    (req, res) => {
     try {
       const { entryId, note } = req.body || {};
       if (!entryId) return res.status(400).json({ ok: false, error: 'entryId is required' });

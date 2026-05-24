@@ -233,6 +233,33 @@ function jobIsStoneMeter(db, job) {
   return isStoneMeterQuotationLinesJson(db, j);
 }
 
+function quotationHasPositiveProductLines(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      payload = {};
+    }
+  }
+  const arr = payload?.products;
+  if (!Array.isArray(arr)) return false;
+  return arr.some((row) => {
+    const name = String(row?.name ?? '').trim();
+    const qty = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
+    return name && qty > 0;
+  });
+}
+
+/** Stone-coated quote with accessories only (no roofing / flatsheet product lines). */
+function quotationIsAccessoriesOnlyForJob(db, job) {
+  const qref = String(job?.quotation_ref ?? '').trim();
+  if (!qref) return false;
+  const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
+  if (!row) return false;
+  return parseQuotationAccessoryLines(row.lines_json).length > 0 && !quotationHasPositiveProductLines(row.lines_json);
+}
+
 function completionModeFromPayload(payload) {
   const mode = String(payload?.startMode ?? payload?.completeMode ?? payload?.completionMode ?? '')
     .trim()
@@ -1137,7 +1164,10 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
 export function previewProductionConversion(db, jobID, payload = {}) {
   const jobRow = productionJobRow(db, jobID);
   if (!jobRow) return { ok: false, error: 'Production job not found.' };
-  if (completionModeFromPayload(payload) === 'offcut') {
+  if (
+    completionModeFromPayload(payload) === 'offcut' ||
+    (jobRow && quotationIsAccessoriesOnlyForJob(db, jobRow))
+  ) {
     const metres = offcutMetersFromPayload(payload);
     if (metres < 0) {
       return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
@@ -1600,6 +1630,9 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   if (!job) return { ok: false, error: 'Production job not found.' };
   if (String(job.status ?? '') === 'Cancelled') {
     return { ok: false, error: 'This production job was cancelled.' };
+  }
+  if (jobIsStoneMeter(db, job) && quotationIsAccessoriesOnlyForJob(db, job)) {
+    return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
   if (jobIsStoneMeter(db, job)) {
     return completeProductionJobStone(db, job, jobID, payload, opts);

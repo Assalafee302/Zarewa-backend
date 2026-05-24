@@ -71,6 +71,40 @@ async function freshPaidStoneQuotationForCutting(agent, unitPriceNgn = 400_000) 
   return qid;
 }
 
+/** Stone-coated accessories-only quotation (no roofing product lines). */
+async function freshPaidStoneAccessoriesOnlyQuotation(agent, unitPriceNgn = 50_000) {
+  const q = await agent.post('/api/quotations').send({
+    customerID: 'CUS-001',
+    projectName: `Stone accessories ${Date.now()}`,
+    dateISO: '2026-03-29',
+    materialTypeId: 'MAT-005',
+    materialDesign: 'Milano',
+    materialColor: 'Black',
+    materialGauge: '0.40mm',
+    lines: {
+      products: [],
+      accessories: [{ name: 'Stone nail', qty: '10', unitPrice: String(unitPriceNgn) }],
+      services: [],
+    },
+  });
+  expect(q.status).toBe(201);
+  const qid = q.body.quotationId;
+  const total = q.body.quotation.totalNgn;
+  const boot = await agent.get('/api/bootstrap');
+  const treasuryAccountId = boot.body.treasuryAccounts[0].id;
+  const payNgn = Math.max(Math.ceil(total * 0.7), 1);
+  const rcpt = await agent.post('/api/ledger/receipt').send({
+    customerID: 'CUS-001',
+    quotationId: qid,
+    amountNgn: payNgn,
+    paymentMethod: 'Cash',
+    dateISO: '2026-03-29',
+    paymentLines: [{ treasuryAccountId, amountNgn: payNgn, reference: `ST-ACC-${Date.now()}` }],
+  });
+  expect(rcpt.status).toBe(201);
+  return qid;
+}
+
 /** Quotation with ≥70% paid via posted sales receipt (syncs `paid_ngn`; satisfies cutting-list gate). */
 async function freshPaidQuotationForCutting(agent, unitPriceNgn = 400_000) {
   const q = await agent.post('/api/quotations').send({
@@ -759,5 +793,49 @@ describe('Inventory scenarios (simulated flows)', () => {
 
     const mov = await agent.get(`/api/inventory/product-movements/${encodeURIComponent(stonePid)}`);
     expect(mov.body.movements.some((m) => m.type === 'STONE_CONSUMPTION')).toBe(true);
+  });
+
+  it('S10b — Stone accessories-only production completes without roofing metres', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const qref = await freshPaidStoneAccessoriesOnlyQuotation(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: qref,
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productName: 'Accessories only',
+      plannedMeters: 0,
+      plannedSheets: 0,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({ allocations: [] });
+    const start = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({
+      startedAtISO: '2026-04-02',
+    });
+    expect(start.status).toBe(200);
+
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-04-02T16:00:00.000Z',
+      completeMode: 'offcut',
+      offcutMetersProduced: 0,
+    });
+    expect(complete.status).toBe(200);
+    expect(complete.body.ok).toBe(true);
+
+    const boot = await agent.get('/api/bootstrap');
+    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.status).toBe('Completed');
   });
 });

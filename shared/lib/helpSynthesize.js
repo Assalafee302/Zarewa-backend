@@ -3,7 +3,6 @@
  * answer instead of dumping raw article text (ChatGPT-style pipeline, no GPU required).
  */
 
-import { transactionContextForArticle } from './helpUserActivity.js';
 import { guideClearanceFootnote } from './helpClearance.js';
 
 /** @typedef {'greeting' | 'thanks' | 'follow_up' | 'clarify' | 'workflow' | 'meta' | 'unknown'} HelpIntent */
@@ -128,22 +127,17 @@ function directOpening(article, message) {
  */
 export function synthesizeMetaReply(opts = {}) {
   const name = String(opts?.userDisplay || '').trim().split(/\s+/)[0];
-  const who = name ? `, ${name}` : '';
+  const who = name ? ` ${name}` : '';
   const aiOn = Boolean(opts.externalAiEnabled);
   return [
-    `Good question${who}! Here is an honest answer:`,
+    `Hi${who} — I'm **Zarewa Coach**, built for your ERP workflows (quotations, receipts, PO, refunds, production).`,
     '',
-    "I'm the **Zarewa Help Assistant** — not a general ChatGPT. I'm built for **your ERP workflows** (quotations, receipts, PO, production, refunds, and more).",
-    '',
-    '**How "smart" I am:**',
-    '- I use **RAG** (semantic search over 44+ built-in guides) plus your **role and branch clearance**.',
-    '- I can pull **live read-only ERP data** when your permissions allow (stock, refunds, quotation status, etc.).',
-    '- I **learn patterns** from staff questions, 👍/👎 ratings, and your recent transactions — not from the public internet.',
+    'I search **44+ guides**, respect your **role clearance**, and can read **live ERP data** when your permissions allow.',
     aiOn
-      ? '- With **AI enabled**, I can rephrase answers more naturally — still grounded in Zarewa data and guides.'
-      : '- **AI polish is off** on this server — I still answer from guides and tools without an external API key.',
+      ? '**AI polish is on** — answers stay grounded in Zarewa data only.'
+      : '**AI polish is off** — I still answer from guides and tools without an external API key.',
     '',
-    '**Limits:** I will not invent numbers, bypass your clearance, or run changes in the database. Ask me "how do I…" for steps, or "what is…" for live data (if your role allows).',
+    'I will not invent numbers or bypass your clearance. Ask "how do I…" for steps, or "what is…" for live data.',
   ].join('\n');
 }
 
@@ -181,47 +175,34 @@ export function synthesizeHelpReply(opts) {
 
   if (intent === 'greeting') {
     const who = name ? ` ${name}` : '';
-    return [
-      `Hello${who}! I'm the Zarewa help assistant.`,
-      '',
-      `You're on **${page}** — ask me anything about workflows here (payments, quotes, PO, production, refunds, and more).`,
-      '',
-      "I'll give you a direct answer first, then only the steps you need — not a full manual dump.",
-    ].join('\n');
+    return `Hello${who}! What **${page}** workflow can I help with?`;
   }
 
   if (intent === 'thanks') {
-    return name
-      ? `You're welcome, ${name}. Ask anytime if the next step is not clear.`
-      : "You're welcome. Ask anytime if the next step is not clear.";
+    return name ? `You're welcome, ${name}.` : "You're welcome.";
   }
 
   if (!articles.length) {
-    return [
-      "I couldn't pin this to a specific Zarewa workflow yet.",
-      '',
-      'Try naming the module (**Sales**, **Finance**, **Operations**) or the document (receipt, quotation, PO, refund).',
-      '',
-      'I learn from your questions and 👍/👎 ratings to answer better next time.',
-    ].join('\n');
+    return 'I could not match that to a workflow yet. Try naming the module (**Sales**, **Finance**, **Operations**) or document (receipt, quotation, PO, refund).';
   }
 
   const maxSteps = pace === 'fast' ? 3 : pace === 'deep' ? 6 : 4;
 
+  if (intent === 'clarify' && articles.length) {
+    const primary = articles[0];
+    const steps = selectRelevantSteps(primary, message, Math.min(maxSteps, 4));
+    const lines = [`**${primary.title.replace(/^How to /i, '')}** — key steps:`];
+    if (steps.length) steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+    lines.push('', 'Which step or screen is unclear?');
+    return lines.join('\n');
+  }
+
   if (intent === 'follow_up' || intent === 'clarify') {
     const primary = articles[0];
     const steps = selectRelevantSteps(primary, message, maxSteps + 1);
-    const lines = [
-      `Picking up on your follow-up about **${primary.title.replace(/^How to /i, '')}**:`,
-      '',
-      summarizeAnswer(primary.answer, 2),
-    ];
+    const lines = [`Follow-up on **${primary.title.replace(/^How to /i, '')}**:`];
     if (steps.length) {
-      lines.push('', '**Focus on this:**');
       steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
-    }
-    if (primary.links?.[0]) {
-      lines.push('', `Open **${primary.links[0].label}** from the links below if you want to do it now.`);
     }
     return lines.join('\n');
   }
@@ -235,17 +216,14 @@ export function synthesizeHelpReply(opts) {
       steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
     }
     const remaining = (article.steps || []).length - steps.length;
-    if (remaining > 0 && pace !== 'fast') {
-      lines.push('', `_There are ${remaining} more detail step(s) in the full guide — ask "tell me more" if you need them._`);
+    if (remaining > 0 && pace === 'deep') {
+      lines.push('', `_Ask "tell me more" for ${remaining} additional step(s)._`);
     }
-    const txnCtx = transactionContextForArticle(article, opts.transactionProfile);
-    if (txnCtx) lines.push('', txnCtx);
     const clearanceNote = guideClearanceFootnote(article, opts.user || { permissions: [], roleKey: opts.roleKey });
     if (clearanceNote) lines.push('', clearanceNote);
     if (opts?.roleKey === 'finance' && article.id.includes('receipt')) {
       lines.push('', '_Finance tip: check ledger posting status before editing a receipt in Sales._');
     }
-    lines.push('', 'Use the links below to jump straight to the screen. Was this on the right track?');
     return lines.join('\n');
   }
 
@@ -262,7 +240,7 @@ export function synthesizeHelpReply(opts) {
     }
     lines.push('');
   });
-  lines.push('Tell me which phase you are on if you want me to go deeper on just one part.');
+  lines.push('Tell me which phase to expand on.');
   return lines.join('\n');
 }
 

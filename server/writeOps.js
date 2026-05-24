@@ -51,7 +51,7 @@ import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
-import { assertTreasuryAccountForWorkspace } from './branchScope.js';
+import { assertEntityBranchForWorkspaceWrite, assertTreasuryAccountForWorkspace, userMayPostAcrossBranches } from './branchScope.js';
 import {
   mergeSupplierProfilePatch,
   parseSupplierProfileJson,
@@ -6525,9 +6525,7 @@ export function payPaymentRequest(db, requestID, payload) {
   const workspaceBranchId = String(payload.workspaceBranchId || '').trim();
   const workspaceViewAll = Boolean(payload.workspaceViewAll);
   const actor = payload.actor;
-  const canPayCrossBranch =
-    workspaceViewAll ||
-    (actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.cross_branch_post')));
+  const canPayCrossBranch = userMayPostAcrossBranches(actor);
   if (!canPayCrossBranch && linkedExpense?.branch_id && workspaceBranchId) {
     const reqBranch = String(linkedExpense.branch_id || '').trim();
     if (reqBranch && reqBranch !== workspaceBranchId) {
@@ -6681,6 +6679,13 @@ export function payAccountsPayable(db, apId, payload) {
 export function payRefundEntry(db, refundId, payload) {
   const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };
+  const branchGate = assertEntityBranchForWorkspaceWrite(
+    payload.actor,
+    row.branch_id,
+    payload.workspaceBranchId,
+    Boolean(payload.workspaceViewAll)
+  );
+  if (!branchGate.ok) return { ok: false, error: branchGate.error };
   if (String(row.status || '') !== 'Approved') {
     return { ok: false, error: 'Only approved refunds can be paid.' };
   }
@@ -6737,6 +6742,9 @@ export function payRefundEntry(db, refundId, payload) {
         reference: payload.reference || refundId,
         note: paymentNote || row.reason || 'Customer refund',
         createdBy: paidBy,
+        workspaceBranchId: payload.workspaceBranchId,
+        workspaceViewAll: Boolean(payload.workspaceViewAll),
+        actor: payload.actor,
       });
       const nextPaidAmountNgn = paidAmountNgn + payoutAmountNgn;
       const fullyPaid = nextPaidAmountNgn >= approvedAmountNgn;
@@ -7412,8 +7420,12 @@ export function deleteCuttingListIfAllowed(db, cuttingListId) {
   return { ok: true, cuttingListId: cid };
 }
 
-export function replaceRefunds(db, refunds) {
-  db.prepare(`DELETE FROM customer_refunds`).run();
+export function replaceRefunds(db, refunds, branchScope) {
+  const bid = String(branchScope || '').trim();
+  if (!bid || bid === 'ALL') {
+    return { ok: false, error: 'Select a single branch workspace before bulk refund replace.' };
+  }
+  db.prepare(`DELETE FROM customer_refunds WHERE branch_id = ?`).run(bid);
   const ins = db.prepare(`
     INSERT INTO customer_refunds (
       refund_id, customer_id, customer_name, quotation_ref, cutting_list_ref, product, reason_category, reason,
@@ -7424,6 +7436,8 @@ export function replaceRefunds(db, refunds) {
   `);
   db.transaction(() => {
     for (const r of refunds) {
+      const rowBranch = String(r.branchId || bid).trim() || bid;
+      if (rowBranch !== bid) continue;
       ins.run(
         r.refundID,
         r.customerID,

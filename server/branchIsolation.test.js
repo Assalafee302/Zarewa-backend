@@ -81,6 +81,51 @@ describe('Branch isolation and rollups', () => {
     expect(idsAll).toContain('CUS-BR-B');
   });
 
+  it('rejects cross-branch purchase order status change', async () => {
+    const agent = request.agent(app);
+    const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    expect(login.status).toBe(200);
+
+    const boot0 = await agent.get('/api/bootstrap');
+    const branches = boot0.body.workspaceBranches || [];
+    const branchA = branches[0].id;
+    const branchB = branches[1].id;
+
+    await agent.patch('/api/session/workspace').send({ currentBranchId: branchA, viewAllBranches: false });
+
+    const sup = await agent.post('/api/suppliers').send({ name: 'Branch ISO Supplier', city: 'Yola' });
+    expect(sup.status).toBe(201);
+    const sid = sup.body.supplierID;
+
+    const po = await agent.post('/api/purchase-orders').send({
+      poID: 'PO-BR-ISO-A',
+      supplierID: sid,
+      supplierName: 'Branch ISO Supplier',
+      orderDateISO: '2026-05-24',
+      expectedDeliveryISO: '',
+      status: 'Pending',
+      lines: [
+        {
+          lineKey: 'L1',
+          productID: 'COIL-ALU',
+          productName: 'Test coil',
+          qtyOrdered: 10,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+
+    await agent.patch('/api/session/workspace').send({ currentBranchId: branchB, viewAllBranches: false });
+
+    const patch = await agent
+      .patch(`/api/purchase-orders/${encodeURIComponent('PO-BR-ISO-A')}/status`)
+      .send({ status: 'Approved' });
+    expect(patch.status).toBe(403);
+  });
+
   it('Managing director can enable all-branches rollup and sees aggregated bootstrap data', async () => {
     const md = request.agent(app);
     const login = await md.post('/api/session/login').send({ username: 'md', password: 'Md@1234567890!' });

@@ -1,4 +1,5 @@
 import { userHasPermission } from './auth.js';
+import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
 export function normalizeWorkspaceBranchId(v) {
@@ -81,6 +82,66 @@ export function assertProductionJobIdInWorkspace(db, req, jobId) {
  * @param {import('express').Request} req
  * @param {string} productID
  */
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} poId
+ */
+export function assertPurchaseOrderIdInWorkspace(db, req, poId) {
+  const id = String(poId ?? '').trim();
+  if (!id) return { ok: false, error: 'Purchase order id is required.', status: 400 };
+  const row = db.prepare(`SELECT po_id, branch_id FROM purchase_orders WHERE po_id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Purchase order not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} quotationId
+ */
+export function assertQuotationIdInWorkspace(db, req, quotationId) {
+  const id = String(quotationId ?? '').trim();
+  if (!id) return { ok: false, error: 'Quotation id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM quotations WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Quotation not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} refundId
+ */
+export function assertRefundIdInWorkspace(db, req, refundId) {
+  const id = String(refundId ?? '').trim();
+  if (!id) return { ok: false, error: 'Refund id is required.', status: 400 };
+  const row = db.prepare(`SELECT refund_id, branch_id FROM customer_refunds WHERE refund_id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Refund not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
 export function assertProductIdInWorkspace(db, req, productID) {
   const pid = String(productID ?? '').trim();
   if (!pid) return { ok: false, error: 'Product is required.', status: 400 };

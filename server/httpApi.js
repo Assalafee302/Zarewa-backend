@@ -73,6 +73,9 @@ import {
   assertCuttingListRowInWorkspace,
   assertProductIdInWorkspace,
   assertProductionJobIdInWorkspace,
+  assertPurchaseOrderIdInWorkspace,
+  assertQuotationIdInWorkspace,
+  assertRefundIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
 import {
@@ -2103,7 +2106,7 @@ export function registerHttpApi(app, db) {
       const raw = listSalesReceipts(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const tm = listTreasuryMovements(db);
+      const tm = listTreasuryMovements(db, branchScope);
       const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, rows });
     } catch (e) {
@@ -2205,7 +2208,7 @@ export function registerHttpApi(app, db) {
         return res.json({ ok: true, cut: 'ordered', startDate, endDate, branchScope, rows });
       }
       if (cut === 'paid') {
-        const tm = listTreasuryMovements(db);
+        const tm = listTreasuryMovements(db, branchScope);
         const rows = purchasesPaidRows(tm, startDate, endDate);
         return res.json({ ok: true, cut: 'paid', startDate, endDate, branchScope, rows });
       }
@@ -2966,6 +2969,8 @@ export function registerHttpApi(app, db) {
   app.patch('/api/purchase-orders/:poId', requirePermission('purchase_orders.manage'), (req, res) => {
     try {
       const poId = req.params.poId;
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) =>
         write.updatePurchaseOrderCoilDraft(db, poId, stripped, req.workspaceBranchId || DEFAULT_BRANCH_ID)
       );
@@ -2977,6 +2982,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/purchase-orders/:poId/link-transport', requirePermission('purchase_orders.manage'), (req, res) => {
     const poId = req.params.poId;
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     const body = req.body || {};
     const amt = Number(body.transportAmountNgn);
     const acct = Number(body.treasuryAccountId);
@@ -3033,6 +3040,8 @@ export function registerHttpApi(app, db) {
     (req, res) => {
     try {
       const poId = req.params.poId;
+      const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+      if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
       const body = req.body || {};
       const amt = Number(body.amountNgn);
       const acct = Number(body.treasuryAccountId);
@@ -3071,12 +3080,16 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/purchase-orders/:poId/transport-paid', requirePermission('purchase_orders.manage'), (req, res) => {
     const poId = req.params.poId;
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, () =>
       write.markTransportPaid(db, poId)
     );
   });
 
   app.post('/api/purchase-orders/:poId/supplier-payment', requirePermission('finance.pay'), (req, res) => {
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, req.params.poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     const { amountNgn, note, treasuryAccountId, reference, dateISO, createdBy } = req.body || {};
     const r = write.recordSupplierPayment(db, req.params.poId, amountNgn, note, {
       treasuryAccountId,
@@ -3092,6 +3105,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/purchase-orders/:poId/status', requirePermission('purchase_orders.manage'), (req, res) => {
     const poId = req.params.poId;
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
       const { status } = stripped || {};
       return write.setPoStatus(db, poId, status);
@@ -3100,6 +3115,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/purchase-orders/:poId/invoice', requirePermission('purchase_orders.manage'), (req, res) => {
     const poId = req.params.poId;
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
       const { invoiceNo, invoiceDateISO, deliveryDateISO } = stripped || {};
       return write.attachSupplierInvoice(db, poId, invoiceNo, invoiceDateISO, deliveryDateISO);
@@ -3588,6 +3605,8 @@ export function registerHttpApi(app, db) {
 
 
   app.post('/api/purchase-orders/:poId/grn', requirePermission('inventory.receive'), (req, res) => {
+    const poGate = assertPurchaseOrderIdInWorkspace(db, req, req.params.poId);
+    if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     const { entries, supplierID, supplierName, allowConversionMismatch } = req.body || {};
     const allowMismatch =
       Boolean(allowConversionMismatch) && userHasPermission(req.user, 'purchase_orders.manage');
@@ -4515,11 +4534,25 @@ export function registerHttpApi(app, db) {
 
   app.put('/api/refunds', requirePermission('settings.view'), (req, res) => {
     try {
+      if (req.workspaceViewAll) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Bulk refund replace is not allowed in all-branches view. Select a single branch workspace.',
+        });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (branchScope === 'ALL') {
+        return res.status(403).json({
+          ok: false,
+          error: 'Bulk refund replace requires a single branch workspace.',
+        });
+      }
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'refunds_bulk', 'bulk', (stripped) => {
         const reason = String(stripped?.reason ?? '').trim();
         if (!reason) return { ok: false, error: 'Reason is required for bulk refund updates.' };
         const refunds = stripped?.refunds || [];
-        write.replaceRefunds(db, refunds);
+        const r = write.replaceRefunds(db, refunds, branchScope);
+        if (!r.ok) return r;
         appendAuditLog(db, {
           actor: req.user,
           action: 'refund.bulk_replace',
@@ -4799,12 +4832,16 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/refunds/:refundId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
+      const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
+      if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const r = write.payRefundEntry(db, req.params.refundId, {
         ...(req.body || {}),
         paymentLines: treasuryLines,
         paidBy: req.user.displayName,
         actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -5800,6 +5837,8 @@ export function registerHttpApi(app, db) {
   app.patch('/api/quotations/:id', requirePermission('quotations.manage'), (req, res) => {
     try {
       const qid = req.params.id;
+      const qGate = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       if (!getQuotation(db, qid)) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
@@ -5833,6 +5872,8 @@ export function registerHttpApi(app, db) {
 
   app.delete('/api/quotations/:id', requirePermission('quotations.manage'), (req, res) => {
     try {
+      const qGate = assertQuotationIdInWorkspace(db, req, req.params.id);
+      if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       const rk = String(req.user?.roleKey || '').toLowerCase();
       if (!['admin', 'md', 'sales_manager', 'branch_manager'].includes(rk)) {
         return res.status(403).json({

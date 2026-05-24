@@ -899,10 +899,34 @@ export function listInventoryCoilSnapshots(db, asAtISO, branchScope = 'ALL') {
     }));
 }
 
-export function listStockMovements(db) {
+export function listStockMovements(db, branchScope = 'ALL') {
+  if (branchScope === 'ALL' || !branchScope) {
+    return db
+      .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC`)
+      .all()
+      .map((row) => ({
+        id: row.id,
+        atISO: row.at_iso,
+        type: row.type,
+        ref: row.ref,
+        productID: row.product_id,
+        qty: row.qty,
+        detail: row.detail,
+        dateISO: row.date_iso,
+        unitPriceNgn: row.unit_price_ngn,
+        valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
+      }));
+  }
+  const bPo = branchWhere(db, 'purchase_orders', branchScope);
+  const bQuo = branchWhere(db, 'quotations', branchScope);
   return db
-    .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC`)
-    .all()
+    .prepare(
+      `SELECT sm.* FROM stock_movements sm
+       WHERE sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})
+          OR sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})
+       ORDER BY sm.at_iso DESC, sm.id DESC`
+    )
+    .all(...bPo.args, ...bQuo.args)
     .map((row) => ({
       id: row.id,
       atISO: row.at_iso,
@@ -1071,10 +1095,16 @@ export function enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerEntr
 }
 
 /** Advance deposits (ADVANCE_IN) mirrored at post time — query-friendly; balances still from ledger math. */
-export function listAdvanceInEvents(db) {
+export function listAdvanceInEvents(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'ledger_entries', branchScope);
   return db
-    .prepare(`SELECT * FROM advance_in_events ORDER BY at_iso DESC, ledger_entry_id DESC`)
-    .all()
+    .prepare(
+      `SELECT a.* FROM advance_in_events a
+       INNER JOIN ledger_entries le ON le.id = a.ledger_entry_id
+       WHERE 1=1${b.sql.replace(/\bbranch_id\b/g, 'le.branch_id')}
+       ORDER BY a.at_iso DESC, a.ledger_entry_id DESC`
+    )
+    .all(...b.args)
     .map((row) => ({
       ledgerEntryId: row.ledger_entry_id,
       customerID: row.customer_id,
@@ -1546,7 +1576,7 @@ export function listExpenses(db, branchScope = 'ALL') {
 
 export function listPaymentRequests(db, branchScope = 'ALL') {
   const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
-  const scopeSql = useScope ? ` AND (e.branch_id = ? OR e.branch_id IS NULL)` : '';
+  const scopeSql = useScope ? ` AND e.branch_id = ?` : '';
   const scopeArgs = useScope ? [branchScope] : [];
   return db
     .prepare(
@@ -1693,10 +1723,11 @@ export function listBankReconciliation(db, branchScope = 'ALL') {
     }));
 }
 
-export function listCoilRequests(db) {
+export function listCoilRequests(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'coil_requests', branchScope);
   return db
-    .prepare(`SELECT * FROM coil_requests ORDER BY created_at_iso DESC`)
-    .all()
+    .prepare(`SELECT * FROM coil_requests WHERE 1=1${b.sql} ORDER BY created_at_iso DESC`)
+    .all(...b.args)
     .map((row) => ({
       id: row.id,
       status: row.status,
@@ -1715,10 +1746,28 @@ export function listCoilRequests(db) {
     }));
 }
 
-export function listYardCoils(db) {
+export function listYardCoils(db, branchScope = 'ALL') {
+  if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'coil_lots', 'branch_id')) {
+    return db
+      .prepare(`SELECT * FROM yard_coils ORDER BY id`)
+      .all()
+      .map((row) => ({
+        id: row.id,
+        colour: row.colour,
+        gaugeLabel: row.gauge_label,
+        materialType: row.material_type,
+        weightKg: row.weight_kg,
+        loc: row.loc,
+      }));
+  }
+  const b = branchWhere(db, 'coil_lots', branchScope);
   return db
-    .prepare(`SELECT * FROM yard_coils ORDER BY id`)
-    .all()
+    .prepare(
+      `SELECT y.* FROM yard_coils y
+       WHERE y.id IN (SELECT coil_no FROM coil_lots WHERE 1=1${b.sql})
+       ORDER BY y.id`
+    )
+    .all(...b.args)
     .map((row) => ({
       id: row.id,
       colour: row.colour,
@@ -1746,35 +1795,51 @@ export function listProcurementCatalog(db) {
 }
 
 export function listAppUsers(db) {
-  return db
-    .prepare(`SELECT * FROM app_users ORDER BY display_name COLLATE NOCASE, username COLLATE NOCASE`)
-    .all()
-    .map((row) => {
-      const u = publicUserFromRow(row);
-      const rawJson = row.permissions_json ?? row.permissionsJson;
-      let hasCustomPermissions = false;
-      if (rawJson && String(rawJson).trim()) {
-        try {
-          const p = JSON.parse(rawJson);
-          hasCustomPermissions = Array.isArray(p);
-        } catch {
-          /* ignore */
-        }
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT u.*,
+          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id
+         FROM app_users u
+         LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+         ORDER BY u.display_name COLLATE NOCASE, u.username COLLATE NOCASE`
+      )
+      .all();
+  } catch {
+    rows = db
+      .prepare(`SELECT * FROM app_users ORDER BY display_name COLLATE NOCASE, username COLLATE NOCASE`)
+      .all();
+  }
+  return rows.map((row) => {
+    const u = publicUserFromRow(row);
+    const rawJson = row.permissions_json ?? row.permissionsJson;
+    let hasCustomPermissions = false;
+    if (rawJson && String(rawJson).trim()) {
+      try {
+        const p = JSON.parse(rawJson);
+        hasCustomPermissions = Array.isArray(p);
+      } catch {
+        /* ignore */
       }
-      return {
-        id: u.id,
-        username: u.username,
-        displayName: u.displayName,
-        email: u.email && String(u.email).trim() ? String(u.email).trim().toLowerCase() : '',
-        roleKey: u.roleKey,
-        department: u.department,
-        status: u.status,
-        permissions: u.permissions,
-        hasCustomPermissions,
-        lastLoginAtISO: u.lastLoginAtISO || '',
-        createdAtISO: u.createdAtISO || row.created_at_iso || '',
-      };
-    });
+    }
+    const branchId =
+      String(row.hr_branch_id ?? row.workspace_branch_id ?? '').trim() || null;
+    return {
+      id: u.id,
+      username: u.username,
+      displayName: u.displayName,
+      email: u.email && String(u.email).trim() ? String(u.email).trim().toLowerCase() : '',
+      roleKey: u.roleKey,
+      department: u.department,
+      status: u.status,
+      permissions: u.permissions,
+      hasCustomPermissions,
+      branchId,
+      lastLoginAtISO: u.lastLoginAtISO || '',
+      createdAtISO: u.createdAtISO || row.created_at_iso || '',
+    };
+  });
 }
 
 export function listPeriodLocks(db) {

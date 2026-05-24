@@ -3629,17 +3629,19 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.body.ok).toBe(false);
   });
 
-  it('POST /api/admin/data-reset clears selected tables for admin', async () => {
-    const before = db.prepare('SELECT COUNT(*) as c FROM human_id_sequences').get();
-    expect(Number(before.c)).toBeGreaterThan(0);
+  it('POST /api/admin/data-reset clears branch-scoped sequences for admin workspace', async () => {
+    const { ensureHumanIdSequencesTable } = await import('./humanId.js');
+    ensureHumanIdSequencesTable(db);
+    db.prepare(`INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES ('QT|KD|2026', 1), ('QT|MDG|2026', 1)`).run();
     const res = await agent.post('/api/admin/data-reset').send({
       presetIds: ['document_sequences'],
       confirmPhrase: 'RESET SELECTED DATA',
     });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    const after = db.prepare('SELECT COUNT(*) as c FROM human_id_sequences').get();
-    expect(Number(after.c)).toBe(0);
+    expect(res.body.branchId).toBeTruthy();
+    const remaining = db.prepare('SELECT scope FROM human_id_sequences').all().map((r) => r.scope);
+    expect(remaining).toEqual(['QT|MDG|2026']);
   });
 
   it('POST /api/settings/integration-api-keys then Bearer GET /api/integration/v1/trial-balance', async () => {

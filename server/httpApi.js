@@ -1859,10 +1859,22 @@ export function registerHttpApi(app, db) {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
         return res.status(403).json({ ok: false, error: 'Admin only.' });
       }
+      const branchId = String(req.workspaceBranchId || '').trim();
+      const branch = branchId ? getBranch(db, branchId) : null;
+      const blocked =
+        !branchId ||
+        branchId === 'ALL' ||
+        Boolean(req.workspaceViewAll && canUseAllBranchesRollup(req.user));
       res.json({
         ok: true,
         presets: ADMIN_DATA_RESET_PRESETS.map(({ id, label, warning }) => ({ id, label, warning })),
         confirmPhrase: ADMIN_DATA_RESET_CONFIRM_PHRASE,
+        branchId: branchId || null,
+        branchName: branch?.name || branchId || null,
+        branchResetBlocked: blocked,
+        branchResetBlockedReason: blocked
+          ? 'Select a single branch in the workspace switcher (not “all branches”) before using data reset.'
+          : null,
       });
     } catch (e) {
       console.error(e);
@@ -1877,7 +1889,12 @@ export function registerHttpApi(app, db) {
       }
       const body = req.body || {};
       const presetIds = Array.isArray(body.presetIds) ? body.presetIds : [];
-      const r = applyAdminDataReset(db, presetIds, body.confirmPhrase, { actorId: req.user?.id });
+      const branchId = String(req.workspaceBranchId || '').trim();
+      const r = applyAdminDataReset(db, presetIds, body.confirmPhrase, {
+        actorId: req.user?.id,
+        branchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      });
       if (!r.ok) {
         return res.status(400).json(r);
       }
@@ -1886,8 +1903,13 @@ export function registerHttpApi(app, db) {
         action: 'admin.data_reset',
         entityKind: 'system',
         entityId: 'data_reset',
-        note: `Admin data reset: ${r.presetIds.join(', ')}`,
-        details: { presetIds: r.presetIds, tablesCleared: r.tablesCleared },
+        note: `Admin data reset (${r.branchName || r.branchId}): ${r.presetIds.join(', ')}`,
+        details: {
+          presetIds: r.presetIds,
+          tablesCleared: r.tablesCleared,
+          branchId: r.branchId,
+          skippedTables: r.skippedTables,
+        },
       });
       res.json(r);
     } catch (e) {

@@ -1,3 +1,5 @@
+import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
+
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
  * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_APPLIED'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
@@ -101,9 +103,9 @@ export function overpayCreditRemainingOnQuotationFromEntries(entries, customerID
  */
 export function amountDueOnQuotationFromEntries(_entries, q) {
   if (!q?.id) return 0;
-  const total = Number(q.totalNgn) || 0;
-  const rowPaid = Number(q.paidNgn) || 0;
-  return Math.max(0, Math.round(total - rowPaid));
+  const total = Math.round(Number(q.totalNgn) || 0);
+  const rowPaid = Math.round(Number(q.paidNgn) || 0);
+  return effectiveOutstandingNgn(total, rowPaid);
 }
 
 export function ledgerReceiptTotalFromEntries(entries, customerID) {

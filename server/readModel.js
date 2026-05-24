@@ -1,4 +1,5 @@
-import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
+import { amountDueOnQuotationFromEntries, companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
+import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow } from './auth.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
@@ -463,7 +464,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
     .reduce((s, e) => s + (Number(e.amount_ngn) || 0), 0);
   /** Prefer ledger receipts/advances when higher than booked paid (stale quotation row). */
   const paid = Math.max(bookedPaid, ledgerInflowSum);
-  const outstanding = Math.max(0, orderTotal - paid);
+  const outstanding = effectiveOutstandingNgn(orderTotal, paid);
   const completedMeters = productionLogs
     .filter((j) => String(j.status || '').toLowerCase() === 'completed')
     .reduce((s, j) => s + (Number(j.actual_meters) || 0), 0);
@@ -761,7 +762,7 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
   return rows.map((row) => {
     const total = Number(row.transport_amount_ngn) || 0;
     const paid = Number(row.transport_paid_ngn) || 0;
-    const outstandingNgn = Math.max(0, total - paid);
+    const outstandingNgn = effectiveOutstandingNgn(total, paid);
     return {
       poID: row.po_id,
       supplierName: row.supplier_name ?? '',
@@ -2433,8 +2434,9 @@ export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) 
     pendingPoCount: nonRejected.filter((po) => normalizeProcurementStatus(po.status) === 'requested').length,
     approvedPoCount: nonRejected.filter((po) => normalizeProcurementStatus(po.status) === 'approved').length,
     outstandingSupplierPaymentsNgn: nonRejected.reduce((s, po) => {
+      const total = poOrderedValue(po);
       const paid = Number(po?.supplierPaidNgn) || 0;
-      return s + Math.max(0, poOrderedValue(po) - paid);
+      return s + effectiveOutstandingNgn(total, paid);
     }, 0),
     activeSuppliers: new Set(nonRejected.map((po) => String(po?.supplierID || '')).filter(Boolean)).size,
     goodsInTransitCount: loads.filter((l) =>
@@ -2442,7 +2444,10 @@ export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) 
     ).length,
     lowStockItemsCount: products.filter((p) => Number(p?.stockLevel) < 1).length,
     posCreatedToday: nonRejected.filter((po) => String(po?.orderDateISO || '').slice(0, 10) === now).length,
-    payablesOutstandingNgn: aps.reduce((s, ap) => s + Math.max(0, (Number(ap?.amountNgn) || 0) - (Number(ap?.paidNgn) || 0)), 0),
+    payablesOutstandingNgn: aps.reduce(
+      (s, ap) => s + effectiveOutstandingNgn(Number(ap?.amountNgn) || 0, Number(ap?.paidNgn) || 0),
+      0
+    ),
   };
   return { ok: true, kpis };
 }
@@ -2492,7 +2497,7 @@ export function procurementPayablesAging(db, branchScope = 'ALL') {
   const now = new Date();
   const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
   aps.forEach((ap) => {
-    const outstanding = Math.max(0, (Number(ap?.amountNgn) || 0) - (Number(ap?.paidNgn) || 0));
+    const outstanding = effectiveOutstandingNgn(Number(ap?.amountNgn) || 0, Number(ap?.paidNgn) || 0);
     if (!(outstanding > 0)) return;
     const due = new Date(String(ap?.dueDateISO || ap?.dueDate || ap?.invoiceDateISO || ''));
     if (Number.isNaN(due.getTime())) return;
@@ -2584,7 +2589,7 @@ export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
     salesMtdNgn: qInRange.reduce((s, q) => s + (Number(q?.totalNgn) || 0), 0),
     receiptsMtdNgn: rInRange.reduce((s, r) => s + (Number(r?.amountNgn) || 0), 0),
     outstandingReceivablesNgn: quotations.reduce(
-      (s, q) => s + Math.max(0, (Number(q?.totalNgn) || 0) - (Number(q?.paidNgn) || 0)),
+      (s, q) => s + amountDueOnQuotationFromEntries([], q),
       0
     ),
     pendingQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'requested').length,
@@ -2593,7 +2598,7 @@ export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
     refundsAwaitingPayout: refunds.filter(
       (r) =>
         String(r?.status || '').toLowerCase() === 'approved' &&
-        Math.max(0, (Number(r?.amountNgn) || 0) - (Number(r?.paidAmountNgn) || 0)) > 0
+        effectiveOutstandingNgn(Number(r?.amountNgn) || 0, Number(r?.paidAmountNgn) || 0) > 0
     ).length,
     cuttingWaiting: cuttingLists.filter((c) => !c?.productionRegistered || c?.productionReleasePending).length,
     producedMeters: productionJobs.reduce((s, j) => s + (Number(j?.actualMeters || j?.plannedMeters || 0) || 0), 0),
@@ -2634,7 +2639,7 @@ export function salesDashboardReceivablesAging(db, branchScope = 'ALL') {
   listQuotations(db, branchScope).forEach((q) => {
     const due = new Date(String(q?.dateISO || q?.date || ''));
     if (Number.isNaN(due.getTime())) return;
-    const outstanding = Math.max(0, (Number(q?.totalNgn) || 0) - (Number(q?.paidNgn) || 0));
+    const outstanding = amountDueOnQuotationFromEntries([], q);
     if (!(outstanding > 0)) return;
     const days = Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000));
     if (days <= 30) out['0_30'] += outstanding;

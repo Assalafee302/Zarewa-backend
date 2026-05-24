@@ -1,4 +1,5 @@
 import { amountDueOnQuotationFromEntries } from './customerLedgerCore.js';
+import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 import { refundOutstandingAmount } from './refundsStore.js';
 import { receiptCashReceivedNgn } from './salesReceiptsList.js';
 
@@ -532,7 +533,7 @@ export function supplierPerformanceSummary(purchaseOrders = [], limit = 5) {
   return [...bySupplier.values()]
     .map((row) => ({
       ...row,
-      outstandingNgn: Math.max(0, row.orderValueNgn - row.paidNgn),
+      outstandingNgn: effectiveOutstandingNgn(row.orderValueNgn, row.paidNgn),
       receiveRatePct: row.poCount > 0 ? Math.round((row.receivedCount / row.poCount) * 100) : 0,
     }))
     .sort((a, b) => b.orderValueNgn - a.orderValueNgn)

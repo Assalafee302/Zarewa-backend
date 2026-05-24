@@ -71,6 +71,10 @@ import {
   listCoilLots,
 } from './readModel.js';
 import { RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE } from '../shared/lib/receiptClearance.js';
+import {
+  effectiveOutstandingNgn,
+  isEffectivelyFullyPaid,
+} from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import {
@@ -321,7 +325,7 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
   const total = Math.round(Number(row.total_ngn) || 0);
   let paymentStatus;
   if (paidTotal <= 0) paymentStatus = 'Unpaid';
-  else if (total > 0 && paidTotal >= total) paymentStatus = 'Paid';
+  else if (isEffectivelyFullyPaid(paidTotal, total)) paymentStatus = 'Paid';
   else paymentStatus = 'Partial';
   db.prepare(`UPDATE quotations SET paid_ngn = ?, payment_status = ? WHERE id = ?`).run(
     paidTotal,
@@ -1348,8 +1352,8 @@ export function syncPurchaseOrderTransportPaymentState(db, poID, actor = null) {
   if (total > 0 && adv <= 0) adv = total;
 
   const transportPaidNgn = paid;
-  const fullyPaid = total > 0 && paid >= total;
-  const advanceMet = total > 0 && paid >= adv;
+  const fullyPaid = isEffectivelyFullyPaid(paid, total);
+  const advanceMet = total > 0 && (paid >= adv || isEffectivelyFullyPaid(paid, adv));
 
   const prevStatus = row.status;
   let nextStatus = prevStatus;
@@ -6476,7 +6480,7 @@ export function payPaymentRequest(db, requestID, payload) {
 
   const requested = roundMoney(row.amount_requested_ngn);
   const alreadyPaid = roundMoney(row.paid_amount_ngn);
-  const outstanding = requested - alreadyPaid;
+  const outstanding = effectiveOutstandingNgn(requested, alreadyPaid);
   if (outstanding <= 0) {
     return { ok: false, error: 'Payment request is already fully paid.' };
   }
@@ -6616,7 +6620,7 @@ export function payAccountsPayable(db, apId, payload) {
   if (!row) return { ok: false, error: 'Payable not found.' };
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Payment amount must be positive.' };
-  const outstanding = roundMoney(row.amount_ngn) - roundMoney(row.paid_ngn);
+  const outstanding = effectiveOutstandingNgn(roundMoney(row.amount_ngn), roundMoney(row.paid_ngn));
   if (outstanding <= 0) return { ok: false, error: 'Invoice is already fully paid.' };
   const apply = Math.min(amountNgn, outstanding);
   try {
@@ -6691,7 +6695,7 @@ export function payRefundEntry(db, refundId, payload) {
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);
-  const outstandingAmountNgn = approvedAmountNgn - paidAmountNgn;
+  const outstandingAmountNgn = effectiveOutstandingNgn(approvedAmountNgn, paidAmountNgn);
   if (outstandingAmountNgn <= 0) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }

@@ -4,6 +4,7 @@ import {
   FINANCE_WORK_ITEM_DOCUMENT_TYPES,
   FINANCE_WORK_ITEM_SOURCE_KINDS,
 } from './financeWorkItemConstants.js';
+import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { sumTransportPaymentsForPo } from './writeOps.js';
 import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady, createWorkItem } from './workItems.js';
 
@@ -107,7 +108,7 @@ export function syncFinancePoTransportWorkItem(db, poID, actor) {
     });
   }
 
-  if (paid >= total) {
+  if (isEffectivelyFullyPaid(paid, total)) {
     return upsertWorkItemBySource(db, {
       actor,
       sourceKind: sk,

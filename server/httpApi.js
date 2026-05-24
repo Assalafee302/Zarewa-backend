@@ -9,6 +9,7 @@ import {
   planRefundAdvance,
   receiptResultFromSavedRows,
 } from '../shared/lib/customerLedgerCore.js';
+import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { productionTransactionReportRows } from '../shared/lib/productionTransactionReportCore.js';
 import {
   arAsAtReportRows,
@@ -326,7 +327,7 @@ import {
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpChat.js';
-import { buildHelpPersonalizationFromSnapshot, computeHelpLearnedBoosts } from './helpQueryOps.js';
+import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
@@ -619,12 +620,17 @@ export function registerHttpApi(app, db) {
     rateLimitAuthedUser(helpChatBuckets, 'help-chat', 40, 60_000),
     async (req, res) => {
       try {
-        const { message, messages, pathname } = req.body || {};
+        const { message, messages, pathname, clientDraftMs } = req.body || {};
+        const msg = typeof message === 'string' ? message : '';
         const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
-        const learnedBoosts = computeHelpLearnedBoosts(db, { branchId });
+        const learnedBoosts = computeMergedLearnedBoosts(db, {
+          branchId,
+          userId: req.user?.id,
+          queryText: msg,
+        });
         const result = await runHelpChat({
           db,
-          message: typeof message === 'string' ? message : '',
+          message: msg,
           messages,
           pathname: typeof pathname === 'string' ? pathname : '',
           userDisplay: req.user?.displayName,
@@ -632,12 +638,14 @@ export function registerHttpApi(app, db) {
           branchId,
           roleKey: req.user?.roleKey,
           learnedBoosts,
+          clientDraftMs: Number(clientDraftMs) || 0,
         });
         return res.json({
           ok: true,
           message: result.content,
           source: result.source,
           links: Array.isArray(result.links) ? result.links : [],
+          logId: result.logId || null,
         });
       } catch (e) {
         const code = e?.code;
@@ -649,6 +657,61 @@ export function registerHttpApi(app, db) {
       }
     }
   );
+
+  app.post('/api/help/signal', requireAuth, (req, res) => {
+    const { logId, signal, readMs } = req.body || {};
+    const id = String(logId || '').trim();
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'logId is required.' });
+    }
+    const sig = String(signal || '').trim();
+    let feedback = null;
+    let followUp = false;
+    let linkClicked = false;
+    if (sig === 'helpful') feedback = 'helpful';
+    else if (sig === 'not_helpful') feedback = 'not_helpful';
+    else if (sig === 'follow_up') followUp = true;
+    else if (sig === 'link_click') linkClicked = true;
+    else {
+      return res.status(400).json({ ok: false, error: 'Invalid signal.' });
+    }
+    const ok = recordHelpQuerySignal(db, {
+      logId: id,
+      userId: req.user?.id,
+      feedback,
+      readMs: Number(readMs) || 0,
+      followUp,
+      linkClicked,
+    });
+    if (!ok) {
+      return res.status(404).json({ ok: false, error: 'Help log entry not found.' });
+    }
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/help/log-query', requireAuth, (req, res) => {
+    const { message, pathname, matchedArticleIds, source, topScore, clientDraftMs, responseMs } = req.body || {};
+    const text = String(message || '').trim();
+    if (!text) {
+      return res.status(400).json({ ok: false, error: 'message is required.' });
+    }
+    const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+    const logId = insertHelpQueryLog(db, {
+      userId: req.user?.id,
+      branchId,
+      roleKey: req.user?.roleKey,
+      pathname: typeof pathname === 'string' ? pathname : '',
+      queryText: text,
+      matchedArticleIds: Array.isArray(matchedArticleIds) ? matchedArticleIds : [],
+      source: String(source || 'kb').slice(0, 32),
+      topScore: Number(topScore) || 0,
+      responseChars: 0,
+      responseMs: Number(responseMs) || 0,
+      clientDraftMs: Number(clientDraftMs) || 0,
+      sessionTurn: 1,
+    });
+    return res.json({ ok: true, logId: logId || null });
+  });
 
   app.get(
     '/api/management/items',
@@ -4708,9 +4771,11 @@ export function registerHttpApi(app, db) {
       const paidBooked = qRow != null ? Math.round(Number(qRow.paid_ngn) || 0) : null;
       const totalBooked = qRow != null ? Math.round(Number(qRow.total_ngn) || 0) : null;
       const orderOutstandingNgn =
-        qRow != null && totalBooked != null && totalBooked > 0 ? Math.max(0, totalBooked - (paidBooked || 0)) : null;
+        qRow != null && totalBooked != null && totalBooked > 0
+          ? amountDueOnQuotationFromEntries([], { id: quotationRef, totalNgn: totalBooked, paidNgn: paidBooked })
+          : null;
       const isOrderFullySettledForPicker =
-        qRow == null ? null : totalBooked <= 0 ? true : (paidBooked || 0) >= totalBooked;
+        qRow == null ? null : totalBooked <= 0 ? true : isEffectivelyFullyPaid(paidBooked || 0, totalBooked);
       const productionJobs = db
         .prepare(
           `SELECT job_id, status FROM production_jobs WHERE quotation_ref = ? ORDER BY job_id ASC`
@@ -4740,9 +4805,9 @@ export function registerHttpApi(app, db) {
           `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — the quotation picker only lists sales where the preview sums to at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} (use Use quotation id when manual entry is allowed).`
         );
       }
-      if (meets.ok && totalBooked > 0 && (paidBooked || 0) < totalBooked) {
+      if (meets.ok && totalBooked > 0 && !isOrderFullySettledForPicker) {
         blockingReasons.push(
-          `Order still has ₦${orderOutstandingNgn.toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations: booked paid ≥ order total).`
+          `Order still has ₦${(orderOutstandingNgn ?? 0).toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations; residuals under 0.01% are ignored).`
         );
       }
       if (meets.ok && remainingNgn > 0 && remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) {

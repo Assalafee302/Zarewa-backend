@@ -2,6 +2,7 @@
  * Refund requests — shared between Sales (create / approve) and Finance (pay out).
  * Live data comes from workspace snapshot; localStorage is legacy-only if present.
  */
+import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 
 const STORAGE_KEY = 'zarewa.sales.refunds';
 
@@ -35,8 +36,9 @@ export function refundApprovedAmount(r) {
 }
 
 export function refundOutstandingAmount(r) {
+  const approved = refundApprovedAmount(r);
   const paid = Number(r?.paidAmountNgn) || 0;
-  return Math.max(0, refundApprovedAmount(r) - paid);
+  return effectiveOutstandingNgn(approved, paid);
 }
 
 /**
@@ -77,7 +79,7 @@ export function normalizeRefund(r) {
     paidBy: r.paidBy ?? '',
     paymentNote: r.paymentNote ?? '',
     payoutHistory: Array.isArray(r.payoutHistory) ? r.payoutHistory.map(normalizePayoutLine) : [],
-    outstandingAmountNgn: Math.max(0, approvedAmountNgn - paidAmountNgn),
+    outstandingAmountNgn: effectiveOutstandingNgn(approvedAmountNgn, paidAmountNgn),
   };
 }
 

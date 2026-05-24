@@ -7639,8 +7639,15 @@ function assertExpenseOutflowBranchGate(db, row, workspaceBranchId, workspaceVie
   } else if (t === 'REFUND_PAYOUT' && sk === 'REFUND') {
     const r = db.prepare(`SELECT COALESCE(branch_id, '') AS branch_id FROM customer_refunds WHERE refund_id = ?`).get(sid);
     bid = String(r?.branch_id || '').trim();
+  } else if (
+    (t === 'SUPPLIER_PAYMENT' || t === 'TRANSPORT_PAYMENT') &&
+    sk === 'PURCHASE_ORDER'
+  ) {
+    bid = '';
+  } else if (t === 'AP_PAYMENT' && sk === 'ACCOUNTS_PAYABLE') {
+    bid = '';
   } else {
-    return { ok: false, error: 'This treasury line cannot be corrected from the expense pay-from flow.' };
+    return { ok: false, error: 'This treasury line cannot be corrected from the pay-from flow.' };
   }
   if (bid && bid !== wb && !viewOk && !cross) {
     return { ok: false, error: 'Switch workspace branch to correct this treasury line.' };
@@ -7671,11 +7678,15 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
   const allowed =
     (t === 'EXPENSE' && sk === 'EXPENSE') ||
     (t === 'PAYMENT_REQUEST_OUT' && sk === 'PAYMENT_REQUEST') ||
-    (t === 'REFUND_PAYOUT' && sk === 'REFUND');
+    (t === 'REFUND_PAYOUT' && sk === 'REFUND') ||
+    (t === 'SUPPLIER_PAYMENT' && sk === 'PURCHASE_ORDER') ||
+    (t === 'TRANSPORT_PAYMENT' && sk === 'PURCHASE_ORDER') ||
+    (t === 'AP_PAYMENT' && sk === 'ACCOUNTS_PAYABLE');
   if (!allowed) {
     return {
       ok: false,
-      error: 'Only expense, payment-request, or customer-refund payout lines can be corrected here.',
+      error:
+        'Only expense, purchase (supplier/AP/transport), payment-request, or customer-refund payout lines can be corrected here.',
     };
   }
 

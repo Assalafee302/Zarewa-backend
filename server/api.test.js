@@ -1027,7 +1027,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(row.supplierProfile?.bankAccounts?.[0]?.accountNumber).toBe('0011223344');
   });
 
-  it('POST /api/suppliers rejects duplicate name in branch (normalized)', async () => {
+  it('POST /api/suppliers rejects duplicate name company-wide (normalized)', async () => {
     const first = await agent.post('/api/suppliers').send({
       name: 'Dup Test Metals Ltd',
       city: 'Kano',

@@ -1,7 +1,7 @@
 import { migrateMergeDuplicateSuppliers } from './supplierDedupe.js';
 
 /**
- * One-time startup migration: merge duplicate suppliers (same branch) by name / phone / registry / account.
+ * One-time startup migration: merge duplicate suppliers (company-wide) by name / phone / registry / account.
  * @param {import('better-sqlite3').Database} db
  */
 export function migrateMergeDuplicateSuppliersOnBoot(db) {

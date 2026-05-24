@@ -50,7 +50,7 @@ import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
-import { DEFAULT_BRANCH_ID } from './branches.js';
+import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
 import { assertTreasuryAccountForWorkspace } from './branchScope.js';
 import {
   mergeSupplierProfilePatch,
@@ -3828,11 +3828,10 @@ export function nextSupplierIdFromDb(db) {
 }
 
 /** @param {import('better-sqlite3').Database} db */
-export function insertSupplier(db, row, branchId = DEFAULT_BRANCH_ID) {
+export function insertSupplier(db, row, _branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) throw new Error('Supplier name is required.');
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  assertNoDuplicateSupplierIdentity(db, bid, { name, supplierProfile: row.supplierProfile }, null);
+  assertNoDuplicateSupplierIdentity(db, GLOBAL_MASTER_DATA_BRANCH, { name, supplierProfile: row.supplierProfile }, null);
   const id = String(row.supplierID ?? '').trim() || nextSupplierIdFromDb(db);
   let profileJson = null;
   if (row.supplierProfile != null && typeof row.supplierProfile === 'object') {
@@ -3850,19 +3849,18 @@ export function insertSupplier(db, row, branchId = DEFAULT_BRANCH_ID) {
     row.paymentTerms ?? 'Credit',
     Number(row.qualityScore) || 80,
     String(row.notes ?? '').trim() || '',
-    String(branchId || DEFAULT_BRANCH_ID).trim(),
+    GLOBAL_MASTER_DATA_BRANCH,
     profileJson
   );
   return id;
 }
 
-export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID) {
+export function updateSupplier(db, supplierID, row, _branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) return { ok: false, error: 'Supplier name is required.' };
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   const curRow = db
-    .prepare(`SELECT name, supplier_profile_json FROM suppliers WHERE supplier_id = ? AND branch_id = ?`)
-    .get(supplierID, bid);
+    .prepare(`SELECT name, supplier_profile_json FROM suppliers WHERE supplier_id = ?`)
+    .get(supplierID);
   if (!curRow) return { ok: false, error: 'Supplier not found.' };
   let mergedProfileForCheck = parseSupplierProfileJson(curRow.supplier_profile_json);
   if (row.supplierProfile != null && typeof row.supplierProfile === 'object') {
@@ -3873,7 +3871,7 @@ export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID
   }
   const conflict = findSupplierIdentityConflict(
     db,
-    bid,
+    GLOBAL_MASTER_DATA_BRANCH,
     { name, supplierProfile: mergedProfileForCheck },
     supplierID
   );
@@ -3906,7 +3904,7 @@ export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID
   const r = profileJson !== undefined
     ? db
         .prepare(
-          `UPDATE suppliers SET name = ?, city = ?, payment_terms = ?, quality_score = ?, notes = ?, supplier_profile_json = ? WHERE supplier_id = ? AND branch_id = ?`
+          `UPDATE suppliers SET name = ?, city = ?, payment_terms = ?, quality_score = ?, notes = ?, supplier_profile_json = ? WHERE supplier_id = ?`
         )
         .run(
           name,
@@ -3915,12 +3913,11 @@ export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID
           Number(row.qualityScore) || 80,
           String(row.notes ?? '').trim() || '',
           profileJson,
-          supplierID,
-          bid
+          supplierID
         )
     : db
         .prepare(
-          `UPDATE suppliers SET name = ?, city = ?, payment_terms = ?, quality_score = ?, notes = ? WHERE supplier_id = ? AND branch_id = ?`
+          `UPDATE suppliers SET name = ?, city = ?, payment_terms = ?, quality_score = ?, notes = ? WHERE supplier_id = ?`
         )
         .run(
           name,
@@ -3928,26 +3925,24 @@ export function updateSupplier(db, supplierID, row, branchId = DEFAULT_BRANCH_ID
           row.paymentTerms ?? 'Credit',
           Number(row.qualityScore) || 80,
           String(row.notes ?? '').trim() || '',
-          supplierID,
-          bid
+          supplierID
         );
   if (r.changes === 0) return { ok: false, error: 'Supplier not found.' };
   db.prepare(`UPDATE purchase_orders SET supplier_name = ? WHERE supplier_id = ?`).run(name, supplierID);
   return { ok: true };
 }
 
-export function deleteSupplier(db, supplierID, branchId = DEFAULT_BRANCH_ID) {
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  const own = db.prepare(`SELECT supplier_id FROM suppliers WHERE supplier_id = ? AND branch_id = ?`).get(supplierID, bid);
-  if (!own) return { ok: false, error: 'Supplier not found in your branch.' };
+export function deleteSupplier(db, supplierID, _branchId = DEFAULT_BRANCH_ID) {
+  const own = db.prepare(`SELECT supplier_id FROM suppliers WHERE supplier_id = ?`).get(supplierID);
+  if (!own) return { ok: false, error: 'Supplier not found.' };
   const c = db.prepare(`SELECT COUNT(*) AS c FROM purchase_orders WHERE supplier_id = ?`).get(supplierID).c;
   if (c > 0) {
     return {
       ok: false,
-      error: `Cannot delete supplier: ${c} purchase order(s) still reference this supplier.`,
+      error: `Cannot delete supplier: ${c} purchase order(s) still reference this supplier (any branch).`,
     };
   }
-  const r = db.prepare(`DELETE FROM suppliers WHERE supplier_id = ? AND branch_id = ?`).run(supplierID, bid);
+  const r = db.prepare(`DELETE FROM suppliers WHERE supplier_id = ?`).run(supplierID);
   if (r.changes === 0) return { ok: false, error: 'Supplier not found.' };
   return { ok: true };
 }
@@ -3972,7 +3967,7 @@ function stringifyTransportAgentProfile(row) {
   }
 }
 
-export function insertTransportAgent(db, row, branchId = DEFAULT_BRANCH_ID) {
+export function insertTransportAgent(db, row, _branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) throw new Error('Agent name is required.');
   const id = String(row.id ?? '').trim() || nextTransportAgentIdFromDb(db);
@@ -3984,16 +3979,15 @@ export function insertTransportAgent(db, row, branchId = DEFAULT_BRANCH_ID) {
     name,
     String(row.region ?? '').trim() || '',
     String(row.phone ?? '').trim() || '',
-    String(branchId || DEFAULT_BRANCH_ID).trim(),
+    GLOBAL_MASTER_DATA_BRANCH,
     profileJson
   );
   return id;
 }
 
-export function updateTransportAgent(db, id, row, branchId = DEFAULT_BRANCH_ID) {
+export function updateTransportAgent(db, id, row, _branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) return { ok: false, error: 'Agent name is required.' };
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   const hasProfileKey =
     row != null &&
     (Object.prototype.hasOwnProperty.call(row, 'profile') ||
@@ -4003,20 +3997,19 @@ export function updateTransportAgent(db, id, row, branchId = DEFAULT_BRANCH_ID) 
     const profileJson = stringifyTransportAgentProfile(row);
     r = db
       .prepare(
-        `UPDATE transport_agents SET name = ?, region = ?, phone = ?, profile_json = ? WHERE id = ? AND branch_id = ?`
+        `UPDATE transport_agents SET name = ?, region = ?, phone = ?, profile_json = ? WHERE id = ?`
       )
       .run(
         name,
         String(row.region ?? '').trim() || '',
         String(row.phone ?? '').trim() || '',
         profileJson,
-        id,
-        bid
+        id
       );
   } else {
     r = db
-      .prepare(`UPDATE transport_agents SET name = ?, region = ?, phone = ? WHERE id = ? AND branch_id = ?`)
-      .run(name, String(row.region ?? '').trim() || '', String(row.phone ?? '').trim() || '', id, bid);
+      .prepare(`UPDATE transport_agents SET name = ?, region = ?, phone = ? WHERE id = ?`)
+      .run(name, String(row.region ?? '').trim() || '', String(row.phone ?? '').trim() || '', id);
   }
   if (r.changes === 0) return { ok: false, error: 'Transport agent not found.' };
   db.prepare(`UPDATE purchase_orders SET transport_agent_name = ? WHERE transport_agent_id = ?`).run(
@@ -4026,10 +4019,8 @@ export function updateTransportAgent(db, id, row, branchId = DEFAULT_BRANCH_ID) 
   return { ok: true };
 }
 
-export function deleteTransportAgent(db, id, branchId = DEFAULT_BRANCH_ID) {
-  const r = db
-    .prepare(`DELETE FROM transport_agents WHERE id = ? AND branch_id = ?`)
-    .run(id, String(branchId || DEFAULT_BRANCH_ID).trim());
+export function deleteTransportAgent(db, id, _branchId = DEFAULT_BRANCH_ID) {
+  const r = db.prepare(`DELETE FROM transport_agents WHERE id = ?`).run(id);
   if (r.changes === 0) return { ok: false, error: 'Transport agent not found.' };
   return { ok: true };
 }

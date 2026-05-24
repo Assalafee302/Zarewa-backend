@@ -1,6 +1,9 @@
 /** Default branch for legacy rows and first login. */
 export const DEFAULT_BRANCH_ID = 'BR-KD';
 
+/** Suppliers and transport agents are shared company-wide (not per branch). */
+export const GLOBAL_MASTER_DATA_BRANCH = '';
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @returns {Array<{ id: string; code: string; name: string; active: boolean; sortOrder: number; cuttingListMinPaidFraction: number }>}

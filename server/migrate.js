@@ -3096,6 +3096,12 @@ function migrateBranches(db) {
       `UPDATE treasury_accounts SET branch_id = 'BR-YL' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '' OR branch_id = ?`
     ).run(defaultBranch);
   }
+  if (tableCols('suppliers').has('branch_id')) {
+    db.prepare(`UPDATE suppliers SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
+  }
+  if (tableCols('transport_agents').has('branch_id')) {
+    db.prepare(`UPDATE transport_agents SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fixed_assets (

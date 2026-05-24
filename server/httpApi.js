@@ -2793,10 +2793,6 @@ export function registerHttpApi(app, db) {
           .prepare(`SELECT supplier_id, supplier_profile_json, branch_id FROM suppliers WHERE supplier_id = ?`)
           .get(sid);
         if (!row) return res.status(404).json({ ok: false, error: 'Supplier not found.' });
-        const scope = resolveBootstrapBranchScope(req);
-        if (scope !== 'ALL' && String(row.branch_id || '') !== String(scope)) {
-          return res.status(403).json({ ok: false, error: 'Supplier is outside your workspace branch.' });
-        }
         const profile = parseSupplierProfileJson(row.supplier_profile_json);
         const agreements = Array.isArray(profile.agreements) ? profile.agreements : [];
         const hit = agreements.find((a) => a && String(a.id) === aid);

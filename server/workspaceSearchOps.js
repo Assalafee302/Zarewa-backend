@@ -136,14 +136,13 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
   if (perm('procurement.view') || perm('purchase_orders.manage')) {
     const n = room();
     if (n > 0) {
-      const bp = branchPredicate(db, 'suppliers', branchScope);
       const rows = db
         .prepare(
-          `SELECT supplier_id, name, IFNULL(city,'') AS city FROM suppliers WHERE 1=1${bp.sql}
-           AND (supplier_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR IFNULL(city,'') LIKE ? ESCAPE '\\')
+          `SELECT supplier_id, name, IFNULL(city,'') AS city FROM suppliers
+           WHERE (supplier_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR IFNULL(city,'') LIKE ? ESCAPE '\\')
            ORDER BY name COLLATE NOCASE LIMIT ?`
         )
-        .all(...bp.args, likeArg, likeArg, likeArg, n);
+        .all(likeArg, likeArg, likeArg, n);
       for (const s of rows) {
         push({
           kind: 'supplier',

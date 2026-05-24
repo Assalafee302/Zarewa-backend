@@ -607,11 +607,11 @@ export function listLedgerEntriesForCustomer(db, customerId, branchScope = 'ALL'
     .map(mapLedgerRow);
 }
 
-export function listSuppliers(db, branchScope = 'ALL') {
-  const b = branchWhere(db, 'suppliers', branchScope);
+/** Company-wide supplier directory; branchScope is ignored (POs/AP stay branch-scoped). */
+export function listSuppliers(db, _branchScope = 'ALL') {
   return db
-    .prepare(`SELECT * FROM suppliers WHERE 1=1${b.sql} ORDER BY name COLLATE NOCASE`)
-    .all(...b.args)
+    .prepare(`SELECT * FROM suppliers ORDER BY name COLLATE NOCASE`)
+    .all()
     .map((row) => {
       const rawProfile = hasColumn(db, 'suppliers', 'supplier_profile_json')
         ? parseSupplierProfileJson(row.supplier_profile_json)
@@ -629,11 +629,11 @@ export function listSuppliers(db, branchScope = 'ALL') {
     });
 }
 
-export function listTransportAgents(db, branchScope = 'ALL') {
-  const b = branchWhere(db, 'transport_agents', branchScope);
+/** Company-wide transporter directory; branchScope is ignored. */
+export function listTransportAgents(db, _branchScope = 'ALL') {
   return db
-    .prepare(`SELECT * FROM transport_agents WHERE 1=1${b.sql} ORDER BY name`)
-    .all(...b.args)
+    .prepare(`SELECT * FROM transport_agents ORDER BY name`)
+    .all()
     .map((row) => {
       let profile = {};
       try {

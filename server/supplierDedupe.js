@@ -18,9 +18,7 @@ const SUPPLIER_REF_TABLES = [
  * @param {string | null | undefined} excludeSupplierId
  * @returns {{ field: string, supplierId: string } | null}
  */
-export function findSupplierIdentityConflict(db, branchId, payload, excludeSupplierId) {
-  const bid = String(branchId || '').trim();
-  if (!bid) return null;
+export function findSupplierIdentityConflict(db, _branchId, payload, excludeSupplierId) {
   const incoming = collectSupplierIdentityKeys(
     String(payload?.name ?? '').trim(),
     payload?.supplierProfile
@@ -35,8 +33,8 @@ export function findSupplierIdentityConflict(db, branchId, payload, excludeSuppl
 
   const ex = excludeSupplierId ? String(excludeSupplierId).trim() : '';
   const rows = db
-    .prepare(`SELECT supplier_id, name, supplier_profile_json FROM suppliers WHERE branch_id = ?`)
-    .all(bid);
+    .prepare(`SELECT supplier_id, name, supplier_profile_json FROM suppliers`)
+    .all();
 
   for (const r of rows) {
     if (ex && r.supplier_id === ex) continue;
@@ -112,71 +110,62 @@ export function pickCanonicalSupplierRow(db, group) {
 }
 
 /**
- * Cluster suppliers in a branch that share any identity key.
+ * Cluster suppliers company-wide that share any identity key (across branches).
  * @param {Array<{ supplier_id: string, name: string, supplier_profile_json?: string | null, branch_id: string }>} rows
  */
 export function clusterDuplicateSuppliers(rows) {
-  const byBranch = new Map();
+  const clusters = [];
+  const idToKeys = new Map();
+  const keyToIds = new Map();
+
+  const addKey = (key, id) => {
+    if (!key) return;
+    if (!keyToIds.has(key)) keyToIds.set(key, new Set());
+    keyToIds.get(key).add(id);
+  };
+
   for (const r of rows) {
-    const bid = String(r.branch_id || '').trim();
-    if (!byBranch.has(bid)) byBranch.set(bid, []);
-    byBranch.get(bid).push(r);
+    const keys = collectSupplierIdentityKeys(
+      r.name,
+      parseSupplierProfileJson(r.supplier_profile_json)
+    );
+    idToKeys.set(r.supplier_id, keys);
+    for (const k of keys.nameKeys) addKey(`n:${k}`, r.supplier_id);
+    for (const k of keys.phoneKeys) addKey(`p:${k}`, r.supplier_id);
+    for (const k of keys.emailKeys) addKey(`e:${k}`, r.supplier_id);
+    for (const k of keys.registryKeys) addKey(`r:${k}`, r.supplier_id);
+    for (const k of keys.accountKeys) addKey(`a:${k}`, r.supplier_id);
   }
 
-  const clusters = [];
-  for (const branchRows of byBranch.values()) {
-    const idToKeys = new Map();
-    const keyToIds = new Map();
-
-    const addKey = (key, id) => {
-      if (!key) return;
-      if (!keyToIds.has(key)) keyToIds.set(key, new Set());
-      keyToIds.get(key).add(id);
-    };
-
-    for (const r of branchRows) {
-      const keys = collectSupplierIdentityKeys(
-        r.name,
-        parseSupplierProfileJson(r.supplier_profile_json)
-      );
-      idToKeys.set(r.supplier_id, keys);
-      for (const k of keys.nameKeys) addKey(`n:${k}`, r.supplier_id);
-      for (const k of keys.phoneKeys) addKey(`p:${k}`, r.supplier_id);
-      for (const k of keys.emailKeys) addKey(`e:${k}`, r.supplier_id);
-      for (const k of keys.registryKeys) addKey(`r:${k}`, r.supplier_id);
-      for (const k of keys.accountKeys) addKey(`a:${k}`, r.supplier_id);
+  const parent = new Map(rows.map((r) => [r.supplier_id, r.supplier_id]));
+  const find = (id) => {
+    let p = parent.get(id);
+    while (p !== parent.get(p)) {
+      parent.set(p, parent.get(parent.get(p)));
+      p = parent.get(p);
     }
+    parent.set(id, p);
+    return p;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
 
-    const parent = new Map(branchRows.map((r) => [r.supplier_id, r.supplier_id]));
-    const find = (id) => {
-      let p = parent.get(id);
-      while (p !== parent.get(p)) {
-        parent.set(p, parent.get(parent.get(p)));
-        p = parent.get(p);
-      }
-      parent.set(id, p);
-      return p;
-    };
-    const union = (a, b) => {
-      const ra = find(a);
-      const rb = find(b);
-      if (ra !== rb) parent.set(ra, rb);
-    };
+  for (const ids of keyToIds.values()) {
+    const list = [...ids];
+    for (let i = 1; i < list.length; i++) union(list[0], list[i]);
+  }
 
-    for (const ids of keyToIds.values()) {
-      const list = [...ids];
-      for (let i = 1; i < list.length; i++) union(list[0], list[i]);
-    }
-
-    const groups = new Map();
-    for (const r of branchRows) {
-      const root = find(r.supplier_id);
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root).push(r);
-    }
-    for (const g of groups.values()) {
-      if (g.length > 1) clusters.push(g);
-    }
+  const groups = new Map();
+  for (const r of rows) {
+    const root = find(r.supplier_id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(r);
+  }
+  for (const g of groups.values()) {
+    if (g.length > 1) clusters.push(g);
   }
   return clusters;
 }

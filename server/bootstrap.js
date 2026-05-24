@@ -76,6 +76,7 @@ import {
   listUnifiedWorkItems,
 } from './workItems.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
@@ -154,6 +155,21 @@ export function buildBootstrap(db, opts = {}) {
     syncDerivedWorkItems(db, workScope, user);
   }
 
+  const productionMetrics = productionOk
+    ? computeProductionMetricsRollup(db, branchScope)
+    : {
+        jobCount: 0,
+        byStatus: {},
+        totalPlannedMeters: 0,
+        totalActualMeters: 0,
+        completedActualMeters: 0,
+      };
+  const operationsInventoryAttention = productionOk
+    ? computeOperationsInventoryAttention(db, branchScope)
+    : emptyOperationsInventoryAttention();
+  const refunds = refundsOk ? listRefunds(db, branchScope) : [];
+  const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
+
   return {
     ok: true,
     session,
@@ -182,22 +198,12 @@ export function buildBootstrap(db, opts = {}) {
     productionJobs: prodRollupOk ? listProductionJobs(db, branchScope) : [],
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
-    productionMetrics: productionOk
-      ? computeProductionMetricsRollup(db, branchScope)
-      : {
-          jobCount: 0,
-          byStatus: {},
-          totalPlannedMeters: 0,
-          totalActualMeters: 0,
-          completedActualMeters: 0,
-        },
+    productionMetrics,
     productionJobCoils: prodRollupOk ? listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
     productionConversionChecks: prodRollupOk ? listProductionConversionChecks(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
     productionCompletionAdjustments: prodRollupOk ? listProductionCompletionAdjustments(db, branchScope) : [],
-    operationsInventoryAttention: productionOk
-      ? computeOperationsInventoryAttention(db, branchScope)
-      : emptyOperationsInventoryAttention(),
-    refunds: refundsOk ? listRefunds(db, branchScope) : [],
+    operationsInventoryAttention,
+    refunds,
     masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
     /** Floor list (₦/m) synced from material pricing workbook — used by quotations UI for coil products. */
     priceListItems: salesOk ? listPriceListItems(db) : [],
@@ -236,6 +242,14 @@ export function buildBootstrap(db, opts = {}) {
     hrPerformanceReviews: [],
     workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
     suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
+    helpPersonalization: user
+      ? buildHelpPersonalizationFromSnapshot(db, helpSnapshotPartial, {
+          userId: user.id,
+          branchId: branchScope === 'ALL' ? DEFAULT_BRANCH_ID : branchScope,
+          roleKey: user.roleKey,
+          pathname: '/',
+        })
+      : null,
   };
 }
 

@@ -721,6 +721,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(occurred_at_iso DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action, occurred_at_iso DESC);
 
+CREATE TABLE IF NOT EXISTS help_query_log (
+  id TEXT PRIMARY KEY,
+  occurred_at_iso TEXT NOT NULL,
+  user_id TEXT,
+  branch_id TEXT,
+  role_key TEXT,
+  pathname TEXT,
+  query_text TEXT NOT NULL,
+  matched_article_ids_json TEXT,
+  source TEXT NOT NULL,
+  top_score REAL NOT NULL DEFAULT 0,
+  response_chars INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_query_log_occurred ON help_query_log(occurred_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_help_query_log_branch ON help_query_log(branch_id, occurred_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_help_query_log_user ON help_query_log(user_id, occurred_at_iso DESC);
+
 CREATE TABLE IF NOT EXISTS treasury_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,

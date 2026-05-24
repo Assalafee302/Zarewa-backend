@@ -25,8 +25,21 @@ describe('helpKnowledge', () => {
     expect(m.article.id).toBe('quote-to-cash-workflow');
   });
 
-  it('returns multiple articles for cross-department queries', () => {
-    const matches = matchHelpArticles('receipt mistake then refund payout finance', { limit: 2, minScore: 4 });
-    expect(matches.length).toBeGreaterThanOrEqual(1);
+  it('matches refund headroom questions', () => {
+    const m = matchHelpArticle('Refund categories exceed quotation headroom cap');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('refund-headroom-categories');
+  });
+
+  it('matches overpayment credit', () => {
+    const m = matchHelpArticle('Customer overpaid on quotation auto apply credit');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('overpayment-quotation-credit');
+  });
+
+  it('matches stone flatsheet topic', () => {
+    const m = matchHelpArticle('Stone coated flatsheet m2 refund');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('stone-flatsheet-quotations');
   });
 });

@@ -156,6 +156,9 @@ import {
   resolveInterBranchRequest,
 } from './interBranchOfficeOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
+import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
+import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
 import { OFFICE_OPERATION_TEMPLATES } from '../shared/officeComposeTemplates.js';
 import {
   appendWorkItemDecision,
@@ -323,6 +326,8 @@ import {
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpChat.js';
+import { buildHelpPersonalizationFromSnapshot, computeHelpLearnedBoosts } from './helpQueryOps.js';
+import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
 const bankFinanceImportBuckets = new Map();
@@ -587,7 +592,25 @@ export function registerHttpApi(app, db) {
   );
 
   app.get('/api/help/status', requireAuth, (_req, res) => {
-    res.json({ ok: true, available: true });
+    res.json({
+      ok: true,
+      available: true,
+      selfContained: true,
+      articleCount: HELP_ARTICLES.length,
+      externalAi: readAiAssistConfig().enabled,
+    });
+  });
+
+  app.get('/api/help/personalization', requireAuth, (req, res) => {
+    const pathname = String(req.query?.pathname || '/').slice(0, 200);
+    const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+    const personalization = buildHelpPersonalizationFromSnapshot(db, null, {
+      userId: req.user?.id,
+      branchId,
+      roleKey: req.user?.roleKey,
+      pathname,
+    });
+    return res.json({ ok: true, ...personalization });
   });
 
   app.post(
@@ -597,11 +620,18 @@ export function registerHttpApi(app, db) {
     async (req, res) => {
       try {
         const { message, messages, pathname } = req.body || {};
+        const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+        const learnedBoosts = computeHelpLearnedBoosts(db, { branchId });
         const result = await runHelpChat({
+          db,
           message: typeof message === 'string' ? message : '',
           messages,
           pathname: typeof pathname === 'string' ? pathname : '',
           userDisplay: req.user?.displayName,
+          userId: req.user?.id,
+          branchId,
+          roleKey: req.user?.roleKey,
+          learnedBoosts,
         });
         return res.json({
           ok: true,
@@ -1143,6 +1173,42 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/reports/daily-pack', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewManagementReports(req.user)) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const pack = buildExecutiveDailyPack(db, {
+        date: String(req.query?.date || '').trim().slice(0, 10),
+        branchScope,
+      });
+      res.json(pack);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to build daily executive pack.' });
+    }
+  });
+
+  app.get('/api/reports/weekly-pack', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewManagementReports(req.user)) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const pack = buildExecutiveWeeklyPack(db, {
+        endDate: String(req.query?.endDate || req.query?.date || '').trim().slice(0, 10),
+        branchScope,
+      });
+      res.json(pack);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to build weekly executive pack.' });
+    }
+  });
+
   app.patch('/api/management/targets', requireAuth, requirePermission('quotations.manage'), (req, res) => {
     try {
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'manager_targets', 'manager_targets', (stripped) => {
@@ -1159,14 +1225,42 @@ export function registerHttpApi(app, db) {
   });
 
   app.get(
+    '/api/management/attention',
+    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        res.json(listMdAttentionInbox(db, branchScope));
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load management attention inbox.' });
+      }
+    }
+  );
+
+  app.get(
     '/api/management/quotation-audit',
     requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage']),
     (req, res) => {
       try {
-        res.json(listManagerQuotationAudit(db, req.query.quotationRef));
+        const base = listManagerQuotationAudit(db, req.query.quotationRef);
+        res.json(enrichQuotationAuditPayload(db, base));
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Failed to load quotation audit.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/management/po-audit',
+    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage', 'procurement.manage', 'purchase_orders.manage']),
+    (req, res) => {
+      try {
+        res.json(listManagerPoAudit(db, req.query.poId || req.query.poID));
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load purchase order audit.' });
       }
     }
   );

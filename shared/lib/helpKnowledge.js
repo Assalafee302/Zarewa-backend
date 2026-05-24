@@ -410,6 +410,604 @@ export const HELP_ARTICLES = [
     ],
     links: [{ label: 'Operations', to: '/operations' }],
   },
+  {
+    id: 'all-branches-view-blocked',
+    title: 'Cannot create while viewing all branches',
+    keywords: [
+      'all branches',
+      'view all branches',
+      'cannot create',
+      '403 quotation',
+      '403 purchase order',
+      'hq roll up',
+      'read only all branches',
+    ],
+    answer:
+      'When HQ “view all branches” roll-up is active, new quotations and purchase orders are blocked so data is not posted to the wrong branch.',
+    steps: [
+      'Switch workspace to a single branch (branch picker in the header or settings).',
+      'Confirm the branch badge shows one factory (e.g. Kaduna, Yola, Maiduguri) — not “All branches”.',
+      'Retry creating the quotation or PO.',
+      'Use all-branches mode for reports and search only; create documents in a specific branch.',
+    ],
+    links: [{ label: 'Settings', to: '/settings' }],
+  },
+  {
+    id: 'api-offline-degraded',
+    title: 'System offline or API degraded',
+    keywords: [
+      'offline',
+      'degraded',
+      'api offline',
+      'cannot save',
+      'boot error',
+      'database false',
+      'system offline',
+      'read only offline',
+    ],
+    answer:
+      'When the live API cannot connect to MySQL or fails boot, the app may show cached data only — nothing new can be saved until the server is healthy.',
+    steps: [
+      'Check GET /api/health — look for ok, database, and bootPhase.',
+      'If database is false: ensure MySQL is running and ZAREWA_MYSQL_* in .env match your host.',
+      'Restart the Node API after fixing .env or database.',
+      'Use “Reconnect” on the offline banner if shown; otherwise refresh the page.',
+      'Do not assume offline edits will sync — re-enter critical data after reconnect.',
+    ],
+    links: [{ label: 'Settings', to: '/settings' }],
+  },
+  {
+    id: 'document-id-format',
+    title: 'Document reference numbers (QT, RCP, PO, etc.)',
+    keywords: ['document id', 'reference format', 'qt-kd', 'human id', 'prefix branch', 'serial number'],
+    answer:
+      'Live documents use PREFIX-BRANCH-YY-NNNN (example QT-KD-26-0001). YY is year; NNNN resets per branch per year on a clean database.',
+    steps: [
+      'Use global search with the full reference (QT-, RCP-, PO-, RF-, etc.).',
+      'Branch segment (KD, YL, MDG) shows which workspace branch owns the document.',
+      'Legacy rows without branch may still appear — search by customer name if needed.',
+    ],
+    links: [{ label: 'Sales', to: '/sales' }],
+  },
+  {
+    id: 'price-exception-workflow',
+    title: 'Price below floor / manager & MD price exception',
+    keywords: [
+      'price exception',
+      'below floor',
+      'bm approval',
+      'md approval',
+      'minimum price',
+      'commission',
+      'pricing workbook',
+    ],
+    answer:
+      'Quotations below material floor or commission rules may require branch manager and sometimes MD confirmation before production or dispatch.',
+    steps: [
+      'Open the quotation and read the price exception banner.',
+      'Branch manager approves in Sales or Manager dashboard when prompted.',
+      'If MD review is required, wait for MD confirmation before treating the quote as fully cleared.',
+      'Adjust lines or use approved exception — do not bypass by editing posted history.',
+    ],
+    links: [
+      { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'insufficient-payment-cutting',
+    title: 'Not enough payment for cutting list / production',
+    keywords: [
+      'insufficient payment',
+      'payment threshold',
+      '50 percent',
+      '70 percent',
+      'cannot cut',
+      'cutting blocked',
+      'min paid fraction',
+    ],
+    answer:
+      'Branch policy may require a minimum paid fraction on the quotation before cutting list or production unlocks (often 50–70%).',
+    steps: [
+      'Open the quotation → Payments tab and compare total paid vs quote total.',
+      'Record additional receipts if the customer has paid more.',
+      'If policy allows an exception, escalate to branch manager — do not force production without clearance.',
+      'Check branch settings / manager targets for the configured fraction.',
+    ],
+    links: [
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'performance-metrics-dashboard',
+    title: 'Reading dashboard production & performance metrics',
+    keywords: [
+      'dashboard metrics',
+      'production metrics',
+      'performance',
+      'meters produced',
+      'job count',
+      'workspace summary',
+      'kpi',
+    ],
+    answer:
+      'The workspace dashboard rolls up production job counts, planned vs actual meters, and cross-module attention flags for your branch scope.',
+    steps: [
+      'Open Workspace home — review production metrics card and attention banners.',
+      'Operations → Production queue for job-level detail.',
+      'Manager / Reports for branch roll-ups when you have access.',
+      'Metrics refresh on bootstrap — reconnect if numbers look stale after major changes.',
+    ],
+    links: [
+      { label: 'Workspace', to: '/' },
+      { label: 'Operations', to: '/operations' },
+      { label: 'Reports', to: '/reports' },
+    ],
+  },
+  {
+    id: 'transport-fee-finance',
+    title: 'PO transport fee and Finance posting',
+    keywords: ['transport fee', 'haulage', 'po transport', 'treasury transport', 'freight payment'],
+    answer:
+      'Purchase order transport charges may appear in Procurement awaiting Finance before treasury posts the fee.',
+    steps: [
+      'Procurement → link transport on the PO and submit for Finance visibility.',
+      'Finance reviews PO transport awaiting treasury on Accounts or Procurement.',
+      'Post from the correct branch treasury account.',
+      'If savepoint/transaction errors appear, refresh and retry once — avoid double posting.',
+    ],
+    links: [
+      { label: 'Procurement', to: '/procurement' },
+      { label: 'Finance', to: '/accounts' },
+    ],
+  },
+  {
+    id: 'refund-headroom-categories',
+    title: 'Refund categories, headroom, and quotation cap',
+    keywords: [
+      'refund headroom',
+      'refund cap',
+      'refund category',
+      'categories',
+      'exceed headroom',
+      'quotation cap',
+      'cash on quote',
+      'independent categories',
+      'refund limit',
+      'stack refund',
+    ],
+    answer:
+      'Refunds share one **headroom** per quotation: cash received on that quote minus refunds already approved or paid. Refund **categories** (coil, stone flatsheet, accessories, etc.) are separate entitlements but cannot together exceed available headroom.',
+    steps: [
+      'Open the refund modal on the quotation — read the headroom / cap banner before selecting lines.',
+      'Each category shows what is eligible; only include lines that apply — do not stack categories past total headroom.',
+      'If submit is blocked, reduce included lines or confirm extra receipts were posted on **this** quotation.',
+      'Stone flatsheet m² and coil substitution follow different rules — use the preview suggestions rather than forcing coil lines on stone-only quotes.',
+      'Route through manager/finance approval; payout still requires treasury disbursement.',
+    ],
+    links: [
+      { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
+      { label: 'Refund workflow', to: '/sales' },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'overpayment-quotation-credit',
+    title: 'Overpayment and auto-apply credit on quotations',
+    keywords: [
+      'overpayment',
+      'over pay',
+      'overpaid',
+      'credit on quote',
+      'auto apply',
+      'split till',
+      'quotation total increased',
+      'paid more than',
+      'excess payment',
+    ],
+    answer:
+      'When a customer pays more than the current quotation balance, the excess becomes **credit on that quotation**. If the quote total increases later, the system may **auto-apply** existing credit in the open posting period.',
+    steps: [
+      'Record the full cash received on the quotation — do not manually split unless Finance requires it.',
+      'After saving quotation line changes, check the toast/message for overpay re-applied or reconciled.',
+      'Refunds use **headroom** based on net cash on the quote — overpayment increases headroom but does not bypass category rules.',
+      'If paid amount looks wrong, use Finance reconcile tools or correct-receipt flows before starting a refund.',
+    ],
+    links: [
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },
+      { label: 'Finance', to: '/accounts' },
+    ],
+  },
+  {
+    id: 'finance-receipt-clearance',
+    title: 'Finance clearance before refunds and cleared balances',
+    keywords: [
+      'receipt clearance',
+      'finance clearance',
+      'cleared balance',
+      'bank confirmed',
+      'refund blocked clearance',
+      'delivery cleared',
+      'finance delivery cleared',
+    ],
+    answer:
+      'Finance may require **receipt clearance** (bank confirmed / delivery cleared) before refunds or certain downstream actions proceed, even when Sales shows a posted receipt.',
+    steps: [
+      'Sales → Payments: check clearance flags on the receipt row.',
+      'Finance → Receipts & recon: confirm bank received amount and mark clearance when matched.',
+      'If refund submit fails for clearance, finish Finance steps first — do not bypass in Sales.',
+      'Manager clearance on the customer or quote is separate — resolve holds on Manager dashboard if shown.',
+    ],
+    links: [
+      { label: 'Finance', to: '/accounts' },
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'material-workbook-pricing',
+    title: 'Material workbook pricing and floor list',
+    keywords: [
+      'workbook pricing',
+      'material workbook',
+      'floor price',
+      'price list',
+      'commission',
+      'gauge price',
+      'pricing workbook',
+      'below floor',
+      'minimum price',
+      'auto price quotation',
+    ],
+    answer:
+      'Quotations for coil/roofing lines can pull **floor prices** from the material pricing workbook (gauge, design, branch). The floor is the minimum allowed before manager exception.',
+    steps: [
+      'Ensure material pricing workbook is synced for your branch (Settings / pricing ops — per your role).',
+      'When adding quotation lines, auto-price uses workbook rows; manual undercuts trigger **price exception** workflow.',
+      'Branch manager approves BM exception; MD may confirm for policy — see price exception guide.',
+      'Refunds and substitution warnings also reference workbook floors — keep workbook current.',
+    ],
+    links: [
+      { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },
+      { label: 'Settings', to: '/settings' },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'stone-flatsheet-quotations',
+    title: 'Stone-coated & flatsheet quotations and refunds',
+    keywords: [
+      'stone coated',
+      'stone-coated',
+      'flatsheet',
+      'flat sheet',
+      'stone meter',
+      'stone m2',
+      'm2 refund',
+      'stone quotation',
+      'single stone profile',
+      '1.5m sku',
+    ],
+    answer:
+      'Stone-coated products use **metre or m²** logic distinct from coil roofing. Colours validate against the price list; refunds may include a **stone flatsheet** category separate from coil substitution.',
+    steps: [
+      'Create quotation lines with stone/flatsheet products — pick colours from the validated workbook list.',
+      'Production plans **roofing metres** separately from stone flatsheet usage where applicable.',
+      'For refunds, use stone flatsheet category when returning unused sheet area — do not apply coil-gauge substitution warnings to stone-only quotes.',
+      'Complete production using stone usage registers; accessories-only stone jobs skip coil requirements.',
+    ],
+    links: [
+      { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },
+      { label: 'Operations', to: '/operations', state: { focusOpsTab: 'production' } },
+    ],
+  },
+  {
+    id: 'accessories-only-production',
+    title: 'Accessories-only quotes and cutting lists',
+    keywords: [
+      'accessories only',
+      'accessory only',
+      'no coil',
+      'cutting list accessories',
+      'complete stone job accessories',
+      'nails screws only',
+    ],
+    answer:
+      'Some quotations are **accessories-only** (no coil roofing lines). Cutting lists and production jobs can still be created and completed without coil picks.',
+    steps: [
+      'Build the quotation with accessory lines only — no coil product required.',
+      'Add cutting list if your process requires it; payment thresholds may still apply per branch policy.',
+      'Operations can complete the production job when accessories are supplied — coil traceability steps are skipped.',
+      'Refunds use accessory categories, not coil substitution.',
+    ],
+    links: [
+      { label: 'Sales', to: '/sales' },
+      { label: 'Operations', to: '/operations' },
+    ],
+  },
+  {
+    id: 'company-suppliers-branch-po',
+    title: 'Suppliers company-wide vs branch-scoped POs',
+    keywords: [
+      'supplier branch',
+      'company wide supplier',
+      'transporter shared',
+      'po branch',
+      'wrong branch supplier',
+      'supplier history branch',
+    ],
+    answer:
+      '**Suppliers and transporters** are shared company-wide. **Purchase orders and receipts** are posted to your **active workspace branch** — supplier history in Procurement may filter by branch context.',
+    steps: [
+      'Register supplier once — duplicates are blocked/merged on server boot.',
+      'Before creating a PO, confirm workspace branch (not “all branches”) in the header.',
+      'PO numbers and stock impact belong to the branch you are working in.',
+      'Treasury accounts for payment are **branch-scoped** — pick the account for your factory.',
+    ],
+    links: [
+      { label: 'Procurement', to: '/procurement' },
+      { label: 'Settings', to: '/settings' },
+    ],
+  },
+  {
+    id: 'mixed-procurement-po',
+    title: 'Mixed purchase orders (coil, stone, accessories)',
+    keywords: [
+      'mixed po',
+      'mixed purchase order',
+      'line type',
+      'coil and stone',
+      'unified po',
+      'multiple line types',
+      'procurement kind',
+    ],
+    answer:
+      'One PO can mix **line types** (coil kg, stone/flatsheet, accessories). Procurement kind is derived from lines; GRN finalizes quantities per line.',
+    steps: [
+      'Procurement → New PO — add each line with correct product/line type.',
+      'Approve and post transport/in transit as usual.',
+      'Store GRN each line — partial receipts stay open until fully received.',
+      'Pay supplier from Procurement/Finance when AP is due for that PO.',
+    ],
+    links: [{ label: 'Procurement', to: '/procurement' }],
+  },
+  {
+    id: 'grn-weight-variance',
+    title: 'GRN weight below ordered (MD alert)',
+    keywords: [
+      'grn below ordered',
+      'short delivery',
+      'weight variance',
+      'kg below',
+      'md alert grn',
+      'received less than ordered',
+      'coil grn short',
+    ],
+    answer:
+      'When coil GRN lands **below ordered kg**, the system may alert **MD/management** so procurement and finance can investigate before paying full PO value.',
+    steps: [
+      'Complete GRN with **actual received kg** — do not force full quantity if material short.',
+      'Notify procurement lead; adjust PO/payment discussion before supplier payment.',
+      'Check in-transit and transport records if haulage loss is suspected.',
+      'MD dashboard or alerts list shows the variance for follow-up.',
+    ],
+    links: [
+      { label: 'Procurement', to: '/procurement' },
+      { label: 'Operations — stock', to: '/operations' },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'duplicate-supplier-colour',
+    title: 'Duplicate suppliers and coil colours',
+    keywords: [
+      'duplicate supplier',
+      'supplier already exists',
+      'duplicate colour',
+      'ivory beige',
+      'canonical colour',
+      'merge colour',
+      'setup colours',
+      'colour alias',
+    ],
+    answer:
+      'The server **blocks duplicate suppliers** and **merges duplicate setup colours** (e.g. IV vs Ivory Beige) to keep stock and quotations consistent.',
+    steps: [
+      'If supplier registration fails, search existing suppliers — use the canonical record.',
+      'For colours, use names from Settings → Setup master list; avoid new spellings of the same colour.',
+      'Stock views unify aliases — if a colour looks duplicated, ask admin to run dedupe migration (automatic on boot).',
+      'When quoting, pick validated workbook colours for stone/coil lines.',
+    ],
+    links: [
+      { label: 'Settings', to: '/settings' },
+      { label: 'Procurement', to: '/procurement' },
+    ],
+  },
+  {
+    id: 'treasury-pay-from-correction',
+    title: 'Correcting pay-from / treasury payout mistakes',
+    keywords: [
+      'pay from correction',
+      'wrong treasury account',
+      'supplier payment correction',
+      'transport payout fix',
+      'ap payment wrong account',
+      'reverse payout',
+    ],
+    answer:
+      'Finance can **correct pay-from** on supplier, AP, and transport payouts when the wrong treasury account was used — use Finance workflows, not ad-hoc ledger edits.',
+    steps: [
+      'Open Finance → Payments and locate the disbursement.',
+      'Use pay-from correction if your role has access (Finance manager).',
+      'Re-post from the correct branch treasury account.',
+      'Verify treasury balance and AP status after correction.',
+    ],
+    links: [{ label: 'Finance — Payments', to: '/accounts', state: { tab: 'payments' } }],
+  },
+  {
+    id: 'manager-payment-hold-clearance',
+    title: 'Manager payment hold and clearance',
+    keywords: [
+      'payment hold',
+      'manager hold',
+      'clearance inbox',
+      'release hold',
+      'partial quote cleared',
+      'transaction intel',
+      'cannot post partial',
+    ],
+    answer:
+      'Branch managers can **hold** or **clear** customer/quote payment posture. Holds block new receipts until cleared; partial quotes may need manager clearance before posting.',
+    steps: [
+      'Read the error on the receipt form — it often names hold or clearance.',
+      'Manager dashboard → Transaction intel / clearance inbox.',
+      'Review quote payment history and any open refunds.',
+      'Release hold or approve clearance, then retry receipt in Sales.',
+    ],
+    links: [
+      { label: 'Manager dashboard', to: '/manager' },
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+    ],
+  },
+  {
+    id: 'coil-reservation-orphan',
+    title: 'Orphan coil reservations (qty_reserved)',
+    keywords: [
+      'orphan reservation',
+      'qty reserved',
+      'coil reserved',
+      'reconcile reservation',
+      'coil profile reservation',
+      'reserved but no job',
+    ],
+    answer:
+      'Coil lots show **qty_reserved** when production or cutting lists hold material. **Orphan** reservations (no active job) can be cleared from the coil profile or reconcile API.',
+    steps: [
+      'Operations or stock → open **coil profile** for the coil number.',
+      'Check reserved qty vs active jobs on the quotation/cutting list.',
+      'Use **Clear / reconcile reservation** on the profile if shown and you confirmed no active job needs it.',
+      'Re-run production queue filters to find jobs still holding coils.',
+    ],
+    links: [{ label: 'Operations', to: '/operations' }],
+  },
+  {
+    id: 'cutting-list-blocked-running',
+    title: 'Cannot edit cutting list — production running',
+    keywords: [
+      'cutting list blocked',
+      'cannot edit cutting list',
+      'production running',
+      'job running',
+      'linked production job',
+      'cutting list locked',
+    ],
+    answer:
+      'Cutting lists linked to a **Running** production job cannot be edited — this protects shop-floor traceability.',
+    steps: [
+      'Check Operations → Production queue for job status on the quotation.',
+      'If change is urgent, coordinate with production lead — pause/complete job per policy before editing lines.',
+      'PATCH sync may update planned metres on the job when allowed — not while actively running.',
+      'For mistakes after production started, use manager/edit-approval paths instead of silent edits.',
+    ],
+    links: [
+      { label: 'Operations', to: '/operations', state: { focusOpsTab: 'production' } },
+      { label: 'Sales', to: '/sales' },
+    ],
+  },
+  {
+    id: 'sales-expense-request',
+    title: 'Sales expense requests (not Finance-only)',
+    keywords: [
+      'expense request',
+      'sales expense',
+      'submit expense',
+      'expenses.create',
+      'petty cash sales',
+      'expense approval sales',
+    ],
+    answer:
+      'Sales staff with **expenses.create** can submit expense requests from Sales; Finance approves and posts according to branch policy.',
+    steps: [
+      'Sales workspace → expense request panel (if your role shows it).',
+      'Fill amount, category, and reference; submit for approval.',
+      'Track status — Finance may need to approve before ledger posting.',
+      'If panel is hidden, ask admin to confirm role permissions include expenses.create.',
+    ],
+    links: [
+      { label: 'Sales', to: '/sales' },
+      { label: 'Finance', to: '/accounts' },
+      { label: 'Edit approvals', to: '/edit-approvals' },
+    ],
+  },
+  {
+    id: 'duplicate-payment-alert',
+    title: 'Duplicate payment detection',
+    keywords: [
+      'duplicate payment',
+      'duplicate receipt',
+      'already paid',
+      'same amount twice',
+      'double payment',
+      'alert duplicate',
+    ],
+    answer:
+      'The app may **alert** when a receipt looks like a duplicate of an existing payment on the same quotation (same amount/date pattern).',
+    steps: [
+      'Stop and verify with the customer/treasury before posting again.',
+      'Open quotation payment history — confirm whether RCP- already exists.',
+      'If first post failed partially, use receipt correction flows instead of a second duplicate.',
+      'Manager dashboard may show duplicate-payment intel for review.',
+    ],
+    links: [
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Manager dashboard', to: '/manager' },
+    ],
+  },
+  {
+    id: 'in-transit-transport-link',
+    title: 'Link transport on in-transit POs',
+    keywords: [
+      'in transit transport',
+      'assign haulier',
+      'transport not set',
+      'link transport in transit',
+      'po in transit',
+      'haulage assign',
+    ],
+    answer:
+      'POs already **in transit** can still receive **transport agent or fee** updates when haulier was not set at dispatch.',
+    steps: [
+      'Open the PO in Procurement — in transit status.',
+      'Assign or update transport agent and fee lines.',
+      'Finance may post transport fee separately — watch for savepoint errors; refresh once and retry.',
+      'Complete GRN at destination branch when material arrives.',
+    ],
+    links: [{ label: 'Procurement', to: '/procurement' }],
+  },
+  {
+    id: 'branch-treasury-scope',
+    title: 'Branch-scoped treasury bank accounts',
+    keywords: [
+      'treasury branch',
+      'bank account branch',
+      'yola account',
+      'maiduguri treasury',
+      'kaduna hq account',
+      'wrong branch account',
+      'create treasury branch',
+    ],
+    answer:
+      'Treasury **bank accounts** belong to a workspace branch. Receipts and payouts must use an account for the branch you are working in.',
+    steps: [
+      'Finance → Treasury: filter by your workspace branch.',
+      'When recording receipts, pick the account for your factory — not another branch’s account.',
+      'Creating new accounts requires branch context (not all-branches view).',
+      'Legacy accounts may have been backfilled to Kaduna HQ — confirm with Finance if balances look wrong.',
+    ],
+    links: [{ label: 'Finance', to: '/accounts' }],
+  },
 ];
 
 const STOP_WORDS = new Set([
@@ -526,12 +1124,53 @@ const STOP_WORDS = new Set([
 
 /** @type {Record<string, string[]>} */
 const PATH_ARTICLE_BOOSTS = {
-  '/sales': ['record-receipt', 'quotation', 'refund', 'cutting-list', 'quote-to-cash-workflow', 'receipt-mistake'],
-  '/procurement': ['procurement-po', 'procurement-full-workflow'],
-  '/operations': ['operations-production', 'production-job-workflow', 'material-incident-workflow'],
-  '/accounts': ['finance-recon', 'bank-reconciliation-workflow', 'period-locked'],
-  '/manager': ['customer-hold', 'edit-approval', 'refund-approval-workflow'],
-  '/settings': ['settings-access', 'period-locked'],
+  '/sales': [
+    'record-receipt',
+    'quotation',
+    'refund',
+    'refund-headroom-categories',
+    'cutting-list',
+    'quote-to-cash-workflow',
+    'receipt-mistake',
+    'overpayment-quotation-credit',
+    'finance-receipt-clearance',
+    'material-workbook-pricing',
+    'price-exception-workflow',
+  ],
+  '/procurement': [
+    'procurement-po',
+    'procurement-full-workflow',
+    'mixed-procurement-po',
+    'grn-weight-variance',
+    'in-transit-transport-link',
+    'company-suppliers-branch-po',
+  ],
+  '/operations': [
+    'operations-production',
+    'production-job-workflow',
+    'material-incident-workflow',
+    'coil-reservation-orphan',
+    'cutting-list-blocked-running',
+    'stone-flatsheet-quotations',
+    'accessories-only-production',
+  ],
+  '/accounts': [
+    'finance-recon',
+    'bank-reconciliation-workflow',
+    'period-locked',
+    'finance-receipt-clearance',
+    'treasury-pay-from-correction',
+    'branch-treasury-scope',
+  ],
+  '/manager': [
+    'customer-hold',
+    'manager-payment-hold-clearance',
+    'edit-approval',
+    'refund-approval-workflow',
+    'refund-headroom-categories',
+    'grn-weight-variance',
+  ],
+  '/settings': ['settings-access', 'period-locked', 'duplicate-supplier-colour', 'material-workbook-pricing'],
 };
 
 /**
@@ -587,7 +1226,7 @@ export function buildHelpSearchText(message, messageHistory) {
  * @param {string} [pathname]
  * @returns {number}
  */
-function scoreHelpArticle(article, qLower, tokens, pathname) {
+function scoreHelpArticle(article, qLower, tokens, pathname, learnedBoosts) {
   let score = 0;
   const titleLower = article.title.toLowerCase();
   if (titleLower.includes(qLower) || qLower.includes(titleLower.slice(0, 14))) {
@@ -612,12 +1251,14 @@ function scoreHelpArticle(article, qLower, tokens, pathname) {
       if (idx >= 0) score += 4 - Math.min(idx, 3);
     }
   }
+  const boost = Number(learnedBoosts?.[article.id]) || 0;
+  if (boost > 0) score += boost;
   return score;
 }
 
 /**
  * @param {string} query
- * @param {{ limit?: number; minScore?: number; pathname?: string }} [opts]
+ * @param {{ limit?: number; minScore?: number; pathname?: string; learnedBoosts?: Record<string, number> }} [opts]
  * @returns {{ article: HelpArticle; score: number }[]}
  */
 export function matchHelpArticles(query, opts = {}) {
@@ -627,9 +1268,10 @@ export function matchHelpArticles(query, opts = {}) {
   const minScore = opts.minScore ?? 4;
   const tokens = tokenizeHelpQuery(q);
   const qLower = q.toLowerCase();
+  const learnedBoosts = opts.learnedBoosts && typeof opts.learnedBoosts === 'object' ? opts.learnedBoosts : {};
   const ranked = HELP_ARTICLES.map((article) => ({
     article,
-    score: scoreHelpArticle(article, qLower, tokens, opts.pathname),
+    score: scoreHelpArticle(article, qLower, tokens, opts.pathname, learnedBoosts),
   }))
     .filter((row) => row.score >= minScore)
     .sort((a, b) => b.score - a.score);
@@ -712,13 +1354,13 @@ export function mergeHelpLinks(articles) {
 /** Short suggestions shown in the help dock UI. */
 export const HELP_QUICK_QUESTIONS = [
   { label: 'Record a payment', query: 'How do I add or record a receipt?' },
+  { label: 'Refund headroom', query: 'How do refund categories and quotation headroom work?' },
+  { label: 'Overpayment credit', query: 'Customer overpaid on the quotation — what happens?' },
   { label: 'Quote to delivery', query: 'Walk me through the full quotation to delivery process' },
+  { label: 'Workbook pricing', query: 'How does material workbook pricing and floor price work?' },
+  { label: 'Stone flatsheet', query: 'Stone-coated flatsheet quotations and refunds' },
   { label: 'PO to payment', query: 'What is the full procurement workflow from PO to supplier payment?' },
-  { label: 'I made a mistake', query: 'What should I do if I made a mistake on a payment?' },
-  { label: 'Production job', query: 'How do I run a production job from cutting list to completion?' },
-  { label: 'Refund process', query: 'Explain the refund approval and payout workflow' },
-  { label: 'Bank reconciliation', query: 'How do I match bank lines to customer receipts?' },
-  { label: 'Period locked', query: 'Why is the accounting period locked?' },
+  { label: 'All-branches blocked', query: 'Why can I not create a quotation in all-branches view?' },
 ];
 
 /**
@@ -730,31 +1372,44 @@ export function quickQuestionsForPath(pathname) {
   if (p.startsWith('/sales')) {
     return [
       { label: 'Record payment', query: 'How do I record a receipt on a quotation?' },
-      { label: 'Quote to cash', query: 'Walk me through quotation to delivery' },
-      { label: 'Fix receipt mistake', query: 'I posted the wrong receipt amount — what now?' },
-      { label: 'Cutting list', query: 'How does the cutting list and payment threshold work?' },
-      { label: 'Start a refund', query: 'How does the refund approval workflow work?' },
+      { label: 'Refund headroom', query: 'Refund categories and quotation headroom cap' },
+      { label: 'Overpayment', query: 'Customer overpaid — auto-apply credit on quotation' },
+      { label: 'Workbook price', query: 'Material workbook floor pricing on quotations' },
+      { label: 'Stone flatsheet', query: 'Stone-coated flatsheet quotation and refund rules' },
+      { label: 'Cutting list blocked', query: 'Cannot edit cutting list while production running' },
     ];
   }
   if (p.startsWith('/procurement')) {
     return [
-      { label: 'Create a PO', query: 'How do I create and approve a purchase order?' },
+      { label: 'Mixed PO', query: 'Mixed purchase order with coil stone and accessories' },
       { label: 'PO to payment', query: 'Full workflow from PO to GRN to supplier payment' },
-      { label: 'In transit', query: 'How do I post material in transit?' },
+      { label: 'GRN short weight', query: 'GRN received below ordered kg MD alert' },
+      { label: 'In-transit transport', query: 'Link transport on in-transit PO' },
+      { label: 'Duplicate supplier', query: 'Duplicate supplier registration blocked' },
     ];
   }
   if (p.startsWith('/operations')) {
     return [
       { label: 'Production job', query: 'Production job from cutting list to completion' },
-      { label: 'Stock & coils', query: 'How do stock transfers and coil traceability work?' },
+      { label: 'Coil reservation', query: 'Orphan coil qty_reserved reconcile' },
+      { label: 'Accessories only', query: 'Accessories-only quotation production complete' },
       { label: 'Material incident', query: 'How do material incidents and approvals work?' },
     ];
   }
   if (p.startsWith('/accounts')) {
     return [
+      { label: 'Receipt clearance', query: 'Finance clearance before refunds' },
+      { label: 'Pay-from fix', query: 'Correct pay-from treasury payout mistake' },
+      { label: 'Branch treasury', query: 'Branch-scoped treasury bank accounts' },
       { label: 'Bank reconciliation', query: 'How do I reconcile bank lines to receipts?' },
-      { label: 'Treasury', query: 'How do treasury accounts and balances work?' },
-      { label: 'Period locked', query: 'Why is the accounting period locked?' },
+    ];
+  }
+  if (p.startsWith('/manager')) {
+    return [
+      { label: 'Payment hold', query: 'Manager payment hold and clearance' },
+      { label: 'Refund headroom', query: 'Refund categories and quotation cap' },
+      { label: 'GRN variance', query: 'GRN below ordered weight alert' },
+      { label: 'Edit approvals', query: 'How do second approvals work?' },
     ];
   }
   return HELP_QUICK_QUESTIONS.slice(0, 6);

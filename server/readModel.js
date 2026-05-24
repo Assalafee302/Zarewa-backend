@@ -998,6 +998,13 @@ export function listDeliveries(db, branchScope = 'ALL') {
 
 export function listSalesReceipts(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'sales_receipts', branchScope);
+  const userDisplayStmt = db.prepare(`SELECT display_name FROM app_users WHERE id = ? LIMIT 1`);
+  const financeReconciliationSavedByDisplay = (userId) => {
+    const uid = String(userId || '').trim();
+    if (!uid) return '';
+    const row = userDisplayStmt.get(uid);
+    return String(row?.display_name || '').trim();
+  };
   return db
     .prepare(`SELECT * FROM sales_receipts WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
     .all(...b.args)
@@ -1022,6 +1029,9 @@ export function listSalesReceipts(db, branchScope = 'ALL') {
       financeDeliveryClearedByUserId: row.finance_delivery_cleared_by_user_id ?? null,
       financeReconciliationSavedAtISO: row.finance_reconciliation_saved_at_iso ?? null,
       financeReconciliationSavedByUserId: row.finance_reconciliation_saved_by_user_id ?? null,
+      financeReconciliationSavedBy: financeReconciliationSavedByDisplay(
+        row.finance_reconciliation_saved_by_user_id
+      ),
     }));
 }
 

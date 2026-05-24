@@ -1521,9 +1521,47 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 }
 
 /**
+ * Records a treasury transport payment for a PO (transaction body only).
+ * Caller must wrap in `db.transaction` unless `skipInnerTransaction` is set on {@link postPurchaseOrderTransport}.
+ * @param {import('better-sqlite3').Database} db
+ */
+function postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, amountNgn, dateISO, reference, note) {
+  assertPeriodOpen(db, dateISO, 'Transport payment date');
+  const m = insertTreasuryMovementTx(db, {
+    type: 'TRANSPORT_PAYMENT',
+    treasuryAccountId,
+    amountNgn: -amountNgn,
+    postedAtISO: opts.postedAtISO || new Date().toISOString(),
+    reference,
+    counterpartyKind: 'TRANSPORT_AGENT',
+    counterpartyId: String(row.transport_agent_id ?? '').trim() || null,
+    counterpartyName: String(row.transport_agent_name ?? '').trim() || null,
+    sourceKind: 'PURCHASE_ORDER',
+    sourceId: poID,
+    note,
+    createdBy: opts.createdBy ?? 'Finance',
+  });
+  appendMovementTx(db, {
+    type: 'PO_TRANSPORT_POSTED',
+    ref: poID,
+    detail: `${reference} · treasury`,
+  });
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'purchase_order.post_transport',
+    entityKind: 'purchase_order',
+    entityId: poID,
+    note: 'Transport treasury payment posted',
+    details: { treasuryMovementId: m.id, amountNgn },
+  });
+  syncPurchaseOrderTransportPaymentState(db, poID, opts.actor);
+}
+
+/**
  * Records a treasury transport payment for a PO. In transit / settled state is derived via
  * syncPurchaseOrderTransportPaymentState (advance vs full fee).
  * @param {import('better-sqlite3').Database} db
+ * @param {{ skipInnerTransaction?: boolean }} [opts]
  */
 export function postPurchaseOrderTransport(db, poID, opts = {}) {
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
@@ -1551,37 +1589,13 @@ export function postPurchaseOrderTransport(db, poID, opts = {}) {
   const reference = String(opts.reference ?? row.transport_reference ?? poID).trim() || poID;
   const note = String(opts.note ?? '').trim() || 'PO transport / haulage';
   try {
-    db.transaction(() => {
-      assertPeriodOpen(db, dateISO, 'Transport payment date');
-      const m = insertTreasuryMovementTx(db, {
-        type: 'TRANSPORT_PAYMENT',
-        treasuryAccountId,
-        amountNgn: -amountNgn,
-        postedAtISO: opts.postedAtISO || new Date().toISOString(),
-        reference,
-        counterpartyKind: 'TRANSPORT_AGENT',
-        counterpartyId: String(row.transport_agent_id ?? '').trim() || null,
-        counterpartyName: String(row.transport_agent_name ?? '').trim() || null,
-        sourceKind: 'PURCHASE_ORDER',
-        sourceId: poID,
-        note,
-        createdBy: opts.createdBy ?? 'Finance',
-      });
-      appendMovementTx(db, {
-        type: 'PO_TRANSPORT_POSTED',
-        ref: poID,
-        detail: `${reference} · treasury`,
-      });
-      appendAuditLog(db, {
-        actor: opts.actor,
-        action: 'purchase_order.post_transport',
-        entityKind: 'purchase_order',
-        entityId: poID,
-        note: 'Transport treasury payment posted',
-        details: { treasuryMovementId: m.id, amountNgn },
-      });
-      syncPurchaseOrderTransportPaymentState(db, poID, opts.actor);
-    })();
+    const runCore = () =>
+      postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, amountNgn, dateISO, reference, note);
+    if (opts.skipInnerTransaction) {
+      runCore();
+    } else {
+      db.transaction(runCore)();
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

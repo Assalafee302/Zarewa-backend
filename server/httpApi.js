@@ -3023,7 +3023,7 @@ export function registerHttpApi(app, db) {
           error: 'Recording haulage against treasury requires finance.pay permission.',
         });
       }
-      return handleWriteWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped) => {
+      return handleWriteWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
         const r = write.postPurchaseOrderTransport(db, poId, {
           treasuryAccountId: stripped?.treasuryAccountId,
           amountNgn: stripped?.amountNgn,
@@ -3033,6 +3033,7 @@ export function registerHttpApi(app, db) {
           note: stripped?.note,
           createdBy: stripped?.createdBy || req.user.displayName,
           actor: req.user,
+          skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
         });
         if (r.ok) {
           syncFinancePoTransportWorkItem(db, poId, req.user);

@@ -1301,6 +1301,51 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(tm?.sourceId).toBe(poId2);
   });
 
+  it('allows transport link on In Transit PO when supplier paid before haulier was assigned', async () => {
+    const sup = await agent.post('/api/suppliers').send({ name: 'Late Haul Sup', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const tid = (
+      await agent.post('/api/transport-agents').send({ name: 'Late Haul Co', region: 'North', phone: '080' })
+    ).body.id;
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Late Haul Sup',
+      orderDateISO: '2026-03-29',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L1',
+          productID: 'COIL-ALU',
+          productName: 'Coil',
+          qtyOrdered: 100,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const poId = po.body.poID;
+    const st = await agent.patch(`/api/purchase-orders/${encodeURIComponent(poId)}/status`).send({
+      status: 'In Transit',
+    });
+    expect(st.status).toBe(200);
+    const link = await agent.patch(`/api/purchase-orders/${encodeURIComponent(poId)}/link-transport`).send({
+      transportAgentId: tid,
+      transportAgentName: 'Late Haul Co',
+      transportReference: 'LH-1',
+      transportAmountNgn: 75_000,
+      transportAdvanceNgn: 75_000,
+    });
+    expect(link.status).toBe(200);
+    expect(link.body.ok).toBe(true);
+    const boot = await agent.get('/api/bootstrap');
+    const row = boot.body.purchaseOrders.find((p) => p.poID === poId);
+    expect(row.transportAgentName).toBe('Late Haul Co');
+    expect(row.transportAmountNgn).toBe(75_000);
+    expect(row.status).toBe('In Transit');
+  });
+
   it('POST /api/cutting-lists and /api/production-jobs persist linked production flow', async () => {
     const cutting = await agent.post('/api/cutting-lists').send({
       quotationRef: 'QT-2026-005',

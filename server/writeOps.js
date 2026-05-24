@@ -1389,10 +1389,19 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false, error: 'PO not found.' };
-  if (!PO_TRANSIT_SOURCE_STATUSES.has(normalizePoTransitStatus(row.status))) {
+  const statusNorm = normalizePoTransitStatus(row.status);
+  const hasTransportAgent = Boolean(String(row.transport_agent_id || '').trim());
+  const transportFeeNgn = Number(row.transport_amount_ngn) || 0;
+  const allowLateLinkOnInTransit =
+    statusNorm === 'in transit' && (!hasTransportAgent || transportFeeNgn <= 0);
+  if (!PO_TRANSIT_SOURCE_STATUSES.has(statusNorm) && !allowLateLinkOnInTransit) {
     return {
       ok: false,
-      error: poStatusGateError('Transport linking', row.status, ['approved', 'on loading']),
+      error: poStatusGateError('Transport linking', row.status, [
+        'approved',
+        'on loading',
+        'in transit (no haulier or fee yet)',
+      ]),
     };
   }
   if (!normalizedTransportAgentId || !normalizedTransportAgentName) {
@@ -1434,8 +1443,10 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
       if (advanceNgn <= 0 && recordedAmount > 0) advanceNgn = recordedAmount;
 
-      let nextStatus = 'On loading';
-      if (!wantsTreasury && recordedAmount <= 0) nextStatus = 'In Transit';
+      let nextStatus = statusNorm === 'in transit' ? 'In Transit' : 'On loading';
+      if (!wantsTreasury && recordedAmount <= 0 && statusNorm !== 'in transit') {
+        nextStatus = 'In Transit';
+      }
 
       const u = db.prepare(
         `UPDATE purchase_orders SET
@@ -1451,7 +1462,13 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
           transport_paid_at_iso = NULL,
           transport_paid_ngn = 0,
           status = CASE WHEN ? = 1 THEN status ELSE ? END
-         WHERE po_id = ? AND status IN ('Approved', 'On loading')`
+         WHERE po_id = ? AND (
+           status IN ('Approved', 'On loading')
+           OR (
+             status = 'In Transit'
+             AND (COALESCE(transport_agent_id, '') = '' OR COALESCE(transport_amount_ngn, 0) <= 0)
+           )
+         )`
       );
       const r = u.run(
         normalizedTransportAgentId,
@@ -1469,7 +1486,11 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
       if (r.changes === 0) {
         const latest = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(poID);
         throw new Error(
-          poStatusGateError('Transport linking', latest?.status, ['approved', 'on loading'])
+          poStatusGateError('Transport linking', latest?.status, [
+            'approved',
+            'on loading',
+            'in transit (no haulier or fee yet)',
+          ])
         );
       }
 

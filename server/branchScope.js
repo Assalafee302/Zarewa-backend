@@ -46,6 +46,26 @@ export function resolveBootstrapBranchScope(req) {
 }
 
 /**
+ * New branch-owned records must not be created while HQ “all branches” roll-up is on.
+ * @param {{ workspaceViewAll?: boolean; workspaceBranchId?: string }} req
+ * @returns {{ ok: true } | { ok: false; error: string }}
+ */
+export function assertSingleBranchWorkspaceForCreate(req) {
+  if (req?.workspaceViewAll) {
+    return {
+      ok: false,
+      error:
+        'Cannot create while “All branches” is on. Uncheck All branches in the workspace bar, confirm the target branch in the dropdown (Kaduna, Yola, or Maiduguri), then try again.',
+    };
+  }
+  const wb = String(req?.workspaceBranchId || '').trim();
+  if (!wb) {
+    return { ok: false, error: 'Select a workspace branch before creating records.' };
+  }
+  return { ok: true };
+}
+
+/**
  * Prevent booking receipts/advances to the wrong branch when read scope is ALL (HQ rollup).
  * @param {{ branchId?: string; branch_id?: string } | null | undefined} customer from `getCustomer` / raw row
  * @param {{ workspaceBranchId?: string; user?: object | null }} req

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from './db.js';
+import { runMigrations } from './migrate.js';
 import { listTreasuryAccounts } from './readModel.js';
 
 describe('treasury accounts per branch', () => {
@@ -32,6 +33,26 @@ describe('treasury accounts per branch', () => {
       expect(mdg[0].branchId).toBe('BR-MDG');
 
       expect(all).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('migration backfills legacy treasury accounts to Kaduna HQ (BR-KD)', () => {
+    const db = createDatabase(':memory:');
+    try {
+      db.prepare(
+        `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id)
+         VALUES ('MoneyPoint', 'MoneyPoint', 100, 'Bank', 'MP1', 'BR-YL'),
+                ('TAJ Bank', 'TAJ', 200, 'Bank', 'TAJ1', 'BR-YL'),
+                ('Cash Office', '', 50, 'Cash', 'N/A', 'BR-YL')`
+      ).run();
+      runMigrations(db);
+      const kd = listTreasuryAccounts(db, 'BR-KD');
+      const yl = listTreasuryAccounts(db, 'BR-YL');
+      expect(kd).toHaveLength(3);
+      expect(yl).toHaveLength(0);
+      expect(kd.map((a) => a.name).sort()).toEqual(['Cash Office', 'MoneyPoint', 'TAJ Bank']);
     } finally {
       db.close();
     }

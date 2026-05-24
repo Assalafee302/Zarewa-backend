@@ -66,6 +66,7 @@ import {
 } from './auth.js';
 import {
   assertCustomerLedgerPostingBranch,
+  assertSingleBranchWorkspaceForCreate,
   resolveBootstrapBranchScope,
 } from './branchScope.js';
 import {
@@ -2956,6 +2957,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/purchase-orders', requirePermission('purchase_orders.manage'), (req, res) => {
     try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const body = req.body || {};
       const poID = body.poID || write.nextPoIdFromDb(db, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       const r = write.insertPurchaseOrder(db, { ...body, poID }, req.workspaceBranchId || DEFAULT_BRANCH_ID);
@@ -5739,6 +5742,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/quotations', requirePermission('quotations.manage'), (req, res) => {
     try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(id);

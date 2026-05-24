@@ -82,7 +82,7 @@ export function runMigrations(db) {
       }
     }
     if (!taCols.has('branch_id')) {
-      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'BR-YL'`);
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'BR-KD'`);
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_treasury_accounts_branch ON treasury_accounts(branch_id)`
       );
@@ -3093,8 +3093,27 @@ function migrateBranches(db) {
   addBranch('bank_reconciliation_lines');
   if (tableCols('treasury_accounts').has('branch_id')) {
     db.prepare(
-      `UPDATE treasury_accounts SET branch_id = 'BR-YL' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '' OR branch_id = ?`
-    ).run(defaultBranch);
+      `UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
+    ).run();
+    // Legacy installs wrongly tagged pre-existing Kaduna HQ bank/cash (MoneyPoint, TAJ, Cash) as Yola.
+    const nonYlTreasury = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM treasury_accounts
+         WHERE TRIM(COALESCE(branch_id,'')) != '' AND branch_id != 'BR-YL'`
+      )
+      .get().c;
+    if (nonYlTreasury === 0) {
+      db.prepare(`UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id = 'BR-YL'`).run();
+    } else {
+      db.prepare(
+        `UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id = 'BR-YL' AND (
+          LOWER(name) LIKE '%moneypoint%' OR LOWER(name) LIKE '%money point%' OR
+          LOWER(COALESCE(bank_name,'')) LIKE '%moneypoint%' OR
+          LOWER(name) LIKE '%taj%' OR LOWER(COALESCE(bank_name,'')) LIKE '%taj%' OR
+          LOWER(name) LIKE '%cash%' OR LOWER(name) LIKE '%till%'
+        )`
+      ).run();
+    }
   }
   if (tableCols('suppliers').has('branch_id')) {
     db.prepare(`UPDATE suppliers SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();

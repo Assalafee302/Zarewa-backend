@@ -12,7 +12,7 @@
 | `shared/lib/helpMemory.js` | User / branch / system memory (DB-backed) |
 | `shared/lib/helpRecommendEngine.js` | Ranked “Try asking” + predictive hints |
 | `shared/lib/helpCoaching.js` | Step-by-step coaching mode |
-| `shared/lib/helpGapAnalysis.js` | Gap detection + suggested article drafts |
+| `shared/lib/helpDesignLimits.js` | Four design limits + RBAC filters on memory/personalization |
 | `shared/lib/helpAgentIntent.js` | Extended intent router |
 | `server/helpAnalytics.js` | ERP activity learning job |
 | `server/helpIntelligenceAdmin.js` | Admin dashboard aggregates |
@@ -35,17 +35,25 @@ Feedback remains on `help_query_log` (no duplicate `help_feedback_signal`).
 - `GET /api/help/admin/dashboard` — Runa metrics (settings/audit permission)
 - `GET /api/help/admin/gaps` — knowledge gaps
 - `GET /api/help/admin/suggestions` — pending article drafts
-- `POST /api/help/admin/run-analytics` — manual analytics refresh
+- `POST /api/help/admin/run-analytics` — manual analytics refresh + draft generation
+- `POST /api/help/admin/suggested-articles/:id/review` — approve/reject draft (no auto-publish)
 
 ## Frontend
 - Mirror new shared libs under `src/lib/`
 - `HelpChatDock` — coaching UI, pathname personalization refresh, sources
 - `RunaIntelligencePanel.jsx` — basic admin view under Settings
 
-## Safety
-- No INSERT/UPDATE/DELETE via Runa SQL path (unchanged guardrails)
-- Memory stores topics/counts only — no restricted field values
-- Suggested articles require admin approval (`status=pending`)
+## Safety (design limits)
+
+Enforced in `shared/lib/helpDesignLimits.js`:
+
+1. **No ERP mutations without user action** — `helpGuardrails.js` SELECT-only; Runa never posts/approves/edits ERP records.
+2. **No auto-publish articles** — drafts stay `pending` until admin review; publishing = code change in `helpKnowledge.js`.
+3. **No in-app neural training** — practical learning only (weights, patterns, analytics); embeddings are retrieval inference.
+4. **RBAC on memory** — `filterPersonalizationForUser` strips restricted article boosts and redacts operational notes without clearance.
+
+Additional:
+- Memory stores topics/counts only — sanitized on write (`sanitizeHelpMemoryPayload`)
 - Analytics job is read-only on ERP tables
 
 ## Tests

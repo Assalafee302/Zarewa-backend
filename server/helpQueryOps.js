@@ -23,6 +23,8 @@ import {
   loadBranchMemoryPatterns,
 } from '../shared/lib/helpRecommendEngine.js';
 import { branchMemoryArticleBoosts, memoryArticleBoosts } from '../shared/lib/helpMemory.js';
+import { filterPersonalizationForUser } from '../shared/lib/helpDesignLimits.js';
+import { recordKnowledgeGap } from '../shared/lib/helpGapAnalysis.js';
 
 const LEARNED_BOOSTS_BLOB = 'help.learned_boosts.v1';
 
@@ -160,6 +162,17 @@ export function recordHelpQuerySignal(db, opts) {
       });
     } catch (e) {
       console.error('[zarewa] help self-train failed', e);
+    }
+    if (opts.feedback === 'not_helpful') {
+      try {
+        recordKnowledgeGap(db, {
+          queryText: String(row.query_text || ''),
+          branchId: row.branch_id,
+          notHelpful: true,
+        });
+      } catch (e) {
+        console.error('[zarewa] help gap record failed', e);
+      }
     }
   }
 
@@ -627,7 +640,7 @@ export function listHelpKnowledgeGaps(db, opts = {}) {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ userId?: string; branchId?: string; roleKey?: string; pathname?: string }} ctx
+ * @param {{ userId?: string; branchId?: string; roleKey?: string; pathname?: string; user?: object }} ctx
  */
 export function buildHelpPersonalization(db, ctx = {}) {
   const pathname = String(ctx.pathname || '/');
@@ -639,11 +652,6 @@ export function buildHelpPersonalization(db, ctx = {}) {
   const learnedBoosts = mergeLearnedBoostMaps(branchBoosts, userBoosts);
   const behaviorProfile = computeUserHelpBehaviorProfile(db, { userId });
   const transactionProfile = computeUserTransactionProfile(db, { userId, branchId });
-  const workPatterns = {
-    recentActions: transactionProfile.recentActions,
-    workPace: transactionProfile.workPace,
-    suggestedGuides: transactionProfile.suggestedGuides,
-  };
 
   const basePrompts = quickQuestionsForPath(pathname);
   const rolePrompts = roleQuickPrompts(roleKey);
@@ -662,7 +670,13 @@ export function buildHelpPersonalization(db, ctx = {}) {
   );
   const knowledgeGaps = listHelpKnowledgeGaps(db, { limit: 8 });
 
-  return {
+  const workPatterns = {
+    recentActions: transactionProfile.recentActions,
+    workPace: transactionProfile.workPace,
+    suggestedGuides: transactionProfile.suggestedGuides,
+  };
+
+  const raw = {
     prompts: prompts.slice(0, 8),
     learnedBoosts,
     branchLearnedBoosts: branchBoosts,
@@ -680,6 +694,7 @@ export function buildHelpPersonalization(db, ctx = {}) {
       ...(transactionProfile.activitySummary || []),
     ].slice(0, 3),
   };
+  return filterPersonalizationForUser(raw, ctx.user || { permissions: [], roleKey });
 }
 
 /**
@@ -731,17 +746,21 @@ export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}, ext
     branchMemory,
     workflowEvents,
     prompts: base.prompts,
+    user: ctx.user,
   });
 
-  return {
-    ...base,
-    coachingHints: merged,
-    recommendations,
-    intelligence: {
-      workflowEvents: workflowEvents.length,
-      branchMemoryKeys: Object.keys(branchMemory?.articleBoosts || {}).length,
+  return filterPersonalizationForUser(
+    {
+      ...base,
+      coachingHints: merged,
+      recommendations,
+      intelligence: {
+        workflowEvents: workflowEvents.length,
+        branchMemoryKeys: Object.keys(branchMemory?.articleBoosts || {}).length,
+      },
     },
-  };
+    ctx.user || { permissions: [], roleKey: ctx.roleKey }
+  );
 }
 
 function roleQuickPrompts(roleKey) {

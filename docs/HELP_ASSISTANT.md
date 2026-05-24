@@ -75,7 +75,7 @@ User question
 |------|------|
 | `shared/lib/helpKnowledge.js` | Articles + retrieval scoring |
 | `shared/lib/helpSynthesize.js` | Smart conversational answers (intent, step selection, pace) |
-| `shared/lib/helpSelfTrain.js` | Self-training query→article weights from feedback |
+| `shared/lib/helpDesignLimits.js` | Four non-negotiable Runa design limits + RBAC filters |
 | `shared/lib/helpBehaviorLearn.js` | Reading pace, audit→article mapping |
 | `shared/lib/helpRecommend.js` | Coaching hints, prompt merging |
 | `server/helpChat.js` | RAG pipeline orchestration |
@@ -144,6 +144,17 @@ If unset, complex questions still get multi-article KB answers via `resolveKnowl
 | `POST /api/help/chat` | Ask a question; returns `logId` for feedback |
 | `POST /api/help/signal` | Record helpful / not_helpful / follow_up / link_click |
 | `POST /api/help/log-query` | Log a client-side KB answer (offline instant match) |
+| `GET /api/help/admin/dashboard` | Runa metrics (settings/audit permission) |
+| `POST /api/help/admin/suggested-articles/:id/review` | Approve/reject draft — does **not** auto-publish |
+
+## Runa design limits (non-negotiable)
+
+Runa may become smarter and more independent, but these boundaries are enforced in code (`helpDesignLimits.js`):
+
+1. **No ERP mutations without user action** — Runa guides, suggests, prepares, and explains. Staff always click the final button or approve the action. ERP SQL is SELECT-only.
+2. **No auto-publish help articles** — Gap detection creates `help_suggested_articles` with `status=pending` only. Admins review via API; live guides still require merging into `helpKnowledge.js`.
+3. **No neural model training in-app** — Learning uses feedback scores, article ranking, user/branch patterns, and workflow analytics (`helpSelfTrain.js` weights in `app_json_blobs`). Embeddings are inference-only for RAG.
+4. **RBAC on memory and live data** — Personalization and recommendations filter by role/clearance even when boosted from past activity.
 
 ## Future upgrades
 

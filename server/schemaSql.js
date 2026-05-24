@@ -819,7 +819,9 @@ CREATE TABLE IF NOT EXISTS help_suggested_articles (
   branch_id TEXT,
   hit_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
-  created_at_iso TEXT NOT NULL
+  created_at_iso TEXT NOT NULL,
+  reviewed_at_iso TEXT,
+  reviewed_by_user_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS help_ai_observations (

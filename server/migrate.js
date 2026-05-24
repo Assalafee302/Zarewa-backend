@@ -181,6 +181,16 @@ export function runMigrations(db) {
     }
   }
 
+  const hsaCols = tableCols('help_suggested_articles');
+  if (hsaCols.size) {
+    if (!hsaCols.has('reviewed_at_iso')) {
+      db.exec(`ALTER TABLE help_suggested_articles ADD COLUMN reviewed_at_iso TEXT`);
+    }
+    if (!hsaCols.has('reviewed_by_user_id')) {
+      db.exec(`ALTER TABLE help_suggested_articles ADD COLUMN reviewed_by_user_id TEXT`);
+    }
+  }
+
   const taCols = tableCols('treasury_accounts');
   if (taCols.size) {
     if (!taCols.has('account_officer_name')) {

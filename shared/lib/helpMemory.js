@@ -1,6 +1,7 @@
 /**
  * Safe memory layers for Runa — topics and patterns only, never restricted payloads.
  */
+import { sanitizeHelpMemoryPayload } from './helpDesignLimits.js';
 import { fingerprintHelpQuery } from './helpSelfTrain.js';
 
 /**
@@ -49,13 +50,14 @@ export function writeHelpMemory(db, scope, scopeId, key, payload) {
   const idCol = scope === 'user' ? 'user_id' : 'branch_id';
   if (!hasTable(db, table) || !scopeId || !key) return;
   const at = new Date().toISOString();
+  const safePayload = sanitizeHelpMemoryPayload(payload ?? {});
   db.prepare(
     `INSERT INTO ${table} (${idCol}, memory_key, payload_json, updated_at_iso)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(${idCol}, memory_key) DO UPDATE SET
        payload_json = excluded.payload_json,
        updated_at_iso = excluded.updated_at_iso`
-  ).run(String(scopeId), String(key), JSON.stringify(payload ?? {}), at);
+  ).run(String(scopeId), String(key), JSON.stringify(safePayload), at);
 }
 
 /**

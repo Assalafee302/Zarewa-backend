@@ -31,6 +31,10 @@ import {
 } from '../shared/lib/helpMemory.js';
 import { recordKnowledgeGap } from '../shared/lib/helpGapAnalysis.js';
 import { logHelpAiObservation } from './helpIntelligenceAdmin.js';
+import {
+  formatClearanceMessage,
+  inferClearanceTopicFromMessage,
+} from '../shared/lib/helpClearance.js';
 
 function logHelpQuery(db, opts, result) {
   if (!db) return null;
@@ -187,6 +191,43 @@ export async function runHelpAgent(opts) {
       learnedBoosts: opts.learnedBoosts,
     })[0]?.score ?? 0;
 
+  if (agentRoute === 'clearance') {
+    const topicKey = inferClearanceTopicFromMessage(message) || 'manager';
+    const clearanceMsg = formatClearanceMessage({
+      topicKey,
+      roleKey: opts.roleKey,
+      mode: 'live_data',
+    });
+    const guideArticles =
+      matchedArticles.length > 0
+        ? matchedArticles
+        : matchHelpArticles(searchText, { limit: 1, minScore: 3, pathname, learnedBoosts: opts.learnedBoosts }).map(
+            (m) => m.article
+          );
+    const guide = synthesizeHelpReply({
+      message,
+      history,
+      articles: guideArticles,
+      pathname,
+      userDisplay: opts.userDisplay,
+      roleKey: opts.roleKey,
+      user: opts.user || { permissions: opts.user?.permissions, roleKey: opts.roleKey },
+      pace: behaviorProfile.pace,
+      intent: helpIntent,
+      transactionProfile,
+      externalAiEnabled: cfgEarly.enabled,
+    });
+    return finish(db, opts, logCtx, chatStarted, {
+      content: [clearanceMsg, '', guide].join('\n'),
+      source: 'clearance',
+      links: mergeHelpLinks(guideArticles.slice(0, 2)),
+      matchedArticleIds: guideArticles.slice(0, 2).map((a) => a.id),
+      topScore,
+      agentRoute: 'clearance',
+      sources,
+    });
+  }
+
   if (agentRoute === 'coaching' || isCoachingMessage(message, history)) {
     const session = db && userId ? readCoachingSession(db, userId) : null;
     const articles =
@@ -226,7 +267,7 @@ export async function runHelpAgent(opts) {
   let erpSummary = null;
   let erpDenied = false;
 
-  if (agentRoute === 'erp_data' || agentRoute === 'hybrid') {
+  if (agentRoute === 'erp_data' || agentRoute === 'hybrid' || agentRoute === 'analytics') {
     if (db) {
       const erp = await queryErpData(db, message, {
         user: opts.user || { id: userId, permissions: opts.user?.permissions, roleKey: opts.roleKey },
@@ -250,6 +291,8 @@ export async function runHelpAgent(opts) {
     agentRoute === 'guide' ||
     agentRoute === 'hybrid' ||
     agentRoute === 'chitchat' ||
+    agentRoute === 'troubleshoot' ||
+    agentRoute === 'analytics' ||
     erpDenied ||
     (agentRoute === 'erp_data' && !erpSummary) ||
     !contentParts.length;

@@ -4,7 +4,9 @@ import {
   aggregateKnowledgeGaps,
   buildSuggestedArticleDrafts,
   listLowHelpfulnessArticles,
+  listSuggestedArticleDrafts,
 } from '../shared/lib/helpGapAnalysis.js';
+import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 
 export function getRunaIntelligenceDashboard(db, opts = {}) {
   const days = opts.days ?? 30;
@@ -16,6 +18,7 @@ export function getRunaIntelligenceDashboard(db, opts = {}) {
     articleCount: HELP_ARTICLES.length,
     ai: readAiAssistConfig(),
     periodDays: days,
+    designLimits: RUNA_DESIGN_LIMITS,
     queryVolume: 0,
     helpfulRate: null,
     avgResponseMs: 0,
@@ -59,7 +62,7 @@ export function getRunaIntelligenceDashboard(db, opts = {}) {
 
     out.knowledgeGaps = aggregateKnowledgeGaps(db, { days, branchId: opts.branchId, limit: 15 });
     out.lowHelpfulnessArticles = listLowHelpfulnessArticles(db, { days: days * 2 });
-    out.suggestedArticles = buildSuggestedArticleDrafts(db, { limit: 10 });
+    out.suggestedArticles = listSuggestedArticleDrafts(db, { status: 'pending', limit: 15 });
 
     out.branchIssues = db
       .prepare(

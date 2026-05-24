@@ -139,6 +139,8 @@ export function synthesizeMetaReply(opts = {}) {
       : '**AI polish is off** — I still answer from guides and tools without an external API key.',
     '',
     'I will not invent numbers or bypass your clearance. Ask "how do I…" for steps, or "what is…" for live data.',
+    '',
+    '**By design:** I guide and recommend — you always click the final action. Draft help articles need admin review before publishing. I learn from feedback and workflow patterns, not by retraining a neural model inside Zarewa. RBAC always applies to memory and live data.',
   ].join('\n');
 }
 

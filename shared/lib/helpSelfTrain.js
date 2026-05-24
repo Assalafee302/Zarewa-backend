@@ -1,7 +1,8 @@
 /**
- * Self-training layer — learns query→article associations from staff feedback and history.
- * Stored in app_json_blobs; no external ML service required.
+ * Practical learning layer — feedback weights and query→article ranking in app_json_blobs.
+ * Not neural model training (see helpDesignLimits.js).
  */
+import { assertPracticalLearningAllowed } from './helpDesignLimits.js';
 
 const QUERY_WEIGHTS_BLOB = 'help.query_article_weights.v1';
 const MAX_FINGERPRINTS = 400;
@@ -103,6 +104,7 @@ function saveQueryWeights(db, data) {
  * }} opts
  */
 export function trainHelpFromFeedback(db, opts) {
+  assertPracticalLearningAllowed('trainHelpFromFeedback');
   if (!db || !opts?.queryText) return;
   const fp = fingerprintHelpQuery(opts.queryText);
   if (fp === 'empty') return;
@@ -175,6 +177,7 @@ export function computeQueryLearnedBoosts(db, queryText, opts = {}) {
  * @param {{ days?: number; limit?: number }} [opts]
  */
 export function retrainHelpFromQueryLog(db, opts = {}) {
+  assertPracticalLearningAllowed('retrainHelpFromQueryLog');
   if (!db) return 0;
   let rows = [];
   try {

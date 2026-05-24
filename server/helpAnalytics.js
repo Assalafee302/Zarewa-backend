@@ -2,6 +2,7 @@
  * ERP activity analytics for Runa — read-only signals stored as learning events.
  */
 import { writeHelpMemory } from '../shared/lib/helpMemory.js';
+import { buildSuggestedArticleDrafts } from '../shared/lib/helpGapAnalysis.js';
 
 export function insertWorkflowEvent(db, ev) {
   if (!db) return;
@@ -104,7 +105,14 @@ export function runHelpAnalyticsJob(db, opts = {}) {
     }
   }
 
-  return { events };
+  let drafts = 0;
+  try {
+    drafts = buildSuggestedArticleDrafts(db, { limit: 10 }).length;
+  } catch {
+    /* optional */
+  }
+
+  return { events, drafts };
 }
 
 export function scheduleHelpAnalytics(db) {

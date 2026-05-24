@@ -3,6 +3,11 @@
  */
 import { fingerprintHelpQuery } from './helpSelfTrain.js';
 import { HELP_ARTICLES } from './helpKnowledge.js';
+import {
+  HELP_ARTICLE_AUTO_CREATE_STATUS,
+  assertDraftStatusTransition,
+  assertValidDraftStatus,
+} from './helpDesignLimits.js';
 
 function hasGapTable(db) {
   try {
@@ -115,9 +120,10 @@ export function buildSuggestedArticleDrafts(db, opts = {}) {
     };
     const id = `suggest-${fingerprintHelpQuery(q)}`;
     if (!db.prepare(`SELECT id FROM help_suggested_articles WHERE id = ?`).get(id)) {
+      assertValidDraftStatus(HELP_ARTICLE_AUTO_CREATE_STATUS, { autoCreate: true });
       db.prepare(
         `INSERT INTO help_suggested_articles (id, title, draft_json, reason, branch_id, hit_count, status, created_at_iso)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         title,
@@ -125,12 +131,56 @@ export function buildSuggestedArticleDrafts(db, opts = {}) {
         `Repeated question (${g.hit_count || 1} hits)`,
         g.branch_id || null,
         Number(g.hit_count) || 1,
+        HELP_ARTICLE_AUTO_CREATE_STATUS,
         new Date().toISOString()
       );
     }
     out.push({ id, title, hitCount: g.hit_count, status: 'pending' });
   }
   return out;
+}
+
+export function listSuggestedArticleDrafts(db, opts = {}) {
+  if (!db) return [];
+  try {
+    if (!db.prepare(`PRAGMA table_info(help_suggested_articles)`).all().length) return [];
+  } catch {
+    return [];
+  }
+  const status = opts.status ? String(opts.status) : null;
+  let sql = `SELECT id, title, reason, branch_id, hit_count, status, created_at_iso FROM help_suggested_articles`;
+  const args = [];
+  if (status) {
+    sql += ` WHERE status = ?`;
+    args.push(assertValidDraftStatus(status));
+  }
+  sql += ` ORDER BY hit_count DESC, created_at_iso DESC LIMIT ?`;
+  args.push(Math.min(50, opts.limit ?? 20));
+  return db.prepare(sql).all(...args);
+}
+
+/**
+ * Admin review — marks draft approved/rejected. Does NOT publish to HELP_ARTICLES.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id: string; status: 'approved' | 'rejected'; reviewerId?: string }} opts
+ */
+export function reviewSuggestedArticle(db, opts) {
+  if (!db || !opts?.id) return { ok: false, error: 'Missing draft id.' };
+  try {
+    if (!db.prepare(`PRAGMA table_info(help_suggested_articles)`).all().length) {
+      return { ok: false, error: 'Draft table unavailable.' };
+    }
+  } catch {
+    return { ok: false, error: 'Draft table unavailable.' };
+  }
+  const row = db.prepare(`SELECT id, status FROM help_suggested_articles WHERE id = ?`).get(String(opts.id));
+  if (!row) return { ok: false, error: 'Draft not found.' };
+  const next = assertDraftStatusTransition(String(row.status), String(opts.status));
+  const at = new Date().toISOString();
+  db.prepare(
+    `UPDATE help_suggested_articles SET status = ?, reviewed_at_iso = ?, reviewed_by_user_id = ? WHERE id = ?`
+  ).run(next, at, opts.reviewerId ? String(opts.reviewerId) : null, String(opts.id));
+  return { ok: true, id: String(opts.id), status: next, reviewedAt: at };
 }
 
 export function listLowHelpfulnessArticles(db, opts = {}) {

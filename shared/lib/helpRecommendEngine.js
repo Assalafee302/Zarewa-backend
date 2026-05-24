@@ -5,6 +5,7 @@ import { HELP_ARTICLES, quickQuestionsForPath } from './helpKnowledge.js';
 import { mergePersonalizedPrompts, buildHelpCoachingHints } from './helpRecommend.js';
 import { buildTransactionCoachingHints } from './helpUserActivity.js';
 import { readHelpMemory } from './helpMemory.js';
+import { userMaySeeArticle } from './helpDesignLimits.js';
 
 /**
  * @param {{
@@ -18,14 +19,17 @@ import { readHelpMemory } from './helpMemory.js';
  *   branchMemory?: object;
  *   workflowEvents?: { signalKey?: string; articleId?: string; weight?: number }[];
  *   prompts?: { label: string; query: string }[];
+ *   user?: { permissions?: string[]; roleKey?: string };
  * }} ctx
  */
 export function rankRunaRecommendations(ctx = {}) {
+  const user = ctx.user;
   /** @type {Map<string, { id: string; title: string; query: string; reason?: string; score: number }>} */
   const ranked = new Map();
   const pathname = String(ctx.pathname || '/');
 
-  const add = (id, title, query, score, reason) => {
+  const add = (id, title, query, score, reason, articleId) => {
+    if (articleId && user && !userMaySeeArticle(articleId, user)) return;
     const key = String(id || title);
     const prev = ranked.get(key);
     if (!prev || score > prev.score) {
@@ -55,7 +59,8 @@ export function rankRunaRecommendations(ctx = {}) {
       article.title,
       `Help me with: ${article.title}`,
       8 + (Number(ev.weight) || 1) * 2,
-      ev.signalKey?.replace(/_/g, ' ')
+      ev.signalKey?.replace(/_/g, ' '),
+      ev.articleId
     );
   }
 
@@ -63,13 +68,27 @@ export function rankRunaRecommendations(ctx = {}) {
   for (const [articleId, weight] of Object.entries(branchMem.articleBoosts || {})) {
     const article = HELP_ARTICLES.find((a) => a.id === articleId);
     if (!article) continue;
-    add(`branch-${articleId}`, article.title, `Explain: ${article.title}`, 7 + Number(weight), 'Common in your branch');
+    add(
+      `branch-${articleId}`,
+      article.title,
+      `Explain: ${article.title}`,
+      7 + Number(weight),
+      'Common in your branch',
+      articleId
+    );
   }
 
   for (const [articleId, boost] of Object.entries(ctx.memoryBoosts || {})) {
     const article = HELP_ARTICLES.find((a) => a.id === articleId);
     if (!article) continue;
-    add(`mem-${articleId}`, article.title, `More on: ${article.title}`, 6 + Number(boost), 'You ask about this often');
+    add(
+      `mem-${articleId}`,
+      article.title,
+      `More on: ${article.title}`,
+      6 + Number(boost),
+      'You ask about this often',
+      articleId
+    );
   }
 
   return [...ranked.values()].sort((a, b) => b.score - a.score).slice(0, 8);

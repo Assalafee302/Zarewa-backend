@@ -330,6 +330,8 @@ import { runHelpChat } from './helpAgent.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { getRunaIntelligenceDashboard } from './helpIntelligenceAdmin.js';
 import { runHelpAnalyticsJob } from './helpAnalytics.js';
+import { reviewSuggestedArticle } from '../shared/lib/helpGapAnalysis.js';
+import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 import { readRunaAiConfig } from './helpAiService.js';
 import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
@@ -605,6 +607,7 @@ export function registerHttpApi(app, db) {
       externalAi: ai.chatEnabled,
       intelligence: ai.mode,
       architecture: 'rag+agent+learning',
+      designLimits: RUNA_DESIGN_LIMITS,
       rag: { semanticSearch: true, vectorStore: 'help_rag_chunks' },
       agent: { router: true, textToSql: ai.chatEnabled, nativeErpTools: true, coaching: true },
       embeddingModel: ai.embeddingModel,
@@ -620,6 +623,7 @@ export function registerHttpApi(app, db) {
       branchId,
       roleKey: req.user?.roleKey,
       pathname,
+      user: req.user,
     });
     return res.json({ ok: true, ...personalization });
   });
@@ -760,6 +764,32 @@ export function registerHttpApi(app, db) {
       const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
       const result = runHelpAnalyticsJob(db, { branchId });
       return res.json({ ok: true, result });
+    }
+  );
+
+  app.post(
+    '/api/help/admin/suggested-articles/:id/review',
+    requireAuth,
+    requirePermission(['settings.manage']),
+    (req, res) => {
+      const id = String(req.params?.id || '').trim();
+      const status = String(req.body?.status || '').trim();
+      if (!id || !['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ ok: false, error: 'id and status (approved|rejected) are required.' });
+      }
+      const result = reviewSuggestedArticle(db, {
+        id,
+        status,
+        reviewerId: req.user?.id,
+      });
+      if (!result.ok) {
+        return res.status(result.error === 'Draft not found.' ? 404 : 400).json(result);
+      }
+      return res.json({
+        ok: true,
+        ...result,
+        note: 'Review recorded. Publishing to live guides still requires a developer to merge into helpKnowledge.js.',
+      });
     }
   );
 

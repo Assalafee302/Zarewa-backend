@@ -9,6 +9,7 @@ import { guideClearanceFootnote } from './helpClearance.js';
 /** @typedef {'greeting' | 'thanks' | 'follow_up' | 'clarify' | 'workflow' | 'meta' | 'unknown'} HelpIntent */
 
 import { normalizeHelpQueryText } from './helpTypoTolerance.js';
+const GREETING_RE = /^(hi|hello|hey|good morning|good afternoon|good evening|greetings|howdy|salam|assalam)\b/i;
 const THANKS_RE = /^(thanks|thank you|got it|perfect|great|ok thanks|cheers)\b/i;
 const META_RE =
   /\b(how smart|how intelligent|what are you|who are you|what can you do|are you (an )?ai|are you (a )?bot|are you real|do you learn|can you think|your capabilities|what do you know|how do you work)\b/i;

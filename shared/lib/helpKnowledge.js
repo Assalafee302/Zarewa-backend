@@ -1,5 +1,6 @@
+import { expandHelpTokens, normalizeHelpQueryText, tokenMatchesTerm } from './helpTypoTolerance.js';
+
 /**
- * Procedural help knowledge for the Zarewa help assistant.
  * Used by server /api/help/chat and mirrored in the frontend for instant offline answers.
  */
 
@@ -1210,10 +1211,10 @@ export function isComplexHelpQuery(query) {
  * @returns {string}
  */
 export function buildHelpSearchText(message, messageHistory) {
-  const parts = [String(message || '').trim()];
+  const parts = [normalizeHelpQueryText(String(message || '').trim())];
   if (Array.isArray(messageHistory)) {
     for (const m of messageHistory.slice(-4)) {
-      if (m?.role === 'user') parts.push(String(m.content || '').trim());
+      if (m?.role === 'user') parts.push(normalizeHelpQueryText(String(m.content || '').trim()));
     }
   }
   return parts.filter(Boolean).join(' ');
@@ -1235,10 +1236,12 @@ function scoreHelpArticle(article, qLower, tokens, pathname, learnedBoosts) {
   for (const kw of article.keywords) {
     const k = kw.toLowerCase();
     if (qLower.includes(k)) score += 6;
-    else if (tokens.some((t) => k.includes(t) || t.includes(k))) score += 3;
+    else if (tokens.some((t) => k.includes(t) || t.includes(k) || tokenMatchesTerm(t, k))) score += 3;
+    else if (tokens.some((t) => k.split(/\s+/).some((part) => tokenMatchesTerm(t, part)))) score += 2;
   }
   for (const token of tokens) {
     if (titleLower.includes(token)) score += 2;
+    else if (titleLower.split(/\s+/).some((w) => tokenMatchesTerm(token, w))) score += 1;
     if (article.answer.toLowerCase().includes(token)) score += 1;
     for (const step of article.steps) {
       if (step.toLowerCase().includes(token)) score += 1;
@@ -1266,8 +1269,9 @@ export function matchHelpArticles(query, opts = {}) {
   if (!q) return [];
   const limit = opts.limit ?? 3;
   const minScore = opts.minScore ?? 4;
-  const tokens = tokenizeHelpQuery(q);
-  const qLower = q.toLowerCase();
+  const normalized = normalizeHelpQueryText(q);
+  const tokens = expandHelpTokens(tokenizeHelpQuery(`${q} ${normalized}`));
+  const qLower = `${q} ${normalized}`.toLowerCase();
   const learnedBoosts = opts.learnedBoosts && typeof opts.learnedBoosts === 'object' ? opts.learnedBoosts : {};
   const ranked = HELP_ARTICLES.map((article) => ({
     article,

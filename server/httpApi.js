@@ -326,7 +326,7 @@ import {
 } from './inTransitOps.js';
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
-import { runHelpChat } from './helpChat.js';
+import { runHelpChat } from './helpAgent.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
@@ -593,12 +593,18 @@ export function registerHttpApi(app, db) {
   );
 
   app.get('/api/help/status', requireAuth, (_req, res) => {
+    const ai = readAiAssistConfig();
     res.json({
       ok: true,
       available: true,
       selfContained: true,
       articleCount: HELP_ARTICLES.length,
-      externalAi: readAiAssistConfig().enabled,
+      externalAi: ai.enabled,
+      architecture: 'rag+agent',
+      rag: { semanticSearch: true, vectorStore: 'help_rag_chunks' },
+      agent: { router: true, textToSql: ai.enabled, nativeErpTools: true },
+      embeddingModel: process.env.ZAREWA_AI_EMBEDDING_MODEL || 'text-embedding-3-small',
+      chatModel: ai.model,
     });
   });
 
@@ -633,6 +639,7 @@ export function registerHttpApi(app, db) {
           message: msg,
           messages,
           pathname: typeof pathname === 'string' ? pathname : '',
+          user: req.user,
           userDisplay: req.user?.displayName,
           userId: req.user?.id,
           branchId,
@@ -646,6 +653,7 @@ export function registerHttpApi(app, db) {
           source: result.source,
           links: Array.isArray(result.links) ? result.links : [],
           logId: result.logId || null,
+          agentRoute: result.agentRoute || null,
         });
       } catch (e) {
         const code = e?.code;

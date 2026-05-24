@@ -69,6 +69,44 @@ export function runMigrations(db) {
     return new Set(rows.map((c) => c.name));
   };
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS help_rag_chunks (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      chunk_text TEXT NOT NULL,
+      embedding_json TEXT,
+      embedding_model TEXT,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_help_rag_source ON help_rag_chunks(source_type, source_id);
+  `);
+
+  const hqlLogCols = tableCols('help_query_log');
+  if (hqlLogCols.size) {
+    if (!hqlLogCols.has('response_ms')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN response_ms INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hqlLogCols.has('client_draft_ms')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN client_draft_ms INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hqlLogCols.has('session_turn')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN session_turn INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hqlLogCols.has('read_ms')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN read_ms INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hqlLogCols.has('feedback')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN feedback TEXT`);
+    }
+    if (!hqlLogCols.has('follow_up')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN follow_up INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hqlLogCols.has('link_clicked')) {
+      db.exec(`ALTER TABLE help_query_log ADD COLUMN link_clicked INTEGER NOT NULL DEFAULT 0`);
+    }
+  }
+
   const taCols = tableCols('treasury_accounts');
   if (taCols.size) {
     if (!taCols.has('account_officer_name')) {

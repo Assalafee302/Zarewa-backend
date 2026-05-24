@@ -9,30 +9,75 @@ The help chatbot (life-ring button) is designed to work **without OpenAI or any 
 | 25+ procedural workflow articles | Neural-network / LLM training on your server |
 | Keyword + route + learned boost matching | ChatGPT Free subscription |
 | Query logging and branch-level learning | Automatic product code changes |
-| Coaching hints from live workspace metrics | Legal/financial advice |
+| User reactions (👍/👎), read time, follow-ups | Legal/financial advice |
+| Work-pattern hints from `audit_log` | |
 
 This is **practical pattern learning**: the system remembers which guides staff use, surfaces gaps when questions fail to match, and nudges users based on dashboard attention flags — not deep machine learning.
 
-## Architecture
+## Enterprise architecture (RAG + AI Agent)
 
 ```
-HelpChatDock (frontend)
-  ├─ Local match → shared/lib/helpKnowledge.js (instant, offline)
-  └─ POST /api/help/chat
-        ├─ matchHelpArticles + learnedBoosts
-        ├─ insertHelpQueryLog (help_query_log table)
-        └─ optional external AI (ZAREWA_AI_API_KEY)
+[User Query]
+    ↓
+[Agent Router]  — guide | erp_data | hybrid | chitchat
+    ↓                    ↓
+[Semantic RAG]      [Text-to-SQL / native ERP tools]
+ help_rag_chunks     products, quotations, refunds, ledger…
+ (text-embedding-3)  (SELECT only + RBAC + branch scope)
+    ↓                    ↓
+    └──────► [Frontier LLM polish] ◄── secure context only
+                    ↓
+           [Synthesized answer]
+```
+
+| Layer | Module | Role |
+|-------|--------|------|
+| Vector RAG | `helpRagStore.js`, `helpEmbeddings.js` | Embed guides (`text-embedding-3-small`), cosine search, keyword merge |
+| Agent | `helpAgent.js`, `helpAgentIntent.js` | Intent routing, orchestration, session history |
+| ERP bridge | `helpErpQuery.js` | Native tools + guarded text-to-SQL |
+| Guardrails | `helpGuardrails.js` | Allowlisted tables, SELECT-only, LIMIT 50, RBAC, branch filter |
+| Self-train | `helpSelfTrain.js`, `helpUserActivity.js` | Feedback + transaction patterns |
+
+### Configure frontier model (Azure OpenAI / OpenAI / Ollama)
+
+```env
+ZAREWA_AI_API_KEY=sk-...
+ZAREWA_AI_MODEL=gpt-4o
+ZAREWA_AI_EMBEDDING_MODEL=text-embedding-3-small
+# Optional enterprise endpoint:
+# ZAREWA_AI_BASE_URL=https://YOUR-RESOURCE.openai.azure.com/openai/v1
+```
+
+Without a key: local TF vectors + keyword RAG + native ERP tools still work; text-to-SQL and LLM polish are off.
+
+### Security
+
+- Every `/api/help/chat` call is **authenticated** (`requireAuth`).
+- SQL runs only after **allowlist + SELECT-only + LIMIT** validation.
+- **Branch_id** and **audit self-only** filters injected when applicable.
+- **Permissions** checked per table (`sales.view`, `finance.view`, etc.).
+
+## Architecture (RAG — like ChatGPT retrieval + generation)
+
+```
+User question
+  → Retrieve matching guides (keyword + learned boosts + self-trained query weights)
+  → Synthesize conversational reply (helpSynthesize.js) — NOT raw article dump
+  → Optional: external AI rephrases using retrieved chunks only (ZAREWA_AI_API_KEY)
+  → Log + learn from 👍/👎 (helpSelfTrain.js updates query→article weights)
 ```
 
 ### Key files
 
 | File | Role |
 |------|------|
-| `shared/lib/helpKnowledge.js` | Articles, matching, formatting (mirror in frontend `src/lib/helpKnowledge.js`) |
+| `shared/lib/helpKnowledge.js` | Articles + retrieval scoring |
+| `shared/lib/helpSynthesize.js` | Smart conversational answers (intent, step selection, pace) |
+| `shared/lib/helpSelfTrain.js` | Self-training query→article weights from feedback |
+| `shared/lib/helpBehaviorLearn.js` | Reading pace, audit→article mapping |
 | `shared/lib/helpRecommend.js` | Coaching hints, prompt merging |
-| `server/helpChat.js` | Server answer pipeline + logging |
-| `server/helpQueryOps.js` | Log inserts, learned boosts, personalization |
-| `server/schemaSql.js` | `help_query_log` table |
+| `server/helpChat.js` | RAG pipeline orchestration |
+| `server/helpQueryOps.js` | Logging, boosts, personalization |
 
 ## Knowledge base
 
@@ -44,17 +89,32 @@ Each article: `id`, `title`, `keywords[]`, `answer`, `steps[]`, `links[]`.
 
 ## Pattern learning (how it “learns”)
 
-1. Every server help answer writes one row to `help_query_log`:
+1. Every help answer writes one row to `help_query_log`:
    - user, branch, role, pathname, query text
    - matched article ids, source (`kb` / `ai` / `fallback`), score
+   - **response_ms**, **client_draft_ms** (typing time), **session_turn**
 
-2. **`computeHelpLearnedBoosts`** aggregates successful matches per branch (90-day window) and adds weight to article scores.
+2. **Reactions & signals** (`POST /api/help/signal`):
+   - 👍 / 👎 feedback with **read_ms** (time before reaction)
+   - **follow_up** when the user asks another question without rating
+   - **link_click** when they open a guide link from the answer
 
-3. **`listHelpKnowledgeGaps`** lists frequent unmatched queries — candidates for new articles.
+3. **`computeHelpLearnedBoosts`** — branch-level article weights (90 days), boosted by helpful votes.
 
-4. **`buildHelpCoachingHints`** reads bootstrap snapshot (`productionMetrics`, `operationsInventoryAttention`, open refunds) and suggests relevant guides proactively.
+4. **`computeUserLearnedBoosts`** — per-user weights from their own history and reactions.
 
-5. Bootstrap includes **`helpPersonalization`**: merged quick prompts + coaching hints for the signed-in user.
+5. **`computeUserTransactionProfile`** — reads **real ERP activity** for the signed-in user (last 14 days):
+   - **Quotations** — quotation-related audit actions
+   - **Payments / receipts** — `ledger_entries` posted by user (`RECEIPT_IN`, advances)
+   - **Refunds** — `customer_refunds` requested by user
+   - **Corrections & errors** — receipt reversals, failed/blocked audit entries, error notes
+   - **Performance** — activity level (high/normal/low), work pace between actions
+
+6. **`buildTransactionCoachingHints`** — turns that activity into proactive help (e.g. “3 refund(s) you requested recently”).
+
+7. **`computeUserHelpBehaviorProfile`** — help-chat reading pace, helpful rate (👍/👎).
+
+8. Bootstrap **`helpPersonalization`** includes transaction summary, coaching hints, and smart reply context.
 
 ## External AI (optional)
 
@@ -78,13 +138,12 @@ If unset, complex questions still get multi-article KB answers via `resolveKnowl
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/help/status` | Available, article count, whether external AI is on |
-| `GET /api/help/personalization?pathname=/sales` | Prompts, coaching hints, learning flags |
-| `POST /api/help/chat` | Ask a question (auth required) |
+| `GET /api/help/personalization?pathname=/sales` | Prompts, coaching hints, behavior profile, work patterns |
+| `POST /api/help/chat` | Ask a question; returns `logId` for feedback |
+| `POST /api/help/signal` | Record helpful / not_helpful / follow_up / link_click |
+| `POST /api/help/log-query` | Log a client-side KB answer (offline instant match) |
 
-## Future upgrades (not yet implemented)
+## Future upgrades
 
 - Admin UI for gap report and article drafts in DB
-- Per-user “recent mistakes” from audit_log correlation
 - Embeddings for fuzzy match (still local, no OpenAI)
-
-These can build on `help_query_log` without changing the staff-facing UX.

@@ -732,12 +732,31 @@ CREATE TABLE IF NOT EXISTS help_query_log (
   matched_article_ids_json TEXT,
   source TEXT NOT NULL,
   top_score REAL NOT NULL DEFAULT 0,
-  response_chars INTEGER NOT NULL DEFAULT 0
+  response_chars INTEGER NOT NULL DEFAULT 0,
+  response_ms INTEGER NOT NULL DEFAULT 0,
+  client_draft_ms INTEGER NOT NULL DEFAULT 0,
+  session_turn INTEGER NOT NULL DEFAULT 0,
+  read_ms INTEGER NOT NULL DEFAULT 0,
+  feedback TEXT,
+  follow_up INTEGER NOT NULL DEFAULT 0,
+  link_clicked INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_help_query_log_occurred ON help_query_log(occurred_at_iso DESC);
 CREATE INDEX IF NOT EXISTS idx_help_query_log_branch ON help_query_log(branch_id, occurred_at_iso DESC);
 CREATE INDEX IF NOT EXISTS idx_help_query_log_user ON help_query_log(user_id, occurred_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS help_rag_chunks (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  chunk_text TEXT NOT NULL,
+  embedding_json TEXT,
+  embedding_model TEXT,
+  updated_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_rag_source ON help_rag_chunks(source_type, source_id);
 
 CREATE TABLE IF NOT EXISTS treasury_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

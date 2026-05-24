@@ -23,6 +23,14 @@ import {
 import { queryErpData, synthesizeErpAnswer } from './helpErpQuery.js';
 import { computeUserHelpBehaviorProfile, computeUserTransactionProfile, insertHelpQueryLog } from './helpQueryOps.js';
 import { formatRetrievedContext, indexHelpKnowledgeBaseIfStale, retrieveHelpContext } from './helpRagStore.js';
+import { buildCoachingReply, isCoachingMessage } from '../shared/lib/helpCoaching.js';
+import {
+  readCoachingSession,
+  recordUserQueryMemory,
+  writeCoachingSession,
+} from '../shared/lib/helpMemory.js';
+import { recordKnowledgeGap } from '../shared/lib/helpGapAnalysis.js';
+import { logHelpAiObservation } from './helpIntelligenceAdmin.js';
 
 function logHelpQuery(db, opts, result) {
   if (!db) return null;
@@ -56,12 +64,34 @@ function finalize(result, logId = null) {
     topScore: result.topScore ?? 0,
     logId,
     agentRoute: result.agentRoute || null,
+    sources: result.sources || [],
+    coaching: result.coaching || null,
   };
 }
 
 function finish(db, opts, logCtx, chatStarted, result) {
   logCtx.responseMs = Date.now() - chatStarted;
   const logId = logHelpQuery(db, logCtx, result);
+  if (db && opts.userId) {
+    recordUserQueryMemory(db, {
+      userId: opts.userId,
+      queryText: opts.message,
+      articleIds: result.matchedArticleIds,
+      agentRoute: result.agentRoute,
+    });
+    logHelpAiObservation(db, {
+      userId: opts.userId,
+      branchId: opts.branchId,
+      route: result.agentRoute,
+      queryText: opts.message,
+      source: result.source,
+      responseMs: logCtx.responseMs,
+      payload: { topScore: result.topScore, sources: result.sources?.length || 0 },
+    });
+  }
+  if (db && (result.topScore < 4 || result.source === 'fallback')) {
+    recordKnowledgeGap(db, { queryText: opts.message, branchId: opts.branchId });
+  }
   return finalize(result, logId);
 }
 
@@ -147,6 +177,49 @@ export async function runHelpAgent(opts) {
     .map((id) => HELP_ARTICLES.find((a) => a.id === id))
     .filter(Boolean);
 
+  const sources = matchedArticles.slice(0, 3).map((a) => ({ id: a.id, title: a.title }));
+
+  const topScore =
+    matchHelpArticles(searchText, {
+      limit: 1,
+      minScore: 4,
+      pathname,
+      learnedBoosts: opts.learnedBoosts,
+    })[0]?.score ?? 0;
+
+  if (agentRoute === 'coaching' || isCoachingMessage(message, history)) {
+    const session = db && userId ? readCoachingSession(db, userId) : null;
+    const articles =
+      matchedArticles.length > 0
+        ? matchedArticles
+        : matchHelpArticles(searchText, {
+            limit: 1,
+            minScore: 3,
+            pathname,
+            learnedBoosts: opts.learnedBoosts,
+          }).map((m) => m.article);
+    const coaching = buildCoachingReply({
+      message,
+      articles,
+      stepIndex: session?.stepIndex,
+      totalSteps: session?.steps,
+      articleId: session?.articleId,
+    });
+    if (db && userId && coaching.coaching?.active) {
+      writeCoachingSession(db, userId, coaching.coaching);
+    }
+    return finish(db, opts, logCtx, chatStarted, {
+      content: coaching.content,
+      source: 'coaching',
+      links: mergeHelpLinks(articles.slice(0, 1)),
+      matchedArticleIds: articles.slice(0, 1).map((a) => a.id),
+      topScore,
+      agentRoute: 'coaching',
+      sources,
+      coaching: coaching.coaching,
+    });
+  }
+
   /** @type {string[]} */
   const contentParts = [];
   let source = 'agent';
@@ -201,12 +274,6 @@ export async function runHelpAgent(opts) {
   }
 
   let content = contentParts.filter(Boolean).join('\n');
-  const topScore = matchHelpArticles(searchText, {
-    limit: 1,
-    minScore: 4,
-    pathname,
-    learnedBoosts: opts.learnedBoosts,
-  })[0]?.score ?? 0;
 
   const cfg = readAiAssistConfig();
   const complex = isComplexHelpQuery(message);
@@ -260,6 +327,7 @@ export async function runHelpAgent(opts) {
     matchedArticleIds: retrieval.articleIds.slice(0, 3),
     topScore,
     agentRoute,
+    sources,
   });
 }
 

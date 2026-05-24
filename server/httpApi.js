@@ -328,6 +328,9 @@ import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.j
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
+import { getRunaIntelligenceDashboard } from './helpIntelligenceAdmin.js';
+import { runHelpAnalyticsJob } from './helpAnalytics.js';
+import { readRunaAiConfig } from './helpAiService.js';
 import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
@@ -593,18 +596,19 @@ export function registerHttpApi(app, db) {
   );
 
   app.get('/api/help/status', requireAuth, (_req, res) => {
-    const ai = readAiAssistConfig();
+    const ai = readRunaAiConfig();
     res.json({
       ok: true,
       available: true,
       selfContained: true,
       articleCount: HELP_ARTICLES.length,
-      externalAi: ai.enabled,
-      architecture: 'rag+agent',
+      externalAi: ai.chatEnabled,
+      intelligence: ai.mode,
+      architecture: 'rag+agent+learning',
       rag: { semanticSearch: true, vectorStore: 'help_rag_chunks' },
-      agent: { router: true, textToSql: ai.enabled, nativeErpTools: true },
-      embeddingModel: process.env.ZAREWA_AI_EMBEDDING_MODEL || 'text-embedding-3-small',
-      chatModel: ai.model,
+      agent: { router: true, textToSql: ai.chatEnabled, nativeErpTools: true, coaching: true },
+      embeddingModel: ai.embeddingModel,
+      chatModel: ai.chatModel,
     });
   });
 
@@ -654,6 +658,8 @@ export function registerHttpApi(app, db) {
           links: Array.isArray(result.links) ? result.links : [],
           logId: result.logId || null,
           agentRoute: result.agentRoute || null,
+          sources: Array.isArray(result.sources) ? result.sources : [],
+          coaching: result.coaching || null,
         });
       } catch (e) {
         const code = e?.code;
@@ -720,6 +726,42 @@ export function registerHttpApi(app, db) {
     });
     return res.json({ ok: true, logId: logId || null });
   });
+
+  app.get(
+    '/api/help/admin/dashboard',
+    requireAuth,
+    requirePermission(['settings.manage', 'audit.view']),
+    (req, res) => {
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const dashboard = getRunaIntelligenceDashboard(db, {
+        branchId,
+        days: Number(req.query?.days) || 30,
+      });
+      return res.json({ ok: true, dashboard });
+    }
+  );
+
+  app.get(
+    '/api/help/admin/gaps',
+    requireAuth,
+    requirePermission(['settings.manage', 'audit.view']),
+    (req, res) => {
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const dashboard = getRunaIntelligenceDashboard(db, { branchId });
+      return res.json({ ok: true, gaps: dashboard.knowledgeGaps, suggestedArticles: dashboard.suggestedArticles });
+    }
+  );
+
+  app.post(
+    '/api/help/admin/run-analytics',
+    requireAuth,
+    requirePermission(['settings.manage']),
+    (req, res) => {
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const result = runHelpAnalyticsJob(db, { branchId });
+      return res.json({ ok: true, result });
+    }
+  );
 
   app.get(
     '/api/management/items',

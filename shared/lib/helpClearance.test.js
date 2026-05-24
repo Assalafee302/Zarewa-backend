@@ -23,8 +23,7 @@ describe('meta questions', () => {
 
   it('answers honestly', () => {
     const reply = synthesizeMetaReply({ userDisplay: 'Ali', externalAiEnabled: false });
-    expect(reply).toMatch(/Zarewa Help Assistant/i);
-    expect(reply).toMatch(/RAG/i);
+    expect(reply).toMatch(/Runa/i);
     expect(reply).toMatch(/clearance/i);
   });
 });

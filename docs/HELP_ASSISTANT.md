@@ -1,4 +1,6 @@
-# Zarewa Help Assistant — self-contained guide system
+# Zarewa Help Assistant (Runa) — self-contained guide system
+
+**Runa** is the cute workflow buddy in the life-ring button — the name nods to *running* quotes, POs, production jobs, and payments through Zarewa.
 
 The help chatbot (life-ring button) is designed to work **without OpenAI or any external AI key**. Optional external AI only adds paraphrasing for unusual questions; the core is a **built-in knowledge base + pattern learning**.
 

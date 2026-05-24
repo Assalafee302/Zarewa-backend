@@ -758,6 +758,84 @@ CREATE TABLE IF NOT EXISTS help_rag_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_help_rag_source ON help_rag_chunks(source_type, source_id);
 
+CREATE TABLE IF NOT EXISTS help_article_weights (
+  id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL DEFAULT '',
+  article_id TEXT NOT NULL,
+  weight REAL NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'aggregate',
+  updated_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_article_weights_scope ON help_article_weights(scope_type, scope_id, article_id);
+
+CREATE TABLE IF NOT EXISTS help_user_memory (
+  user_id TEXT NOT NULL,
+  memory_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL,
+  PRIMARY KEY (user_id, memory_key)
+);
+
+CREATE TABLE IF NOT EXISTS help_branch_memory (
+  branch_id TEXT NOT NULL,
+  memory_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL,
+  PRIMARY KEY (branch_id, memory_key)
+);
+
+CREATE TABLE IF NOT EXISTS help_workflow_events (
+  id TEXT PRIMARY KEY,
+  occurred_at_iso TEXT NOT NULL,
+  branch_id TEXT,
+  event_type TEXT NOT NULL,
+  signal_key TEXT NOT NULL,
+  payload_json TEXT,
+  weight REAL NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_workflow_events_branch ON help_workflow_events(branch_id, occurred_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS help_knowledge_gaps (
+  id TEXT PRIMARY KEY,
+  query_fingerprint TEXT NOT NULL,
+  query_text TEXT NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  not_helpful_count INTEGER NOT NULL DEFAULT 0,
+  branch_id TEXT,
+  last_at_iso TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_knowledge_gaps_fp ON help_knowledge_gaps(query_fingerprint, branch_id);
+
+CREATE TABLE IF NOT EXISTS help_suggested_articles (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  draft_json TEXT NOT NULL,
+  reason TEXT,
+  branch_id TEXT,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at_iso TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS help_ai_observations (
+  id TEXT PRIMARY KEY,
+  occurred_at_iso TEXT NOT NULL,
+  user_id TEXT,
+  branch_id TEXT,
+  route TEXT,
+  query_text TEXT,
+  source TEXT,
+  response_ms INTEGER,
+  payload_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_help_ai_observations_time ON help_ai_observations(occurred_at_iso DESC);
+
 CREATE TABLE IF NOT EXISTS treasury_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,

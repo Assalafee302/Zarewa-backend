@@ -12,7 +12,8 @@ const INDEX_BLOB = 'help.rag_index_version';
 function chunkArticle(article) {
   /** @type {{ id: string; sourceType: string; sourceId: string; text: string }[]} */
   const chunks = [];
-  const base = `${article.title}\n${article.answer}`;
+  const moduleHint = (article.keywords || []).slice(0, 6).join(', ');
+  const base = `[${article.id}] ${article.title}\nModule keywords: ${moduleHint}\n${article.answer}`;
   chunks.push({ id: `${article.id}:summary`, sourceType: 'article', sourceId: article.id, text: base });
   if (article.steps?.length) {
     const stepText = article.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
@@ -20,7 +21,7 @@ function chunkArticle(article) {
       id: `${article.id}:steps`,
       sourceType: 'article',
       sourceId: article.id,
-      text: `${article.title} steps:\n${stepText}`,
+      text: `[${article.id}] ${article.title} steps:\n${stepText}`,
     });
   }
   return chunks;

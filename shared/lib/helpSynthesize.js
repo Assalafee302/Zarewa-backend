@@ -4,6 +4,7 @@
  */
 
 import { guideClearanceFootnote } from './helpClearance.js';
+import { HELP_BOT_NAME } from './helpBotBrand.js';
 
 /** @typedef {'greeting' | 'thanks' | 'follow_up' | 'clarify' | 'workflow' | 'meta' | 'unknown'} HelpIntent */
 
@@ -130,7 +131,7 @@ export function synthesizeMetaReply(opts = {}) {
   const who = name ? ` ${name}` : '';
   const aiOn = Boolean(opts.externalAiEnabled);
   return [
-    `Hi${who} — I'm **Zarewa Coach**, built for your ERP workflows (quotations, receipts, PO, refunds, production).`,
+    `Hi${who} — I'm **${HELP_BOT_NAME}**, your Zarewa workflow buddy (quotations, receipts, PO, production, refunds).`,
     '',
     'I search **44+ guides**, respect your **role clearance**, and can read **live ERP data** when your permissions allow.',
     aiOn
@@ -175,7 +176,7 @@ export function synthesizeHelpReply(opts) {
 
   if (intent === 'greeting') {
     const who = name ? ` ${name}` : '';
-    return `Hello${who}! What **${page}** workflow can I help with?`;
+    return `Hello${who}! I'm **${HELP_BOT_NAME}**. What **${page}** workflow can I help with?`;
   }
 
   if (intent === 'thanks') {
@@ -274,7 +275,7 @@ export function buildRetrievedContextForAi(articles, message) {
  */
 export function buildHelpAiSystemPrompt(ctx) {
   return [
-    'You are the Zarewa Help Assistant — a smart, friendly procedural coach for ERP staff.',
+    `You are ${HELP_BOT_NAME} — the Zarewa workflow guide for ERP staff.`,
     'Architecture: RAG — you ONLY use the retrieved guides below. Never invent modules, buttons, or URLs.',
     'Style (like ChatGPT):',
     '- Lead with a direct 1–2 sentence answer to what they asked.',

@@ -16,7 +16,13 @@ import {
   guideForTransactionAction,
 } from '../shared/lib/helpUserActivity.js';
 import { buildHelpCoachingHints, mergePersonalizedPrompts } from '../shared/lib/helpRecommend.js';
-import { computeQueryLearnedBoosts } from '../shared/lib/helpSelfTrain.js';
+import { computeQueryLearnedBoosts, trainHelpFromFeedback } from '../shared/lib/helpSelfTrain.js';
+import {
+  rankRunaRecommendations,
+  loadBranchWorkflowHints,
+  loadBranchMemoryPatterns,
+} from '../shared/lib/helpRecommendEngine.js';
+import { branchMemoryArticleBoosts, memoryArticleBoosts } from '../shared/lib/helpMemory.js';
 
 const LEARNED_BOOSTS_BLOB = 'help.learned_boosts.v1';
 
@@ -282,7 +288,12 @@ export function computeMergedLearnedBoosts(db, opts = {}) {
   const query = opts.queryText
     ? computeQueryLearnedBoosts(db, opts.queryText, { branchId: opts.branchId })
     : {};
-  return mergeLearnedBoostMaps(mergeLearnedBoostMaps(branch, user), query);
+  const memUser = opts.userId ? memoryArticleBoosts(db, String(opts.userId)) : {};
+  const memBranch = opts.branchId ? branchMemoryArticleBoosts(db, String(opts.branchId)) : {};
+  return mergeLearnedBoostMaps(
+    mergeLearnedBoostMaps(mergeLearnedBoostMaps(branch, user), query),
+    mergeLearnedBoostMaps(memUser, memBranch)
+  );
 }
 
 /**
@@ -704,7 +715,33 @@ export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}, ext
     .slice(0, 5)
     .map(({ id, title, query, reason }) => ({ id, title, query, reason }));
 
-  return { ...base, coachingHints: merged };
+  const branchId = String(ctx.branchId || '').trim();
+  const workflowEvents = branchId ? loadBranchWorkflowHints(db, branchId) : [];
+  const branchMemory = branchId ? loadBranchMemoryPatterns(db, branchId) : {};
+  const memoryBoosts = ctx.userId ? memoryArticleBoosts(db, String(ctx.userId)) : {};
+
+  const recommendations = rankRunaRecommendations({
+    pathname: ctx.pathname,
+    roleKey: ctx.roleKey,
+    branchId,
+    learnedBoosts: base.learnedBoosts,
+    memoryBoosts,
+    transactionProfile: base.transactionProfile,
+    snapshot,
+    branchMemory,
+    workflowEvents,
+    prompts: base.prompts,
+  });
+
+  return {
+    ...base,
+    coachingHints: merged,
+    recommendations,
+    intelligence: {
+      workflowEvents: workflowEvents.length,
+      branchMemoryKeys: Object.keys(branchMemory?.articleBoosts || {}).length,
+    },
+  };
 }
 
 function roleQuickPrompts(roleKey) {

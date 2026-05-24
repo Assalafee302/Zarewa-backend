@@ -1469,10 +1469,11 @@ export function listRefunds(db, branchScope = 'ALL') {
     });
 }
 
-export function listTreasuryAccounts(db) {
+export function listTreasuryAccounts(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'treasury_accounts', branchScope);
   return db
-    .prepare(`SELECT * FROM treasury_accounts ORDER BY id`)
-    .all()
+    .prepare(`SELECT * FROM treasury_accounts WHERE 1=1${b.sql} ORDER BY id`)
+    .all(...b.args)
     .map((row) => ({
       id: row.id,
       name: row.name,
@@ -1486,18 +1487,24 @@ export function listTreasuryAccounts(db) {
       bankBranch: row.bank_branch ?? '',
       sortCodeOrSwift: row.sort_code_or_swift ?? '',
       notes: row.notes ?? '',
+      branchId: row.branch_id ?? '',
     }));
 }
 
-export function listTreasuryMovements(db) {
+export function listTreasuryMovements(db, branchScope = 'ALL') {
+  const scopeSql =
+    branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
+      ? { sql: '', args: [] }
+      : { sql: ` AND ta.branch_id = ?`, args: [branchScope] };
   return db
     .prepare(
       `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE 1=1${scopeSql.sql}
        ORDER BY tm.posted_at_iso DESC, tm.id DESC`
     )
-    .all()
+    .all(...scopeSql.args)
     .map((row) => ({
       id: row.id,
       postedAtISO: row.posted_at_iso,

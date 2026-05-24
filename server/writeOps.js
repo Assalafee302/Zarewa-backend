@@ -51,6 +51,7 @@ import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { assertTreasuryAccountForWorkspace } from './branchScope.js';
 import {
   mergeSupplierProfilePatch,
   parseSupplierProfileJson,
@@ -544,6 +545,14 @@ function adjustTreasuryBalanceTx(db, treasuryAccountId, deltaNgn, opts = {}) {
 export function insertTreasuryMovementTx(db, payload) {
   const treasuryAccountId = Number(payload.treasuryAccountId);
   if (!treasuryAccountId) throw new Error('treasuryAccountId is required.');
+  if (payload.workspaceBranchId && payload.actor) {
+    const gate = assertTreasuryAccountForWorkspace(db, treasuryAccountId, {
+      workspaceBranchId: payload.workspaceBranchId,
+      workspaceViewAll: Boolean(payload.workspaceViewAll),
+      user: payload.actor,
+    });
+    if (!gate.ok) throw new Error(gate.error);
+  }
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn === 0) throw new Error('Treasury movement amount must be non-zero.');
   const allowNeg =
@@ -665,6 +674,9 @@ export function recordCustomerReceiptCash(db, payload) {
     sourceId: payload.sourceId,
     note: payload.note || 'Customer receipt',
     createdBy: payload.createdBy ?? 'Sales',
+    workspaceBranchId: payload.workspaceBranchId,
+    workspaceViewAll: payload.workspaceViewAll,
+    actor: payload.actor,
   });
 }
 
@@ -682,6 +694,9 @@ export function recordCustomerAdvanceCash(db, payload) {
     sourceId: payload.sourceId,
     note: payload.note || 'Customer advance',
     createdBy: payload.createdBy ?? 'Sales',
+    workspaceBranchId: payload.workspaceBranchId,
+    workspaceViewAll: payload.workspaceViewAll,
+    actor: payload.actor,
   });
 }
 
@@ -702,6 +717,9 @@ export function recordCustomerAdvanceRefundCash(db, payload) {
       sourceId: payload.sourceId,
       note: payload.note || 'Advance refunded to customer',
       createdBy: payload.createdBy ?? 'Finance',
+      workspaceBranchId: payload.workspaceBranchId,
+      workspaceViewAll: payload.workspaceViewAll,
+      actor: payload.actor,
     }
   );
 }
@@ -1434,6 +1452,9 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
           sourceId: poID,
           note: noteMerged,
           createdBy: opts.createdBy ?? 'Procurement',
+          workspaceBranchId: opts.workspaceBranchId,
+          workspaceViewAll: opts.workspaceViewAll,
+          actor: opts.actor,
         });
         movementId = m.id;
         recordedAmount = amountNgn;
@@ -1540,6 +1561,9 @@ function postPurchaseOrderTransportTx(db, poID, row, opts, treasuryAccountId, am
     sourceId: poID,
     note,
     createdBy: opts.createdBy ?? 'Finance',
+    workspaceBranchId: opts.workspaceBranchId,
+    workspaceViewAll: opts.workspaceViewAll,
+    actor: opts.actor,
   });
   appendMovementTx(db, {
     type: 'PO_TRANSPORT_POSTED',
@@ -1642,6 +1666,9 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
           sourceId: poID,
           note: note || 'Supplier settlement',
           createdBy: opts.createdBy ?? 'Procurement',
+          workspaceBranchId: opts.workspaceBranchId,
+          workspaceViewAll: opts.workspaceViewAll,
+          actor: opts.actor,
         });
       }
       appendAuditLog(db, {
@@ -3743,8 +3770,8 @@ export function acknowledgeCoilRequest(db, id) {
 
 export function replaceTreasuryAccounts(db, accounts) {
   const ins = db.prepare(
-    `INSERT INTO treasury_accounts (id, name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO treasury_accounts (id, name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes, branch_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        bank_name = excluded.bank_name,
@@ -3756,7 +3783,8 @@ export function replaceTreasuryAccounts(db, accounts) {
        account_officer_phone = excluded.account_officer_phone,
        bank_branch = excluded.bank_branch,
        sort_code_or_swift = excluded.sort_code_or_swift,
-       notes = excluded.notes`
+       notes = excluded.notes,
+       branch_id = excluded.branch_id`
   );
   db.transaction(() => {
     for (const a of accounts) {
@@ -3765,6 +3793,7 @@ export function replaceTreasuryAccounts(db, accounts) {
         a.openingBalanceNgn !== undefined && a.openingBalanceNgn !== null
           ? Math.round(Number(a.openingBalanceNgn)) || 0
           : bal;
+      const branchId = String(a.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
       ins.run(
         a.id,
         a.name,
@@ -3777,7 +3806,8 @@ export function replaceTreasuryAccounts(db, accounts) {
         String(a.accountOfficerPhone ?? '').trim(),
         String(a.bankBranch ?? '').trim(),
         String(a.sortCodeOrSwift ?? '').trim(),
-        String(a.notes ?? '').trim()
+        String(a.notes ?? '').trim(),
+        branchId
       );
     }
   })();
@@ -5992,6 +6022,8 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
           note: payload.expenseType || category,
           createdBy: payload.createdBy ?? 'Finance',
           workspaceBranchId: bid,
+          workspaceViewAll: payload.workspaceViewAll,
+          actor: payload.actor,
         });
       }
       appendAuditLog(db, {
@@ -6370,6 +6402,26 @@ export function transferTreasuryFunds(db, payload) {
     return { ok: false, error: 'Choose two different accounts.' };
   }
   if (amountNgn <= 0) return { ok: false, error: 'Transfer amount must be positive.' };
+  const fromRow = db.prepare(`SELECT branch_id FROM treasury_accounts WHERE id = ?`).get(fromId);
+  const toRow = db.prepare(`SELECT branch_id FROM treasury_accounts WHERE id = ?`).get(toId);
+  if (!fromRow || !toRow) return { ok: false, error: 'Treasury account not found.' };
+  const fromBranch = String(fromRow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+  const toBranch = String(toRow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+  if (fromBranch !== toBranch) {
+    return {
+      ok: false,
+      error:
+        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use inter-branch lending on Finance → Movements.',
+    };
+  }
+  if (payload.workspaceBranchId && payload.actor) {
+    const gate = assertTreasuryAccountForWorkspace(db, fromId, {
+      workspaceBranchId: payload.workspaceBranchId,
+      workspaceViewAll: Boolean(payload.workspaceViewAll),
+      user: payload.actor,
+    });
+    if (!gate.ok) return gate;
+  }
   const batchId = nextTreasuryTransferBatchHumanId(db);
   try {
     assertPeriodOpen(db, payload.dateISO || new Date().toISOString().slice(0, 10), 'Transfer date');
@@ -6387,6 +6439,9 @@ export function transferTreasuryFunds(db, payload) {
         note: payload.reference || 'Internal transfer out',
         createdBy: payload.createdBy ?? 'Finance',
         batchId,
+        workspaceBranchId: payload.workspaceBranchId,
+        workspaceViewAll: payload.workspaceViewAll,
+        actor: payload.actor,
       });
       const inn = insertTreasuryMovementTx(db, {
         type: 'INTERNAL_TRANSFER_IN',
@@ -6401,6 +6456,9 @@ export function transferTreasuryFunds(db, payload) {
         note: payload.reference || 'Internal transfer in',
         createdBy: payload.createdBy ?? 'Finance',
         batchId,
+        workspaceBranchId: payload.workspaceBranchId,
+        workspaceViewAll: payload.workspaceViewAll,
+        actor: payload.actor,
       });
       appendAuditLog(db, {
         actor: payload.actor,
@@ -6408,7 +6466,7 @@ export function transferTreasuryFunds(db, payload) {
         entityKind: 'treasury_transfer',
         entityId: batchId,
         note: payload.reference || 'Internal fund transfer',
-        details: { fromId, toId, amountNgn },
+        details: { fromId, toId, amountNgn, branchId: fromBranch },
       });
       return [out, inn];
     })();
@@ -6509,6 +6567,9 @@ export function payPaymentRequest(db, requestID, payload) {
           sourceId: requestID,
           note: row.description || 'Payment request payout',
           createdBy: paidBy,
+          workspaceBranchId,
+          workspaceViewAll,
+          actor,
         }
       );
 
@@ -6603,6 +6664,9 @@ export function payAccountsPayable(db, apId, payload) {
         sourceId: apId,
         note: payload.paymentMethod || 'Supplier payment',
         createdBy: payload.createdBy ?? 'Finance',
+        workspaceBranchId: payload.workspaceBranchId,
+        workspaceViewAll: payload.workspaceViewAll,
+        actor: payload.actor,
       });
       appendAuditLog(db, {
         actor: payload.actor,

@@ -2996,6 +2996,8 @@ export function registerHttpApi(app, db) {
         note,
         createdBy: createdBy || req.user.displayName,
         actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       if (r.ok) {
         syncFinancePoTransportWorkItem(db, poId, req.user);
@@ -3033,6 +3035,8 @@ export function registerHttpApi(app, db) {
           note: stripped?.note,
           createdBy: stripped?.createdBy || req.user.displayName,
           actor: req.user,
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
           skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
         });
         if (r.ok) {
@@ -3062,6 +3066,8 @@ export function registerHttpApi(app, db) {
       dateISO,
       createdBy: createdBy || req.user.displayName,
       actor: req.user,
+      workspaceBranchId: req.workspaceBranchId,
+      workspaceViewAll: Boolean(req.workspaceViewAll),
     });
     res.status(r.ok ? 200 : 400).json(r);
   });
@@ -4294,7 +4300,14 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/accounts', requirePermission('treasury.manage'), (req, res) => {
     try {
-      const r = upsertTreasuryAccount(db, req.body || {}, req.user);
+      const r = upsertTreasuryAccount(
+        db,
+        {
+          ...(req.body || {}),
+          branchId: String(req.body?.branchId || req.workspaceBranchId || '').trim() || undefined,
+        },
+        req.user
+      );
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -4322,6 +4335,8 @@ export function registerHttpApi(app, db) {
         ...(req.body || {}),
         createdBy: req.user.displayName,
         actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -4416,6 +4431,7 @@ export function registerHttpApi(app, db) {
           ...(req.body || {}),
           createdBy: req.user.displayName,
           actor: req.user,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
@@ -4945,6 +4961,8 @@ export function registerHttpApi(app, db) {
         ...(req.body || {}),
         createdBy: req.user.displayName,
         actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
       });
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -5979,6 +5997,9 @@ export function registerHttpApi(app, db) {
             note: purpose,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
+            workspaceBranchId: req.workspaceBranchId,
+            workspaceViewAll: Boolean(req.workspaceViewAll),
+            actor: req.user,
           });
         }
         if (created && treasuryLines.length > 0) {
@@ -6262,6 +6283,9 @@ export function registerHttpApi(app, db) {
             note: parsed.overpay ? `Receipt ${qtSynced.id} with overpayment credit (not deposit advance)` : `Receipt ${qtSynced.id}`,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
+            workspaceBranchId: req.workspaceBranchId,
+            workspaceViewAll: Boolean(req.workspaceViewAll),
+            actor: req.user,
           });
         }
         if (parsed.receipt?.id && treasuryLines.length > 0) {
@@ -6442,6 +6466,9 @@ export function registerHttpApi(app, db) {
             note,
             paymentLines: treasuryLines,
             createdBy: req.user.displayName,
+            workspaceBranchId: req.workspaceBranchId,
+            workspaceViewAll: Boolean(req.workspaceViewAll),
+            actor: req.user,
           });
         }
         appendAuditLog(db, {

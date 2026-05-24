@@ -203,8 +203,8 @@ export function buildBootstrap(db, opts = {}) {
     priceListItems: salesOk ? listPriceListItems(db) : [],
     /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
-    treasuryAccounts: treasuryOk ? listTreasuryAccounts(db) : [],
-    treasuryMovements: finOk ? listTreasuryMovements(db) : [],
+    treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    treasuryMovements: finOk ? listTreasuryMovements(db, branchScope) : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],

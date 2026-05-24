@@ -2880,6 +2880,7 @@ export function upsertTreasuryAccount(db, payload, actor) {
   let savedId = null;
   try {
     db.transaction(() => {
+      const branchId = String(payload.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
       if (payload.id) {
         db.prepare(
           `UPDATE treasury_accounts
@@ -2902,8 +2903,8 @@ export function upsertTreasuryAccount(db, payload, actor) {
         );
       } else {
         db.prepare(
-          `INSERT INTO treasury_accounts (name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO treasury_accounts (name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes, branch_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           name,
           String(payload.bankName ?? '').trim(),
@@ -2915,7 +2916,8 @@ export function upsertTreasuryAccount(db, payload, actor) {
           accountOfficerPhone,
           bankBranch,
           sortCodeOrSwift,
-          notes
+          notes,
+          branchId
         );
       }
       const row = payload.id

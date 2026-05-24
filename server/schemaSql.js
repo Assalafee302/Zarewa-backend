@@ -733,8 +733,11 @@ CREATE TABLE IF NOT EXISTS treasury_accounts (
   account_officer_phone TEXT,
   bank_branch TEXT,
   sort_code_or_swift TEXT,
-  notes TEXT
+  notes TEXT,
+  branch_id TEXT NOT NULL DEFAULT 'BR-KD'
 );
+
+CREATE INDEX IF NOT EXISTS idx_treasury_accounts_branch ON treasury_accounts(branch_id);
 
 CREATE TABLE IF NOT EXISTS treasury_movements (
   id TEXT PRIMARY KEY,

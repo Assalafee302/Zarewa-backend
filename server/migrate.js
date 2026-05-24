@@ -81,6 +81,12 @@ export function runMigrations(db) {
         upd.run(Math.max(0, implied), a.id);
       }
     }
+    if (!taCols.has('branch_id')) {
+      db.exec(`ALTER TABLE treasury_accounts ADD COLUMN branch_id TEXT NOT NULL DEFAULT 'BR-YL'`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_treasury_accounts_branch ON treasury_accounts(branch_id)`
+      );
+    }
   }
 
   const q = tableCols('quotations');
@@ -3085,6 +3091,11 @@ function migrateBranches(db) {
   }
   addBranch('products');
   addBranch('bank_reconciliation_lines');
+  if (tableCols('treasury_accounts').has('branch_id')) {
+    db.prepare(
+      `UPDATE treasury_accounts SET branch_id = 'BR-YL' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = '' OR branch_id = ?`
+    ).run(defaultBranch);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fixed_assets (

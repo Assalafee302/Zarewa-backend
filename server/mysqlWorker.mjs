@@ -122,6 +122,18 @@ function isDuplicateIndexNameError(e) {
   return errno === 1061 || code === 'ER_DUP_KEYNAME';
 }
 
+/** Legacy DBs may lack columns added later; migrations recreate these indexes after ALTER. */
+function isMissingIndexColumnError(e) {
+  const errno = /** @type {{ errno?: number }} */ (e).errno;
+  const code = /** @type {{ code?: string }} */ (e).code;
+  return errno === 1072 || code === 'ER_KEY_COLUMN_DOES_NOT_EXITS';
+}
+
+function isSkippableBootstrapIndexError(e, stmt) {
+  if (!/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(String(stmt || ''))) return false;
+  return isDuplicateIndexNameError(e) || isMissingIndexColumnError(e);
+}
+
 async function ensurePool(cfg) {
   if (!pool) {
     pool = mysql.createPool({
@@ -164,7 +176,7 @@ async function execBootstrapDdl(ddl) {
       } catch (e) {
         const errno = /** @type {{ errno?: number }} */ (e).errno;
         const code = /** @type {{ code?: string }} */ (e).code;
-        if (errno === 1061 || code === 'ER_DUP_KEYNAME') continue;
+        if (isSkippableBootstrapIndexError(e, part)) continue;
         agentLog({
           hypothesisId: 'A',
           location: 'mysqlWorker.mjs:execBootstrapDdl',
@@ -214,7 +226,7 @@ async function execRaw(sql) {
       await conn.query(stmt);
     } catch (e) {
       /* Migrations repeat CREATE INDEX after bootstrap; SQLite had IF NOT EXISTS. */
-      if (isDuplicateIndexNameError(e) && /^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(part)) {
+      if (isSkippableBootstrapIndexError(e, part)) {
         continue;
       }
       throw e;

@@ -278,11 +278,15 @@ export async function runHelpAgent(opts) {
         erpSummary = synthesizeErpAnswer(erp, message);
         contentParts.push(erpSummary);
         source = 'agent+erp';
-      } else if (erp?.code === 'CLEARANCE_DENIED' || erp?.error) {
+      } else if (erp?.code === 'CLEARANCE_DENIED') {
         erpSummary = synthesizeErpAnswer(erp, message);
         contentParts.push(erpSummary);
         erpDenied = true;
         source = 'agent+clearance';
+      } else if (erp?.error) {
+        erpSummary = synthesizeErpAnswer(erp, message);
+        contentParts.push(erpSummary);
+        source = 'agent+erp_error';
       }
     }
   }

@@ -11,6 +11,213 @@ import {
   ERP_SCHEMA_EXCERPT,
   validateReadOnlySql,
 } from './helpGuardrails.js';
+import { getBranchCodeUpper } from './humanId.js';
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ */
+function quotationsHasBranchId(db) {
+  try {
+    return db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'branch_id');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} message
+ * @returns {{ kind: 'full' | 'seq'; value: string } | null}
+ */
+export function parseQuotationRefFromMessage(message) {
+  const q = normalizeHelpQueryText(String(message || '').trim());
+  const full = q.match(/\b(QT-[A-Z0-9-]+)\b/i);
+  if (full) return { kind: 'full', value: full[1].toUpperCase() };
+
+  const whatIn = q.match(
+    /\bwhat(?:'s| is)\s+in\s+(?:the\s+)?(?:quotation|quote|qt)\s*#?\s*(\d{1,6})\b/i
+  );
+  if (whatIn) return { kind: 'seq', value: whatIn[1] };
+
+  const num = q.match(/\b(?:quotation|quote|qt)\s*#?\s*(\d{1,6})\b/i);
+  if (num) return { kind: 'seq', value: num[1] };
+
+  return null;
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ kind: 'full' | 'seq'; value: string }} ref
+ * @param {string} [branchId]
+ * @returns {string[]}
+ */
+export function resolveQuotationIds(db, ref, branchId = '') {
+  const branchFilter = quotationsHasBranchId(db) && branchId ? ' AND branch_id = ?' : '';
+
+  if (ref.kind === 'full') {
+    const row = db.prepare(`SELECT id FROM quotations WHERE id = ? LIMIT 1`).get(ref.value);
+    return row?.id ? [String(row.id)] : [];
+  }
+
+  const n = Number(ref.value);
+  if (!Number.isFinite(n) || n <= 0) return [];
+
+  const padded4 = String(n).padStart(4, '0');
+  /** @type {string[]} */
+  const patterns = [`QT-%-${padded4}`, `%-${padded4}`];
+  if (String(n) !== padded4) patterns.push(`%-${n}`);
+  if (branchId) {
+    const code = getBranchCodeUpper(db, branchId);
+    patterns.unshift(`QT-${code}-%-${padded4}`);
+  }
+
+  /** @type {string[]} */
+  const found = [];
+  for (const pat of patterns) {
+    const args = [pat];
+    if (branchFilter) args.push(String(branchId));
+    const rows = db
+      .prepare(
+        `SELECT id FROM quotations WHERE id LIKE ?${branchFilter} ORDER BY date_iso DESC, id DESC LIMIT 5`
+      )
+      .all(...args);
+    for (const row of rows) found.push(String(row.id));
+    if (found.length === 1) return found;
+  }
+
+  return [...new Set(found)].slice(0, 5);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ */
+function loadQuotationLineSummaries(db, quotationId, linesJsonRaw) {
+  /** @type {string[]} */
+  const out = [];
+  try {
+    const tableLines = db
+      .prepare(
+        `SELECT category, name, qty, unit, line_total_ngn FROM quotation_lines
+         WHERE quotation_id = ? ORDER BY sort_order LIMIT 25`
+      )
+      .all(quotationId);
+    for (const line of tableLines) {
+      const qty =
+        line.qty != null
+          ? `${line.qty}${line.unit ? ` ${line.unit}` : ''}`
+          : '';
+      const total = line.line_total_ngn != null ? ` — ₦${line.line_total_ngn}` : '';
+      out.push(`• ${line.name}${qty ? ` (${qty})` : ''}${total}`);
+    }
+  } catch {
+    /* optional table */
+  }
+
+  if (out.length) return out;
+
+  if (!linesJsonRaw) return out;
+  try {
+    const j = JSON.parse(String(linesJsonRaw));
+    for (const bucket of ['products', 'accessories', 'services']) {
+      for (const line of j?.[bucket] || []) {
+        const name = line?.name || line?.productName || line?.description || 'Line item';
+        const qty = line?.qty ?? line?.quantity ?? '';
+        const unit = line?.unit || '';
+        out.push(`• ${name}${qty !== '' ? ` (${qty}${unit ? ` ${unit}` : ''})` : ''}`);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out.slice(0, 25);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationId
+ */
+function lookupQuotationDetails(db, quotationId) {
+  const row = db
+    .prepare(
+      `SELECT id, customer_name, status, total_ngn, paid_ngn, payment_status, date_iso, project_name, lines_json
+       FROM quotations WHERE id = ? LIMIT 1`
+    )
+    .get(quotationId);
+  if (!row) return null;
+
+  const lines = loadQuotationLineSummaries(db, quotationId, row.lines_json);
+  const header = [
+    `**${row.id}** — ${row.customer_name}`,
+    row.project_name ? `Project: ${row.project_name}` : null,
+    `Status: **${row.status || 'n/a'}** · Total **₦${row.total_ngn}** · Paid **₦${row.paid_ngn}** (${row.payment_status || 'n/a'})`,
+    row.date_iso ? `Date: ${String(row.date_iso).slice(0, 10)}` : null,
+  ].filter(Boolean);
+
+  const summaryParts = [header.join('\n')];
+  if (lines.length) {
+    summaryParts.push('', '**Lines:**', ...lines);
+  } else {
+    summaryParts.push('', '_No line items stored for this quotation._');
+  }
+
+  return {
+    row,
+    lines,
+    summary: summaryParts.join('\n'),
+  };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} message
+ * @param {{ user?: object; branchId?: string }} ctx
+ */
+function tryQuotationLookup(db, message, ctx) {
+  const user = ctx.user;
+  if (!userMayQueryTables(user, ['quotations'])) {
+    return clearanceDenied(user, 'quotations', user?.roleKey);
+  }
+
+  const ref = parseQuotationRefFromMessage(message);
+  if (!ref) return null;
+
+  const ids = resolveQuotationIds(db, ref, String(ctx.branchId || '').trim());
+  if (!ids.length) {
+    const label = ref.kind === 'full' ? ref.value : `quotation ${ref.value}`;
+    return {
+      ok: true,
+      tool: 'quotation_lookup',
+      rows: [],
+      summary: `No quotation found for **${label}**. Try the full id (example **QT-KD-26-0036**) or check the branch workspace.`,
+    };
+  }
+
+  if (ids.length > 1) {
+    return {
+      ok: true,
+      tool: 'quotation_lookup',
+      rows: ids.map((id) => ({ id })),
+      summary: `Multiple quotations match **${ref.kind === 'seq' ? ref.value : ref.value}**: ${ids.join(', ')}. Ask again with the full **QT-…** id.`,
+    };
+  }
+
+  const detail = lookupQuotationDetails(db, ids[0]);
+  if (!detail) {
+    return {
+      ok: true,
+      tool: 'quotation_lookup',
+      rows: [],
+      summary: `Quotation ${ids[0]} was not found.`,
+    };
+  }
+
+  return {
+    ok: true,
+    tool: 'quotation_lookup',
+    rows: [detail.row],
+    summary: detail.summary,
+  };
+}
 
 function clearanceDenied(user, topicKey, roleKey) {
   return {
@@ -82,24 +289,8 @@ export function tryNativeErpTool(db, message, ctx) {
     };
   }
 
-  const qtMatch = q.match(/\b(QT-[A-Z0-9-]+)\b/i);
-  if (qtMatch && /\b(status|payment|paid|quotation)\b/i.test(q)) {
-    if (!userMayQueryTables(user, ['quotations'])) {
-      return clearanceDenied(user, 'quotations', user?.roleKey);
-    }
-    const row = db
-      .prepare(
-        `SELECT id, customer_name, status, total_ngn, paid_ngn, payment_status, date_iso FROM quotations WHERE id = ? LIMIT 1`
-      )
-      .get(qtMatch[1].toUpperCase());
-    if (!row) return { ok: true, tool: 'quotation_status', rows: [], summary: `Quotation ${qtMatch[1]} not found.` };
-    return {
-      ok: true,
-      tool: 'quotation_status',
-      rows: [row],
-      summary: `${row.id} — ${row.customer_name}: status ${row.status}, paid ₦${row.paid_ngn} / ₦${row.total_ngn} (${row.payment_status || 'n/a'}).`,
-    };
-  }
+  const qtLookup = tryQuotationLookup(db, message, ctx);
+  if (qtLookup) return qtLookup;
 
   if (userId && /\bmy recent receipt|receipts i posted\b/i.test(q)) {
     if (!userMayQueryTables(user, ['ledger_entries'])) {
@@ -211,7 +402,7 @@ export function synthesizeErpAnswer(erpResult, userQuestion) {
     if (erpResult?.code === 'CLEARANCE_DENIED' && erpResult.error) {
       return erpResult.error;
     }
-    return `I couldn't fetch live ERP data: **${erpResult?.error || 'unknown error'}**. You can still ask **how do I…** for the workflow steps.`;
+    return `I couldn't fetch live ERP data: **${erpResult?.error || 'unknown error'}**. You can still ask **how do I…** for the workflow steps, or try a full document id (example **QT-KD-26-0036**).`;
   }
   const lines = ['**From your Zarewa data (read-only):**', '', erpResult.summary || 'No summary.'];
   if (Array.isArray(erpResult.rows) && erpResult.rows.length > 0 && erpResult.rows.length <= 5) {

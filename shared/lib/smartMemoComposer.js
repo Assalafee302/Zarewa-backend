@@ -192,7 +192,7 @@ export const SMART_MEMO_GUIDED_FIELDS = {
     { key: 'faultDescription', label: 'Fault description', type: 'text', required: true },
     { key: 'location', label: 'Location / branch area', type: 'text', required: false },
     { key: 'urgency', label: 'Urgency', type: 'select', options: ['normal', 'high', 'urgent'], required: true },
-    { key: 'workStopped', label: 'Is work stopped?', type: 'select', options: ['yes', 'no', 'partial'], required: false },
+    { key: 'workStopped', label: 'Is production affected?', type: 'select', options: ['yes', 'no', 'partial'], required: false },
     { key: 'mechanicVendor', label: 'Mechanic / vendor name', type: 'text', required: false },
     { key: 'estimatedCostNgn', label: 'Estimated cost (NGN)', type: 'number', required: false },
     { key: 'requiredParts', label: 'Required parts / items', type: 'text', required: false },

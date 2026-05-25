@@ -360,9 +360,9 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
         push({
           kind: 'work_item',
           id: row.id,
-          label: confidential ? 'Restricted memo' : row.title || row.reference_no,
+          label: row.title || row.reference_no || 'Work item',
           sublabel: confidential
-            ? 'Permission required'
+            ? `${row.reference_no} · Confidential · ${row.status}`
             : `${row.reference_no} · ${row.document_type} · ${row.status}`,
           path: '/',
           state: { workItemId: row.id },

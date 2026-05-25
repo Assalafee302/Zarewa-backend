@@ -6,7 +6,9 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog } from './controlOps.js';
 import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
 import { isConfidentialLevel } from '../shared/lib/workspaceConfidentialAccess.js';
+import { sanitizeTimelineEvent } from '../shared/lib/workspaceSanitize.js';
 import { getOfficeThread, listOfficeThreads } from './officeOps.js';
+import { listOfficeMemoDrafts } from './officeDraftOps.js';
 import { getOfficeThreadFiling } from './officeFilingOps.js';
 import {
   getUnifiedWorkItem,
@@ -57,11 +59,30 @@ export function getWorkspaceCounts(db, scope, user) {
     (item) => item.slaState === 'overdue' || (item.dueAtIso && item.dueAtIso < nowIso())
   );
   const unfiled = items.filter((item) => item.filingIncomplete);
-  const maintenanceFuel = items.filter((item) => {
+  const maintenanceOpen = items.filter((item) => {
     const payload = item.data?.smartMemo || item.data || {};
     const type = payload.memoType || item.data?.smartMemoType || '';
-    return ['maintenance_repairs', 'fuel_diesel'].includes(type) || categoryForWorkItem(item) === 'operations';
+    return type === 'maintenance_repairs' && workItemNeedsActionForUser(item, uid);
   });
+  const fuelRequestsOpen = items.filter((item) => {
+    const payload = item.data?.smartMemo || item.data || {};
+    const type = payload.memoType || item.data?.smartMemoType || '';
+    return type === 'fuel_diesel' && workItemNeedsActionForUser(item, uid);
+  });
+  const confidentialAssigned = items.filter(
+    (item) =>
+      isConfidentialLevel(item.confidentiality) &&
+      String(item.responsibleUserId || '').trim() === uid &&
+      workItemNeedsActionForUser(item, uid)
+  );
+
+  let draftCount = 0;
+  try {
+    const branchId = String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    draftCount = listOfficeMemoDrafts(db, uid, branchId).length;
+  } catch {
+    draftCount = 0;
+  }
 
   return {
     ok: true,
@@ -71,12 +92,16 @@ export function getWorkspaceCounts(db, scope, user) {
       pendingApprovals: actionRequired.filter((i) => i.requiresApproval).length,
       pendingResponses: actionRequired.filter((i) => i.requiresResponse).length,
       unfiled: unfiled.length,
+      unreadMemos: actionRequired.filter((i) => categoryForWorkItem(i) === 'memos').length,
       financePending: actionRequired.filter((i) => categoryForWorkItem(i) === 'finance').length,
-      productionPending: actionRequired.filter((i) => categoryForWorkItem(i) === 'production').length,
+      productionAttention: actionRequired.filter((i) => categoryForWorkItem(i) === 'production').length,
       procurementPending: actionRequired.filter((i) =>
         ['procurement', 'inventory'].includes(categoryForWorkItem(i))
       ).length,
-      maintenanceFuel: maintenanceFuel.filter((i) => workItemNeedsActionForUser(i, uid)).length,
+      maintenanceOpen: maintenanceOpen.length,
+      fuelRequestsOpen: fuelRequestsOpen.length,
+      confidentialAssignedToMe: confidentialAssigned.length,
+      drafts: draftCount,
       totalVisible: items.length,
     },
   };
@@ -225,13 +250,36 @@ function buildThreadTimelineEvents(db, scope, user, threadId) {
   ];
 
   for (const m of detail.messages || []) {
+    events.push(
+      sanitizeTimelineEvent({
+        id: m.id,
+        kind: m.kind === 'system' ? 'system_update' : 'reply_added',
+        label: m.kind === 'system' ? 'System update' : 'Reply added',
+        atIso: m.createdAtIso || '',
+        actor: m.authorDisplayName || m.authorUserId || '',
+        note: String(m.body || '').slice(0, 120),
+      })
+    );
+  }
+
+  if (Array.isArray(t.attachments) && t.attachments.length) {
+    for (const att of t.attachments) {
+      events.push({
+        id: `att-${att.name || att.id || Math.random()}`,
+        kind: 'attachment_uploaded',
+        label: 'Supporting document attached',
+        atIso: t.updatedAtIso || t.createdAtIso || '',
+        note: String(att.name || 'Attachment').slice(0, 80),
+      });
+    }
+  }
+
+  if (t.status && t.status !== 'open') {
     events.push({
-      id: m.id,
-      kind: m.kind === 'system' ? 'system' : 'reply',
-      label: m.kind === 'system' ? 'System update' : 'Reply added',
-      atIso: m.createdAtIso || '',
-      actor: m.authorUserId || '',
-      note: String(m.body || '').slice(0, 200),
+      id: `status-${tid}`,
+      kind: 'status_changed',
+      label: `Status: ${String(t.status).replace(/_/g, ' ')}`,
+      atIso: t.updatedAtIso || t.createdAtIso || '',
     });
   }
 

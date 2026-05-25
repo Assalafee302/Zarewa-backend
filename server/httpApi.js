@@ -342,6 +342,8 @@ import {
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
+import { handleMemoAssist } from './helpMemoAssist.js';
+import { sanitizeRunaPageContext } from '../shared/lib/workspaceSanitize.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { getRunaIntelligenceDashboard } from './helpIntelligenceAdmin.js';
 import { runHelpAnalyticsJob } from './helpAnalytics.js';
@@ -644,12 +646,28 @@ export function registerHttpApi(app, db) {
   });
 
   app.post(
+    '/api/help/memo-assist',
+    requireAuth,
+    requirePermission('office.use'),
+    rateLimitAuthedUser(helpChatBuckets, 'help-memo-assist', 60, 60_000),
+    (req, res) => {
+      try {
+        const r = handleMemoAssist(db, req.user, req.body || {});
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error('Memo assist error', e);
+        res.status(500).json({ ok: false, error: 'Memo assist failed.' });
+      }
+    }
+  );
+
+  app.post(
     '/api/help/chat',
     requireAuth,
     rateLimitAuthedUser(helpChatBuckets, 'help-chat', 40, 60_000),
     async (req, res) => {
       try {
-        const { message, messages, pathname, clientDraftMs } = req.body || {};
+        const { message, messages, pathname, clientDraftMs, pageContext } = req.body || {};
         const msg = typeof message === 'string' ? message : '';
         const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const learnedBoosts = computeMergedLearnedBoosts(db, {
@@ -657,11 +675,15 @@ export function registerHttpApi(app, db) {
           userId: req.user?.id,
           queryText: msg,
         });
+        const safePageContext = sanitizeRunaPageContext(
+          pageContext && typeof pageContext === 'object' ? pageContext : {}
+        );
         const result = await runHelpChat({
           db,
           message: msg,
           messages,
           pathname: typeof pathname === 'string' ? pathname : '',
+          pageContext: safePageContext,
           user: req.user,
           userDisplay: req.user?.displayName,
           userId: req.user?.id,
@@ -3065,7 +3087,7 @@ export function registerHttpApi(app, db) {
       };
       const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
       const r = bulkMarkWorkItemsRead(db, scope, req.user, ids);
-      res.status(r.ok ? 200 : 400).json(r);
+      res.status(r.ok ? 200 : 400).json({ ...r, updated: r.succeeded ?? 0 });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Bulk read failed.' });
@@ -3081,7 +3103,7 @@ export function registerHttpApi(app, db) {
       };
       const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
       const r = bulkArchiveWorkItems(db, scope, req.user, ids);
-      res.status(r.ok ? 200 : 400).json(r);
+      res.status(r.ok ? 200 : 400).json({ ...r, updated: r.succeeded ?? 0 });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Bulk archive failed.' });

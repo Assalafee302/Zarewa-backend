@@ -112,6 +112,7 @@ function finish(db, opts, logCtx, chatStarted, result) {
  *   roleKey?: string;
  *   learnedBoosts?: Record<string, number>;
  *   clientDraftMs?: number;
+ *   pageContext?: Record<string, unknown>;
  * }} opts
  */
 export async function runHelpAgent(opts) {
@@ -133,6 +134,7 @@ export async function runHelpAgent(opts) {
   const sanitized = sanitizeClientMessages(opts.messages);
   const history = sanitized.length > 0 ? sanitized : [{ role: 'user', content: message }];
   const pathname = String(opts.pathname || '').trim().slice(0, 200);
+  const pageContext = opts.pageContext && typeof opts.pageContext === 'object' ? opts.pageContext : null;
   const userId = String(opts.userId || opts.user?.id || '').trim();
   const branchId = String(opts.branchId || '').trim();
   const sessionTurn = history.filter((m) => m.role === 'user').length;
@@ -263,6 +265,18 @@ export async function runHelpAgent(opts) {
 
   /** @type {string[]} */
   const contentParts = [];
+  if (
+    pageContext?.surface === 'workspace_command_center' &&
+    (helpIntent === 'guide' || agentRoute === 'guide' || /what should i do|next|workspace|memo/i.test(message))
+  ) {
+    const folder = String(pageContext.folder || 'inbox');
+    const cat = String(pageContext.category || 'all');
+    const ar = pageContext.counts?.actionRequired;
+    contentParts.push(
+      `You are on the **Workspace command center** (${folder}${cat !== 'all' ? ` · ${cat}` : ''}).` +
+        (ar != null ? ` **${ar}** item(s) need action.` : '')
+    );
+  }
   let source = 'agent';
   let erpSummary = null;
   let erpDenied = false;

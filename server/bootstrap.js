@@ -75,6 +75,7 @@ import {
   syncDerivedWorkItems,
   listUnifiedWorkItems,
 } from './workItems.js';
+import { sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 
@@ -233,7 +234,9 @@ export function buildBootstrap(db, opts = {}) {
         : {},
     orgManagerTargets,
     orgGovernanceLimits: user ? getOrgGovernanceLimits(db) : null,
-    unifiedWorkItems: user ? listUnifiedWorkItems(db, workScope, user, { limit: 200 }) : [],
+    unifiedWorkItems: user
+      ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 200 }))
+      : [],
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     machines: user ? listMachines(db, workScope) : [],

@@ -5,6 +5,9 @@ import { canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, insertPaymentRequest } from './controlOps.js';
 import { hrListScope } from './hrOps.js';
+import { createMaterialRequest } from './workItems.js';
+import { parseItemListToMaterialLines } from '../shared/lib/smartMemoComposer.js';
+import { userCanSeeOfficeThreadRow } from '../shared/lib/workspaceConfidentialAccess.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,34 +79,7 @@ export function officeTablesReady(db) {
 }
 
 function userCanSeeThreadWithUser(scope, user, row) {
-  const uid = String(user?.id || '').trim();
-  if (!uid || !row) return false;
-  const rk = String(user?.roleKey || '').trim().toLowerCase();
-  const payload = safeJsonParse(row.payload_json, {});
-  const confidentiality = String(payload.confidentiality || 'internal').trim().toLowerCase();
-  const to = parseUserIdsJson(row.to_user_ids_json);
-  const cc = parseUserIdsJson(row.cc_user_ids_json);
-  const participant =
-    String(row.created_by_user_id || '').trim() === uid || to.includes(uid) || cc.includes(uid);
-
-  const hqRollup = canUseAllBranchesRollup(user) && scope.viewAll;
-  if (hqRollup && (rk === 'admin' || rk === 'md')) {
-    // Confidential memos: executives must still be on distribution (or admin/*), not the whole branch roll-up.
-    if (confidentiality === 'confidential') {
-      if (rk === 'admin' || userHasPermission(user, '*')) return true;
-      return participant;
-    }
-    return true;
-  }
-  const bid = String(row.branch_id || '').trim() || DEFAULT_BRANCH_ID;
-  if (!scope.viewAll && bid !== String(scope.branchId || '').trim()) {
-    return false;
-  }
-  if (userHasPermission(user, '*')) {
-    return true;
-  }
-  if (String(row.created_by_user_id || '').trim() === uid) return true;
-  return to.includes(uid) || cc.includes(uid);
+  return userCanSeeOfficeThreadRow(scope, user, row);
 }
 
 /**
@@ -403,6 +379,113 @@ export function convertOfficeThreadToPaymentRequest(db, scope, actor, workspaceB
   })();
 
   return { ok: true, requestID, threadId: tid };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll: boolean; branchId: string }} scope
+ * @param {object} actor
+ * @param {string} workspaceBranchId
+ * @param {string} threadId
+ * @param {object} [payload] — optional lines[], summary, note, requestCategory, urgency
+ */
+export function convertOfficeThreadToMaterialRequest(db, scope, actor, workspaceBranchId, threadId, payload = {}) {
+  if (!officeTablesReady(db)) return { ok: false, error: 'Office Desk is not available.' };
+  const tid = String(threadId || '').trim();
+  const row = db.prepare(`SELECT * FROM office_threads WHERE id = ?`).get(tid);
+  if (!row) return { ok: false, error: 'Thread not found.' };
+  if (!userCanSeeThreadWithUser(scope, actor, row)) return { ok: false, error: 'Forbidden.' };
+  if (String(row.created_by_user_id || '').trim() !== String(actor?.id || '').trim()) {
+    return { ok: false, error: 'Only the author can convert this thread to a material request.' };
+  }
+  if (String(row.status || '') === 'converted' || row.related_payment_request_id) {
+    return { ok: false, error: 'This thread was already converted.' };
+  }
+  const existingPayload = safeJsonParse(row.payload_json, {});
+  if (existingPayload.materialRequestId) {
+    return { ok: false, error: 'This thread was already converted to a material request.' };
+  }
+
+  const branchId = String(row.branch_id || workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID;
+  const smartMemo = existingPayload.smartMemo || {};
+  const guided = smartMemo.guidedFields || {};
+  let lines = Array.isArray(payload?.lines) ? payload.lines : [];
+  if (!lines.length) {
+    const itemListText =
+      String(payload?.itemList ?? '').trim() ||
+      String(guided.itemList ?? '').trim() ||
+      String(guided.requiredParts ?? '').trim();
+    lines = parseItemListToMaterialLines(itemListText);
+  }
+  if (!lines.length) {
+    return { ok: false, error: 'Add an item list (one item per line) before converting to procurement.' };
+  }
+
+  const preSummary = [String(row.subject || '').trim(), String(row.body || '').trim()].filter(Boolean).join('\n\n');
+  const summary = String(payload?.summary ?? '').trim() || preSummary.slice(0, 500) || 'Material request from office memo';
+  const note = String(payload?.note ?? '').trim() || preSummary || null;
+  const requestCategory = String(payload?.requestCategory ?? smartMemo.memoType ?? 'operational').trim() || 'operational';
+  const urgency = String(payload?.urgency ?? smartMemo.priority ?? 'normal').trim() || 'normal';
+  const responsibleOfficeKey = String(row.office_key || 'procurement').trim() || 'procurement';
+
+  const ins = createMaterialRequest(
+    db,
+    {
+      branchId,
+      lines,
+      summary,
+      note,
+      requestCategory,
+      urgency,
+      responsibleOfficeKey,
+      referenceNo: `OFFICE-${tid}`,
+      sourceKind: 'office_thread',
+      sourceId: tid,
+      data: { officeThreadId: tid, smartMemoType: smartMemo.memoType || null },
+    },
+    actor,
+    branchId
+  );
+  if (!ins.ok) return ins;
+
+  const materialRequestId = ins.request?.id || ins.request?.referenceNo;
+  if (!materialRequestId) return { ok: false, error: 'Material request was created but could not be linked.' };
+
+  const now = nowIso();
+  const sysBody = `Converted to material request ${materialRequestId}. Track approval under Operations → Inventory.`;
+
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE office_threads SET status = 'converted', kind = 'procurement', updated_at_iso = ?, payload_json = ?
+       WHERE id = ?`
+    ).run(
+      now,
+      JSON.stringify({
+        ...existingPayload,
+        convertedAtIso: now,
+        materialRequestId,
+        smartMemo: {
+          ...smartMemo,
+          filingStatus: 'converted_to_procurement',
+        },
+      }),
+      tid
+    );
+    const mid = newMessageId();
+    db.prepare(
+      `INSERT INTO office_messages (id, thread_id, author_user_id, body, kind, created_at_iso) VALUES (?,?,?,?,?,?)`
+    ).run(mid, tid, null, sysBody, 'system', now);
+    appendAuditLog(db, {
+      actor,
+      action: 'office.thread.convert_material_request',
+      entityKind: 'office_thread',
+      entityId: tid,
+      note: materialRequestId,
+      details: { materialRequestId },
+    });
+  })();
+
+  return { ok: true, materialRequestId, threadId: tid };
 }
 
 /**

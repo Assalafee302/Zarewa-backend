@@ -15,6 +15,12 @@ import {
 } from './humanId.js';
 import { filingCompletenessForWorkItem } from './filingCompleteness.js';
 import { listCoilRequests, listManagementItems, listPaymentRequests } from './readModel.js';
+import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
+import {
+  isConfidentialLevel,
+  userCanSeeOfficeThreadRow,
+  userIsWorkItemParticipant,
+} from '../shared/lib/workspaceConfidentialAccess.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -198,6 +204,16 @@ function workItemSearchBlob(item) {
     .toLowerCase();
 }
 
+function enrichWorkItemApiFields(item) {
+  const summary = String(item.summary || '').trim();
+  const bodyPreview = String(item.body || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  return {
+    ...item,
+    category: categoryForWorkItem(item),
+    previewText: summary || bodyPreview || String(item.title || '').trim(),
+  };
+}
+
 function mapPersistedWorkItemRow(row, visibility = []) {
   const data = safeJsonParse(row.data_json, {});
   const dueAtIso = row.due_at_iso || '';
@@ -218,7 +234,7 @@ function mapPersistedWorkItemRow(row, visibility = []) {
         }
       : null;
   const fc = filingCompletenessForWorkItem(row.document_type, filing);
-  return {
+  return enrichWorkItemApiFields({
     id: row.id,
     referenceNo: row.reference_no,
     branchId: row.branch_id,
@@ -260,7 +276,7 @@ function mapPersistedWorkItemRow(row, visibility = []) {
     filing,
     filingIncomplete: fc.filingIncomplete,
     filingIncompleteReason: fc.filingIncompleteReason,
-  };
+  });
 }
 
 function loadWorkItemVisibility(db, workItemId) {
@@ -279,14 +295,28 @@ export function userCanSeePersistedWorkItem(db, scope, user, row) {
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
   const officeKey = officeKeyForUser(user);
   const branchId = String(row.branch_id || '').trim() || DEFAULT_BRANCH_ID;
-  const hqRollup = canUseAllBranchesRollup(user) && scope?.viewAll;
-  if (hqRollup && (roleKey === 'admin' || roleKey === 'md')) return true;
+  const visibility = loadWorkItemVisibility(db, row.id);
+
   if (userHasPermission(user, '*')) return true;
+  if (roleKey === 'admin') return true;
+
+  const hqRollup = canUseAllBranchesRollup(user) && scope?.viewAll;
+  if (hqRollup && (roleKey === 'admin' || roleKey === 'md')) {
+    if (isConfidentialLevel(row.confidentiality)) {
+      return userIsWorkItemParticipant(user, row, visibility);
+    }
+    return true;
+  }
+
   if (!scope?.viewAll && branchId !== String(scope?.branchId || DEFAULT_BRANCH_ID).trim()) return false;
+
+  if (isConfidentialLevel(row.confidentiality)) {
+    return userIsWorkItemParticipant(user, row, visibility);
+  }
+
   if (String(row.sender_user_id || '').trim() === uid) return true;
   if (String(row.responsible_user_id || '').trim() === uid) return true;
 
-  const visibility = loadWorkItemVisibility(db, row.id);
   if (!visibility.length) {
     return userMatchesWorkItemOfficeAudience(user, row);
   }
@@ -362,10 +392,10 @@ function defaultVisibilityEntries(payload) {
   if (responsibleOfficeKey) entries.push({ visibilityKind: 'office_key', visibilityValue: responsibleOfficeKey });
   if (confidentiality === 'internal') {
     if (senderRoleKey) entries.push({ visibilityKind: 'role_key', visibilityValue: senderRoleKey });
-    // Do not add branch_id here: it made every user in the branch see the item via visibility OR rules.
   } else if (confidentiality === 'restricted') {
     if (branchId) entries.push({ visibilityKind: 'branch_id', visibilityValue: branchId, accessLevel: 'review' });
   }
+  // confidential: participant-only via explicit visibilityEntries (no branch roll-up)
   return entries;
 }
 
@@ -733,13 +763,17 @@ export function ensureWorkItemForOfficeThread(db, threadId, actor = null) {
   if (existingId) return getPersistedWorkItem(db, existingId);
   const toUserIds = safeJsonParse(row.to_user_ids_json, []).filter(Boolean);
   const ccUserIds = safeJsonParse(row.cc_user_ids_json, []).filter(Boolean);
+  const payload = safeJsonParse(row.payload_json, {});
+  const branchId = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const confidentiality = String(payload?.confidentiality || 'internal').trim().toLowerCase() || 'internal';
   const visibilityEntries = [
     { visibilityKind: 'user_id', visibilityValue: String(row.created_by_user_id || '').trim() },
     ...toUserIds.map((userId) => ({ visibilityKind: 'user_id', visibilityValue: String(userId || '').trim() })),
     ...ccUserIds.map((userId) => ({ visibilityKind: 'user_id', visibilityValue: String(userId || '').trim() })),
-    { visibilityKind: 'branch_id', visibilityValue: String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID },
   ];
-  const payload = safeJsonParse(row.payload_json, {});
+  if (confidentiality === 'restricted') {
+    visibilityEntries.push({ visibilityKind: 'branch_id', visibilityValue: branchId, accessLevel: 'review' });
+  }
   const createResult = createWorkItem(db, {
     actor,
     branchId: String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
@@ -778,7 +812,7 @@ export function ensureWorkItemForOfficeThread(db, threadId, actor = null) {
 
 export function ensureWorkItemsForVisibleOfficeThreads(db, scope, user) {
   if (!workRegistryTablesReady(db)) return [];
-  let sql = `SELECT id FROM office_threads WHERE 1=1`;
+  let sql = `SELECT * FROM office_threads WHERE 1=1`;
   const args = [];
   if (!scope?.viewAll) {
     sql += ` AND branch_id = ?`;
@@ -787,6 +821,7 @@ export function ensureWorkItemsForVisibleOfficeThreads(db, scope, user) {
   sql += ` ORDER BY updated_at_iso DESC LIMIT 200`;
   const out = [];
   for (const row of db.prepare(sql).all(...args)) {
+    if (!userCanSeeOfficeThreadRow(scope, user, row)) continue;
     const r = ensureWorkItemForOfficeThread(db, row.id, user);
     if (r.ok && r.item) out.push(r.item);
   }
@@ -853,7 +888,7 @@ function legacyItemId(prefix, id) {
 }
 
 function legacyWorkItemBase(base) {
-  return {
+  return enrichWorkItemApiFields({
     id: base.id,
     referenceNo: base.referenceNo || base.id,
     branchId: base.branchId || DEFAULT_BRANCH_ID,
@@ -894,7 +929,7 @@ function legacyWorkItemBase(base) {
     filing: null,
     filingIncomplete: false,
     filingIncompleteReason: null,
-  };
+  });
 }
 
 function persistedSourceKey(item) {
@@ -1135,14 +1170,30 @@ function listLegacyHrRequestWorkItems(db, scope, user) {
 function filterWorkItems(items, filter = {}) {
   const q = String(filter?.q || '').trim().toLowerCase();
   const status = String(filter?.status || '').trim().toLowerCase();
+  const priority = String(filter?.priority || '').trim().toLowerCase();
+  const category = String(filter?.category || '').trim().toLowerCase();
   const officeKey = String(filter?.officeKey || '').trim().toLowerCase();
+  const branchId = String(filter?.branchId || '').trim();
+  const dateFrom = String(filter?.dateFrom || '').trim().slice(0, 10);
+  const dateTo = String(filter?.dateTo || '').trim().slice(0, 10);
   const needsAction = filter?.needsAction === true || String(filter?.view || '').trim().toLowerCase() === 'needs_action';
+  const assignedToMe = filter?.assignedToMe === true || filter?.assignedToMe === 'true';
+  const createdByMe = filter?.createdByMe === true || filter?.createdByMe === 'true';
+  const overdueOnly = filter?.overdue === true || filter?.overdue === 'true';
   const uid = String(filter?.currentUserId || '').trim();
   return items.filter((item) => {
     if (status && String(item.status || '').trim().toLowerCase() !== status) return false;
+    if (priority && String(item.priority || '').trim().toLowerCase() !== priority) return false;
+    if (category && category !== 'all' && categoryForWorkItem(item) !== category) return false;
+    if (branchId && String(item.branchId || '').trim() !== branchId) return false;
     if (officeKey && String(item.responsibleOfficeKey || item.officeKey || '').trim().toLowerCase() !== officeKey) {
       return false;
     }
+    if (assignedToMe && String(item.responsibleUserId || '').trim() !== uid) return false;
+    if (createdByMe && String(item.senderUserId || '').trim() !== uid) return false;
+    if (overdueOnly && item.slaState !== 'overdue') return false;
+    if (dateFrom && String(item.updatedAtIso || item.createdAtIso || '').slice(0, 10) < dateFrom) return false;
+    if (dateTo && String(item.updatedAtIso || item.createdAtIso || '').slice(0, 10) > dateTo) return false;
     if (needsAction) {
       const assigned = String(item.responsibleUserId || '').trim();
       if (assigned && uid && assigned !== uid) return false;

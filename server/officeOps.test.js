@@ -4,6 +4,7 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   createOfficeThread,
   convertOfficeThreadToPaymentRequest,
+  convertOfficeThreadToMaterialRequest,
   listOfficeThreads,
   officeTablesReady,
 } from './officeOps.js';
@@ -56,6 +57,39 @@ describe('officeOps', () => {
       .get(conv.requestID);
     expect(pr).toBeTruthy();
     expect(Number(pr.amount_requested_ngn)).toBe(5000);
+  });
+
+  it('converts a procurement memo thread to a material request', () => {
+    expect(officeTablesReady(db)).toBe(true);
+    const row = db.prepare(`SELECT id, username, role_key AS roleKey FROM app_users WHERE username = 'admin'`).get();
+    const actor = { id: row.id, username: row.username, roleKey: row.roleKey };
+    const scope = { viewAll: false, branchId: DEFAULT_BRANCH_ID };
+
+    const created = createOfficeThread(db, actor, DEFAULT_BRANCH_ID, {
+      subject: 'Spare parts for line 2',
+      body: 'Need procurement for maintenance',
+      kind: 'memo',
+      payload: {
+        smartMemo: {
+          memoType: 'procurement_request',
+          guidedFields: { itemList: 'Bolt M12 x 10\nGrease cartridge x 2' },
+        },
+      },
+    });
+    expect(created.ok).toBe(true);
+    const tid = created.thread.id;
+
+    const conv = convertOfficeThreadToMaterialRequest(db, scope, actor, DEFAULT_BRANCH_ID, tid, {});
+    expect(conv.ok).toBe(true);
+    expect(conv.materialRequestId).toBeTruthy();
+
+    const threadRow = db.prepare(`SELECT status, payload_json FROM office_threads WHERE id = ?`).get(tid);
+    expect(threadRow.status).toBe('converted');
+    const payload = JSON.parse(threadRow.payload_json);
+    expect(payload.materialRequestId).toBe(conv.materialRequestId);
+
+    const mr = db.prepare(`SELECT id FROM material_requests WHERE id = ?`).get(conv.materialRequestId);
+    expect(mr).toBeTruthy();
   });
 
   it('hides confidential threads from HQ roll-up when executive is not on distribution', () => {

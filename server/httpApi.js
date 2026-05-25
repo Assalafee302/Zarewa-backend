@@ -136,6 +136,7 @@ import {
 import {
   addOfficeMessage,
   convertOfficeThreadToPaymentRequest,
+  convertOfficeThreadToMaterialRequest,
   createOfficeThread,
   getOfficeSummary,
   getOfficeThread,
@@ -144,6 +145,20 @@ import {
   markOfficeThreadRead,
   officeScopeFromReq,
 } from './officeOps.js';
+import {
+  deleteOfficeMemoDraft,
+  listOfficeMemoDrafts,
+  upsertOfficeMemoDraft,
+} from './officeDraftOps.js';
+import {
+  bulkArchiveWorkItems,
+  bulkMarkWorkItemsRead,
+  getOfficeThreadTimeline,
+  getWorkItemRelatedRecords,
+  getWorkItemTimeline,
+  getWorkspaceCounts,
+  getWorkspaceMonitoring,
+} from './workspaceOps.js';
 import {
   getOfficeThreadFiling,
   listOfficeThreadFilingForUser,
@@ -910,7 +925,15 @@ export function registerHttpApi(app, db) {
       const items = listUnifiedWorkItems(db, scope, req.user, {
         q: req.query.q,
         status: req.query.status,
+        priority: req.query.priority,
+        category: req.query.category,
+        branchId: req.query.branchId,
         officeKey: req.query.officeKey,
+        dateFrom: req.query.dateFrom,
+        dateTo: req.query.dateTo,
+        assignedToMe: req.query.assignedToMe,
+        createdByMe: req.query.createdByMe,
+        overdue: req.query.overdue,
         view: req.query.view,
         limit: req.query.limit,
       });
@@ -1208,8 +1231,61 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/office/threads/:threadId/convert-material-request', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const scope = officeScopeFromReq(req);
+      const r = convertOfficeThreadToMaterialRequest(
+        db,
+        scope,
+        req.user,
+        req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        String(req.params.threadId || ''),
+        req.body || {}
+      );
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not convert to material request.' });
+    }
+  });
+
   app.get('/api/office/compose-templates', requireAuth, requirePermission('office.use'), (_req, res) => {
     res.json({ ok: true, templates: OFFICE_OPERATION_TEMPLATES });
+  });
+
+  app.get('/api/office/compose-drafts', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const drafts = listOfficeMemoDrafts(
+        db,
+        req.user?.id,
+        req.workspaceBranchId || DEFAULT_BRANCH_ID
+      );
+      res.json({ ok: true, drafts });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load drafts.' });
+    }
+  });
+
+  app.put('/api/office/compose-drafts/:draftId?', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const body = { ...(req.body || {}), id: req.params.draftId || req.body?.id };
+      const r = upsertOfficeMemoDraft(db, req.user?.id, body);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save draft.' });
+    }
+  });
+
+  app.delete('/api/office/compose-drafts/:draftId', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const r = deleteOfficeMemoDraft(db, req.user?.id, String(req.params.draftId || ''));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not delete draft.' });
+    }
   });
 
   app.get('/api/office/inter-branch-requests', requireAuth, requirePermission('office.use'), (req, res) => {
@@ -2907,6 +2983,108 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Search failed' });
+    }
+  });
+
+  app.get('/api/workspace/counts', requireAuth, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      res.json(getWorkspaceCounts(db, scope, req.user));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load workspace counts.' });
+    }
+  });
+
+  app.get('/api/workspace/monitoring', requireAuth, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      const r = getWorkspaceMonitoring(db, scope, req.user);
+      res.status(r.ok ? 200 : 403).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load monitoring data.' });
+    }
+  });
+
+  app.get('/api/work-items/:workItemId/timeline', requireAuth, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      const r = getWorkItemTimeline(db, scope, req.user, String(req.params.workItemId || ''));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load timeline.' });
+    }
+  });
+
+  app.get('/api/work-items/:workItemId/related', requireAuth, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      const r = getWorkItemRelatedRecords(db, scope, req.user, String(req.params.workItemId || ''));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load related records.' });
+    }
+  });
+
+  app.get('/api/office/threads/:threadId/timeline', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const scope = officeScopeFromReq(req);
+      const r = getOfficeThreadTimeline(db, scope, req.user, String(req.params.threadId || ''));
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load thread timeline.' });
+    }
+  });
+
+  app.post('/api/work-items/bulk/read', requireAuth, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const r = bulkMarkWorkItemsRead(db, scope, req.user, ids);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Bulk read failed.' });
+    }
+  });
+
+  app.post('/api/work-items/bulk/archive', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const scope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? (req.workspaceBranchId || DEFAULT_BRANCH_ID) : branchScope,
+      };
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const r = bulkArchiveWorkItems(db, scope, req.user, ids);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Bulk archive failed.' });
     }
   });
 

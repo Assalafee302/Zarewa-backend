@@ -966,6 +966,7 @@ export function runMigrations(db) {
   migrateUnifiedWorkspaceRegistry(db);
   migrateOperationsMaintenanceWorkspace(db);
   migrateOfficeOperations2026(db);
+  migrateWorkspaceCommandCenter2026(db);
   migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
   try {
@@ -1162,6 +1163,46 @@ function migrateOfficeThreadFiling(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_office_thread_filing_branch ON office_thread_filing(branch_id, updated_at_iso DESC);
     CREATE INDEX IF NOT EXISTS idx_office_thread_filing_category ON office_thread_filing(category_key, branch_id);
+  `);
+}
+
+/** Workspace command center — drafts, read state, bulk action log (Phases 7–9). */
+function migrateWorkspaceCommandCenter2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS office_memo_drafts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      subject TEXT,
+      body TEXT,
+      confidentiality TEXT NOT NULL DEFAULT 'internal',
+      smart_memo_type TEXT,
+      payload_json TEXT,
+      updated_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_office_memo_drafts_user_branch ON office_memo_drafts(user_id, branch_id, updated_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS workspace_read_state (
+      user_id TEXT NOT NULL,
+      work_item_id TEXT NOT NULL,
+      last_read_at_iso TEXT NOT NULL,
+      PRIMARY KEY (user_id, work_item_id),
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+      FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_read_state_user ON workspace_read_state(user_id, last_read_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS workspace_bulk_action_log (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      item_ids_json TEXT,
+      result_json TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (actor_user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_bulk_action_log_time ON workspace_bulk_action_log(created_at_iso DESC);
   `);
 }
 

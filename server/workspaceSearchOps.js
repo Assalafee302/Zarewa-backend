@@ -6,6 +6,8 @@ import {
   canSeeRefundsList,
 } from './workspaceAccess.js';
 import { hrListScope, hrTablesReady } from './hrOps.js';
+import { userCanSeePersistedWorkItem } from './workItems.js';
+import { isConfidentialLevel } from '../shared/lib/workspaceConfidentialAccess.js';
 
 /** @param {string} s */
 export function escapeSqlLikePattern(s) {
@@ -332,6 +334,38 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
           sublabel: [row.entry_date_iso, row.memo || row.source_id].filter(Boolean).join(' · ') || 'GL journal',
           path: '/accounts',
           state: { accountsTab: 'audit', highlightGlJournalId: row.id },
+        });
+      }
+    }
+  }
+
+  if (perm('office.use') || perm('*')) {
+    const n = room();
+    if (n > 0) {
+      const bp = branchPredicate(db, 'work_items', branchScope, 'w');
+      const rows = db
+        .prepare(
+          `SELECT w.id, w.reference_no, w.title, w.document_type, w.status, w.branch_id, w.confidentiality,
+                  w.sender_user_id, w.responsible_user_id, w.responsible_office_key, w.office_key
+           FROM work_items w WHERE 1=1${bp.sql}
+           AND (w.reference_no LIKE ? ESCAPE '\\' OR w.title LIKE ? ESCAPE '\\' OR w.document_type LIKE ? ESCAPE '\\')
+           ORDER BY w.updated_at_iso DESC LIMIT ?`
+        )
+        .all(...bp.args, likeArg, likeArg, likeArg, Math.min(n * 3, 60));
+      const searchScope = { viewAll: branchScope.viewAll, branchId: branchScope.branchId };
+      for (const row of rows) {
+        if (!userCanSeePersistedWorkItem(db, searchScope, user, row)) continue;
+        if (results.length >= cap) break;
+        const confidential = isConfidentialLevel(row.confidentiality);
+        push({
+          kind: 'work_item',
+          id: row.id,
+          label: confidential ? 'Restricted memo' : row.title || row.reference_no,
+          sublabel: confidential
+            ? 'Permission required'
+            : `${row.reference_no} · ${row.document_type} · ${row.status}`,
+          path: '/',
+          state: { workItemId: row.id },
         });
       }
     }

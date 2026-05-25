@@ -1,5 +1,6 @@
 import { amountDueOnQuotationFromEntries, companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow } from './auth.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
@@ -659,11 +660,18 @@ export function listProducts(db, branchScope = 'ALL') {
     const b = branchWhere(db, 'products', branchScope);
     rows = db.prepare(`SELECT * FROM products WHERE 1=1${b.sql} ORDER BY name`).all(...b.args);
   } else {
+    const bid = String(branchScope).trim();
     rows = db
       .prepare(
-        `SELECT * FROM products WHERE branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '' ORDER BY name`
+        `SELECT * FROM products
+         WHERE branch_id = ?
+            OR (
+              (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')
+              AND product_id IN ('COIL-ALU','PRD-102')
+            )
+         ORDER BY name`
       )
-      .all(branchScope);
+      .all(bid);
   }
   return rows
     .map((row) => {
@@ -675,6 +683,7 @@ export function listProducts(db, branchScope = 'ALL') {
       }
       return {
         productID: row.product_id,
+        branchId: String(row.branch_id ?? '').trim(),
         name: row.name,
         stockLevel: row.stock_level,
         unit: row.unit,

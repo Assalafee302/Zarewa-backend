@@ -1,6 +1,7 @@
 import { userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { getProductRowForWorkspace, isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 
 export function normalizeWorkspaceBranchId(v) {
   return String(v ?? '').trim() || DEFAULT_BRANCH_ID;
@@ -145,8 +146,16 @@ export function assertRefundIdInWorkspace(db, req, refundId) {
 export function assertProductIdInWorkspace(db, req, productID) {
   const pid = String(productID ?? '').trim();
   if (!pid) return { ok: false, error: 'Product is required.', status: 400 };
-  const row = db.prepare(`SELECT product_id, branch_id FROM products WHERE product_id = ?`).get(pid);
-  if (!row) return { ok: false, error: 'Product not found.', status: 404 };
+  const row = getProductRowForWorkspace(db, pid, req.workspaceBranchId);
+  if (!row) {
+    return {
+      ok: false,
+      error: isGlobalCoilCatalogProductId(pid)
+        ? 'Product not found.'
+        : 'Product not found for this branch. Open the correct branch workspace or receive stock here first.',
+      status: 404,
+    };
+  }
   if (!productMutationAllowed(req.user, row.branch_id, req.workspaceBranchId)) {
     return { ok: false, error: 'This product is not in your current workspace branch.', status: 403 };
   }

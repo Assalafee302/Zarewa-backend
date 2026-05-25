@@ -7,6 +7,7 @@ import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
 import { debugBootLog } from './debugBootLog.js';
+import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -939,6 +940,7 @@ export function runMigrations(db) {
   migrateMaterialTypeLabels(db);
   migrateProcurementCoilMaterials(db);
   migrateCoilSkuProductsBranchGlobal(db);
+  migrateProductsBranchCompositeInventory(db);
   migrateMaterialPricingWorkbook(db);
   migratePricingPolicy2026(db);
   migrateUserProfileAndPasswordReset(db);
@@ -3502,7 +3504,6 @@ function migrateCoilSkuProductsBranchGlobal(db) {
   const cols = db.prepare(`PRAGMA table_info(products)`).all();
   if (!cols.some((c) => c.name === 'branch_id')) return;
   db.prepare(`UPDATE products SET branch_id = '' WHERE product_id IN ('COIL-ALU','PRD-102')`).run();
-  db.prepare(`UPDATE products SET branch_id = '' WHERE product_id LIKE 'STONE-%' OR product_id LIKE 'ACC-%'`).run();
 }
 
 /** Material pricing workbook (coil): conversions, suggested ₦/m, minimum floor, change log. */

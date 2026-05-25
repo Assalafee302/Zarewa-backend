@@ -16,6 +16,11 @@ import {
   isStoneMeterQuotationLinesJson,
 } from './stoneInventory.js';
 import {
+  bumpProductStockLevel,
+  getProductRowForWorkspace,
+  isGlobalCoilCatalogProductId,
+} from './productBranchInventory.js';
+import {
   coilReceiptShortToleranceKg,
   inferLineTypeFromProduct,
   stoneFlatsheetSheetsToM2,
@@ -1940,7 +1945,6 @@ export function confirmGrn(
   const updLine = db.prepare(
     `UPDATE purchase_order_lines SET qty_received = qty_received + ? WHERE po_id = ? AND line_key = ?`
   );
-  const updProd = db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`);
   const existingLots = db.prepare(`SELECT COUNT(*) AS c FROM coil_lots`).get().c;
   const coilYy = String(new Date().getFullYear()).slice(-2);
 
@@ -2198,7 +2202,7 @@ export function confirmGrn(
     }
     for (const pid of Object.keys(deltaByProduct)) {
       const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(pid);
-      if (exists) updProd.run(deltaByProduct[pid], pid);
+      if (exists) bumpProductStockLevel(db, pid, coilBranch, deltaByProduct[pid]);
     }
   })();
 
@@ -2240,7 +2244,9 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_
 
   try {
     db.transaction(() => {
-      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(metres, productId);
+      if (!bumpProductStockLevel(db, productId, bid, metres)) {
+        throw new Error('Stone product row missing for this branch.');
+      }
       appendMovementTx(db, {
         type: 'STORE_STONE_DIRECT',
         ref: String(payload?.refNote ?? '').trim() || 'DIRECT',
@@ -2299,7 +2305,9 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
 
   try {
     db.transaction(() => {
-      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(m2, productId);
+      if (!bumpProductStockLevel(db, productId, bid, m2)) {
+        throw new Error('Stone flatsheet product row missing for this branch.');
+      }
       appendMovementTx(db, {
         type: 'STORE_STONE_FLATSHEET_DIRECT',
         ref: String(payload?.refNote ?? '').trim() || 'DIRECT',
@@ -2336,17 +2344,18 @@ export function postAccessoryInventoryReceipt(db, payload, branchFallback = DEFA
   const qty = Number(payload?.qtyReceived ?? payload?.qty);
   if (!productID) return { ok: false, error: 'productID is required.' };
   if (!Number.isFinite(qty) || qty <= 0) return { ok: false, error: 'Enter a valid quantity received.' };
-  const row = db.prepare(`SELECT * FROM products WHERE product_id = ?`).get(productID);
-  if (!row) return { ok: false, error: 'Product not found.' };
+  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const row = getProductRowForWorkspace(db, productID, bid);
+  if (!row) return { ok: false, error: 'Product not found for this branch.' };
   const up = Math.round(Number(payload?.unitCostNgn) || 0);
   const landed = up > 0 ? Math.round(qty * up) : null;
   const dateISO = String(payload?.dateISO || new Date().toISOString()).slice(0, 10);
   const glUserId = opts?.actor?.id != null ? String(opts.actor.id) : null;
-  const bid = String(branchFallback || DEFAULT_BRANCH_ID).trim();
-
   try {
     db.transaction(() => {
-      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(qty, productID);
+      if (!bumpProductStockLevel(db, productID, bid, qty)) {
+        throw new Error('Accessory product row missing for this branch.');
+      }
       appendMovementTx(db, {
         type: 'STORE_ACCESSORY_DIRECT',
         ref: String(payload?.refNote ?? '').trim() || 'ACCESSORY',
@@ -2384,18 +2393,7 @@ function pragmaHasColumn(db, table, col) {
 }
 
 function productExistsForBranch(db, productId, branchId) {
-  const hasPb = pragmaHasColumn(db, 'products', 'branch_id');
-  if (!hasPb) {
-    return Boolean(db.prepare(`SELECT 1 FROM products WHERE product_id = ? LIMIT 1`).get(productId));
-  }
-  const bid = String(branchId || '').trim();
-  return Boolean(
-    db
-      .prepare(
-        `SELECT 1 FROM products WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '' OR branch_id = ?) LIMIT 1`
-      )
-      .get(productId, bid)
-  );
+  return Boolean(getProductRowForWorkspace(db, productId, branchId));
 }
 
 /**
@@ -2715,16 +2713,22 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
   };
 }
 
-export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO) {
+export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO, branchId = DEFAULT_BRANCH_ID) {
   const q = Number(qty);
   if (Number.isNaN(q) || q <= 0) return { ok: false, error: 'Invalid quantity.' };
   const delta = type === 'Increase' ? q : -q;
-  const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-  if (!p) return { ok: false, error: 'Product not found.' };
-  const raw = Number(p.stock_level) + delta;
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const row = getProductRowForWorkspace(db, productID, bid);
+  if (!row) return { ok: false, error: 'Product not found for this branch.' };
+  const raw = Number(row.stock_level) + delta;
   const accessorySku = /^ACC-/i.test(String(productID || '').trim());
   const next = accessorySku ? raw : Math.max(0, raw);
-  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, productID);
+  const pb = String(row.branch_id ?? '').trim();
+  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
+    next,
+    productID,
+    pb
+  );
   appendMovementTx(db, {
     type: 'ADJUSTMENT',
     productID,
@@ -2735,13 +2739,21 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO)
   return { ok: true };
 }
 
-export function transferToProduction(db, productID, qty, productionOrderId, dateISO) {
+export function transferToProduction(db, productID, qty, productionOrderId, dateISO, branchId = DEFAULT_BRANCH_ID) {
   const q = Number(qty);
   if (Number.isNaN(q) || q <= 0) return { ok: false, error: 'Invalid quantity.' };
-  const p = db.prepare(`SELECT stock_level, branch_id FROM products WHERE product_id = ?`).get(productID);
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const p = getProductRowForWorkspace(db, productID, bid);
   if (!p || p.stock_level < q) return { ok: false, error: 'Insufficient stock in store.' };
-  const wipBranch = String(p.branch_id ?? '').trim();
-  db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(q, productID);
+  const wipBranch = isGlobalCoilCatalogProductId(productID)
+    ? bid
+    : String(p.branch_id ?? '').trim() || bid;
+  const pb = String(p.branch_id ?? '').trim();
+  db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ? AND branch_id = ?`).run(
+    q,
+    productID,
+    pb
+  );
   db.prepare(
     `INSERT INTO wip_balances (branch_id, product_id, qty) VALUES (?,?,?)
      ON CONFLICT(branch_id, product_id) DO UPDATE SET qty = wip_balances.qty + excluded.qty`

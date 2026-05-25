@@ -115,7 +115,10 @@ export function ensureStoneProduct(db, spec) {
   const colourLabel = String(spec.colourLabel || '').trim();
   const gaugeLabel = String(spec.gaugeLabel || '').trim();
   const id = stoneProductIdFromSpec(designLabel, colourLabel, gaugeLabel);
-  const existing = db.prepare(`SELECT product_id FROM products WHERE product_id = ?`).get(id);
+  const branchId = String(spec.branchId ?? '').trim() || 'BR-KD';
+  const existing = db
+    .prepare(`SELECT product_id FROM products WHERE product_id = ? AND branch_id = ?`)
+    .get(id, branchId);
   if (existing) return id;
 
   const name = `Stone coated ${designLabel} / ${colourLabel} / ${gaugeLabel}`.replace(/\s+/g, ' ').trim();
@@ -126,7 +129,6 @@ export function ensureStoneProduct(db, spec) {
     stoneGauge: gaugeLabel,
     materialTypeId: STONE_COATED_MATERIAL_TYPE_ID,
   });
-  const branchId = String(spec.branchId ?? '').trim() || '';
   db.prepare(
     `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`
@@ -170,7 +172,10 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     throw new Error('Stone flatsheet requires colour and length (1.4 m, 1.5 m, or 2 m).');
   }
   const id = stoneFlatsheetProductIdFromSpec(colourLabel, lengthM);
-  const existing = db.prepare(`SELECT product_id FROM products WHERE product_id = ?`).get(id);
+  const branchId = String(spec.branchId ?? '').trim() || 'BR-KD';
+  const existing = db
+    .prepare(`SELECT product_id FROM products WHERE product_id = ? AND branch_id = ?`)
+    .get(id, branchId);
   if (existing) return id;
 
   const name = `Stone flatsheet ${colourLabel} / ${lengthM} m`.replace(/\s+/g, ' ').trim();
@@ -181,7 +186,6 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     stoneFlatsheetColour: colourLabel,
     materialTypeId: STONE_COATED_MATERIAL_TYPE_ID,
   });
-  const branchId = String(spec.branchId ?? '').trim() || '';
   db.prepare(
     `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`

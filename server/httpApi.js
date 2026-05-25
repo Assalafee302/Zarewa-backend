@@ -4201,7 +4201,16 @@ export function registerHttpApi(app, db) {
         });
       }
     }
-    const r = write.adjustStock(db, productID, type, qty, reasonCode, note, dateISO);
+    const r = write.adjustStock(
+      db,
+      productID,
+      type,
+      qty,
+      reasonCode,
+      note,
+      dateISO,
+      req.workspaceBranchId || DEFAULT_BRANCH_ID
+    );
     res.status(r.ok ? 200 : 400).json(r);
   });
 
@@ -4209,7 +4218,14 @@ export function registerHttpApi(app, db) {
     const { productID, qty, productionOrderId, dateISO } = req.body || {};
     const pg = assertProductIdInWorkspace(db, req, productID);
     if (!pg.ok) return res.status(pg.status).json({ ok: false, error: pg.error });
-    const r = write.transferToProduction(db, productID, qty, productionOrderId, dateISO);
+    const r = write.transferToProduction(
+      db,
+      productID,
+      qty,
+      productionOrderId,
+      dateISO,
+      req.workspaceBranchId || DEFAULT_BRANCH_ID
+    );
     res.status(r.ok ? 200 : 400).json(r);
   });
 

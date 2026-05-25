@@ -1289,7 +1289,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.put('/api/office/compose-drafts/:draftId?', requireAuth, requirePermission('office.use'), (req, res) => {
+  const saveOfficeComposeDraft = (req, res) => {
     try {
       const body = { ...(req.body || {}), id: req.params.draftId || req.body?.id };
       const r = upsertOfficeMemoDraft(db, req.user?.id, body);
@@ -1298,7 +1298,10 @@ export function registerHttpApi(app, db) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not save draft.' });
     }
-  });
+  };
+
+  app.put('/api/office/compose-drafts', requireAuth, requirePermission('office.use'), saveOfficeComposeDraft);
+  app.put('/api/office/compose-drafts/:draftId', requireAuth, requirePermission('office.use'), saveOfficeComposeDraft);
 
   app.delete('/api/office/compose-drafts/:draftId', requireAuth, requirePermission('office.use'), (req, res) => {
     try {

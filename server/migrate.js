@@ -2821,6 +2821,18 @@ function migrateUserProfileAndPasswordReset(db) {
   if (users.size && !users.has('avatar_url')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN avatar_url TEXT`);
   }
+  if (users.size && !users.has('must_change_password')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (users.size && !users.has('training_completed_at_iso')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN training_completed_at_iso TEXT NOT NULL DEFAULT ''`);
+    db.prepare(
+      `UPDATE app_users
+       SET training_completed_at_iso = COALESCE(NULLIF(trim(last_login_at_iso), ''), created_at_iso, ?)
+       WHERE training_completed_at_iso IS NULL OR trim(training_completed_at_iso) = ''`
+    ).run(new Date().toISOString());
+  }
+
   if (users.size && !users.has('department')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN department TEXT NOT NULL DEFAULT 'general'`);
     db.prepare(

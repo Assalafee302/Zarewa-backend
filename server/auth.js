@@ -11,6 +11,26 @@ function appUsersHasEmailColumn(db) {
   }
 }
 
+function appUsersHasColumn(db, name) {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
+    return cols.some((c) => c.name === name);
+  } catch {
+    return false;
+  }
+}
+
+function readMustChangePassword(row) {
+  if (!row) return false;
+  return Number(row.must_change_password) === 1;
+}
+
+function readTrainingCompleted(row) {
+  if (!row) return true;
+  if (!Object.prototype.hasOwnProperty.call(row, 'training_completed_at_iso')) return true;
+  return Boolean(String(row.training_completed_at_iso ?? '').trim());
+}
+
 export const SESSION_COOKIE = 'zarewa_session';
 export const CSRF_COOKIE = 'zarewa_csrf';
 const SESSION_TTL_HOURS = 12;
@@ -546,6 +566,8 @@ export function publicUserFromRow(row) {
     status: row.status ?? 'active',
     lastLoginAtISO: row.last_login_at_iso ?? row.lastLoginAtISO ?? '',
     createdAtISO: row.created_at_iso ?? row.createdAtISO ?? '',
+    mustChangePassword: readMustChangePassword(row),
+    trainingCompleted: readTrainingCompleted(row),
     permissions,
   };
 }
@@ -730,9 +752,29 @@ export function createAppUserRecord(db, row) {
   }
   const userId = `USR-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
   const createdAtISO = nowIso();
-  const hasDeptCol = db.prepare(`PRAGMA table_info(app_users)`).all().some((c) => c.name === 'department');
+  const hasDeptCol = appUsersHasColumn(db, 'department');
+  const hasOnboarding = appUsersHasColumn(db, 'must_change_password');
   try {
-    if (hasDeptCol) {
+    if (hasDeptCol && hasOnboarding) {
+      db.prepare(
+        `INSERT INTO app_users (
+        id, username, display_name, password_hash, role_key, department, status, last_login_at_iso, created_at_iso,
+        must_change_password, training_completed_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        userId,
+        username,
+        displayName,
+        createPasswordHash(String(row.password)),
+        roleKey,
+        department,
+        'active',
+        '',
+        createdAtISO,
+        1,
+        ''
+      );
+    } else if (hasDeptCol) {
       db.prepare(
         `INSERT INTO app_users (
         id, username, display_name, password_hash, role_key, department, status, last_login_at_iso, created_at_iso
@@ -800,7 +842,9 @@ function findSessionRow(db, token) {
          u.status,
          u.last_login_at_iso,
          u.created_at_iso,
-         u.workspace_branch_id
+         u.workspace_branch_id,
+         u.must_change_password,
+         u.training_completed_at_iso
        FROM user_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.session_token = ?`
@@ -1129,8 +1173,55 @@ export function changePassword(db, userId, currentPassword, newPassword) {
   const nextPassword = String(newPassword || '');
   const strength = validatePasswordStrength(nextPassword);
   if (!strength.ok) return strength;
-  db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(createPasswordHash(nextPassword), userId);
-  return { ok: true };
+  if (appUsersHasColumn(db, 'must_change_password')) {
+    db.prepare(`UPDATE app_users SET password_hash = ?, must_change_password = 0 WHERE id = ?`).run(
+      createPasswordHash(nextPassword),
+      userId
+    );
+  } else {
+    db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(createPasswordHash(nextPassword), userId);
+  }
+  const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
+  return { ok: true, user: publicUserFromRow(next) };
+}
+
+/**
+ * Mark role-based onboarding training as completed for the signed-in user.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function completeUserTraining(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'User id is required.' };
+  if (!appUsersHasColumn(db, 'training_completed_at_iso')) {
+    return { ok: false, error: 'Training tracking is not available. Restart the server after migration.' };
+  }
+  const row = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'User not found.' };
+  db.prepare(`UPDATE app_users SET training_completed_at_iso = ? WHERE id = ?`).run(nowIso(), uid);
+  const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(uid);
+  return { ok: true, user: publicUserFromRow(next) };
+}
+
+/**
+ * Blocks mutating API calls until the user changes a temporary password (GET still allowed).
+ */
+export function requireActivePassword(req, res, next) {
+  if (!req.user?.mustChangePassword) return next();
+  const method = String(req.method || '').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
+  const path = String(req.originalUrl || req.url || '').split('?')[0];
+  const allowed = [
+    '/api/session/change-password',
+    '/api/session/logout',
+    '/api/session/complete-training',
+  ];
+  if (allowed.some((p) => path === p || path.endsWith(p))) return next();
+  return res.status(403).json({
+    ok: false,
+    code: 'PASSWORD_CHANGE_REQUIRED',
+    error: 'Change your temporary password before using this action.',
+  });
 }
 
 /**
@@ -1251,6 +1342,9 @@ function issuePasswordResetTokenForUserId(db, userId) {
     `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at_iso, expires_at_iso, used_at_iso)
      VALUES (?,?,?,?,?,NULL)`
   ).run(id, row.id, tokenHash, createdAtISO, expiresAtISO);
+  if (appUsersHasColumn(db, 'must_change_password')) {
+    db.prepare(`UPDATE app_users SET must_change_password = 1 WHERE id = ?`).run(row.id);
+  }
   return {
     token: plain,
     expiresAtISO,
@@ -1337,10 +1431,17 @@ export function completePasswordReset(db, identifier, token, newPassword) {
   if (!strength.ok) return strength;
 
   db.transaction(() => {
-    db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(
-      createPasswordHash(String(newPassword)),
-      matchRow.user_id
-    );
+    if (appUsersHasColumn(db, 'must_change_password')) {
+      db.prepare(`UPDATE app_users SET password_hash = ?, must_change_password = 0 WHERE id = ?`).run(
+        createPasswordHash(String(newPassword)),
+        matchRow.user_id
+      );
+    } else {
+      db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(
+        createPasswordHash(String(newPassword)),
+        matchRow.user_id
+      );
+    }
     db.prepare(`UPDATE password_reset_tokens SET used_at_iso = ? WHERE id = ?`).run(nowIso(), matchRow.prt_id);
     db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(matchRow.user_id);
   })();

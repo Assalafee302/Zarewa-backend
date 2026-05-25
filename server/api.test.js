@@ -289,6 +289,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.status).toBe(201);
     expect(res.body.ok).toBe(true);
     expect(res.body.userId).toMatch(/^USR-/);
+    const loginRes = await request(app)
+      .post('/api/session/login')
+      .send({ username: 'e2e.created.user', password: 'TempPass@999!' });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user?.mustChangePassword).toBe(true);
+    expect(loginRes.body.user?.trainingCompleted).toBe(false);
   });
 
   it('DELETE /api/users/:id removes a user when confirmUsername matches (admin)', async () => {

@@ -40,6 +40,7 @@ import {
   clearCsrfCookie,
   clearSessionCookie,
   completePasswordReset,
+  completeUserTraining,
   createAppUserRecord,
   listAllAppUsers,
   loginWithPassword,
@@ -48,6 +49,7 @@ import {
   patchAppUserWorkspaceDepartment,
   issuePasswordResetForAdmin,
   requestPasswordReset,
+  requireActivePassword,
   requireAuth,
   requirePermission,
   ROLE_DEFINITIONS,
@@ -1832,12 +1834,30 @@ export function registerHttpApi(app, db) {
         action: 'session.change_password',
         entityKind: 'user',
         entityId: req.user.id,
-        note: 'Password changed',
+        note: req.user?.mustChangePassword ? 'First-login password set' : 'Password changed',
       });
-      return res.json({ ok: true });
+      return res.json({ ok: true, user: r.user });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not change password' });
+    }
+  });
+
+  app.post('/api/session/complete-training', requireAuth, (req, res) => {
+    try {
+      const r = completeUserTraining(db, req.user.id);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'session.training_complete',
+        entityKind: 'user',
+        entityId: req.user.id,
+        note: `Role training completed (${req.user?.roleKey || 'user'})`,
+      });
+      return res.json({ ok: true, user: r.user });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save training completion.' });
     }
   });
 
@@ -1982,7 +2002,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.use('/api', requireAuth);
+  app.use('/api', requireAuth, requireActivePassword);
 
   app.get('/api/bootstrap', (req, res) => {
     try {

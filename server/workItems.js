@@ -1024,7 +1024,15 @@ function listLegacyManagementWorkItems(db, scope, user) {
           documentType: 'conversion_review',
           status: 'pending_review',
           title: `Conversion review ${row.job_id}`,
-          summary: `${row.customer_name || ''} · ${row.product_name || ''} · ${row.conversion_alert_state || 'Pending'}`.trim(),
+          summary: [
+            row.customer_name || '',
+            row.product_name || '',
+            row.conversion_alert_state || 'Pending',
+            row.conversion_variance_reason_code ? `reason: ${row.conversion_variance_reason_code}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+            .trim(),
           createdAtIso: row.completed_at_iso || '',
           sourceKind: 'conversion_review',
           sourceId: row.job_id,

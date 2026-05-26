@@ -510,6 +510,15 @@ export function runMigrations(db) {
   if (!productionJobs.has('manager_review_remark')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN manager_review_remark TEXT`);
   }
+  if (!productionJobs.has('conversion_variance_reason_code')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN conversion_variance_reason_code TEXT`);
+  }
+  if (!productionJobs.has('conversion_variance_reason_text')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN conversion_variance_reason_text TEXT`);
+  }
+  if (!productionJobs.has('conversion_variance_band')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN conversion_variance_band TEXT`);
+  }
   if (!productionJobs.has('coil_spec_mismatch_pending')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0`);
   }

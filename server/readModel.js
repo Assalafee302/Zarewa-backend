@@ -300,7 +300,8 @@ export function listManagementItems(db, branchScope = 'ALL') {
   // 6. Completed production jobs awaiting conversion / manager review sign-off (High/Low or flag)
   const pendingConversionReviews = db.prepare(`
     SELECT job_id, cutting_list_id, quotation_ref, customer_name, product_name,
-      conversion_alert_state, manager_review_required, actual_meters, actual_weight_kg, completed_at_iso, branch_id
+      conversion_alert_state, manager_review_required, actual_meters, actual_weight_kg, completed_at_iso, branch_id,
+      conversion_variance_reason_code, conversion_variance_reason_text, conversion_variance_band
     FROM production_jobs
     WHERE status = 'Completed'
       AND (manager_review_signed_at_iso IS NULL OR TRIM(COALESCE(manager_review_signed_at_iso, '')) = '')
@@ -1211,6 +1212,9 @@ export function listProductionJobs(db, branchScope = 'ALL') {
         managerReviewSignedByUserId: row.manager_review_signed_by_user_id ?? '',
         managerReviewSignedByName: row.manager_review_signed_by_name ?? '',
         managerReviewRemark: row.manager_review_remark ?? '',
+        conversionVarianceReasonCode: row.conversion_variance_reason_code ?? '',
+        conversionVarianceReasonText: row.conversion_variance_reason_text ?? '',
+        conversionVarianceBand: row.conversion_variance_band ?? '',
         operatorName: row.operator_name ?? '',
         branchId: row.branch_id ?? '',
         coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),

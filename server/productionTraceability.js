@@ -35,6 +35,10 @@ import { listMasterData } from './masterData.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
 import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
+import {
+  persistProductionConversionVarianceReason,
+  validateConversionVarianceReason,
+} from '../shared/productionConversionReasons.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1699,6 +1703,8 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     const computed = computeCompletionConversionRows(db, jobID, payload);
     if (!computed.ok) return computed;
     const { conversionRows, totalMeters, totalWeightKg, aggregatedAlertState, managerReviewRequired } = computed;
+    const reasonCheck = validateConversionVarianceReason(payload, aggregatedAlertState);
+    if (!reasonCheck.ok) return reasonCheck;
     const offInv = offcutInventoryMetersFromPayload(payload);
     if (offInv > 0 && totalMeters <= 0) {
       return {
@@ -1912,6 +1918,13 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }
+      if (reasonCheck.code) {
+        persistProductionConversionVarianceReason(db, jobID, {
+          code: reasonCheck.code,
+          band: reasonCheck.band || aggregatedAlertState,
+          text: reasonCheck.text,
+        });
+      }
       applyAccessoryCompletionTx(
         db,
         jobID,
@@ -1929,7 +1942,9 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
         note:
           aggregatedAlertState === 'OK'
             ? `Production completed on ${jobID}`
-            : `Production completed on ${jobID} with ${aggregatedAlertState.toLowerCase()} conversion alert`,
+            : reasonCheck.code
+              ? `Production completed on ${jobID} with ${aggregatedAlertState.toLowerCase()} conversion (${reasonCheck.code})`
+              : `Production completed on ${jobID} with ${aggregatedAlertState.toLowerCase()} conversion alert`,
         details: {
           coilMeters: totalMeters,
           offcutInventoryMeters: offInv,
@@ -1937,6 +1952,8 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           totalWeightKg,
           alertState: aggregatedAlertState,
           managerReviewRequired,
+          conversionVarianceReasonCode: reasonCheck.code || null,
+          conversionVarianceReasonText: reasonCheck.text || null,
         },
       });
 

@@ -141,17 +141,11 @@ function mapQuotationRow(db, row) {
         if (typeof j.materialColor === 'string') materialColor = j.materialColor;
         if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
         if (typeof j.materialTypeId === 'string') materialTypeId = j.materialTypeId;
-        if (
-          Array.isArray(j.products) &&
-          Array.isArray(j.accessories) &&
-          Array.isArray(j.services)
-        ) {
-          quotationLines = {
-            products: j.products,
-            accessories: j.accessories,
-            services: j.services,
-          };
-        }
+        quotationLines = {
+          products: Array.isArray(j.products) ? j.products : [],
+          accessories: Array.isArray(j.accessories) ? j.accessories : [],
+          services: Array.isArray(j.services) ? j.services : [],
+        };
       }
     }
   } catch {

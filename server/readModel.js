@@ -1099,11 +1099,16 @@ export function enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerEntr
   }
   const companion = companionOverpayNgnByReceiptId(ledgerEntries);
   return rows.map((r) => {
+    const reconciled = String(r.financeReconciliationSavedAtISO || '').trim() !== '';
+    const confirmed =
+      reconciled && r.bankReceivedAmountNgn != null && Math.round(Number(r.bankReceivedAmountNgn) || 0) > 0
+        ? Math.round(Number(r.bankReceivedAmountNgn) || 0)
+        : null;
     const alloc = Math.round(Number(r.amountNgn) || 0);
     const rid = String(r.id || '');
     const lid = r.ledgerEntryId != null ? String(r.ledgerEntryId) : '';
     const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
-    const cash = Math.round(alloc + extra);
+    const cash = confirmed != null ? confirmed : Math.round(alloc + extra);
     const next = { ...r, cashReceivedNgn: cash };
     if (extra > 0) {
       next.quotationAllocatedNgn = alloc;

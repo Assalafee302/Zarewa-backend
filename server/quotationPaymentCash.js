@@ -44,7 +44,8 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
 
   const receiptRows = db
     .prepare(
-      `SELECT id, amount_ngn, ledger_entry_id FROM sales_receipts
+      `SELECT id, amount_ngn, ledger_entry_id, finance_reconciliation_saved_at_iso, bank_received_amount_ngn
+       FROM sales_receipts
        WHERE quotation_ref = ?
          AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
     )
@@ -61,6 +62,16 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
   let receiptAllocatedSumNgn = 0;
   let companionOverpayOnQuoteNgn = 0;
   for (const r of receiptRows) {
+    const reconciled = String(r.finance_reconciliation_saved_at_iso || '').trim() !== '';
+    const confirmed =
+      reconciled && r.bank_received_amount_ngn != null && roundMoney(r.bank_received_amount_ngn) > 0
+        ? roundMoney(r.bank_received_amount_ngn)
+        : null;
+    if (confirmed != null) {
+      receiptAllocatedSumNgn += confirmed;
+      receiptCashNgn += confirmed;
+      continue;
+    }
     const alloc = roundMoney(r.amount_ngn);
     const rid = String(r.id || '');
     const lid = r.ledger_entry_id != null ? String(r.ledger_entry_id) : '';

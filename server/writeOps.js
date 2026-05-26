@@ -6563,7 +6563,22 @@ export function payPaymentRequest(db, requestID, payload) {
 
   try {
     assertPeriodOpen(db, paidAtISO, 'Payment request payout date');
-    const movements = db.transaction(() => {
+    const txResult = db.transaction(() => {
+      const fresh = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
+      if (!fresh) throw new Error('Payment request not found.');
+      if (String(fresh.approval_status || '') !== 'Approved') {
+        throw new Error('Only approved payment requests can be paid.');
+      }
+      const requestedFresh = roundMoney(fresh.amount_requested_ngn);
+      const alreadyPaidFresh = roundMoney(fresh.paid_amount_ngn);
+      const outstandingFresh = effectiveOutstandingNgn(requestedFresh, alreadyPaidFresh);
+      if (outstandingFresh <= 0) {
+        throw new Error('Payment request is already fully paid.');
+      }
+      if (totalPaid > outstandingFresh) {
+        throw new Error('Payment exceeds the approved request balance.');
+      }
+
       const created = insertTreasurySplitTx(
         db,
         paymentLines.map((line) => ({
@@ -6575,11 +6590,11 @@ export function payPaymentRequest(db, requestID, payload) {
           postedAtISO: paidAtISO,
           reference: String(payload.reference ?? '').trim() || requestID,
           counterpartyKind: 'EXPENSE',
-          counterpartyId: row.expense_id,
-          counterpartyName: row.description || row.request_id,
+          counterpartyId: fresh.expense_id,
+          counterpartyName: fresh.description || fresh.request_id,
           sourceKind: 'PAYMENT_REQUEST',
           sourceId: requestID,
-          note: row.description || 'Payment request payout',
+          note: fresh.description || 'Payment request payout',
           createdBy: paidBy,
           workspaceBranchId,
           workspaceViewAll,
@@ -6587,14 +6602,14 @@ export function payPaymentRequest(db, requestID, payload) {
         }
       );
 
-      const nextPaid = alreadyPaid + totalPaid;
+      const nextPaid = alreadyPaidFresh + totalPaid;
       db.prepare(
         `UPDATE payment_requests
          SET paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, payment_note = ?
          WHERE request_id = ?`
       ).run(nextPaid, paidAtISO, paidBy, paymentNote, requestID);
 
-      if (nextPaid >= requested) {
+      if (nextPaid >= requestedFresh) {
         syncStaffLoanDisbursementOnFullPay(db, requestID, paidAtISO);
       }
 
@@ -6603,7 +6618,7 @@ export function payPaymentRequest(db, requestID, payload) {
         action: 'payment_request.pay',
         entityKind: 'payment_request',
         entityId: requestID,
-        note: paymentNote || row.description || 'Payment request paid',
+        note: paymentNote || fresh.description || 'Payment request paid',
         details: {
           amountPaidNgn: totalPaid,
           paidAmountNgn: nextPaid,
@@ -6613,15 +6628,17 @@ export function payPaymentRequest(db, requestID, payload) {
         },
       });
 
-      return created;
+      return { movements: created, paidAmountNgn: nextPaid, requestedFresh };
     })();
 
-    const paidAmountNgn = alreadyPaid + totalPaid;
-    const fullyPaid = paidAmountNgn >= requested;
-    const remain = Math.max(0, requested - paidAmountNgn);
+    const movements = txResult.movements;
+    const paidAmountNgn = txResult.paidAmountNgn;
+    const requestedAfter = txResult.requestedFresh;
+    const fullyPaid = paidAmountNgn >= requestedAfter;
+    const remain = Math.max(0, requestedAfter - paidAmountNgn);
     const payLine = fullyPaid
       ? `Accounts: treasury paid ₦${totalPaid.toLocaleString('en-NG')} toward ${requestID} (now fully paid; total ₦${paidAmountNgn.toLocaleString('en-NG')}).`
-      : `Accounts: treasury paid ₦${totalPaid.toLocaleString('en-NG')} toward ${requestID} (partial; ₦${remain.toLocaleString('en-NG')} remaining of ₦${requested.toLocaleString('en-NG')}).`;
+      : `Accounts: treasury paid ₦${totalPaid.toLocaleString('en-NG')} toward ${requestID} (partial; ₦${remain.toLocaleString('en-NG')} remaining of ₦${requestedAfter.toLocaleString('en-NG')}).`;
     appendPaymentRequestTimelineToOfficeThreads(db, requestID, payLine);
 
     return {
@@ -6756,23 +6773,38 @@ export function payRefundEntry(db, refundId, payload) {
   try {
     assertPeriodOpen(db, paidAtISO, 'Refund payout date');
     const result = db.transaction(() => {
+      const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+      if (!fresh) throw new Error('Refund not found.');
+      if (String(fresh.status || '') !== 'Approved') {
+        throw new Error('Only approved refunds can be paid.');
+      }
+      const approvedFresh = roundMoney(fresh.approved_amount_ngn || fresh.amount_ngn);
+      const paidFresh = roundMoney(fresh.paid_amount_ngn);
+      const outstandingFresh = effectiveOutstandingNgn(approvedFresh, paidFresh);
+      if (outstandingFresh <= 0) {
+        throw new Error('Refund has already been fully paid.');
+      }
+      if (payoutAmountNgn > outstandingFresh) {
+        throw new Error('Payout exceeds the approved refund balance.');
+      }
+
       const movements = insertTreasurySplitTx(db, paymentLines.map((line) => ({ ...line, amountNgn: -line.amountNgn })), {
         type: 'REFUND_PAYOUT',
         postedAtISO: paidAtISO,
         counterpartyKind: 'CUSTOMER',
-        counterpartyId: row.customer_id,
-        counterpartyName: row.customer_name,
+        counterpartyId: fresh.customer_id,
+        counterpartyName: fresh.customer_name,
         sourceKind: 'REFUND',
         sourceId: refundId,
         reference: payload.reference || refundId,
-        note: paymentNote || row.reason || 'Customer refund',
+        note: paymentNote || fresh.reason || 'Customer refund',
         createdBy: paidBy,
         workspaceBranchId: payload.workspaceBranchId,
         workspaceViewAll: Boolean(payload.workspaceViewAll),
         actor: payload.actor,
       });
-      const nextPaidAmountNgn = paidAmountNgn + payoutAmountNgn;
-      const fullyPaid = nextPaidAmountNgn >= approvedAmountNgn;
+      const nextPaidAmountNgn = paidFresh + payoutAmountNgn;
+      const fullyPaid = nextPaidAmountNgn >= approvedFresh;
       db.prepare(
         `UPDATE customer_refunds
          SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, payment_note = ?
@@ -6782,7 +6814,7 @@ export function payRefundEntry(db, refundId, payload) {
         nextPaidAmountNgn,
         paidAtISO,
         paidBy,
-        paymentNote || row.payment_note || null,
+        paymentNote || fresh.payment_note || null,
         refundId
       );
       appendAuditLog(db, {
@@ -6790,10 +6822,10 @@ export function payRefundEntry(db, refundId, payload) {
         action: 'refund.pay',
         entityKind: 'refund',
         entityId: refundId,
-        note: paymentNote || row.reason || 'Customer refund payout recorded',
+        note: paymentNote || fresh.reason || 'Customer refund payout recorded',
         details: {
           payoutAmountNgn,
-          approvedAmountNgn,
+          approvedAmountNgn: approvedFresh,
           paidAmountNgn: nextPaidAmountNgn,
           treasuryAccountIds: movements.map((movement) => movement.treasuryAccountId),
         },
@@ -6803,7 +6835,7 @@ export function payRefundEntry(db, refundId, payload) {
         payoutAmountNgn,
         cumulativePaidNgn: nextPaidAmountNgn,
         entryDateISO: paidAtISO.slice(0, 10),
-        branchId: row.branch_id ?? null,
+        branchId: fresh.branch_id ?? null,
         createdByUserId: payload.actor?.id != null ? String(payload.actor.id) : null,
       });
       if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {

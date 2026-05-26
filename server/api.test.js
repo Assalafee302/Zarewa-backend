@@ -1582,6 +1582,60 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     ).toHaveLength(2);
   });
 
+  it('POST /api/payment-requests/:requestId/pay rejects a second full payout when already paid', async () => {
+    const before = await agent.get('/api/bootstrap');
+    const cashAccount = before.body.treasuryAccounts[0];
+
+    const expense = await agent.post('/api/expenses').send({
+      expenseType: 'Duplicate pay guard',
+      amountNgn: 25_000,
+      date: '2026-03-29',
+      category: 'Maintenance',
+      paymentMethod: 'Cash',
+      reference: 'EXP-DUP-PAY',
+    });
+    expect(expense.status).toBe(201);
+
+    const requestCreate = await agent.post('/api/payment-requests').send({
+      expenseID: expense.body.expenseID,
+      amountRequestedNgn: 25_000,
+      requestDate: '2026-03-29',
+      description: 'Duplicate payout guard',
+    });
+    expect(requestCreate.status).toBe(201);
+
+    const approve = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/decision`)
+      .send({ status: 'Approved', note: 'ok' });
+    expect(approve.status).toBe(200);
+
+    const payOnce = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/pay`)
+      .send({
+        paymentLines: [{ treasuryAccountId: cashAccount.id, amountNgn: 25_000, reference: 'ONCE' }],
+      });
+    expect(payOnce.status).toBe(201);
+    expect(payOnce.body.ok).toBe(true);
+
+    const payAgain = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(requestCreate.body.requestID)}/pay`)
+      .send({
+        paymentLines: [{ treasuryAccountId: cashAccount.id, amountNgn: 25_000, reference: 'TWICE' }],
+      });
+    expect(payAgain.status).toBe(400);
+    expect(payAgain.body.ok).toBe(false);
+    expect(String(payAgain.body.error || '')).toMatch(/already fully paid/i);
+
+    const after = await agent.get('/api/bootstrap');
+    const reqRow = after.body.paymentRequests.find((r) => r.requestID === requestCreate.body.requestID);
+    expect(reqRow.paidAmountNgn).toBe(25_000);
+    expect(
+      after.body.treasuryMovements.filter(
+        (m) => m.sourceKind === 'PAYMENT_REQUEST' && m.sourceId === requestCreate.body.requestID
+      )
+    ).toHaveLength(1);
+  });
+
   it('POST /api/payment-requests/:requestId/reverse-treasury-payout zeros paid and posts compensating movements', async () => {
     const before = await agent.get('/api/bootstrap');
     const cashAccount = before.body.treasuryAccounts[0];

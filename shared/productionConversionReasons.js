@@ -54,8 +54,9 @@ export function conversionReasonOptionsForBand(band) {
 export function findConversionReasonOption(code, band = null) {
   const c = String(code ?? '').trim();
   if (!c) return null;
-  const inBand = conversionReasonOptionsForBand(band).find((o) => o.code === c);
-  if (inBand) return inBand;
+  if (band) {
+    return conversionReasonOptionsForBand(band).find((o) => o.code === c) ?? null;
+  }
   return ALL_BY_CODE.get(c) ?? null;
 }
 

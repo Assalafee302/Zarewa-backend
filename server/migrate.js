@@ -733,6 +733,9 @@ export function runMigrations(db) {
       manager_review_signed_by_user_id TEXT,
       manager_review_signed_by_name TEXT,
       manager_review_remark TEXT,
+      conversion_variance_reason_code TEXT,
+      conversion_variance_reason_text TEXT,
+      conversion_variance_band TEXT,
       coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0,
       offcut_inventory_meters REAL NOT NULL DEFAULT 0,
       FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)

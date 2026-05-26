@@ -1533,10 +1533,21 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
 
 function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
-  const metres = offcutMetersFromPayload(payload);
+  let metres = offcutMetersFromPayload(payload);
+  let offInv = offcutInventoryMetersFromPayload(payload);
+  const offcutSupplyRaw = payload.offcutSupply ?? payload.offcutIssues ?? payload.offcut_supply;
+  const offcutSupplyList = Array.isArray(offcutSupplyRaw) ? offcutSupplyRaw : [];
+  if (offcutSupplyList.length > 0) {
+    const supplySum = offcutSupplyList.reduce((s, row) => s + (Number(row.meters) || 0), 0);
+    if (supplySum > 0) {
+      if (offInv <= 0) offInv = supplySum;
+      if (metres <= 0) metres = supplySum;
+    }
+  }
   if (!Number.isFinite(metres) || metres < 0) {
     return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
   }
+  if (offInv <= 0 && metres > 0) offInv = metres;
   let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
@@ -1544,6 +1555,21 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       const accPlan = planAccessoryCompletion(db, job, payload);
       if (!accPlan.ok) throw new Error(accPlan.error);
       accessoryStockWarnings = accPlan.accessoryStockWarnings ?? [];
+
+      let offcutSupplyJson = null;
+      if (offcutSupplyList.length > 0) {
+        const supply = issueOffcutSupplyForProductionTx(db, job, offcutSupplyList, opts.actor);
+        offcutSupplyJson = JSON.stringify(supply);
+        const sumIssued = supply.reduce((s, x) => s + (Number(x.meters) || 0), 0);
+        if (sumIssued > 0) {
+          if (offInv <= 0) offInv = sumIssued;
+          if (Math.abs(sumIssued - offInv) > 0.02) {
+            throw new Error(
+              `Offcut issue total (${sumIssued.toFixed(2)} m) must match offcut stock metres (${offInv.toFixed(2)} m).`
+            );
+          }
+        }
+      }
 
       const allocations = listJobCoilsForJob(db, jobID);
       for (const row of allocations) {
@@ -1575,12 +1601,34 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
           detail: `${jobID} completed from offcut/accessories mode (${job.product_name || job.product_id})`,
         });
       }
-      db.prepare(
-        `UPDATE production_jobs
-         SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
-         WHERE job_id = ?`
-      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, metres, jobID);
+      const pjColsOffcut = db.prepare(`PRAGMA table_info(production_jobs)`).all();
+      const hasOffcutSupplyCol = pjColsOffcut.some((c) => c.name === 'offcut_supply_json');
+      if (hasOffcutSupplyCol) {
+        db.prepare(
+          `UPDATE production_jobs
+           SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+               conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?, offcut_supply_json = ?
+           WHERE job_id = ?`
+        ).run(
+          'Completed',
+          completedAtISO.slice(0, 10),
+          completedAtISO,
+          metres,
+          0,
+          'OK',
+          0,
+          offInv,
+          offcutSupplyJson,
+          jobID
+        );
+      } else {
+        db.prepare(
+          `UPDATE production_jobs
+           SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+               conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
+           WHERE job_id = ?`
+        ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, offInv, jobID);
+      }
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }
@@ -1599,7 +1647,12 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
         entityKind: 'production_job',
         entityId: jobID,
         note: `Production completed on ${jobID} (offcut/accessories mode)`,
-        details: { totalMeters: metres, releasedCoilLines: allocations.length, offcutInventoryMeters: metres },
+        details: {
+          totalMeters: metres,
+          releasedCoilLines: allocations.length,
+          offcutInventoryMeters: offInv,
+          offcutSupplyCount: offcutSupplyList.length,
+        },
       });
       const glRec = tryPostProductionRecognitionGlTx(db, {
         jobID,

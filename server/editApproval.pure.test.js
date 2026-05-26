@@ -5,6 +5,8 @@ import {
   handlePatchWithEditApprovalQuotation,
   consumeEditApprovalInTransaction,
   createEditApprovalRequest,
+  receiptFinanceSettlementRequiresEditApproval,
+  salesReceiptReconciliationIsFinalized,
 } from './editApproval.js';
 
 function mockRes() {
@@ -132,6 +134,96 @@ describe('editApproval (no MySQL)', () => {
     expect(() =>
       consumeEditApprovalInTransaction(db, '123456', 'purchase_order', 'PO-1')
     ).toThrow(/Invalid|expired|already used|mismatched/i);
+  });
+
+  it('receipt finance settlement: first reconcile skips token; second requires it', () => {
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('finance_reconciliation_saved_at_iso FROM sales_receipts')) {
+          return {
+            get: vi.fn((id) =>
+              id === 'RC-FINAL' ? { finance_reconciliation_saved_at_iso: '2026-05-01' } : { finance_reconciliation_saved_at_iso: null }
+            ),
+          };
+        }
+        return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
+      },
+    };
+    const finance = { roleKey: 'finance_officer', permissions: ['finance.post'] };
+    expect(salesReceiptReconciliationIsFinalized(db, 'RC-FINAL')).toBe(true);
+    expect(salesReceiptReconciliationIsFinalized(db, 'RC-NEW')).toBe(false);
+    expect(receiptFinanceSettlementRequiresEditApproval(db, finance, 'RC-NEW')).toBe(false);
+    expect(receiptFinanceSettlementRequiresEditApproval(db, finance, 'RC-FINAL')).toBe(true);
+    expect(receiptFinanceSettlementRequiresEditApproval(db, { roleKey: 'admin' }, 'RC-FINAL')).toBe(false);
+  });
+
+  it('handlePatchWithEditApproval: finance first receipt reconcile skips token', () => {
+    const res = mockRes();
+    const db = {
+      exec: vi.fn(),
+      transaction(fn) {
+        return () => fn();
+      },
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('finance_reconciliation_saved_at_iso FROM sales_receipts')) {
+          return { get: vi.fn(() => ({ finance_reconciliation_saved_at_iso: null })) };
+        }
+        return { get: vi.fn(), run: vi.fn(() => ({ changes: 0 })), all: vi.fn(() => []) };
+      },
+    };
+    const finance = { roleKey: 'finance_officer' };
+    const executeWrite = vi.fn(() => ({ ok: true }));
+    handlePatchWithEditApproval(
+      res,
+      db,
+      finance,
+      { bankReceivedAmountNgn: 1000 },
+      'sales_receipt',
+      'RC-NEW',
+      executeWrite,
+      {
+        requiresEditApproval: (database, user, receiptId) =>
+          receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
+      }
+    );
+    expect(executeWrite).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('handlePatchWithEditApproval: finance second receipt reconcile requires token', () => {
+    const res = mockRes();
+    const db = {
+      exec: vi.fn(),
+      transaction(fn) {
+        return () => fn();
+      },
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('finance_reconciliation_saved_at_iso FROM sales_receipts')) {
+          return { get: vi.fn(() => ({ finance_reconciliation_saved_at_iso: '2026-05-01' })) };
+        }
+        return { get: vi.fn(), run: vi.fn(() => ({ changes: 0 })), all: vi.fn(() => []) };
+      },
+    };
+    const finance = { roleKey: 'finance_officer' };
+    handlePatchWithEditApproval(
+      res,
+      db,
+      finance,
+      { bankReceivedAmountNgn: 1000 },
+      'sales_receipt',
+      'RC-FINAL',
+      () => ({ ok: true }),
+      {
+        requiresEditApproval: (database, user, receiptId) =>
+          receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
+      }
+    );
+    expect(res.statusCode).toBe(403);
+    expect(res.payload?.code).toBe('EDIT_APPROVAL_REQUIRED');
+    expect(String(res.payload?.error || '')).toMatch(/already reconciled once/i);
   });
 
   it('createEditApprovalRequest returns EDIT_APPROVAL_ALREADY_PENDING when a pending row exists', () => {

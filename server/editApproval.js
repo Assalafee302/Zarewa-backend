@@ -2,7 +2,7 @@
  * Second-party approval for sensitive PATCH (edit) operations.
  * Exempt roles: admin, md. Everyone else must obtain an approved token (single-use) per edit.
  */
-import { editMutationRequiresSecondApproval, userCanApproveEditMutations } from './auth.js';
+import { editMutationRequiresSecondApproval, userCanApproveEditMutations, userHasPermission } from './auth.js';
 import { appendAuditLog } from './controlOps.js';
 
 export function ensureEditApprovalTable(db) {
@@ -199,6 +199,75 @@ export function stripEditApprovalFromBody(body) {
   return rest;
 }
 
+/** @param {import('better-sqlite3').Database} db */
+export function salesReceiptReconciliationIsFinalized(db, receiptId) {
+  const id = String(receiptId || '').trim();
+  if (!id) return false;
+  const row = db
+    .prepare(`SELECT finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = ?`)
+    .get(id);
+  return (
+    row?.finance_reconciliation_saved_at_iso != null &&
+    String(row.finance_reconciliation_saved_at_iso).trim() !== ''
+  );
+}
+
+/** Admin, MD, or finance.approve may revise reconciled receipts without a second-party token. */
+export function userMayBypassReceiptSettlementEditApproval(user) {
+  if (!editMutationRequiresSecondApproval(user)) return true;
+  return Boolean(user && (userHasPermission(user, '*') || userHasPermission(user, 'finance.approve')));
+}
+
+/**
+ * Receipt finance settlement: first reconcile is open to Finance/Cashier; second edit needs manager token.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function receiptFinanceSettlementRequiresEditApproval(db, user, receiptId) {
+  if (userMayBypassReceiptSettlementEditApproval(user)) return false;
+  return salesReceiptReconciliationIsFinalized(db, receiptId);
+}
+
+/**
+ * Standalone ledger receipt treasury correction follows the same first-free / second-gated rule.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function ledgerReceiptMovementRevisionRequiresEditApproval(db, user, movementId) {
+  if (userMayBypassReceiptSettlementEditApproval(user)) return false;
+  const mid = String(movementId || '').trim();
+  if (!mid) return false;
+  const row = db
+    .prepare(`SELECT source_id, type, source_kind FROM treasury_movements WHERE id = ?`)
+    .get(mid);
+  if (!row || String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
+    return editMutationRequiresSecondApproval(user);
+  }
+  const sid = String(row.source_id || '').trim();
+  if (!sid) return false;
+  const lockRow = db
+    .prepare(
+      `SELECT finance_reconciliation_saved_at_iso FROM sales_receipts
+       WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
+    )
+    .get(sid, sid);
+  return (
+    lockRow?.finance_reconciliation_saved_at_iso != null &&
+    String(lockRow.finance_reconciliation_saved_at_iso).trim() !== ''
+  );
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} user
+ * @param {string} entityId
+ * @param {{ requiresEditApproval?: (db: import('better-sqlite3').Database, user: object, entityId: string) => boolean }} [options]
+ */
+function patchNeedsEditApprovalToken(db, user, entityId, options = {}) {
+  if (typeof options.requiresEditApproval === 'function') {
+    return options.requiresEditApproval(db, user, entityId);
+  }
+  return editMutationRequiresSecondApproval(user);
+}
+
 /**
  * Shared guard for PATCH/POST bodies that carry `editApprovalId` (single-use token for non-exempt roles).
  * @param {import('express').Response} res
@@ -271,9 +340,9 @@ export function handleWriteWithEditApproval(res, db, user, body, entityKind, ent
  * @param {string} entityId
  * @param {(strippedBody: object, ctx?: { withinEditApprovalTransaction?: boolean }) => { ok: boolean, error?: string, code?: string }} executeWrite — sync; pass ctx.withinEditApprovalTransaction true when callee must not nest db.transaction (edit-approval outer tx on MySQL).
  */
-export function handlePatchWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite) {
+export function handlePatchWithEditApproval(res, db, user, body, entityKind, entityId, executeWrite, options = {}) {
   const stripped = stripEditApprovalFromBody(body || {});
-  if (!editMutationRequiresSecondApproval(user)) {
+  if (!patchNeedsEditApprovalToken(db, user, entityId, options)) {
     const r = executeWrite(stripped, { withinEditApprovalTransaction: false });
     if (!r.ok && (r.code === 'DUPLICATE_CUSTOMER_REGISTRATION' || r.code === 'DUPLICATE_SUPPLIER_REGISTRATION'))
       return res.status(409).json(r);
@@ -281,11 +350,16 @@ export function handlePatchWithEditApproval(res, db, user, body, entityKind, ent
   }
   const aid = String(body?.editApprovalId ?? '').trim();
   if (!aid) {
+    const receiptRevision =
+      entityKind === 'sales_receipt' &&
+      typeof options.requiresEditApproval === 'function' &&
+      salesReceiptReconciliationIsFinalized(db, entityId);
     return res.status(403).json({
       ok: false,
       code: 'EDIT_APPROVAL_REQUIRED',
-      error:
-        'A manager or administrator must approve this change first. Request an approval (Procurement / quotation save panel, or POST /api/edit-approvals/request), have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
+      error: receiptRevision
+        ? 'This receipt was already reconciled once. A manager must approve before you can change it again — request approval, then enter the 6-digit code and retry.'
+        : 'A manager or administrator must approve this change first. Request an approval (Procurement / quotation save panel, or POST /api/edit-approvals/request), have them approve it on the Manager dashboard, then enter the 6-digit code and retry.',
     });
   }
   try {

@@ -7520,26 +7520,6 @@ export function patchSalesReceiptBankConfirmation(db, receiptId, confirmed, acto
   return { ok: true };
 }
 
-function userMayReviseFinalizedReceiptSettlement(actor) {
-  return (
-    actor && (userHasPermission(actor, '*') || userHasPermission(actor, 'finance.approve'))
-  );
-}
-
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} movementSourceId
- */
-function findSalesReceiptLockRowByMovementSource(db, movementSourceId) {
-  const s = String(movementSourceId || '').trim();
-  if (!s) return null;
-  return db
-    .prepare(
-      `SELECT id, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
-    )
-    .get(s, s);
-}
-
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} movementRow treasury_movements row
@@ -7588,18 +7568,6 @@ export function ledgerReceiptTreasuryMovementCorrectTx(
   if (bypassReceiptLock) {
     const bel = assertLedgerReceiptMovementBelongsToReceipt(db, row, receiptId);
     if (!bel.ok) return bel;
-  } else {
-    const lockRow = findSalesReceiptLockRowByMovementSource(db, row.source_id);
-    if (
-      lockRow?.finance_reconciliation_saved_at_iso &&
-      !userMayReviseFinalizedReceiptSettlement(actor)
-    ) {
-      return {
-        ok: false,
-        error:
-          'This receipt reconciliation was finalized. Only a user with finance approval access can revise payment lines.',
-      };
-    }
   }
 
   const oldAmt = roundMoney(row.amount_ngn);
@@ -7972,7 +7940,7 @@ export function patchExpenseOutflowTreasuryMovement(db, movementId, payload, act
 
 /**
  * Finance: record amount actually received in bank, optional delivery clearance, optional batched
- * payment-line corrections, and mark reconciliation finalized (MD may revise later).
+ * payment-line corrections, and mark reconciliation finalized (second edit needs manager token).
  * @param {import('better-sqlite3').Database} db
  * @param {string} receiptId
  * @param {{
@@ -7997,13 +7965,6 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
 
   const finalized =
     row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
-  if (finalized && !userMayReviseFinalizedReceiptSettlement(actor)) {
-    return {
-      ok: false,
-      error:
-        'This receipt reconciliation was finalized. Only a user with finance approval access can change settlement.',
-    };
-  }
 
   const clearForDelivery = Boolean(payload?.clearForDelivery);
   const rawAmt = payload?.bankReceivedAmountNgn;

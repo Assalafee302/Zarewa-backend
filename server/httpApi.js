@@ -132,7 +132,9 @@ import {
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
   handleWriteWithEditApproval,
+  ledgerReceiptMovementRevisionRequiresEditApproval,
   listPendingEditApprovals,
+  receiptFinanceSettlementRequiresEditApproval,
   stripEditApprovalFromBody,
 } from './editApproval.js';
 import {
@@ -2942,8 +2944,18 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const rid = String(req.params.receiptId || '');
-        return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'sales_receipt', rid, (stripped) =>
-          write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user)
+        return handlePatchWithEditApproval(
+          res,
+          db,
+          req.user,
+          req.body || {},
+          'sales_receipt',
+          rid,
+          (stripped) => write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user),
+          {
+            requiresEditApproval: (database, user, receiptId) =>
+              receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
+          }
         );
       } catch (e) {
         console.error(e);
@@ -2968,7 +2980,11 @@ export function registerHttpApi(app, db) {
           req.body || {},
           'treasury_movement',
           movementId,
-          (stripped) => write.patchLedgerReceiptTreasuryMovement(db, movementId, stripped || {}, req.user)
+          (stripped) => write.patchLedgerReceiptTreasuryMovement(db, movementId, stripped || {}, req.user),
+          {
+            requiresEditApproval: (database, user, mid) =>
+              ledgerReceiptMovementRevisionRequiresEditApproval(database, user, mid),
+          }
         );
       } catch (e) {
         console.error(e);

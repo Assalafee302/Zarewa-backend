@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from './db.js';
 import { runMigrations } from './migrate.js';
+import { upsertTreasuryAccount } from './controlOps.js';
 import { listTreasuryAccounts } from './readModel.js';
 
 describe('treasury accounts per branch', () => {
@@ -33,6 +34,33 @@ describe('treasury accounts per branch', () => {
       expect(mdg[0].branchId).toBe('BR-MDG');
 
       expect(all).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('upsertTreasuryAccount ignores branchId ALL and uses workspace branch', () => {
+    const db = createDatabase(':memory:');
+    try {
+      runMigrations(db);
+      const r = upsertTreasuryAccount(
+        db,
+        {
+          name: 'Yola POS',
+          bankName: 'Zenith',
+          balance: 0,
+          type: 'Bank',
+          accNo: '999',
+          branchId: 'ALL',
+          workspaceBranchId: 'BR-YL',
+        },
+        { id: 'u1', username: 'fin', roleKey: 'finance_manager' }
+      );
+      expect(r.ok).toBe(true);
+      const yola = listTreasuryAccounts(db, 'BR-YL');
+      const kd = listTreasuryAccounts(db, 'BR-KD');
+      expect(yola.some((a) => a.name === 'Yola POS')).toBe(true);
+      expect(kd.some((a) => a.name === 'Yola POS')).toBe(false);
     } finally {
       db.close();
     }

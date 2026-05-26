@@ -1,6 +1,6 @@
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
-import { DEFAULT_BRANCH_ID } from './branches.js';
+import { DEFAULT_BRANCH_ID, getBranch } from './branches.js';
 import {
   nextApprovalActionHumanId,
   nextAuditLogHumanId,
@@ -2858,6 +2858,25 @@ function positiveNumber(value) {
   return Number.isFinite(next) && next > 0 ? next : null;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [preferred]
+ * @param {string} [workspaceBranchId]
+ */
+function resolveTreasuryAccountBranchId(db, preferred, workspaceBranchId) {
+  const wb = String(workspaceBranchId || '').trim();
+  const raw = String(preferred || wb || '').trim();
+  if (raw && raw !== 'ALL') {
+    const br = getBranch(db, raw);
+    if (br?.id) return br.id;
+  }
+  if (wb && wb !== 'ALL') {
+    const br = getBranch(db, wb);
+    if (br?.id) return br.id;
+  }
+  return DEFAULT_BRANCH_ID;
+}
+
 export function upsertTreasuryAccount(db, payload, actor) {
   const name = String(payload.name ?? '').trim();
   if (!name) return { ok: false, error: 'Account name is required.' };
@@ -2880,7 +2899,11 @@ export function upsertTreasuryAccount(db, payload, actor) {
   let savedId = null;
   try {
     db.transaction(() => {
-      const branchId = String(payload.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const branchId = resolveTreasuryAccountBranchId(
+        db,
+        payload.branchId,
+        payload.workspaceBranchId
+      );
       if (payload.id) {
         db.prepare(
           `UPDATE treasury_accounts

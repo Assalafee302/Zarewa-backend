@@ -4832,11 +4832,16 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/accounts', requirePermission('treasury.manage'), (req, res) => {
     try {
+      const createScope = assertSingleBranchWorkspaceForCreate(req);
+      if (!createScope.ok) {
+        return res.status(400).json(createScope);
+      }
       const r = upsertTreasuryAccount(
         db,
         {
           ...(req.body || {}),
           branchId: String(req.body?.branchId || req.workspaceBranchId || '').trim() || undefined,
+          workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         },
         req.user
       );

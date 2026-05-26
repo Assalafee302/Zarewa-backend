@@ -2877,6 +2877,11 @@ function resolveTreasuryAccountBranchId(db, preferred, workspaceBranchId) {
   return DEFAULT_BRANCH_ID;
 }
 
+function actorMayAssignTreasuryBranch(actor) {
+  const rk = String(actor?.roleKey || '').trim().toLowerCase();
+  return rk === 'admin' || rk === 'md' || rk === 'ceo';
+}
+
 export function upsertTreasuryAccount(db, payload, actor) {
   const name = String(payload.name ?? '').trim();
   if (!name) return { ok: false, error: 'Account name is required.' };
@@ -2904,26 +2909,54 @@ export function upsertTreasuryAccount(db, payload, actor) {
         payload.branchId,
         payload.workspaceBranchId
       );
+      const mayReassignBranch =
+        actorMayAssignTreasuryBranch(actor) &&
+        Object.prototype.hasOwnProperty.call(payload, 'branchId') &&
+        String(payload.branchId ?? '').trim();
       if (payload.id) {
-        db.prepare(
-          `UPDATE treasury_accounts
-           SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
-               account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?
-           WHERE id = ?`
-        ).run(
-          name,
-          String(payload.bankName ?? '').trim(),
-          balance,
-          openingBalanceNgn,
-          String(payload.type ?? 'Bank').trim() || 'Bank',
-          String(payload.accNo ?? '').trim() || 'N/A',
-          accountOfficerName,
-          accountOfficerPhone,
-          bankBranch,
-          sortCodeOrSwift,
-          notes,
-          Number(payload.id)
-        );
+        if (mayReassignBranch) {
+          db.prepare(
+            `UPDATE treasury_accounts
+             SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
+                 account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?,
+                 branch_id = ?
+             WHERE id = ?`
+          ).run(
+            name,
+            String(payload.bankName ?? '').trim(),
+            balance,
+            openingBalanceNgn,
+            String(payload.type ?? 'Bank').trim() || 'Bank',
+            String(payload.accNo ?? '').trim() || 'N/A',
+            accountOfficerName,
+            accountOfficerPhone,
+            bankBranch,
+            sortCodeOrSwift,
+            notes,
+            branchId,
+            Number(payload.id)
+          );
+        } else {
+          db.prepare(
+            `UPDATE treasury_accounts
+             SET name = ?, bank_name = ?, balance = ?, opening_balance_ngn = ?, type = ?, acc_no = ?,
+                 account_officer_name = ?, account_officer_phone = ?, bank_branch = ?, sort_code_or_swift = ?, notes = ?
+             WHERE id = ?`
+          ).run(
+            name,
+            String(payload.bankName ?? '').trim(),
+            balance,
+            openingBalanceNgn,
+            String(payload.type ?? 'Bank').trim() || 'Bank',
+            String(payload.accNo ?? '').trim() || 'N/A',
+            accountOfficerName,
+            accountOfficerPhone,
+            bankBranch,
+            sortCodeOrSwift,
+            notes,
+            Number(payload.id)
+          );
+        }
       } else {
         db.prepare(
           `INSERT INTO treasury_accounts (name, bank_name, balance, opening_balance_ngn, type, acc_no, account_officer_name, account_officer_phone, bank_branch, sort_code_or_swift, notes, branch_id)

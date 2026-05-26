@@ -39,6 +39,48 @@ describe('treasury accounts per branch', () => {
     }
   });
 
+  it('upsertTreasuryAccount allows admin to reassign branch on update', () => {
+    const db = createDatabase(':memory:');
+    try {
+      runMigrations(db);
+      const created = upsertTreasuryAccount(
+        db,
+        {
+          name: 'Mis-tagged',
+          bankName: 'GTBank',
+          balance: 0,
+          type: 'Bank',
+          accNo: '123',
+          workspaceBranchId: 'BR-KD',
+        },
+        { id: 'u1', username: 'fin', roleKey: 'finance_manager' }
+      );
+      expect(created.ok).toBe(true);
+      const admin = { id: 'a1', username: 'admin', roleKey: 'admin' };
+      const moved = upsertTreasuryAccount(
+        db,
+        {
+          id: created.id,
+          name: 'Mis-tagged',
+          bankName: 'GTBank',
+          balance: 0,
+          type: 'Bank',
+          accNo: '123',
+          branchId: 'BR-YL',
+          workspaceBranchId: 'BR-KD',
+        },
+        admin
+      );
+      expect(moved.ok).toBe(true);
+      const yola = listTreasuryAccounts(db, 'BR-YL');
+      const kd = listTreasuryAccounts(db, 'BR-KD');
+      expect(yola.some((a) => a.name === 'Mis-tagged')).toBe(true);
+      expect(kd.some((a) => a.name === 'Mis-tagged')).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it('upsertTreasuryAccount ignores branchId ALL and uses workspace branch', () => {
     const db = createDatabase(':memory:');
     try {

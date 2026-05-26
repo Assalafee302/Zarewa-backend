@@ -354,6 +354,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
       summary: null,
       ledgerEntries: [],
       receipts: [],
+      salesReceipts: [],
       cuttingLists: [],
       productionLogs: [],
       conversionChecks: [],
@@ -370,8 +371,11 @@ export function listManagerQuotationAudit(db, quotationRef) {
   const quotation = getQuotation(db, qid);
   const qRow = db
     .prepare(
-      `SELECT id, customer_name, total_ngn, paid_ngn, status, payment_status,
-        manager_cleared_at_iso, manager_flagged_at_iso, manager_production_approved_at_iso
+      `SELECT id, customer_name, total_ngn, paid_ngn, status, payment_status, handled_by, date_iso,
+        manager_cleared_at_iso, manager_flagged_at_iso, manager_production_approved_at_iso,
+        bm_price_exception_approved_at_iso, bm_price_exception_approved_by_user_id,
+        price_exception_md_confirmed_at_iso, price_exception_md_confirmed_by_user_id,
+        md_price_exception_approved_at_iso, md_price_exception_approved_by_user_id
        FROM quotations WHERE id = ?`
     )
     .get(qid);
@@ -402,11 +406,20 @@ export function listManagerQuotationAudit(db, quotationRef) {
     .prepare(
       `SELECT job_id, cutting_list_id, product_name, planned_meters, actual_meters, actual_weight_kg, status,
         conversion_alert_state, manager_review_required, completed_at_iso, operator_name,
-        manager_review_signed_at_iso, manager_review_remark,
+        manager_review_signed_at_iso, manager_review_signed_by_name, manager_review_remark,
         start_date_iso, end_date_iso, machine_name, materials_note, created_at_iso
        FROM production_jobs
        WHERE quotation_ref = ?
        ORDER BY (completed_at_iso IS NULL), completed_at_iso DESC, created_at_iso DESC`
+    )
+    .all(qid);
+
+  const salesReceipts = db
+    .prepare(
+      `SELECT id, date_iso, amount_ngn, method, status, handled_by
+       FROM sales_receipts
+       WHERE quotation_ref = ?
+       ORDER BY date_iso DESC, id DESC`
     )
     .all(qid);
 
@@ -443,8 +456,9 @@ export function listManagerQuotationAudit(db, quotationRef) {
 
   const refunds = db
     .prepare(
-      `SELECT refund_id, product, reason_category, amount_ngn, status, requested_at_iso, approved_amount_ngn,
-        paid_amount_ngn, reason, calculation_notes, cutting_list_ref, manager_comments
+      `SELECT refund_id, product, reason_category, amount_ngn, status, requested_at_iso, requested_by,
+        approval_date, approved_by, approved_amount_ngn, paid_amount_ngn, paid_by, paid_at_iso,
+        reason, calculation_notes, cutting_list_ref, manager_comments
        FROM customer_refunds
        WHERE quotation_ref = ?
        ORDER BY requested_at_iso DESC`
@@ -494,6 +508,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
       : null,
     ledgerEntries,
     receipts,
+    salesReceipts,
     cuttingLists,
     productionLogs,
     conversionChecks,

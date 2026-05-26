@@ -11,6 +11,62 @@ function pushEvent(events, row) {
   events.push(row);
 }
 
+function resolveUserDisplayName(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid || !tableExists(db, 'app_users')) return '';
+  const row = db.prepare(`SELECT display_name FROM app_users WHERE id = ? LIMIT 1`).get(uid);
+  return String(row?.display_name || '').trim();
+}
+
+function latestTimelineActor(timeline, action) {
+  const hit = (timeline || []).find((e) => String(e.action || '') === action);
+  return hit ? { by: hit.actor || '', atIso: hit.atIso || '' } : { by: '', atIso: '' };
+}
+
+function buildQuotationStageActors(db, auditPayload, activityTimeline) {
+  const q = auditPayload.quotation || {};
+  const sum = auditPayload.summary || {};
+  const clearAudit = latestTimelineActor(activityTimeline, 'quotation.clear');
+  const flagAudit = latestTimelineActor(activityTimeline, 'quotation.flag');
+  const prodAudit = latestTimelineActor(activityTimeline, 'quotation.approve_production');
+  const bmAudit = latestTimelineActor(activityTimeline, 'quotation.bm_price_exception_approve');
+  const mdAudit = latestTimelineActor(activityTimeline, 'quotation.md_price_exception_confirm');
+  const bmBy = resolveUserDisplayName(db, q.bmPriceExceptionApprovedByUserId) || bmAudit.by;
+  const mdBy =
+    resolveUserDisplayName(db, q.priceExceptionMdConfirmedByUserId) ||
+    resolveUserDisplayName(db, q.mdPriceExceptionApprovedByUserId) ||
+    mdAudit.by;
+
+  return {
+    quotation: { by: q.handledBy || '', atIso: q.dateISO || '', label: 'Quoted / prepared' },
+    managerClear: {
+      by: clearAudit.by,
+      atIso: sum.managerClearedAtIso || clearAudit.atIso,
+      label: 'Manager clearance',
+    },
+    managerFlag: {
+      by: flagAudit.by,
+      atIso: sum.managerFlaggedAtIso || flagAudit.atIso,
+      label: 'Manager flag',
+    },
+    managerProduction: {
+      by: prodAudit.by,
+      atIso: sum.managerProductionApprovedAtIso || prodAudit.atIso,
+      label: 'Production override',
+    },
+    bmPriceException: {
+      by: bmBy,
+      atIso: q.bmPriceExceptionApprovedAtISO || bmAudit.atIso,
+      label: 'Below-floor (branch)',
+    },
+    mdPriceException: {
+      by: mdBy,
+      atIso: q.priceExceptionMdConfirmedAtISO || q.mdPriceExceptionApprovedAtISO || mdAudit.atIso,
+      label: 'Below-floor (MD)',
+    },
+  };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  */
@@ -168,10 +224,13 @@ export function enrichQuotationAuditPayload(db, auditPayload) {
       }));
   }
 
+  const stageActors = buildQuotationStageActors(db, auditPayload, activityTimeline);
+
   return {
     ...auditPayload,
     activityTimeline,
     editApprovals,
+    stageActors,
   };
 }
 

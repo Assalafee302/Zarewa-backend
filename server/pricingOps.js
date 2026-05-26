@@ -496,8 +496,12 @@ export function approveBranchManagerPriceExceptionForQuotation(db, quotationId, 
   const qid = String(quotationId || '').trim();
   if (!qid) return { ok: false, error: 'Quotation id required.' };
   const roleKey = actor?.roleKey ?? actor?.role_key ?? actor?.role;
-  if (!isBranchManagerApprovalAuthority(roleKey)) {
-    return { ok: false, error: 'Only a branch manager may approve a below-floor price exception.' };
+  const rk = String(roleKey || '').trim().toLowerCase();
+  if (!isBranchManagerApprovalAuthority(roleKey) && rk !== 'admin') {
+    return {
+      ok: false,
+      error: 'Only a branch manager or administrator may approve a below-floor price exception.',
+    };
   }
   const row = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
   if (!row) return { ok: false, error: 'Quotation not found.' };

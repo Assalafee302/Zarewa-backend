@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { normalizeWorkspaceDepartment } from './departmentRoleTemplates.js';
+import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
+import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
 
 function appUsersHasEmailColumn(db) {
   try {
@@ -105,6 +107,8 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'material_incidents.approve',
+      ...HR_ROLE_PERMISSION_BUNDLES.mdExecutive,
+      'hr.payroll.md_approve',
     ],
   },
   finance_manager: {
@@ -130,6 +134,7 @@ export const ROLE_DEFINITIONS = {
       'settings.view',
       /** Management reports (`/api/reports/*`, `/reports`) — same gate as `userMayViewManagementReports`. */
       'reports.view',
+      ...HR_ROLE_PERMISSION_BUNDLES.financeHr,
     ],
   },
   cashier: {
@@ -177,6 +182,7 @@ export const ROLE_DEFINITIONS = {
       'inventory.adjust',
       'finance.approve',
       'material_incidents.approve',
+      ...HR_ROLE_PERMISSION_BUNDLES.branchManager,
     ],
   },
   sales_staff: {
@@ -190,6 +196,26 @@ export const ROLE_DEFINITIONS = {
       'receipts.post',
       'expenses.create',
       'refunds.request',
+      ...HR_ROLE_PERMISSION_BUNDLES.selfService,
+    ],
+  },
+  hr_admin: {
+    label: 'HR / Admin',
+    permissions: [
+      'dashboard.view',
+      'office.use',
+      'reports.view',
+      ...HR_ROLE_PERMISSION_BUNDLES.hrAdmin,
+    ],
+  },
+  gmhr: {
+    label: 'GM HR',
+    permissions: [
+      'dashboard.view',
+      'office.use',
+      'reports.view',
+      'hq.view_all_branches',
+      ...HR_ROLE_PERMISSION_BUNDLES.gmhr,
     ],
   },
   operations_officer: {
@@ -333,6 +359,24 @@ function verifyPassword(password, storedHash) {
   const b = Buffer.from(digest, 'hex');
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Re-verify password for sensitive HR screens (compensation, payslips, etc.).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {string} password
+ */
+export function verifyUserPassword(db, userId, password) {
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const row = db.prepare(`SELECT password_hash, status FROM app_users WHERE id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'User not found.' };
+  if (String(row.status || '') !== 'active') return { ok: false, error: 'Account is not active.' };
+  if (!verifyPassword(String(password || ''), row.password_hash)) {
+    return { ok: false, error: 'Incorrect password.' };
+  }
+  return { ok: true };
 }
 
 function createSessionToken() {
@@ -1537,6 +1581,7 @@ export function allKnownPermissionKeys() {
   for (const def of Object.values(ROLE_DEFINITIONS)) {
     for (const p of def.permissions) s.add(p);
   }
+  for (const p of HR_PERMISSION_KEYS) s.add(p);
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 

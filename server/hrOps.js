@@ -1885,6 +1885,41 @@ export function approvePayrollRunByMd(db, runId, actor) {
   return { ok: true, run: getPayrollRunById(db, runId) };
 }
 
+/** GM HR payroll approval (primary lock gate alongside MD). */
+export function approvePayrollRunByGmHr(db, runId, actor) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  if (
+    !userHasPermission(actor, 'hr.payroll.gm_approve') &&
+    !userHasPermission(actor, '*')
+  ) {
+    return { ok: false, error: 'GM HR payroll approval permission required.' };
+  }
+  const run = db.prepare(`SELECT * FROM hr_payroll_runs WHERE id = ?`).get(runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  if (String(run.status || '').toLowerCase() !== 'draft') {
+    return { ok: false, error: 'Only draft runs can receive GM HR payroll approval.' };
+  }
+  const now = nowIso();
+  try {
+    db.prepare(`UPDATE hr_payroll_runs SET gm_approved_at_iso = ?, gm_approved_by_user_id = ? WHERE id = ?`).run(
+      now,
+      actor?.id ?? null,
+      runId
+    );
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.payroll_run.gm_approve',
+    entityKind: 'hr_payroll_run',
+    entityId: runId,
+    details: { at: now },
+  });
+  return { ok: true, run: getPayrollRunById(db, runId) };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} runId
@@ -1970,18 +2005,20 @@ export function patchPayrollRun(db, runId, body, actor) {
       return { ok: false, error: 'Only a locked run can be returned to draft.' };
     }
     if (ns === 'locked' && String(run.status || '').toLowerCase() === 'draft') {
+      const gmOk = String(run.gm_approved_at_iso || '').trim();
       const mdOk = String(run.md_approved_at_iso || '').trim();
-      if (!mdOk && !userHasPermission(actor, '*')) {
+      if (!gmOk && !mdOk && !userHasPermission(actor, '*')) {
         return {
           ok: false,
-          error: 'Managing Director must approve this payroll run before it can be locked.',
+          error: 'GM HR or Managing Director must approve this payroll run before it can be locked.',
         };
       }
     }
     const wasPaid = run.status === 'paid';
     if (ns === 'draft' && String(run.status || '').toLowerCase() === 'locked') {
       db.prepare(
-        `UPDATE hr_payroll_runs SET status = ?, md_approved_at_iso = NULL, md_approved_by_user_id = NULL WHERE id = ?`
+        `UPDATE hr_payroll_runs SET status = ?, md_approved_at_iso = NULL, md_approved_by_user_id = NULL,
+         gm_approved_at_iso = NULL, gm_approved_by_user_id = NULL WHERE id = ?`
       ).run(ns, runId);
     } else {
       db.prepare(`UPDATE hr_payroll_runs SET status = ? WHERE id = ?`).run(ns, runId);
@@ -2033,6 +2070,8 @@ export function listPayrollRuns(db) {
       createdByUserId: row.created_by_user_id,
       mdApprovedAtIso: row.md_approved_at_iso ?? null,
       mdApprovedByUserId: row.md_approved_by_user_id ?? null,
+      gmApprovedAtIso: row.gm_approved_at_iso ?? null,
+      gmApprovedByUserId: row.gm_approved_by_user_id ?? null,
       signedAtIso: row.signed_at_iso ?? null,
       signedByUserId: row.signed_by_user_id ?? null,
       signatureKind: row.signature_kind ?? null,
@@ -2105,6 +2144,8 @@ export function getPayrollRunById(db, runId) {
     createdByUserId: row.created_by_user_id,
     mdApprovedAtIso: row.md_approved_at_iso ?? null,
     mdApprovedByUserId: row.md_approved_by_user_id ?? null,
+    gmApprovedAtIso: row.gm_approved_at_iso ?? null,
+    gmApprovedByUserId: row.gm_approved_by_user_id ?? null,
     signedAtIso: row.signed_at_iso ?? null,
     signedByUserId: row.signed_by_user_id ?? null,
     signatureKind: row.signature_kind ?? null,

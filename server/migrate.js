@@ -2356,6 +2356,23 @@ function migratePriceListAndPayrollMd(db) {
   if (pr.size && !pr.has('md_approved_by_user_id')) {
     db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN md_approved_by_user_id TEXT`);
   }
+  if (pr.size && !pr.has('gm_approved_at_iso')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN gm_approved_at_iso TEXT`);
+  }
+  if (pr.size && !pr.has('gm_approved_by_user_id')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN gm_approved_by_user_id TEXT`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_sensitive_tokens (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT 'general',
+      created_at_iso TEXT NOT NULL,
+      expires_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_sensitive_tokens_user ON hr_sensitive_tokens(user_id, expires_at_iso DESC);
+  `);
 }
 
 /** Quote item → inventory SKU mapping; per-job accessory fulfillment for refunds and stock. */

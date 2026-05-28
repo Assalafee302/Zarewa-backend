@@ -176,6 +176,7 @@ import {
   resolveInterBranchRequest,
 } from './interBranchOfficeOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
+import { registerHrApi } from './hrApi.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
 import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
@@ -2005,6 +2006,8 @@ export function registerHttpApi(app, db) {
   });
 
   app.use('/api', requireAuth, requireActivePassword);
+
+  registerHrApi(app, db);
 
   app.get('/api/bootstrap', (req, res) => {
     try {

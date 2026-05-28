@@ -3847,4 +3847,34 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(recon.status).toBe(200);
     expect(typeof recon.body.totalMetersAvailable).toBe('number');
   });
+
+  it('GET /api/hr/policy-requirements returns required policies', async () => {
+    const res = await agent.get('/api/hr/policy-requirements');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.required)).toBe(true);
+    expect(Array.isArray(res.body.missing)).toBe(true);
+  });
+
+  it('GET /api/hr/staff redacts salary for branch manager', async () => {
+    const bm = request.agent(app);
+    await loginAs(bm, 'sales.manager', 'Sales@123');
+    const res = await bm.get('/api/hr/staff');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const withSalary = (res.body.staff || []).find((s) => Number(s.baseSalaryNgn) > 0);
+    if (withSalary) {
+      expect(withSalary.baseSalaryNgn).toBeNull();
+      expect(withSalary.compensationRedacted).toBe(true);
+    }
+  });
+
+  it('GET /api/hr/staff shows salary for admin', async () => {
+    const res = await agent.get('/api/hr/staff');
+    expect(res.status).toBe(200);
+    const withSalary = (res.body.staff || []).find((s) => s.userId && s.baseSalaryNgn != null);
+    if (withSalary) {
+      expect(Number(withSalary.baseSalaryNgn)).toBeGreaterThan(0);
+    }
+  });
 });

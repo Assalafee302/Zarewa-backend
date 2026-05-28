@@ -72,8 +72,16 @@ describe('businessIntelligence', () => {
           },
         ],
         purchaseOrders: [],
-        productionJobs: [],
-        quotations: [],
+        productionJobs: [
+          {
+            status: 'Completed',
+            quotationRef: 'QT-1',
+            productID: 'COIL-ALU',
+            actualWeightKg: 200,
+            completedAtISO: '2026-05-12T10:00:00Z',
+          },
+        ],
+        quotations: [{ id: 'QT-1', materialTypeId: 'MAT-001' }],
       },
       { periodKey: 'month', asOfISO: '2026-05-20' }
     );

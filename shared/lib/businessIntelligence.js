@@ -143,7 +143,7 @@ function productionKgInRange(productionJobs, quotations, family, startIso, endIs
   for (const j of productionJobs || []) {
     if (!productionJobIsCompleted(j)) continue;
     const d = productionOutputDateISO(j);
-    if (!d || d < startIso || d > asOfISO) continue;
+    if (!d || d < startIso || d > endIso) continue;
     const q = quoteById.get(String(j.quotationRef || '').trim());
     const fam = resolveBusinessMaterialFamily({
       productID: j.productID,

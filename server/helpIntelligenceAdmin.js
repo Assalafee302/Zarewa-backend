@@ -8,7 +8,7 @@ import {
 } from '../shared/lib/helpGapAnalysis.js';
 import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 
-export function getRunaIntelligenceDashboard(db, opts = {}) {
+export function getZareIntelligenceDashboard(db, opts = {}) {
   const days = opts.days ?? 30;
   const since = new Date();
   since.setUTCDate(since.getUTCDate() - days);
@@ -79,6 +79,9 @@ export function getRunaIntelligenceDashboard(db, opts = {}) {
 
   return out;
 }
+
+/** @deprecated Use getZareIntelligenceDashboard */
+export const getRunaIntelligenceDashboard = getZareIntelligenceDashboard;
 
 export function logHelpAiObservation(db, obs) {
   if (!db) return;

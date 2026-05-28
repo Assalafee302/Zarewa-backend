@@ -6,6 +6,10 @@
  *              [Synthesized Answer] ← [Frontier LLM] ← [Secure context]
  */
 import { classifyAgentRoute, routeLabel } from '../shared/lib/helpAgentIntent.js';
+import { classifyZareIntent } from '../shared/lib/helpZareIntent.js';
+import { buildTransactionHelpReply } from '../shared/lib/helpTransactionHelp.js';
+import { formatHelpErrorReply } from '../shared/lib/helpErrorExplain.js';
+import { buildZareDailyBriefing, formatZareBriefingReply } from '../shared/lib/helpZareBriefing.js';
 import { buildHelpSearchText, isComplexHelpQuery, matchHelpArticles, mergeHelpLinks } from '../shared/lib/helpKnowledge.js';
 import {
   buildHelpAiSystemPrompt,
@@ -150,9 +154,83 @@ export async function runHelpAgent(opts) {
   const transactionProfile =
     db && userId ? computeUserTransactionProfile(db, { userId, branchId }) : null;
 
-  const agentRoute = classifyAgentRoute(message, history);
+  const agentRoute = classifyAgentRoute(message, history, pageContext);
+  const zareIntent = classifyZareIntent(message, history, pageContext);
   const helpIntent = detectHelpIntent(message, history);
   const cfgEarly = readAiAssistConfig();
+
+  const txCtx = pageContext?.transaction || pageContext?.transactionContext;
+  const transactionHelpIntents = new Set([
+    'wrong_payment_amount',
+    'wrong_customer_payment',
+    'duplicate_receipt',
+    'wrong_payment_method',
+    'wrong_branch',
+    'wrong_expense_amount',
+    'wrong_vendor_or_supplier',
+    'transaction_stuck',
+    'transaction_problem',
+    'correction_request',
+    'reversal_request',
+    'missing_attachment',
+    'cannot_approve',
+  ]);
+  if (
+    pageContext?.mode === 'transaction_help' ||
+    txCtx ||
+    transactionHelpIntents.has(zareIntent)
+  ) {
+    const txReply = buildTransactionHelpReply({
+      message,
+      history,
+      pageContext,
+      transactionContext: txCtx,
+    });
+    return finish(db, opts, logCtx, chatStarted, {
+      content: txReply.content,
+      source: 'transaction_help',
+      links: [],
+      matchedArticleIds: [],
+      topScore: 0,
+      agentRoute: 'troubleshoot',
+      sources: [],
+      coaching: txReply.correctionMemo
+        ? { correctionMemo: txReply.correctionMemo, issueType: txReply.issueType }
+        : null,
+    });
+  }
+
+  if (zareIntent === 'error_explanation') {
+    const errContent = formatHelpErrorReply(message);
+    if (errContent) {
+      return finish(db, opts, logCtx, chatStarted, {
+        content: errContent,
+        source: 'error_explain',
+        links: [],
+        matchedArticleIds: [],
+        topScore: 0,
+        agentRoute: 'troubleshoot',
+      });
+    }
+  }
+
+  if (zareIntent === 'daily_briefing' || zareIntent === 'branch_summary') {
+    const briefingLines = buildZareDailyBriefing(
+      opts.snapshot || pageContext?.briefingSnapshot || pageContext?.snapshot,
+      opts.roleKey
+    );
+    const briefing = formatZareBriefingReply(briefingLines);
+    if (briefing) {
+      return finish(db, opts, logCtx, chatStarted, {
+        content: briefing,
+        source: 'briefing',
+        links: [{ label: 'Workspace', to: '/' }],
+        matchedArticleIds: [],
+        topScore: 0,
+        agentRoute: 'analytics',
+      });
+    }
+  }
 
   if (agentRoute === 'meta' || helpIntent === 'meta') {
     return finish(db, opts, logCtx, chatStarted, {

@@ -18,10 +18,11 @@ import {
 import { buildHelpCoachingHints, mergePersonalizedPrompts } from '../shared/lib/helpRecommend.js';
 import { computeQueryLearnedBoosts, trainHelpFromFeedback } from '../shared/lib/helpSelfTrain.js';
 import {
-  rankRunaRecommendations,
+  rankZareRecommendations,
   loadBranchWorkflowHints,
   loadBranchMemoryPatterns,
 } from '../shared/lib/helpRecommendEngine.js';
+import { buildZareDailyBriefing } from '../shared/lib/helpZareBriefing.js';
 import { branchMemoryArticleBoosts, memoryArticleBoosts } from '../shared/lib/helpMemory.js';
 import { filterPersonalizationForUser } from '../shared/lib/helpDesignLimits.js';
 import { recordKnowledgeGap } from '../shared/lib/helpGapAnalysis.js';
@@ -735,7 +736,9 @@ export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}, ext
   const branchMemory = branchId ? loadBranchMemoryPatterns(db, branchId) : {};
   const memoryBoosts = ctx.userId ? memoryArticleBoosts(db, String(ctx.userId)) : {};
 
-  const recommendations = rankRunaRecommendations({
+  const dailyBriefing = buildZareDailyBriefing(snapshot, ctx.roleKey);
+
+  const recommendations = rankZareRecommendations({
     pathname: ctx.pathname,
     roleKey: ctx.roleKey,
     branchId,
@@ -754,6 +757,7 @@ export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}, ext
       ...base,
       coachingHints: merged,
       recommendations,
+      dailyBriefing,
       intelligence: {
         workflowEvents: workflowEvents.length,
         branchMemoryKeys: Object.keys(branchMemory?.articleBoosts || {}).length,

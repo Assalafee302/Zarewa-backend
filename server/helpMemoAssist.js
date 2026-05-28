@@ -22,6 +22,8 @@ export function handleMemoAssist(db, user, body = {}) {
     'suggest_expense_category',
     'suggest_filing_category',
     'manager_reply',
+    'correction_memo',
+    'transaction_issue',
   ];
   if (!allowed.includes(action)) {
     return { ok: false, error: 'Invalid action.' };

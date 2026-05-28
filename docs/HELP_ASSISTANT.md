@@ -1,6 +1,6 @@
-# Zarewa Help Assistant (Runa) — self-contained guide system
+# Zarewa Help Assistant (Zare) — ERP operations copilot
 
-**Runa** is the cute workflow buddy in the life-ring button — the name nods to *running* quotes, POs, production jobs, and payments through Zarewa.
+**Zare** is the life-ring ERP operations assistant — workflow help, memos, transaction issues, approvals, and permission-safe search inside Zarewa.
 
 The help chatbot (life-ring button) is designed to work **without OpenAI or any external AI key**. Optional external AI only adds paraphrasing for unusual questions; the core is a **built-in knowledge base + pattern learning**.
 

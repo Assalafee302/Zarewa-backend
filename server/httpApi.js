@@ -347,7 +347,7 @@ import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.j
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
-import { sanitizeRunaPageContext } from '../shared/lib/workspaceSanitize.js';
+import { sanitizeZarePageContext } from '../shared/lib/workspaceSanitize.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { getRunaIntelligenceDashboard } from './helpIntelligenceAdmin.js';
 import { runHelpAnalyticsJob } from './helpAnalytics.js';
@@ -679,7 +679,7 @@ export function registerHttpApi(app, db) {
           userId: req.user?.id,
           queryText: msg,
         });
-        const safePageContext = sanitizeRunaPageContext(
+        const safePageContext = sanitizeZarePageContext(
           pageContext && typeof pageContext === 'object' ? pageContext : {}
         );
         const result = await runHelpChat({

@@ -3297,8 +3297,15 @@ export function registerHttpApi(app, db) {
       const pack = loadBusinessIntelligencePack(db, branchScope, { periodKey, asOfISO });
       return res.json(pack);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load business intelligence.' });
+      console.error('[business-intelligence]', e);
+      const detail = String(e?.message || e || '').trim();
+      return res.status(500).json({
+        ok: false,
+        error: detail
+          ? `Could not load business intelligence: ${detail}`
+          : 'Could not load business intelligence.',
+        code: 'BI_LOAD_FAILED',
+      });
     }
   });
 

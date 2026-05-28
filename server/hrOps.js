@@ -267,7 +267,10 @@ export function listHrStaff(db, scope, opts = {}) {
            p.next_of_kin_json AS nextOfKinJson,
            p.profile_extra_json AS profileExtraJson,
            p.line_manager_user_id AS lineManagerUserId,
-           p.leave_entitlement_band AS leaveEntitlementBand
+           p.leave_entitlement_band AS leaveEntitlementBand,
+           p.payroll_group AS payrollGroup,
+           p.salary_level AS salaryLevel,
+           p.salary_step AS salaryStep
     FROM app_users u
     LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1
@@ -1019,28 +1022,16 @@ export function submitHrRequest(db, requestId, userId) {
   return { ok: true };
 }
 
-export function hrReviewRequest(db, requestId, actor, approve, note) {
+export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const row = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
   if (!row) return { ok: false, error: 'Request not found.' };
   if (row.status !== 'hr_review') {
     return { ok: false, error: 'Request is not awaiting HR review.' };
   }
-  const HR_DECISION_REASON_CODES = new Set([
-    'documentation',
-    'policy',
-    'attendance',
-    'performance',
-    'finance',
-    'other',
-  ]);
-  const rc = String(arguments[5] ?? '') // reasonCode (back-compat: optional)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z_]/g, '_')
-    .slice(0, 40);
+  const rc = normalizeReasonCode(reasonCode);
   const noteNorm = String(note || '').trim();
-  if (!HR_DECISION_REASON_CODES.has(rc)) {
+  if (!DECISION_REASON_CODES.has(rc)) {
     return { ok: false, error: 'reasonCode is required for HR decisions.' };
   }
   if (noteNorm.length < 3) {
@@ -1821,6 +1812,224 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
     leaveWaiveWorkingDays: leaveWaive,
     deductionNgn,
   };
+}
+
+function salaryMatrixReady(db) {
+  return Boolean(
+    hrTablesReady(db) &&
+      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_salary_matrix'`).get()
+  );
+}
+
+export function listHrSalaryMatrix(db) {
+  if (!salaryMatrixReady(db)) return [];
+  return db
+    .prepare(
+      `SELECT id, payroll_group AS payrollGroup, salary_level AS salaryLevel, salary_step AS salaryStep,
+              base_salary_ngn AS baseSalaryNgn, housing_allowance_ngn AS housingAllowanceNgn,
+              transport_allowance_ngn AS transportAllowanceNgn, effective_from_iso AS effectiveFromIso, notes
+       FROM hr_salary_matrix ORDER BY payroll_group ASC, salary_level ASC, salary_step ASC`
+    )
+    .all();
+}
+
+export function upsertHrSalaryMatrixRow(db, actor, body = {}) {
+  if (!salaryMatrixReady(db)) return { ok: false, error: 'Salary matrix not initialised.' };
+  const payrollGroup = String(body.payrollGroup || 'branch_ops').trim();
+  const salaryLevel = Math.round(Number(body.salaryLevel) || 0);
+  const salaryStep = Math.round(Number(body.salaryStep) || 0);
+  if (!payrollGroup || salaryLevel < 1 || salaryStep < 1) {
+    return { ok: false, error: 'payrollGroup, salaryLevel, and salaryStep are required.' };
+  }
+  const existing = db
+    .prepare(
+      `SELECT id FROM hr_salary_matrix WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`
+    )
+    .get(payrollGroup, salaryLevel, salaryStep);
+  const id = existing?.id || newId('HRMX');
+  const now = nowIso();
+  db.prepare(
+    `INSERT OR REPLACE INTO hr_salary_matrix (
+      id, payroll_group, salary_level, salary_step, base_salary_ngn, housing_allowance_ngn,
+      transport_allowance_ngn, effective_from_iso, notes, updated_at_iso, updated_by_user_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    payrollGroup,
+    salaryLevel,
+    salaryStep,
+    Math.max(0, Math.round(Number(body.baseSalaryNgn) || 0)),
+    Math.max(0, Math.round(Number(body.housingAllowanceNgn) || 0)),
+    Math.max(0, Math.round(Number(body.transportAllowanceNgn) || 0)),
+    String(body.effectiveFromIso || '').trim().slice(0, 10) || null,
+    String(body.notes ?? '').trim() || null,
+    now,
+    actor?.id || null
+  );
+  return { ok: true, id };
+}
+
+export function listHrBranchPayrollContributions(db, periodYyyymm) {
+  if (!salaryMatrixReady(db)) return [];
+  const period = String(periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
+  if (!/^\d{6}$/.test(period)) return [];
+  const branchRows = db
+    .prepare(
+      `SELECT DISTINCT p.branch_id AS branchId FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
+       WHERE p.branch_id IS NOT NULL AND trim(p.branch_id) != ''`
+    )
+    .all();
+  const out = [];
+  for (const b of branchRows) {
+    const branchId = String(b.branchId || '').trim();
+    const sumRow = db
+      .prepare(
+        `SELECT SUM(COALESCE(p.base_salary_ngn,0) + COALESCE(p.housing_allowance_ngn,0) + COALESCE(p.transport_allowance_ngn,0)) AS expectedNgn
+         FROM hr_staff_profiles p JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
+         WHERE p.branch_id = ?`
+      )
+      .get(branchId);
+    const expectedNgn = Math.round(Number(sumRow?.expectedNgn) || 0);
+    const existing = db
+      .prepare(`SELECT * FROM hr_branch_payroll_contributions WHERE branch_id = ? AND period_yyyymm = ?`)
+      .get(branchId, period);
+    out.push({
+      id: existing?.id || null,
+      branchId,
+      periodYyyymm: period,
+      expectedNgn,
+      contributedNgn: Math.round(Number(existing?.contributed_ngn) || 0),
+      status: existing?.status || (expectedNgn > 0 && !existing ? 'pending' : 'pending'),
+      notes: existing?.notes || null,
+      markedAtIso: existing?.marked_at_iso || null,
+      outstandingNgn: Math.max(0, expectedNgn - Math.round(Number(existing?.contributed_ngn) || 0)),
+    });
+  }
+  out.sort((a, b) => (b.outstandingNgn || 0) - (a.outstandingNgn || 0));
+  return out;
+}
+
+export function upsertHrBranchPayrollContribution(db, actor, body = {}) {
+  if (!salaryMatrixReady(db)) return { ok: false, error: 'Branch contributions not initialised.' };
+  const branchId = String(body.branchId || '').trim();
+  const periodYyyymm = String(body.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
+  if (!branchId || !/^\d{6}$/.test(periodYyyymm)) {
+    return { ok: false, error: 'branchId and periodYyyymm (YYYYMM) are required.' };
+  }
+  const contributedNgn = Math.max(0, Math.round(Number(body.contributedNgn) || 0));
+  const status = String(body.status || 'recorded').trim().toLowerCase();
+  const allowed = new Set(['pending', 'partial', 'recorded', 'waived']);
+  if (!allowed.has(status)) return { ok: false, error: 'Invalid contribution status.' };
+  const now = nowIso();
+  const existing = db
+    .prepare(`SELECT id FROM hr_branch_payroll_contributions WHERE branch_id = ? AND period_yyyymm = ?`)
+    .get(branchId, periodYyyymm);
+  const id = existing?.id || newId('HRBC');
+  const list = listHrBranchPayrollContributions(db, periodYyyymm);
+  const row = list.find((r) => r.branchId === branchId);
+  const expectedNgn = row?.expectedNgn ?? Math.round(Number(body.expectedNgn) || 0);
+  if (existing) {
+    db.prepare(
+      `UPDATE hr_branch_payroll_contributions SET contributed_ngn = ?, status = ?, notes = ?,
+       marked_at_iso = ?, marked_by_user_id = ?, updated_at_iso = ? WHERE id = ?`
+    ).run(
+      contributedNgn,
+      status,
+      String(body.notes ?? '').trim() || null,
+      now,
+      actor?.id || null,
+      now,
+      id
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO hr_branch_payroll_contributions (
+        id, branch_id, period_yyyymm, expected_ngn, contributed_ngn, status, notes,
+        marked_at_iso, marked_by_user_id, created_at_iso, updated_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      id,
+      branchId,
+      periodYyyymm,
+      expectedNgn,
+      contributedNgn,
+      status,
+      String(body.notes ?? '').trim() || null,
+      now,
+      actor?.id || null,
+      now,
+      now
+    );
+  }
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.branch_contribution.upsert',
+    entityKind: 'hr_branch_payroll_contribution',
+    entityId: id,
+    branchId,
+    details: { periodYyyymm, contributedNgn, status },
+  });
+  return { ok: true, id };
+}
+
+/** Aggregate totals for a payroll run (preview / summary cards). */
+export function getPayrollRunTotals(db, runId) {
+  const lines = listPayrollLines(db, runId);
+  let gross = 0;
+  let net = 0;
+  let tax = 0;
+  let pension = 0;
+  let attendanceDed = 0;
+  let otherDed = 0;
+  for (const l of lines) {
+    gross += Math.round(Number(l.grossNgn) || 0);
+    net += Math.round(Number(l.netNgn) || 0);
+    tax += Math.round(Number(l.taxNgn) || 0);
+    pension += Math.round(Number(l.pensionNgn) || 0);
+    attendanceDed += Math.round(Number(l.attendanceDeductionNgn) || 0);
+    otherDed += Math.round(Number(l.otherDeductionNgn) || 0);
+  }
+  return {
+    headcount: lines.length,
+    grossTotalNgn: gross,
+    netTotalNgn: net,
+    taxTotalNgn: tax,
+    pensionTotalNgn: pension,
+    attendanceDeductionTotalNgn: attendanceDed,
+    otherDeductionTotalNgn: otherDed,
+  };
+}
+
+/** Payslip lines for one user across locked/paid runs. */
+export function listHrPayslipsForUser(db, userId, limit = 24) {
+  if (!hrTablesReady(db)) return [];
+  const uid = String(userId || '').trim();
+  if (!uid) return [];
+  const cap = Math.min(100, Math.max(1, Math.round(Number(limit) || 24)));
+  const rows = db
+    .prepare(
+      `SELECT r.id AS runId, r.period_yyyymm AS periodYyyymm, r.status AS runStatus,
+              l.gross_ngn AS grossNgn, l.net_ngn AS netNgn, l.tax_ngn AS taxNgn, l.pension_ngn AS pensionNgn,
+              l.attendance_deduction_ngn AS attendanceDeductionNgn, l.other_deduction_ngn AS otherDeductionNgn
+       FROM hr_payroll_lines l
+       JOIN hr_payroll_runs r ON r.id = l.run_id
+       WHERE l.user_id = ? AND r.status IN ('locked', 'paid')
+       ORDER BY r.period_yyyymm DESC LIMIT ?`
+    )
+    .all(uid, cap);
+  return rows.map((row) => ({
+    runId: row.runId,
+    periodYyyymm: row.periodYyyymm,
+    runStatus: row.runStatus,
+    grossNgn: row.grossNgn,
+    netNgn: row.netNgn,
+    taxNgn: row.taxNgn,
+    pensionNgn: row.pensionNgn,
+    attendanceDeductionNgn: row.attendanceDeductionNgn,
+    otherDeductionNgn: row.otherDeductionNgn,
+  }));
 }
 
 export function createPayrollRun(db, actor, body) {

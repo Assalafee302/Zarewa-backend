@@ -23,6 +23,7 @@ import {
   getHrMeProfile,
   getHrStaffOne,
   getPayrollRunById,
+  getPayrollRunTotals,
   gmHrReviewRequest,
   hrListScope,
   hrNextUatReadiness,
@@ -39,6 +40,9 @@ import {
   listHrStaffBranchHistory,
   listHrAuditEventsForStaff,
   listHrAttendanceDeductionPreview,
+  listHrBranchPayrollContributions,
+  listHrPayslipsForUser,
+  listHrSalaryMatrix,
   listMissingHrPolicyAcceptances,
   listPayrollLines,
   listPayrollRuns,
@@ -51,7 +55,9 @@ import {
   salaryWelfareSnapshot,
   submitHrRequest,
   uploadHrAttendance,
+  upsertHrBranchPayrollContribution,
   upsertHrDailyRollCall,
+  upsertHrSalaryMatrixRow,
   upsertHrStaffProfile,
 } from './hrOps.js';
 import { HR_POLICY_REGISTRY } from './hrPolicy.js';
@@ -64,6 +70,7 @@ import {
   userCanGmApproveHr,
   userCanGmApprovePayroll,
   userCanMdApprovePayroll,
+  userCanMarkBranchContribution,
   userCanPayPayroll,
   userCanPreparePayroll,
   userCanReviewHrRequests,
@@ -604,6 +611,31 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/hr/payroll-runs/:runId/totals',
+    requireHrAny('hr.payroll.prepare', 'hr.payroll.view_sensitive', 'hr.payroll.pay'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const run = getPayrollRunById(db, req.params.runId);
+        if (!run) return res.status(404).json({ ok: false, error: 'Payroll run not found.' });
+        const ctx = hrRedactionContextFromReq(req);
+        const totals = getPayrollRunTotals(db, req.params.runId);
+        if (!ctx.canViewSensitive) {
+          return res.json({
+            ok: true,
+            totals: { headcount: totals.headcount, amountsRedacted: true },
+            run,
+          });
+        }
+        return res.json({ ok: true, totals, run });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load payroll totals.' });
+      }
+    }
+  );
+
   app.post('/api/hr/payroll-runs/:runId/recompute', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -685,6 +717,94 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Export failed.' });
     }
   };
+
+  app.get('/api/hr/payslips', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.query?.userId || req.user?.id || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (
+        !isSelf &&
+        !hrUserHas(req.user, 'hr.payroll.view_sensitive') &&
+        !hrUserHas(req.user, 'hr.staff.manage')
+      ) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const ctx = hrRedactionContextFromReq(req);
+      const slips = listHrPayslipsForUser(db, userId).map((s) =>
+        ctx.canViewSensitive || isSelf
+          ? s
+          : {
+              ...s,
+              grossNgn: null,
+              netNgn: null,
+              taxNgn: null,
+              pensionNgn: null,
+              attendanceDeductionNgn: null,
+              otherDeductionNgn: null,
+              amountsRedacted: true,
+            }
+      );
+      return res.json({ ok: true, payslips: slips });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load payslips.' });
+    }
+  });
+
+  app.get('/api/hr/salary-matrix', requireHrAny('hr.payroll.prepare', 'hr.staff.manage', 'hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, matrix: listHrSalaryMatrix(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load salary matrix.' });
+    }
+  });
+
+  app.put('/api/hr/salary-matrix', requireHrAny('hr.staff.manage', 'hr.settings.manage', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertHrSalaryMatrixRow(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save salary matrix row.' });
+    }
+  });
+
+  app.get('/api/hr/branch-contributions', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!userCanMarkBranchContribution(req.user) && !hrUserHas(req.user, 'hr.executive.view')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const periodYyyymm = String(req.query?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
+      if (!/^\d{6}$/.test(periodYyyymm)) {
+        return res.status(400).json({ ok: false, error: 'periodYyyymm must be YYYYMM.' });
+      }
+      return res.json({ ok: true, periodYyyymm, contributions: listHrBranchPayrollContributions(db, periodYyyymm) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load branch contributions.' });
+    }
+  });
+
+  app.put('/api/hr/branch-contributions', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!userCanMarkBranchContribution(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Managing Director permission required.' });
+      }
+      const r = upsertHrBranchPayrollContribution(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save branch contribution.' });
+    }
+  });
 
   app.get('/api/hr/payroll-runs/:runId/export/treasury', exportPayroll(exportPayrollTreasuryPackCsv, 'payroll-treasury.csv'));
   app.get('/api/hr/payroll-runs/:runId/export/payslips', exportPayroll(exportPayrollPayslipsCsv, 'payroll-payslips.csv'));

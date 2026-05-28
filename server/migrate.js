@@ -2536,7 +2536,69 @@ function migrateHrStaffProfileColumns(db) {
   if (hr.size && !hr.has('pension_percent_override')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN pension_percent_override REAL`);
   }
+  if (hr.size && !hr.has('payroll_group')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN payroll_group TEXT`);
+  }
+  if (hr.size && !hr.has('salary_level')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN salary_level INTEGER`);
+  }
+  if (hr.size && !hr.has('salary_step')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN salary_step INTEGER`);
+  }
   migrateHrModule(db);
+  migrateHrPhase5PayrollSchema(db);
+}
+
+/** Salary matrix, salary history, branch payroll contributions (Phase 5). */
+function migrateHrPhase5PayrollSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_salary_matrix (
+      id TEXT PRIMARY KEY,
+      payroll_group TEXT NOT NULL,
+      salary_level INTEGER NOT NULL,
+      salary_step INTEGER NOT NULL,
+      base_salary_ngn INTEGER NOT NULL DEFAULT 0,
+      housing_allowance_ngn INTEGER NOT NULL DEFAULT 0,
+      transport_allowance_ngn INTEGER NOT NULL DEFAULT 0,
+      effective_from_iso TEXT,
+      notes TEXT,
+      updated_at_iso TEXT,
+      updated_by_user_id TEXT,
+      UNIQUE(payroll_group, salary_level, salary_step)
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_salary_history (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      effective_from_iso TEXT NOT NULL,
+      salary_level INTEGER,
+      salary_step INTEGER,
+      base_salary_ngn INTEGER,
+      housing_allowance_ngn INTEGER,
+      transport_allowance_ngn INTEGER,
+      reason TEXT,
+      actor_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_salary_history_user ON hr_salary_history(user_id, effective_from_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_branch_payroll_contributions (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      period_yyyymm TEXT NOT NULL,
+      expected_ngn INTEGER NOT NULL DEFAULT 0,
+      contributed_ngn INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
+      marked_at_iso TEXT,
+      marked_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT,
+      UNIQUE(branch_id, period_yyyymm)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_branch_contrib_period ON hr_branch_payroll_contributions(period_yyyymm);
+  `);
 }
 
 /** HR staff files, requests, payroll, attendance (idempotent). */

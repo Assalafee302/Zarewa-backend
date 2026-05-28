@@ -347,6 +347,7 @@ import {
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
+import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
 import { sanitizeZarePageContext } from '../shared/lib/workspaceSanitize.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
@@ -675,6 +676,7 @@ export function registerHttpApi(app, db) {
         const { message, messages, pathname, clientDraftMs, pageContext } = req.body || {};
         const msg = typeof message === 'string' ? message : '';
         const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+        const branchScope = resolveBootstrapBranchScope(req);
         const learnedBoosts = computeMergedLearnedBoosts(db, {
           branchId,
           userId: req.user?.id,
@@ -693,6 +695,7 @@ export function registerHttpApi(app, db) {
           userDisplay: req.user?.displayName,
           userId: req.user?.id,
           branchId,
+          branchScope,
           roleKey: req.user?.roleKey,
           learnedBoosts,
           clientDraftMs: Number(clientDraftMs) || 0,
@@ -3283,6 +3286,19 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load sales alerts.' });
+    }
+  });
+
+  app.get('/api/analytics/business-intelligence', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const periodKey = String(req.query?.period || req.query?.periodKey || 'month').trim();
+      const asOfISO = String(req.query?.asOfISO || req.query?.asOf || '').slice(0, 10) || undefined;
+      const pack = loadBusinessIntelligencePack(db, branchScope, { periodKey, asOfISO });
+      return res.json(pack);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load business intelligence.' });
     }
   });
 

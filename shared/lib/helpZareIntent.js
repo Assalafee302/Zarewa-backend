@@ -30,6 +30,10 @@ const INTENT_RULES = [
   ['filing_help', /\b(file(d|ing)?|filing category|unfiled)\b/i],
   ['smart_search', /\b(find|search|show me|look for|where is).*(memo|receipt|payment|expense|quotation|po|refund|work item)/i],
   ['daily_briefing', /\b(what needs my attention|today|pending items|my queue|briefing|what should i do next|what next|what do i do next)\b/i],
+  [
+    'business_analysis',
+    /\b(cash flow|cashflow|forecast|predict|profit|margin|stockout|weeks of cover|inventory analys|sales analys|business analys|business intelligence|reorder|under.?stock|over.?stock|aluminium vs|aluzinc vs|coil cover|cash squeeze|future profit)\b/i,
+  ],
   ['branch_summary', /\b(branch (workload|summary|performance)|abuja|lagos branch)\b/i],
   ['next_step_guidance', /\b(what (should i|do i) do next|next step|what now|how do i complete)\b/i],
   ['troubleshooting', /\b(machine spoil|gen no diesel|generator|diesel|fuel request|broken|not working)\b/i],
@@ -81,7 +85,8 @@ export function zareIntentToAgentRoute(zareIntent) {
   if (intent === 'meta_question') return 'meta';
   if (intent === 'live_data_question') return 'erp_data';
   if (intent === 'hybrid_guide_and_data') return 'hybrid';
-  if (intent === 'daily_briefing' || intent === 'branch_summary') return 'analytics';
+  if (intent === 'daily_briefing' || intent === 'branch_summary' || intent === 'business_analysis')
+    return 'analytics';
   if (
     [
       'wrong_payment_amount',

@@ -10,6 +10,8 @@ import { classifyZareIntent } from '../shared/lib/helpZareIntent.js';
 import { buildTransactionHelpReply } from '../shared/lib/helpTransactionHelp.js';
 import { formatHelpErrorReply } from '../shared/lib/helpErrorExplain.js';
 import { buildZareDailyBriefing, formatZareBriefingReply } from '../shared/lib/helpZareBriefing.js';
+import { formatBusinessAnalysisReply } from '../shared/lib/helpBusinessAnalysis.js';
+import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildHelpSearchText, isComplexHelpQuery, matchHelpArticles, mergeHelpLinks } from '../shared/lib/helpKnowledge.js';
 import {
   buildHelpAiSystemPrompt,
@@ -214,17 +216,49 @@ export async function runHelpAgent(opts) {
     }
   }
 
+  if (zareIntent === 'business_analysis') {
+    if (db) {
+      const biScope = String(opts.branchScope || opts.branchId || 'ALL').trim() || 'ALL';
+      const pack = loadBusinessIntelligencePack(db, biScope, { periodKey: 'month' });
+      const content = formatBusinessAnalysisReply(pack);
+      return finish(db, opts, logCtx, chatStarted, {
+        content,
+        source: 'business_analysis',
+        links: [
+          { label: 'Business intelligence', to: '/analytics' },
+          { label: 'Reports', to: '/reports' },
+        ],
+        matchedArticleIds: [],
+        topScore: 0,
+        agentRoute: 'analytics',
+      });
+    }
+  }
+
   if (zareIntent === 'daily_briefing' || zareIntent === 'branch_summary') {
     const briefingLines = buildZareDailyBriefing(
       opts.snapshot || pageContext?.briefingSnapshot || pageContext?.snapshot,
       opts.roleKey
     );
+    if (db && /finance|manager|md|admin|ceo|exec/i.test(String(opts.roleKey || ''))) {
+      try {
+        const biScope = String(opts.branchScope || branchId || 'ALL').trim() || 'ALL';
+        const pack = loadBusinessIntelligencePack(db, biScope, { periodKey: 'month' });
+        const biLines = (pack.predictive?.alerts || []).slice(0, 2).map((a) => a.message);
+        briefingLines.push(...biLines);
+      } catch {
+        /* optional */
+      }
+    }
     const briefing = formatZareBriefingReply(briefingLines);
     if (briefing) {
       return finish(db, opts, logCtx, chatStarted, {
         content: briefing,
         source: 'briefing',
-        links: [{ label: 'Workspace', to: '/' }],
+        links: [
+          { label: 'Workspace', to: '/' },
+          { label: 'Business intelligence', to: '/analytics' },
+        ],
         matchedArticleIds: [],
         topScore: 0,
         agentRoute: 'analytics',

@@ -28,6 +28,17 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+/** @param {unknown} v */
+function normalizeRollTime(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const hh = Math.min(23, Math.max(0, Number(m[1])));
+  const mm = Math.min(59, Math.max(0, Number(m[2])));
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function newId(prefix) {
   return `${prefix}-${crypto.randomBytes(10).toString('hex')}`;
 }
@@ -1367,11 +1378,16 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
   }
   const rawRows = Array.isArray(body?.rows) ? body.rows : [];
   const rowsNorm = rawRows
-    .map((r) => ({
-      userId: String(r?.userId || '').trim(),
-      status: String(r?.status || 'present').toLowerCase() === 'late' ? 'late' : 'present',
-    }))
-    .filter((r) => r.userId);
+    .map((r) => {
+      const userId = String(r?.userId || '').trim();
+      if (!userId) return null;
+      const statusRaw = String(r?.status || 'present').toLowerCase();
+      const status = statusRaw === 'late' || statusRaw === 'absent' ? statusRaw : 'present';
+      const inTime = normalizeRollTime(r?.inTime);
+      const outTime = normalizeRollTime(r?.outTime);
+      return { userId, status, ...(inTime ? { inTime } : {}), ...(outTime ? { outTime } : {}) };
+    })
+    .filter(Boolean);
   if (rowsNorm.length === 0) return { ok: false, error: 'rows must include at least one staff member.' };
   const branchUsers = new Set(
     db
@@ -1411,6 +1427,50 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
     details: { dayIso, rows: rowsNorm.length },
   });
   return { ok: true, id };
+}
+
+/**
+ * HR review queue: projected attendance deductions for a payroll month (no auto-apply).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll: boolean; branchId: string }} scope
+ * @param {string} periodYyyymm
+ */
+export function listHrAttendanceDeductionPreview(db, scope, periodYyyymm) {
+  if (!hrTablesReady(db)) return [];
+  const period = String(periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
+  if (!/^\d{6}$/.test(period)) return [];
+  const staff = listHrStaff(db, scope, { includeInactive: false });
+  const out = [];
+  for (const s of staff) {
+    const preview = attendanceDeductionForUser(db, s.userId, s.branchId, period);
+    if (
+      preview.absentDays <= 0 &&
+      preview.lateDays <= 0 &&
+      preview.deductionNgn <= 0
+    ) {
+      continue;
+    }
+    const pendingException = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM hr_requests
+         WHERE user_id = ? AND kind = 'attendance_exception'
+           AND status IN ('draft','hr_review','branch_manager_review','gm_hr_review')`
+      )
+      .get(s.userId)?.c;
+    out.push({
+      userId: s.userId,
+      displayName: s.displayName,
+      employeeNo: s.employeeNo,
+      branchId: s.branchId,
+      jobTitle: s.jobTitle,
+      ...preview,
+      pendingExceptionRequests: Number(pendingException) || 0,
+      recommendation:
+        'Review lateness/absence before payroll lock. Deductions apply at payroll run only — raise an attendance exception request if warranted.',
+    });
+  }
+  out.sort((a, b) => (b.deductionNgn || 0) - (a.deductionNgn || 0));
+  return out;
 }
 
 export function recomputeHrLeaveBalances(db, actor, body = {}) {
@@ -2726,6 +2786,38 @@ export function getHrMeProfile(db, userId) {
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
   };
   return { user, hr };
+}
+
+/**
+ * Audit trail for an employee (requests + profile events).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {number} [limit]
+ */
+export function listHrAuditEventsForStaff(db, userId, limit = 50) {
+  const uid = String(userId || '').trim();
+  if (!uid || !hrTablesReady(db)) return [];
+  const cap = Math.min(200, Math.max(1, Math.round(Number(limit) || 50)));
+  try {
+    const rows = db
+      .prepare(
+        `SELECT e.id, e.occurred_at_iso AS atIso, e.actor_user_id AS actorUserId, e.actor_display_name AS actorDisplayName,
+                e.action, e.entity_kind AS entityKind, e.entity_id AS entityId, e.branch_id AS branchId, e.reason, e.details_json AS detailsJson
+         FROM hr_audit_events e
+         WHERE e.entity_kind = 'hr_staff_profile' AND e.entity_id = ?
+            OR e.entity_id IN (SELECT id FROM hr_requests WHERE user_id = ?)
+         ORDER BY e.occurred_at_iso DESC
+         LIMIT ?`
+      )
+      .all(uid, uid, cap);
+    return rows.map((row) => ({
+      ...row,
+      details: safeJsonParse(row.detailsJson, {}),
+      detailsJson: undefined,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**

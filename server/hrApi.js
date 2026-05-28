@@ -37,6 +37,8 @@ import {
   listHrRequests,
   listHrStaff,
   listHrStaffBranchHistory,
+  listHrAuditEventsForStaff,
+  listHrAttendanceDeductionPreview,
   listMissingHrPolicyAcceptances,
   listPayrollLines,
   listPayrollRuns,
@@ -167,7 +169,25 @@ export function registerHrApi(app, db) {
       const observability = listHrObservability(db, scope);
       const inbox = getHrInboxSummary(db, scope);
       const readiness = hrNextUatReadiness(db, scope);
-      return res.json({ ok: true, observability, inbox, readiness });
+      const staffAll = listHrStaff(db, scope, { includeInactive: true });
+      const staffCounts = {
+        total: staffAll.length,
+        active: staffAll.filter((s) => String(s.status || '') === 'active').length,
+        inactive: staffAll.filter((s) => String(s.status || '') !== 'active').length,
+        incompleteProfiles: staffAll.filter((s) => (s.criticalMissing || []).length > 0).length,
+      };
+      const ctx = hrRedactionContextFromReq(req);
+      const recentRequests = listHrRequests(db, scope, {})
+        .slice(0, 12)
+        .map((r) => redactHrRequest(r, { canViewSensitive: ctx.canViewSensitive, isOwner: false }));
+      return res.json({
+        ok: true,
+        observability,
+        inbox,
+        readiness,
+        staffCounts,
+        recentRequests,
+      });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load HR dashboard.' });
@@ -233,6 +253,18 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not register staff.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/audit-events', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const events = listHrAuditEventsForStaff(db, userId, 60);
+      return res.json({ ok: true, events });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load audit trail.' });
     }
   });
 
@@ -445,19 +477,44 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/hr/attendance/deduction-preview',
+    requireHrAny('hr.deductions.manage', 'hr.attendance.manage', 'hr.staff.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const periodYyyymm = String(req.query?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
+        if (!/^\d{6}$/.test(periodYyyymm)) {
+          return res.status(400).json({ ok: false, error: 'periodYyyymm must be YYYYMM.' });
+        }
+        const scope = hrListScope(req);
+        const items = listHrAttendanceDeductionPreview(db, scope, periodYyyymm);
+        return res.json({ ok: true, periodYyyymm, items });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load deduction preview.' });
+      }
+    }
+  );
+
   app.get('/api/hr/leave/balances', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const userId = String(req.query?.userId || req.user?.id || '').trim();
-      if (userId !== req.user?.id && !hrUserHas(req.user, 'hr.leave.manage') && !hrUserHas(req.user, 'hr.staff.manage')) {
+      const requestedUserId = String(req.query?.userId || '').trim();
+      const canViewOthers =
+        hrUserHas(req.user, 'hr.leave.manage') || hrUserHas(req.user, 'hr.staff.manage');
+      if (requestedUserId && requestedUserId !== req.user?.id && !canViewOthers) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const filter = { periodYyyymm: req.query?.periodYyyymm };
+      if (requestedUserId) {
+        filter.userId = requestedUserId;
+      } else if (!canViewOthers) {
+        filter.userId = req.user?.id;
       }
       return res.json({
         ok: true,
-        balances: listHrLeaveBalances(db, {
-          userId,
-          periodYyyymm: req.query?.periodYyyymm,
-        }),
+        balances: listHrLeaveBalances(db, filter),
       });
     } catch (e) {
       console.error(e);

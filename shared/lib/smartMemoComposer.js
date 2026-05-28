@@ -308,7 +308,8 @@ export function buildSmartMemoSuggestions(input = {}) {
     suggestedAttachments: meta.requiredAttachments,
     guidedFieldDefs,
     checklist,
-    runaHints: buildRunaHints(memoType, meta, checklist),
+    zareHints: buildZareHints(memoType, meta, checklist),
+    runaHints: buildZareHints(memoType, meta, checklist),
   };
 }
 
@@ -364,17 +365,23 @@ export function buildSmartMemoChecklist(memoType, guidedFields = {}, attachmentC
   return { items, missingRequired, warning, complete: missingRequired.length === 0 };
 }
 
-function buildRunaHints(memoType, meta, checklist) {
-  const hints = [`This looks like a ${meta.label} memo.`];
+function buildZareHints(memoType, meta, checklist) {
+  const hints = [`Zare: This looks like a **${meta.label}** memo.`];
   if (meta.expenseCategory) {
     hints.push(`Suggested expense category: ${meta.expenseCategory}.`);
   }
   if (meta.conversionTargets.includes('expense')) {
-    hints.push('If payment is involved, it should go through Branch Manager approval before Finance.');
+    hints.push('If payment is involved, route through Branch Manager before Finance.');
+  }
+  if (meta.conversionTargets.includes('procurement')) {
+    hints.push('You may need a supplier quotation before converting to procurement.');
   }
   if (checklist.warning) hints.push(checklist.warning);
   return hints;
 }
+
+/** @deprecated Use buildZareHints */
+const buildRunaHints = buildZareHints;
 
 /**
  * Rule-based memo improvement when AI is unavailable.

@@ -1009,6 +1009,177 @@ export const HELP_ARTICLES = [
     ],
     links: [{ label: 'Finance', to: '/accounts' }],
   },
+  {
+    id: 'wrong-customer-payment-correction',
+    title: 'Wrong customer on a payment',
+    keywords: [
+      'wrong customer',
+      'wrong client payment',
+      'posted wrong customer',
+      'customer payment wrong',
+      'paid wrong account',
+    ],
+    answer:
+      'If cash was posted to the wrong customer, do not silently reassign ledger rows. Finance needs an audit trail via correction memo or reversal.',
+    steps: [
+      'Confirm receipt reference(s) and the correct customer on the quotation.',
+      'Raise a **Wrong Customer Payment Report** with proof (bank slip, customer confirmation).',
+      'Branch Manager reviews; Finance reverses or re-posts to the correct customer.',
+      'Attach supporting documents before approval.',
+    ],
+    links: [
+      { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Finance', to: '/accounts' },
+    ],
+  },
+  {
+    id: 'receipt-reversal-process',
+    title: 'Receipt reversal process',
+    keywords: [
+      'reverse receipt',
+      'reversal',
+      'undo receipt',
+      'cancel posted receipt',
+      'receipt reversal',
+    ],
+    answer:
+      'Posted receipts are reversed through Finance — not deleted. After reversal you may record the correct payment again.',
+    steps: [
+      'Open the posted receipt and note reference, amount, and customer.',
+      'Raise a **Receipt Reversal Request** memo with reason and proof.',
+      'Finance/manager approves reversal per clearance rules.',
+      'Record the correct receipt on the right quotation once cleared.',
+    ],
+    links: [
+      { label: 'Finance', to: '/accounts', state: { accountsTab: 'receipts' } },
+      { label: 'Edit approvals', to: '/edit-approvals' },
+    ],
+  },
+  {
+    id: 'cannot-approve-troubleshoot',
+    title: 'Why approval is blocked',
+    keywords: [
+      'cannot approve',
+      "can't approve",
+      'approval blocked',
+      'why cant i approve',
+      'approval disabled',
+      'clearance',
+    ],
+    answer:
+      'Approval buttons stay disabled when clearance, branch scope, attachments, status, or locked periods block the action.',
+    steps: [
+      'Check your role clearance vs the request amount.',
+      'Confirm the item belongs to your branch (or you have cross-branch approval).',
+      'Verify required attachments are present.',
+      'Check if the item is already approved, rejected, or in a locked period.',
+      'Escalate to Branch Manager or Finance with an Approval Error Report memo if needed.',
+    ],
+    links: [
+      { label: 'Manager dashboard', to: '/manager' },
+      { label: 'Edit approvals', to: '/edit-approvals' },
+      { label: 'Settings — governance', to: '/settings/governance' },
+    ],
+  },
+  {
+    id: 'expense-correction-workflow',
+    title: 'Expense correction workflow',
+    keywords: [
+      'wrong expense',
+      'expense correction',
+      'fix expense amount',
+      'expense mistake',
+      'wrong expense amount',
+    ],
+    answer:
+      'Approved or paid expenses should be corrected through memo + Finance review, not silent edits.',
+    steps: [
+      'If still draft and editable, fix amount/category before submission.',
+      'If submitted or approved, raise an **Expense Correction Request** with references and proof.',
+      'Branch Manager → Finance reviews and adjusts per policy.',
+    ],
+    links: [
+      { label: 'Finance', to: '/accounts' },
+      { label: 'Workspace', to: '/' },
+    ],
+  },
+  {
+    id: 'wrong-branch-transaction',
+    title: 'Wrong branch on a transaction',
+    keywords: ['wrong branch', 'other branch', 'branch mistake', 'posted wrong branch'],
+    answer: 'Transactions are branch-scoped. Wrong-branch posts need manager/Finance correction with audit trail.',
+    steps: [
+      'Confirm which branch should own the transaction.',
+      'Do not delete — raise a memo describing wrong branch, reference, and correct branch.',
+      'HQ/Finance reviews treasury and ledger impact before correction.',
+    ],
+    links: [
+      { label: 'Settings — team', to: '/settings/team' },
+      { label: 'Finance', to: '/accounts' },
+    ],
+  },
+  {
+    id: 'stock-inventory-correction',
+    title: 'Stock / inventory correction',
+    keywords: [
+      'wrong stock',
+      'inventory correction',
+      'wrong quantity',
+      'stock mistake',
+      'grn wrong qty',
+    ],
+    answer: 'Inventory corrections use material incidents, GRN adjustments, or manager-approved corrections — not ad-hoc deletes.',
+    steps: [
+      'Identify SKU/coil/register reference and wrong vs correct quantity.',
+      'Raise stock correction memo or material incident per Operations policy.',
+      'Attach GRN or weighbridge proof; Operations + Manager approve.',
+    ],
+    links: [
+      { label: 'Operations', to: '/operations' },
+      { label: 'Procurement', to: '/procurement' },
+    ],
+  },
+  {
+    id: 'maintenance-memo-workflow',
+    title: 'Raising a maintenance / repairs memo',
+    keywords: [
+      'maintenance memo',
+      'machine broken',
+      'machine spoil',
+      'repair memo',
+      'mechanic',
+      'maintenance request',
+    ],
+    answer:
+      'Maintenance memos should describe the fault, attach mechanic report or quotation, and route to Branch Manager before expense/procurement conversion.',
+    steps: [
+      'Compose memo → Maintenance / Repairs type.',
+      'Attach mechanic quotation or fault report.',
+      'Send to Branch Manager; convert to expense or procurement when payment is needed.',
+    ],
+    links: [{ label: 'Workspace — Compose', to: '/' }],
+  },
+  {
+    id: 'diesel-fuel-memo-workflow',
+    title: 'Diesel / fuel request memo',
+    keywords: [
+      'diesel',
+      'fuel',
+      'gen no diesel',
+      'generator fuel',
+      'litres',
+      'fuel request',
+    ],
+    answer:
+      'Fuel memos need litres, vendor, and estimated amount before approval. Urgent generator downtime should be marked high priority.',
+    steps: [
+      'Compose memo → Diesel / fuel request.',
+      'Enter litres, vendor, estimated amount, and branch.',
+      'Attach delivery note or vendor quote if available.',
+      'Branch Manager approves; convert to expense if payment is required.',
+    ],
+    links: [{ label: 'Workspace', to: '/' }],
+  },
 ];
 
 const STOP_WORDS = new Set([
@@ -1375,6 +1546,9 @@ export function quickQuestionsForPath(pathname) {
   const p = String(pathname || '');
   if (p.startsWith('/sales')) {
     return [
+      { label: 'What next?', query: 'What should I do next on this receipt?' },
+      { label: 'Wrong payment', query: 'I entered the wrong payment amount — what should I do?' },
+      { label: 'Cannot approve', query: 'Why can’t I approve this?' },
       { label: 'Record payment', query: 'How do I record a receipt on a quotation?' },
       { label: 'Refund headroom', query: 'Refund categories and quotation headroom cap' },
       { label: 'Overpayment', query: 'Customer overpaid — auto-apply credit on quotation' },
@@ -1402,6 +1576,8 @@ export function quickQuestionsForPath(pathname) {
   }
   if (p.startsWith('/accounts')) {
     return [
+      { label: 'Correction memo', query: 'How do I raise a payment correction memo?' },
+      { label: 'Duplicate receipt', query: 'I created a duplicate receipt — what should I do?' },
       { label: 'Receipt clearance', query: 'Finance clearance before refunds' },
       { label: 'Pay-from fix', query: 'Correct pay-from treasury payout mistake' },
       { label: 'Branch treasury', query: 'Branch-scoped treasury bank accounts' },

@@ -9,6 +9,8 @@ import {
   detectSmartMemoType,
   improveMemoRuleBased,
 } from './smartMemoComposer.js';
+import { buildCorrectionMemo } from './helpTransactionHelp.js';
+import { classifyZareIntent } from './helpZareIntent.js';
 
 const FORMAL_OPENERS = ['Dear Team,', 'Please be advised that', 'This memo serves to'];
 const SHORTER_MAX = 480;
@@ -122,6 +124,29 @@ export function runMemoAssist(input = {}) {
       improvedBody: tpl.body,
       nextActions: ['Send reply in thread'],
       confidence: 0.9,
+    };
+  }
+
+  if (action === 'correction_memo' || action === 'transaction_issue') {
+    const issueType =
+      input.issueType ||
+      classifyZareIntent(`${subject}\n${body}`, [], input.transactionContext || null);
+    const correction = buildCorrectionMemo(issueType, {
+      referenceNo: input.transactionContext?.referenceNo,
+      wrongValue: input.transactionContext?.wrongValue,
+      correctValue: input.transactionContext?.correctValue,
+      reason: input.reason,
+    });
+    return {
+      ...base,
+      suggestedSubject: correction.subject,
+      improvedBody: correction.body,
+      memoType: correction.memoType,
+      issueType: correction.issueType,
+      correctionMemo: correction,
+      nextActions: [`Route to ${correction.route.join(' → ')} for review`],
+      warnings: base.warnings,
+      confidence: 0.88,
     };
   }
 

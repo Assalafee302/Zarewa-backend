@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { runMemoAssist } from './memoAssist.js';
-import { sanitizeRunaPageContext, sanitizeWorkItemForClient } from './workspaceSanitize.js';
+import {
+  sanitizeRunaPageContext,
+  sanitizeZarePageContext,
+  sanitizeTransactionContextForZare,
+  sanitizeWorkItemForClient,
+} from './workspaceSanitize.js';
 
 describe('memoAssist', () => {
   it('classifies diesel memo', () => {
@@ -41,5 +46,24 @@ describe('workspaceSanitize', () => {
       summary: 'sum',
     });
     expect(item.body).toBe('');
+  });
+
+  it('sanitizeZarePageContext is alias-safe', () => {
+    const a = sanitizeZarePageContext({ pathname: '/sales', body: 'secret' });
+    const b = sanitizeRunaPageContext({ pathname: '/sales', body: 'secret' });
+    expect(a.body).toBeUndefined();
+    expect(b.pathname).toBe('/sales');
+  });
+
+  it('redacts restricted transaction context', () => {
+    const tx = sanitizeTransactionContextForZare({
+      referenceNo: 'RCP-1',
+      amountSummary: '50000 NGN',
+      canView: false,
+      restricted: true,
+    });
+    expect(tx.restricted).toBe(true);
+    expect(tx.amountSummary).toBeUndefined();
+    expect(tx.referenceNo).toBe('RCP-1');
   });
 });

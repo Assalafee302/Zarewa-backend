@@ -131,9 +131,9 @@ export function synthesizeMetaReply(opts = {}) {
   const who = name ? ` ${name}` : '';
   const aiOn = Boolean(opts.externalAiEnabled);
   return [
-    `Hi${who} — I'm **${HELP_BOT_NAME}**, your Zarewa workflow buddy (quotations, receipts, PO, production, refunds).`,
+    `Hi${who} — I'm **${HELP_BOT_NAME}**, your **ERP operations assistant** (workflow help, memos, transactions, approvals, and search).`,
     '',
-    'I search **44+ guides**, respect your **role clearance**, and can read **live ERP data** when your permissions allow.',
+    'I search **workflow guides**, respect your **role clearance**, and can read **permission-safe ERP data** when allowed.',
     aiOn
       ? '**AI polish is on** — answers stay grounded in Zarewa data only.'
       : '**AI polish is off** — I still answer from guides and tools without an external API key.',

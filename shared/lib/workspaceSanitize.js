@@ -1,5 +1,5 @@
 /**
- * Workspace response sanitizers — strip or redact sensitive fields before client/cache/Runa.
+ * Workspace response sanitizers — strip or redact sensitive fields before client/cache/Zare.
  */
 import {
   RESTRICTED_WORK_ITEM_PLACEHOLDER,
@@ -131,39 +131,129 @@ export function sanitizeSearchResult(result, row, canSeeFull = true) {
 }
 
 /**
- * @param {Record<string, unknown>|null|undefined} ctx
+ * @param {Record<string, unknown>|null|undefined} item
+ * @param {object} [user]
  */
-export function sanitizeRunaPageContext(ctx) {
+export function sanitizeWorkspaceItemForZare(item, user = null) {
+  void user;
+  return sanitizeWorkspaceItem(item, true);
+}
+
+/**
+ * Safe transaction context for Zare (no confidential amounts unless permitted).
+ * @param {Record<string, unknown>|null|undefined} transaction
+ * @param {object} [user]
+ */
+export function sanitizeTransactionContextForZare(transaction, user = null) {
+  if (!transaction || typeof transaction !== 'object') return {};
+  const canView = transaction.canView !== false;
+  if (!canView || transaction.restricted) {
+    return {
+      currentPage: transaction.currentPage,
+      module: transaction.module,
+      transactionType: transaction.transactionType,
+      referenceNo: transaction.referenceNo ? String(transaction.referenceNo).slice(0, 40) : undefined,
+      status: transaction.status,
+      restricted: true,
+      canView: false,
+      canEdit: false,
+      canReverse: false,
+      canApprove: false,
+      canCreateMemo: Boolean(transaction.canCreateMemo),
+    };
+  }
+
+  const safe = {
+    currentPage: transaction.currentPage,
+    module: transaction.module,
+    transactionType: transaction.transactionType,
+    referenceNo: transaction.referenceNo ? String(transaction.referenceNo).slice(0, 40) : undefined,
+    status: transaction.status,
+    branchId: transaction.branchId,
+    branchName: transaction.branchName ? String(transaction.branchName).slice(0, 80) : undefined,
+    createdByCurrentUser: Boolean(transaction.createdByCurrentUser),
+    assignedToCurrentUser: Boolean(transaction.assignedToCurrentUser),
+    approvalStatus: transaction.approvalStatus,
+    settlementStatus: transaction.settlementStatus,
+    filingStatus: transaction.filingStatus,
+    linkedThreadId: transaction.linkedThreadId,
+    availableActions: Array.isArray(transaction.availableActions)
+      ? transaction.availableActions.map((a) => String(a).slice(0, 40)).slice(0, 12)
+      : [],
+    canView: true,
+    canEdit: Boolean(transaction.canEdit),
+    canReverse: Boolean(transaction.canReverse),
+    canApprove: Boolean(transaction.canApprove),
+    canRequestCorrection: Boolean(transaction.canRequestCorrection),
+    canCreateMemo: transaction.canCreateMemo !== false,
+    canAttachDocument: Boolean(transaction.canAttachDocument),
+  };
+
+  if (transaction.showFinancialSummary && transaction.amountSummary) {
+    safe.amountSummary = String(transaction.amountSummary).slice(0, 80);
+  }
+
+  return safe;
+}
+
+/**
+ * @param {Record<string, unknown>|null|undefined} ctx
+ * @param {object} [user]
+ */
+export function sanitizeZarePageContext(ctx, user = null) {
   if (!ctx || typeof ctx !== 'object') return {};
   const safe = { ...ctx };
   delete safe.routeState;
   delete safe.messages;
   delete safe.body;
+  delete safe.threadBody;
+  delete safe.attachments;
 
   if (safe.selectedWorkItem && typeof safe.selectedWorkItem === 'object') {
     const wi = safe.selectedWorkItem;
     const redacted = Boolean(wi.redacted) || isConfidentialLevel(wi.confidentiality);
-    safe.selectedWorkItem = {
-      id: wi.id,
-      referenceNo: wi.referenceNo,
-      title: redacted ? RESTRICTED_WORK_ITEM_PLACEHOLDER.title : String(wi.title || '').slice(0, 120),
-      documentType: wi.documentType,
-      category: wi.category,
-      status: wi.status,
-      requiresApproval: Boolean(wi.requiresApproval),
-      requiresResponse: Boolean(wi.requiresResponse),
-      actionLabel: wi.actionLabel,
-      linkedThreadId: wi.linkedThreadId,
-      redacted,
-    };
+    safe.selectedWorkItem = sanitizeWorkspaceItemForZare(
+      {
+        id: wi.id,
+        referenceNo: wi.referenceNo,
+        title: redacted ? RESTRICTED_WORK_ITEM_PLACEHOLDER.title : String(wi.title || '').slice(0, 120),
+        documentType: wi.documentType,
+        category: wi.category,
+        status: wi.status,
+        memoType: wi.memoType,
+        requiresApproval: Boolean(wi.requiresApproval),
+        requiresResponse: Boolean(wi.requiresResponse),
+        actionLabel: wi.actionLabel,
+        linkedThreadId: wi.linkedThreadId,
+        redacted,
+        confidentiality: wi.confidentiality,
+      },
+      user
+    );
+  }
+
+  if (safe.transaction && typeof safe.transaction === 'object') {
+    safe.transaction = sanitizeTransactionContextForZare(safe.transaction, user);
   }
 
   if (Array.isArray(safe.suggestions)) {
     safe.suggestions = safe.suggestions.map((s) => String(s || '').slice(0, 120));
   }
 
+  if (safe.counts && typeof safe.counts === 'object') {
+    const c = safe.counts;
+    safe.counts = {
+      actionRequired: Number(c.actionRequired) || 0,
+      pendingApproval: Number(c.pendingApproval) || 0,
+      overdue: Number(c.overdue) || 0,
+    };
+  }
+
   return safe;
 }
+
+/** @deprecated Use sanitizeZarePageContext */
+export const sanitizeRunaPageContext = sanitizeZarePageContext;
 
 /**
  * @param {object} ev

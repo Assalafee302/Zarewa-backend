@@ -1,5 +1,5 @@
 /**
- * Runa design limits — non-negotiable safety boundaries for ERP intelligence.
+ * Zare design limits — non-negotiable safety boundaries for ERP intelligence.
  *
  * 1. No ERP mutations without user action (guide/suggest/prepare only).
  * 2. No auto-publish help articles (drafts stay pending until admin review).
@@ -13,14 +13,17 @@ import {
 } from './helpClearance.js';
 
 /** @readonly */
-export const RUNA_DESIGN_LIMITS = Object.freeze({
+export const ZARE_DESIGN_LIMITS = Object.freeze({
   noErpMutations: true,
   noAutoPublishArticles: true,
   noNeuralTraining: true,
   rbacOnMemory: true,
 });
 
-/** Auto-created drafts always start here; never merged into HELP_ARTICLES by Runa. */
+/** @deprecated Use ZARE_DESIGN_LIMITS */
+export const RUNA_DESIGN_LIMITS = ZARE_DESIGN_LIMITS;
+
+/** Auto-created drafts always start here; never merged into HELP_ARTICLES by Zare. */
 export const HELP_ARTICLE_AUTO_CREATE_STATUS = 'pending';
 
 /** Valid draft lifecycle states (no "published" — that requires a code deploy). */
@@ -69,12 +72,12 @@ const FORBIDDEN_NEURAL_OPS = new Set([
 ]);
 
 /**
- * Runa learns via feedback weights, article ranking, and workflow analytics — not in-app neural training.
+ * Zare learns via feedback weights, article ranking, and workflow analytics — not in-app neural training.
  * @param {string} operation
  */
 export function assertPracticalLearningAllowed(operation) {
   if (FORBIDDEN_NEURAL_OPS.has(String(operation || ''))) {
-    throw new Error('Runa does not train neural models inside the ERP.');
+    throw new Error('Zare does not train neural models inside the ERP.');
   }
 }
 
@@ -88,7 +91,7 @@ export function assertValidDraftStatus(status, opts = {}) {
     throw new Error(`Invalid help article draft status: ${s}`);
   }
   if (opts.autoCreate && s !== HELP_ARTICLE_AUTO_CREATE_STATUS) {
-    throw new Error('Runa may only auto-create help article drafts as pending.');
+    throw new Error('Zare may only auto-create help article drafts as pending.');
   }
   return s;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { classifyAgentRoute } from './helpAgentIntent.js';
 import { isCoachingMessage, buildCoachingReply } from './helpCoaching.js';
-import { rankRunaRecommendations } from './helpRecommendEngine.js';
+import { rankZareRecommendations } from './helpRecommendEngine.js';
 import { HELP_ARTICLES } from './helpKnowledge.js';
 
 describe('helpAgentIntent extended', () => {
@@ -37,7 +37,7 @@ describe('helpCoaching', () => {
 
 describe('helpRecommendEngine', () => {
   it('ranks page prompts', () => {
-    const recs = rankRunaRecommendations({ pathname: '/sales', learnedBoosts: {} });
+    const recs = rankZareRecommendations({ pathname: '/sales', learnedBoosts: {} });
     expect(recs.length).toBeGreaterThan(0);
   });
 });

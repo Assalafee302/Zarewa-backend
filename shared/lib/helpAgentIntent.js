@@ -4,11 +4,12 @@
 import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 import { HELP_BOT_NAME } from './helpBotBrand.js';
 import { isCoachingMessage } from './helpCoaching.js';
+import { classifyZareIntent, zareIntentToAgentRoute } from './helpZareIntent.js';
 
 /** @typedef {'guide' | 'erp_data' | 'hybrid' | 'chitchat' | 'meta' | 'troubleshoot' | 'clearance' | 'analytics' | 'coaching'} AgentRoute */
 
 const META_RE =
-  /\b(how smart|how intelligent|what are you|who are you|what can you do|are you (an )?ai|are you (a )?bot|are you real|do you learn|can you think|your capabilities|what do you know|who is runa|what is runa)\b/i;
+  /\b(how smart|how intelligent|what are you|who are you|what can you do|are you (an )?ai|are you (a )?bot|are you real|do you learn|can you think|your capabilities|what do you know|who is (runa|zare)|what is (runa|zare))\b/i;
 const ERP_DATA_RE =
   /\b(how many|what is|what's|show me|current|count|total|balance|stock|inventory|level|open|pending|status of|list my|my recent|do we have|available)\b/i;
 const GUIDE_RE =
@@ -28,9 +29,18 @@ const FOLLOW_UP_RE =
  * @param {Array<{ role?: string; content?: string }>} [history]
  * @returns {AgentRoute}
  */
-export function classifyAgentRoute(message, history = []) {
+export function classifyAgentRoute(message, history = [], pageContext = null) {
   const q = normalizeHelpQueryText(String(message || '').trim());
   if (!q) return 'guide';
+
+  const zareIntent = classifyZareIntent(message, history, pageContext);
+  const zareRoute = zareIntentToAgentRoute(zareIntent);
+  if (zareRoute !== 'guide' || pageContext?.mode === 'transaction_help') {
+    if (zareRoute === 'meta') return 'meta';
+    if (zareRoute !== 'guide') return zareRoute;
+    if (pageContext?.mode === 'transaction_help') return 'troubleshoot';
+  }
+
   if (META_RE.test(q)) return 'meta';
   if (CHITCHAT_RE.test(q) && q.length < 50) return 'chitchat';
   if (isCoachingMessage(q, history) || /\b(step by step|coaching mode)\b/i.test(q)) return 'coaching';

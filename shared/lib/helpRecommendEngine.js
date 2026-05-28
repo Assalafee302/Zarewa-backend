@@ -1,5 +1,5 @@
 /**
- * Ranked recommendations for Runa's "Try asking" area.
+ * Ranked recommendations for Zare's "Try asking" area.
  */
 import { HELP_ARTICLES, quickQuestionsForPath } from './helpKnowledge.js';
 import { mergePersonalizedPrompts, buildHelpCoachingHints } from './helpRecommend.js';
@@ -22,7 +22,7 @@ import { userMaySeeArticle } from './helpDesignLimits.js';
  *   user?: { permissions?: string[]; roleKey?: string };
  * }} ctx
  */
-export function rankRunaRecommendations(ctx = {}) {
+export function rankZareRecommendations(ctx = {}) {
   const user = ctx.user;
   /** @type {Map<string, { id: string; title: string; query: string; reason?: string; score: number }>} */
   const ranked = new Map();
@@ -93,6 +93,9 @@ export function rankRunaRecommendations(ctx = {}) {
 
   return [...ranked.values()].sort((a, b) => b.score - a.score).slice(0, 8);
 }
+
+/** @deprecated Use rankZareRecommendations */
+export const rankRunaRecommendations = rankZareRecommendations;
 
 /**
  * @param {import('better-sqlite3').Database} db

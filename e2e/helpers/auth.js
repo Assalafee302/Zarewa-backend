@@ -21,8 +21,18 @@ export async function signInViaUi(page, username, password) {
 }
 
 export async function signInViaApi(page, username, password) {
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: /open your workspace/i })).toBeVisible({ timeout: 15_000 });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.goto('/');
+    try {
+      await expect(page.getByRole('heading', { name: /open your workspace/i })).toBeVisible({
+        timeout: 15_000,
+      });
+      break;
+    } catch {
+      if (attempt === 2) throw new Error('Login screen did not load (check Vite / module errors).');
+      await page.waitForTimeout(400);
+    }
+  }
 
   const loginRes = await page.request.post('/api/session/login', { data: { username, password } });
   const loginBody = await loginRes.text();

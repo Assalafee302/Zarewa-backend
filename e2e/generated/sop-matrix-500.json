@@ -1,0 +1,3505 @@
+{
+  "generatedAt": "2026-05-29T13:02:06.640Z",
+  "cases": [
+    {
+      "id": "op-operations-0500",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "guide for receive stock into store GRN",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0501",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "sop for receive stock into store GRN",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0502",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "i need to receive stock into store GRN",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0503",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "help me receive stock into store GRN",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0504",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "explain how to receive stock into store GRN",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0505",
+      "title": "Store GRN (operations)",
+      "path": "/operations",
+      "keyword": "can i receive stock into store GRN in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0506",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "how do i understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0507",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "how to understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0508",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "where do i understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0509",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "steps to understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0510",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "what is the process to understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0511",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "guide for understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0512",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "sop for understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0513",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "i need to understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0514",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "help me understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0515",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "explain how to understand stock adjustment permissions",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0516",
+      "title": "Stock adjustment rules",
+      "path": "/operations",
+      "keyword": "can i understand stock adjustment permissions in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0517",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "how do i use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0518",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "how to use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0519",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "where do i use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0520",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "steps to use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0521",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "what is the process to use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0522",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "guide for use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0523",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "sop for use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0524",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "i need to use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0525",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "help me use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0526",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "explain how to use the production register",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0527",
+      "title": "Production register",
+      "path": "/operations",
+      "keyword": "can i use the production register in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0528",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "how do i record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0529",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "how to record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0530",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "where do i record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0531",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "steps to record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0532",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "what is the process to record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0533",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "guide for record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0534",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "sop for record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0535",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "i need to record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0536",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "help me record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0537",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "explain how to record accessory usage on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0538",
+      "title": "Accessory usage on job",
+      "path": "/operations",
+      "keyword": "can i record accessory usage on a job in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0539",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "how do i handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0540",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "how to handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0541",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "where do i handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0542",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "steps to handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0543",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "what is the process to handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0544",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "guide for handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0545",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "sop for handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0546",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "i need to handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0547",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "help me handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0548",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "explain how to handle coil substitution on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0549",
+      "title": "Coil substitution",
+      "path": "/operations",
+      "keyword": "can i handle coil substitution on a job in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0550",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "how do i handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0551",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "how to handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0552",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "where do i handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0553",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "steps to handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0554",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "what is the process to handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0555",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "guide for handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0556",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "sop for handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0557",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "i need to handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0558",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "help me handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0559",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "explain how to handle delayed production",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0560",
+      "title": "Delayed / stuck production",
+      "path": "/operations",
+      "keyword": "can i handle delayed production in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0561",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "how do i cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0562",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "how to cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0563",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "where do i cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0564",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "steps to cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0565",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "what is the process to cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0566",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "guide for cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0567",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "sop for cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0568",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "i need to cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0569",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "help me cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0570",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "explain how to cancel a production job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0571",
+      "title": "Cancel production job",
+      "path": "/operations",
+      "keyword": "can i cancel a production job in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0572",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "how do i record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0573",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "how to record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0574",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "where do i record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0575",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "steps to record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0576",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "what is the process to record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0577",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "guide for record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0578",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "sop for record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0579",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "i need to record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0580",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "help me record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0581",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "explain how to record output metres on a job",
+      "module": "operations"
+    },
+    {
+      "id": "op-operations-0582",
+      "title": "Record production metres",
+      "path": "/operations",
+      "keyword": "can i record output metres on a job in zarewa",
+      "module": "operations"
+    },
+    {
+      "id": "op-manager-0583",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "how do i clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0584",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "how to clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0585",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "where do i clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0586",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "steps to clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0587",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "what is the process to clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0588",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "guide for clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0589",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "sop for clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0590",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "i need to clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0591",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "help me clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0592",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "explain how to clear a quotation for production",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0593",
+      "title": "Manager quotation clearance",
+      "path": "/manager",
+      "keyword": "can i clear a quotation for production in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0594",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "how do i review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0595",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "how to review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0596",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "where do i review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0597",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "steps to review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0598",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "what is the process to review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0599",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "guide for review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0600",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "sop for review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0601",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "i need to review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0602",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "help me review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0603",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "explain how to review a refund in the manager inbox",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0604",
+      "title": "Manager refund review",
+      "path": "/manager",
+      "keyword": "can i review a refund in the manager inbox in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0605",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "how do i approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0606",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "how to approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0607",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "where do i approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0608",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "steps to approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0609",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "what is the process to approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0610",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "guide for approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0611",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "sop for approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0612",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "i need to approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0613",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "help me approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0614",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "explain how to approve a payment request as finance",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0615",
+      "title": "Manager/finance payment decision",
+      "path": "/manager",
+      "keyword": "can i approve a payment request as finance in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0616",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "how do i grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0617",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "how to grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0618",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "where do i grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0619",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "steps to grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0620",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "what is the process to grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0621",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "guide for grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0622",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "sop for grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0623",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "i need to grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0624",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "help me grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0625",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "explain how to grant edit approval to a staff member",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0626",
+      "title": "Edit approval token",
+      "path": "/edit-approvals",
+      "keyword": "can i grant edit approval to a staff member in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0627",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "how do i review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0628",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "how to review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0629",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "where do i review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0630",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "steps to review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0631",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "what is the process to review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0632",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "guide for review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0633",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "sop for review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0634",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "i need to review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0635",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "help me review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0636",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "explain how to review material incidents as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0637",
+      "title": "Manager material incidents",
+      "path": "/material-exceptions",
+      "keyword": "can i review material incidents as manager in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0638",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "how do i handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0639",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "how to handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0640",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "where do i handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0641",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "steps to handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0642",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "what is the process to handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0643",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "guide for handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0644",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "sop for handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0645",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "i need to handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0646",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "help me handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0647",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "explain how to handle a flagged below-floor quote",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0648",
+      "title": "Flagged quotation review",
+      "path": "/manager",
+      "keyword": "can i handle a flagged below-floor quote in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0649",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "how do i sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0650",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "how to sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0651",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "where do i sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0652",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "steps to sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0653",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "what is the process to sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0654",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "guide for sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0655",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "sop for sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0656",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "i need to sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0657",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "help me sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0658",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "explain how to sign off conversion production review",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0659",
+      "title": "Conversion review signoff",
+      "path": "/manager",
+      "keyword": "can i sign off conversion production review in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0660",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "how do i use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0661",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "how to use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0662",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "where do i use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0663",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "steps to use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0664",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "what is the process to use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0665",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "guide for use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0666",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "sop for use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0667",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "i need to use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0668",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "help me use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0669",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "explain how to use the manager attention dashboard",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0670",
+      "title": "Manager attention dashboard",
+      "path": "/manager",
+      "keyword": "can i use the manager attention dashboard in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0671",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "how do i use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0672",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "how to use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0673",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "where do i use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0674",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "steps to use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0675",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "what is the process to use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0676",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "guide for use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0677",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "sop for use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0678",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "i need to use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0679",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "help me use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0680",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "explain how to use KPI approval code for sensitive actions",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0681",
+      "title": "KPI / second approval code",
+      "path": "/edit-approvals",
+      "keyword": "can i use KPI approval code for sensitive actions in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0682",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "how do i work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0683",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "how to work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0684",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "where do i work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0685",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "steps to work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0686",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "what is the process to work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0687",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "guide for work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0688",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "sop for work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0689",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "i need to work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0690",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "help me work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0691",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "explain how to work across branches as manager",
+      "module": "manager"
+    },
+    {
+      "id": "op-manager-0692",
+      "title": "Branch scope for managers",
+      "path": "/",
+      "keyword": "can i work across branches as manager in zarewa",
+      "module": "manager"
+    },
+    {
+      "id": "op-settings-0693",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "how do i register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0694",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "how to register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0695",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "where do i register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0696",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "steps to register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0697",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "what is the process to register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0698",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "guide for register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0699",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "sop for register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0700",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "i need to register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0701",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "help me register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0702",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "explain how to register a new ERP login for staff",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0703",
+      "title": "Register ERP user (Team & access)",
+      "path": "/settings/team",
+      "keyword": "can i register a new ERP login for staff in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0704",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "how do i change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0705",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "how to change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0706",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "where do i change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0707",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "steps to change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0708",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "what is the process to change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0709",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "guide for change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0710",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "sop for change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0711",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "i need to change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0712",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "help me change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0713",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "explain how to change user permissions",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0714",
+      "title": "User permissions",
+      "path": "/settings/team",
+      "keyword": "can i change user permissions in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0715",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "how do i reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0716",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "how to reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0717",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "where do i reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0718",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "steps to reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0719",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "what is the process to reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0720",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "guide for reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0721",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "sop for reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0722",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "i need to reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0723",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "help me reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0724",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "explain how to reset a user password",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0725",
+      "title": "Password reset (admin)",
+      "path": "/settings/security",
+      "keyword": "can i reset a user password in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0726",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "how do i lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0727",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "how to lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0728",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "where do i lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0729",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "steps to lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0730",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "what is the process to lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0731",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "guide for lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0732",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "sop for lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0733",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "i need to lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0734",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "help me lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0735",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "explain how to lock or unlock accounting period",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0736",
+      "title": "Governance period lock",
+      "path": "/settings/governance",
+      "keyword": "can i lock or unlock accounting period in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0737",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "how do i switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0738",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "how to switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0739",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "where do i switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0740",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "steps to switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0741",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "what is the process to switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0742",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "guide for switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0743",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "sop for switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0744",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "i need to switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0745",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "help me switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0746",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "explain how to switch workspace branch",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0747",
+      "title": "Switch branch",
+      "path": "/",
+      "keyword": "can i switch workspace branch in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0748",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "how do i maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0749",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "how to maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0750",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "where do i maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0751",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "steps to maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0752",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "what is the process to maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0753",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "guide for maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0754",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "sop for maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0755",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "i need to maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0756",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "help me maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0757",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "explain how to maintain colour master list",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0758",
+      "title": "Colour master data",
+      "path": "/settings",
+      "keyword": "can i maintain colour master list in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0759",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "how do i sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0760",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "how to sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0761",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "where do i sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0762",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "steps to sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0763",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "what is the process to sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0764",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "guide for sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0765",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "sop for sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0766",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "i need to sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0767",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "help me sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0768",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "explain how to sync material pricing workbook",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0769",
+      "title": "Material workbook pricing",
+      "path": "/settings",
+      "keyword": "can i sync material pricing workbook in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0770",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "how do i review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0771",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "how to review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0772",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "where do i review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0773",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "steps to review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0774",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "what is the process to review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0775",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "guide for review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0776",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "sop for review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0777",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "i need to review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0778",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "help me review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0779",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "explain how to review Zare knowledge gaps",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0780",
+      "title": "Zare intelligence (admin)",
+      "path": "/settings",
+      "keyword": "can i review Zare knowledge gaps in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0781",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "how do i update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0782",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "how to update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0783",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "where do i update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0784",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "steps to update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0785",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "what is the process to update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0786",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "guide for update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0787",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "sop for update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0788",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "i need to update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0789",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "help me update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0790",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "explain how to update my profile and security",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0791",
+      "title": "Profile & security",
+      "path": "/settings/security",
+      "keyword": "can i update my profile and security in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0792",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "how do i understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0793",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "how to understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0794",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "where do i understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0795",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "steps to understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0796",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "what is the process to understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0797",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "guide for understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0798",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "sop for understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0799",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "i need to understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0800",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "help me understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0801",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "explain how to understand role templates",
+      "module": "settings"
+    },
+    {
+      "id": "op-settings-0802",
+      "title": "Role templates",
+      "path": "/settings/team",
+      "keyword": "can i understand role templates in zarewa",
+      "module": "settings"
+    },
+    {
+      "id": "op-hr-0803",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "how do i register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0804",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "how to register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0805",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "where do i register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0806",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "steps to register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0807",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "what is the process to register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0808",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "guide for register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0809",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "sop for register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0810",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "i need to register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0811",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "help me register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0812",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "explain how to register a new employee in HR",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0813",
+      "title": "HR employee register",
+      "path": "/hr/staff",
+      "keyword": "can i register a new employee in HR in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0814",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "how do i view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0815",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "how to view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0816",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "where do i view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0817",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "steps to view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0818",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "what is the process to view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0819",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "guide for view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0820",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "sop for view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0821",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "i need to view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0822",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "help me view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0823",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "explain how to view an employee HR profile",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0824",
+      "title": "HR staff profile",
+      "path": "/hr",
+      "keyword": "can i view an employee HR profile in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0825",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "how do i submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0826",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "how to submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0827",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "where do i submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0828",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "steps to submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0829",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "what is the process to submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0830",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "guide for submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0831",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "sop for submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0832",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "i need to submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0833",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "help me submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0834",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "explain how to submit a leave request",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0835",
+      "title": "Leave request",
+      "path": "/hr/leave",
+      "keyword": "can i submit a leave request in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0836",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "how do i record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0837",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "how to record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0838",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "where do i record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0839",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "steps to record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0840",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "what is the process to record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0841",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "guide for record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0842",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "sop for record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0843",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "i need to record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0844",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "help me record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0845",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "explain how to record attendance",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0846",
+      "title": "Attendance",
+      "path": "/hr/attendance",
+      "keyword": "can i record attendance in zarewa",
+      "module": "attendance"
+    },
+    {
+      "id": "op-hr-0847",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "how do i run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0848",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "how to run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0849",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "where do i run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0850",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "steps to run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0851",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "what is the process to run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0852",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "guide for run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0853",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "sop for run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0854",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "i need to run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0855",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "help me run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0856",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "explain how to run payroll",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0857",
+      "title": "Payroll run",
+      "path": "/hr/payroll",
+      "keyword": "can i run payroll in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0858",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "how do i transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0859",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "how to transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0860",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "where do i transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0861",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "steps to transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0862",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "what is the process to transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0863",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "guide for transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0864",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "sop for transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0865",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "i need to transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0866",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "help me transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0867",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "explain how to transfer staff between branches",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0868",
+      "title": "Staff transfer",
+      "path": "/hr/transfers",
+      "keyword": "can i transfer staff between branches in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0869",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "how do i record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0870",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "how to record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0871",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "where do i record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0872",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "steps to record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0873",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "what is the process to record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0874",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "guide for record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0875",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "sop for record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0876",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "i need to record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0877",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "help me record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0878",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "explain how to record a discipline case",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0879",
+      "title": "Discipline record",
+      "path": "/hr",
+      "keyword": "can i record a discipline case in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0880",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "how do i use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0881",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "how to use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0882",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "where do i use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0883",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "steps to use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0884",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "what is the process to use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0885",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "guide for use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0886",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "sop for use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0887",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "i need to use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0888",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "help me use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0889",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "explain how to use salary matrix",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0890",
+      "title": "Salary matrix",
+      "path": "/hr",
+      "keyword": "can i use salary matrix in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0891",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "how do i unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0892",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "how to unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0893",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "where do i unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0894",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "steps to unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0895",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "what is the process to unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0896",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "guide for unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0897",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "sop for unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0898",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "i need to unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0899",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "help me unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0900",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "explain how to unlock sensitive HR fields",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0901",
+      "title": "Sensitive HR unlock",
+      "path": "/hr",
+      "keyword": "can i unlock sensitive HR fields in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0902",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "how do i understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0903",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "how to understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0904",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "where do i understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0905",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "steps to understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0906",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "what is the process to understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0907",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "guide for understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0908",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "sop for understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0909",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "i need to understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0910",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "help me understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0911",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "explain how to understand HR record vs ERP login",
+      "module": "hr"
+    },
+    {
+      "id": "op-hr-0912",
+      "title": "HR employee vs ERP user",
+      "path": "/hr/staff",
+      "keyword": "can i understand HR record vs ERP login in zarewa",
+      "module": "hr"
+    },
+    {
+      "id": "op-workspace-0913",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "how do i compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0914",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "how to compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0915",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "where do i compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0916",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "steps to compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0917",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "what is the process to compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0918",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "guide for compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0919",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "sop for compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0920",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "i need to compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0921",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "help me compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0922",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "explain how to compose an internal memo",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0923",
+      "title": "Compose memo",
+      "path": "/",
+      "keyword": "can i compose an internal memo in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0924",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "how do i file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0925",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "how to file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0926",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "where do i file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0927",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "steps to file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0928",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "what is the process to file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0929",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "guide for file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0930",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "sop for file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0931",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "i need to file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0932",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "help me file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0933",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "explain how to file a memo after approval",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0934",
+      "title": "File memo",
+      "path": "/",
+      "keyword": "can i file a memo after approval in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0935",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "how do i choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0936",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "how to choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0937",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "where do i choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0938",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "steps to choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0939",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "what is the process to choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0940",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "guide for choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0941",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "sop for choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0942",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "i need to choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0943",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "help me choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0944",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "explain how to choose memo routing",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0945",
+      "title": "Memo routing",
+      "path": "/",
+      "keyword": "can i choose memo routing in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0946",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "how do i convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0947",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "how to convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0948",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "where do i convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0949",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "steps to convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0950",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "what is the process to convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0951",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "guide for convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0952",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "sop for convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0953",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "i need to convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0954",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "help me convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0955",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "explain how to convert memo to expense request",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0956",
+      "title": "Memo to expense",
+      "path": "/",
+      "keyword": "can i convert memo to expense request in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0957",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "how do i convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0958",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "how to convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0959",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "where do i convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0960",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "steps to convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0961",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "what is the process to convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0962",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "guide for convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0963",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "sop for convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0964",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "i need to convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0965",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "help me convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0966",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "explain how to convert memo to procurement",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0967",
+      "title": "Memo to procurement",
+      "path": "/procurement",
+      "keyword": "can i convert memo to procurement in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0968",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "how do i reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0969",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "how to reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0970",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "where do i reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0971",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "steps to reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0972",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "what is the process to reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0973",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "guide for reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0974",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "sop for reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0975",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "i need to reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0976",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "help me reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0977",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "explain how to reply in a memo thread",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0978",
+      "title": "Reply in memo thread",
+      "path": "/",
+      "keyword": "can i reply in a memo thread in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0979",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "how do i find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0980",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "how to find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0981",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "where do i find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0982",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "steps to find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0983",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "what is the process to find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0984",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "guide for find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0985",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "sop for find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0986",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "i need to find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0987",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "help me find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0988",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "explain how to find unfiled memos",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0989",
+      "title": "Unfiled memos",
+      "path": "/",
+      "keyword": "can i find unfiled memos in zarewa",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0990",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "how do i search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0991",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "how to search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0992",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "where do i search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0993",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "steps to search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0994",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "what is the process to search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0995",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "guide for search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0996",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "sop for search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0997",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "i need to search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0998",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "help me search workspace items",
+      "module": "workspace"
+    },
+    {
+      "id": "op-workspace-0999",
+      "title": "Search workspace",
+      "path": "/",
+      "keyword": "explain how to search workspace items",
+      "module": "workspace"
+    }
+  ]
+}

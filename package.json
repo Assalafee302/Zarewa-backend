@@ -25,6 +25,8 @@
     "test:watch": "vitest",
     "test:office-mysql": "node scripts/test-office-mysql.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:generate-matrix": "node scripts/generate-sop-matrix-500.mjs",
+    "test:e2e:sop-matrix-500": "node scripts/generate-sop-matrix-500.mjs && playwright test -c playwright.sop-matrix.config.js",
     "test:e2e:sales-refund-finance": "playwright test e2e/sales-refund-finance-checklist.spec.js",
     "test:e2e:refund-risk": "playwright test e2e/refund-risk-api.spec.js",
     "test:e2e:ui": "playwright test --ui",

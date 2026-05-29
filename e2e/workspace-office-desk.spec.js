@@ -11,7 +11,10 @@ test.describe('Online Office Workspace desk', () => {
   test('desk loads with professional navigation', async ({ page }) => {
     await page.goto('/');
     await expect(
-      page.getByRole('navigation', { name: /workspace desk/i }).or(page.getByRole('heading', { name: /my desk|office desk|executive desk|branch desk/i }))
+      page
+        .getByRole('navigation', { name: /workspace desk/i })
+        .or(page.getByRole('heading', { name: /my desk|office desk|executive desk|branch desk/i }))
+        .first()
     ).toBeVisible({ timeout: 25_000 });
   });
 
@@ -43,13 +46,13 @@ test.describe('Online Office Workspace desk', () => {
 
   test('branch workspace selector', async ({ page }) => {
     await page.goto('/');
-    const branchSelect = page.locator('#zarewa-branch-workspace');
+    const branchSelect = page.locator('#main-content #zarewa-branch-workspace').first();
     await expect(branchSelect).toBeVisible({ timeout: 15_000 });
   });
 
   test('HQ roll-up blocks create office record', async ({ page }) => {
     await page.goto('/');
-    const branchSelect = page.locator('#zarewa-branch-workspace');
+    const branchSelect = page.locator('#main-content #zarewa-branch-workspace').first();
     await expect(branchSelect).toBeVisible({ timeout: 15_000 });
     const allBranchesOption = branchSelect.locator('option[value="__ALL__"]');
     if (!(await allBranchesOption.count())) {
@@ -72,7 +75,7 @@ test.describe('Online Office Workspace desk', () => {
 
 test.describe('Branch manager office flows', () => {
   test('GP2: branch manager convert to expense', async ({ page }) => {
-    await signInViaApi(page, 'sales_manager', 'Manager@123');
+    await signInViaApi(page, 'sales.manager', 'Sales@123');
     await page.goto('/');
     const conversions = page.getByRole('button', { name: /expense conversions/i }).or(page.getByRole('tab', { name: /expense conversions/i }));
     if (await conversions.first().isVisible().catch(() => false)) {
@@ -104,7 +107,7 @@ test.describe('Official notices and forum', () => {
   });
 
   test('GP6: forum topic opens create wizard pre-filled', async ({ page }) => {
-    await signInViaApi(page, 'sales_staff', 'Sales@123');
+    await signInViaApi(page, 'sales.manager', 'Sales@123');
     const headers = await page.evaluate(() => {
       const m = document.cookie.match(/zarewa_csrf=([^;]+)/);
       return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
@@ -117,11 +120,9 @@ test.describe('Official notices and forum', () => {
       },
       headers,
     });
-    await page.goto('/');
-    const branchForum = page.getByRole('button', { name: /branch forum/i });
-    if (await branchForum.isVisible().catch(() => false)) {
-      await branchForum.click({ timeout: 15_000 });
-    }
+    await page.goto('/office');
+    await expect(page.getByRole('heading', { name: /branch desk/i })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: /^branch forum$/i }).click({ timeout: 15_000 });
     await page.getByRole('button', { name: /turn into office record/i }).first().click({ timeout: 15_000 });
     await expect(page.getByRole('dialog', { name: /create office record/i })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByPlaceholder(/subject/i)).toHaveValue(/.+/, { timeout: 10_000 });

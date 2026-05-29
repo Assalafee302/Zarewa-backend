@@ -1552,3 +1552,8 @@ export const OPERATIONAL_FAQ_ARTICLES = buildOperationalHelpArticles();
 
 /** Frozen count for tests and admin UI. */
 export const OPERATIONAL_FAQ_COUNT = OPERATIONAL_FAQ_TARGET;
+
+/** @returns {typeof OPERATIONAL_TOPICS} */
+export function listOperationalSopTopics() {
+  return OPERATIONAL_TOPICS;
+}

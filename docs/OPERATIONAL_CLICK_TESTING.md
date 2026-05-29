@@ -5,6 +5,15 @@
 1. **MySQL** running on `127.0.0.1:3306` (XAMPP, MariaDB, or MySQL Installer on Windows).
 2. Repo-root **`.env`** from `.env.example` with `ZAREWA_MYSQL_PASSWORD` set.
 3. E2E database (created automatically on first run): `zarewa_e2e`.
+4. **Frontend path** (sibling folder is not named `frontend` on this machine):
+
+```powershell
+$env:ZAREWA_FRONTEND_ROOT="C:\Users\USER\OneDrive\Desktop\Zarewa-frontend-main"
+```
+
+5. **Playwright browsers** (once): `npx playwright install chromium`
+
+E2E starts Vite with `VITE_OFFICE_DESK_V2=1` so workspace tests hit the Online Office desk (not legacy Gmail UI).
 
 ```powershell
 cd Zarewa-backend-main
@@ -41,6 +50,17 @@ npm run test:e2e -- e2e/workspace-office-desk.spec.js e2e/smoke.spec.js e2e/oper
 Playwright fails with `ECONNREFUSED 127.0.0.1:3306` or `Timeout waiting for .../api/health`.
 
 Start MySQL service, then re-run. There is no SQLite mode for E2E — only Vitest pure tests work offline.
+
+## 500-case SOP matrix (different batch)
+
+Second half of the operational FAQ catalog (entries 500–999) — not the workspace/smoke/operational-click packs:
+
+```powershell
+$env:ZAREWA_FRONTEND_ROOT="C:\Users\USER\OneDrive\Desktop\Zarewa-frontend-main"
+npm run test:e2e:sop-matrix-500
+```
+
+Uses `playwright.sop-matrix.config.js` with 4 workers and saved admin auth (`e2e/.auth/admin.json`).
 
 ## Map to ~1,000 Zare SOPs
 

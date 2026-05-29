@@ -89,7 +89,7 @@ test.describe('Operational scenario clicks (admin)', () => {
 
 test.describe('Operational scenario clicks (branch manager)', () => {
   test('branch desk endorsements section', async ({ page }) => {
-    await signInViaApi(page, 'sales_manager', 'Manager@123');
+    await signInViaApi(page, 'sales.manager', 'Sales@123');
     await page.goto('/');
     const endorse = page.getByRole('button', { name: /endorsements/i });
     if (await endorse.isVisible().catch(() => false)) {
@@ -101,7 +101,7 @@ test.describe('Operational scenario clicks (branch manager)', () => {
 
 test.describe('Operational scenario clicks (sales staff UI login)', () => {
   test('sales staff reaches workspace', async ({ page }) => {
-    await signInViaUi(page, 'sales_staff', 'Sales@123');
+    await signInViaUi(page, 'sales.staff', 'Sales@123');
     await page.goto('/');
     await expect(
       page.getByRole('button', { name: /create office record/i }).or(page.getByRole('heading', { name: /my desk/i }))

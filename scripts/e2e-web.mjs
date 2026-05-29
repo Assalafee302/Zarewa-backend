@@ -49,7 +49,11 @@ const { viteCli, frontendRoot } = resolveViteCli();
 const uiPort = String(process.env.E2E_UI_PORT || '5180');
 const vite = spawn(process.execPath, [viteCli, '--host', '127.0.0.1', '--port', uiPort], {
   cwd: frontendRoot,
-  env: { ...env, NODE_ENV: 'development' },
+  env: {
+    ...env,
+    NODE_ENV: 'development',
+    VITE_OFFICE_DESK_V2: process.env.VITE_OFFICE_DESK_V2 || '1',
+  },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
 

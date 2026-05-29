@@ -21,11 +21,18 @@ test.describe('Operational SOP matrix (500)', () => {
   for (const c of cases) {
     test(`[${c.id}] ${c.title}`, async ({ request }) => {
       const target = c.path.startsWith('/') ? c.path : `/${c.path}`;
-      const res = await request.get(target);
-      expect(res.status(), `${c.id} ${target}`).toBe(200);
-      const body = await res.text();
-      expect(body.length, `${c.id} empty body`).toBeGreaterThan(100);
-      expect(body.toLowerCase()).not.toMatch(/application error|failed to fetch/i);
+      const shell = await request.get(target);
+      expect(shell.status(), `${c.id} shell ${target}`).toBe(200);
+      const html = await shell.text();
+      expect(html, `${c.id} missing SPA root`).toMatch(/id=["']root["']/i);
+
+      const help = await request.post('/api/help/chat', {
+        data: { message: c.keyword, pathname: target },
+      });
+      expect(help.status(), `${c.id} help`).toBe(200);
+      const payload = await help.json();
+      expect(payload.ok, `${c.id} help ok`).toBe(true);
+      expect(String(payload.message || '').length, `${c.id} empty help`).toBeGreaterThan(20);
     });
   }
 });

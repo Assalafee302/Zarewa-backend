@@ -1005,4 +1005,202 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not update loan.' });
     }
   });
+
+  app.get('/api/hr/beneficiaries', requireHrAny('hr.benefits.manage', 'hr.staff.manage', 'hr.self'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const mineOnly = String(req.query?.mine || '') === '1';
+      let rows = listHrBeneficiaries(db, scope);
+      if (mineOnly) {
+        rows = rows.filter((b) => b.userId === req.user?.id);
+      }
+      return res.json({ ok: true, beneficiaries: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load beneficiaries.' });
+    }
+  });
+
+  app.put('/api/hr/beneficiaries', requireHrAny('hr.benefits.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertHrBeneficiary(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save beneficiary.' });
+    }
+  });
+
+  app.get('/api/hr/benefit-payments', requireHrAny('hr.benefits.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const periodYyyymm = String(req.query?.periodYyyymm || '').replace(/\D/g, '').slice(0, 6);
+      return res.json({ ok: true, payments: listHrBenefitPayments(db, periodYyyymm) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load benefit payments.' });
+    }
+  });
+
+  app.post('/api/hr/benefit-payments', requireHrAny('hr.benefits.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = recordHrBenefitPayment(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record benefit payment.' });
+    }
+  });
+
+  app.get('/api/hr/incident-memos', requireHrAny('hr.team.view', 'hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      }
+      return res.json({ ok: true, memos: listHrIncidentMemos(db, scope) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load incident memos.' });
+    }
+  });
+
+  app.post('/api/hr/incident-memos', requireHrAny('hr.team.view', 'hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrIncidentMemo(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create incident memo.' });
+    }
+  });
+
+  app.post('/api/hr/incident-memos/:memoId/escalate', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = escalateHrIncidentToDiscipline(db, req.params.memoId, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not escalate incident.' });
+    }
+  });
+
+  app.get('/api/hr/transfer-recommendations', requireHrAny('hr.transfers.manage', 'hr.team.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      }
+      return res.json({ ok: true, recommendations: listHrTransferRecommendations(db, scope) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load transfer recommendations.' });
+    }
+  });
+
+  app.post('/api/hr/transfer-recommendations', requireHrAny('hr.transfers.manage', 'hr.team.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrTransferRecommendation(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create transfer recommendation.' });
+    }
+  });
+
+  app.patch('/api/hr/transfer-recommendations/:id', requireHrAny('hr.transfers.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = reviewHrTransferRecommendation(db, req.user?.id, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update recommendation.' });
+    }
+  });
+
+  app.get('/api/hr/leave/calendar', requireHrAny('hr.team.view', 'hr.leave.manage', 'hr.directory.view', 'hr.self'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const fromIso = String(req.query?.from || '').slice(0, 10);
+      const toIso = String(req.query?.to || '').slice(0, 10);
+      const scope = hrListScope(req);
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      }
+      return res.json({ ok: true, entries: listHrLeaveCalendar(db, scope, fromIso, toIso) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load leave calendar.' });
+    }
+  });
+
+  app.get('/api/hr/loans/exceptional-queue', requireHrAny('hr.exceptional_loan.approve', 'hr.executive.view', 'hr.requests.gm_approve'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = { viewAll: true, branchId: hrListScope(req).branchId };
+      const ctx = hrRedactionContextFromReq(req);
+      const loans = listExceptionalLoanQueue(db, scope).map((r) =>
+        redactHrRequest(r, { canViewSensitive: ctx.canViewSensitive, isOwner: false })
+      );
+      return res.json({ ok: true, loans });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load exceptional loan queue.' });
+    }
+  });
+
+  app.get('/api/hr/reports/summary', requireHrAny('hr.reports.view', 'hr.staff.manage', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, summary: getHrReportsSummary(db, hrListScope(req)) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load HR reports.' });
+    }
+  });
+
+  app.get('/api/hr/salary-changes/recent', requireHrAny('hr.executive.view', 'hr.payroll.view_sensitive', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const ctx = hrRedactionContextFromReq(req);
+      let changes = listRecentOrgSalaryChanges(db, scope, req.query?.limit);
+      if (!ctx.canViewSensitive) {
+        changes = changes.map((c) => ({
+          ...c,
+          baseSalaryNgn: null,
+          amountsRedacted: true,
+        }));
+      }
+      return res.json({ ok: true, changes });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load salary changes.' });
+    }
+  });
+
+  app.get('/api/hr/payroll-runs/drafts', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, runs: listDraftPayrollRunIds(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list draft payroll runs.' });
+    }
+  });
 }

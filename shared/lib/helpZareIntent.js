@@ -7,7 +7,10 @@ import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 
 const INTENT_RULES = [
   ['meta_question', /\b(who are you|what are you|what can you do|who is (runa|zare)|what is (runa|zare)|how smart|how intelligent)\b/i],
-  ['error_explanation', /\b(error|failed|403|denied|locked|amount required|period locked|clearance_scope)\b/i],
+  [
+    'error_explanation',
+    /\b(error|failed|403|denied|locked|amount required|period locked|clearance_scope)\b|period_locked|PERIOD_LOCKED|clearance_scope_denied/i,
+  ],
   ['reversal_request', /\b(reverse|reversal|undo|take back|cancel posted)\b/i],
   ['correction_request', /\b(correct|correction|fix mistake|fix wrong|i enter wrong|entered wrong|wrong money|wrong amount)\b/i],
   ['wrong_payment_amount', /\b(wrong (payment )?amount|payment amount wrong|paid wrong amount|incorrect amount)\b/i],

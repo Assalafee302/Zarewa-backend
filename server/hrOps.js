@@ -701,6 +701,24 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
       )`
     ).run(row);
   }
+  if (existing && prevRow) {
+    const before = compensationSnapshotFromProfileRow(prevRow);
+    const after = compensationSnapshotFromProfileRow(row);
+    if (compensationChanged(before, after)) {
+      const reason =
+        String(body?.salaryChangeReason || body?.reason || '').trim() || 'Compensation update';
+      insertHrSalaryHistoryRow(db, actorUserId, userId, {
+        effectiveFromIso: String(body?.effectiveFromIso || '').slice(0, 10) || now.slice(0, 10),
+        salaryLevel: after.salaryLevel,
+        salaryStep: after.salaryStep,
+        baseSalaryNgn: after.baseSalaryNgn,
+        housingAllowanceNgn: after.housingAllowanceNgn,
+        transportAllowanceNgn: after.transportAllowanceNgn,
+        reason,
+      });
+    }
+  }
+
   appendHrAuditEvent(db, {
     actorUserId,
     action: existing ? 'hr.staff.profile_updated' : 'hr.staff.profile_created',
@@ -710,6 +728,107 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     details: { employeeNo: row.employee_no, jobTitle: row.job_title },
   });
   return { ok: true, profile: getHrStaffOne(db, userId) };
+}
+
+function compensationSnapshotFromProfileRow(row) {
+  if (!row) return null;
+  return {
+    baseSalaryNgn: Math.round(Number(row.base_salary_ngn) || 0),
+    housingAllowanceNgn: Math.round(Number(row.housing_allowance_ngn) || 0),
+    transportAllowanceNgn: Math.round(Number(row.transport_allowance_ngn) || 0),
+    salaryLevel: row.salary_level != null ? Number(row.salary_level) : null,
+    salaryStep: row.salary_step != null ? Number(row.salary_step) : null,
+  };
+}
+
+function compensationChanged(before, after) {
+  if (!before || !after) return false;
+  return (
+    before.baseSalaryNgn !== after.baseSalaryNgn ||
+    before.housingAllowanceNgn !== after.housingAllowanceNgn ||
+    before.transportAllowanceNgn !== after.transportAllowanceNgn ||
+    before.salaryLevel !== after.salaryLevel ||
+    before.salaryStep !== after.salaryStep
+  );
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} actorUserId
+ * @param {string} userId
+ * @param {object} entry
+ */
+export function insertHrSalaryHistoryRow(db, actorUserId, userId, entry) {
+  if (!hrTablesReady(db)) return null;
+  const id = newId('HRSH');
+  const now = nowIso();
+  db.prepare(
+    `INSERT INTO hr_salary_history (
+      id, user_id, effective_from_iso, salary_level, salary_step,
+      base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, reason, actor_user_id, created_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    userId,
+    String(entry.effectiveFromIso || '').slice(0, 10) || now.slice(0, 10),
+    entry.salaryLevel != null ? Math.round(Number(entry.salaryLevel)) : null,
+    entry.salaryStep != null ? Math.round(Number(entry.salaryStep)) : null,
+    Math.round(Number(entry.baseSalaryNgn) || 0),
+    Math.round(Number(entry.housingAllowanceNgn) || 0),
+    Math.round(Number(entry.transportAllowanceNgn) || 0),
+    String(entry.reason || '').trim() || null,
+    actorUserId,
+    now
+  );
+  return id;
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {number} [limit]
+ */
+export function listHrSalaryHistory(db, userId, limit = 40) {
+  const uid = String(userId || '').trim();
+  if (!uid || !hrTablesReady(db)) return [];
+  const cap = Math.min(100, Math.max(1, Math.round(Number(limit) || 40)));
+  try {
+    return db
+      .prepare(
+        `SELECT id, user_id AS userId, effective_from_iso AS effectiveFromIso,
+                salary_level AS salaryLevel, salary_step AS salaryStep,
+                base_salary_ngn AS baseSalaryNgn, housing_allowance_ngn AS housingAllowanceNgn,
+                transport_allowance_ngn AS transportAllowanceNgn, reason, actor_user_id AS actorUserId,
+                created_at_iso AS createdAtIso
+         FROM hr_salary_history WHERE user_id = ? ORDER BY effective_from_iso DESC, created_at_iso DESC LIMIT ?`
+      )
+      .all(uid, cap);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Record a salary increment (updates profile + history row).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} actorUserId
+ * @param {string} userId
+ * @param {object} body
+ */
+export function applyHrSalaryIncrement(db, actorUserId, userId, body) {
+  const reason = String(body?.reason || '').trim();
+  if (reason.length < 3) return { ok: false, error: 'Reason is required (minimum 3 characters).' };
+  return upsertHrStaffProfile(db, actorUserId, {
+    userId,
+    effectiveFromIso: String(body?.effectiveFromIso || '').slice(0, 10),
+    salaryChangeReason: reason,
+    payrollGroup: body?.payrollGroup,
+    salaryLevel: body?.salaryLevel,
+    salaryStep: body?.salaryStep,
+    baseSalaryNgn: body?.baseSalaryNgn,
+    housingAllowanceNgn: body?.housingAllowanceNgn,
+    transportAllowanceNgn: body?.transportAllowanceNgn,
+  });
 }
 
 /**

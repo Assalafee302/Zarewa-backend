@@ -6,6 +6,7 @@
 import {
   acceptHrPolicy,
   adjustHrLeaveBalance,
+  applyHrSalaryIncrement,
   appendHrAuditEvent,
   approvePayrollRunByGmHr,
   approvePayrollRunByMd,
@@ -39,6 +40,7 @@ import {
   listHrRequests,
   listHrStaff,
   listHrStaffBranchHistory,
+  listHrSalaryHistory,
   listRecentBranchTransfers,
   listRecentDisciplinaryEvents,
   appendHrDisciplinaryEvent,
@@ -314,6 +316,45 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load disciplinary events.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/salary-history', requireHrAny('hr.staff.manage', 'hr.payroll.view_sensitive', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const history = listHrSalaryHistory(db, userId);
+      const ctx = hrRedactionContextFromReq(req, { subjectUserId: userId });
+      if (!ctx.canViewSensitive) {
+        return res.json({
+          ok: true,
+          history: history.map((h) => ({
+            ...h,
+            baseSalaryNgn: null,
+            housingAllowanceNgn: null,
+            transportAllowanceNgn: null,
+            amountsRedacted: true,
+          })),
+        });
+      }
+      return res.json({ ok: true, history });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load salary history.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/salary-increment', requireHrAny('hr.staff.manage', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const r = applyHrSalaryIncrement(db, req.user?.id, userId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      const ctx = hrRedactionContextFromReq(req, { subjectUserId: userId });
+      return res.json({ ok: true, profile: redactStaffProfile(r.profile, ctx) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not apply salary increment.' });
     }
   });
 

@@ -1232,17 +1232,10 @@ export function ensureHelpArticles() {
   return allArticlesCache;
 }
 
-/** @type {HelpArticle[]} Lazy proxy — operational FAQs built on first access. */
-export const HELP_ARTICLES = new Proxy([], {
-  get(_target, prop) {
-    const arr = ensureHelpArticles();
-    if (prop === Symbol.iterator) {
-      return arr[Symbol.iterator].bind(arr);
-    }
-    const val = Reflect.get(arr, prop, arr);
-    return typeof val === 'function' ? val.bind(arr) : val;
-  },
-});
+/** @returns {HelpArticle[]} */
+export function getHelpArticles() {
+  return ensureHelpArticles();
+}
 
 /** Total articles including operational catalog (for status/admin). */
 export const HELP_ARTICLE_COUNT = CORE_HELP_ARTICLES.length + OPERATIONAL_FAQ_COUNT;

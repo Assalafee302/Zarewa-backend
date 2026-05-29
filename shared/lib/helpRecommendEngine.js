@@ -1,7 +1,7 @@
 /**
  * Ranked recommendations for Zare's "Try asking" area.
  */
-import { HELP_ARTICLES, quickQuestionsForPath } from './helpKnowledge.js';
+import { ensureHelpArticles, quickQuestionsForPath } from './helpKnowledge.js';
 import { mergePersonalizedPrompts, buildHelpCoachingHints } from './helpRecommend.js';
 import { buildTransactionCoachingHints } from './helpUserActivity.js';
 import { readHelpMemory } from './helpMemory.js';
@@ -52,7 +52,7 @@ export function rankZareRecommendations(ctx = {}) {
 
   for (const ev of ctx.workflowEvents || []) {
     if (!ev.articleId) continue;
-    const article = HELP_ARTICLES.find((a) => a.id === ev.articleId);
+    const article = ensureHelpArticles().find((a) => a.id === ev.articleId);
     if (!article) continue;
     add(
       `wf-${ev.signalKey}`,
@@ -66,7 +66,7 @@ export function rankZareRecommendations(ctx = {}) {
 
   const branchMem = ctx.branchMemory || {};
   for (const [articleId, weight] of Object.entries(branchMem.articleBoosts || {})) {
-    const article = HELP_ARTICLES.find((a) => a.id === articleId);
+    const article = ensureHelpArticles().find((a) => a.id === articleId);
     if (!article) continue;
     add(
       `branch-${articleId}`,
@@ -79,7 +79,7 @@ export function rankZareRecommendations(ctx = {}) {
   }
 
   for (const [articleId, boost] of Object.entries(ctx.memoryBoosts || {})) {
-    const article = HELP_ARTICLES.find((a) => a.id === articleId);
+    const article = ensureHelpArticles().find((a) => a.id === articleId);
     if (!article) continue;
     add(
       `mem-${articleId}`,

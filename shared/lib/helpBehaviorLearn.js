@@ -1,4 +1,4 @@
-import { HELP_ARTICLES } from './helpKnowledge.js';
+import { ensureHelpArticles } from './helpKnowledge.js';
 
 /** Map recent audit actions to help article ids for proactive coaching. */
 export const AUDIT_ACTION_ARTICLE_HINTS = {
@@ -50,7 +50,7 @@ export function buildBehaviorCoachingNotes(profile) {
  * @returns {{ label: string; query: string } | null}
  */
 export function promptForArticleId(articleId) {
-  const article = HELP_ARTICLES.find((a) => a.id === articleId);
+  const article = ensureHelpArticles().find((a) => a.id === articleId);
   if (!article) return null;
   return {
     label: article.title.length > 36 ? `${article.title.slice(0, 33)}…` : article.title,

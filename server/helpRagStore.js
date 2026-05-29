@@ -1,5 +1,9 @@
-import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
-import { matchHelpArticles, buildHelpSearchText } from '../shared/lib/helpKnowledge.js';
+import {
+  ensureHelpArticles,
+  HELP_ARTICLE_COUNT,
+  matchHelpArticles,
+  buildHelpSearchText,
+} from '../shared/lib/helpKnowledge.js';
 import {
   cosineSimilarity,
   embedTexts,
@@ -61,7 +65,7 @@ export function ragIndexVersion(db) {
 export async function indexHelpKnowledgeBase(db) {
   ensureHelpRagTables(db);
   const cfg = readEmbeddingConfig();
-  const chunks = HELP_ARTICLES.flatMap(chunkArticle);
+  const chunks = ensureHelpArticles().flatMap(chunkArticle);
   const texts = chunks.map((c) => c.text);
 
   /** @type {number[][] | null} */
@@ -111,7 +115,7 @@ export async function indexHelpKnowledgeBase(db) {
        ON CONFLICT(key) DO UPDATE SET payload_json = excluded.payload_json, updated_at_iso = excluded.updated_at_iso`
     ).run(
       INDEX_BLOB,
-      JSON.stringify({ articleCount: HELP_ARTICLES.length, model, at }),
+      JSON.stringify({ articleCount: HELP_ARTICLE_COUNT, model, at }),
       at
     );
   });
@@ -209,6 +213,6 @@ export function formatRetrievedContext(retrieval) {
  */
 export async function indexHelpKnowledgeBaseIfStale(db) {
   const ver = ragIndexVersion(db);
-  if (ver?.articleCount === HELP_ARTICLES.length) return ver;
+  if (ver?.articleCount === HELP_ARTICLE_COUNT) return ver;
   return indexHelpKnowledgeBase(db);
 }

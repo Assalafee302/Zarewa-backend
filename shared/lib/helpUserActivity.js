@@ -1,4 +1,4 @@
-import { HELP_ARTICLES } from './helpKnowledge.js';
+import { ensureHelpArticles } from './helpKnowledge.js';
 
 /** Audit actions → help article for coaching from real ERP activity. */
 export const TRANSACTION_ACTION_GUIDES = {
@@ -71,7 +71,7 @@ export function buildTransactionCoachingHints(profile) {
 
   const push = (articleId, reason, weight) => {
     if (!articleId || seen.has(articleId)) return;
-    const article = HELP_ARTICLES.find((a) => a.id === articleId);
+    const article = ensureHelpArticles().find((a) => a.id === articleId);
     if (!article) return;
     seen.add(articleId);
     hints.push({

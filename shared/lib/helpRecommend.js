@@ -1,4 +1,4 @@
-import { HELP_ARTICLES, quickQuestionsForPath } from './helpKnowledge.js';
+import { ensureHelpArticles, quickQuestionsForPath } from './helpKnowledge.js';
 
 /**
  * @param {typeof HELP_QUICK_QUESTIONS[number][]} base
@@ -25,7 +25,7 @@ export function mergePersonalizedPrompts(base, rolePrompts, learnedBoosts, pathn
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4);
   for (const [articleId, boost] of boostedArticles) {
-    const article = HELP_ARTICLES.find((a) => a.id === articleId);
+    const article = ensureHelpArticles().find((a) => a.id === articleId);
     if (!article) continue;
     add({ label: article.title.slice(0, 42), query: `Explain: ${article.title}` }, 8 + boost);
   }
@@ -47,7 +47,7 @@ export function buildHelpCoachingHints(snapshot, pathname) {
   const hints = [];
 
   const pushHint = (articleId, reason, weight) => {
-    const article = HELP_ARTICLES.find((a) => a.id === articleId);
+    const article = ensureHelpArticles().find((a) => a.id === articleId);
     if (!article) return;
     hints.push({
       id: articleId,

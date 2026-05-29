@@ -15,11 +15,12 @@ import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildHelpSearchText, isComplexHelpQuery, matchHelpArticles, mergeHelpLinks } from '../shared/lib/helpKnowledge.js';
 import {
   buildHelpAiSystemPrompt,
+  buildRetrievedContextForAi,
   detectHelpIntent,
   synthesizeHelpReply,
   synthesizeMetaReply,
 } from '../shared/lib/helpSynthesize.js';
-import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
+import { ensureHelpArticles } from '../shared/lib/helpKnowledge.js';
 import {
   normalizeCompletionContent,
   postChatCompletions,
@@ -308,7 +309,7 @@ export async function runHelpAgent(opts) {
 
   const ragContext = formatRetrievedContext(retrieval);
   let matchedArticles = retrieval.articleIds
-    .map((id) => HELP_ARTICLES.find((a) => a.id === id))
+    .map((id) => ensureHelpArticles().find((a) => a.id === id))
     .filter(Boolean);
 
   if (!matchedArticles.length) {
@@ -475,15 +476,65 @@ export async function runHelpAgent(opts) {
 
   const cfg = readAiAssistConfig();
   const complex = isComplexHelpQuery(message);
-  const shouldPolish =
-    cfg.enabled && (complex || agentRoute === 'hybrid' || (erpSummary && matchedArticles.length));
+  const articleContext = buildRetrievedContextForAi(
+    matchedArticles.length ? matchedArticles : [],
+    message
+  );
+  const retrievedContext = [ragContext, articleContext, erpSummary ? `ERP tool result:\n${erpSummary}` : '']
+    .filter(Boolean)
+    .join('\n\n');
 
-  if (shouldPolish) {
+  const shouldGenerate =
+    cfg.enabled &&
+    wantsGuide &&
+    helpIntent !== 'greeting' &&
+    helpIntent !== 'thanks' &&
+    helpIntent !== 'meta' &&
+    (complex ||
+      agentRoute === 'hybrid' ||
+      matchedArticles.length > 0 ||
+      helpIntent === 'workflow' ||
+      helpIntent === 'follow_up');
+
+  const shouldPolishDraft =
+    cfg.enabled &&
+    !shouldGenerate &&
+    (complex || agentRoute === 'hybrid' || (erpSummary && matchedArticles.length));
+
+  if (shouldGenerate) {
     const system =
       buildHelpAiSystemPrompt({
-        retrievedContext: [ragContext, erpSummary ? `ERP tool result:\n${erpSummary}` : '']
-          .filter(Boolean)
-          .join('\n\n'),
+        retrievedContext,
+        pathname,
+        userDisplay: opts.userDisplay,
+        roleKey: opts.roleKey,
+        pace: behaviorProfile.pace,
+      }) +
+      `\nAgent route: ${routeLabel(agentRoute)}. Answer the user's latest message directly. Never invent data outside retrieved guides and ERP results.`;
+
+    const chatHistory = sanitizeClientMessages(history).slice(-14);
+    const { ok, json } = await postChatCompletions(cfg, {
+      model: cfg.helpModel || cfg.model,
+      messages: [
+        { role: 'system', content: system },
+        ...chatHistory,
+        { role: 'user', content: String(message || '').trim().slice(0, 4000) },
+      ],
+      max_tokens: cfg.helpMaxTokens || 2000,
+      temperature: 0.35,
+    });
+
+    if (ok) {
+      const generated = normalizeCompletionContent(json?.choices?.[0]?.message);
+      if (String(generated).trim()) {
+        content = String(generated);
+        source = erpSummary ? 'ai+erp' : 'ai';
+      }
+    }
+  } else if (shouldPolishDraft) {
+    const system =
+      buildHelpAiSystemPrompt({
+        retrievedContext,
         pathname,
         userDisplay: opts.userDisplay,
         roleKey: opts.roleKey,
@@ -492,10 +543,10 @@ export async function runHelpAgent(opts) {
       `\nAgent route: ${routeLabel(agentRoute)}. Never invent data outside retrieved context and ERP results.`;
 
     const { ok, json } = await postChatCompletions(cfg, {
-      model: cfg.model,
+      model: cfg.helpModel || cfg.model,
       messages: [
         { role: 'system', content: system },
-        ...history.slice(-12),
+        ...sanitizeClientMessages(history).slice(-12),
         {
           role: 'assistant',
           content: `Draft answer (${routeLabel(agentRoute)}):\n${content}`.slice(0, 6000),
@@ -505,8 +556,8 @@ export async function runHelpAgent(opts) {
           content: 'Polish this into one clear, accurate reply. Keep ERP numbers exact. Do not add fake data.',
         },
       ],
-      max_tokens: 1000,
-      temperature: 0.25,
+      max_tokens: cfg.helpMaxTokens || 2000,
+      temperature: 0.3,
     });
 
     if (ok) {

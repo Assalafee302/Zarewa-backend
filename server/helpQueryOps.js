@@ -1,5 +1,6 @@
 import {
-  HELP_ARTICLES,
+  ensureHelpArticles,
+  HELP_ARTICLE_COUNT,
   quickQuestionsForPath,
   buildHelpSearchText,
   matchHelpArticles,
@@ -26,6 +27,7 @@ import { buildZareDailyBriefing } from '../shared/lib/helpZareBriefing.js';
 import { branchMemoryArticleBoosts, memoryArticleBoosts } from '../shared/lib/helpMemory.js';
 import { filterPersonalizationForUser } from '../shared/lib/helpDesignLimits.js';
 import { recordKnowledgeGap } from '../shared/lib/helpGapAnalysis.js';
+import { readAiAssistConfig } from './aiAssist.js';
 
 const LEARNED_BOOSTS_BLOB = 'help.learned_boosts.v1';
 
@@ -491,7 +493,7 @@ export function computeUserTransactionProfile(db, opts = {}) {
       if (action.includes('quotation')) totals.quotationsTouched += count;
       const map = guideForTransactionAction(action);
       if (!map) continue;
-      const article = HELP_ARTICLES.find((a) => a.id === map.articleId);
+      const article = ensureHelpArticles().find((a) => a.id === map.articleId);
       if (!article) continue;
       suggestedGuides.push({
         articleId: map.articleId,
@@ -551,7 +553,7 @@ export function computeUserTransactionProfile(db, opts = {}) {
   for (const err of recentErrors) {
     const fromNote = guideForErrorNote(err.note);
     if (!fromNote) continue;
-    const article = HELP_ARTICLES.find((a) => a.id === fromNote.articleId);
+    const article = ensureHelpArticles().find((a) => a.id === fromNote.articleId);
     if (!article) continue;
     suggestedGuides.push({
       articleId: fromNote.articleId,
@@ -677,13 +679,18 @@ export function buildHelpPersonalization(db, ctx = {}) {
     suggestedGuides: transactionProfile.suggestedGuides,
   };
 
+  const aiCfg = readAiAssistConfig();
   const raw = {
     prompts: prompts.slice(0, 8),
     learnedBoosts,
     branchLearnedBoosts: branchBoosts,
     userLearnedBoosts: userBoosts,
     knowledgeGaps,
-    articleCount: HELP_ARTICLES.length,
+    articleCount: HELP_ARTICLE_COUNT,
+    externalAi: aiCfg.enabled,
+    aiProvider: aiCfg.provider,
+    chatModel: aiCfg.helpModel || aiCfg.model,
+    polishModel: aiCfg.polishModel || aiCfg.model,
     learningEnabled: hasHelpQueryLogTable(db),
     behaviorLearningEnabled: hasHelpQueryLogTable(db) && Boolean(userId),
     behaviorProfile,

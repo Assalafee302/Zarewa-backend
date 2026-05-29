@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { classifyAgentRoute } from './helpAgentIntent.js';
 import { isCoachingMessage, buildCoachingReply } from './helpCoaching.js';
 import { rankZareRecommendations } from './helpRecommendEngine.js';
-import { HELP_ARTICLES } from './helpKnowledge.js';
+import { ensureHelpArticles } from './helpKnowledge.js';
 
 describe('helpAgentIntent extended', () => {
   it('routes coaching', () => {
@@ -28,7 +28,7 @@ describe('helpCoaching', () => {
   });
 
   it('builds step reply', () => {
-    const article = HELP_ARTICLES.find((a) => a.id === 'record-receipt');
+    const article = ensureHelpArticles().find((a) => a.id === 'record-receipt');
     const reply = buildCoachingReply({ message: 'step by step receipt', articles: [article] });
     expect(reply.content).toMatch(/step 1 of/i);
     expect(reply.coaching.active).toBe(true);

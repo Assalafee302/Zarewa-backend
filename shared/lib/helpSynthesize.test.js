@@ -5,7 +5,7 @@ import {
   selectRelevantSteps,
   synthesizeHelpReply,
 } from './helpSynthesize.js';
-import { HELP_ARTICLES } from './helpKnowledge.js';
+import { ensureHelpArticles } from './helpKnowledge.js';
 
 describe('helpSynthesize', () => {
   it('detects greetings', () => {
@@ -22,7 +22,7 @@ describe('helpSynthesize', () => {
   });
 
   it('answers register staff from knowledge', () => {
-    const article = HELP_ARTICLES.find((a) => a.id === 'register-staff-user');
+    const article = ensureHelpArticles().find((a) => a.id === 'register-staff-user');
     const reply = synthesizeHelpReply({
       message: 'how can i register new staff',
       articles: [article],
@@ -33,7 +33,7 @@ describe('helpSynthesize', () => {
   });
 
   it('synthesizes a concise workflow answer', () => {
-    const article = HELP_ARTICLES.find((a) => a.id === 'record-receipt');
+    const article = ensureHelpArticles().find((a) => a.id === 'record-receipt');
     const reply = synthesizeHelpReply({
       message: 'How do I record customer payment?',
       articles: [article],
@@ -45,13 +45,13 @@ describe('helpSynthesize', () => {
   });
 
   it('selects relevant steps only', () => {
-    const article = HELP_ARTICLES.find((a) => a.id === 'record-receipt');
+    const article = ensureHelpArticles().find((a) => a.id === 'record-receipt');
     const steps = selectRelevantSteps(article, 'Payments tab quotation', 3);
     expect(steps.length).toBeLessThanOrEqual(3);
   });
 
   it('builds AI system prompt with retrieved context', () => {
-    const article = HELP_ARTICLES.find((a) => a.id === 'record-receipt');
+    const article = ensureHelpArticles().find((a) => a.id === 'record-receipt');
     const prompt = buildHelpAiSystemPrompt({
       retrievedContext: `### ${article.title}\n${article.answer}`,
       pathname: '/sales',

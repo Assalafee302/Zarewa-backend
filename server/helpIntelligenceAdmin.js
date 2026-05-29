@@ -1,5 +1,5 @@
 import { readAiAssistConfig } from './aiAssist.js';
-import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
+import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
 import {
   aggregateKnowledgeGaps,
   buildSuggestedArticleDrafts,
@@ -15,7 +15,7 @@ export function getZareIntelligenceDashboard(db, opts = {}) {
   const sinceIso = since.toISOString();
 
   const out = {
-    articleCount: HELP_ARTICLES.length,
+    articleCount: HELP_ARTICLE_COUNT,
     ai: readAiAssistConfig(),
     periodDays: days,
     designLimits: RUNA_DESIGN_LIMITS,

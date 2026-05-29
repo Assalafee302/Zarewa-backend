@@ -358,7 +358,7 @@ import { runHelpAnalyticsJob } from './helpAnalytics.js';
 import { reviewSuggestedArticle } from '../shared/lib/helpGapAnalysis.js';
 import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 import { readRunaAiConfig } from './helpAiService.js';
-import { HELP_ARTICLES } from '../shared/lib/helpKnowledge.js';
+import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
 const bankFinanceImportBuckets = new Map();
@@ -630,15 +630,23 @@ export function registerHttpApi(app, db) {
       ok: true,
       available: true,
       selfContained: true,
-      articleCount: HELP_ARTICLES.length,
+      articleCount: HELP_ARTICLE_COUNT,
       externalAi: ai.chatEnabled,
+      aiProvider: ai.provider,
       intelligence: ai.mode,
       architecture: 'rag+agent+learning',
       designLimits: RUNA_DESIGN_LIMITS,
       rag: { semanticSearch: true, vectorStore: 'help_rag_chunks' },
-      agent: { router: true, textToSql: ai.chatEnabled, nativeErpTools: true, coaching: true },
+      agent: {
+        router: true,
+        textToSql: ai.chatEnabled,
+        nativeErpTools: true,
+        coaching: true,
+        fullLlmGeneration: ai.chatEnabled,
+      },
       embeddingModel: ai.embeddingModel,
       chatModel: ai.chatModel,
+      polishModel: ai.polishModel,
     });
   });
 
@@ -660,9 +668,9 @@ export function registerHttpApi(app, db) {
     requireAuth,
     requirePermission('office.use'),
     rateLimitAuthedUser(helpChatBuckets, 'help-memo-assist', 60, 60_000),
-    (req, res) => {
+    async (req, res) => {
       try {
-        const r = handleMemoAssist(db, req.user, req.body || {});
+        const r = await handleMemoAssist(db, req.user, req.body || {});
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error('Memo assist error', e);
@@ -1183,8 +1191,8 @@ export function registerHttpApi(app, db) {
       if (!readAiAssistConfig().enabled) {
         return res.status(503).json({ ok: false, error: 'AI assistant is not configured on this server.' });
       }
-      const { subject = '', body = '' } = req.body || {};
-      const result = await runOfficeMemoPolish({ subject, body });
+      const { subject = '', body = '', style = 'improve' } = req.body || {};
+      const result = await runOfficeMemoPolish({ subject, body, style });
       return res.json({ ok: true, subject: result.subject, body: result.body });
     } catch (e) {
       const code = e?.code;

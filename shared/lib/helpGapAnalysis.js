@@ -2,7 +2,7 @@
  * Knowledge gap detection and suggested article drafts (admin review only).
  */
 import { fingerprintHelpQuery } from './helpSelfTrain.js';
-import { HELP_ARTICLES } from './helpKnowledge.js';
+import { ensureHelpArticles } from './helpKnowledge.js';
 import {
   HELP_ARTICLE_AUTO_CREATE_STATUS,
   assertDraftStatusTransition,
@@ -209,7 +209,7 @@ export function listLowHelpfulnessArticles(db, opts = {}) {
       }
       return ids.map((id) => ({
         articleId: id,
-        title: HELP_ARTICLES.find((a) => a.id === id)?.title || id,
+        title: ensureHelpArticles().find((a) => a.id === id)?.title || id,
         notHelpful: Number(r.bad),
         helpful: Number(r.helpful),
       }));

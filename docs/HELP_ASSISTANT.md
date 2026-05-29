@@ -1,6 +1,8 @@
-# Zarewa Help Assistant (Zare) — ERP operations copilot
+# Zarewa Help Assistant (Zare) — how-to guide & SOPs
 
-**Zare** is the life-ring ERP operations assistant — workflow help, memos, transaction issues, approvals, and permission-safe search inside Zarewa.
+**Zare** is the life-ring **how-to guide** inside Zarewa — friendly SOPs, screen-by-screen steps, and workflow rules.
+
+**Zare is not an approver and does not perform ERP actions in chat.** Staff always click Approve, Save, Post, and Pay themselves. Zare explains *how* and *why* (including who normally approves).
 
 The help chatbot (life-ring button) is designed to work **without OpenAI or any external AI key**. Optional external AI only adds paraphrasing for unusual questions; the core is a **built-in knowledge base + pattern learning**.
 
@@ -8,11 +10,12 @@ The help chatbot (life-ring button) is designed to work **without OpenAI or any 
 
 | Built in | Not included |
 |----------|----------------|
-| 25+ procedural workflow articles | Neural-network / LLM training on your server |
+| 25+ procedural workflow articles (SOPs) | Approving or posting on behalf of users |
 | Keyword + route + learned boost matching | ChatGPT Free subscription |
 | Query logging and branch-level learning | Automatic product code changes |
 | User reactions (👍/👎), read time, follow-ups | Legal/financial advice |
-| Work-pattern hints from `audit_log` | |
+| Work-pattern hints from `audit_log` | Doing ERP mutations from chat |
+| Approval **rule** explanations (who/when) | Acting as approver in the UI |
 
 This is **practical pattern learning**: the system remembers which guides staff use, surfaces gaps when questions fail to match, and nudges users based on dashboard attention flags — not deep machine learning.
 

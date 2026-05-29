@@ -259,4 +259,81 @@ describe('businessIntelligence', () => {
     expect(pack.predictive).toBeTruthy();
     expect(Array.isArray(pack.predictive.alerts)).toBe(true);
   });
+
+  it('merges Metra and Industrial 6 profiles and ranks material combos by metres', () => {
+    const pack = buildBusinessIntelligencePack(
+      {
+        quotations: [
+          {
+            id: 'QT-M',
+            dateISO: '2026-05-10',
+            totalNgn: 50000,
+            materialGauge: '0.26mm',
+            materialColor: 'IV',
+            materialDesign: 'Longspan (Metra)',
+            materialTypeId: 'MAT-001',
+          },
+          {
+            id: 'QT-I',
+            dateISO: '2026-05-10',
+            totalNgn: 50000,
+            materialGauge: '0.26mm',
+            materialColor: 'IV',
+            materialDesign: 'Longspan (Indus6)',
+            materialTypeId: 'MAT-001',
+          },
+          {
+            id: 'QT-C',
+            dateISO: '2026-05-10',
+            totalNgn: 200000,
+            materialGauge: '0.26mm',
+            materialColor: 'IV',
+            materialDesign: 'Corrugated',
+            materialTypeId: 'MAT-001',
+          },
+        ],
+        productionJobs: [
+          {
+            status: 'Completed',
+            quotationRef: 'QT-M',
+            productID: 'COIL-ALU',
+            actualMeters: 40,
+            completedAtISO: '2026-05-15T10:00:00Z',
+          },
+          {
+            status: 'Completed',
+            quotationRef: 'QT-I',
+            productID: 'COIL-ALU',
+            actualMeters: 60,
+            completedAtISO: '2026-05-16T10:00:00Z',
+          },
+          {
+            status: 'Completed',
+            quotationRef: 'QT-C',
+            productID: 'COIL-ALU',
+            actualMeters: 30,
+            completedAtISO: '2026-05-17T10:00:00Z',
+          },
+        ],
+        cuttingLists: [],
+        receipts: [],
+        ledgerEntries: [],
+        refunds: [],
+        coilLots: [],
+        products: [],
+        stockMovements: [],
+        purchaseOrders: [],
+        expenses: [],
+        treasuryMovements: [],
+        paymentRequests: [],
+        treasuryAccounts: [],
+      },
+      { periodKey: 'month', asOfISO: '2026-05-20' }
+    );
+    const combos = pack.sales.materialPerformance?.aluminium?.topCombinations || [];
+    const longspan = combos.find((c) => c.profile === 'Longspan (Industrial 6 & Metra)');
+    expect(longspan?.metres).toBe(100);
+    expect(combos[0].profile).toBe('Longspan (Industrial 6 & Metra)');
+    expect(combos[0].metres).toBeGreaterThan(combos[1]?.metres || 0);
+  });
 });

@@ -1,4 +1,5 @@
 import { amountDueOnQuotationFromEntries } from './customerLedgerCore.js';
+import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 import { refundOutstandingAmount } from './refundsStore.js';
 import { receiptCashReceivedNgn } from './salesReceiptsList.js';
@@ -277,7 +278,8 @@ function materialSpecFromQuotation(q) {
   if (!q) return { colour: '—', gauge: '—', profile: '—' };
   const colour = String(q.materialColor ?? q.material_color ?? q.color ?? '').trim();
   const gauge = String(q.materialGauge ?? q.material_gauge ?? q.gauge ?? '').trim();
-  const profile = String(q.materialDesign ?? q.material_design ?? q.profile ?? '').trim();
+  const profileRaw = String(q.materialDesign ?? q.material_design ?? q.profile ?? '').trim();
+  const profile = normalizeMaterialProfile(profileRaw);
   return {
     colour: colour || '—',
     gauge: gauge || '—',
@@ -346,7 +348,7 @@ export function liveTopSalesPerformersByMaterial(productionJobs = [], quotations
     };
   });
 
-  rows.sort((a, b) => (b.revenueNgn - a.revenueNgn) || (b.metresProduced - a.metresProduced));
+  rows.sort((a, b) => b.metresProduced - a.metresProduced || b.revenueNgn - a.revenueNgn);
   const capped = limit == null ? rows : rows.slice(0, limit);
   return capped.map((r, i) => ({ ...r, rank: i + 1 }));
 }

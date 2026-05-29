@@ -11,13 +11,14 @@ import {
   productionOutputDateISO,
   receivablesAgingBuckets,
 } from './liveAnalytics.js';
+import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 
 const ALU_PRODUCT_IDS = new Set(['COIL-ALU', 'MAT-001']);
 const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
 /** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
-export const BI_ENGINE_REV = 'bi-v4';
+export const BI_ENGINE_REV = 'bi-v5';
 
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
@@ -68,7 +69,8 @@ function materialSpecFromQuotation(q) {
   if (!q) return { colour: '—', gauge: '—', profile: '—' };
   const colour = String(q.materialColor ?? q.material_color ?? q.color ?? '').trim();
   const gauge = String(q.materialGauge ?? q.material_gauge ?? q.gauge ?? '').trim();
-  const profile = String(q.materialDesign ?? q.material_design ?? q.profile ?? '').trim();
+  const profileRaw = String(q.materialDesign ?? q.material_design ?? q.profile ?? '').trim();
+  const profile = normalizeMaterialProfile(profileRaw);
   return {
     colour: colour || '—',
     gauge: gauge || '—',
@@ -592,29 +594,35 @@ export function computeMaterialPerformance(data, opts = {}) {
     bump(buckets.colour, spec.colour, spec.colour, metres, revenueNgn, weightKg, cogsNgn);
   }
 
-  const finalize = (map, limit = 6, withMargin = false) =>
-    [...map.values()]
-      .map((r) => {
-        const revenueNgn = Math.round(r.revenueNgn);
-        const cogsNgn = Math.round(r.cogsNgn || 0);
-        const marginNgn = revenueNgn - cogsNgn;
-        const base = {
-          label: r.key,
-          metres: Math.round(r.metres),
-          weightKg: Math.round(r.weightKg),
-          revenueNgn,
-          jobCount: r.jobCount,
-        };
-        if (!withMargin) return base;
-        return {
-          ...base,
-          cogsNgn,
-          marginNgn,
-          marginPct: revenueNgn > 0 ? Math.round((marginNgn / revenueNgn) * 1000) / 10 : null,
-        };
-      })
-      .sort((a, b) => b.revenueNgn - a.revenueNgn || b.metres - a.metres)
+  const finalize = (map, limit = 6, withMargin = false) => {
+    const rows = [...map.values()].map((r) => {
+      const revenueNgn = Math.round(r.revenueNgn);
+      const cogsNgn = Math.round(r.cogsNgn || 0);
+      const marginNgn = revenueNgn - cogsNgn;
+      const base = {
+        label: r.key,
+        metres: Math.round(r.metres),
+        weightKg: Math.round(r.weightKg),
+        revenueNgn,
+        jobCount: r.jobCount,
+      };
+      if (!withMargin) return base;
+      return {
+        ...base,
+        cogsNgn,
+        marginNgn,
+        marginPct: revenueNgn > 0 ? Math.round((marginNgn / revenueNgn) * 1000) / 10 : null,
+      };
+    });
+    const totalMetres = rows.reduce((s, r) => s + r.metres, 0);
+    return rows
+      .map((row) => ({
+        ...row,
+        sharePctMetres: totalMetres > 0 ? Math.round((row.metres / totalMetres) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.metres - a.metres || b.revenueNgn - a.revenueNgn)
       .slice(0, limit);
+  };
 
   const packFamily = (fam) => {
     const b = byFamily[fam];
@@ -970,10 +978,13 @@ export function computeSalesAnalytics(data, opts = {}) {
     bucket.jobCount += 1;
   }
 
+  const totalMetres = Object.values(mix).reduce((s, row) => s + row.metres, 0);
   const mixRows = Object.values(mix).map((row) => ({
     ...row,
+    metres: Math.round(row.metres),
     revenueNgn: Math.round(row.revenueNgn),
     sharePct: producedRevenueNgn > 0 ? Math.round((row.revenueNgn / producedRevenueNgn) * 1000) / 10 : 0,
+    sharePctMetres: totalMetres > 0 ? Math.round((row.metres / totalMetres) * 1000) / 10 : 0,
   }));
 
   const qInPeriod = quotations.filter((q) => {
@@ -1726,9 +1737,9 @@ export function businessIntelligenceHeadlines(pack) {
     );
   }
   const topMat = pack.sales?.materialPerformance?.aluminium?.topCombinations?.[0];
-  if (topMat?.revenueNgn > 0) {
+  if (topMat?.metres > 0) {
     lines.push(
-      `Best alu combo: ${topMat.gauge} · ${topMat.colour} · ${topMat.profile} (₦${topMat.revenueNgn.toLocaleString('en-NG')} produced sales).`
+      `Best alu combo (by metres): ${topMat.gauge} · ${topMat.colour} · ${topMat.profile} — ${topMat.metres.toLocaleString()} m produced (${topMat.sharePctMetres ?? 0}% of alu metres).`
     );
   }
   const pf = pack.productionForecast?.horizons?.find((h) => h.days === 30);

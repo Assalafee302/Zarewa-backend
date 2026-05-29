@@ -5,10 +5,9 @@
 
 import { guideClearanceFootnote } from './helpClearance.js';
 import { HELP_BOT_GUIDE_PRINCIPLE, HELP_BOT_NAME } from './helpBotBrand.js';
+import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 
 /** @typedef {'greeting' | 'thanks' | 'follow_up' | 'clarify' | 'workflow' | 'meta' | 'unknown'} HelpIntent */
-
-import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 const GREETING_RE = /^(hi|hello|hey|good morning|good afternoon|good evening|greetings|howdy|salam|assalam)\b/i;
 const THANKS_RE = /^(thanks|thank you|got it|perfect|great|ok thanks|cheers)\b/i;
 const META_RE =

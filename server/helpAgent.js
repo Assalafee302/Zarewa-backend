@@ -264,6 +264,15 @@ export async function runHelpAgent(opts) {
         agentRoute: 'analytics',
       });
     }
+    return finish(db, opts, logCtx, chatStarted, {
+      content:
+        '**Briefing** — I do not have live workspace counts in this session yet. Open **Workspace** or refresh, then ask again; I will summarize pending approvals, overdue items, and finance queue counts (permission-safe only).',
+      source: 'briefing',
+      links: [{ label: 'Workspace', to: '/' }],
+      matchedArticleIds: [],
+      topScore: 0,
+      agentRoute: 'analytics',
+    });
   }
 
   if (agentRoute === 'meta' || helpIntent === 'meta') {

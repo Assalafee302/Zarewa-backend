@@ -3,7 +3,7 @@
  */
 import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 import { HELP_BOT_NAME } from './helpBotBrand.js';
-import { isCoachingMessage } from './helpCoaching.js';
+import { isCoachingMessage } from './helpCoachingDetect.js';
 import { classifyZareIntent, zareIntentToAgentRoute } from './helpZareIntent.js';
 
 /** @typedef {'guide' | 'erp_data' | 'hybrid' | 'chitchat' | 'meta' | 'troubleshoot' | 'clearance' | 'analytics' | 'coaching'} AgentRoute */

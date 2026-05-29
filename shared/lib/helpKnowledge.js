@@ -1214,14 +1214,38 @@ const CORE_HELP_ARTICLES = [
   },
 ];
 
-/** @type {HelpArticle[]} Operational Q&A catalog (~1000 phrasings) merged at load. */
-const OPERATIONAL_HELP_ARTICLES = buildOperationalHelpArticles();
+let operationalArticlesCache = null;
+let allArticlesCache = null;
 
-/** @type {HelpArticle[]} */
-export const HELP_ARTICLES = [...CORE_HELP_ARTICLES, ...OPERATIONAL_HELP_ARTICLES];
+function getOperationalHelpArticles() {
+  if (!operationalArticlesCache) {
+    operationalArticlesCache = buildOperationalHelpArticles();
+  }
+  return operationalArticlesCache;
+}
+
+/** Build merged catalog on first use (avoids blocking server/worker startup). */
+export function ensureHelpArticles() {
+  if (!allArticlesCache) {
+    allArticlesCache = [...CORE_HELP_ARTICLES, ...getOperationalHelpArticles()];
+  }
+  return allArticlesCache;
+}
+
+/** @type {HelpArticle[]} Lazy proxy — operational FAQs built on first access. */
+export const HELP_ARTICLES = new Proxy([], {
+  get(_target, prop) {
+    const arr = ensureHelpArticles();
+    if (prop === Symbol.iterator) {
+      return arr[Symbol.iterator].bind(arr);
+    }
+    const val = Reflect.get(arr, prop, arr);
+    return typeof val === 'function' ? val.bind(arr) : val;
+  },
+});
 
 /** Total articles including operational catalog (for status/admin). */
-export const HELP_ARTICLE_COUNT = HELP_ARTICLES.length;
+export const HELP_ARTICLE_COUNT = CORE_HELP_ARTICLES.length + OPERATIONAL_FAQ_COUNT;
 
 /** Re-export for admin dashboards and docs. */
 export { OPERATIONAL_FAQ_COUNT };
@@ -1514,7 +1538,7 @@ export function matchHelpArticles(query, opts = {}) {
   const qLower = `${q} ${normalized}`.toLowerCase();
   const learnedBoosts = opts.learnedBoosts && typeof opts.learnedBoosts === 'object' ? opts.learnedBoosts : {};
   const ranked = preferCuratedOverOperational(
-    HELP_ARTICLES.map((article) => ({
+    ensureHelpArticles().map((article) => ({
       article,
       score: scoreHelpArticle(article, qLower, tokens, opts.pathname, learnedBoosts),
     }))

@@ -348,6 +348,7 @@ import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.j
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
+import { buildBusinessIntelligenceXlsx } from './businessIntelligenceExport.js';
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
 import { sanitizeZarePageContext } from '../shared/lib/workspaceSanitize.js';
@@ -3308,6 +3309,34 @@ export function registerHttpApi(app, db) {
           ? `Could not load business intelligence: ${detail}`
           : 'Could not load business intelligence.',
         code: 'BI_LOAD_FAILED',
+      });
+    }
+  });
+
+  app.get('/api/analytics/business-intelligence/export', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const periodKey = String(req.query?.period || req.query?.periodKey || 'month').trim();
+      const asOfISO = String(req.query?.asOfISO || req.query?.asOf || '').slice(0, 10) || undefined;
+      const pack = loadBusinessIntelligencePack(db, branchScope, { periodKey, asOfISO });
+      const buf = buildBusinessIntelligenceXlsx(pack);
+      const safePeriod = periodKey.replace(/[^a-z0-9_-]/gi, '') || 'month';
+      const filename = `zarewa-business-intelligence-${safePeriod}-${pack.asOfISO || 'export'}.xlsx`;
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(buf);
+    } catch (e) {
+      console.error('[business-intelligence-export]', e);
+      const detail = String(e?.message || e || '').trim();
+      return res.status(500).json({
+        ok: false,
+        error: detail
+          ? `Could not export business intelligence: ${detail}`
+          : 'Could not export business intelligence.',
+        code: 'BI_EXPORT_FAILED',
       });
     }
   });

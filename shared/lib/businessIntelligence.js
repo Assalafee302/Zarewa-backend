@@ -17,7 +17,7 @@ const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
 /** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
-export const BI_ENGINE_REV = 'bi-v2';
+export const BI_ENGINE_REV = 'bi-v3';
 
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
@@ -315,6 +315,215 @@ function coilInventoryForFamily(coilLots, family) {
 }
 
 /**
+ * Weighted average coil cost ₦/kg by family + gauge + colour (from live lots).
+ * @param {object[]} coilLots
+ */
+export function buildCoilUnitCostIndex(coilLots = []) {
+  /** @type {Map<string, { kg: number; costNgn: number }>} */
+  const byKey = new Map();
+  /** @type {Record<string, { kg: number; costNgn: number }>} */
+  const familyTotals = { aluminium: { kg: 0, costNgn: 0 }, aluzinc: { kg: 0, costNgn: 0 } };
+
+  for (const lot of coilLots) {
+    if (lot?.currentStatus === 'Consumed') continue;
+    const fam = coilFamilyFromLot(lot);
+    if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
+    const kg = liveCoilKg(lot);
+    if (kg <= 0) continue;
+    const gauge = lot.gaugeLabel || lot.gauge || '—';
+    const colour = lot.colour || lot.color || '—';
+    const unit = Number(lot.unitCostNgnPerKg) || 0;
+    const cost =
+      unit > 0 ? kg * unit : Math.max(0, Number(lot.landedCostNgn) || 0);
+    const unitPerKg = cost > 0 && kg > 0 ? cost / kg : 0;
+    if (unitPerKg <= 0) continue;
+
+    const key = `${fam}|${gauge}|${colour}`;
+    const prev = byKey.get(key) || { kg: 0, costNgn: 0 };
+    prev.kg += kg;
+    prev.costNgn += Math.round(cost);
+    byKey.set(key, prev);
+
+    familyTotals[fam].kg += kg;
+    familyTotals[fam].costNgn += Math.round(cost);
+  }
+
+  const index = new Map();
+  for (const [key, v] of byKey) {
+    index.set(key, v.kg > 0 ? v.costNgn / v.kg : 0);
+  }
+  const familyAvg = {
+    aluminium: familyTotals.aluminium.kg > 0 ? familyTotals.aluminium.costNgn / familyTotals.aluminium.kg : 0,
+    aluzinc: familyTotals.aluzinc.kg > 0 ? familyTotals.aluzinc.costNgn / familyTotals.aluzinc.kg : 0,
+  };
+  return { bySku: index, familyAvg };
+}
+
+function resolveEntityBranchId(entity, quoteById) {
+  const direct = String(entity?.branchId || entity?.branch_id || '').trim();
+  if (direct) return direct;
+  const ref = String(entity?.quotationRef || '').trim();
+  if (ref && quoteById) {
+    const q = quoteById.get(ref);
+    const qb = String(q?.branchId || q?.branch_id || '').trim();
+    if (qb) return qb;
+  }
+  return 'UNASSIGNED';
+}
+
+/**
+ * Branch scorecards when scope is ALL — produced sales, collections, coil stock, top SKU signals.
+ * @param {object} data
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string; branchScope?: string }} opts
+ */
+export function computeBranchBreakdown(data, opts = {}) {
+  const scope = String(opts.branchScope || 'ALL').trim();
+  if (scope && scope !== 'ALL') {
+    return { scopeSingle: scope, byBranch: [] };
+  }
+
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const quoteById = new Map((data.quotations || []).map((q) => [String(q.id || '').trim(), q]));
+  const metersByRef = metersProducedByQuotationRef(data.productionJobs || []);
+
+  /** @type {Map<string, { branchId: string; producedRevenueNgn: number; paymentsNgn: number; refundsNgn: number; coilKgOnHand: number; coilValuationNgn: number }>} */
+  const byBranch = new Map();
+
+  const ensure = (branchId) => {
+    const id = branchId || 'UNASSIGNED';
+    if (!byBranch.has(id)) {
+      byBranch.set(id, {
+        branchId: id,
+        producedRevenueNgn: 0,
+        paymentsNgn: 0,
+        refundsNgn: 0,
+        coilKgOnHand: 0,
+        coilValuationNgn: 0,
+      });
+    }
+    return byBranch.get(id);
+  };
+
+  for (const j of data.productionJobs || []) {
+    if (!productionJobIsCompleted(j)) continue;
+    const d = productionOutputDateISO(j);
+    if (!d || d < startIso || d > asOfISO) continue;
+    const q = quoteById.get(String(j.quotationRef || '').trim());
+    const row = ensure(resolveEntityBranchId(j, quoteById));
+    row.producedRevenueNgn += allocatedQuotationRevenueForProductionJob(j, q, metersByRef);
+  }
+
+  for (const r of data.receipts || []) {
+    const d = toIsoDate(r.dateISO || r.date);
+    if (!d || d < startIso || d > asOfISO) continue;
+    const row = ensure(resolveEntityBranchId(r, quoteById));
+    row.paymentsNgn += receiptCashNgn(r);
+  }
+
+  for (const rf of data.refunds || []) {
+    const d = toIsoDate(rf.requestedAtISO || rf.paidAtISO);
+    if (!d || d < startIso || d > asOfISO) continue;
+    const amt = refundImpactNgn(rf);
+    if (amt <= 0) continue;
+    const row = ensure(resolveEntityBranchId(rf, quoteById));
+    row.refundsNgn += amt;
+  }
+
+  for (const lot of (data.coilLots || []).filter((c) => c.currentStatus !== 'Consumed')) {
+    const fam = coilFamilyFromLot(lot);
+    if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
+    const row = ensure(String(lot.branchId || '').trim() || 'UNASSIGNED');
+    const kg = liveCoilKg(lot);
+    row.coilKgOnHand += kg;
+    const unit = Number(lot.unitCostNgnPerKg) || 0;
+    row.coilValuationNgn +=
+      unit > 0 && kg > 0 ? Math.round(kg * unit) : Math.round(Number(lot.landedCostNgn) || 0);
+  }
+
+  const branchSkuTables = [];
+  for (const row of byBranch.values()) {
+    const filtered = filterBiDataByBranch(data, row.branchId);
+    const mat = computeMaterialPerformance(filtered, opts);
+    const sku = computeSkuIntelligence(filtered, mat, opts);
+    const topCombo = mat.aluminium?.topCombinations?.[0] || mat.aluzinc?.topCombinations?.[0];
+    branchSkuTables.push({
+      branchId: row.branchId,
+      topMaterialLabel: topCombo
+        ? `${topCombo.gauge} · ${topCombo.colour} · ${topCombo.profile}`
+        : '—',
+      buySkuCount:
+        (sku.aluminium?.buyNext?.length || 0) + (sku.aluzinc?.buyNext?.length || 0),
+      liquidateSkuCount:
+        (sku.aluminium?.reduceStock?.length || 0) + (sku.aluzinc?.reduceStock?.length || 0),
+      topBuy:
+        sku.aluminium?.buyNext?.[0] || sku.aluzinc?.buyNext?.[0] || null,
+      topLiquidate:
+        sku.aluminium?.reduceStock?.[0] || sku.aluzinc?.reduceStock?.[0] || null,
+    });
+  }
+
+  const skuByBranch = new Map(branchSkuTables.map((t) => [t.branchId, t]));
+
+  const byBranchRows = [...byBranch.values()]
+    .map((r) => {
+      const sku = skuByBranch.get(r.branchId) || {};
+      return {
+        ...r,
+        producedRevenueNgn: Math.round(r.producedRevenueNgn),
+        paymentsNgn: Math.round(r.paymentsNgn),
+        refundsNgn: Math.round(r.refundsNgn),
+        netCollectedNgn: Math.round(r.paymentsNgn - r.refundsNgn),
+        coilKgOnHand: Math.round(r.coilKgOnHand),
+        coilValuationNgn: Math.round(r.coilValuationNgn),
+        topMaterialLabel: sku.topMaterialLabel || '—',
+        buySkuCount: sku.buySkuCount || 0,
+        liquidateSkuCount: sku.liquidateSkuCount || 0,
+        topBuy: sku.topBuy || null,
+        topLiquidate: sku.topLiquidate || null,
+      };
+    })
+    .sort((a, b) => b.producedRevenueNgn - a.producedRevenueNgn);
+
+  return {
+    periodStartISO: startIso,
+    periodEndISO: asOfISO,
+    byBranch: byBranchRows,
+  };
+}
+
+/**
+ * @param {object} data
+ * @param {string} branchId
+ */
+export function filterBiDataByBranch(data, branchId) {
+  const id = String(branchId || '').trim();
+  const quoteById = new Map((data.quotations || []).map((q) => [String(q.id || '').trim(), q]));
+  const quoteMatches = (q) => resolveEntityBranchId(q, quoteById) === id;
+  const entityMatches = (e) => resolveEntityBranchId(e, quoteById) === id;
+
+  return {
+    ...data,
+    quotations: (data.quotations || []).filter(quoteMatches),
+    productionJobs: (data.productionJobs || []).filter(entityMatches),
+    receipts: (data.receipts || []).filter(entityMatches),
+    refunds: (data.refunds || []).filter(entityMatches),
+    coilLots: (data.coilLots || []).filter((lot) => String(lot.branchId || '').trim() === id),
+    purchaseOrders: (data.purchaseOrders || []).filter(
+      (po) => String(po.branchId || '').trim() === id
+    ),
+    stockMovements: data.stockMovements || [],
+    products: data.products || [],
+    cuttingLists: (data.cuttingLists || []).filter(entityMatches),
+    ledgerEntries: data.ledgerEntries || [],
+    expenses: data.expenses || [],
+    treasuryMovements: data.treasuryMovements || [],
+    paymentRequests: data.paymentRequests || [],
+    treasuryAccounts: data.treasuryAccounts || [],
+  };
+}
+
+/**
  * Material performance by gauge × colour × profile (produced sales basis), split by metal family.
  * @param {object} data
  * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
@@ -326,6 +535,7 @@ export function computeMaterialPerformance(data, opts = {}) {
   const productionJobs = data.productionJobs || [];
   const quoteById = new Map(quotations.map((q) => [String(q.id || '').trim(), q]));
   const metersByRef = metersProducedByQuotationRef(productionJobs);
+  const costIndex = buildCoilUnitCostIndex(data.coilLots || []);
 
   /** @type {Record<string, { combo: Map<string, object>; gauge: Map<string, object>; colour: Map<string, object> }>} */
   const byFamily = {
@@ -333,11 +543,20 @@ export function computeMaterialPerformance(data, opts = {}) {
     aluzinc: { combo: new Map(), gauge: new Map(), colour: new Map() },
   };
 
-  const bump = (map, key, label, metres, revenueNgn, weightKg) => {
-    const prev = map.get(key) || { key: label, metres: 0, revenueNgn: 0, weightKg: 0, jobCount: 0 };
+  const unitCostFor = (fam, gauge, colour, weightKg) => {
+    const skuKey = `${fam}|${gauge}|${colour}`;
+    const sku = costIndex.bySku.get(skuKey);
+    if (sku > 0) return sku;
+    return costIndex.familyAvg[fam] || 0;
+  };
+
+  const bump = (map, key, label, metres, revenueNgn, weightKg, cogsNgn) => {
+    const prev =
+      map.get(key) || { key: label, metres: 0, revenueNgn: 0, weightKg: 0, cogsNgn: 0, jobCount: 0 };
     prev.metres += metres;
     prev.revenueNgn += revenueNgn;
     prev.weightKg += weightKg;
+    prev.cogsNgn += cogsNgn;
     prev.jobCount += 1;
     map.set(key, prev);
   };
@@ -363,28 +582,43 @@ export function computeMaterialPerformance(data, opts = {}) {
         ? Number(j.actualWeightKg)
         : Math.round(metres * (gaugeMmFromLabel(spec.gauge) <= 0.26 ? 2.65 : 2.9));
 
+    const unitCost = unitCostFor(fam, spec.gauge, spec.colour, weightKg);
+    const cogsNgn = unitCost > 0 && weightKg > 0 ? Math.round(weightKg * unitCost) : 0;
+
     const comboKey = `${spec.gauge}|${spec.colour}|${spec.profile}`;
     const buckets = byFamily[fam];
-    bump(buckets.combo, comboKey, comboKey, metres, revenueNgn, weightKg);
-    bump(buckets.gauge, spec.gauge, spec.gauge, metres, revenueNgn, weightKg);
-    bump(buckets.colour, spec.colour, spec.colour, metres, revenueNgn, weightKg);
+    bump(buckets.combo, comboKey, comboKey, metres, revenueNgn, weightKg, cogsNgn);
+    bump(buckets.gauge, spec.gauge, spec.gauge, metres, revenueNgn, weightKg, cogsNgn);
+    bump(buckets.colour, spec.colour, spec.colour, metres, revenueNgn, weightKg, cogsNgn);
   }
 
-  const finalize = (map, limit = 6) =>
+  const finalize = (map, limit = 6, withMargin = false) =>
     [...map.values()]
-      .map((r) => ({
-        label: r.key,
-        metres: Math.round(r.metres),
-        weightKg: Math.round(r.weightKg),
-        revenueNgn: Math.round(r.revenueNgn),
-        jobCount: r.jobCount,
-      }))
+      .map((r) => {
+        const revenueNgn = Math.round(r.revenueNgn);
+        const cogsNgn = Math.round(r.cogsNgn || 0);
+        const marginNgn = revenueNgn - cogsNgn;
+        const base = {
+          label: r.key,
+          metres: Math.round(r.metres),
+          weightKg: Math.round(r.weightKg),
+          revenueNgn,
+          jobCount: r.jobCount,
+        };
+        if (!withMargin) return base;
+        return {
+          ...base,
+          cogsNgn,
+          marginNgn,
+          marginPct: revenueNgn > 0 ? Math.round((marginNgn / revenueNgn) * 1000) / 10 : null,
+        };
+      })
       .sort((a, b) => b.revenueNgn - a.revenueNgn || b.metres - a.metres)
       .slice(0, limit);
 
   const packFamily = (fam) => {
     const b = byFamily[fam];
-    const topCombinations = finalize(b.combo, 8).map((row) => {
+    const topCombinations = finalize(b.combo, 8, true).map((row) => {
       const [gauge, colour, profile] = String(row.label).split('|');
       return { gauge, colour, profile, ...row };
     });
@@ -1058,6 +1292,11 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
   const inventory = computeInventoryAnalytics(data, { periodKey, asOfISO });
   const sales = computeSalesAnalytics(data, { periodKey, asOfISO });
   const procurement = computeProcurementInsights(data, { periodKey, asOfISO });
+  const branchBreakdown = computeBranchBreakdown(data, {
+    periodKey,
+    asOfISO,
+    branchScope: opts.branchScope || 'ALL',
+  });
   const predictive = computePredictiveAnalytics(data, sales, inventory, {
     periodKey,
     asOfISO,
@@ -1075,6 +1314,7 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
     inventory,
     sales,
     procurement,
+    branchBreakdown,
     predictive,
   };
 }

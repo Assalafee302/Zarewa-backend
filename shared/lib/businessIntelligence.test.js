@@ -164,7 +164,7 @@ describe('businessIntelligence', () => {
             currentWeightKg: 1000,
             gaugeLabel: '0.26mm',
             colour: 'IV',
-            unitCostNgnPerKg: 1200,
+            unitCostNgnPerKg: 300,
           },
         ],
         products: [],
@@ -189,6 +189,11 @@ describe('businessIntelligence', () => {
     expect(pack.inventory.skuIntelligence?.aluminium).toBeTruthy();
     expect(pack.procurement?.supplierFocus?.length).toBeGreaterThan(0);
     expect(pack.sales.topCustomers[0].netCollectedNgn).toBe(80000);
+    const combo = pack.sales.materialPerformance?.aluminium?.topCombinations?.[0];
+    expect(combo?.revenueNgn).toBeGreaterThan(0);
+    expect(combo?.cogsNgn).toBeGreaterThan(0);
+    expect(combo?.marginNgn).toBeDefined();
+    expect(combo?.marginPct).toBeGreaterThan(0);
   });
 
   it('builds full pack with predictive alerts', () => {

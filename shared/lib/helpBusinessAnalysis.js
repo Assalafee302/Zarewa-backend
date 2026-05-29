@@ -46,8 +46,10 @@ export function formatBusinessAnalysisReply(pack) {
     const perf = s.materialPerformance?.[famKey];
     const best = perf?.topCombinations?.[0];
     if (best?.revenueNgn > 0) {
+      const margin =
+        best.marginPct != null ? ` · est. margin ${best.marginPct}%` : '';
       sections.push(
-        `- Best ${perf.label} combo: ${best.gauge} · ${best.colour} · ${best.profile} — ₦${best.revenueNgn.toLocaleString('en-NG')}`
+        `- Best ${perf.label} combo: ${best.gauge} · ${best.colour} · ${best.profile} — ₦${best.revenueNgn.toLocaleString('en-NG')}${margin}`
       );
     }
   }

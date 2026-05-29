@@ -4,6 +4,7 @@ import {
   computeInventoryAnalytics,
   computeSalesAnalytics,
   resolveBusinessMaterialFamily,
+  topCustomersByNetPayments,
 } from './businessIntelligence.js';
 
 describe('businessIntelligence', () => {
@@ -88,6 +89,106 @@ describe('businessIntelligence', () => {
     expect(inv.families[0].kgOnHand).toBe(1000);
     expect(inv.families[1].kgOnHand).toBe(500);
     expect(inv.totalCoilKg).toBe(1500);
+  });
+
+  it('ranks top customers by net payments minus refunds', () => {
+    const rows = topCustomersByNetPayments(
+      [
+        {
+          customerID: 'C1',
+          customer: 'Alpha Ltd',
+          dateISO: '2026-05-10',
+          amountNgn: 500000,
+        },
+        {
+          customerID: 'C2',
+          customer: 'Beta Co',
+          dateISO: '2026-05-12',
+          amountNgn: 300000,
+        },
+      ],
+      [
+        {
+          customerID: 'C1',
+          customer: 'Alpha Ltd',
+          requestedAtISO: '2026-05-15',
+          status: 'Paid',
+          paidAmountNgn: 50000,
+        },
+      ],
+      '2026-05-01',
+      '2026-05-31',
+      5
+    );
+    expect(rows[0].customerID).toBe('C1');
+    expect(rows[0].paymentsNgn).toBe(500000);
+    expect(rows[0].refundsNgn).toBe(50000);
+    expect(rows[0].netCollectedNgn).toBe(450000);
+    expect(rows[1].netCollectedNgn).toBe(300000);
+  });
+
+  it('includes material performance and sku intelligence in pack', () => {
+    const pack = buildBusinessIntelligencePack(
+      {
+        quotations: [
+          {
+            id: 'QT-1',
+            customerID: 'C1',
+            customer: 'Acme',
+            dateISO: '2026-05-10',
+            totalNgn: 100000,
+            materialGauge: '0.26mm',
+            materialColor: 'IV',
+            materialDesign: 'Corrugated',
+            materialTypeId: 'MAT-001',
+          },
+        ],
+        productionJobs: [
+          {
+            status: 'Completed',
+            quotationRef: 'QT-1',
+            productID: 'COIL-ALU',
+            actualMeters: 100,
+            actualWeightKg: 250,
+            completedAtISO: '2026-05-15T10:00:00Z',
+          },
+        ],
+        cuttingLists: [],
+        receipts: [{ customerID: 'C1', customer: 'Acme', dateISO: '2026-05-16', amountNgn: 80000 }],
+        ledgerEntries: [],
+        refunds: [],
+        coilLots: [
+          {
+            currentStatus: 'Available',
+            materialTypeName: 'Aluminium',
+            currentWeightKg: 1000,
+            gaugeLabel: '0.26mm',
+            colour: 'IV',
+            unitCostNgnPerKg: 1200,
+          },
+        ],
+        products: [],
+        stockMovements: [],
+        purchaseOrders: [
+          {
+            supplierID: 'S1',
+            supplierName: 'Coil Vendor',
+            status: 'Open',
+            orderDateISO: '2026-05-01',
+            lines: [{ productID: 'COIL-ALU', qtyOrdered: 500, qtyReceived: 0, unitPricePerKgNgn: 1100 }],
+          },
+        ],
+        expenses: [],
+        treasuryMovements: [],
+        paymentRequests: [],
+        treasuryAccounts: [{ balance: 5000 }],
+      },
+      { periodKey: 'month', asOfISO: '2026-05-20' }
+    );
+    expect(pack.sales.materialPerformance?.aluminium?.topCombinations?.length).toBeGreaterThan(0);
+    expect(pack.inventory.skuIntelligence?.aluminium).toBeTruthy();
+    expect(pack.procurement?.supplierFocus?.length).toBeGreaterThan(0);
+    expect(pack.sales.topCustomers[0].netCollectedNgn).toBe(80000);
   });
 
   it('builds full pack with predictive alerts', () => {

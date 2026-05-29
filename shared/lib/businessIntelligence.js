@@ -17,7 +17,7 @@ const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
 /** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
-export const BI_ENGINE_REV = '42372a4';
+export const BI_ENGINE_REV = 'bi-v2';
 
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
@@ -62,6 +62,102 @@ function daysBetween(startIso, endIso) {
   const b = new Date(`${toIsoDate(endIso)}T12:00:00`);
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 30;
   return Math.max(1, Math.round((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function materialSpecFromQuotation(q) {
+  if (!q) return { colour: '—', gauge: '—', profile: '—' };
+  const colour = String(q.materialColor ?? q.material_color ?? q.color ?? '').trim();
+  const gauge = String(q.materialGauge ?? q.material_gauge ?? q.gauge ?? '').trim();
+  const profile = String(q.materialDesign ?? q.material_design ?? q.profile ?? '').trim();
+  return {
+    colour: colour || '—',
+    gauge: gauge || '—',
+    profile: profile || '—',
+  };
+}
+
+function gaugeMmFromLabel(gaugeRaw) {
+  const m = String(gaugeRaw || '').match(/(\d+(?:\.\d+)?)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function receiptCashNgn(receipt) {
+  const cash = Number(receipt?.cashReceivedNgn);
+  if (Number.isFinite(cash) && cash > 0) return Math.round(cash);
+  return Math.round(Number(receipt?.amountNgn) || 0);
+}
+
+function refundImpactNgn(refund) {
+  const status = String(refund?.status || '').toLowerCase();
+  if (status === 'paid') return Math.round(Number(refund?.paidAmountNgn) || 0);
+  if (status === 'approved') {
+    return Math.round(Number(refund?.approvedAmountNgn) || Number(refund?.amountNgn) || 0);
+  }
+  return 0;
+}
+
+/**
+ * Top customers by net cash collected (receipts minus approved/paid refunds) in the period.
+ * @param {object[]} receipts
+ * @param {object[]} refunds
+ * @param {string} startIso
+ * @param {string} endIso
+ * @param {number} [limit]
+ */
+export function topCustomersByNetPayments(receipts = [], refunds = [], startIso, endIso, limit = 10) {
+  /** @type {Map<string, { customerID: string; customerName: string; paymentsNgn: number; refundsNgn: number; receiptCount: number; refundCount: number }>} */
+  const byCustomer = new Map();
+
+  for (const r of receipts) {
+    const d = toIsoDate(r.dateISO || r.date);
+    if (!d || d < startIso || d > endIso) continue;
+    const pay = receiptCashNgn(r);
+    if (pay <= 0) continue;
+    const cid = String(r.customerID || r.customer || '').trim();
+    if (!cid) continue;
+    const curr = byCustomer.get(cid) || {
+      customerID: cid,
+      customerName: r.customer || cid,
+      paymentsNgn: 0,
+      refundsNgn: 0,
+      receiptCount: 0,
+      refundCount: 0,
+    };
+    curr.paymentsNgn += pay;
+    curr.receiptCount += 1;
+    byCustomer.set(cid, curr);
+  }
+
+  for (const rf of refunds) {
+    const d = toIsoDate(rf.requestedAtISO || rf.paidAtISO);
+    if (!d || d < startIso || d > endIso) continue;
+    const amt = refundImpactNgn(rf);
+    if (amt <= 0) continue;
+    const cid = String(rf.customerID || rf.customer || '').trim();
+    if (!cid) continue;
+    const curr = byCustomer.get(cid) || {
+      customerID: cid,
+      customerName: rf.customer || cid,
+      paymentsNgn: 0,
+      refundsNgn: 0,
+      receiptCount: 0,
+      refundCount: 0,
+    };
+    curr.refundsNgn += amt;
+    curr.refundCount += 1;
+    byCustomer.set(cid, curr);
+  }
+
+  return [...byCustomer.values()]
+    .map((row) => ({
+      ...row,
+      paymentsNgn: Math.round(row.paymentsNgn),
+      refundsNgn: Math.round(row.refundsNgn),
+      netCollectedNgn: Math.round(row.paymentsNgn - row.refundsNgn),
+    }))
+    .filter((row) => row.netCollectedNgn > 0 || row.paymentsNgn > 0)
+    .sort((a, b) => b.netCollectedNgn - a.netCollectedNgn || b.paymentsNgn - a.paymentsNgn)
+    .slice(0, limit);
 }
 
 function productionJobIsCompleted(job) {
@@ -219,6 +315,323 @@ function coilInventoryForFamily(coilLots, family) {
 }
 
 /**
+ * Material performance by gauge × colour × profile (produced sales basis), split by metal family.
+ * @param {object} data
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeMaterialPerformance(data, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const quotations = data.quotations || [];
+  const productionJobs = data.productionJobs || [];
+  const quoteById = new Map(quotations.map((q) => [String(q.id || '').trim(), q]));
+  const metersByRef = metersProducedByQuotationRef(productionJobs);
+
+  /** @type {Record<string, { combo: Map<string, object>; gauge: Map<string, object>; colour: Map<string, object> }>} */
+  const byFamily = {
+    aluminium: { combo: new Map(), gauge: new Map(), colour: new Map() },
+    aluzinc: { combo: new Map(), gauge: new Map(), colour: new Map() },
+  };
+
+  const bump = (map, key, label, metres, revenueNgn, weightKg) => {
+    const prev = map.get(key) || { key: label, metres: 0, revenueNgn: 0, weightKg: 0, jobCount: 0 };
+    prev.metres += metres;
+    prev.revenueNgn += revenueNgn;
+    prev.weightKg += weightKg;
+    prev.jobCount += 1;
+    map.set(key, prev);
+  };
+
+  for (const j of productionJobs) {
+    if (!productionJobIsCompleted(j)) continue;
+    const d = productionOutputDateISO(j);
+    if (!d || d < startIso || d > asOfISO) continue;
+    const metres = Number(j.actualMeters) || 0;
+    if (metres <= 0) continue;
+    const q = quoteById.get(String(j.quotationRef || '').trim());
+    const fam = resolveBusinessMaterialFamily({
+      productID: j.productID,
+      productName: j.productName,
+      materialTypeId: q?.materialTypeId,
+      materialDesign: q?.materialDesign,
+    });
+    if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
+    const spec = materialSpecFromQuotation(q);
+    const revenueNgn = allocatedQuotationRevenueForProductionJob(j, q, metersByRef);
+    const weightKg =
+      Number(j.actualWeightKg) > 0
+        ? Number(j.actualWeightKg)
+        : Math.round(metres * (gaugeMmFromLabel(spec.gauge) <= 0.26 ? 2.65 : 2.9));
+
+    const comboKey = `${spec.gauge}|${spec.colour}|${spec.profile}`;
+    const buckets = byFamily[fam];
+    bump(buckets.combo, comboKey, comboKey, metres, revenueNgn, weightKg);
+    bump(buckets.gauge, spec.gauge, spec.gauge, metres, revenueNgn, weightKg);
+    bump(buckets.colour, spec.colour, spec.colour, metres, revenueNgn, weightKg);
+  }
+
+  const finalize = (map, limit = 6) =>
+    [...map.values()]
+      .map((r) => ({
+        label: r.key,
+        metres: Math.round(r.metres),
+        weightKg: Math.round(r.weightKg),
+        revenueNgn: Math.round(r.revenueNgn),
+        jobCount: r.jobCount,
+      }))
+      .sort((a, b) => b.revenueNgn - a.revenueNgn || b.metres - a.metres)
+      .slice(0, limit);
+
+  const packFamily = (fam) => {
+    const b = byFamily[fam];
+    const topCombinations = finalize(b.combo, 8).map((row) => {
+      const [gauge, colour, profile] = String(row.label).split('|');
+      return { gauge, colour, profile, ...row };
+    });
+    return {
+      family: fam,
+      label: fam === 'aluminium' ? 'Aluminium' : 'Aluzinc (PPGI)',
+      topCombinations,
+      topGauges: finalize(b.gauge, 5),
+      topColours: finalize(b.colour, 5),
+    };
+  };
+
+  return {
+    periodStartISO: startIso,
+    periodEndISO: asOfISO,
+    aluminium: packFamily('aluminium'),
+    aluzinc: packFamily('aluzinc'),
+  };
+}
+
+function poLineOpenValueNgn(line) {
+  const ordered = Number(line.qtyOrdered) || 0;
+  const received = Number(line.qtyReceived) || 0;
+  const unit = Number(line.unitPricePerKgNgn || line.unitPriceNgn) || 0;
+  return Math.max(0, ordered - received) * unit;
+}
+
+/**
+ * Coil SKU intelligence: gauge × colour combinations — reorder, watch, or liquidate (cash tied up).
+ * @param {object} data
+ * @param {ReturnType<typeof computeMaterialPerformance>} materialPerformance
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeSkuIntelligence(data, materialPerformance, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const windowDays = daysBetween(startIso, asOfISO);
+  const quotations = data.quotations || [];
+  const productionJobs = data.productionJobs || [];
+  const quoteById = new Map(quotations.map((q) => [String(q.id || '').trim(), q]));
+
+  /** @type {Record<string, Map<string, { gauge: string; colour: string; kgOnHand: number; valuationNgn: number; coilCount: number }>>} */
+  const stockByFamily = { aluminium: new Map(), aluzinc: new Map() };
+  /** @type {Record<string, Map<string, number>>} */
+  const demandKgByFamily = { aluminium: new Map(), aluzinc: new Map() };
+
+  for (const lot of (data.coilLots || []).filter((c) => c.currentStatus !== 'Consumed')) {
+    const fam = coilFamilyFromLot(lot);
+    if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
+    const gauge = lot.gaugeLabel || lot.gauge || '—';
+    const colour = lot.colour || lot.color || '—';
+    const key = `${gauge}|${colour}`;
+    const kg = liveCoilKg(lot);
+    const unit = Number(lot.unitCostNgnPerKg) || 0;
+    const val =
+      unit > 0 && kg > 0
+        ? Math.round(kg * unit)
+        : Math.round(Number(lot.landedCostNgn) || 0);
+    const prev = stockByFamily[fam].get(key) || {
+      gauge,
+      colour,
+      kgOnHand: 0,
+      valuationNgn: 0,
+      coilCount: 0,
+    };
+    prev.kgOnHand += kg;
+    prev.valuationNgn += val;
+    prev.coilCount += 1;
+    stockByFamily[fam].set(key, prev);
+  }
+
+  for (const j of productionJobs) {
+    if (!productionJobIsCompleted(j)) continue;
+    const d = productionOutputDateISO(j);
+    if (!d || d < startIso || d > asOfISO) continue;
+    const q = quoteById.get(String(j.quotationRef || '').trim());
+    const fam = resolveBusinessMaterialFamily({
+      productID: j.productID,
+      materialTypeId: q?.materialTypeId,
+      materialDesign: q?.materialDesign,
+    });
+    if (fam !== 'aluminium' && fam !== 'aluzinc') continue;
+    const spec = materialSpecFromQuotation(q);
+    const key = `${spec.gauge}|${spec.colour}`;
+    const w = Number(j.actualWeightKg) || 0;
+    demandKgByFamily[fam].set(key, (demandKgByFamily[fam].get(key) || 0) + (w > 0 ? w : 0));
+  }
+
+  const topDemandKeys = (fam) => {
+    const perf = fam === 'aluminium' ? materialPerformance?.aluminium : materialPerformance?.aluzinc;
+    return new Set(
+      (perf?.topCombinations || []).slice(0, 5).map((c) => `${c.gauge}|${c.colour}`)
+    );
+  };
+
+  const analyzeFamily = (fam) => {
+    const demandKeys = topDemandKeys(fam);
+    /** @type {object[]} */
+    const rows = [];
+    const keys = new Set([...stockByFamily[fam].keys(), ...demandKgByFamily[fam].keys()]);
+    for (const key of keys) {
+      const stock = stockByFamily[fam].get(key) || {
+        gauge: key.split('|')[0],
+        colour: key.split('|')[1],
+        kgOnHand: 0,
+        valuationNgn: 0,
+        coilCount: 0,
+      };
+      const kgDemand = demandKgByFamily[fam].get(key) || 0;
+      const dailyDemand = kgDemand / windowDays;
+      const weeksCover =
+        dailyDemand > 0 ? Math.round((stock.kgOnHand / dailyDemand / 7) * 10) / 10 : null;
+      const monthsOfStock =
+        kgDemand > 0 ? Math.round((stock.kgOnHand / kgDemand) * 10) / 10 : null;
+
+      let action = 'ok';
+      let reason = 'Balanced stock vs recent production pull.';
+      if (stock.kgOnHand > 0 && (weeksCover == null || weeksCover > 16) && kgDemand < stock.kgOnHand * 0.15) {
+        action = 'liquidate';
+        reason = 'High kg on hand with very low consumption — cash tied up in slow movers.';
+      } else if (weeksCover != null && weeksCover < 2) {
+        action = 'buy';
+        reason = 'Under 2 weeks cover at current consumption.';
+      } else if (demandKeys.has(key) && (weeksCover == null || weeksCover < 6)) {
+        action = 'buy';
+        reason = 'Top-selling gauge/colour combination needs replenishment.';
+      } else if (weeksCover != null && weeksCover < 4) {
+        action = 'watch';
+        reason = 'Cover tightening — review procurement before stockout.';
+      } else if (stock.kgOnHand > 800 && monthsOfStock != null && monthsOfStock > 3) {
+        action = 'watch';
+        reason = 'Elevated stock relative to period demand.';
+      }
+
+      rows.push({
+        family: fam,
+        gauge: stock.gauge,
+        colour: stock.colour,
+        kgOnHand: Math.round(stock.kgOnHand),
+        valuationNgn: Math.round(stock.valuationNgn),
+        kgDemandPeriod: Math.round(kgDemand),
+        weeksCover,
+        action,
+        reason,
+      });
+    }
+
+    const buyNext = rows
+      .filter((r) => r.action === 'buy')
+      .sort((a, b) => (a.weeksCover ?? 0) - (b.weeksCover ?? 0))
+      .slice(0, 6);
+    const reduceStock = rows
+      .filter((r) => r.action === 'liquidate')
+      .sort((a, b) => b.valuationNgn - a.valuationNgn)
+      .slice(0, 6);
+    const needsAttention = rows
+      .filter((r) => r.action === 'watch' || r.action === 'buy')
+      .sort((a, b) => {
+        const rank = { buy: 0, watch: 1, ok: 2, liquidate: 3 };
+        return (rank[a.action] || 9) - (rank[b.action] || 9);
+      })
+      .slice(0, 8);
+
+    return { buyNext, reduceStock, needsAttention };
+  };
+
+  return {
+    asOfISO,
+    periodStartISO: startIso,
+    aluminium: analyzeFamily('aluminium'),
+    aluzinc: analyzeFamily('aluzinc'),
+  };
+}
+
+/**
+ * Supplier focus from purchase orders (spend, open commitment, coil lines).
+ * @param {object} data
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeProcurementInsights(data, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const lookbackStart = periodStartISO('4months', new Date(`${asOfISO}T12:00:00`));
+  const pos = data.purchaseOrders || [];
+
+  /** @type {Map<string, { supplierID: string; supplierName: string; spendNgn: number; openNgn: number; poCount: number; coilKgOrdered: number }>} */
+  const bySupplier = new Map();
+
+  for (const po of pos) {
+    const orderDate = toIsoDate(po.orderDateISO);
+    const st = String(po.status || '').toLowerCase();
+    if (['cancelled', 'canceled', 'rejected'].includes(st)) continue;
+    const sid = String(po.supplierID || po.supplierName || '').trim();
+    if (!sid) continue;
+    const name = String(po.supplierName || sid).trim();
+    const curr = bySupplier.get(sid) || {
+      supplierID: sid,
+      supplierName: name,
+      spendNgn: 0,
+      openNgn: 0,
+      poCount: 0,
+      coilKgOrdered: 0,
+    };
+
+    let poTotal = 0;
+    let open = 0;
+    for (const line of po.lines || []) {
+      const ordered = Number(line.qtyOrdered) || 0;
+      const received = Number(line.qtyReceived) || 0;
+      const unit = Number(line.unitPricePerKgNgn || line.unitPriceNgn) || 0;
+      poTotal += ordered * unit;
+      open += poLineOpenValueNgn(line);
+      const pid = String(line.productID || '').trim();
+      if (pid === 'COIL-ALU' || pid === 'PRD-102') {
+        curr.coilKgOrdered += Math.max(0, ordered - received);
+      }
+    }
+
+    if (orderDate && orderDate >= lookbackStart && orderDate <= asOfISO) {
+      curr.spendNgn += Math.round(poTotal);
+      curr.poCount += 1;
+    }
+    if (!['closed', 'received', 'cancelled', 'canceled'].includes(st)) {
+      curr.openNgn += Math.round(open);
+    }
+    bySupplier.set(sid, curr);
+  }
+
+  const supplierFocus = [...bySupplier.values()]
+    .map((r) => ({
+      ...r,
+      spendNgn: Math.round(r.spendNgn),
+      openNgn: Math.round(r.openNgn),
+      coilKgOrdered: Math.round(r.coilKgOrdered),
+      priorityScore: Math.round(r.openNgn + r.spendNgn * 0.2 + r.coilKgOrdered * 500),
+    }))
+    .filter((r) => r.spendNgn > 0 || r.openNgn > 0)
+    .sort((a, b) => b.priorityScore - a.priorityScore)
+    .slice(0, 8);
+
+  return {
+    asOfISO,
+    lookbackStartISO: lookbackStart,
+    supplierFocus,
+  };
+}
+
+/**
  * @param {object} data
  * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
  */
@@ -263,6 +676,9 @@ export function computeInventoryAnalytics(data, opts = {}) {
   });
 
   const totalKg = families.reduce((s, f) => s + f.kgOnHand, 0);
+  const materialPerformance = computeMaterialPerformance(data, opts);
+  const skuIntelligence = computeSkuIntelligence(data, materialPerformance, opts);
+
   return {
     asOfISO,
     periodKey: opts.periodKey || 'month',
@@ -272,6 +688,7 @@ export function computeInventoryAnalytics(data, opts = {}) {
       totalKg > 0 ? Math.round((families[0].kgOnHand / totalKg) * 1000) / 10 : 0,
     aluzincSharePct:
       totalKg > 0 ? Math.round((families[1].kgOnHand / totalKg) * 1000) / 10 : 0,
+    skuIntelligence,
   };
 }
 
@@ -353,24 +770,8 @@ export function computeSalesAnalytics(data, opts = {}) {
     }).length,
   };
 
-  /** @type {Map<string, { customerID: string; customerName: string; revenueNgn: number; metres: number }>} */
-  const byCustomer = new Map();
-  for (const q of qInPeriod) {
-    const cid = String(q.customerID || q.customer || '').trim();
-    if (!cid) continue;
-    const curr = byCustomer.get(cid) || {
-      customerID: cid,
-      customerName: q.customer || cid,
-      revenueNgn: 0,
-      metres: 0,
-    };
-    curr.revenueNgn += Number(q.totalNgn) || 0;
-    byCustomer.set(cid, curr);
-  }
-  const topCustomers = [...byCustomer.values()]
-    .sort((a, b) => b.revenueNgn - a.revenueNgn)
-    .slice(0, 10)
-    .map((r) => ({ ...r, revenueNgn: Math.round(r.revenueNgn) }));
+  const topCustomers = topCustomersByNetPayments(receipts, data.refunds || [], startIso, asOfISO, 10);
+  const materialPerformance = computeMaterialPerformance(data, opts);
 
   const aging = receivablesAgingBuckets(quotations, ledgerEntries, asOfISO);
   const outstandingReceivablesNgn = Object.values(aging).reduce((s, v) => s + v, 0);
@@ -402,6 +803,7 @@ export function computeSalesAnalytics(data, opts = {}) {
     collectedNgn: Math.round(collectedNgn),
     collectionRatePct: quotedNgn > 0 ? Math.round((collectedNgn / quotedNgn) * 1000) / 10 : null,
     mixRows,
+    materialPerformance,
     funnel,
     topCustomers,
     receivablesAging: aging,
@@ -448,7 +850,7 @@ function pendingOutflowsNgn(paymentRequests, purchaseOrders) {
  * @param {object} data
  * @param {ReturnType<typeof computeSalesAnalytics>} sales
  * @param {ReturnType<typeof computeInventoryAnalytics>} inventory
- * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string; procurement?: ReturnType<typeof computeProcurementInsights> }} opts
  */
 export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
   const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
@@ -587,6 +989,44 @@ export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
     });
   }
 
+  const sku = inventory.skuIntelligence;
+  if (sku) {
+    for (const fam of ['aluminium', 'aluzinc']) {
+      const block = sku[fam];
+      if (block?.buyNext?.length) {
+        const top = block.buyNext[0];
+        alerts.push({
+          id: `buy-${fam}-${top.gauge}-${top.colour}`,
+          severity: 'medium',
+          category: 'procurement',
+          message: `Reorder ${fam === 'aluminium' ? 'aluminium' : 'aluzinc'}: ${top.gauge} · ${top.colour} (${top.reason})`,
+          metric: top.weeksCover != null ? `${top.weeksCover} wk cover` : 'low cover',
+        });
+      }
+      if (block?.reduceStock?.length) {
+        const top = block.reduceStock[0];
+        alerts.push({
+          id: `liquidate-${fam}-${top.gauge}-${top.colour}`,
+          severity: 'medium',
+          category: 'inventory',
+          message: `Slow coil stock — consider prioritizing sales or transfer: ${top.gauge} · ${top.colour}.`,
+          metric: `₦${top.valuationNgn.toLocaleString('en-NG')} tied up`,
+        });
+      }
+    }
+  }
+
+  const topSupplier = opts.procurement?.supplierFocus?.[0];
+  if (topSupplier && topSupplier.openNgn > 0) {
+    alerts.push({
+      id: 'supplier-open-commitment',
+      severity: 'low',
+      category: 'procurement',
+      message: `Largest open PO exposure: ${topSupplier.supplierName} — align deliveries and payments.`,
+      metric: `₦${topSupplier.openNgn.toLocaleString('en-NG')} open`,
+    });
+  }
+
   return {
     asOfISO,
     avgMonthlyInflowNgn: avgMonthlyInflow,
@@ -617,7 +1057,12 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
 
   const inventory = computeInventoryAnalytics(data, { periodKey, asOfISO });
   const sales = computeSalesAnalytics(data, { periodKey, asOfISO });
-  const predictive = computePredictiveAnalytics(data, sales, inventory, { periodKey, asOfISO });
+  const procurement = computeProcurementInsights(data, { periodKey, asOfISO });
+  const predictive = computePredictiveAnalytics(data, sales, inventory, {
+    periodKey,
+    asOfISO,
+    procurement,
+  });
 
   return {
     ok: true,
@@ -629,6 +1074,7 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
     branchScope: opts.branchScope || 'ALL',
     inventory,
     sales,
+    procurement,
     predictive,
   };
 }
@@ -651,6 +1097,18 @@ export function businessIntelligenceHeadlines(pack) {
   for (const fam of pack.inventory?.families || []) {
     const cover = fam.weeksCover != null ? `${fam.weeksCover} wk cover` : 'no consumption rate';
     lines.push(`${fam.label}: ${fam.kgOnHand.toLocaleString()} kg on hand (${cover}).`);
+  }
+  const topPay = pack.sales?.topCustomers?.[0];
+  if (topPay?.netCollectedNgn > 0) {
+    lines.push(
+      `Top payer (${pack.periodLabel}): ${topPay.customerName} — ₦${topPay.netCollectedNgn.toLocaleString('en-NG')} net collected.`
+    );
+  }
+  const topMat = pack.sales?.materialPerformance?.aluminium?.topCombinations?.[0];
+  if (topMat?.revenueNgn > 0) {
+    lines.push(
+      `Best alu combo: ${topMat.gauge} · ${topMat.colour} · ${topMat.profile} (₦${topMat.revenueNgn.toLocaleString('en-NG')} produced sales).`
+    );
   }
   const h90 = p.cashHorizons?.find((x) => x.days === 90);
   if (h90) {

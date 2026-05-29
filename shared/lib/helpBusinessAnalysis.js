@@ -27,12 +27,47 @@ export function formatBusinessAnalysisReply(pack) {
   ];
 
   if (s.mixRows?.length) {
-    sections.push('- Material mix (produced revenue share):');
+    sections.push('- Metal family mix (produced revenue share):');
     for (const row of s.mixRows.filter((r) => r.revenueNgn > 0)) {
       const label =
         row.family === 'aluminium' ? 'Aluminium' : row.family === 'aluzinc' ? 'Aluzinc' : 'Other';
       sections.push(`  · ${label}: ${row.sharePct}% (₦${row.revenueNgn.toLocaleString('en-NG')})`);
     }
+  }
+
+  const topPay = s.topCustomers?.[0];
+  if (topPay?.netCollectedNgn > 0) {
+    sections.push(
+      `- Top payer (net receipts − refunds): ${topPay.customerName} — ₦${topPay.netCollectedNgn.toLocaleString('en-NG')}`
+    );
+  }
+
+  for (const famKey of ['aluminium', 'aluzinc']) {
+    const perf = s.materialPerformance?.[famKey];
+    const best = perf?.topCombinations?.[0];
+    if (best?.revenueNgn > 0) {
+      sections.push(
+        `- Best ${perf.label} combo: ${best.gauge} · ${best.colour} · ${best.profile} — ₦${best.revenueNgn.toLocaleString('en-NG')}`
+      );
+    }
+  }
+
+  const buyAlu = pack.inventory?.skuIntelligence?.aluminium?.buyNext?.[0];
+  if (buyAlu) {
+    sections.push(`- Buy next (alu): ${buyAlu.gauge} · ${buyAlu.colour} — ${buyAlu.reason}`);
+  }
+  const slow = pack.inventory?.skuIntelligence?.aluminium?.reduceStock?.[0];
+  if (slow) {
+    sections.push(
+      `- Slow stock (alu): ${slow.gauge} · ${slow.colour} — ₦${slow.valuationNgn.toLocaleString('en-NG')} tied up`
+    );
+  }
+
+  const sup = pack.procurement?.supplierFocus?.[0];
+  if (sup) {
+    sections.push(
+      `- Supplier focus: ${sup.supplierName} (₦${sup.spendNgn.toLocaleString('en-NG')} spend, ₦${sup.openNgn.toLocaleString('en-NG')} open PO)`
+    );
   }
 
   sections.push('', '**Coil inventory (aluminium & aluzinc)**');

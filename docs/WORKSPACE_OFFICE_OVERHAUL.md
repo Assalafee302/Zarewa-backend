@@ -69,3 +69,26 @@ cd Zarewa-backend-main && npm run test && npm run test:e2e -- e2e/workspace-offi
 6. Print official notice  
 
 Allow pop-ups or confirm in-page preview fallback toast.
+
+## MySQL integration tests
+
+Office data-layer tests (`officeRecordOps`, `filingNumberOps`, `officialNoticesOps`, `forumOps`) run against MySQL when env is set:
+
+| Variable | Purpose |
+|----------|---------|
+| `ZAREWA_MYSQL_HOST` | MySQL host (e.g. `127.0.0.1`) |
+| `ZAREWA_MYSQL_USER` | Database user |
+| `ZAREWA_MYSQL_PASSWORD` | Password |
+| `ZAREWA_MYSQL_DATABASE` | Schema name |
+
+```bash
+cd Zarewa-backend-main
+# export ZAREWA_MYSQL_* then:
+npm run test:office-mysql
+```
+
+This runs migrations then the integration pack. Without env, the script exits 0 with a skip message; vitest suites use `describe.skipIf` when MySQL is not configured.
+
+### CI (optional)
+
+Add a job that sets `ZAREWA_MYSQL_*` from secrets and runs `npm run test:office-mysql` on PRs touching `server/office*` or `server/forum*`.

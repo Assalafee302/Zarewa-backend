@@ -25,7 +25,7 @@ test.describe('Online Office Workspace desk', () => {
     await expect(page.getByText(/diesel|fuel|submitted|record/i).first()).toBeVisible({ timeout: 25_000 });
   });
 
-  test('GP3: record detail timeline and print button', async ({ page }) => {
+  test('GP3: record detail action bar with print', async ({ page }) => {
     await page.goto('/');
     const taskTab = page.getByRole('tab', { name: /needs my action/i });
     if (await taskTab.isVisible().catch(() => false)) {
@@ -34,8 +34,10 @@ test.describe('Online Office Workspace desk', () => {
     const row = page.locator('[data-work-item-row]').first();
     if (await row.isVisible().catch(() => false)) {
       await row.click();
-      await expect(page.getByRole('tab', { name: /timeline/i })).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByRole('button', { name: /^print$/i }).first()).toBeVisible();
+      const toolbar = page.locator('[data-office-record-action-bar]');
+      await expect(toolbar).toBeVisible({ timeout: 15_000 });
+      await expect(toolbar.getByRole('button', { name: /^print$/i })).toBeVisible();
+      await expect(page.getByRole('tab', { name: /timeline/i })).toBeVisible();
     }
   });
 
@@ -43,6 +45,28 @@ test.describe('Online Office Workspace desk', () => {
     await page.goto('/');
     const branchSelect = page.locator('#zarewa-branch-workspace');
     await expect(branchSelect).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('HQ roll-up blocks create office record', async ({ page }) => {
+    await page.goto('/');
+    const branchSelect = page.locator('#zarewa-branch-workspace');
+    await expect(branchSelect).toBeVisible({ timeout: 15_000 });
+    const allBranchesOption = branchSelect.locator('option[value="__ALL__"]');
+    if (!(await allBranchesOption.count())) {
+      test.skip();
+      return;
+    }
+    await branchSelect.selectOption('__ALL__');
+    const createBtn = page.getByRole('button', { name: /create office record/i });
+    await expect(createBtn).toBeDisabled({ timeout: 15_000 });
+    const branches = await branchSelect.locator('option:not([value="__ALL__"])').all();
+    if (branches.length > 0) {
+      const firstVal = await branches[0].getAttribute('value');
+      if (firstVal) {
+        await branchSelect.selectOption(firstVal);
+        await expect(createBtn).toBeEnabled({ timeout: 15_000 });
+      }
+    }
   });
 });
 
@@ -79,10 +103,27 @@ test.describe('Official notices and forum', () => {
     await page.getByRole('button', { name: /i have read and understood/i }).first().click({ timeout: 15_000 });
   });
 
-  test('GP6: forum visible', async ({ page }) => {
+  test('GP6: forum topic opens create wizard pre-filled', async ({ page }) => {
     await signInViaApi(page, 'sales_staff', 'Sales@123');
+    const headers = await page.evaluate(() => {
+      const m = document.cookie.match(/zarewa_csrf=([^;]+)/);
+      return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
+    });
+    await page.request.post('/api/forum/topics', {
+      data: {
+        scope: 'branch',
+        title: 'Gen no diesel since morning',
+        body: 'Branch forum E2E — need fuel urgently.',
+      },
+      headers,
+    });
     await page.goto('/');
-    await page.getByRole('button', { name: /office forum/i }).click({ timeout: 15_000 });
-    await expect(page.getByText(/forum posts are not official/i)).toBeVisible({ timeout: 15_000 });
+    const branchForum = page.getByRole('button', { name: /branch forum/i });
+    if (await branchForum.isVisible().catch(() => false)) {
+      await branchForum.click({ timeout: 15_000 });
+    }
+    await page.getByRole('button', { name: /turn into office record/i }).first().click({ timeout: 15_000 });
+    await expect(page.getByRole('dialog', { name: /create office record/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByPlaceholder(/subject/i)).toHaveValue(/.+/, { timeout: 10_000 });
   });
 });

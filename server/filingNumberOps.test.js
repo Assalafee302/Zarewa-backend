@@ -29,6 +29,6 @@ describe.skipIf(!process.env.ZAREWA_MYSQL_HOST && !process.env.ZAREWA_MYSQL_USER
     });
     const r = fileOfficeThread(db, created.thread.id, actor, { category: 'fuel' });
     expect(r.ok).toBe(true);
-    expect(r.filingNo).toMatch(/^FUEL-/);
+    expect(r.filingNo).toMatch(/^FUEL-[A-Z]{2,4}-\d{2}-\d{4}$/);
   });
 });

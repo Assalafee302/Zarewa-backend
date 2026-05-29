@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:edit-approval": "vitest run server/editApproval.pure.test.js",
     "test:watch": "vitest",
+    "test:office-mysql": "node scripts/test-office-mysql.mjs",
     "test:e2e": "playwright test",
     "test:e2e:sales-refund-finance": "playwright test e2e/sales-refund-finance-checklist.spec.js",
     "test:e2e:refund-risk": "playwright test e2e/refund-risk-api.spec.js",

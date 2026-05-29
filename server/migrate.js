@@ -2629,6 +2629,102 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrPhase5PayrollSchema(db);
   migrateHrPhase6BenefitsAndOps(db);
   migrateHrStaffDocumentsSchema(db);
+  migrateHrLifecycleAndNotificationsSchema(db);
+  migrateHrRecruitingLearningEngagementSchema(db);
+}
+
+/** Recruiting, L&D training records, engagement surveys (Phase 9). */
+function migrateHrRecruitingLearningEngagementSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_job_postings (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      branch_id TEXT,
+      department TEXT,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      openings INTEGER NOT NULL DEFAULT 1,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_job_postings_status ON hr_job_postings(status, updated_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_job_applicants (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      status TEXT NOT NULL DEFAULT 'applied',
+      notes TEXT,
+      applied_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      hired_user_id TEXT,
+      created_by_user_id TEXT,
+      FOREIGN KEY (job_id) REFERENCES hr_job_postings(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_job_applicants_job ON hr_job_applicants(job_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_training_records (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      provider TEXT,
+      completed_at_iso TEXT,
+      expiry_at_iso TEXT,
+      certificate_ref TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_training_user ON hr_training_records(user_id, completed_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_engagement_surveys (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      questions_json TEXT NOT NULL,
+      opens_at_iso TEXT,
+      closes_at_iso TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_engagement_responses (
+      id TEXT PRIMARY KEY,
+      survey_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      answers_json TEXT NOT NULL,
+      submitted_at_iso TEXT NOT NULL,
+      FOREIGN KEY (survey_id) REFERENCES hr_engagement_surveys(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+      UNIQUE(survey_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_engagement_responses_survey ON hr_engagement_responses(survey_id);
+  `);
+}
+
+/** Lifecycle checklists + in-app HR notifications (Phase 8). */
+function migrateHrLifecycleAndNotificationsSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      route_path TEXT,
+      entity_kind TEXT,
+      entity_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      read_at_iso TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_notifications_user ON hr_notifications(user_id, read_at_iso, created_at_iso DESC);
+  `);
 }
 
 /** Staff onboarding documents + NIN (Phase 7). */

@@ -18,7 +18,14 @@ import {
   exportPayrollGlJournalTemplateCsv,
   exportPayrollPayslipsCsv,
   exportPayrollPayslipsPdf,
+  exportSinglePayslipPdf,
   exportEmploymentLetterPdf,
+  listHrAppraisalCycles,
+  createHrAppraisalCycle,
+  listHrAppraisalForms,
+  upsertHrAppraisalForm,
+  listHrFeedbackNotes,
+  createHrFeedbackNote,
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   generateEmploymentLetter,
@@ -26,6 +33,7 @@ import {
   getHrInboxSummary,
   getHrMeProfile,
   getHrStaffOne,
+  getHrOrgChart,
   getPayrollRunById,
   getPayrollRunTotals,
   gmHrReviewRequest,
@@ -90,6 +98,40 @@ import {
   setHrStaffPassportPhoto,
   uploadHrStaffDocument,
 } from './hrStaffDocuments.js';
+import {
+  getHrStaffLifecycle,
+  patchHrLifecycleTask,
+  patchHrStaffSeparation,
+} from './hrStaffLifecycle.js';
+import {
+  countUnreadHrNotifications,
+  listHrNotifications,
+  markAllHrNotificationsRead,
+  markHrNotificationRead,
+} from './hrNotifications.js';
+import {
+  createHrApplicant,
+  createHrJobPosting,
+  getHrApplicantRegisterPrefill,
+  getHrJobPosting,
+  listHrApplicants,
+  listHrJobPostings,
+  patchHrApplicant,
+  patchHrJobPosting,
+} from './hrRecruiting.js';
+import {
+  createHrTrainingRecord,
+  deleteHrTrainingRecord,
+  listHrTrainingRecords,
+} from './hrLearning.js';
+import {
+  createHrEngagementSurvey,
+  getHrEngagementSurveySummary,
+  listHrEngagementSurveys,
+  listOpenSurveysForUser,
+  patchHrEngagementSurvey,
+  submitHrEngagementResponse,
+} from './hrEngagement.js';
 import { HR_POLICY_REGISTRY } from './hrPolicy.js';
 import { validateStaffLoanApplication } from './hrBusinessRules.js';
 import {
@@ -192,7 +234,16 @@ export function registerHrApi(app, db) {
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: req.user?.id });
       const { user, hr } = getHrMeProfile(db, req.user?.id);
       const redactedHr = hr ? redactStaffProfile({ ...hr, userId: req.user?.id }, ctx) : null;
-      return res.json({ ok: true, user, hr: redactedHr });
+      const staffFull = getHrStaffOne(db, req.user?.id);
+      const unreadNotifications = countUnreadHrNotifications(db, req.user?.id);
+      return res.json({
+        ok: true,
+        user,
+        hr: redactedHr,
+        lifecycle: staffFull?.lifecycle || null,
+        onboardingChecklist: staffFull?.onboardingChecklist || null,
+        unreadNotifications,
+      });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load your HR profile.' });
@@ -238,6 +289,21 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load HR inbox.' });
+    }
+  });
+
+  app.get('/api/hr/org-chart', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      }
+      const chart = getHrOrgChart(db, scope);
+      return res.json({ ok: true, chart });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load org chart.' });
     }
   });
 
@@ -287,8 +353,13 @@ export function registerHrApi(app, db) {
   app.post('/api/hr/staff/register', requireHrAny('hr.staff.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const r = registerNewStaffWithProfile(db, req.user?.id, req.body || {});
+      const body = req.body || {};
+      const r = registerNewStaffWithProfile(db, req.user?.id, body);
       if (!r.ok) return res.status(400).json(r);
+      const applicantId = String(body.applicantId || '').trim();
+      if (applicantId && r.userId) {
+        patchHrApplicant(db, applicantId, { status: 'hired', hiredUserId: r.userId });
+      }
       return res.status(201).json(r);
     } catch (e) {
       console.error(e);
@@ -472,6 +543,105 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update passport photo.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/lifecycle', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (
+        !isSelf &&
+        !hrUserHas(req.user, 'hr.directory.view') &&
+        !hrUserHas(req.user, 'hr.team.view') &&
+        !hrUserHas(req.user, 'hr.staff.manage')
+      ) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = getHrStaffLifecycle(db, userId);
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load lifecycle.' });
+    }
+  });
+
+  app.patch('/api/hr/staff/:userId/lifecycle/tasks', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      const workflow = String(req.body?.workflow || '').trim();
+      const taskKey = String(req.body?.taskKey || '').trim();
+      const done = Boolean(req.body?.done);
+      const canManage = hrUserHas(req.user, 'hr.staff.manage');
+      const employeePolicyAck = isSelf && workflow === 'onboarding' && taskKey === 'policy_ack';
+      if (!canManage && !employeePolicyAck) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = patchHrLifecycleTask(db, req.user, userId, workflow, taskKey, done);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update task.' });
+    }
+  });
+
+  app.patch('/api/hr/staff/:userId/lifecycle/separation', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const r = patchHrStaffSeparation(db, req.user, userId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update separation.' });
+    }
+  });
+
+  app.get('/api/hr/notifications', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user) && !userCanAccessHrModule(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const userId = String(req.query?.userId || req.user?.id || '').trim();
+      if (userId !== req.user?.id && !hrUserHas(req.user, 'hr.staff.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const unreadOnly = String(req.query?.unreadOnly || '') === '1';
+      const notifications = listHrNotifications(db, userId, { unreadOnly });
+      const unreadCount = countUnreadHrNotifications(db, userId);
+      return res.json({ ok: true, notifications, unreadCount });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load notifications.' });
+    }
+  });
+
+  app.patch('/api/hr/notifications/:notificationId/read', (req, res) => {
+    try {
+      const notificationId = String(req.params.notificationId || '').trim();
+      const r = markHrNotificationRead(db, req.user?.id, notificationId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, unreadCount: countUnreadHrNotifications(db, req.user?.id) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update notification.' });
+    }
+  });
+
+  app.post('/api/hr/notifications/mark-all-read', (req, res) => {
+    try {
+      const r = markAllHrNotificationsRead(db, req.user?.id);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, unreadCount: 0 });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update notifications.' });
     }
   });
 
@@ -1023,8 +1193,327 @@ export function registerHrApi(app, db) {
     '/api/hr/payroll-runs/:runId/export/payslips-pdf',
     exportPayroll(exportPayrollPayslipsPdf, 'payroll-payslips.pdf', { binary: true })
   );
+
+  app.get('/api/hr/payroll-runs/:runId/payslips/:userId/pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const runId = String(req.params.runId || '').trim();
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      const run = getPayrollRunById(db, runId);
+      if (!run) return res.status(404).json({ ok: false, error: 'Payroll run not found.' });
+      const canHr =
+        hrUserHas(req.user, 'hr.payroll.view_sensitive') ||
+        hrUserHas(req.user, 'hr.staff.manage') ||
+        hrUserHas(req.user, 'hr.payroll.prepare');
+      if (!isSelf && !canHr) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (isSelf && !['locked', 'paid'].includes(String(run.status || ''))) {
+        return res.status(403).json({ ok: false, error: 'Payslip is available after payroll is locked.' });
+      }
+      const r = exportSinglePayslipPdf(db, runId, userId);
+      if (!r.ok) return res.status(400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'payslip.pdf'}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'PDF export failed.' });
+    }
+  });
+
   app.get('/api/hr/payroll-runs/:runId/export/statutory', exportPayroll(exportPayrollStatutoryPackCsv, 'payroll-statutory.csv'));
   app.get('/api/hr/payroll-runs/:runId/export/gl', exportPayroll(exportPayrollGlJournalTemplateCsv, 'payroll-gl.csv'));
+
+  app.get('/api/hr/appraisal-cycles', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, cycles: listHrAppraisalCycles(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load appraisal cycles.' });
+    }
+  });
+
+  app.post('/api/hr/appraisal-cycles', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrAppraisalCycle(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create appraisal cycle.' });
+    }
+  });
+
+  app.get('/api/hr/appraisal-cycles/:cycleId/forms', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const cycleId = String(req.params.cycleId || '').trim();
+      const forms = listHrAppraisalForms(db, cycleId).map((f) => {
+        let scores = null;
+        if (f.scoresJson) {
+          try {
+            scores = JSON.parse(f.scoresJson);
+          } catch {
+            scores = null;
+          }
+        }
+        return { ...f, scores };
+      });
+      return res.json({ ok: true, forms });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load appraisal forms.' });
+    }
+  });
+
+  app.post('/api/hr/appraisal-forms', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertHrAppraisalForm(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save appraisal form.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/feedback', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (
+        !isSelf &&
+        !hrUserHas(req.user, 'hr.staff.manage') &&
+        !hrUserHas(req.user, 'hr.directory.view') &&
+        !hrUserHas(req.user, 'hr.team.view')
+      ) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      return res.json({ ok: true, notes: listHrFeedbackNotes(db, userId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load feedback notes.' });
+    }
+  });
+
+  app.post('/api/hr/feedback', requireHrAny('hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrFeedbackNote(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save feedback note.' });
+    }
+  });
+
+  app.get('/api/hr/recruiting/jobs', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const status = String(req.query?.status || '').trim();
+      return res.json({ ok: true, jobs: listHrJobPostings(db, { status }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load jobs.' });
+    }
+  });
+
+  app.post('/api/hr/recruiting/jobs', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrJobPosting(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create job.' });
+    }
+  });
+
+  app.patch('/api/hr/recruiting/jobs/:jobId', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchHrJobPosting(db, req.params.jobId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update job.' });
+    }
+  });
+
+  app.get('/api/hr/recruiting/jobs/:jobId/applicants', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const jobId = String(req.params.jobId || '').trim();
+      if (!getHrJobPosting(db, jobId)) return res.status(404).json({ ok: false, error: 'Job not found.' });
+      return res.json({ ok: true, applicants: listHrApplicants(db, jobId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load applicants.' });
+    }
+  });
+
+  app.post('/api/hr/recruiting/applicants', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrApplicant(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not add applicant.' });
+    }
+  });
+
+  app.patch('/api/hr/recruiting/applicants/:applicantId', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchHrApplicant(db, req.params.applicantId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update applicant.' });
+    }
+  });
+
+  app.get('/api/hr/recruiting/applicants/:applicantId/prefill', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = getHrApplicantRegisterPrefill(db, req.params.applicantId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load prefill.' });
+    }
+  });
+
+  app.get('/api/hr/training-records', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.query?.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (
+        !isSelf &&
+        !hrUserHas(req.user, 'hr.staff.manage') &&
+        !hrUserHas(req.user, 'hr.directory.view') &&
+        !hrUserHas(req.user, 'hr.team.view')
+      ) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      return res.json({ ok: true, records: listHrTrainingRecords(db, userId || req.user?.id) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load training records.' });
+    }
+  });
+
+  app.post('/api/hr/training-records', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrTrainingRecord(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save training record.' });
+    }
+  });
+
+  app.delete('/api/hr/training-records/:recordId', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = deleteHrTrainingRecord(db, req.params.recordId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not delete training record.' });
+    }
+  });
+
+  app.get('/api/hr/engagement/surveys', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, surveys: listHrEngagementSurveys(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load surveys.' });
+    }
+  });
+
+  app.post('/api/hr/engagement/surveys', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createHrEngagementSurvey(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create survey.' });
+    }
+  });
+
+  app.patch('/api/hr/engagement/surveys/:surveyId', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchHrEngagementSurvey(db, req.params.surveyId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update survey.' });
+    }
+  });
+
+  app.get('/api/hr/engagement/surveys/:surveyId/summary', requireHrAny('hr.staff.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = getHrEngagementSurveySummary(db, req.params.surveyId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load survey summary.' });
+    }
+  });
+
+  app.get('/api/hr/engagement/open', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, surveys: listOpenSurveysForUser(db, req.user?.id) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load surveys.' });
+    }
+  });
+
+  app.post('/api/hr/engagement/responses', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!hrReady(res, db)) return;
+      const r = submitHrEngagementResponse(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit response.' });
+    }
+  });
 
   app.get('/api/hr/employment-letters', (req, res) => {
     try {

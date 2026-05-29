@@ -11,6 +11,13 @@ import {
 import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
+import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
+import { buildHrOrgChart, hrStaffReportingContext } from '../shared/lib/hrOrgChart.js';
+import {
+  notifyAppraisalFormOpened,
+  notifyHrRequestOutcome,
+  notifyPayrollRunStatus,
+} from './hrNotifications.js';
 
 const REQUEST_KINDS = new Set([
   'leave',
@@ -467,7 +474,24 @@ export function getHrStaffOne(db, userId) {
   );
   const staff = list.find((s) => s.userId === userId) ?? null;
   if (!staff) return null;
-  return enrichStaffWithOnboarding(db, staff, staff.avatarUrl);
+  const reporting = hrStaffReportingContext(list, userId);
+  const enriched = enrichStaffWithLifecycle(enrichStaffWithOnboarding(db, staff, staff.avatarUrl));
+  return {
+    ...enriched,
+    lineManager: reporting.lineManager,
+    lineManagerDisplayName: reporting.lineManager?.displayName || null,
+    directReports: reporting.directReports,
+  };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll: boolean; branchId: string; includeUnassigned?: boolean }} scope
+ */
+export function getHrOrgChart(db, scope) {
+  if (!hrTablesReady(db)) return { roots: [], orphans: [], total: 0 };
+  const staff = listHrStaff(db, scope, { includeInactive: false });
+  return buildHrOrgChart(staff);
 }
 
 /**
@@ -1217,6 +1241,10 @@ export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode)
       reason: noteNorm || null,
       details: { kind: row.kind, decision: 'reject', reasonCode: rc },
     });
+    const rejected = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+    if (rejected && (rejected.kind === 'leave' || rejected.kind === 'loan')) {
+      notifyHrRequestOutcome(db, rejected, 'rejected');
+    }
     return { ok: true };
   }
   db.prepare(
@@ -1285,6 +1313,10 @@ export function branchManagerEndorseRequest(db, requestId, actor, approve, note,
       reason: noteNorm || null,
       details: { kind: row.kind, decision: 'reject', reasonCode: rc },
     });
+    const rejected = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+    if (rejected && (rejected.kind === 'leave' || rejected.kind === 'loan')) {
+      notifyHrRequestOutcome(db, rejected, 'rejected');
+    }
     return { ok: true };
   }
   db.prepare(
@@ -1336,6 +1368,10 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
       reason: noteNorm || null,
       details: { kind: row.kind, decision: 'reject', reasonCode: rc },
     });
+    const rejected = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+    if (rejected && (rejected.kind === 'leave' || rejected.kind === 'loan')) {
+      notifyHrRequestOutcome(db, rejected, 'rejected');
+    }
     return { ok: true };
   }
   const isLoan = String(row.kind) === 'loan';
@@ -1362,6 +1398,10 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
       reason: noteNorm || null,
       details: { kind: row.kind, financeProvisioned: true, decision: 'approve', reasonCode: rc },
     });
+    const approved = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+    if (approved && (approved.kind === 'leave' || approved.kind === 'loan')) {
+      notifyHrRequestOutcome(db, approved, 'approved');
+    }
     return { ok: true };
   }
   db.prepare(
@@ -1377,6 +1417,10 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
     reason: noteNorm || null,
     details: { kind: row.kind, decision: 'approve', reasonCode: rc },
   });
+  const approved = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+  if (approved && (approved.kind === 'leave' || approved.kind === 'loan')) {
+    notifyHrRequestOutcome(db, approved, 'approved');
+  }
   return { ok: true };
 }
 
@@ -2176,19 +2220,25 @@ export function listHrPayslipsForUser(db, userId, limit = 24) {
   const rows = db
     .prepare(
       `SELECT r.id AS runId, r.period_yyyymm AS periodYyyymm, r.status AS runStatus,
-              l.gross_ngn AS grossNgn, l.net_ngn AS netNgn, l.tax_ngn AS taxNgn, l.pension_ngn AS pensionNgn,
-              l.attendance_deduction_ngn AS attendanceDeductionNgn, l.other_deduction_ngn AS otherDeductionNgn
+              u.display_name AS displayName,
+              l.gross_ngn AS grossNgn, l.bonus_ngn AS bonusNgn, l.net_ngn AS netNgn, l.tax_ngn AS taxNgn,
+              l.pension_ngn AS pensionNgn, l.attendance_deduction_ngn AS attendanceDeductionNgn,
+              l.other_deduction_ngn AS otherDeductionNgn
        FROM hr_payroll_lines l
        JOIN hr_payroll_runs r ON r.id = l.run_id
+       JOIN app_users u ON u.id = l.user_id
        WHERE l.user_id = ? AND r.status IN ('locked', 'paid')
        ORDER BY r.period_yyyymm DESC LIMIT ?`
     )
     .all(uid, cap);
   return rows.map((row) => ({
+    userId: uid,
     runId: row.runId,
     periodYyyymm: row.periodYyyymm,
     runStatus: row.runStatus,
+    displayName: row.displayName,
     grossNgn: row.grossNgn,
+    bonusNgn: row.bonusNgn,
     netNgn: row.netNgn,
     taxNgn: row.taxNgn,
     pensionNgn: row.pensionNgn,
@@ -2468,6 +2518,13 @@ export function patchPayrollRun(db, runId, body, actor) {
       entityId: runId,
       details: { from: String(run.status || ''), to: ns },
     });
+    if (ns === 'locked' || ns === 'paid') {
+      const updatedRun = getPayrollRunById(db, runId);
+      const userIds = listPayrollLines(db, runId).map((l) => l.userId).filter(Boolean);
+      if (updatedRun && userIds.length) {
+        notifyPayrollRunStatus(db, updatedRun, ns, userIds);
+      }
+    }
     return { ok: true };
   }
 
@@ -2713,11 +2770,9 @@ function formatNgnPdf(n) {
   return `NGN ${(Math.round(Number(n) || 0)).toLocaleString('en-NG')}`;
 }
 
-export function exportPayrollPayslipsPdf(db, runId) {
-  const run = getPayrollRunById(db, runId);
-  if (!run) return { ok: false, error: 'Payroll run not found.' };
-  const lines = listPayrollLines(db, runId);
-  const pages = lines.map((l) => ({
+/** @param {{ periodYyyymm: string; id: string; status: string }} run */
+function buildPayslipPdfPage(run, l) {
+  return {
     lines: [
       'Zarewa Aluminium and Plastics Ltd',
       'PAYSLIP (CONFIDENTIAL)',
@@ -2737,12 +2792,37 @@ export function exportPayrollPayslipsPdf(db, runId) {
       `Payroll run: ${run.id}`,
       `Status: ${run.status}`,
     ],
-  }));
+  };
+}
+
+export function exportPayrollPayslipsPdf(db, runId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  const lines = listPayrollLines(db, runId);
+  const pages = lines.map((l) => buildPayslipPdfPage(run, l));
   const pdf = buildSimpleTextPdf(pages.length ? pages : [{ lines: ['No payroll lines in this run.'] }]);
   return {
     ok: true,
     pdf,
     filename: `payslips-${run.periodYyyymm}-${run.id}.pdf`,
+    contentType: 'application/pdf',
+  };
+}
+
+export function exportSinglePayslipPdf(db, runId, userId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'userId is required.' };
+  const lines = listPayrollLines(db, runId);
+  const line = lines.find((l) => l.userId === uid);
+  if (!line) return { ok: false, error: 'No payslip line for this employee in this run.' };
+  const pdf = buildSimpleTextPdf([buildPayslipPdfPage(run, line)]);
+  const safeUid = uid.replace(/[^\w-]/g, '').slice(0, 16);
+  return {
+    ok: true,
+    pdf,
+    filename: `payslip-${run.periodYyyymm}-${safeUid}.pdf`,
     contentType: 'application/pdf',
   };
 }
@@ -3212,6 +3292,31 @@ export function getHrMeProfile(db, userId) {
     lineManagerUserId: p.line_manager_user_id ?? null,
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
   };
+  const mgrId = p.line_manager_user_id ? String(p.line_manager_user_id) : '';
+  if (mgrId) {
+    const mgr = db
+      .prepare(`SELECT u.id AS userId, u.display_name AS displayName, p.job_title AS jobTitle FROM app_users u
+                LEFT JOIN hr_staff_profiles p ON p.user_id = u.id WHERE u.id = ?`)
+      .get(mgrId);
+    if (mgr) {
+      hr.lineManager = {
+        userId: mgr.userId,
+        displayName: mgr.displayName || mgr.userId,
+        jobTitle: mgr.jobTitle || null,
+      };
+      hr.lineManagerDisplayName = hr.lineManager.displayName;
+    }
+  }
+  const directReports = db
+    .prepare(
+      `SELECT u.id AS userId, u.display_name AS displayName, p.job_title AS jobTitle
+       FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id
+       WHERE p.line_manager_user_id = ? AND u.status = 'active'
+       ORDER BY u.display_name ASC`
+    )
+    .all(userId);
+  hr.directReports = directReports;
   return { user, hr };
 }
 
@@ -3550,6 +3655,10 @@ export function upsertHrAppraisalForm(db, actor, body = {}) {
       now,
       now
     );
+    const cycle = db
+      .prepare(`SELECT id, label, due_by_iso AS dueByIso FROM hr_appraisal_cycles WHERE id = ?`)
+      .get(cycleId);
+    if (cycle) notifyAppraisalFormOpened(db, subjectUserId, cycle);
     return { ok: true, id };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

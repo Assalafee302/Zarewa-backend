@@ -1,4 +1,8 @@
 import { expandHelpTokens, normalizeHelpQueryText, tokenMatchesTerm } from './helpTypoTolerance.js';
+import {
+  buildOperationalHelpArticles,
+  OPERATIONAL_FAQ_COUNT,
+} from './helpOperationalCatalog.js';
 
 /**
  * Used by server /api/help/chat and mirrored in the frontend for instant offline answers.
@@ -7,8 +11,8 @@ import { expandHelpTokens, normalizeHelpQueryText, tokenMatchesTerm } from './he
 /** @typedef {{ label: string; to: string; state?: object }} HelpLink */
 /** @typedef {{ id: string; title: string; keywords: string[]; answer: string; steps: string[]; links: HelpLink[] }} HelpArticle */
 
-/** @type {HelpArticle[]} */
-export const HELP_ARTICLES = [
+/** Curated deep-dive guides (hand-maintained). */
+const CORE_HELP_ARTICLES = [
   {
     id: 'record-receipt',
     title: 'How to record a payment (receipt)',
@@ -1209,6 +1213,18 @@ export const HELP_ARTICLES = [
     links: [{ label: 'Workspace', to: '/' }],
   },
 ];
+
+/** @type {HelpArticle[]} Operational Q&A catalog (~1000 phrasings) merged at load. */
+const OPERATIONAL_HELP_ARTICLES = buildOperationalHelpArticles();
+
+/** @type {HelpArticle[]} */
+export const HELP_ARTICLES = [...CORE_HELP_ARTICLES, ...OPERATIONAL_HELP_ARTICLES];
+
+/** Total articles including operational catalog (for status/admin). */
+export const HELP_ARTICLE_COUNT = HELP_ARTICLES.length;
+
+/** Re-export for admin dashboards and docs. */
+export { OPERATIONAL_FAQ_COUNT };
 
 const STOP_WORDS = new Set([
   'a',

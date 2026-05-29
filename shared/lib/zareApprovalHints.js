@@ -58,7 +58,7 @@ export function explainApprovalBlock(ctx = {}) {
 
   const zareQuery =
     ctx.zareQuery ||
-    `Why can't I approve this ${documentType ? documentType.replace(/_/g, ' ') : 'item'}? Reference: ${ctx.referenceNo || 'unknown'}.`;
+    `Explain the approval rules for this ${documentType ? documentType.replace(/_/g, ' ') : 'item'} (I need guidance only — who can approve and what steps). Reference: ${ctx.referenceNo || 'unknown'}.`;
 
   if (ctx.alreadyApproved || /\b(approved|paid|settled|closed|complete)\b/.test(status)) {
     return {
@@ -134,7 +134,7 @@ export function explainApprovalBlock(ctx = {}) {
 
   return {
     show: true,
-    summary: ctx.summary || 'You cannot approve this yet.',
+    summary: ctx.summary || 'Approval rules — Zare explains; you approve in Zarewa',
     reasons,
     zareQuery,
   };

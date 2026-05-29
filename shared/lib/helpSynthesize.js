@@ -4,7 +4,7 @@
  */
 
 import { guideClearanceFootnote } from './helpClearance.js';
-import { HELP_BOT_NAME } from './helpBotBrand.js';
+import { HELP_BOT_GUIDE_PRINCIPLE, HELP_BOT_NAME } from './helpBotBrand.js';
 
 /** @typedef {'greeting' | 'thanks' | 'follow_up' | 'clarify' | 'workflow' | 'meta' | 'unknown'} HelpIntent */
 
@@ -135,16 +135,18 @@ export function synthesizeMetaReply(opts = {}) {
   const who = name ? ` ${name}` : '';
   const aiOn = Boolean(opts.externalAiEnabled);
   return [
-    `Hi${who} — I'm **${HELP_BOT_NAME}**, your **ERP operations assistant** (workflow help, memos, transactions, approvals, and search).`,
+    `Hi${who} — I'm **${HELP_BOT_NAME}**, your **Zarewa how-to guide** for SOPs, screen-by-screen steps, and company workflow rules.`,
     '',
-    'I search **workflow guides**, respect your **role clearance**, and can read **permission-safe ERP data** when allowed.',
+    HELP_BOT_GUIDE_PRINCIPLE,
+    '',
+    'I can explain **why** something is blocked (permissions, period lock, missing attachment) and **who** normally handles the next step — but I never approve, post, pay, or save records for you in chat.',
     aiOn
-      ? '**AI polish is on** — answers stay grounded in Zarewa data only.'
-      : '**AI polish is off** — I still answer from guides and tools without an external API key.',
+      ? '**AI polish is on** — answers stay grounded in Zarewa guides and permission-safe data only.'
+      : '**AI polish is off** — I still answer from built-in guides without an external API key.',
     '',
-    'I will not invent numbers or bypass your clearance. Ask "how do I…" for steps, or "what is…" for live data.',
+    'Ask things like: *How do I register staff?* · *What is the receipt workflow?* · *Why can’t I approve this?* (I’ll explain the rule, not press Approve for you.)',
     '',
-    '**By design:** I guide and recommend — you always click the final action. Draft help articles need admin review before publishing. I learn from feedback and workflow patterns, not by retraining a neural model inside Zarewa. RBAC always applies to memory and live data.',
+    'I learn from feedback and usage patterns to surface better guides — not by retraining a model inside your ERP. RBAC always applies.',
   ].join('\n');
 }
 
@@ -182,7 +184,11 @@ export function synthesizeHelpReply(opts) {
 
   if (intent === 'greeting') {
     const who = name ? ` ${name}` : '';
-    return `Hello${who}! I'm **${HELP_BOT_NAME}**. What **${page}** workflow can I help with?`;
+    return [
+      `Hello${who}! I'm **${HELP_BOT_NAME}** — here to help you use **${page}** the right way.`,
+      '',
+      'Ask **how do I…** for step-by-step SOPs, or **why can’t I…** when something is blocked. I guide only; you keep control of every button in Zarewa.',
+    ].join('\n');
   }
 
   if (intent === 'thanks') {
@@ -190,7 +196,13 @@ export function synthesizeHelpReply(opts) {
   }
 
   if (!articles.length) {
-    return 'I could not match that to a workflow yet. Try naming the module (**Sales**, **Finance**, **Operations**) or document (receipt, quotation, PO, refund).';
+    return [
+      "I'm not sure which workflow you mean yet — and that's okay.",
+      '',
+      'Try naming the area (**Sales**, **Finance**, **Operations**, **Settings**, **HR**) or the document (**receipt**, **quotation**, **PO**, **refund**, **memo**).',
+      '',
+      'Example: *How do I record a receipt?* or *How do I register a new staff user?*',
+    ].join('\n');
   }
 
   const maxSteps = pace === 'fast' ? 3 : pace === 'deep' ? 6 : 4;
@@ -207,7 +219,7 @@ export function synthesizeHelpReply(opts) {
   if (intent === 'follow_up' || intent === 'clarify') {
     const primary = articles[0];
     const steps = selectRelevantSteps(primary, message, maxSteps + 1);
-    const lines = [`Follow-up on **${primary.title.replace(/^How to /i, '')}**:`];
+    const lines = [`More on **${primary.title.replace(/^How to /i, '')}**:`];
     if (steps.length) {
       steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
     }
@@ -219,7 +231,7 @@ export function synthesizeHelpReply(opts) {
     const steps = selectRelevantSteps(article, message, maxSteps);
     const lines = [directOpening(article, message)];
     if (steps.length) {
-      lines.push('', '**Do this:**');
+      lines.push('', '**In Zarewa, you do this:**');
       steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
     }
     const remaining = (article.steps || []).length - steps.length;
@@ -281,14 +293,20 @@ export function buildRetrievedContextForAi(articles, message) {
  */
 export function buildHelpAiSystemPrompt(ctx) {
   return [
-    `You are ${HELP_BOT_NAME} — the Zarewa workflow guide for ERP staff.`,
+    `You are ${HELP_BOT_NAME} — the friendly Zarewa how-to guide (SOPs and workflow rules).`,
+    'Hard rules:',
+    `- ${HELP_BOT_GUIDE_PRINCIPLE}`,
+    '- NEVER say you approved, posted, paid, saved, rejected, or will perform any ERP action for the user.',
+    '- NEVER tell the user you clicked a button or changed data — only explain what THEY should click.',
+    '- For approval questions: explain rules, roles, and who normally approves; do not impersonate an approver.',
     'Architecture: RAG — you ONLY use the retrieved guides below. Never invent modules, buttons, or URLs.',
-    'Style (like ChatGPT):',
+    'Tone: warm, clear, professional — like a helpful senior colleague, not a robot or legal disclaimer.',
+    'Style:',
     '- Lead with a direct 1–2 sentence answer to what they asked.',
     '- Then numbered steps — only the steps relevant to their question (max 5 unless they asked for full workflow).',
     '- Use **bold** for screen names and document types.',
     '- If they are continuing a conversation, reference prior context briefly — do not repeat the whole guide.',
-    '- End with one short offer: e.g. "Want me to break down phase 2?" or "Need the Finance posting rules?"',
+    '- End with one short friendly offer: e.g. "Want the Finance posting steps next?" or "Should I explain who can approve this?"',
     '- Never paste the entire knowledge base. Never say "as an AI model".',
     ctx.userDisplay ? `Staff member: ${ctx.userDisplay}.` : '',
     ctx.roleKey ? `Role: ${ctx.roleKey}.` : '',

@@ -27,11 +27,13 @@ export function formatBusinessAnalysisReply(pack) {
   ];
 
   if (s.mixRows?.length) {
-    sections.push('- Metal family mix (produced revenue share):');
-    for (const row of s.mixRows.filter((r) => r.revenueNgn > 0)) {
+    sections.push('- Metal family mix (metres produced share):');
+    for (const row of s.mixRows.filter((r) => r.metres > 0)) {
       const label =
         row.family === 'aluminium' ? 'Aluminium' : row.family === 'aluzinc' ? 'Aluzinc' : 'Other';
-      sections.push(`  · ${label}: ${row.sharePct}% (₦${row.revenueNgn.toLocaleString('en-NG')})`);
+      sections.push(
+        `  · ${label}: ${row.sharePctMetres ?? 0}% (${row.metres.toLocaleString()} m · ₦${row.revenueNgn.toLocaleString('en-NG')} produced sales)`
+      );
     }
   }
 
@@ -45,11 +47,11 @@ export function formatBusinessAnalysisReply(pack) {
   for (const famKey of ['aluminium', 'aluzinc']) {
     const perf = s.materialPerformance?.[famKey];
     const best = perf?.topCombinations?.[0];
-    if (best?.revenueNgn > 0) {
+    if (best?.metres > 0) {
       const margin =
         best.marginPct != null ? ` · est. margin ${best.marginPct}%` : '';
       sections.push(
-        `- Best ${perf.label} combo: ${best.gauge} · ${best.colour} · ${best.profile} — ₦${best.revenueNgn.toLocaleString('en-NG')}${margin}`
+        `- Best ${perf.label} combo (by metres): ${best.gauge} · ${best.colour} · ${best.profile} — ${best.metres.toLocaleString()} m (${best.sharePctMetres ?? 0}% of family) · ₦${best.revenueNgn.toLocaleString('en-NG')}${margin}`
       );
     }
   }

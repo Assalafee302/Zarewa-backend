@@ -93,17 +93,18 @@ export function buildBusinessIntelligenceXlsx(pack) {
   const materialSheet = (famKey, label) => {
     const perf = s.materialPerformance?.[famKey];
     const rows = [
-      ['Gauge', 'Colour', 'Profile', 'Revenue ₦', 'COGS ₦', 'Margin ₦', 'Margin %', 'Metres', 'Kg'],
+      ['Gauge', 'Colour', 'Profile', 'Metres', 'Share % (metres)', 'Kg', 'Revenue ₦', 'COGS ₦', 'Margin ₦', 'Margin %'],
       ...(perf?.topCombinations || []).map((r) => [
         r.gauge,
         r.colour,
         r.profile,
+        r.metres,
+        r.sharePctMetres ?? '',
+        r.weightKg,
         r.revenueNgn,
         r.cogsNgn ?? '',
         r.marginNgn ?? '',
         r.marginPct ?? '',
-        r.metres,
-        r.weightKg,
       ]),
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), label);

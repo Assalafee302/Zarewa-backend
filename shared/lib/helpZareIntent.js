@@ -68,7 +68,7 @@ export function classifyZareIntent(message, history = [], pageContext = null) {
     if (/\b(category|classify|type)\b/i.test(q)) return 'memo_category_suggestion';
     return 'memo_writing_help';
   }
-  if (pageContext?.mode === 'approval_help') {
+  if (pageContext?.mode === 'approval_help' || pageContext?.mode === 'approval_rules_help') {
     return 'cannot_approve';
   }
 
@@ -133,7 +133,7 @@ export function zareIntentLabel(intent) {
   const labels = {
     workflow_help: 'Workflow guide',
     transaction_problem: 'Transaction help',
-    cannot_approve: 'Approval guidance',
+    cannot_approve: 'Approval rules (guide only)',
     correction_request: 'Correction guidance',
     memo_writing_help: 'Memo assistant',
     smart_search: 'Smart search',

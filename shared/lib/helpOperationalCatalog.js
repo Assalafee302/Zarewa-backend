@@ -1547,5 +1547,8 @@ export function buildOperationalHelpArticles() {
   return articles;
 }
 
+/** Pre-built catalog — initialized after module helpers to avoid bundler TDZ. */
+export const OPERATIONAL_FAQ_ARTICLES = buildOperationalHelpArticles();
+
 /** Frozen count for tests and admin UI. */
 export const OPERATIONAL_FAQ_COUNT = OPERATIONAL_FAQ_TARGET;

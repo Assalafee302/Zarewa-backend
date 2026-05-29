@@ -1,6 +1,6 @@
 import { expandHelpTokens, normalizeHelpQueryText, tokenMatchesTerm } from './helpTypoTolerance.js';
 import {
-  buildOperationalHelpArticles,
+  OPERATIONAL_FAQ_ARTICLES,
   OPERATIONAL_FAQ_COUNT,
 } from './helpOperationalCatalog.js';
 
@@ -1214,14 +1214,10 @@ const CORE_HELP_ARTICLES = [
   },
 ];
 
-let operationalArticlesCache = null;
 let allArticlesCache = null;
 
 function getOperationalHelpArticles() {
-  if (!operationalArticlesCache) {
-    operationalArticlesCache = buildOperationalHelpArticles();
-  }
-  return operationalArticlesCache;
+  return OPERATIONAL_FAQ_ARTICLES;
 }
 
 /** Build merged catalog on first use (avoids blocking server/worker startup). */

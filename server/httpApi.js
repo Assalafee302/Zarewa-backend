@@ -348,6 +348,7 @@ import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.j
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { runHelpChat } from './helpAgent.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
+import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
 import { sanitizeZarePageContext } from '../shared/lib/workspaceSanitize.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
@@ -570,6 +571,8 @@ export function registerHttpApi(app, db) {
         /** Confirms this process includes Office Desk routes (e.g. POST /api/office/ai/polish-memo). */
         officeDesk: true,
         materialIncidentBoot: 'po-line-type-migrate-v4',
+        /** Present when BI analytics engine includes productionKgInRange fix (42372a4+). */
+        businessIntelligence: BI_ENGINE_REV,
       },
     });
   };

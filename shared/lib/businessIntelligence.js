@@ -16,6 +16,9 @@ const ALU_PRODUCT_IDS = new Set(['COIL-ALU', 'MAT-001']);
 const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
+/** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
+export const BI_ENGINE_REV = '42372a4';
+
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
 export const BI_PERIOD_OPTIONS = [
@@ -618,6 +621,7 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
 
   return {
     ok: true,
+    engineRev: BI_ENGINE_REV,
     generatedAtISO: new Date().toISOString(),
     asOfISO,
     periodKey,

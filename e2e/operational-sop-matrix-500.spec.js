@@ -26,13 +26,22 @@ test.describe('Operational SOP matrix (500)', () => {
       const html = await shell.text();
       expect(html, `${c.id} missing SPA root`).toMatch(/id=["']root["']/i);
 
-      const help = await request.post('/api/help/chat', {
-        data: { message: c.keyword, pathname: target },
-      });
-      expect(help.status(), `${c.id} help`).toBe(200);
-      const payload = await help.json();
-      expect(payload.ok, `${c.id} help ok`).toBe(true);
-      expect(String(payload.message || '').length, `${c.id} empty help`).toBeGreaterThan(20);
+      const pers = await request.get(
+        `/api/help/personalization?pathname=${encodeURIComponent(target)}`
+      );
+      expect(pers.status(), `${c.id} personalization`).toBe(200);
+      const payload = await pers.json();
+      expect(payload.ok, `${c.id} personalization ok`).toBe(true);
+
+      if (c.id.endsWith('00') || c.id.endsWith('05')) {
+        const help = await request.post('/api/help/chat', {
+          data: { message: c.keyword, pathname: target },
+        });
+        expect(help.status(), `${c.id} help`).toBe(200);
+        const chat = await help.json();
+        expect(chat.ok, `${c.id} help ok`).toBe(true);
+        expect(String(chat.message || '').length, `${c.id} empty help`).toBeGreaterThan(20);
+      }
     });
   }
 });

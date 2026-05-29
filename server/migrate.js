@@ -2635,6 +2635,14 @@ function migrateHrStaffProfileColumns(db) {
 
 /** Recruiting, L&D training records, engagement surveys (Phase 9). */
 function migrateHrRecruitingLearningEngagementSchema(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
   db.exec(`
     CREATE TABLE IF NOT EXISTS hr_job_postings (
       id TEXT PRIMARY KEY,
@@ -2705,6 +2713,13 @@ function migrateHrRecruitingLearningEngagementSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_engagement_responses_survey ON hr_engagement_responses(survey_id);
   `);
+  const applicants = tableCols('hr_job_applicants');
+  if (applicants.size && !applicants.has('interview_scores_json')) {
+    db.exec(`ALTER TABLE hr_job_applicants ADD COLUMN interview_scores_json TEXT`);
+  }
+  if (applicants.size && !applicants.has('offer_letter_text')) {
+    db.exec(`ALTER TABLE hr_job_applicants ADD COLUMN offer_letter_text TEXT`);
+  }
 }
 
 /** Lifecycle checklists + in-app HR notifications (Phase 8). */

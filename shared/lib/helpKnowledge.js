@@ -1626,5 +1626,13 @@ export function quickQuestionsForPath(pathname) {
       { label: 'Edit approvals', query: 'How do second approvals work?' },
     ];
   }
+  if (p.startsWith('/settings')) {
+    return [
+      { label: 'Register staff', query: 'How do I register a new staff user?' },
+      { label: 'Team access', query: 'Settings team access and permissions' },
+      { label: 'Period lock', query: 'Accounting period locked — what can I do?' },
+      { label: 'Governance', query: 'Settings governance and period locks' },
+    ];
+  }
   return HELP_QUICK_QUESTIONS.slice(0, 6);
 };

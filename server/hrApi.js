@@ -39,7 +39,6 @@ import {
   getPayrollRunTotals,
   gmHrReviewRequest,
   hrListScope,
-  hrNextUatReadiness,
   hrReviewRequest,
   hrTablesReady,
   listEmploymentLetters,
@@ -122,7 +121,7 @@ import {
   patchHrApplicant,
   patchHrJobPosting,
 } from './hrRecruiting.js';
-import { getHrModuleHealth } from './hrModuleHealth.js';
+import { buildHrModuleBlockers, buildHrReadiness, getHrModuleHealth } from './hrModuleHealth.js';
 import {
   exportHrEngagementTrendsCsv,
   exportHrHeadcountCsv,
@@ -192,7 +191,13 @@ export function registerHrApi(app, db) {
 
   app.get('/api/hr/health', (_req, res) => {
     const modules = getHrModuleHealth(db);
-    res.json({ ok: true, hrReady: hrTablesReady(db), modules, productionReady: modules.allReady });
+    res.json({
+      ok: true,
+      hrReady: hrTablesReady(db),
+      modules,
+      productionReady: modules.allReady,
+      blockers: buildHrModuleBlockers(modules),
+    });
   });
 
   app.get('/api/hr/policy-requirements', (req, res) => {
@@ -267,8 +272,7 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       const observability = listHrObservability(db, scope);
       const inbox = getHrInboxSummary(db, scope);
-      const modules = getHrModuleHealth(db);
-      const readiness = { ...hrNextUatReadiness(db, scope), modules, productionReady: modules.allReady };
+      const readiness = buildHrReadiness(db, scope);
       const staffAll = listHrStaff(db, scope, { includeInactive: true });
       const staffCounts = {
         total: staffAll.length,

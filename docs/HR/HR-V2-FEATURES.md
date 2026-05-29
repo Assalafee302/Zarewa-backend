@@ -60,8 +60,9 @@ Permission: `hr.reports.view`, `hr.staff.manage`, or `hr.executive.view`.
 
 ## Production readiness
 
-- `GET /api/hr/health` — `modules` + `productionReady` (all submodule tables present)
-- Dashboard readiness card — same data from `GET /api/hr/dashboard`
+- `GET /api/hr/health` — `modules`, `productionReady`, `blockers` (schema; no auth)
+- `GET /api/hr/dashboard` → `readiness` — adds `gates`, `canCutover`, and scoped data blockers
+- Cutover checklist: [HR-UAT-CUTOVER.md](./HR-UAT-CUTOVER.md)
 
 ## Staff loan agreement letters
 

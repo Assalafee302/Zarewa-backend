@@ -32,10 +32,7 @@ test.describe('Operational SOP matrix (500)', () => {
       expect(pers.status(), `${c.id} personalization`).toBe(200);
       const payload = await pers.json();
       expect(payload.ok, `${c.id} personalization ok`).toBe(true);
-      expect(
-        Array.isArray(payload.suggestedPrompts) || Array.isArray(payload.quickLinks),
-        `${c.id} personalization payload`
-      ).toBe(true);
+      expect(Array.isArray(payload.prompts), `${c.id} prompts`).toBe(true);
     });
   }
 });

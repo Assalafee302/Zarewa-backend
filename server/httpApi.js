@@ -149,6 +149,17 @@ import {
   markOfficeThreadRead,
   officeScopeFromReq,
 } from './officeOps.js';
+import { fileOfficeThread } from './filingNumberOps.js';
+import {
+  listOfficeRecordVersions,
+  patchOfficeRecordByBranchManager,
+} from './officeRecordOps.js';
+import {
+  acknowledgeOfficialNotice,
+  createOfficialNotice,
+  listOfficialNoticesForUser,
+} from './officialNoticesOps.js';
+import { addForumPost, createForumTopic, listForumTopics } from './forumOps.js';
 import {
   deleteOfficeMemoDraft,
   listOfficeMemoDrafts,
@@ -1370,6 +1381,108 @@ export function registerHttpApi(app, db) {
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/office/threads/:threadId', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const r = patchOfficeRecordByBranchManager(db, req.params.threadId, req.user, req.body || {});
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/office/threads/:threadId/versions', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const versions = listOfficeRecordVersions(db, req.params.threadId);
+      res.json({ ok: true, versions });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load versions.' });
+    }
+  });
+
+  app.post('/api/office/threads/:threadId/file', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const r = fileOfficeThread(db, req.params.threadId, req.user, {
+        category: req.body?.category,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/official-notices', requireAuth, (req, res) => {
+    try {
+      const notices = listOfficialNoticesForUser(db, req.user, {
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      res.json({ ok: true, notices });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not list notices.' });
+    }
+  });
+
+  app.post('/api/official-notices', requireAuth, (req, res) => {
+    try {
+      const r = createOfficialNotice(db, req.user, req.body || {});
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/official-notices/:id/acknowledge', requireAuth, (req, res) => {
+    try {
+      const r = acknowledgeOfficialNotice(db, req.params.id, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/forum/topics', requireAuth, (req, res) => {
+    try {
+      const scope = String(req.query?.scope || '').trim() || undefined;
+      const topics = listForumTopics(db, {
+        scope,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      res.json({ ok: true, topics });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not list forum topics.' });
+    }
+  });
+
+  app.post('/api/forum/topics', requireAuth, (req, res) => {
+    try {
+      const r = createForumTopic(db, req.user, {
+        ...req.body,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/forum/topics/:topicId/posts', requireAuth, (req, res) => {
+    try {
+      const r = addForumPost(db, req.params.topicId, req.user, req.body || {});
+      res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

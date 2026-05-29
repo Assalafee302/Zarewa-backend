@@ -35,6 +35,9 @@ test.describe('Authenticated app flows', () => {
 
     await modulesNav.getByRole('link', { name: 'Workspace' }).click();
     await expect(page).toHaveURL(/\//);
+    await expect(
+      page.getByRole('button', { name: /create office record/i }).or(page.getByRole('button', { name: /compose memo/i }))
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   test('settings exposes profile and period lock controls', async ({ page }) => {

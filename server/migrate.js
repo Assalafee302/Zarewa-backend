@@ -981,6 +981,7 @@ export function runMigrations(db) {
   migrateOperationsMaintenanceWorkspace(db);
   migrateOfficeOperations2026(db);
   migrateWorkspaceCommandCenter2026(db);
+  migrateOnlineOfficeDesk2026(db);
   migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
   try {
@@ -1181,6 +1182,85 @@ function migrateOfficeThreadFiling(db) {
 }
 
 /** Workspace command center — drafts, read state, bulk action log (Phases 7–9). */
+function migrateOnlineOfficeDesk2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS office_record_versions (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      subject TEXT,
+      body TEXT,
+      edited_by_user_id TEXT,
+      edited_by_display TEXT,
+      edit_reason TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (thread_id) REFERENCES office_threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_office_record_versions_thread ON office_record_versions(thread_id, created_at_iso ASC);
+
+    CREATE TABLE IF NOT EXISTS official_notices (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_by_user_id TEXT,
+      targets_json TEXT,
+      requires_acknowledgement INTEGER NOT NULL DEFAULT 0,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      expires_at_iso TEXT,
+      attachments_json TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_official_notices_created ON official_notices(created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS official_notice_reads (
+      notice_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      read_at_iso TEXT NOT NULL,
+      PRIMARY KEY (notice_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS official_notice_acknowledgements (
+      notice_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      acknowledged_at_iso TEXT NOT NULL,
+      PRIMARY KEY (notice_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS forum_topics (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL DEFAULT 'branch',
+      branch_id TEXT,
+      title TEXT NOT NULL,
+      created_by_user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_forum_topics_branch ON forum_topics(branch_id, updated_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS forum_posts (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT NOT NULL,
+      author_user_id TEXT,
+      body TEXT NOT NULL,
+      attachments_json TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (topic_id) REFERENCES forum_topics(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_forum_posts_topic ON forum_posts(topic_id, created_at_iso ASC);
+
+    CREATE TABLE IF NOT EXISTS forum_moderation_log (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT,
+      post_id TEXT,
+      actor_user_id TEXT,
+      action TEXT NOT NULL,
+      note TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+  `);
+}
+
 function migrateWorkspaceCommandCenter2026(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS office_memo_drafts (

@@ -2547,6 +2547,72 @@ function migrateHrStaffProfileColumns(db) {
   }
   migrateHrModule(db);
   migrateHrPhase5PayrollSchema(db);
+  migrateHrPhase6BenefitsAndOps(db);
+}
+
+/** Benefits, incident memos, transfer recommendations (Phase 6–7). */
+function migrateHrPhase6BenefitsAndOps(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_beneficiaries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      display_name TEXT NOT NULL,
+      beneficiary_type TEXT NOT NULL DEFAULT 'allowance',
+      branch_id TEXT,
+      monthly_amount_ngn INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_beneficiaries_branch ON hr_beneficiaries(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_benefit_payments (
+      id TEXT PRIMARY KEY,
+      beneficiary_id TEXT NOT NULL,
+      period_yyyymm TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      paid_at_iso TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (beneficiary_id) REFERENCES hr_beneficiaries(id) ON DELETE CASCADE,
+      UNIQUE(beneficiary_id, period_yyyymm)
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_incident_memos (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reported_by_user_id TEXT,
+      incident_date_iso TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      disciplinary_event_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_incident_memos_branch ON hr_incident_memos(branch_id, incident_date_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_transfer_recommendations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      from_branch_id TEXT NOT NULL,
+      to_branch_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      recommended_by_user_id TEXT,
+      reviewed_at_iso TEXT,
+      reviewed_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_transfer_rec_status ON hr_transfer_recommendations(status, created_at_iso DESC);
+  `);
 }
 
 /** Salary matrix, salary history, branch payroll contributions (Phase 5). */

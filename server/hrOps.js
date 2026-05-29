@@ -1122,9 +1122,12 @@ export function createHrRequest(db, userId, body) {
     if (deductionPerMonthNgn < minDeduction) {
       return { ok: false, error: `deductionPerMonthNgn too low for repaymentMonths (min ${minDeduction}).` };
     }
-    const loanVal = validateStaffLoanApplication(db, userId, { amountNgn, repaymentMonths });
-    if (!loanVal.ok) {
-      return { ok: false, error: loanVal.error || 'Loan does not meet policy.' };
+    const exceptionalLoan = Boolean(p.exceptionalLoan);
+    if (!exceptionalLoan) {
+      const loanVal = validateStaffLoanApplication(db, userId, { amountNgn, repaymentMonths });
+      if (!loanVal.ok) {
+        return { ok: false, error: loanVal.error || 'Loan does not meet policy.' };
+      }
     }
     db.prepare(
       `INSERT OR REPLACE INTO hr_request_loan (

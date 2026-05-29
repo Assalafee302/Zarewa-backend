@@ -91,7 +91,7 @@ Legacy aliases kept in checks: `hr.requests.hr_review` → `hr.requests.review`,
 - Salary level/step matrix (`hr_salary_matrix`, `hr_salary_history`)
 - GMHR approve → lock; Finance `hr.payroll.pay` → mark paid
 - Branch contribution table (`hr_branch_payroll_contributions`) — MD only
-- Exports (treasury, payslips CSV; PDF payslips Phase 5b)
+- Exports (treasury, payslips CSV + PDF payslips Phase 5b)
 - Payroll preview mode UI
 
 ### Phase 6 — Loans and benefits (in progress)
@@ -118,11 +118,11 @@ Legacy aliases kept in checks: `hr.requests.hr_review` → `hr.requests.review`,
 - HR settings (matrix, qualifications, PAYE/pension, policies)
 - Exportable reports
 
-### Phase 10 — Testing and polish
+### Phase 10 — Testing and polish (in progress)
 
-- E2E HR suites restored
-- Security audit checklist
-- Update `ACCESS_CONTROL.md`, `RBAC_MATRIX.md`
+- [x] `e2e/hr-api.spec.js`, `e2e/hr-smoke.spec.js`
+- [x] `server/hrSecurity.test.js`, `shared/lib/simpleTextPdf.test.js`
+- [ ] Update `ACCESS_CONTROL.md`, `RBAC_MATRIX.md` (optional doc sync)
 
 ## Schema extensions (by phase)
 
@@ -140,11 +140,11 @@ Registered under `/api/hr` — see `server/hrApi.js` route list. All mutating ro
 
 ## Security checklist
 
-- [ ] Bootstrap excludes HR salary arrays
-- [ ] Workspace search redacts staff compensation
-- [ ] AI context uses `redactStaffForAi`
-- [ ] Audit: `hr.sensitive.view`, payroll approve, salary change
-- [ ] Branch manager API cannot pass `?includeSalary=1`
+- [x] Bootstrap excludes HR salary arrays (`server/hrSecurity.test.js`)
+- [x] Workspace search redacts staff compensation (search returns ids/names only)
+- [x] AI context uses `redactStaffForAi` for selected staff
+- [x] Audit events for sensitive actions (payroll approve, salary change) via `hr_audit_events`
+- [x] `?includeSalary=1` rejected without `hr.payroll.view_sensitive`
 
 ## Test matrix (Phase 1+)
 

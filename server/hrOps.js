@@ -9,6 +9,7 @@ import {
   validateStaffLoanApplication,
 } from './hrBusinessRules.js';
 import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
+import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 
 const REQUEST_KINDS = new Set([
   'leave',
@@ -2691,6 +2692,58 @@ export function exportPayrollTreasuryPackCsv(db, runId) {
     ok: true,
     csv,
     filename: `treasury-payroll-${run.periodYyyymm}-${String(run.id).replace(/[^\w-]/g, '').slice(0, 12)}.csv`,
+  };
+}
+
+function formatNgnPdf(n) {
+  return `NGN ${(Math.round(Number(n) || 0)).toLocaleString('en-NG')}`;
+}
+
+export function exportPayrollPayslipsPdf(db, runId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  const lines = listPayrollLines(db, runId);
+  const pages = lines.map((l) => ({
+    lines: [
+      'Zarewa Aluminium and Plastics Ltd',
+      'PAYSLIP (CONFIDENTIAL)',
+      `Period: ${run.periodYyyymm}`,
+      '',
+      `Employee: ${l.displayName || l.userId}`,
+      `Staff ID: ${l.userId}`,
+      '',
+      `Gross pay: ${formatNgnPdf(l.grossNgn)}`,
+      `Bonus: ${formatNgnPdf(l.bonusNgn)}`,
+      `Attendance deduction: ${formatNgnPdf(l.attendanceDeductionNgn)}`,
+      `Other deduction: ${formatNgnPdf(l.otherDeductionNgn)}`,
+      `PAYE tax: ${formatNgnPdf(l.taxNgn)}`,
+      `Pension: ${formatNgnPdf(l.pensionNgn)}`,
+      `Net pay: ${formatNgnPdf(l.netNgn)}`,
+      '',
+      `Payroll run: ${run.id}`,
+      `Status: ${run.status}`,
+    ],
+  }));
+  const pdf = buildSimpleTextPdf(pages.length ? pages : [{ lines: ['No payroll lines in this run.'] }]);
+  return {
+    ok: true,
+    pdf,
+    filename: `payslips-${run.periodYyyymm}-${run.id}.pdf`,
+    contentType: 'application/pdf',
+  };
+}
+
+export function exportEmploymentLetterPdf(db, letterId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const row = db.prepare(`SELECT * FROM hr_employment_letters WHERE id = ?`).get(letterId);
+  if (!row) return { ok: false, error: 'Letter not found.' };
+  const lines = String(row.content_text || '').split(/\r?\n/);
+  const pdf = buildSimpleTextPdf([{ lines: lines.length ? lines : ['(empty letter)'] }]);
+  return {
+    ok: true,
+    pdf,
+    filename: `employment-letter-${letterId}.pdf`,
+    contentType: 'application/pdf',
   };
 }
 

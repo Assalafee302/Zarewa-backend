@@ -77,6 +77,11 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
     expect(locked.status).toBe(200);
     expect(locked.body.ok).toBe(true);
 
+    const pdf = await agent.get(`/api/hr/payroll-runs/${runId}/export/payslips-pdf`);
+    expect(pdf.status).toBe(200);
+    expect(String(pdf.headers['content-type'] || '')).toContain('application/pdf');
+    expect(pdf.text.slice(0, 5)).toBe('%PDF-');
+
     const run = await agent.get(`/api/hr/payroll-runs/${runId}`);
     expect(run.status).toBe(200);
     expect(run.body.run.status).toBe('locked');

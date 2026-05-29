@@ -36,6 +36,7 @@
     "test:e2e:operations": "playwright test e2e/complete-gate.spec.js --grep \"operations: Store\"",
     "test:e2e:production": "playwright test e2e/complete-gate.spec.js e2e/production-register.spec.js --grep \"Store & production|Production register\"",
     "test:e2e:finance": "playwright test e2e/complete-gate.spec.js --grep \"finance manager\"",
+    "test:e2e:hr": "playwright test e2e/hr-api.spec.js e2e/hr-smoke.spec.js",
     "test:e2e:ops-finance": "playwright test e2e/complete-gate.spec.js --grep \"finance manager|operations: Store\"",
     "verify:ci": "npm run lint && npm run test:transactions",
     "verify:split-deploy": "node scripts/verify-split-deploy.mjs",

@@ -17,6 +17,8 @@ import {
   deleteHrRequestDraft,
   exportPayrollGlJournalTemplateCsv,
   exportPayrollPayslipsCsv,
+  exportPayrollPayslipsPdf,
+  exportEmploymentLetterPdf,
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   generateEmploymentLetter,
@@ -238,6 +240,9 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
         scope.viewAll = false;
+      }
+      if (String(req.query?.includeSalary || '') === '1' && !userCanViewOrgSensitiveHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Sensitive compensation data is restricted.' });
       }
       const includeInactive = String(req.query?.includeInactive || '') === '1';
       const staff = listHrStaff(db, scope, { includeInactive });
@@ -805,7 +810,7 @@ export function registerHrApi(app, db) {
     }
   });
 
-  const exportPayroll = (handler, filename) => (req, res) => {
+  const exportPayroll = (handler, filename, { binary = false } = {}) => (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       if (!hrUserHas(req.user, 'hr.payroll.export') && !userCanPayPayroll(req.user)) {
@@ -813,8 +818,13 @@ export function registerHrApi(app, db) {
       }
       const r = handler(db, req.params.runId);
       if (!r.ok) return res.status(400).json(r);
+      if (binary && r.pdf) {
+        res.setHeader('Content-Type', r.contentType || 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${r.filename || filename}"`);
+        return res.send(Buffer.from(r.pdf));
+      }
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || filename}"`);
       return res.send(r.csv);
     } catch (e) {
       console.error(e);
@@ -912,6 +922,10 @@ export function registerHrApi(app, db) {
 
   app.get('/api/hr/payroll-runs/:runId/export/treasury', exportPayroll(exportPayrollTreasuryPackCsv, 'payroll-treasury.csv'));
   app.get('/api/hr/payroll-runs/:runId/export/payslips', exportPayroll(exportPayrollPayslipsCsv, 'payroll-payslips.csv'));
+  app.get(
+    '/api/hr/payroll-runs/:runId/export/payslips-pdf',
+    exportPayroll(exportPayrollPayslipsPdf, 'payroll-payslips.pdf', { binary: true })
+  );
   app.get('/api/hr/payroll-runs/:runId/export/statutory', exportPayroll(exportPayrollStatutoryPackCsv, 'payroll-statutory.csv'));
   app.get('/api/hr/payroll-runs/:runId/export/gl', exportPayroll(exportPayrollGlJournalTemplateCsv, 'payroll-gl.csv'));
 
@@ -942,6 +956,31 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+    }
+  });
+
+  app.get('/api/hr/employment-letters/:letterId/pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const letterId = String(req.params.letterId || '').trim();
+      const row = db.prepare(`SELECT user_id FROM hr_employment_letters WHERE id = ?`).get(letterId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Letter not found.' });
+      const isSelf = row.user_id === req.user?.id;
+      if (
+        !isSelf &&
+        !hrUserHas(req.user, 'hr.letters.generate') &&
+        !hrUserHas(req.user, 'hr.staff.manage')
+      ) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = exportEmploymentLetterPdf(db, letterId);
+      if (!r.ok) return res.status(400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export letter PDF.' });
     }
   });
 

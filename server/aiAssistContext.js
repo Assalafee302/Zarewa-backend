@@ -17,6 +17,7 @@ import {
   listHrStaff,
   listPayrollRuns,
 } from './hrOps.js';
+import { redactStaffForAi } from './hrRedaction.js';
 import { canAccessModuleWithPermissions } from '../shared/lib/moduleAccess.js';
 import { buildWorkspaceNotifications } from '../shared/lib/workspaceNotifications.js';
 import { quotationNeedsFollowUpAlert } from '../shared/lib/quotationLifecycleUi.js';
@@ -483,10 +484,11 @@ function hrContextLines(db, req, pageContext) {
     )
   );
   if (selectedStaff) {
-    pushLines(lines, 'Selected staff context:', [
-      `${selectedStaff.displayName || selectedStaff.username} · ${selectedStaff.department || '—'} · ${
-        selectedStaff.jobTitle || '—'
-      } · branch ${selectedStaff.branchId || '—'}`,
+    const safe = redactStaffForAi(selectedStaff);
+    pushLines(lines, 'Selected staff context (compensation redacted):', [
+      `${safe.displayName || safe.username} · ${safe.department || '—'} · ${safe.jobTitle || '—'} · branch ${
+        safe.branchId || '—'
+      }`,
       `Compliance flags: handbook ${selectedStaff.complianceBadges?.handbookAcknowledged ? 'acknowledged' : 'missing'}, overdue review ${
         selectedStaff.complianceBadges?.overdueReview ? 'yes' : 'no'
       }`,

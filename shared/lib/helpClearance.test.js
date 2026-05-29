@@ -24,6 +24,6 @@ describe('meta questions', () => {
   it('answers honestly', () => {
     const reply = synthesizeMetaReply({ userDisplay: 'Ali', externalAiEnabled: false });
     expect(reply).toMatch(/Zare/i);
-    expect(reply).toMatch(/clearance/i);
+    expect(reply).toMatch(/you always perform approvals/i);
   });
 });

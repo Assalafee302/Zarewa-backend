@@ -40,7 +40,7 @@ describe('helpSynthesize', () => {
       pathname: '/sales',
     });
     expect(reply).toMatch(/receipt|payment/i);
-    expect(reply).toMatch(/\*\*Do this:\*\*/);
+    expect(reply).toMatch(/\*\*In Zarewa, you do this:\*\*/);
     expect(reply.length).toBeLessThan(1200);
   });
 

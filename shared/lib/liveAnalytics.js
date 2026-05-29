@@ -1,4 +1,8 @@
-import { amountDueOnQuotationFromEntries } from './customerLedgerCore.js';
+import {
+  amountDueOnQuotationFromEntries,
+  firstProductionDateISO,
+  receivableDueOnQuotationFromEntries,
+} from './customerLedgerCore.js';
 import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 import { refundOutstandingAmount } from './refundsStore.js';
@@ -374,9 +378,9 @@ export function liveProductionPulse(productionJobs = [], movements = [], wipByPr
   return { metresProduced7d, millOutput7d, activeJobs };
 }
 
-export function liveReceivablesNgn(quotations = [], ledgerEntries = []) {
+export function liveReceivablesNgn(quotations = [], ledgerEntries = [], productionJobs = []) {
   return quotations.reduce(
-    (s, q) => s + amountDueOnQuotationFromEntries(ledgerEntries, q),
+    (s, q) => s + receivableDueOnQuotationFromEntries(ledgerEntries, q, productionJobs),
     0
   );
 }
@@ -492,24 +496,30 @@ export function topCustomersByProductionAttributedSales(
     .slice(0, limit);
 }
 
-export function receivablesAgingBuckets(quotations = [], ledgerEntries = [], asOfISO = new Date().toISOString().slice(0, 10)) {
-  const buckets = { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, days90plus: 0 };
+export function receivablesAgingBuckets(
+  quotations = [],
+  ledgerEntries = [],
+  asOfISO = new Date().toISOString().slice(0, 10),
+  productionJobs = []
+) {
+  const buckets = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
+  const asOfDate = new Date(`${toIsoDate(asOfISO)}T00:00:00`);
   quotations.forEach((q) => {
-    const due = amountDueOnQuotationFromEntries(ledgerEntries, q);
+    const due = receivableDueOnQuotationFromEntries(ledgerEntries, q, productionJobs);
     if (due <= 0) return;
-    const basis = toIsoDate(q.dueDateISO || q.dateISO);
+    const ref = String(q.id || '').trim();
+    const basis =
+      firstProductionDateISO(ref, productionJobs) || toIsoDate(q.dueDateISO || q.dateISO);
     const basisDate = basis ? new Date(`${basis}T00:00:00`) : null;
-    const asOfDate = new Date(`${toIsoDate(asOfISO)}T00:00:00`);
     if (!basisDate || Number.isNaN(basisDate.getTime()) || Number.isNaN(asOfDate.getTime())) {
-      buckets.current += due;
+      buckets['0_30'] += due;
       return;
     }
     const diffDays = Math.floor((asOfDate.getTime() - basisDate.getTime()) / 86400000);
-    if (diffDays <= 0) buckets.current += due;
-    else if (diffDays <= 30) buckets.days1to30 += due;
-    else if (diffDays <= 60) buckets.days31to60 += due;
-    else if (diffDays <= 90) buckets.days61to90 += due;
-    else buckets.days90plus += due;
+    if (diffDays <= 30) buckets['0_30'] += due;
+    else if (diffDays <= 60) buckets['31_60'] += due;
+    else if (diffDays <= 90) buckets['61_90'] += due;
+    else buckets.over_90 += due;
   });
   return buckets;
 }
@@ -761,11 +771,11 @@ export function salesPeriodCashBridgeExportRows(
   }
 
   for (const q of quotations || []) {
-    const due = amountDueOnQuotationFromEntries(ledgerEntries, q);
+    const due = receivableDueOnQuotationFromEntries(ledgerEntries, q, productionJobs);
     if (due <= 0) continue;
     rows.push({
       reportSection: 'Open receivables (live snapshot)',
-      category: 'Amount still due on quotation',
+      category: 'Balance due after completed production',
       ledgerType: 'AR_OPEN',
       dateISO: endDate || '',
       recordId: q.id,

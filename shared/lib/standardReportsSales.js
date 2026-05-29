@@ -2,7 +2,7 @@
  * Standard sales / AR report row builders (pure; used by GET /api/reports/*).
  */
 
-import { amountDueOnQuotationFromEntries } from './customerLedgerCore.js';
+import { receivableDueOnQuotationFromEntries } from './customerLedgerCore.js';
 import {
   allocatedQuotationRevenueForProductionJob,
   metersProducedByQuotationRef,
@@ -163,12 +163,12 @@ export function revenueProductionReportRows(quotations = [], productionJobs = []
 }
 
 /**
- * AR listing: open balances using quotation row paid vs total (same basis as UI).
+ * AR listing: balance due only on quotations with completed production (pending balance on delivered work).
  */
-export function arAsAtReportRows(quotations = [], ledgerEntries = []) {
+export function arAsAtReportRows(quotations = [], ledgerEntries = [], productionJobs = []) {
   const rows = [];
   for (const q of quotations || []) {
-    const due = amountDueOnQuotationFromEntries(ledgerEntries, q);
+    const due = receivableDueOnQuotationFromEntries(ledgerEntries, q, productionJobs);
     if (due <= 0) continue;
     const id = String(q.id ?? '').trim();
     rows.push({

@@ -2507,12 +2507,13 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const quotations = listQuotations(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
-      const rows = arAsAtReportRows(quotations, ledger);
+      const productionJobs = listProductionJobs(db, branchScope);
+      const rows = arAsAtReportRows(quotations, ledger, productionJobs);
       res.json({
         ok: true,
         asAtDate: asAtDate || null,
         branchScope,
-        arBasis: 'quote_row_live',
+        arBasis: 'production_completed_pending_balance',
         rows,
       });
     } catch (e) {

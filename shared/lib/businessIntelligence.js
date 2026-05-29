@@ -18,7 +18,7 @@ const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
 /** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
-export const BI_ENGINE_REV = 'bi-v5';
+export const BI_ENGINE_REV = 'bi-v6';
 
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
@@ -1018,7 +1018,7 @@ export function computeSalesAnalytics(data, opts = {}) {
   const topCustomers = topCustomersByNetPayments(receipts, data.refunds || [], startIso, asOfISO, 10);
   const materialPerformance = computeMaterialPerformance(data, opts);
 
-  const aging = receivablesAgingBuckets(quotations, ledgerEntries, asOfISO);
+  const aging = receivablesAgingBuckets(quotations, ledgerEntries, asOfISO, productionJobs);
   const outstandingReceivablesNgn = Object.values(aging).reduce((s, v) => s + v, 0);
 
   const trendKeys = [];
@@ -1724,7 +1724,9 @@ export function businessIntelligenceHeadlines(pack) {
     `Produced sales (${pack.periodLabel}): ₦${(s.producedRevenueNgn || 0).toLocaleString('en-NG')}.`
   );
   if (s.outstandingReceivablesNgn > 0) {
-    lines.push(`Outstanding receivables: ₦${s.outstandingReceivablesNgn.toLocaleString('en-NG')}.`);
+    lines.push(
+      `Outstanding receivables (production complete, balance due): ₦${s.outstandingReceivablesNgn.toLocaleString('en-NG')}.`
+    );
   }
   for (const fam of pack.inventory?.families || []) {
     const cover = fam.weeksCover != null ? `${fam.weeksCover} wk cover` : 'no consumption rate';

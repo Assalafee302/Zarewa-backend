@@ -158,7 +158,7 @@ export function buildActionSuggestions(pack) {
   const s = pack.sales;
 
   if (s.outstandingReceivablesNgn > 0) {
-    out.push('Review receivables aging and chase quotes with balance due.');
+    out.push('Review receivables aging and chase balances on quotations where production is complete.');
   }
   for (const fam of pack.inventory?.families || []) {
     if (fam.risk === 'critical') {

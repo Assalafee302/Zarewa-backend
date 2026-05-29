@@ -336,4 +336,38 @@ describe('businessIntelligence', () => {
     expect(combos[0].profile).toBe('Longspan (Industrial 6 & Metra)');
     expect(combos[0].metres).toBeGreaterThan(combos[1]?.metres || 0);
   });
+
+  it('counts receivables only when production is complete with balance due', () => {
+    const pack = buildBusinessIntelligencePack(
+      {
+        quotations: [
+          { id: 'QT-UNPAID', dateISO: '2026-05-10', totalNgn: 200_000, paidNgn: 0 },
+          { id: 'QT-AR', dateISO: '2026-05-10', totalNgn: 100_000, paidNgn: 30_000 },
+        ],
+        productionJobs: [
+          {
+            status: 'Completed',
+            quotationRef: 'QT-AR',
+            productID: 'COIL-ALU',
+            actualMeters: 20,
+            completedAtISO: '2026-05-15T10:00:00Z',
+          },
+        ],
+        cuttingLists: [],
+        receipts: [],
+        ledgerEntries: [],
+        refunds: [],
+        coilLots: [],
+        products: [],
+        stockMovements: [],
+        purchaseOrders: [],
+        expenses: [],
+        treasuryMovements: [],
+        paymentRequests: [],
+        treasuryAccounts: [],
+      },
+      { periodKey: 'month', asOfISO: '2026-05-20' }
+    );
+    expect(pack.sales.outstandingReceivablesNgn).toBe(70_000);
+  });
 });

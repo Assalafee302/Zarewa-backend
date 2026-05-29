@@ -1,4 +1,9 @@
-import { amountDueOnQuotationFromEntries, companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
+import {
+  amountDueOnQuotationFromEntries,
+  companionOverpayNgnByReceiptId,
+  firstProductionDateISO,
+  receivableDueOnQuotationFromEntries,
+} from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
@@ -2616,7 +2621,7 @@ export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
     salesMtdNgn: qInRange.reduce((s, q) => s + (Number(q?.totalNgn) || 0), 0),
     receiptsMtdNgn: rInRange.reduce((s, r) => s + (Number(r?.amountNgn) || 0), 0),
     outstandingReceivablesNgn: quotations.reduce(
-      (s, q) => s + amountDueOnQuotationFromEntries([], q),
+      (s, q) => s + receivableDueOnQuotationFromEntries([], q, productionJobs),
       0
     ),
     pendingQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'requested').length,
@@ -2663,12 +2668,20 @@ export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
 export function salesDashboardReceivablesAging(db, branchScope = 'ALL') {
   const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
   const now = new Date();
+  const productionJobs = listProductionJobs(db, branchScope);
   listQuotations(db, branchScope).forEach((q) => {
-    const due = new Date(String(q?.dateISO || q?.date || ''));
-    if (Number.isNaN(due.getTime())) return;
-    const outstanding = amountDueOnQuotationFromEntries([], q);
+    const outstanding = receivableDueOnQuotationFromEntries([], q, productionJobs);
     if (!(outstanding > 0)) return;
-    const days = Math.floor((now.getTime() - due.getTime()) / (24 * 60 * 60 * 1000));
+    const ref = String(q?.id || q?.quotationId || '').trim();
+    const basisIso =
+      firstProductionDateISO(ref, productionJobs) ||
+      String(q?.dueDateISO || q?.dateISO || q?.date || '').slice(0, 10);
+    const basis = new Date(basisIso);
+    if (Number.isNaN(basis.getTime())) {
+      out['0_30'] += outstanding;
+      return;
+    }
+    const days = Math.floor((now.getTime() - basis.getTime()) / (24 * 60 * 60 * 1000));
     if (days <= 30) out['0_30'] += outstanding;
     else if (days <= 60) out['31_60'] += outstanding;
     else if (days <= 90) out['61_90'] += outstanding;

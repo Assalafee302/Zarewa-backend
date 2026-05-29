@@ -108,6 +108,58 @@ export function amountDueOnQuotationFromEntries(_entries, q) {
   return effectiveOutstandingNgn(total, rowPaid);
 }
 
+function toIsoDateOnly(value) {
+  return String(value || '').slice(0, 10);
+}
+
+/**
+ * True when at least one completed production job with metres exists for this quotation.
+ * Unpaid quotes with no production are not receivable.
+ * @param {string} quotationRef
+ * @param {Array<{ status?: string, quotationRef?: string, actualMeters?: number }>} productionJobs
+ */
+export function quotationHasCompletedProduction(quotationRef, productionJobs = []) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return false;
+  return (productionJobs || []).some((j) => {
+    if (String(j?.status || '').trim() !== 'Completed') return false;
+    if (String(j.quotationRef || '').trim() !== ref) return false;
+    return (Number(j.actualMeters) || 0) > 0;
+  });
+}
+
+/**
+ * Earliest completion date for production on a quotation (aging basis for receivables).
+ * @param {string} quotationRef
+ * @param {Array<{ status?: string, quotationRef?: string, completedAtISO?: string, endDateISO?: string }>} productionJobs
+ * @returns {string}
+ */
+export function firstProductionDateISO(quotationRef, productionJobs = []) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return '';
+  let earliest = '';
+  for (const j of productionJobs || []) {
+    if (String(j?.status || '').trim() !== 'Completed') continue;
+    if (String(j.quotationRef || '').trim() !== ref) continue;
+    const iso = toIsoDateOnly(j.completedAtISO || j.endDateISO);
+    if (!iso) continue;
+    if (!earliest || iso < earliest) earliest = iso;
+  }
+  return earliest;
+}
+
+/**
+ * Accounts receivable: balance still due only after completed production (pending balance on delivered work).
+ * Quotes with no production output are excluded even if unpaid.
+ * @param {unknown} entries
+ * @param {{ id: string, totalNgn?: number, paidNgn?: number, dueDateISO?: string, dateISO?: string }} q
+ * @param {Array<{ status?: string, quotationRef?: string, actualMeters?: number, completedAtISO?: string, endDateISO?: string }>} productionJobs
+ */
+export function receivableDueOnQuotationFromEntries(entries, q, productionJobs = []) {
+  if (!quotationHasCompletedProduction(q?.id, productionJobs)) return 0;
+  return amountDueOnQuotationFromEntries(entries, q);
+}
+
 export function ledgerReceiptTotalFromEntries(entries, customerID) {
   if (!customerID) return 0;
   return (entries || []).reduce((s, e) => {

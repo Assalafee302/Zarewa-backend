@@ -3609,6 +3609,348 @@ export function registerNewStaffWithProfile(db, actorUserId, body) {
   return { ok: true, userId: created.userId, profile: up.profile };
 }
 
+function hrPhase6TablesReady(db) {
+  try {
+    return Boolean(db.prepare(`SELECT 1 FROM hr_beneficiaries LIMIT 1`).get());
+  } catch {
+    return false;
+  }
+}
+
+export function listHrBeneficiaries(db, scope) {
+  if (!hrPhase6TablesReady(db)) return [];
+  let sql = `SELECT * FROM hr_beneficiaries WHERE 1=1`;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND (branch_id = ? OR branch_id IS NULL)`;
+    args.push(scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  sql += ` ORDER BY display_name ASC LIMIT 500`;
+  return db.prepare(sql).all(...args).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    displayName: row.display_name,
+    beneficiaryType: row.beneficiary_type,
+    branchId: row.branch_id,
+    monthlyAmountNgn: Number(row.monthly_amount_ngn) || 0,
+    status: row.status,
+    notes: row.notes,
+    createdAtIso: row.created_at_iso,
+    updatedAtIso: row.updated_at_iso,
+  }));
+}
+
+export function upsertHrBeneficiary(db, actorUserId, body) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'HR benefits tables not initialised.' };
+  const displayName = String(body?.displayName || '').trim();
+  if (displayName.length < 2) return { ok: false, error: 'Display name is required.' };
+  const now = nowIso();
+  const id = String(body?.id || '').trim() || newId('HRBEN');
+  const existing = db.prepare(`SELECT id FROM hr_beneficiaries WHERE id = ?`).get(id);
+  const branchId = String(body?.branchId || '').trim() || null;
+  const row = {
+    id,
+    user_id: String(body?.userId || '').trim() || null,
+    display_name: displayName,
+    beneficiary_type: String(body?.beneficiaryType || 'allowance').trim() || 'allowance',
+    branch_id: branchId,
+    monthly_amount_ngn: Math.max(0, Math.round(Number(body?.monthlyAmountNgn) || 0)),
+    status: String(body?.status || 'active').trim() || 'active',
+    notes: String(body?.notes || '').trim() || null,
+    updated_at_iso: now,
+    created_by_user_id: actorUserId,
+  };
+  if (existing) {
+    db.prepare(
+      `UPDATE hr_beneficiaries SET user_id=@user_id, display_name=@display_name, beneficiary_type=@beneficiary_type,
+       branch_id=@branch_id, monthly_amount_ngn=@monthly_amount_ngn, status=@status, notes=@notes, updated_at_iso=@updated_at_iso
+       WHERE id=@id`
+    ).run({ ...row, id });
+  } else {
+    db.prepare(
+      `INSERT INTO hr_beneficiaries (id, user_id, display_name, beneficiary_type, branch_id, monthly_amount_ngn, status, notes, created_at_iso, updated_at_iso, created_by_user_id)
+       VALUES (@id,@user_id,@display_name,@beneficiary_type,@branch_id,@monthly_amount_ngn,@status,@notes,@created_at_iso,@updated_at_iso,@created_by_user_id)`
+    ).run({ ...row, created_at_iso: now });
+  }
+  const saved = db.prepare(`SELECT * FROM hr_beneficiaries WHERE id = ?`).get(id);
+  return {
+    ok: true,
+    beneficiary: saved
+      ? {
+          id: saved.id,
+          userId: saved.user_id,
+          displayName: saved.display_name,
+          beneficiaryType: saved.beneficiary_type,
+          branchId: saved.branch_id,
+          monthlyAmountNgn: Number(saved.monthly_amount_ngn) || 0,
+          status: saved.status,
+          notes: saved.notes,
+        }
+      : null,
+  };
+}
+
+export function listHrBenefitPayments(db, periodYyyymm) {
+  if (!hrPhase6TablesReady(db)) return [];
+  const p = String(periodYyyymm || '').replace(/\D/g, '').slice(0, 6);
+  if (!/^\d{6}$/.test(p)) return [];
+  return db
+    .prepare(
+      `SELECT bp.*, b.display_name, b.beneficiary_type FROM hr_benefit_payments bp
+       JOIN hr_beneficiaries b ON b.id = bp.beneficiary_id WHERE bp.period_yyyymm = ? ORDER BY b.display_name`
+    )
+    .all(p)
+    .map((row) => ({
+      id: row.id,
+      beneficiaryId: row.beneficiary_id,
+      displayName: row.display_name,
+      beneficiaryType: row.beneficiary_type,
+      periodYyyymm: row.period_yyyymm,
+      amountNgn: Number(row.amount_ngn) || 0,
+      status: row.status,
+      paidAtIso: row.paid_at_iso,
+      notes: row.notes,
+    }));
+}
+
+export function recordHrBenefitPayment(db, actorUserId, body) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'HR benefits tables not initialised.' };
+  const beneficiaryId = String(body?.beneficiaryId || '').trim();
+  const periodYyyymm = String(body?.periodYyyymm || '').replace(/\D/g, '').slice(0, 6);
+  if (!beneficiaryId) return { ok: false, error: 'beneficiaryId is required.' };
+  if (!/^\d{6}$/.test(periodYyyymm)) return { ok: false, error: 'periodYyyymm must be YYYYMM.' };
+  const ben = db.prepare(`SELECT id, monthly_amount_ngn FROM hr_beneficiaries WHERE id = ?`).get(beneficiaryId);
+  if (!ben) return { ok: false, error: 'Beneficiary not found.' };
+  const amountNgn = Math.max(0, Math.round(Number(body?.amountNgn ?? ben.monthly_amount_ngn) || 0));
+  const now = nowIso();
+  const id = newId('HRBPAY');
+  db.prepare(
+    `INSERT INTO hr_benefit_payments (id, beneficiary_id, period_yyyymm, amount_ngn, status, paid_at_iso, notes, created_at_iso, created_by_user_id)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(beneficiary_id, period_yyyymm) DO UPDATE SET
+       amount_ngn=excluded.amount_ngn, status=excluded.status, paid_at_iso=excluded.paid_at_iso, notes=excluded.notes`
+  ).run(
+    id,
+    beneficiaryId,
+    periodYyyymm,
+    amountNgn,
+    String(body?.status || 'scheduled').trim() || 'scheduled',
+    body?.markPaid ? now : null,
+    String(body?.notes || '').trim() || null,
+    now,
+    actorUserId
+  );
+  return { ok: true, payments: listHrBenefitPayments(db, periodYyyymm) };
+}
+
+export function listHrIncidentMemos(db, scope) {
+  if (!hrPhase6TablesReady(db)) return [];
+  let sql = `SELECT m.*, u.display_name AS staffDisplayName FROM hr_incident_memos m JOIN app_users u ON u.id = m.user_id WHERE 1=1`;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND m.branch_id = ?`;
+    args.push(scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  sql += ` ORDER BY m.incident_date_iso DESC, m.created_at_iso DESC LIMIT 200`;
+  return db.prepare(sql).all(...args).map((row) => ({
+    id: row.id,
+    branchId: row.branch_id,
+    userId: row.user_id,
+    staffDisplayName: row.staffDisplayName,
+    reportedByUserId: row.reported_by_user_id,
+    incidentDateIso: row.incident_date_iso,
+    summary: row.summary,
+    status: row.status,
+    disciplinaryEventId: row.disciplinary_event_id,
+    createdAtIso: row.created_at_iso,
+  }));
+}
+
+export function createHrIncidentMemo(db, actorUserId, body) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'HR incident tables not initialised.' };
+  const userId = String(body?.userId || '').trim();
+  const summary = String(body?.summary || '').trim();
+  if (!userId) return { ok: false, error: 'userId is required.' };
+  if (summary.length < 3) return { ok: false, error: 'Summary must be at least 3 characters.' };
+  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const branchId = String(body?.branchId || prof?.branch_id || DEFAULT_BRANCH_ID).trim();
+  const now = nowIso();
+  const id = newId('HRINC');
+  const dateIso = String(body?.incidentDateIso || '').slice(0, 10) || now.slice(0, 10);
+  db.prepare(
+    `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(id, branchId, userId, actorUserId, dateIso, summary, 'open', now, now);
+  return { ok: true, memo: listHrIncidentMemos(db, { viewAll: true, branchId }).find((m) => m.id === id) };
+}
+
+export function escalateHrIncidentToDiscipline(db, memoId, actorUserId, body = {}) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'HR incident tables not initialised.' };
+  const memo = db.prepare(`SELECT * FROM hr_incident_memos WHERE id = ?`).get(memoId);
+  if (!memo) return { ok: false, error: 'Incident memo not found.' };
+  const r = appendHrDisciplinaryEvent(db, memo.user_id, {
+    kind: String(body?.kind || 'incident').trim() || 'incident',
+    dateIso: memo.incident_date_iso,
+    summary: String(body?.summary || memo.summary).trim(),
+  }, actorUserId);
+  if (!r.ok) return r;
+  const eventId = r.events?.[0]?.id || null;
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_incident_memos SET status = 'escalated', disciplinary_event_id = ?, updated_at_iso = ? WHERE id = ?`
+  ).run(eventId, now, memoId);
+  return { ok: true, eventId, events: r.events };
+}
+
+export function listHrTransferRecommendations(db, scope) {
+  if (!hrPhase6TablesReady(db)) return [];
+  let sql = `SELECT t.*, u.display_name AS staffDisplayName FROM hr_transfer_recommendations t JOIN app_users u ON u.id = t.user_id WHERE 1=1`;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND (t.from_branch_id = ? OR t.to_branch_id = ?)`;
+    args.push(scope?.branchId || DEFAULT_BRANCH_ID, scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  sql += ` ORDER BY t.created_at_iso DESC LIMIT 200`;
+  return db.prepare(sql).all(...args).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    staffDisplayName: row.staffDisplayName,
+    fromBranchId: row.from_branch_id,
+    toBranchId: row.to_branch_id,
+    reason: row.reason,
+    status: row.status,
+    recommendedByUserId: row.recommended_by_user_id,
+    createdAtIso: row.created_at_iso,
+  }));
+}
+
+export function createHrTransferRecommendation(db, actorUserId, body) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'Transfer recommendation tables not initialised.' };
+  const userId = String(body?.userId || '').trim();
+  const toBranchId = String(body?.toBranchId || '').trim();
+  const reason = String(body?.reason || '').trim();
+  if (!userId || !toBranchId) return { ok: false, error: 'userId and toBranchId are required.' };
+  if (reason.length < 3) return { ok: false, error: 'Reason must be at least 3 characters.' };
+  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const fromBranchId = String(prof?.branch_id || DEFAULT_BRANCH_ID).trim();
+  const now = nowIso();
+  const id = newId('HRTR');
+  db.prepare(
+    `INSERT INTO hr_transfer_recommendations (id, user_id, from_branch_id, to_branch_id, reason, status, recommended_by_user_id, created_at_iso)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(id, userId, fromBranchId, toBranchId, reason, 'pending', actorUserId, now);
+  return { ok: true, recommendation: listHrTransferRecommendations(db, { viewAll: true, branchId: fromBranchId }).find((t) => t.id === id) };
+}
+
+export function reviewHrTransferRecommendation(db, actorUserId, id, body) {
+  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'Transfer recommendation tables not initialised.' };
+  const row = db.prepare(`SELECT * FROM hr_transfer_recommendations WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Recommendation not found.' };
+  const status = String(body?.status || '').trim();
+  if (!['approved', 'rejected', 'pending'].includes(status)) {
+    return { ok: false, error: 'status must be approved, rejected, or pending.' };
+  }
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_transfer_recommendations SET status = ?, reviewed_at_iso = ?, reviewed_by_user_id = ? WHERE id = ?`
+  ).run(status, now, actorUserId, id);
+  if (status === 'approved') {
+    upsertHrStaffProfile(db, actorUserId, {
+      userId: row.user_id,
+      branchId: row.to_branch_id,
+      branchChangeReason: `Transfer recommendation approved: ${row.reason}`,
+    });
+  }
+  return { ok: true };
+}
+
+export function listHrLeaveCalendar(db, scope, fromIso, toIso) {
+  if (!hrTablesReady(db)) return [];
+  const from = String(fromIso || '').slice(0, 10);
+  const to = String(toIso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return [];
+  let sql = `
+    SELECT r.user_id AS userId, u.display_name AS displayName, r.branch_id AS branchId,
+           l.leave_type AS leaveType, l.start_date_iso AS startDateIso, l.end_date_iso AS endDateIso,
+           l.days_requested AS daysRequested, r.title, r.id AS requestId
+    FROM hr_requests r
+    JOIN hr_request_leave l ON l.request_id = r.id
+    JOIN app_users u ON u.id = r.user_id
+    WHERE r.kind = 'leave' AND r.status = 'approved'
+      AND l.end_date_iso >= ? AND l.start_date_iso <= ?
+  `;
+  const args = [from, to];
+  if (!scope?.viewAll) {
+    sql += ` AND r.branch_id = ?`;
+    args.push(scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  sql += ` ORDER BY l.start_date_iso ASC`;
+  return db.prepare(sql).all(...args);
+}
+
+export function listExceptionalLoanQueue(db, scope) {
+  return listHrRequests(db, scope, { kind: 'loan' }).filter(
+    (r) => r.status === 'gm_hr_review' || Boolean(r.payload?.exceptionalLoan)
+  );
+}
+
+export function listRecentOrgSalaryChanges(db, scope, limit = 30) {
+  if (!hrTablesReady(db)) return [];
+  let sql = `
+    SELECT h.*, u.display_name AS displayName, p.branch_id AS branchId
+    FROM hr_salary_history h
+    JOIN app_users u ON u.id = h.user_id
+    LEFT JOIN hr_staff_profiles p ON p.user_id = h.user_id
+    WHERE 1=1
+  `;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND p.branch_id = ?`;
+    args.push(scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  sql += ` ORDER BY h.created_at_iso DESC LIMIT ?`;
+  args.push(Math.min(100, Math.max(1, Math.round(Number(limit) || 30))));
+  return db.prepare(sql).all(...args).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    displayName: row.displayName,
+    branchId: row.branch_id,
+    effectiveFromIso: row.effective_from_iso,
+    baseSalaryNgn: row.base_salary_ngn,
+    reason: row.reason,
+    createdAtIso: row.created_at_iso,
+  }));
+}
+
+export function getHrReportsSummary(db, scope) {
+  const staff = listHrStaff(db, scope, { includeInactive: false });
+  const runs = listPayrollRuns(db).filter((r) => !scope?.viewAll || true);
+  const byStatus = {};
+  for (const run of runs) {
+    byStatus[run.status] = (byStatus[run.status] || 0) + 1;
+  }
+  const obs = listHrObservability(db, scope);
+  return {
+    staffActive: staff.filter((s) => String(s.status) === 'active').length,
+    staffIncomplete: staff.filter((s) => (s.criticalMissing || []).length > 0).length,
+    payrollRunsByStatus: byStatus,
+    inbox: obs.summary,
+    recentSalaryChanges: listRecentOrgSalaryChanges(db, scope, 15),
+    beneficiaries: hrPhase6TablesReady(db) ? listHrBeneficiaries(db, scope).length : 0,
+    openIncidents: hrPhase6TablesReady(db)
+      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_incident_memos WHERE status = 'open'`).get().c
+      : 0,
+  };
+}
+
+export function listDraftPayrollRunIds(db) {
+  if (!hrTablesReady(db)) return [];
+  return db
+    .prepare(`SELECT id, period_yyyymm, status FROM hr_payroll_runs WHERE status = 'draft' ORDER BY created_at_iso DESC`)
+    .all()
+    .map((r) => ({ id: r.id, periodYyyymm: r.period_yyyymm, status: r.status }));
+}
+
 /**
  * Seed default profiles so payroll and branch filters work on demo DBs.
  * @param {import('better-sqlite3').Database} db

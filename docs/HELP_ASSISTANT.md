@@ -10,7 +10,7 @@ The help chatbot (life-ring button) is designed to work **without OpenAI or any 
 
 | Built in | Not included |
 |----------|----------------|
-| 25+ procedural workflow articles (SOPs) | Approving or posting on behalf of users |
+| 45+ curated SOPs + **1000** operational Q&A phrasings (`helpOperationalCatalog.js`) | Approving or posting on behalf of users |
 | Keyword + route + learned boost matching | ChatGPT Free subscription |
 | Query logging and branch-level learning | Automatic product code changes |
 | User reactions (👍/👎), read time, follow-ups | Legal/financial advice |
@@ -76,7 +76,8 @@ User question
 
 | File | Role |
 |------|------|
-| `shared/lib/helpKnowledge.js` | Articles + retrieval scoring |
+| `shared/lib/helpKnowledge.js` | Curated articles + operational catalog merge + retrieval scoring |
+| `shared/lib/helpOperationalCatalog.js` | 1000 operational how-to phrasings (10 templates × ~100 topics) |
 | `shared/lib/helpSynthesize.js` | Smart conversational answers (intent, step selection, pace) |
 | `shared/lib/helpDesignLimits.js` | Four non-negotiable Runa design limits + RBAC filters |
 | `shared/lib/helpBehaviorLearn.js` | Reading pace, audit→article mapping |
@@ -88,9 +89,24 @@ User question
 
 Each article: `id`, `title`, `keywords[]`, `answer`, `steps[]`, `links[]`.
 
-**44 articles** covering sales, finance, procurement, operations, manager, settings, and error recovery (see `HELP_ARTICLES` in code).
+**~45 curated articles** plus **1000 operational Q&A** entries from `buildOperationalHelpArticles()` (merged into `HELP_ARTICLES` at load). Curated guides win ties over operational FAQs when scores are close.
 
-**To add a guide:** edit `shared/lib/helpKnowledge.js`, add a test in `helpKnowledge.test.js`, copy file to frontend.
+**To add a deep guide:** edit the `CORE_HELP_ARTICLES` block in `shared/lib/helpKnowledge.js`, add a test in `helpKnowledge.test.js`, sync to `frontend/src/lib/`.
+
+**To extend operational coverage:** edit topic rows in `shared/lib/helpOperationalCatalog.js` (10 question templates per topic; catalog caps at 1000 entries), copy to frontend `src/lib/`, run `helpOperationalCatalog.test.js`.
+
+## Operational catalog (1000 questions)
+
+`helpOperationalCatalog.js` defines **~100 topics** across Sales, Finance, Procurement, Operations, Manager, Settings, HR, Workspace, Memos, and General — each with **10 natural phrasings** (e.g. “How do I…”, “Steps to…”, “SOP for…”). The builder stops at **1000** articles so Zare can match how staff actually ask.
+
+Every answer is **guide-only**: numbered steps, deep links into Zarewa, and a reminder that **you** approve, save, and post — Zare does not.
+
+**“Training” Zare** on this catalog does **not** mean fine-tuning a model in ERP. After deploy:
+
+1. Articles load into `HELP_ARTICLES` — instant keyword/RAG retrieval.
+2. Staff 👍/👎 on answers updates `helpSelfTrain` weights toward the best article id.
+3. Unmatched questions appear in the admin gap report → add curated topics or new rows in the catalog.
+4. Optional `ZAREWA_AI_API_KEY` only polishes wording; guardrails still forbid mutations from chat.
 
 ## Pattern learning (how it “learns”)
 

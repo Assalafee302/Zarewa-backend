@@ -1477,8 +1477,26 @@ function scoreHelpArticle(article, qLower, tokens, pathname, learnedBoosts) {
   }
   const boost = Number(learnedBoosts?.[article.id]) || 0;
   if (boost > 0) score += boost;
-  if (!String(article.id).startsWith('op-')) score += 2;
   return score;
+}
+
+/** Prefer hand-curated SOPs when an operational FAQ is only slightly ahead. */
+const CURATED_OVER_OPERATIONAL_SCORE_GAP = 8;
+
+/**
+ * @param {{ article: HelpArticle; score: number }[]} ranked
+ * @returns {{ article: HelpArticle; score: number }[]}
+ */
+function preferCuratedOverOperational(ranked) {
+  if (!ranked.length) return ranked;
+  const top = ranked[0];
+  if (!String(top.article.id).startsWith('op-')) return ranked;
+  const curatedIdx = ranked.findIndex((row) => !String(row.article.id).startsWith('op-'));
+  if (curatedIdx < 0) return ranked;
+  const curated = ranked[curatedIdx];
+  if (top.score - curated.score > CURATED_OVER_OPERATIONAL_SCORE_GAP) return ranked;
+  const rest = ranked.filter((_, i) => i !== curatedIdx);
+  return [curated, ...rest];
 }
 
 /**
@@ -1495,12 +1513,14 @@ export function matchHelpArticles(query, opts = {}) {
   const tokens = expandHelpTokens(tokenizeHelpQuery(`${q} ${normalized}`));
   const qLower = `${q} ${normalized}`.toLowerCase();
   const learnedBoosts = opts.learnedBoosts && typeof opts.learnedBoosts === 'object' ? opts.learnedBoosts : {};
-  const ranked = HELP_ARTICLES.map((article) => ({
-    article,
-    score: scoreHelpArticle(article, qLower, tokens, opts.pathname, learnedBoosts),
-  }))
-    .filter((row) => row.score >= minScore)
-    .sort((a, b) => b.score - a.score);
+  const ranked = preferCuratedOverOperational(
+    HELP_ARTICLES.map((article) => ({
+      article,
+      score: scoreHelpArticle(article, qLower, tokens, opts.pathname, learnedBoosts),
+    }))
+      .filter((row) => row.score >= minScore)
+      .sort((a, b) => b.score - a.score),
+  );
   return ranked.slice(0, limit);
 }
 

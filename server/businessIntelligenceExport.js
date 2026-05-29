@@ -34,8 +34,48 @@ export function buildBusinessIntelligenceXlsx(pack) {
     ['Cleared cash (₦)', pred.clearedCashNgn || 0],
     ['Est. gross margin %', pred.grossMarginPct ?? ''],
     ['Total coil kg', inv.totalCoilKg || 0],
+    ['Expenses (period ₦)', pack.expenseAnalysis?.periodTotalNgn || 0],
+    ['30d production forecast ₦', pack.productionForecast?.horizons?.find((h) => h.days === 30)?.projectedProducedRevenueNgn || 0],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
+
+  const prodFc = pack.productionForecast;
+  if (prodFc) {
+    const pfRows = [
+      ['Horizon', 'Projected revenue ₦', 'Projected metres'],
+      ...(prodFc.horizons || []).map((h) => [h.days, h.projectedProducedRevenueNgn, h.projectedMetres]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pfRows), 'Production forecast');
+  }
+
+  const exp = pack.expenseAnalysis;
+  if (exp) {
+    const expRows = [
+      ['Category', 'Amount ₦', 'Share %'],
+      ...(exp.topCategories || []).map((c) => [c.category, c.amountNgn, c.sharePct]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(expRows), 'Expenses');
+    const expTrend = [
+      ['Month', 'Amount ₦'],
+      ...(exp.monthlyTrend || []).map((m) => [m.key, m.amountNgn]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(expTrend), 'Expense trend');
+  }
+
+  const invFc = pack.inventoryForecast;
+  if (invFc?.familyForecasts?.length) {
+    const invFcRows = [
+      ['Family', 'Kg on hand', 'Daily kg', 'Suggested order kg', 'Stockout date'],
+      ...invFc.familyForecasts.map((f) => [
+        f.label,
+        f.kgOnHand,
+        f.dailyConsumptionKg,
+        f.suggestedOrderKg,
+        f.projectedStockoutISO || '',
+      ]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(invFcRows), 'Inventory forecast');
+  }
 
   const customerRows = [
     ['Rank', 'Customer', 'Net collected ₦', 'Payments ₦', 'Refunds ₦', 'Receipts'],

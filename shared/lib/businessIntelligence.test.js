@@ -194,6 +194,44 @@ describe('businessIntelligence', () => {
     expect(combo?.cogsNgn).toBeGreaterThan(0);
     expect(combo?.marginNgn).toBeDefined();
     expect(combo?.marginPct).toBeGreaterThan(0);
+    expect(pack.productionForecast?.horizons?.length).toBe(3);
+    expect(pack.inventoryForecast?.familyForecasts?.length).toBeGreaterThan(0);
+  });
+
+  it('computes expense analysis and production forecast', () => {
+    const pack = buildBusinessIntelligencePack(
+      {
+        quotations: [{ id: 'Q1', dateISO: '2026-05-10', totalNgn: 200000 }],
+        productionJobs: [
+          {
+            status: 'Completed',
+            quotationRef: 'Q1',
+            productID: 'COIL-ALU',
+            actualMeters: 50,
+            completedAtISO: '2026-05-15T10:00:00Z',
+          },
+        ],
+        cuttingLists: [],
+        receipts: [],
+        ledgerEntries: [],
+        refunds: [],
+        coilLots: [],
+        products: [],
+        stockMovements: [],
+        purchaseOrders: [],
+        expenses: [
+          { expenseID: 'E1', category: 'Diesel', amountNgn: 50000, date: '2026-05-12', branchId: 'BR-KD' },
+          { expenseID: 'E2', category: 'Transport', amountNgn: 20000, date: '2026-05-08', branchId: 'BR-KD' },
+        ],
+        treasuryMovements: [],
+        paymentRequests: [],
+        treasuryAccounts: [],
+      },
+      { periodKey: 'month', asOfISO: '2026-05-20' }
+    );
+    expect(pack.expenseAnalysis.periodTotalNgn).toBe(70000);
+    expect(pack.expenseAnalysis.topCategories[0].category).toBe('Diesel');
+    expect(pack.productionForecast.horizons[0].projectedProducedRevenueNgn).toBeGreaterThanOrEqual(0);
   });
 
   it('builds full pack with predictive alerts', () => {

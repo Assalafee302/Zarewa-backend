@@ -72,6 +72,30 @@ export function formatBusinessAnalysisReply(pack) {
     );
   }
 
+  const pf30 = pack.productionForecast?.horizons?.find((h) => h.days === 30);
+  if (pf30) {
+    sections.push(
+      `- 30-day production forecast: ₦${pf30.projectedProducedRevenueNgn.toLocaleString('en-NG')} · ${pf30.projectedMetres.toLocaleString()} m`
+    );
+  }
+  const ex = pack.expenseAnalysis;
+  if (ex?.periodTotalNgn > 0) {
+    sections.push(
+      `- Expenses (${pack.periodLabel}): ₦${ex.periodTotalNgn.toLocaleString('en-NG')}${ex.expenseToProducedSalesPct != null ? ` (${ex.expenseToProducedSalesPct}% of produced sales)` : ''}`
+    );
+    const topEx = ex.topCategories?.[0];
+    if (topEx) {
+      sections.push(`- Largest expense category: ${topEx.category} (${topEx.sharePct}%)`);
+    }
+  }
+  for (const fam of pack.inventoryForecast?.familyForecasts || []) {
+    if (fam.suggestedOrderKg > 0) {
+      sections.push(
+        `- ${fam.label} reorder hint: ~${fam.suggestedOrderKg.toLocaleString()} kg suggested (4-week cover target)`
+      );
+    }
+  }
+
   sections.push('', '**Coil inventory (aluminium & aluzinc)**');
   for (const fam of inv?.families || []) {
     sections.push(

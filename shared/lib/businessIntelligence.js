@@ -17,7 +17,7 @@ const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
 const COIL_FAMILIES = ['aluminium', 'aluzinc'];
 
 /** Bump when BI engine logic changes — surfaced in /api/health and BI payloads for deploy checks. */
-export const BI_ENGINE_REV = 'bi-v3';
+export const BI_ENGINE_REV = 'bi-v4';
 
 /** @typedef {'month' | '4months' | 'half' | 'year'} BiPeriodKey */
 
@@ -1084,7 +1084,7 @@ function pendingOutflowsNgn(paymentRequests, purchaseOrders) {
  * @param {object} data
  * @param {ReturnType<typeof computeSalesAnalytics>} sales
  * @param {ReturnType<typeof computeInventoryAnalytics>} inventory
- * @param {{ periodKey?: BiPeriodKey; asOfISO?: string; procurement?: ReturnType<typeof computeProcurementInsights> }} opts
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string; procurement?: ReturnType<typeof computeProcurementInsights>; expenseAnalysis?: ReturnType<typeof computeExpenseAnalysis>; productionForecast?: ReturnType<typeof computeProductionForecast>; inventoryForecast?: ReturnType<typeof computeInventoryForecast> }} opts
  */
 export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
   const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
@@ -1261,6 +1261,40 @@ export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
     });
   }
 
+  for (const a of opts.expenseAnalysis?.alerts || []) {
+    alerts.push({
+      id: a.id,
+      severity: a.severity === 'high' ? 'high' : a.severity === 'medium' ? 'medium' : 'low',
+      category: 'expenses',
+      message: a.message,
+      metric: a.metric,
+    });
+  }
+
+  const prod90 = opts.productionForecast?.horizons?.find((h) => h.days === 90);
+  if (prod90 && sales.producedRevenueNgn > 0 && prod90.projectedProducedRevenueNgn < sales.producedRevenueNgn * 0.85) {
+    alerts.push({
+      id: 'production-forecast-soft',
+      severity: 'medium',
+      category: 'sales',
+      message: '90-day produced-sales forecast is below recent monthly run-rate.',
+      metric: `₦${prod90.projectedProducedRevenueNgn.toLocaleString('en-NG')} projected`,
+    });
+  }
+
+  for (const fam of opts.inventoryForecast?.familyForecasts || []) {
+    const h30 = fam.horizons?.find((x) => x.days === 30);
+    if (h30?.stockoutRisk) {
+      alerts.push({
+        id: `inv-stockout-30-${fam.family}`,
+        severity: 'high',
+        category: 'inventory',
+        message: `${fam.label} may stock out within 30 days at current burn rate.`,
+        metric: fam.projectedStockoutISO || '30d',
+      });
+    }
+  }
+
   return {
     asOfISO,
     avgMonthlyInflowNgn: avgMonthlyInflow,
@@ -1277,6 +1311,344 @@ export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
       return (rank[a.severity] || 9) - (rank[b.severity] || 9);
     }),
     nextReviewISO: addDaysISO(asOfISO, 7),
+  };
+}
+
+function expenseDateISO(ex) {
+  const raw = String(ex?.date || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return toIsoDate(raw);
+}
+
+/**
+ * Production / sales forecast from monthly produced-revenue trend and funnel.
+ * @param {object} data
+ * @param {ReturnType<typeof computeSalesAnalytics>} sales
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeProductionForecast(data, sales, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const quotations = data.quotations || [];
+  const productionJobs = data.productionJobs || [];
+
+  const trend = sales.revenueTrend || [];
+  const monthlyValues = trend.map((t) => t.producedSalesNgn || 0);
+  const recent3 = monthlyValues.slice(-3);
+  const prior3 = monthlyValues.slice(-6, -3);
+  const recentAvg = recent3.length ? recent3.reduce((a, b) => a + b, 0) / recent3.length : 0;
+  const priorAvg = prior3.length ? prior3.reduce((a, b) => a + b, 0) / prior3.length : 0;
+  const growthRatePct =
+    priorAvg > 0 ? Math.round(((recentAvg - priorAvg) / priorAvg) * 1000) / 10 : null;
+
+  const monthlyMetres = trend.map((t) => {
+    const mStart = `${t.key}-01`;
+    const mEnd = t.key === monthKey(asOfISO) ? asOfISO : `${t.key}-31`;
+    let metres = 0;
+    let jobs = 0;
+    for (const j of productionJobs) {
+      if (!productionJobIsCompleted(j)) continue;
+      const d = productionOutputDateISO(j);
+      if (!d || d < mStart || d > mEnd) continue;
+      metres += Number(j.actualMeters) || 0;
+      jobs += 1;
+    }
+    return { key: t.key, metres: Math.round(metres), jobs, producedSalesNgn: t.producedSalesNgn };
+  });
+
+  const avgMonthlyRevenue = monthlyValues.length
+    ? monthlyValues.reduce((a, b) => a + b, 0) / monthlyValues.length
+    : 0;
+  const avgMonthlyMetres = monthlyMetres.length
+    ? monthlyMetres.reduce((s, m) => s + m.metres, 0) / monthlyMetres.length
+    : 0;
+
+  const growthFactor = growthRatePct != null ? 1 + Math.min(0.5, Math.max(-0.5, growthRatePct / 100)) : 1;
+
+  const horizons = [30, 60, 90].map((days) => {
+    const factor = (days / 30) * growthFactor;
+    return {
+      days,
+      projectedProducedRevenueNgn: Math.round(avgMonthlyRevenue * factor),
+      projectedMetres: Math.round(avgMonthlyMetres * factor),
+      confidence: monthlyValues.filter((v) => v > 0).length >= 3 ? 'medium' : 'low',
+    };
+  });
+
+  const funnel = sales.funnel || {};
+  const quoteToProductionPct =
+    funnel.quotations > 0
+      ? Math.round((funnel.productionCompleted / funnel.quotations) * 1000) / 10
+      : null;
+  const quoteToPaymentPct =
+    funnel.quotations > 0
+      ? Math.round((funnel.withPayment / funnel.quotations) * 1000) / 10
+      : null;
+
+  const lookbackStart = periodStartISO('month', new Date(`${asOfISO}T12:00:00`));
+  let pipelineQuotedNgn = 0;
+  let pipelineMetres = 0;
+  for (const q of quotations) {
+    const d = toIsoDate(q.dateISO);
+    if (!d || d < lookbackStart || d > asOfISO) continue;
+    const ref = String(q.id || '').trim();
+    const hasProduction = productionJobs.some(
+      (j) =>
+        productionJobIsCompleted(j) &&
+        String(j.quotationRef || '').trim() === ref &&
+        productionOutputDateISO(j) >= lookbackStart
+    );
+    if (hasProduction) continue;
+    if (!/approved|paid|partial|requested/i.test(String(q.status || ''))) continue;
+    pipelineQuotedNgn += Number(q.totalNgn) || 0;
+    pipelineMetres += Number(q.totalMeters) || 0;
+  }
+
+  const conversionFactor = quoteToProductionPct != null ? quoteToProductionPct / 100 : 0.65;
+  const pipelineForecastRevenueNgn = Math.round(pipelineQuotedNgn * conversionFactor);
+
+  return {
+    asOfISO,
+    monthlyHistory: monthlyMetres,
+    growthRatePct,
+    avgMonthlyProducedRevenueNgn: Math.round(avgMonthlyRevenue),
+    avgMonthlyMetres: Math.round(avgMonthlyMetres),
+    horizons,
+    funnelConversion: {
+      quoteToProductionPct,
+      quoteToPaymentPct,
+      quotations: funnel.quotations,
+      productionCompleted: funnel.productionCompleted,
+    },
+    pipeline: {
+      openQuotedNgn: Math.round(pipelineQuotedNgn),
+      openMetres: Math.round(pipelineMetres),
+      forecastProducedRevenueNgn: pipelineForecastRevenueNgn,
+      assumedConversionPct: Math.round(conversionFactor * 1000) / 10,
+    },
+  };
+}
+
+/**
+ * Inventory consumption forecast by metal family and enriched SKU reorder lines.
+ * @param {object} data
+ * @param {ReturnType<typeof computeInventoryAnalytics>} inventory
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeInventoryForecast(data, inventory, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const windowDays = daysBetween(startIso, asOfISO);
+  const sku = inventory.skuIntelligence;
+
+  const enrichSkuRow = (row) => {
+    const dailyDemand = row.kgDemandPeriod > 0 ? row.kgDemandPeriod / windowDays : 0;
+    const stockoutDays = dailyDemand > 0 ? row.kgOnHand / dailyDemand : null;
+    const weeksTarget = 4;
+    const targetKg = dailyDemand * weeksTarget * 7;
+    const suggestedOrderKg = Math.max(0, Math.round(targetKg - row.kgOnHand));
+    return {
+      ...row,
+      dailyDemandKg: Math.round(dailyDemand * 10) / 10,
+      projectedStockoutISO:
+        stockoutDays != null && stockoutDays < 365
+          ? addDaysISO(asOfISO, Math.ceil(stockoutDays))
+          : null,
+      suggestedOrderKg,
+      weeksTarget,
+    };
+  };
+
+  const familyForecasts = (inventory.families || []).map((fam) => {
+    const daily = Number(fam.dailyConsumptionKg) || 0;
+    const horizons = [30, 60, 90].map((days) => {
+      const burn = daily * days;
+      const remaining = fam.kgOnHand + (fam.incomingKg || 0) - burn;
+      return {
+        days,
+        projectedConsumptionKg: Math.round(burn),
+        projectedKgOnHand: Math.round(remaining),
+        stockoutRisk: daily > 0 && remaining < 0,
+      };
+    });
+    const stockoutDays =
+      daily > 0 ? Math.round((fam.kgOnHand / daily) * 10) / 10 : null;
+    return {
+      family: fam.family,
+      label: fam.label,
+      kgOnHand: fam.kgOnHand,
+      incomingKg: fam.incomingKg,
+      dailyConsumptionKg: daily,
+      weeksCover: fam.weeksCover,
+      stockoutDays,
+      projectedStockoutISO:
+        stockoutDays != null && stockoutDays < 365
+          ? addDaysISO(asOfISO, Math.ceil(stockoutDays))
+          : null,
+      suggestedOrderKg:
+        daily > 0
+          ? Math.max(0, Math.round(daily * 28 - fam.kgOnHand))
+          : 0,
+      horizons,
+    };
+  });
+
+  return {
+    asOfISO,
+    periodStartISO: startIso,
+    familyForecasts,
+    aluminium: sku?.aluminium
+      ? {
+          buyNext: (sku.aluminium.buyNext || []).map(enrichSkuRow),
+          reduceStock: sku.aluminium.reduceStock || [],
+          needsAttention: (sku.aluminium.needsAttention || []).map(enrichSkuRow),
+        }
+      : null,
+    aluzinc: sku?.aluzinc
+      ? {
+          buyNext: (sku.aluzinc.buyNext || []).map(enrichSkuRow),
+          reduceStock: sku.aluzinc.reduceStock || [],
+          needsAttention: (sku.aluzinc.needsAttention || []).map(enrichSkuRow),
+        }
+      : null,
+  };
+}
+
+/**
+ * Operating expense analysis — categories, trend, and ratio to produced sales.
+ * @param {object} data
+ * @param {ReturnType<typeof computeSalesAnalytics>} sales
+ * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
+ */
+export function computeExpenseAnalysis(data, sales, opts = {}) {
+  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
+  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const windowDays = daysBetween(startIso, asOfISO);
+  const priorEnd = addDaysISO(startIso, -1);
+  const priorStart = addDaysISO(startIso, -windowDays);
+
+  const expenses = data.expenses || [];
+  let periodTotal = 0;
+  let priorTotal = 0;
+  /** @type {Map<string, number>} */
+  const byCategory = new Map();
+  /** @type {Map<string, number>} */
+  const byBranch = new Map();
+  /** @type {object[]} */
+  const lineItems = [];
+
+  for (const ex of expenses) {
+    const iso = expenseDateISO(ex);
+    if (!iso) continue;
+    const amt = Math.round(Number(ex.amountNgn) || 0);
+    if (amt <= 0) continue;
+    const cat = String(ex.category || ex.expenseType || 'Uncategorized').trim() || 'Uncategorized';
+    const branch = String(ex.branchId || 'UNASSIGNED').trim() || 'UNASSIGNED';
+
+    if (iso >= startIso && iso <= asOfISO) {
+      periodTotal += amt;
+      byCategory.set(cat, (byCategory.get(cat) || 0) + amt);
+      byBranch.set(branch, (byBranch.get(branch) || 0) + amt);
+      lineItems.push({
+        expenseID: ex.expenseID,
+        dateISO: iso,
+        category: cat,
+        branchId: branch,
+        amountNgn: amt,
+        reference: ex.reference || '',
+      });
+    } else if (iso >= priorStart && iso <= priorEnd) {
+      priorTotal += amt;
+    }
+  }
+
+  lineItems.sort((a, b) => b.amountNgn - a.amountNgn);
+
+  const periodChangePct =
+    priorTotal > 0 ? Math.round(((periodTotal - priorTotal) / priorTotal) * 1000) / 10 : null;
+
+  const d0 = new Date(`${asOfISO}T12:00:00`);
+  const monthlyTrend = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const x = new Date(d0.getFullYear(), d0.getMonth() - i, 1);
+    const key = x.toISOString().slice(0, 7);
+    const mStart = `${key}-01`;
+    const mEnd = key === monthKey(asOfISO) ? asOfISO : `${key}-31`;
+    let sum = 0;
+    for (const ex of expenses) {
+      const iso = expenseDateISO(ex);
+      if (!iso || iso < mStart || iso > mEnd) continue;
+      sum += Math.round(Number(ex.amountNgn) || 0);
+    }
+    monthlyTrend.push({ key, amountNgn: sum });
+  }
+
+  const avgMonthly =
+    monthlyTrend.length > 0
+      ? Math.round(monthlyTrend.reduce((s, m) => s + m.amountNgn, 0) / monthlyTrend.length)
+      : 0;
+
+  const producedRevenue = sales.producedRevenueNgn || 0;
+  const expenseToSalesPct =
+    producedRevenue > 0 ? Math.round((periodTotal / producedRevenue) * 1000) / 10 : null;
+
+  const topCategories = [...byCategory.entries()]
+    .map(([category, amountNgn]) => ({
+      category,
+      amountNgn,
+      sharePct: periodTotal > 0 ? Math.round((amountNgn / periodTotal) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.amountNgn - a.amountNgn)
+    .slice(0, 12);
+
+  const byBranchRows = [...byBranch.entries()]
+    .map(([branchId, amountNgn]) => ({ branchId, amountNgn }))
+    .sort((a, b) => b.amountNgn - a.amountNgn);
+
+  /** @type {{ id: string; severity: string; message: string; metric?: string }[]} */
+  const alerts = [];
+  if (periodChangePct != null && periodChangePct > 25) {
+    alerts.push({
+      id: 'expense-spike',
+      severity: 'medium',
+      message: 'Operating expenses are up sharply versus the prior period.',
+      metric: `+${periodChangePct}%`,
+    });
+  }
+  if (expenseToSalesPct != null && expenseToSalesPct > 40) {
+    alerts.push({
+      id: 'expense-ratio-high',
+      severity: 'medium',
+      message: 'Expenses exceed 40% of produced sales in this period — review spend.',
+      metric: `${expenseToSalesPct}%`,
+    });
+  }
+  const topCat = topCategories[0];
+  if (topCat && topCat.sharePct > 45) {
+    alerts.push({
+      id: 'expense-category-dominant',
+      severity: 'low',
+      message: `${topCat.category} dominates spend — check if expected.`,
+      metric: `${topCat.sharePct}%`,
+    });
+  }
+
+  return {
+    asOfISO,
+    periodStartISO: startIso,
+    periodEndISO: asOfISO,
+    periodTotalNgn: periodTotal,
+    priorPeriodTotalNgn: priorTotal,
+    periodChangePct,
+    avgMonthlyExpenseNgn: avgMonthly,
+    projectedNext30DaysNgn: Math.round(avgMonthly),
+    expenseToProducedSalesPct: expenseToSalesPct,
+    monthlyTrend,
+    topCategories,
+    byBranch: byBranchRows,
+    topExpenses: lineItems.slice(0, 15),
+    alerts,
   };
 }
 
@@ -1297,10 +1669,16 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
     asOfISO,
     branchScope: opts.branchScope || 'ALL',
   });
+  const productionForecast = computeProductionForecast(data, sales, { periodKey, asOfISO });
+  const inventoryForecast = computeInventoryForecast(data, inventory, { periodKey, asOfISO });
+  const expenseAnalysis = computeExpenseAnalysis(data, sales, { periodKey, asOfISO });
   const predictive = computePredictiveAnalytics(data, sales, inventory, {
     periodKey,
     asOfISO,
     procurement,
+    expenseAnalysis,
+    productionForecast,
+    inventoryForecast,
   });
 
   return {
@@ -1312,7 +1690,10 @@ export function buildBusinessIntelligencePack(data, opts = {}) {
     periodLabel: periodMeta.label,
     branchScope: opts.branchScope || 'ALL',
     inventory,
+    inventoryForecast,
     sales,
+    productionForecast,
+    expenseAnalysis,
     procurement,
     branchBreakdown,
     predictive,
@@ -1349,6 +1730,22 @@ export function businessIntelligenceHeadlines(pack) {
     lines.push(
       `Best alu combo: ${topMat.gauge} · ${topMat.colour} · ${topMat.profile} (₦${topMat.revenueNgn.toLocaleString('en-NG')} produced sales).`
     );
+  }
+  const pf = pack.productionForecast?.horizons?.find((h) => h.days === 30);
+  if (pf) {
+    lines.push(
+      `30-day production forecast: ₦${pf.projectedProducedRevenueNgn.toLocaleString('en-NG')} · ${pf.projectedMetres.toLocaleString()} m.`
+    );
+  }
+  const ex = pack.expenseAnalysis;
+  if (ex?.periodTotalNgn > 0) {
+    lines.push(
+      `Expenses (${pack.periodLabel}): ₦${ex.periodTotalNgn.toLocaleString('en-NG')}${ex.expenseToProducedSalesPct != null ? ` (${ex.expenseToProducedSalesPct}% of produced sales)` : ''}.`
+    );
+  }
+  const invF = pack.inventoryForecast?.familyForecasts?.find((f) => f.stockoutDays != null && f.stockoutDays < 14);
+  if (invF) {
+    lines.push(`${invF.label} stock cover critical — ~${invF.stockoutDays} days at current consumption.`);
   }
   const h90 = p.cashHorizons?.find((x) => x.days === 90);
   if (h90) {

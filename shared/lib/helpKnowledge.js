@@ -251,6 +251,34 @@ export const HELP_ARTICLES = [
     links: [{ label: 'Settings', to: '/settings' }],
   },
   {
+    id: 'register-staff-user',
+    title: 'How to register a new staff user',
+    keywords: [
+      'register staff',
+      'new staff',
+      'add staff',
+      'add user',
+      'create user',
+      'new employee',
+      'team member',
+      'onboard staff',
+      'hire',
+      'user account',
+      'team access',
+      'settings team',
+    ],
+    answer:
+      'New ERP logins are created in **Settings → Team & access** by an administrator (settings.manage). This is separate from recording a customer payment or production output.',
+    steps: [
+      'Open **Settings** from the sidebar.',
+      'Open the **Team & access** tab (admin / settings.manage only).',
+      'Click **Add user** and enter username, display name, temporary password, role, and branch.',
+      'Save — the user can sign in and should update their password under **Settings → Security** if your branch requires it.',
+      'Adjust granular permissions on the user row if the role template is not enough.',
+    ],
+    links: [{ label: 'Settings — Team & access', to: '/settings/team' }],
+  },
+  {
     id: 'quote-to-cash-workflow',
     title: 'End-to-end: quotation to cash and delivery',
     keywords: [
@@ -1342,7 +1370,13 @@ const PATH_ARTICLE_BOOSTS = {
     'refund-headroom-categories',
     'grn-weight-variance',
   ],
-  '/settings': ['settings-access', 'period-locked', 'duplicate-supplier-colour', 'material-workbook-pricing'],
+  '/settings': [
+    'register-staff-user',
+    'settings-access',
+    'period-locked',
+    'duplicate-supplier-colour',
+    'material-workbook-pricing',
+  ],
 };
 
 /**

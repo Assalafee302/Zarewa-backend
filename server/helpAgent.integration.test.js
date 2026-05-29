@@ -69,6 +69,21 @@ describe('runHelpAgent Zare routes (no database)', () => {
     expect(r.content).toMatch(/briefing/i);
   });
 
+  it('routes staff registration to settings team guide (not receipt follow-up)', async () => {
+    const r = await runHelpAgent({
+      ...baseOpts,
+      message: 'how can i register new staff',
+      pathname: '/settings',
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'Hello!' },
+      ],
+    });
+    expect(['kb', 'synth', 'rag']).toContain(r.source);
+    expect(r.content).toMatch(/team\s*&\s*access|team access|settings/i);
+    expect(r.content).not.toMatch(/Follow-up on.*receipt/i);
+  });
+
   it('returns kb answer for receipt how-to without db', async () => {
     const r = await runHelpAgent({
       ...baseOpts,

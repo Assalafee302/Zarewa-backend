@@ -16,6 +16,9 @@ const META_RE =
 const FOLLOW_UP_RE =
   /\b(what about|and then|tell me more|more detail|step\s+\d|next step|you said|you mentioned|also|what if|how about|continue|go on|explain that)\b/i;
 const CLARIFY_RE = /\b(what do you mean|which one|where exactly|which tab|which screen|confused|don't understand)\b/i;
+/** New workflow questions — not continuations of the previous answer. */
+const NEW_TOPIC_RE =
+  /\b(how (can|do|to)|where (can|do|to)|what is|who can|help me|register|create|add|new|delete|remove|onboard|set up|setup)\b/i;
 
 /**
  * @param {string} message
@@ -29,8 +32,9 @@ export function detectHelpIntent(message, history = []) {
   if (GREETING_RE.test(q) && q.length < 40) return 'greeting';
   if (THANKS_RE.test(q) && q.length < 60) return 'thanks';
   if (CLARIFY_RE.test(q)) return 'clarify';
+  if (FOLLOW_UP_RE.test(q)) return 'follow_up';
   const userTurns = (history || []).filter((m) => m?.role === 'user').length;
-  if (FOLLOW_UP_RE.test(q) || (userTurns >= 2 && q.length < 90)) return 'follow_up';
+  if (userTurns >= 2 && q.length < 50 && !NEW_TOPIC_RE.test(q)) return 'follow_up';
   return 'workflow';
 }
 

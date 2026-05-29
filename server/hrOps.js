@@ -572,6 +572,22 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     return n;
   };
 
+  const nullablePosInt = (v) => {
+    if (v === undefined || v === null || v === '') return null;
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n) || n < 1) return null;
+    return n;
+  };
+
+  const payrollGroup =
+    body?.payrollGroup !== undefined
+      ? String(body.payrollGroup || '').trim() || null
+      : prevRow?.payroll_group ?? null;
+  const salaryLevel =
+    body?.salaryLevel !== undefined ? nullablePosInt(body.salaryLevel) : prevRow?.salary_level ?? null;
+  const salaryStep =
+    body?.salaryStep !== undefined ? nullablePosInt(body.salaryStep) : prevRow?.salary_step ?? null;
+
   const row = {
     user_id: userId,
     branch_id: branchId,
@@ -609,6 +625,9 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     self_service_eligible: selfServiceEligible,
     line_manager_user_id: lineManagerUserId,
     leave_entitlement_band: leaveEntitlementBand,
+    payroll_group: payrollGroup,
+    salary_level: salaryLevel,
+    salary_step: salaryStep,
   };
 
   if (existing) {
@@ -628,6 +647,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         profile_extra_json=@profile_extra_json,
         self_service_eligible=@self_service_eligible,
         line_manager_user_id=@line_manager_user_id, leave_entitlement_band=@leave_entitlement_band,
+        payroll_group=@payroll_group, salary_level=@salary_level, salary_step=@salary_step,
         updated_at_iso=@updated_at_iso, updated_by_user_id=@updated_by_user_id
       WHERE user_id=@user_id`
     ).run(row);
@@ -668,7 +688,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
         minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
         paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
-        line_manager_user_id, leave_entitlement_band,
+        line_manager_user_id, leave_entitlement_band, payroll_group, salary_level, salary_step,
         updated_at_iso, updated_by_user_id
       ) VALUES (
         @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
@@ -676,11 +696,19 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
         @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
         @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
-        @line_manager_user_id, @leave_entitlement_band,
+        @line_manager_user_id, @leave_entitlement_band, @payroll_group, @salary_level, @salary_step,
         @updated_at_iso, @updated_by_user_id
       )`
     ).run(row);
   }
+  appendHrAuditEvent(db, {
+    actorUserId,
+    action: existing ? 'hr.staff.profile_updated' : 'hr.staff.profile_created',
+    entityKind: 'hr_staff_profile',
+    entityId: userId,
+    branchId,
+    details: { employeeNo: row.employee_no, jobTitle: row.job_title },
+  });
   return { ok: true, profile: getHrStaffOne(db, userId) };
 }
 
@@ -3033,6 +3061,38 @@ export function listHrAuditEventsForStaff(db, userId, limit = 50) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
  */
+/**
+ * Recent branch transfers for HR operations (scoped by branch when not HQ).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll: boolean; branchId: string }} scope
+ * @param {number} [limit]
+ */
+export function listRecentBranchTransfers(db, scope, limit = 150) {
+  if (!hrTablesReady(db)) return [];
+  const cap = Math.min(300, Math.max(1, Math.round(Number(limit) || 150)));
+  try {
+    let sql = `
+      SELECT h.id, h.user_id AS userId, h.from_branch_id AS fromBranchId, h.to_branch_id AS toBranchId,
+             h.effective_from_iso AS effectiveFromIso, h.reason, h.actor_user_id AS actorUserId,
+             h.created_at_iso AS createdAtIso,
+             u.display_name AS staffDisplayName, u.username AS staffUsername, p.employee_no AS employeeNo
+      FROM hr_staff_branch_history h
+      JOIN app_users u ON u.id = h.user_id
+      LEFT JOIN hr_staff_profiles p ON p.user_id = h.user_id
+      WHERE 1=1`;
+    const args = [];
+    if (!scope.viewAll) {
+      sql += ` AND (h.from_branch_id = ? OR h.to_branch_id = ?)`;
+      args.push(scope.branchId, scope.branchId);
+    }
+    sql += ` ORDER BY h.created_at_iso DESC LIMIT ?`;
+    args.push(cap);
+    return db.prepare(sql).all(...args);
+  } catch {
+    return [];
+  }
+}
+
 export function listHrStaffBranchHistory(db, userId) {
   const uid = String(userId || '').trim();
   if (!uid || !hrTablesReady(db)) return [];
@@ -3403,11 +3463,25 @@ export function registerNewStaffWithProfile(db, actorUserId, body) {
     department: body?.department,
     employmentType: body?.employmentType || 'permanent',
     dateJoinedIso: body?.dateJoinedIso,
+    probationEndIso: body?.probationEndIso,
     baseSalaryNgn: body?.baseSalaryNgn ?? 0,
     housingAllowanceNgn: body?.housingAllowanceNgn ?? 0,
     transportAllowanceNgn: body?.transportAllowanceNgn ?? 0,
     minimumQualification: body?.minimumQualification,
     academicQualification: body?.academicQualification,
+    payrollGroup: body?.payrollGroup,
+    salaryLevel: body?.salaryLevel,
+    salaryStep: body?.salaryStep,
+    lineManagerUserId: body?.lineManagerUserId,
+    selfServiceEligible: body?.selfServiceEligible,
+    payeTaxPercent: body?.payeTaxPercent,
+    pensionPercentOverride: body?.pensionPercentOverride,
+    taxId: body?.taxId,
+    pensionRsaPin: body?.pensionRsaPin,
+    bankName: body?.bankName,
+    bankAccountName: body?.bankAccountName,
+    bankAccountNoMasked: body?.bankAccountNoMasked,
+    leaveEntitlementBand: body?.leaveEntitlementBand,
   });
   if (!up.ok) return up;
   return { ok: true, userId: created.userId, profile: up.profile };

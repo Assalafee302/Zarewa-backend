@@ -6,6 +6,7 @@
 import {
   acceptHrPolicy,
   adjustHrLeaveBalance,
+  appendHrAuditEvent,
   approvePayrollRunByGmHr,
   approvePayrollRunByMd,
   branchManagerEndorseRequest,
@@ -38,6 +39,9 @@ import {
   listHrRequests,
   listHrStaff,
   listHrStaffBranchHistory,
+  listRecentBranchTransfers,
+  listRecentDisciplinaryEvents,
+  appendHrDisciplinaryEvent,
   listHrAuditEventsForStaff,
   listHrAttendanceDeductionPreview,
   listHrBranchPayrollContributions,
@@ -286,6 +290,50 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update staff profile.' });
+    }
+  });
+
+  app.get('/api/hr/branch-transfers', requireHrAny('hr.transfers.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const transfers = listRecentBranchTransfers(db, scope);
+      return res.json({ ok: true, transfers });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load branch transfers.' });
+    }
+  });
+
+  app.get('/api/hr/disciplinary-events', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const events = listRecentDisciplinaryEvents(db, scope, { includeInactive: true });
+      return res.json({ ok: true, events });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load disciplinary events.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/disciplinary-events', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const r = appendHrDisciplinaryEvent(db, userId, req.body || {}, req.user?.id);
+      if (!r.ok) return res.status(400).json(r);
+      appendHrAuditEvent(db, {
+        actorUserId: req.user?.id,
+        action: 'hr.discipline.recorded',
+        entityKind: 'hr_staff_profile',
+        entityId: userId,
+        details: { kind: req.body?.kind, dateIso: req.body?.dateIso },
+      });
+      return res.status(201).json({ ok: true, events: r.events });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record disciplinary event.' });
     }
   });
 

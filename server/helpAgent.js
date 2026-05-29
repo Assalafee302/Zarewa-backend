@@ -156,9 +156,16 @@ export async function runHelpAgent(opts) {
   const transactionProfile =
     db && userId ? computeUserTransactionProfile(db, { userId, branchId }) : null;
 
-  const agentRoute = classifyAgentRoute(message, history, pageContext);
-  const zareIntent = classifyZareIntent(message, history, pageContext);
-  const helpIntent = detectHelpIntent(message, history);
+  const priorHistory =
+    history.length > 0 &&
+    history[history.length - 1]?.role === 'user' &&
+    String(history[history.length - 1]?.content || '').trim() === message
+      ? history.slice(0, -1)
+      : history;
+
+  const agentRoute = classifyAgentRoute(message, priorHistory, pageContext);
+  const zareIntent = classifyZareIntent(message, priorHistory, pageContext);
+  const helpIntent = detectHelpIntent(message, priorHistory);
   const cfgEarly = readAiAssistConfig();
 
   const txCtx = pageContext?.transaction || pageContext?.transactionContext;
@@ -300,9 +307,18 @@ export async function runHelpAgent(opts) {
       : { chunks: [], articleIds: [], mode: 'none' };
 
   const ragContext = formatRetrievedContext(retrieval);
-  const matchedArticles = retrieval.articleIds
+  let matchedArticles = retrieval.articleIds
     .map((id) => HELP_ARTICLES.find((a) => a.id === id))
     .filter(Boolean);
+
+  if (!matchedArticles.length) {
+    matchedArticles = matchHelpArticles(searchText, {
+      limit: 3,
+      minScore: 4,
+      pathname,
+      learnedBoosts: opts.learnedBoosts,
+    }).map((m) => m.article);
+  }
 
   const sources = matchedArticles.slice(0, 3).map((a) => ({ id: a.id, title: a.title }));
 

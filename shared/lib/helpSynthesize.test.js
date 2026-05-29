@@ -13,6 +13,25 @@ describe('helpSynthesize', () => {
     expect(detectHelpIntent('How do I add a receipt?')).toBe('workflow');
   });
 
+  it('does not treat a new staff question after hi as follow_up', () => {
+    const prior = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'Hello!' },
+    ];
+    expect(detectHelpIntent('how can i register new staff', prior)).toBe('workflow');
+  });
+
+  it('answers register staff from knowledge', () => {
+    const article = HELP_ARTICLES.find((a) => a.id === 'register-staff-user');
+    const reply = synthesizeHelpReply({
+      message: 'how can i register new staff',
+      articles: [article],
+      pathname: '/settings',
+    });
+    expect(reply).toMatch(/team\s*&\s*access|team access/i);
+    expect(reply).not.toMatch(/receipt|record a payment/i);
+  });
+
   it('synthesizes a concise workflow answer', () => {
     const article = HELP_ARTICLES.find((a) => a.id === 'record-receipt');
     const reply = synthesizeHelpReply({

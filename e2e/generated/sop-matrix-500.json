@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-29T13:02:06.640Z",
+  "generatedAt": "2026-05-29T14:10:40.076Z",
   "cases": [
     {
       "id": "op-operations-0500",
@@ -2355,80 +2355,80 @@
     },
     {
       "id": "op-hr-0836",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "how do i record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "how do i export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0837",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "how to record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "how to export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0838",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "where do i record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "where do i export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0839",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "steps to record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "steps to export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0840",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "what is the process to record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "what is the process to export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0841",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "guide for record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "guide for export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0842",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "sop for record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "sop for export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0843",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "i need to record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "i need to export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0844",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "help me record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "help me export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0845",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "explain how to record attendance",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "explain how to export HR analytics reports to CSV",
+      "module": "hr"
     },
     {
       "id": "op-hr-0846",
-      "title": "Attendance",
-      "path": "/hr/attendance",
-      "keyword": "can i record attendance in zarewa",
-      "module": "attendance"
+      "title": "HR report exports",
+      "path": "/hr/reports",
+      "keyword": "can i export HR analytics reports to CSV in zarewa",
+      "module": "hr"
     },
     {
       "id": "op-hr-0847",
@@ -2509,79 +2509,79 @@
     },
     {
       "id": "op-hr-0858",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "how do i transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "how do i check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0859",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "how to transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "how to check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0860",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "where do i transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "where do i check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0861",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "steps to transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "steps to check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0862",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "what is the process to transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "what is the process to check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0863",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "guide for transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "guide for check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0864",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "sop for transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "sop for check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0865",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "i need to transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "i need to check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0866",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "help me transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "help me check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0867",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "explain how to transfer staff between branches",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "explain how to check HR production readiness before UAT cutover",
       "module": "hr"
     },
     {
       "id": "op-hr-0868",
-      "title": "Staff transfer",
-      "path": "/hr/transfers",
-      "keyword": "can i transfer staff between branches in zarewa",
+      "title": "HR production readiness (UAT)",
+      "path": "/hr",
+      "keyword": "can i check HR production readiness before UAT cutover in zarewa",
       "module": "hr"
     },
     {
@@ -2663,156 +2663,156 @@
     },
     {
       "id": "op-hr-0880",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "how do i use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "how do i manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0881",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "how to use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "how to manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0882",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "where do i use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "where do i manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0883",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "steps to use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "steps to manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0884",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "what is the process to use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "what is the process to manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0885",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "guide for use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "guide for manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0886",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "sop for use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "sop for manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0887",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "i need to use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "i need to manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0888",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "help me use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "help me manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0889",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "explain how to use salary matrix",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "explain how to manage recruiting and public careers",
       "module": "hr"
     },
     {
       "id": "op-hr-0890",
-      "title": "Salary matrix",
-      "path": "/hr",
-      "keyword": "can i use salary matrix in zarewa",
+      "title": "Recruiting & careers",
+      "path": "/hr/recruiting",
+      "keyword": "can i manage recruiting and public careers in zarewa",
       "module": "hr"
     },
     {
       "id": "op-hr-0891",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "how do i unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "how do i generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0892",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "how to unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "how to generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0893",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "where do i unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "where do i generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0894",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "steps to unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "steps to generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0895",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "what is the process to unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "what is the process to generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0896",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "guide for unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "guide for generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0897",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "sop for unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "sop for generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0898",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "i need to unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "i need to generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0899",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "help me unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "help me generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0900",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "explain how to unlock sensitive HR fields",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "explain how to generate a staff loan agreement PDF",
       "module": "hr"
     },
     {
       "id": "op-hr-0901",
-      "title": "Sensitive HR unlock",
-      "path": "/hr",
-      "keyword": "can i unlock sensitive HR fields in zarewa",
+      "title": "Staff loan agreement letter",
+      "path": "/hr/loans",
+      "keyword": "can i generate a staff loan agreement PDF in zarewa",
       "module": "hr"
     },
     {

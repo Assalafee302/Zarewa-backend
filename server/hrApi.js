@@ -83,6 +83,13 @@ import {
   upsertHrSalaryMatrixRow,
   upsertHrStaffProfile,
 } from './hrOps.js';
+import {
+  deleteHrStaffDocument,
+  getHrStaffDocumentRow,
+  listHrStaffDocumentMeta,
+  setHrStaffPassportPhoto,
+  uploadHrStaffDocument,
+} from './hrStaffDocuments.js';
 import { HR_POLICY_REGISTRY } from './hrPolicy.js';
 import { validateStaffLoanApplication } from './hrBusinessRules.js';
 import {
@@ -375,6 +382,96 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not apply salary increment.' });
+    }
+  });
+
+  function canEditStaffFile(req, userId) {
+    const uid = String(userId || '').trim();
+    if (uid === req.user?.id) return userCanAccessMyProfileHr(req.user);
+    return hrUserHas(req.user, 'hr.staff.manage');
+  }
+
+  app.get('/api/hr/staff/:userId/documents', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (!isSelf && !hrUserHas(req.user, 'hr.directory.view') && !hrUserHas(req.user, 'hr.team.view')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const documents = listHrStaffDocumentMeta(db, userId);
+      return res.json({ ok: true, documents });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list documents.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/documents/:docId/download', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (!isSelf && !hrUserHas(req.user, 'hr.directory.view') && !hrUserHas(req.user, 'hr.team.view')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const row = getHrStaffDocumentRow(db, userId, req.params.docId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Document not found.' });
+      const buf = Buffer.from(String(row.data_b64 || ''), 'base64');
+      res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || 'document')}"`);
+      return res.send(buf);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not download document.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/documents', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!canEditStaffFile(req, userId)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = uploadHrStaffDocument(db, req.user?.id, userId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not upload document.' });
+    }
+  });
+
+  app.delete('/api/hr/staff/:userId/documents/:docId', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!canEditStaffFile(req, userId)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = deleteHrStaffDocument(db, userId, req.params.docId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not delete document.' });
+    }
+  });
+
+  app.patch('/api/hr/staff/:userId/passport-photo', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!canEditStaffFile(req, userId)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = setHrStaffPassportPhoto(db, req.user?.id, userId, req.body?.avatarUrl ?? null);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, user: r.user });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update passport photo.' });
     }
   });
 

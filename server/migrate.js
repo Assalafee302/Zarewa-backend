@@ -2548,6 +2548,37 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrModule(db);
   migrateHrPhase5PayrollSchema(db);
   migrateHrPhase6BenefitsAndOps(db);
+  migrateHrStaffDocumentsSchema(db);
+}
+
+/** Staff onboarding documents + NIN (Phase 7). */
+function migrateHrStaffDocumentsSchema(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const hr = tableCols('hr_staff_profiles');
+  if (hr.size && !hr.has('nin_number')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN nin_number TEXT`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_staff_documents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      doc_kind TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT,
+      data_b64 TEXT NOT NULL,
+      uploaded_at_iso TEXT NOT NULL,
+      uploaded_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_staff_docs_user ON hr_staff_documents(user_id, doc_kind);
+  `);
 }
 
 /** Benefits, incident memos, transfer recommendations (Phase 6–7). */

@@ -10,6 +10,7 @@ import {
 } from './hrBusinessRules.js';
 import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
+import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 
 const REQUEST_KINDS = new Set([
   'leave',
@@ -252,6 +253,7 @@ export function listHrStaff(db, scope, opts = {}) {
 
   let sql = `
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
+           u.avatar_url AS avatarUrl,
            p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
            p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
            p.probation_end_iso AS probationEndIso,
@@ -266,6 +268,7 @@ export function listHrStaff(db, scope, opts = {}) {
            p.pension_percent_override AS pensionPercentOverride,
            p.self_service_eligible AS selfServiceEligible,
            p.next_of_kin_json AS nextOfKinJson,
+           p.nin_number AS ninNumber,
            p.profile_extra_json AS profileExtraJson,
            p.line_manager_user_id AS lineManagerUserId,
            p.leave_entitlement_band AS leaveEntitlementBand,
@@ -462,7 +465,9 @@ export function getHrStaffOne(db, userId) {
     { viewAll: true, branchId: DEFAULT_BRANCH_ID, includeUnassigned: true },
     { includeInactive: true }
   );
-  return list.find((s) => s.userId === userId) ?? null;
+  const staff = list.find((s) => s.userId === userId) ?? null;
+  if (!staff) return null;
+  return enrichStaffWithOnboarding(db, staff, staff.avatarUrl);
 }
 
 /**
@@ -603,7 +608,16 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     bank_account_no_masked: String(body?.bankAccountNoMasked ?? '').trim() || null,
     tax_id: String(body?.taxId ?? '').trim() || null,
     pension_rsa_pin: String(body?.pensionRsaPin ?? '').trim() || null,
-    next_of_kin_json: body?.nextOfKin != null ? JSON.stringify(body.nextOfKin) : null,
+    next_of_kin_json:
+      body?.nextOfKin !== undefined
+        ? body.nextOfKin != null
+          ? JSON.stringify(body.nextOfKin)
+          : null
+        : prevRow?.next_of_kin_json ?? null,
+    nin_number:
+      body?.ninNumber !== undefined
+        ? String(body.ninNumber ?? '').trim() || null
+        : prevRow?.nin_number ?? null,
     base_salary_ngn: Math.max(0, Math.round(Number(body?.baseSalaryNgn) || 0)),
     housing_allowance_ngn: Math.max(0, Math.round(Number(body?.housingAllowanceNgn) || 0)),
     transport_allowance_ngn: Math.max(0, Math.round(Number(body?.transportAllowanceNgn) || 0)),
@@ -638,7 +652,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
         employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
         bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-        tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json,
+        tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
         base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
         transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
         minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
@@ -685,7 +699,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     db.prepare(
       `INSERT INTO hr_staff_profiles (
         user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
-        bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json,
+        bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
         base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
         minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
         paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
@@ -693,7 +707,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         updated_at_iso, updated_by_user_id
       ) VALUES (
         @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
-        @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json,
+        @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
         @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
         @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
         @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
@@ -3192,6 +3206,7 @@ export function getHrMeProfile(db, userId) {
     payeTaxPercent: p.paye_tax_percent != null ? Number(p.paye_tax_percent) : null,
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
     nextOfKin: safeJsonParse(p.next_of_kin_json, null),
+    ninNumber: p.nin_number ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
     selfServiceEligible: Number(p.self_service_eligible) === 1,
     lineManagerUserId: p.line_manager_user_id ?? null,

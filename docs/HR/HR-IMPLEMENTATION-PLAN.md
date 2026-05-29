@@ -8,8 +8,8 @@ This plan restores and completes HR as a first-class Zarewa ERP module aligned w
 |------|--------|
 | Database | `hr_*` tables via `server/migrate.js` (`migrateHrModule`, roadmap migrations) |
 | Business logic | `server/hrOps.js` (~3k LOC), `hrBusinessRules.js`, `hrPolicy.js` |
-| HTTP API | **Missing** — routes not registered in `server/httpApi.js` |
-| Frontend | `/hr/*` redirects home; no HR pages |
+| HTTP API | Registered under `/api/hr/*` via `server/hrApi.js` |
+| Frontend | `/hr/*`, `/team-hr/*`, `/my-profile/*`, `/hr/executive/*` live |
 | Roles | `hr_officer` / `hr_manager` migrated away; no `hr_admin` / `gmhr` in `ROLE_DEFINITIONS` |
 | Finance link | Staff loans → payment requests (`provisionStaffLoanForFinanceQueue`) |
 | Workspace | `hr_admin` inbox category, `hr_*` work item types |
@@ -73,11 +73,11 @@ Legacy aliases kept in checks: `hr.requests.hr_review` → `hr.requests.review`,
 - [x] `HrSensitiveUnlockModal` + `useHrSensitiveAccess` + `/api/hr/sensitive/verify`
 - [x] Live HR dashboard at `/hr/dashboard` (API-backed)
 
-### Phase 3 — Dashboard and staff directory
+### Phase 3 — Dashboard and staff directory ✅
 
-- HR dashboard (real cards from `listHrObservability`, `getHrInboxSummary`)
-- Staff directory filters + employee profile tabs (redacted by role)
-- Re-auth gate on Compensation tab
+- [x] HR dashboard (real cards from `listHrObservability`, `getHrInboxSummary`)
+- [x] Staff directory filters + employee profile tabs (redacted by role)
+- [x] Re-auth gate on Compensation tab
 
 ### Phase 4 — Requests, leave, attendance
 
@@ -94,17 +94,18 @@ Legacy aliases kept in checks: `hr.requests.hr_review` → `hr.requests.review`,
 - Exports (treasury, payslips CSV; PDF payslips Phase 5b)
 - Payroll preview mode UI
 
-### Phase 6 — Loans and benefits
+### Phase 6 — Loans and benefits (in progress)
 
-- Loan wizard + exceptional MD path
-- Benefits / scholarship beneficiaries
-- Agreement letter template
+- [x] Loan wizard + exceptional flag → GM HR queue
+- [x] Benefits / scholarship beneficiaries (`hr_beneficiaries`, `hr_benefit_payments`)
+- [ ] Agreement letter template (PDF export)
 
-### Phase 7 — Transfers, discipline, letters
+### Phase 7 — Transfers, discipline, letters (in progress)
 
-- Transfer workflow + history tabs
-- Discipline from incident memo
-- Letter templates + approval + PDF
+- [x] Transfer workflow + history + branch recommendations
+- [x] Discipline register + incident memo → escalate
+- [x] Employment letter generate + list UI
+- [ ] Letter PDF export
 
 ### Phase 8 — Workspace and Zare
 

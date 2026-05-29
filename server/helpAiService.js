@@ -6,7 +6,9 @@ export function readRunaAiConfig() {
   const embed = readEmbeddingConfig();
   return {
     chatEnabled: chat.enabled,
-    chatModel: chat.model,
+    chatModel: chat.helpModel || chat.model,
+    polishModel: chat.polishModel || chat.model,
+    provider: chat.provider,
     embeddingEnabled: embed.enabled,
     embeddingModel: embed.embeddingModel,
     mode: chat.enabled ? 'ai_enhanced' : 'local_intelligence',

@@ -1,15 +1,18 @@
 /**
- * POST /api/help/memo-assist — rule-based memo writing assistant.
+ * POST /api/help/memo-assist — memo writing assistant (rules + optional frontier LLM polish).
  */
 import { runMemoAssist } from '../shared/lib/memoAssist.js';
 import { appendAuditLog } from './controlOps.js';
+import { readAiAssistConfig, runMemoAssistPolish } from './aiAssist.js';
+
+const LLM_POLISH_ACTIONS = new Set(['improve', 'make_formal', 'make_shorter', 'fix_grammar']);
 
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} user
  * @param {object} body
  */
-export function handleMemoAssist(db, user, body = {}) {
+export async function handleMemoAssist(db, user, body = {}) {
   const action = String(body?.action || 'classify').trim().toLowerCase();
   const allowed = [
     'classify',
@@ -37,7 +40,25 @@ export function handleMemoAssist(db, user, body = {}) {
     attachmentCount: body?.attachmentCount,
     templateId: body?.templateId,
     action,
+    issueType: body?.issueType,
+    transactionContext: body?.transactionContext,
+    reason: body?.reason,
   });
+
+  if (LLM_POLISH_ACTIONS.has(action) && readAiAssistConfig().enabled) {
+    try {
+      const polished = await runMemoAssistPolish({
+        subject: body?.subject,
+        body: body?.body,
+        action,
+      });
+      if (polished?.subject) result.suggestedSubject = polished.subject;
+      if (polished?.body) result.improvedBody = polished.body;
+      result.aiPolished = true;
+    } catch {
+      /* rule-based result from runMemoAssist remains */
+    }
+  }
 
   if (db && user?.id) {
     try {
@@ -47,7 +68,11 @@ export function handleMemoAssist(db, user, body = {}) {
         entityKind: 'help',
         entityId: String(user.id),
         note: action,
-        details: { memoType: result.memoType, confidence: result.confidence },
+        details: {
+          memoType: result.memoType,
+          confidence: result.confidence,
+          aiPolished: Boolean(result.aiPolished),
+        },
       });
     } catch {
       /* non-fatal */

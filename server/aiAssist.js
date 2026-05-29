@@ -31,7 +31,17 @@ function trimBaseUrl(raw) {
 export function defaultChatModelIdForBaseUrl(baseUrl) {
   const u = String(baseUrl || '').trim().toLowerCase();
   if (/:11434(?:\/|$)/.test(u)) return 'llama3.2';
+  if (u.includes('generativelanguage.googleapis.com')) return 'gemini-2.0-flash';
   return 'gpt-4o-mini';
+}
+
+/** @param {string} baseUrl */
+export function inferAiProviderLabel(baseUrl) {
+  const u = String(baseUrl || '').trim().toLowerCase();
+  if (u.includes('generativelanguage.googleapis.com')) return 'gemini';
+  if (/:11434(?:\/|$)/.test(u) || u.includes('ollama')) return 'ollama';
+  if (u.includes('openai.azure.com')) return 'azure_openai';
+  return 'openai';
 }
 
 export function readAiAssistConfig() {
@@ -39,7 +49,28 @@ export function readAiAssistConfig() {
   const baseUrl = trimBaseUrl(process.env.ZAREWA_AI_BASE_URL || 'https://api.openai.com/v1');
   const envModel = String(process.env.ZAREWA_AI_MODEL || '').trim();
   const model = envModel || defaultChatModelIdForBaseUrl(baseUrl);
-  return { enabled: Boolean(apiKey), apiKey, baseUrl, model };
+  const helpModel =
+    String(process.env.ZAREWA_AI_HELP_MODEL || '').trim() || model;
+  const polishModel =
+    String(
+      process.env.ZAREWA_AI_POLISH_MODEL ||
+        process.env.ZAREWA_AI_MEMO_MODEL ||
+        ''
+    ).trim() || model;
+  const helpMaxTokens = Math.min(
+    4096,
+    Math.max(400, Number(process.env.ZAREWA_AI_HELP_MAX_TOKENS) || 2000)
+  );
+  return {
+    enabled: Boolean(apiKey),
+    apiKey,
+    baseUrl,
+    model,
+    helpModel,
+    polishModel,
+    helpMaxTokens,
+    provider: inferAiProviderLabel(baseUrl),
+  };
 }
 
 export function chatCompletionsUrl(baseUrl) {
@@ -128,6 +159,18 @@ export function sanitizeClientMessages(messages) {
 
 const MEMO_POLISH_MAX = 12_000;
 
+/** @type {Record<string, string>} */
+const MEMO_POLISH_STYLE_LINES = {
+  improve:
+    'Improve clarity, structure, and professional tone while preserving every fact and request.',
+  make_formal:
+    'Rewrite in formal internal memo tone suitable for management circulation; use complete sentences.',
+  make_shorter:
+    'Condense to essential points only; remove redundancy; keep all numbers, names, and references.',
+  fix_grammar:
+    'Fix grammar, punctuation, and spelling only; do not change meaning or tone.',
+};
+
 /** Normalize OpenAI-style message.content (string or multimodal array). */
 export function normalizeCompletionContent(message) {
   const c = message?.content;
@@ -213,12 +256,13 @@ export function buildSystemPrompt(context, userDisplay, opts = {}) {
   const mode = String(opts.mode || '').trim().toLowerCase();
   const retrievedContext = String(opts.retrievedContext || '').trim().slice(0, MAX_RETRIEVED_CONTEXT_LEN);
   const lines = [
-    'You are a concise assistant for Zarewa System users (sales, procurement, operations, finance, HR).',
-    'You cannot run actions in the app, mutate records, or approve anything. You are a read-only assistant.',
-    'Explain concepts, summarize live workspace context when provided, suggest workflows, and help interpret terminology. For balances, tax, legal, disciplinary, or payroll-finalizing matters, tell the user to verify in the system or with qualified staff.',
-    'Keep answers short unless the user asks for detail. Use clear headings or bullets when helpful.',
-    'When live workspace context is provided, ground your answer in it and avoid making up records that are not shown.',
-    'If the live context seems incomplete or missing, say so plainly instead of guessing.',
+    'You are an expert Zarewa ERP assistant — as capable as ChatGPT for explaining workflows, but strictly read-only in the app.',
+    'You cannot run actions, mutate records, approve, post, pay, or save anything. Staff perform all clicks themselves.',
+    'Explain concepts clearly, summarize live workspace context when provided, suggest step-by-step workflows, and interpret ERP terminology.',
+    'For balances, tax, legal, disciplinary, or payroll-finalizing matters, tell the user to verify in the system or with qualified staff.',
+    'Match the user\'s depth: brief for quick questions, thorough when they ask for detail. Use markdown headings and numbered steps when helpful.',
+    'When live workspace context is provided, ground your answer in it and avoid inventing records, amounts, or document numbers.',
+    'If context is incomplete, say what is missing instead of guessing.',
   ];
   if (who) lines.push(`The signed-in user is referred to as: ${who}.`);
   if (ctx) lines.push(`The user is currently viewing: ${ctx}.`);
@@ -263,10 +307,10 @@ export async function runAiChat(opts) {
       Authorization: `Bearer ${cfg.apiKey}`,
     },
     body: JSON.stringify({
-      model: cfg.model,
+      model: cfg.helpModel || cfg.model,
       messages: [{ role: 'system', content: system }, ...sanitized],
-      max_tokens: 1200,
-      temperature: 0.25,
+      max_tokens: cfg.helpMaxTokens || 2000,
+      temperature: 0.3,
     }),
   });
 
@@ -317,12 +361,16 @@ export async function runOfficeMemoPolish(opts) {
     throw err;
   }
 
+  const style = String(opts?.style || 'improve').trim().toLowerCase();
+  const styleLine = MEMO_POLISH_STYLE_LINES[style] || MEMO_POLISH_STYLE_LINES.improve;
+
   const system = [
-    'You improve internal office memos for grammar, clarity, and professional tone.',
+    'You are an expert internal memo editor for Zarewa ERP — quality should match ChatGPT or Gemini professional writing.',
+    styleLine,
     'Polish BOTH the subject line and the message body. The subject should stay concise (one line, like an email subject).',
     'Do not invent facts, people, amounts, dates, or references. Do not remove or alter numbers, IDs, or quoted text.',
-    'Keep the same intent and level of detail.',
-    'Return a single JSON object with keys "subject" and "body" (both strings). No markdown, no code fences.',
+    'Preserve bullet lists and paragraph breaks where they aid clarity.',
+    'Return a single JSON object with keys "subject" and "body" (both strings). No markdown fences, no commentary.',
     'If the user left the subject empty, propose a short professional subject from the body.',
   ].join('\n');
 
@@ -335,7 +383,7 @@ export async function runOfficeMemoPolish(opts) {
   ].join('\n');
 
   const reqPayload = {
-    model: cfg.model,
+    model: cfg.polishModel || cfg.model,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },
@@ -357,6 +405,18 @@ export async function runOfficeMemoPolish(opts) {
 
   const content = normalizeCompletionContent(json?.choices?.[0]?.message);
   return parseMemoPolishJson(content, subject, body);
+}
+
+/**
+ * Memo assist polish (same as office polish; action maps to style).
+ * @param {{ subject?: string; body?: string; action?: string; style?: string }} opts
+ */
+export async function runMemoAssistPolish(opts) {
+  return runOfficeMemoPolish({
+    subject: opts?.subject,
+    body: opts?.body,
+    style: opts?.action || opts?.style || 'improve',
+  });
 }
 
 const FILING_TRANSCRIPT_MAX = 64_000;

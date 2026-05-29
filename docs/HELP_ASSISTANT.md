@@ -47,13 +47,19 @@ This is **practical pattern learning**: the system remembers which guides staff 
 
 ```env
 ZAREWA_AI_API_KEY=sk-...
-ZAREWA_AI_MODEL=gpt-4o
+ZAREWA_AI_HELP_MODEL=gpt-4o
+ZAREWA_AI_POLISH_MODEL=gpt-4o-mini
 ZAREWA_AI_EMBEDDING_MODEL=text-embedding-3-small
-# Optional enterprise endpoint:
-# ZAREWA_AI_BASE_URL=https://YOUR-RESOURCE.openai.azure.com/openai/v1
+# OpenAI (default base):
+# ZAREWA_AI_BASE_URL=https://api.openai.com/v1
+# Gemini (OpenAI-compatible):
+# ZAREWA_AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+# ZAREWA_AI_HELP_MODEL=gemini-2.0-flash
 ```
 
-Without a key: local TF vectors + keyword RAG + native ERP tools still work; text-to-SQL and LLM polish are off.
+With a key: Zare uses **full RAG + LLM generation** (ChatGPT/Gemini-quality answers grounded in guides) and **AI memo polish** on Improve / Formal / Shorter / Grammar.
+
+Without a key: local keyword RAG + rule-based synthesis + rule-based memo assist still work; frontier generation and AI polish are off.
 
 ### Security
 

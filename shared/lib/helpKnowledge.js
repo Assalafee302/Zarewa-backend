@@ -1477,6 +1477,7 @@ function scoreHelpArticle(article, qLower, tokens, pathname, learnedBoosts) {
   }
   const boost = Number(learnedBoosts?.[article.id]) || 0;
   if (boost > 0) score += boost;
+  if (!String(article.id).startsWith('op-')) score += 2;
   return score;
 }
 

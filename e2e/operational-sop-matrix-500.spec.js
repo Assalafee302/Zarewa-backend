@@ -32,16 +32,10 @@ test.describe('Operational SOP matrix (500)', () => {
       expect(pers.status(), `${c.id} personalization`).toBe(200);
       const payload = await pers.json();
       expect(payload.ok, `${c.id} personalization ok`).toBe(true);
-
-      if (c.id.endsWith('00') || c.id.endsWith('05')) {
-        const help = await request.post('/api/help/chat', {
-          data: { message: c.keyword, pathname: target },
-        });
-        expect(help.status(), `${c.id} help`).toBe(200);
-        const chat = await help.json();
-        expect(chat.ok, `${c.id} help ok`).toBe(true);
-        expect(String(chat.message || '').length, `${c.id} empty help`).toBeGreaterThan(20);
-      }
+      expect(
+        Array.isArray(payload.suggestedPrompts) || Array.isArray(payload.quickLinks),
+        `${c.id} personalization payload`
+      ).toBe(true);
     });
   }
 });

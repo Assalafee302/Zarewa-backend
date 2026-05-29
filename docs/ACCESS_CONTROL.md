@@ -57,7 +57,9 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 |------|-------------------------|-------------------------|--------|
 | Customer refund | Sales-facing roles (`refunds.request`) | Branch manager or **MD** (`refunds.approve`), or **finance** (`finance.approve` on the same decision API), or **admin** (`*`) | Who acts first is organisational; segregation of duties still requires **Finance** to pay out (`finance.pay` / treasury). Operational checklist: [REFUND_OPERATIONS.md](./REFUND_OPERATIONS.md). |
 | Payment request / expense payout | Requesters per module | `finance.approve` / manager flows | Cashier / finance executes pay after approval. |
-| Payroll lock → export | HR (`hr.payroll.manage`) | MD sign-off (`hr.payroll.md_approve`) | Draft run must have `md_approved_at_iso` before lock (unless `admin` `*`). |
+| Payroll lock → export | HR (`hr.payroll.manage`) | GM HR (`hr.payroll.gm_approve`) **or** MD (`hr.payroll.md_approve`) | Draft run must have `gm_approved_at_iso` **or** `md_approved_at_iso` before lock (unless `admin` `*`). See `patchPayrollRun` in `server/hrOps.js`. |
+| Staff loan agreement PDF | HR (`hr.letters.generate` or `hr.loans.manage`) | — | Only for **approved** loan requests: `POST /api/hr/loan-requests/:requestId/agreement-letter`. |
+| Public careers | — | — | `GET/POST /api/public/careers/*` — no session; registered before auth middleware. |
 | Below floor price → production | Branch manager or **administrator** (`refunds.approve` + `sales_manager` / `branch_manager` / `admin` role) | MD confirms after production (`md.price_exception.approve`) | BM/admin approval unblocks production; MD confirm required before refund. Approval is available on the quotation and in **Operations → production register**. |
 | Delivery / produced (authoritative) | — | Operations (`deliveries.manage`, `production.manage`, …) | Sales sees status read-only where enforced. |
 | Bank statement lines | Finance post (`finance.post`) | Same role matches lines | `GET /api/bank-reconciliation` is `finance.view`; bulk paste: `POST /api/bank-reconciliation/import`. |

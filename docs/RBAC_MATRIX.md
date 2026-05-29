@@ -18,12 +18,36 @@ Source of truth in code: [src/lib/moduleAccess.js](src/lib/moduleAccess.js) (`MO
 `GET /api/reports/*` and the AI reports module use `userMayViewManagementReports` ([`server/auth.js`](server/auth.js)): the user’s role must be in `MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS` **and** they must have `reports.view`.
 
 **`finance_manager`** includes `reports.view` and is in that role set so finance staff can open `/reports` and management report APIs without being branch manager or MD.
+
 | `edit_approvals` | `dashboard.view` (plus role filtering in workspace context) |
 | `settings` | `settings.view`, `period.manage` |
 | `office` | `office.use` |
-| `hr` | `hr.self`, `hr.directory.view`, `hr.staff.manage`, `hr.requests.hr_review`, `hr.requests.gm_approve`, `hr.requests.final_approve`, `hr.branch.endorse_staff`, `hr.payroll.manage`, `hr.payroll.md_approve`, `hr.attendance.upload`, `hr.daily_roll.mark`, `hr.loan_maintain`, `hr.letters.generate`, `hr.compliance` |
+| `hr` | Any of: `hr.self`, `hr.directory.view`, `hr.staff.manage`, `hr.requests.hr_review`, `hr.requests.gm_approve`, `hr.requests.final_approve`, `hr.branch.endorse_staff`, `hr.payroll.manage`, `hr.payroll.md_approve`, `hr.attendance.upload`, `hr.daily_roll.mark`, `hr.loan_maintain`, `hr.letters.generate`, `hr.compliance`, `hr.reports.view`, `hr.executive.view` (see `server/hrPermissionKeys.js`) |
+| `my_profile_hr` | `hr.self` and related self-service keys |
+| `team_hr` | `hr.team.view` |
+| `executive_hr` | `hr.executive.view` |
 
 Wildcard `*` grants all modules.
+
+### HR API permissions (server)
+
+Full list: `server/hrPermissionKeys.js`. Notable keys beyond the module guard:
+
+| Permission | Typical use |
+|------------|-------------|
+| `hr.reports.view` | HR reports summary + CSV exports |
+| `hr.executive.view` | Executive HR routes |
+| `hr.payroll.gm_approve` | GM HR payroll sign-off before lock |
+| `hr.payroll.view_sensitive` | Unredacted compensation / payslip fields |
+| `hr.loans.manage` | Loan maintenance + agreement letters |
+
+### Public routes (no RBAC module)
+
+| Route | Auth |
+|-------|------|
+| `GET /api/public/careers/jobs` | None |
+| `POST /api/public/careers/jobs/:jobId/apply` | None |
+| SPA `/careers` | None (public page) |
 
 ## Route Guard Alignment
 

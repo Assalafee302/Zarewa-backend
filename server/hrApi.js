@@ -29,6 +29,7 @@ import {
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   generateEmploymentLetter,
+  generateStaffLoanAgreementLetter,
   getHrDailyRollCall,
   getHrInboxSummary,
   getHrMeProfile,
@@ -112,6 +113,8 @@ import {
 import {
   createHrApplicant,
   createHrJobPosting,
+  DEFAULT_INTERVIEW_CRITERIA,
+  generateOfferLetter,
   getHrApplicantRegisterPrefill,
   getHrJobPosting,
   listHrApplicants,
@@ -119,6 +122,13 @@ import {
   patchHrApplicant,
   patchHrJobPosting,
 } from './hrRecruiting.js';
+import { getHrModuleHealth } from './hrModuleHealth.js';
+import {
+  exportHrEngagementTrendsCsv,
+  exportHrHeadcountCsv,
+  exportHrTrainingExpiryCsv,
+  exportHrTurnoverCsv,
+} from './hrReportsExport.js';
 import {
   createHrTrainingRecord,
   deleteHrTrainingRecord,
@@ -181,7 +191,8 @@ export function registerHrApi(app, db) {
   app.use('/api/hr', hrSensitiveTokenMiddleware(db));
 
   app.get('/api/hr/health', (_req, res) => {
-    res.json({ ok: true, hrReady: hrTablesReady(db) });
+    const modules = getHrModuleHealth(db);
+    res.json({ ok: true, hrReady: hrTablesReady(db), modules, productionReady: modules.allReady });
   });
 
   app.get('/api/hr/policy-requirements', (req, res) => {
@@ -256,7 +267,8 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       const observability = listHrObservability(db, scope);
       const inbox = getHrInboxSummary(db, scope);
-      const readiness = hrNextUatReadiness(db, scope);
+      const modules = getHrModuleHealth(db);
+      const readiness = { ...hrNextUatReadiness(db, scope), modules, productionReady: modules.allReady };
       const staffAll = listHrStaff(db, scope, { includeInactive: true });
       const staffCounts = {
         total: staffAll.length,
@@ -1397,6 +1409,46 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get('/api/hr/recruiting/interview-criteria', requireHrAny('hr.staff.manage', 'hr.directory.view'), (_req, res) => {
+    return res.json({ ok: true, criteria: DEFAULT_INTERVIEW_CRITERIA });
+  });
+
+  app.post('/api/hr/recruiting/applicants/:applicantId/offer-letter', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = generateOfferLetter(db, req.params.applicantId, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate offer letter.' });
+    }
+  });
+
+  app.get('/api/hr/reports/export/:kind', requireHrAny('hr.reports.view', 'hr.staff.manage', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const kind = String(req.params.kind || '').trim();
+      const scope = hrListScope(req);
+      const exporters = {
+        headcount: () => exportHrHeadcountCsv(db, scope),
+        turnover: () => exportHrTurnoverCsv(db, scope),
+        'training-expiry': () => exportHrTrainingExpiryCsv(db, scope),
+        'engagement-trends': () => exportHrEngagementTrendsCsv(db),
+      };
+      const run = exporters[kind];
+      if (!run) return res.status(400).json({ ok: false, error: 'Unknown export kind.' });
+      const r = run();
+      if (!r.ok) return res.status(400).json(r);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(r.csv);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Export failed.' });
+    }
+  });
+
   app.get('/api/hr/training-records', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -1542,6 +1594,18 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+    }
+  });
+
+  app.post('/api/hr/loan-requests/:requestId/agreement-letter', requireHrAny('hr.letters.generate', 'hr.loans.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = generateStaffLoanAgreementLetter(db, req.user, { requestId: req.params.requestId });
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate loan agreement.' });
     }
   });
 

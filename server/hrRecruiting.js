@@ -24,6 +24,41 @@ export function hrRecruitingTablesReady(db) {
 const JOB_STATUSES = new Set(['draft', 'open', 'closed']);
 const APPLICANT_STATUSES = new Set(['applied', 'screening', 'interview', 'offer', 'hired', 'rejected']);
 
+export const DEFAULT_INTERVIEW_CRITERIA = [
+  { key: 'role_fit', label: 'Role fit' },
+  { key: 'experience', label: 'Experience' },
+  { key: 'communication', label: 'Communication' },
+  { key: 'culture', label: 'Culture / values' },
+  { key: 'overall', label: 'Overall recommendation' },
+];
+
+function safeJsonParse(raw, fallback) {
+  if (raw == null || raw === '') return fallback;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return fallback;
+  }
+}
+
+function mapApplicantRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobId: row.job_id || row.jobId,
+    fullName: row.full_name || row.fullName,
+    email: row.email,
+    phone: row.phone,
+    status: row.status,
+    notes: row.notes,
+    appliedAtIso: row.applied_at_iso || row.appliedAtIso,
+    updatedAtIso: row.updated_at_iso || row.updatedAtIso,
+    hiredUserId: row.hired_user_id || row.hiredUserId,
+    interviewScores: safeJsonParse(row.interview_scores_json, null),
+    offerLetterText: row.offer_letter_text || row.offerLetterText || null,
+  };
+}
+
 export function listHrJobPostings(db, opts = {}) {
   if (!hrRecruitingTablesReady(db)) return [];
   const status = String(opts.status || '').trim();
@@ -115,7 +150,8 @@ export function listHrApplicants(db, jobId) {
   const jid = String(jobId || '').trim();
   let sql = `SELECT id, job_id AS jobId, full_name AS fullName, email, phone, status, notes,
                     applied_at_iso AS appliedAtIso, updated_at_iso AS updatedAtIso,
-                    hired_user_id AS hiredUserId
+                    hired_user_id AS hiredUserId, interview_scores_json AS interviewScoresJson,
+                    offer_letter_text AS offerLetterText
              FROM hr_job_applicants`;
   const args = [];
   if (jid) {
@@ -123,7 +159,14 @@ export function listHrApplicants(db, jobId) {
     args.push(jid);
   }
   sql += ` ORDER BY applied_at_iso DESC LIMIT 500`;
-  return db.prepare(sql).all(...args);
+  return db
+    .prepare(sql)
+    .all(...args)
+    .map((r) => ({
+      ...r,
+      interviewScores: safeJsonParse(r.interviewScoresJson, null),
+      interviewScoresJson: undefined,
+    }));
 }
 
 export function createHrApplicant(db, actor, body = {}) {
@@ -162,6 +205,8 @@ export function patchHrApplicant(db, applicantId, body = {}) {
   const status = body.status !== undefined ? String(body.status || '').trim() : row.status;
   if (!APPLICANT_STATUSES.has(status)) return { ok: false, error: 'Invalid status.' };
   const now = nowIso();
+  const scoresJson =
+    body.interviewScores != null ? JSON.stringify(body.interviewScores) : body.interviewScores === null ? null : undefined;
   db.prepare(
     `UPDATE hr_job_applicants SET
       full_name = COALESCE(?, full_name),
@@ -170,6 +215,8 @@ export function patchHrApplicant(db, applicantId, body = {}) {
       status = ?,
       notes = COALESCE(?, notes),
       hired_user_id = COALESCE(?, hired_user_id),
+      interview_scores_json = COALESCE(?, interview_scores_json),
+      offer_letter_text = COALESCE(?, offer_letter_text),
       updated_at_iso = ?
      WHERE id = ?`
   ).run(
@@ -179,10 +226,104 @@ export function patchHrApplicant(db, applicantId, body = {}) {
     status,
     body.notes !== undefined ? String(body.notes || '').trim() || null : null,
     body.hiredUserId !== undefined ? String(body.hiredUserId || '').trim() || null : null,
+    scoresJson !== undefined ? scoresJson : null,
+    body.offerLetterText !== undefined ? String(body.offerLetterText || '').trim() || null : null,
     now,
     id
   );
   return { ok: true };
+}
+
+export function listPublicOpenJobs(db) {
+  if (!hrRecruitingTablesReady(db)) return [];
+  return listHrJobPostings(db, { status: 'open' }).map((j) => ({
+    id: j.id,
+    title: j.title,
+    branchId: j.branchId,
+    department: j.department,
+    description: j.description,
+    openings: j.openings,
+  }));
+}
+
+export function publicApplyToJob(db, jobId, body = {}) {
+  if (!hrRecruitingTablesReady(db)) return { ok: false, error: 'Recruiting not available.' };
+  const job = getHrJobPosting(db, jobId);
+  if (!job || job.status !== 'open') return { ok: false, error: 'This position is not open for applications.' };
+  return createHrApplicant(db, null, {
+    jobId,
+    fullName: body.fullName,
+    email: body.email,
+    phone: body.phone,
+    notes: body.coverNote || body.notes,
+    status: 'applied',
+  });
+}
+
+export function generateOfferLetter(db, applicantId, actor = {}, body = {}) {
+  if (!hrRecruitingTablesReady(db)) return { ok: false, error: 'Recruiting module not initialised.' };
+  const id = String(applicantId || '').trim();
+  const row = db
+    .prepare(
+      `SELECT a.*, j.title AS jobTitle, j.branch_id AS branchId, j.department
+       FROM hr_job_applicants a JOIN hr_job_postings j ON j.id = a.job_id WHERE a.id = ?`
+    )
+    .get(id);
+  if (!row) return { ok: false, error: 'Applicant not found.' };
+  const company = 'Zarewa Aluminium and Plastics Ltd';
+  const startDate = String(body.startDateIso || '').slice(0, 10) || 'to be confirmed';
+  const salary = body.salaryNgn
+    ? `NGN ${Math.round(Number(body.salaryNgn)).toLocaleString('en-NG')}`
+    : 'as agreed with HR';
+  const content = [
+    company,
+    '',
+    `Date: ${nowIso().slice(0, 10)}`,
+    '',
+    `Dear ${row.full_name},`,
+    '',
+    `We are pleased to offer you the position of ${row.jobTitle}${row.department ? ` (${row.department})` : ''} at ${company}.`,
+    '',
+    `Proposed start date: ${startDate}`,
+    `Monthly gross salary: ${salary}`,
+    `Work location: ${row.branchId || 'as assigned'}`,
+    '',
+    `This offer is subject to satisfactory completion of onboarding requirements, including identity verification and required HR documents.`,
+    '',
+    `Please confirm your acceptance in writing to the Human Resources department.`,
+    '',
+    'Yours faithfully,',
+    `${actor.displayName || actor.username || 'Human Resources'}`,
+    'Human Resources (HQ)',
+  ].join('\n');
+  db.prepare(`UPDATE hr_job_applicants SET offer_letter_text = ?, updated_at_iso = ? WHERE id = ?`).run(content, nowIso(), id);
+  return { ok: true, offerLetterText: content };
+}
+
+/**
+ * @param {import('express').Express} app
+ * @param {import('better-sqlite3').Database} db
+ */
+export function registerPublicCareersApi(app, db) {
+  app.get('/api/public/careers/jobs', (req, res) => {
+    try {
+      return res.json({ ok: true, jobs: listPublicOpenJobs(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load careers.' });
+    }
+  });
+
+  app.post('/api/public/careers/jobs/:jobId/apply', (req, res) => {
+    try {
+      const r = publicApplyToJob(db, req.params.jobId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Application failed.' });
+    }
+  });
 }
 
 /** Prefill for staff registration from applicant + job. */

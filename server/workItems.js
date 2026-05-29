@@ -15,6 +15,7 @@ import {
 } from './humanId.js';
 import { filingCompletenessForWorkItem } from './filingCompleteness.js';
 import { listCoilRequests, listManagementItems, listPaymentRequests } from './readModel.js';
+import { listHrRequests } from './hrOps.js';
 import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
 import {
   isConfidentialLevel,
@@ -1169,10 +1170,209 @@ function listLegacyCoilRequestWorkItems(db, scope, user) {
 }
 
 function listLegacyHrRequestWorkItems(db, scope, user) {
-  void db;
-  void scope;
-  void user;
-  return [];
+  if (!user) return [];
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_requests'`).get()) return [];
+  const scopeNorm = {
+    viewAll: Boolean(scope?.viewAll),
+    branchId: String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+  };
+  const pending = listHrRequests(db, scopeNorm, {}).filter((r) =>
+    ['hr_review', 'branch_manager_review', 'gm_hr_review'].includes(String(r.status))
+  );
+  const out = [];
+  for (const r of pending) {
+    if (!userCanActOnHrRequestQueue(user, r.status)) continue;
+    const kindLabel =
+      r.kind === 'loan' ? 'Loan' : r.kind === 'leave' ? 'Leave' : String(r.kind || 'HR').replace(/_/g, ' ');
+    const officeKey =
+      r.status === 'branch_manager_review' ? 'branch_manager' : 'hr';
+    const routeScope =
+      r.status === 'hr_review' ? 'hr_queue' : r.status === 'branch_manager_review' ? 'endorse_queue' : 'gm_queue';
+    out.push(
+      legacyWorkItemBase({
+        id: legacyItemId('hr-request', r.id),
+        referenceNo: r.id,
+        branchId: r.branchId || scopeNorm.branchId,
+        officeKey,
+        responsibleOfficeKey: officeKey,
+        documentClass: 'approval',
+        documentType: `hr_${String(r.kind || 'request')}_request`,
+        status: 'pending_review',
+        priority: r.slaState === 'overdue' ? 'high' : 'normal',
+        title: `${kindLabel}: ${r.title || r.id}`,
+        summary: `${r.staffDisplayName || r.userId} · ${r.nextStepLabel || r.status}`,
+        createdAtIso: r.submittedAtIso || r.createdAtIso,
+        updatedAtIso: r.submittedAtIso || r.createdAtIso,
+        sourceKind: 'hr_request',
+        sourceId: r.id,
+        routePath: r.kind === 'loan' ? '/hr/loans' : '/hr/requests',
+        routeState: { scope: routeScope, focusRequestId: r.id },
+        data: { kind: r.kind, requestId: r.id, userId: r.userId, hrStatus: r.status },
+      })
+    );
+  }
+  return out;
+}
+
+function userCanActOnHrRequestQueue(user, status) {
+  if (!user) return false;
+  if (userHasPermission(user, '*')) return true;
+  const s = String(status || '').trim();
+  if (s === 'hr_review') {
+    return (
+      userHasPermission(user, 'hr.requests.hr_review') ||
+      userHasPermission(user, 'hr.requests.review') ||
+      userHasPermission(user, 'hr.staff.manage')
+    );
+  }
+  if (s === 'branch_manager_review') {
+    return userHasPermission(user, 'hr.branch.endorse_staff') || userHasPermission(user, 'hr.team.view');
+  }
+  if (s === 'gm_hr_review') {
+    return (
+      userHasPermission(user, 'hr.requests.gm_approve') ||
+      userHasPermission(user, 'hr.requests.final_approve')
+    );
+  }
+  return false;
+}
+
+function userCanSeeHrDisciplineQueue(user) {
+  if (!user) return false;
+  return (
+    userHasPermission(user, '*') ||
+    userHasPermission(user, 'hr.discipline.manage') ||
+    userHasPermission(user, 'hr.staff.manage')
+  );
+}
+
+function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
+  if (!userCanSeeHrDisciplineQueue(user)) return [];
+  const out = [];
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_discipline_cases'`).get()) {
+    let sql = `SELECT id, user_id, branch_id, status, offence_category, summary, opened_at_iso FROM hr_discipline_cases WHERE status = 'open'`;
+    const args = [];
+    if (!scope?.viewAll) {
+      sql += ` AND branch_id = ?`;
+      args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
+    }
+    sql += ` ORDER BY opened_at_iso DESC LIMIT 80`;
+    for (const row of db.prepare(sql).all(...args)) {
+      out.push(
+        legacyWorkItemBase({
+          id: legacyItemId('hr-discipline', row.id),
+          referenceNo: row.id,
+          branchId: row.branch_id,
+          officeKey: 'hr',
+          responsibleOfficeKey: 'hr',
+          documentClass: 'case',
+          documentType: 'hr_discipline_case',
+          status: 'open',
+          priority: 'normal',
+          title: `Discipline case ${row.id}`,
+          summary: `${row.offence_category || '—'} · ${String(row.summary || '').slice(0, 120)}`,
+          createdAtIso: row.opened_at_iso,
+          updatedAtIso: row.opened_at_iso,
+          sourceKind: 'hr_discipline_case',
+          sourceId: row.id,
+          routePath: '/hr/discipline',
+          data: { userId: row.user_id, caseId: row.id },
+        })
+      );
+    }
+  }
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_incident_memos'`).get()) {
+    let sql = `SELECT id, user_id, branch_id, incident_date_iso, summary, status FROM hr_incident_memos WHERE status = 'open'`;
+    const args = [];
+    if (!scope?.viewAll) {
+      sql += ` AND branch_id = ?`;
+      args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
+    }
+    sql += ` ORDER BY incident_date_iso DESC LIMIT 80`;
+    for (const row of db.prepare(sql).all(...args)) {
+      out.push(
+        legacyWorkItemBase({
+          id: legacyItemId('hr-incident', row.id),
+          referenceNo: row.id,
+          branchId: row.branch_id,
+          officeKey: 'hr',
+          responsibleOfficeKey: 'hr',
+          documentClass: 'case',
+          documentType: 'hr_incident_memo',
+          status: 'open',
+          priority: 'high',
+          title: `Incident memo ${row.id}`,
+          summary: String(row.summary || '').slice(0, 140),
+          createdAtIso: row.incident_date_iso,
+          updatedAtIso: row.incident_date_iso,
+          sourceKind: 'hr_incident_memo',
+          sourceId: row.id,
+          routePath: '/hr/discipline',
+          data: { userId: row.user_id, memoId: row.id },
+        })
+      );
+    }
+  }
+  return out;
+}
+
+function userCanSeeHrPerformanceQueue(user) {
+  if (!user) return false;
+  return (
+    userHasPermission(user, '*') ||
+    userHasPermission(user, 'hr.staff.manage') ||
+    userHasPermission(user, 'hr.directory.view')
+  );
+}
+
+function listLegacyHrPerformanceReviewWorkItems(db, scope, user) {
+  if (!userCanSeeHrPerformanceQueue(user)) return [];
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_appraisal_forms'`).get()) return [];
+  let sql = `
+    SELECT f.id, f.cycle_id, f.subject_user_id, f.reviewer_user_id, f.status, f.updated_at_iso,
+           u.display_name AS subjectName, c.label AS cycleLabel
+    FROM hr_appraisal_forms f
+    JOIN app_users u ON u.id = f.subject_user_id
+    LEFT JOIN hr_appraisal_cycles c ON c.id = f.cycle_id
+    WHERE f.status IS NULL OR f.status NOT IN ('completed', 'closed')
+  `;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND EXISTS (SELECT 1 FROM hr_staff_profiles p WHERE p.user_id = f.subject_user_id AND p.branch_id = ?)`;
+    args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
+  }
+  if (!userHasPermission(user, '*') && !userHasPermission(user, 'hr.staff.manage')) {
+    sql += ` AND (f.reviewer_user_id = ? OR f.subject_user_id = ?)`;
+    args.push(user.id, user.id);
+  }
+  sql += ` ORDER BY f.updated_at_iso DESC LIMIT 80`;
+  const out = [];
+  for (const row of db.prepare(sql).all(...args)) {
+    const isReviewer = String(row.reviewer_user_id || '') === String(user.id);
+    out.push(
+      legacyWorkItemBase({
+        id: legacyItemId('hr-appraisal', row.id),
+        referenceNo: row.id,
+        branchId: scope?.branchId || DEFAULT_BRANCH_ID,
+        officeKey: 'hr',
+        responsibleOfficeKey: 'hr',
+        responsibleUserId: row.reviewer_user_id || '',
+        documentClass: 'review',
+        documentType: 'hr_appraisal_form',
+        status: row.status === 'submitted' ? 'pending_review' : 'open',
+        priority: 'normal',
+        title: `Appraisal: ${row.subjectName}`,
+        summary: `${row.cycleLabel || row.cycle_id || 'Cycle'} · ${isReviewer ? 'Awaiting your review' : 'Complete your form'}`,
+        createdAtIso: row.updated_at_iso,
+        updatedAtIso: row.updated_at_iso,
+        sourceKind: 'hr_appraisal_form',
+        sourceId: row.id,
+        routePath: '/hr/performance',
+        data: { cycleId: row.cycle_id, subjectUserId: row.subject_user_id, formId: row.id },
+      })
+    );
+  }
+  return out;
 }
 
 function filterWorkItems(items, filter = {}) {
@@ -1944,19 +2144,5 @@ export function createHrPerformanceReview(db, body, actor, workspaceBranchId = D
 export function listHrPerformanceReviews(db, scope) {
   void db;
   void scope;
-  return [];
-}
-
-function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
-  void db;
-  void scope;
-  void user;
-  return [];
-}
-
-function listLegacyHrPerformanceReviewWorkItems(db, scope, user) {
-  void db;
-  void scope;
-  void user;
   return [];
 }

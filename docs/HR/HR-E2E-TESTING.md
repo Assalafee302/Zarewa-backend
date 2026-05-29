@@ -8,6 +8,9 @@
 - **Payroll**: create run → recompute → lock → mark paid
 - **Loan deductions**: appear on recompute; repayment counters update when run is marked **paid**
 - **Leave balances**: recompute + read balances for validation
+- **Employment letters**: generate + PDF (`e2e/hr-api.spec.js`)
+- **Loan agreement letters**: `POST /api/hr/loan-requests/:requestId/agreement-letter` (approved loans only)
+- **Public careers**: `GET /api/public/careers/jobs` (no auth)
 
 ## Run HR suites (default)
 Runs the HR happy-path and edge-case suites.

@@ -2833,10 +2833,11 @@ export function exportEmploymentLetterPdf(db, letterId) {
   if (!row) return { ok: false, error: 'Letter not found.' };
   const lines = String(row.content_text || '').split(/\r?\n/);
   const pdf = buildSimpleTextPdf([{ lines: lines.length ? lines : ['(empty letter)'] }]);
+  const kind = String(row.letter_kind || 'employment').replace(/[^\w-]+/g, '-');
   return {
     ok: true,
     pdf,
-    filename: `employment-letter-${letterId}.pdf`,
+    filename: `${kind}-${letterId}.pdf`,
     contentType: 'application/pdf',
   };
 }
@@ -2987,6 +2988,85 @@ export function generateEmploymentLetter(db, actor, body) {
      VALUES (?,?,?,?,?,?)`
   ).run(id, userId, String(body?.letterKind || 'employment').trim() || 'employment', content, now, actor.id);
   return { ok: true, id, contentText: content };
+}
+
+/**
+ * Generate staff loan agreement letter for an approved loan request.
+ * Stored in hr_employment_letters with letter_kind staff_loan_agreement.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {{ requestId: string }} body
+ */
+export function generateStaffLoanAgreementLetter(db, actor, body) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const requestId = String(body?.requestId || '').trim();
+  if (!requestId) return { ok: false, error: 'requestId is required.' };
+  const row = db
+    .prepare(
+      `SELECT r.id, r.user_id, r.status, r.branch_id,
+              l.amount_ngn, l.repayment_months, l.deduction_per_month_ngn, l.purpose
+       FROM hr_requests r
+       JOIN hr_request_loan l ON l.request_id = r.id
+       WHERE r.id = ? AND r.kind = 'loan'`
+    )
+    .get(requestId);
+  if (!row) return { ok: false, error: 'Loan request not found.' };
+  if (String(row.status) !== 'approved') {
+    return { ok: false, error: 'Loan agreement can only be generated for approved requests.' };
+  }
+  const userId = row.user_id;
+  const u = db.prepare(`SELECT display_name, username FROM app_users WHERE id = ?`).get(userId);
+  if (!u) return { ok: false, error: 'Employee not found.' };
+  const p = db.prepare(`SELECT job_title, department FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const company = 'Zarewa Aluminium and Plastics Ltd';
+  const amount = Math.round(Number(row.amount_ngn) || 0);
+  const months = Math.round(Number(row.repayment_months) || 0);
+  const monthly = Math.round(Number(row.deduction_per_month_ngn) || 0);
+  const fmt = (n) => `NGN ${n.toLocaleString('en-NG')}`;
+  const content = [
+    company,
+    '',
+    `Date: ${nowIso().slice(0, 10)}`,
+    '',
+    `STAFF LOAN AGREEMENT`,
+    '',
+    `Reference: ${requestId}`,
+    '',
+    `This agreement is between ${company} ("the Company") and ${u.display_name} ("the Employee").`,
+    '',
+    `1. Loan amount: ${fmt(amount)}`,
+    `2. Purpose: ${String(row.purpose || 'Staff loan as approved by HR').trim()}`,
+    `3. Repayment period: ${months} month(s) via payroll deduction`,
+    `4. Monthly deduction: ${fmt(monthly)} (subject to payroll availability)`,
+    `5. Work location / branch: ${String(row.branch_id || 'as assigned').trim()}`,
+    `6. Job title: ${p?.job_title || 'Staff'}${p?.department ? ` (${p.department})` : ''}`,
+    '',
+    `The Employee agrees that outstanding balance may be recovered from final salary or benefits if employment ends before full repayment, in accordance with company policy and applicable law.`,
+    '',
+    `Signed for the Company:`,
+    `${actor.displayName || actor.username || 'Human Resources'}`,
+    'Human Resources (HQ)',
+    '',
+    `Employee acknowledgement: ${u.display_name}`,
+    'Signature: _________________________   Date: _________________',
+  ].join('\n');
+
+  const id = newId('HRL');
+  const now = nowIso();
+  db.prepare(
+    `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
+     VALUES (?,?,?,?,?,?)`
+  ).run(id, userId, 'staff_loan_agreement', content, now, actor.id);
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.loan.agreement_letter',
+    entityKind: 'hr_employment_letter',
+    entityId: id,
+    branchId: row.branch_id,
+    details: { requestId, userId, amountNgn: amount },
+  });
+  return { ok: true, id, contentText: content, requestId };
 }
 
 export function listEmploymentLetters(db, userId) {
@@ -3233,7 +3313,15 @@ export function hrNextUatReadiness(db, scope) {
       sensitiveMaskingReady: true,
       overdueRequests: Number(obs.summary?.overdueRequests || 0),
     },
-    canCutover: hasSpecialNodes && qualityCoverage >= 85,
+    canCutover: hasSpecialNodes && qualityCoverage >= 85 && queue.length === 0,
+    blockers: [
+      !hasSpecialNodes ? 'Map special org nodes (mining, scholarship, chairman staff).' : null,
+      qualityCoverage < 85 ? `Profile quality below 85% (${qualityCoverage}%).` : null,
+      queue.length > 0 ? `${queue.length} data cleanup item(s) remain.` : null,
+      Number(obs.summary?.overdueRequests || 0) > 0
+        ? `${obs.summary.overdueRequests} overdue HR request(s).`
+        : null,
+    ].filter(Boolean),
   };
 }
 

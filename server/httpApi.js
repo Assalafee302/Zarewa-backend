@@ -188,6 +188,7 @@ import {
 } from './interBranchOfficeOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { registerHrApi } from './hrApi.js';
+import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
 import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
@@ -591,6 +592,8 @@ export function registerHttpApi(app, db) {
   for (const p of livenessPaths) {
     app.get(p, sendLiveness);
   }
+
+  registerPublicCareersApi(app, db);
 
   app.get('/api/ai/status', requireAuth, (req, res) => {
     res.json(readAiStatusForRequest(req, readAiAssistConfig().enabled));

@@ -12,3 +12,5 @@
 - Payroll master/detail data uses `hr_payroll_runs`, `hr_payroll_lines`, `hr_payroll_line_loans`.
 - Treasury pack, payslip pack, and statutory pack are exported from locked/paid runs.
 - Attendance and approved loan deductions feed into payroll line calculations.
+- **Lock:** draft runs need `gm_approved_at_iso` **or** `md_approved_at_iso` before `locked` (unless admin `*`).
+- **Payslip PDF:** `GET /api/hr/payroll-runs/:runId/payslips/:userId/pdf`.

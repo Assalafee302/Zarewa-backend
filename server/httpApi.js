@@ -601,6 +601,8 @@ export function registerHttpApi(app, db) {
     app.get(p, sendLiveness);
   }
 
+  const coilMaterialPerms = ['inventory.adjust', 'operations.manage', 'production.manage'];
+
   registerPublicCareersApi(app, db);
 
   app.get('/api/ai/status', requireAuth, (req, res) => {
@@ -4592,8 +4594,6 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: String(e.message || e) });
     }
   });
-
-  const coilMaterialPerms = ['inventory.adjust', 'operations.manage', 'production.manage'];
 
   app.get('/api/coil-control/events', requirePermission(coilMaterialPerms), (req, res) => {
     try {

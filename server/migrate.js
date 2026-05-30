@@ -1074,6 +1074,10 @@ function migrateStockRegister2026(db) {
     CREATE INDEX IF NOT EXISTS idx_stock_register_branch_period
       ON stock_register_periods(branch_id, period_key DESC);
   `);
+  const srCols = db.prepare(`PRAGMA table_info(stock_register_periods)`).all();
+  if (!srCols.some((c) => c.name === 'pricing_overrides_json')) {
+    db.exec(`ALTER TABLE stock_register_periods ADD COLUMN pricing_overrides_json TEXT`);
+  }
   const snapCols = db.prepare(`PRAGMA table_info(inventory_coil_snapshots)`).all();
   const ensureSnapCol = (name, ddl) => {
     if (!snapCols.some((c) => c.name === name)) db.exec(ddl);

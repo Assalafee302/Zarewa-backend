@@ -136,4 +136,57 @@ describe('stockRegisterCore', () => {
     expect(pack.summary.aluminium.netClosingKg).toBe(465);
     expect(pack.summary.aluminium.valueNgn).toBe(465 * 1200);
   });
+
+  it('derives used qty from stock level when issue movements are missing', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [],
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [
+        {
+          productID: 'ACC-TAPPING-SCREW',
+          name: 'Tapping screw 50mm (box)',
+          unit: 'box',
+          stockLevel: 40,
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+      ],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    const row = pack.accessories.rows[0];
+    expect(row.opening).toBe(0);
+    expect(row.used).toBe(0);
+    expect(row.balance).toBe(40);
+    const pack2 = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [],
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [
+        {
+          productID: 'ACC-TAPPING-SCREW',
+          name: 'Tapping screw 50mm (box)',
+          unit: 'box',
+          stockLevel: 40,
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+      ],
+      stockMovements: [{ productID: 'ACC-TAPPING-SCREW', qty: 100, dateISO: '2026-04-05' }],
+      accessoryOpeningByProduct: new Map([['ACC-TAPPING-SCREW', 50]]),
+      inTransitLoads: [],
+    });
+    const row2 = pack2.accessories.rows[0];
+    expect(row2.opening).toBe(50);
+    expect(row2.received).toBe(100);
+    expect(row2.used).toBe(110);
+    expect(row2.balance).toBe(40);
+  });
 });

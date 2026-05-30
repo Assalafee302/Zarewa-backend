@@ -336,23 +336,29 @@ function productMovementsInPeriod(movements, productId, start, end) {
   return { received: round2(received), used: round2(used) };
 }
 
+/** Opening / received / used / balance — used from ledger + implied from live stock when ledger is incomplete. */
+function productPeriodFlow(product, movements, openingByProduct, start, end) {
+  const pid = String(product?.productID || product?.product_id || '').trim();
+  const opening = round2(openingByProduct.get(pid) || 0);
+  const { received, used: usedFromMovements } = productMovementsInPeriod(movements, pid, start, end);
+  const liveBalance = round2(Number(product?.stockLevel ?? product?.stock_level) || 0);
+  const usedImplied = round2(Math.max(0, opening + received - liveBalance));
+  const used = round2(Math.max(usedFromMovements, usedImplied));
+  const total = round2(opening + received);
+  const remaining = round2(liveBalance >= 0 ? liveBalance : Math.max(0, total - used));
+  return { opening, received, used, total, remaining, balance: remaining, usedFromMovements, usedImplied };
+}
+
 function buildStoneSection(products, movements, openingByProduct, start, end, masterData) {
   const rows = [];
   for (const p of products || []) {
     if (!isStoneProduct(p)) continue;
     const pid = String(p.productID || '');
-    const stock = Number(p.stockLevel) || 0;
-    if (stock <= 0.0001) {
-      const mv = productMovementsInPeriod(movements, pid, start, end);
-      if (mv.received <= 0 && mv.used <= 0 && !(openingByProduct.get(pid) > 0)) continue;
-    }
+    const flow = productPeriodFlow(p, movements, openingByProduct, start, end);
+    if (flow.opening <= 0 && flow.received <= 0 && flow.used <= 0 && flow.remaining <= 0) continue;
     const gauge = String(p.dashboardAttrs?.gauge || '').trim() || '—';
     const colour = String(p.dashboardAttrs?.colour || p.name || '').trim();
-    const opening = round2(openingByProduct.get(pid) || 0);
-    const { received, used } = productMovementsInPeriod(movements, pid, start, end);
-    const total = round2(opening + received);
-    const remaining = round2(total - used);
-    if (opening <= 0 && received <= 0 && used <= 0 && remaining <= 0) continue;
+    const { opening, received, used, total, remaining } = flow;
     rows.push({
       gaugeLabel: gauge,
       colour,
@@ -387,9 +393,8 @@ function buildAccessorySection(products, movements, openingByProduct, start, end
     if (!isAccessoryProduct(p)) continue;
     const pid = String(p.productID || '');
     const unit = String(p.unit || 'unit').trim();
-    const opening = round2(openingByProduct.get(pid) || 0);
-    const { received, used } = productMovementsInPeriod(movements, pid, start, end);
-    const balance = round2(Number(p.stockLevel) || opening + received - used);
+    const flow = productPeriodFlow(p, movements, openingByProduct, start, end);
+    const { opening, received, used, total, balance } = flow;
     if (opening <= 0 && received <= 0 && used <= 0 && balance <= 0) continue;
     const itemName =
       String(itemNameByProduct?.get(pid) || '').trim() || String(p.name || '').trim() || pid;
@@ -400,7 +405,7 @@ function buildAccessorySection(products, movements, openingByProduct, start, end
       opening,
       received,
       used,
-      total: round2(opening + received),
+      total,
       balance,
       remark: '',
     });
@@ -474,16 +479,42 @@ function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgn
  *   accessoryFallbackUnitPriceNgn?: number|null;
  *   priceLookbackDays?: number;
  *   priceSources?: Record<string, string>;
+ *   aluminiumUnitCostOverride?: number|null;
+ *   aluzincUnitCostOverride?: number|null;
+ *   stoneUnitPriceOverrides?: Map<string, number>|Record<string, number>;
+ *   accessoryUnitPriceOverrides?: Map<string, number>|Record<string, number>;
  * }} pricing
  */
+function overrideMap(raw) {
+  if (!raw) return new Map();
+  if (raw instanceof Map) return raw;
+  return new Map(Object.entries(raw));
+}
+
+function pickPrice(overrideVal, suggestedVal, fallbackVal) {
+  const o = Number(overrideVal);
+  if (Number.isFinite(o) && o > 0) return { price: Math.round(o), source: 'manual' };
+  const s = Number(suggestedVal);
+  if (Number.isFinite(s) && s > 0) return { price: Math.round(s), source: 'suggested' };
+  const f = Number(fallbackVal);
+  if (Number.isFinite(f) && f > 0) return { price: Math.round(f), source: 'fallback' };
+  return { price: null, source: 'none' };
+}
+
 export function enrichStockRegisterValuation(register, pricing = {}) {
   if (!register) return register;
   const spoolKg = pricing.spoolKg || SPOOL_KG_DEFAULT;
   const lookback = pricing.priceLookbackDays ?? 31;
   const sources = pricing.priceSources || {};
+  const stoneOverrides = overrideMap(pricing.stoneUnitPriceOverrides);
+  const accOverrides = overrideMap(pricing.accessoryUnitPriceOverrides);
 
-  const aluCost = Number(pricing.aluminiumUnitCostNgnPerKg) || 0;
-  const aluzCost = Number(pricing.aluzincUnitCostNgnPerKg) || 0;
+  const aluSuggested = Number(pricing.aluminiumUnitCostNgnPerKg) || 0;
+  const aluzSuggested = Number(pricing.aluzincUnitCostNgnPerKg) || 0;
+  const aluPick = pickPrice(pricing.aluminiumUnitCostOverride, aluSuggested, null);
+  const aluzPick = pickPrice(pricing.aluzincUnitCostOverride, aluzSuggested, null);
+  const aluCost = aluPick.price || 0;
+  const aluzCost = aluzPick.price || 0;
 
   register.summary = register.summary || {};
   register.summary.aluminium = coilSectionSummary(
@@ -492,8 +523,10 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
     spoolKg,
     aluCost
   );
-  register.summary.aluminium.unitCostNgnPerKg = aluCost > 0 ? Math.round(aluCost) : null;
-  register.summary.aluminium.priceSource = sources.aluminium || (aluCost > 0 ? 'purchase_avg' : 'none');
+  register.summary.aluminium.unitCostNgnPerKg = aluCost > 0 ? aluCost : null;
+  register.summary.aluminium.suggestedUnitCostNgnPerKg = aluSuggested > 0 ? Math.round(aluSuggested) : null;
+  register.summary.aluminium.priceSource =
+    aluPick.source === 'manual' ? 'manual' : sources.aluminium || (aluCost > 0 ? 'purchase_avg' : 'none');
   register.summary.aluminium.priceLookbackDays = lookback;
   register.summary.aluminium.pricingNote =
     'Coil PO may be per kg or per metre; closing stock valued at ₦/kg on net weight.';
@@ -504,8 +537,10 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
     spoolKg,
     aluzCost
   );
-  register.summary.aluzinc.unitCostNgnPerKg = aluzCost > 0 ? Math.round(aluzCost) : null;
-  register.summary.aluzinc.priceSource = sources.aluzinc || (aluzCost > 0 ? 'purchase_avg' : 'none');
+  register.summary.aluzinc.unitCostNgnPerKg = aluzCost > 0 ? aluzCost : null;
+  register.summary.aluzinc.suggestedUnitCostNgnPerKg = aluzSuggested > 0 ? Math.round(aluzSuggested) : null;
+  register.summary.aluzinc.priceSource =
+    aluzPick.source === 'manual' ? 'manual' : sources.aluzinc || (aluzCost > 0 ? 'purchase_avg' : 'none');
   register.summary.aluzinc.priceLookbackDays = lookback;
   register.summary.aluzinc.pricingNote =
     'Coil PO may be per kg or per metre; closing stock valued at ₦/kg on net weight.';
@@ -518,8 +553,12 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   let stonePriceWeight = 0;
   for (const g of register.stoneCoated?.groups || []) {
     for (const r of g.rows || []) {
-      const price = Number(stoneMap.get(r.productID)) || stoneFallback;
-      r.unitPriceNgnPerM = price > 0 ? Math.round(price) : null;
+      const suggested = Number(stoneMap.get(r.productID)) || stoneFallback;
+      const picked = pickPrice(stoneOverrides.get(r.productID), suggested, stoneFallback);
+      const price = picked.price || 0;
+      r.suggestedUnitPriceNgnPerM = suggested > 0 ? Math.round(suggested) : null;
+      r.unitPriceNgnPerM = price > 0 ? price : null;
+      r.priceSource = picked.source === 'manual' ? 'manual' : sources.stoneCoated || 'receipt_avg';
       r.closingValueNgn = price > 0 ? Math.round((Number(r.remainingM) || 0) * price) : 0;
       stoneRemainingM += Number(r.remainingM) || 0;
       stoneValueNgn += r.closingValueNgn;
@@ -534,8 +573,10 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
     valueNgn: Math.round(stoneValueNgn),
     unitPriceNgnPerM:
       stonePriceWeight > 0 ? Math.round(stonePriceWeighted / stonePriceWeight) : stoneFallback > 0 ? Math.round(stoneFallback) : null,
-    priceSource: sources.stoneCoated || (stoneValueNgn > 0 ? 'receipt_avg' : 'none'),
+    priceSource: stoneOverrides.size ? 'manual' : sources.stoneCoated || (stoneValueNgn > 0 ? 'receipt_avg' : 'none'),
     priceLookbackDays: lookback,
+    lineCount: register.stoneCoated?.rowCount || 0,
+    lines: [],
   };
 
   const accMap = pricing.accessoryUnitPriceByProduct || new Map();
@@ -543,24 +584,57 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   let accValueNgn = 0;
   let accPriceWeighted = 0;
   let accPriceWeight = 0;
+  const accessoryValuationLines = [];
   for (const r of register.accessories?.rows || []) {
     const pid = String(r.productID || '').trim();
-    const price = Number(accMap.get(pid)) || accFallback;
-    r.unitPriceNgn = price > 0 ? Math.round(price) : null;
+    const suggested = Number(accMap.get(pid)) || accFallback;
+    const picked = pickPrice(accOverrides.get(pid), suggested, accFallback);
+    const price = picked.price || 0;
+    r.suggestedUnitPriceNgn = suggested > 0 ? Math.round(suggested) : null;
+    r.unitPriceNgn = price > 0 ? price : null;
+    r.priceSource = picked.source === 'manual' ? 'manual' : sources.accessories || 'receipt_avg';
     r.closingValueNgn = price > 0 ? Math.round((Number(r.balance) || 0) * price) : 0;
     accValueNgn += r.closingValueNgn;
     if (price > 0 && r.balance > 0) {
       accPriceWeighted += price * r.balance;
       accPriceWeight += r.balance;
     }
+    accessoryValuationLines.push({
+      productID: pid,
+      itemName: r.itemName,
+      unit: r.unit,
+      balance: r.balance,
+      suggestedUnitPriceNgn: r.suggestedUnitPriceNgn,
+      unitPriceNgn: r.unitPriceNgn,
+      closingValueNgn: r.closingValueNgn,
+      priceSource: r.priceSource,
+    });
   }
   register.summary.accessories = {
     rowCount: register.accessories?.rowCount || 0,
     valueNgn: Math.round(accValueNgn),
     unitPriceNgn: accPriceWeight > 0 ? Math.round(accPriceWeighted / accPriceWeight) : accFallback > 0 ? Math.round(accFallback) : null,
-    priceSource: sources.accessories || (accValueNgn > 0 ? 'receipt_avg' : 'none'),
+    priceSource: accOverrides.size ? 'manual' : sources.accessories || (accValueNgn > 0 ? 'receipt_avg' : 'none'),
     priceLookbackDays: lookback,
+    lines: accessoryValuationLines,
   };
+
+  const stoneValuationLines = [];
+  for (const g of register.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      stoneValuationLines.push({
+        productID: r.productID,
+        colourDisplay: r.colourDisplay,
+        gaugeLabel: g.gaugeLabel,
+        remainingM: r.remainingM,
+        suggestedUnitPriceNgnPerM: r.suggestedUnitPriceNgnPerM,
+        unitPriceNgnPerM: r.unitPriceNgnPerM,
+        closingValueNgn: r.closingValueNgn,
+        priceSource: r.priceSource,
+      });
+    }
+  }
+  register.summary.stoneCoated.lines = stoneValuationLines;
 
   register.summary.totalClosingValueNgn = Math.round(
     (register.summary.aluminium?.valueNgn || 0) +

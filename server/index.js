@@ -23,6 +23,11 @@ const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefi
 console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
 console.log('[zarewa] runtime package: @zarewa/backend — if Hostinger shows frontend commits, wrong Git repo is linked in hPanel');
 
+const mysqlCfgPreview = mysqlConfigFromEnv();
+console.log(
+  `[zarewa] MySQL target: ${mysqlCfgPreview.host}:${mysqlCfgPreview.port}/${mysqlCfgPreview.database} user=${mysqlCfgPreview.user}`
+);
+
 let app;
 let dbPath = '';
 let bootDegraded = false;

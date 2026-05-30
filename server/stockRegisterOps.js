@@ -2,7 +2,7 @@
  * Month-end stock register — DB orchestration and sign-off workflow.
  */
 
-import { buildStockRegisterPack, periodBoundsFromEndDate, previousPeriodEndIso } from '../shared/lib/stockRegisterCore.js';
+import { buildStockRegisterPack, periodBoundsFromEndDate, previousPeriodEndIso, enrichStockRegisterValuation } from '../shared/lib/stockRegisterCore.js';
 import { appendAuditLog } from './controlOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -12,7 +12,7 @@ import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionJobCoils } from './productionTraceability.js';
 import { isBranchManagerApprovalAuthority, isExecutiveRoleKey } from '../shared/workspaceGovernance.js';
-import { purchaseWeightedAvgCostPerKgLastDays } from './materialPricingOps.js';
+import { purchaseWeightedAvgUnitPriceLastDays, purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -159,8 +159,49 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     accessoryOpeningByProduct,
   });
 
-  pack.summary.aluminium.unitCostNgnPerKg = purchaseWeightedAvgCostPerKgLastDays(db, 'COIL-ALU', bid, 31);
-  pack.summary.aluzinc.unitCostNgnPerKg = purchaseWeightedAvgCostPerKgLastDays(db, 'PRD-102', bid, 31);
+  const lookbackDays = 31;
+  const aluResolved = resolveBranchCoilCostPerKg(db, 'COIL-ALU', bid, lookbackDays);
+  const aluzResolved = resolveBranchCoilCostPerKg(db, 'PRD-102', bid, lookbackDays);
+  const stonePriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'STONE%', lookbackDays);
+  const accessoryPriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'ACC%', lookbackDays);
+
+  let stoneFallback = null;
+  if (stonePriceMap.size) {
+    let sw = 0;
+    let sv = 0;
+    for (const p of stonePriceMap.values()) {
+      sw += 1;
+      sv += p;
+    }
+    stoneFallback = sw > 0 ? Math.round(sv / sw) : null;
+  }
+
+  let accessoryFallback = null;
+  if (accessoryPriceMap.size) {
+    let aw = 0;
+    let av = 0;
+    for (const p of accessoryPriceMap.values()) {
+      aw += 1;
+      av += p;
+    }
+    accessoryFallback = aw > 0 ? Math.round(av / aw) : null;
+  }
+
+  enrichStockRegisterValuation(pack, {
+    aluminiumUnitCostNgnPerKg: aluResolved.cost,
+    aluzincUnitCostNgnPerKg: aluzResolved.cost,
+    stoneUnitPriceByProduct: stonePriceMap,
+    stoneFallbackUnitPriceNgnPerM: stoneFallback,
+    accessoryUnitPriceByProduct: accessoryPriceMap,
+    accessoryFallbackUnitPriceNgn: accessoryFallback,
+    priceLookbackDays: lookbackDays,
+    priceSources: {
+      aluminium: aluResolved.source,
+      aluzinc: aluzResolved.source,
+      stoneCoated: stonePriceMap.size ? 'receipt_avg' : 'none',
+      accessories: accessoryPriceMap.size ? 'receipt_avg' : 'none',
+    },
+  });
 
   const periodRow = getPeriodRow(db, bid, periodKey);
   return {

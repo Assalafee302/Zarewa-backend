@@ -255,6 +255,115 @@ export function purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, da
 }
 
 /**
+ * Branch coil purchase avg ₦/kg — recent receipts first, then all received lots with unit cost.
+ * @returns {{ cost: number|null; source: string }}
+ */
+export function resolveBranchCoilCostPerKg(db, productId, branchId, days = 31) {
+  const recent = purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, days);
+  if (recent) return { cost: recent, source: `purchase_${days}d` };
+  const pid = String(productId || '').trim();
+  const bid = String(branchId || '').trim();
+  if (!pid || !bid) return { cost: null, source: 'none' };
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()) {
+    return { cost: null, source: 'none' };
+  }
+  const rows = db
+    .prepare(
+      `SELECT unit_cost_ngn_per_kg, weight_kg, current_weight_kg, qty_received
+       FROM coil_lots
+       WHERE product_id = ?
+         AND IFNULL(branch_id, '') = ?
+         AND unit_cost_ngn_per_kg IS NOT NULL
+         AND unit_cost_ngn_per_kg > 0`
+    )
+    .all(pid, bid);
+  let sumW = 0;
+  let sumCost = 0;
+  for (const r of rows) {
+    const uk = Number(r.unit_cost_ngn_per_kg);
+    const w = Number(r.weight_kg) || Number(r.current_weight_kg) || Number(r.qty_received) || 0;
+    if (!Number.isFinite(uk) || uk <= 0 || w <= 0) continue;
+    sumW += w;
+    sumCost += uk * w;
+  }
+  if (sumW <= 0) return { cost: null, source: 'none' };
+  return { cost: Math.round(sumCost / sumW), source: 'coil_lots_all' };
+}
+
+/**
+ * Weighted avg unit price from GRN stock movements (positive qty) for a product in branch.
+ * @returns {number|null}
+ */
+export function purchaseWeightedAvgUnitPriceLastDays(db, productId, branchId, days = 31) {
+  const pid = String(productId || '').trim();
+  const bid = String(branchId || '').trim();
+  if (!pid) return null;
+  const since = isoDateDaysAgo(days);
+  /** @type {{ qty: number; unit_price_ngn: number }[]} */
+  let rows = [];
+  if (
+    bid &&
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_orders'`).get()
+  ) {
+    rows = db
+      .prepare(
+        `SELECT sm.qty, sm.unit_price_ngn
+         FROM stock_movements sm
+         INNER JOIN purchase_orders po ON po.po_id = sm.ref
+         WHERE sm.product_id = ?
+           AND po.branch_id = ?
+           AND sm.qty > 0
+           AND sm.unit_price_ngn IS NOT NULL
+           AND sm.unit_price_ngn > 0
+           AND SUBSTR(COALESCE(sm.date_iso, sm.at_iso), 1, 10) >= ?`
+      )
+      .all(pid, bid, since);
+  }
+  if (!rows.length) {
+    rows = db
+      .prepare(
+        `SELECT qty, unit_price_ngn FROM stock_movements
+         WHERE product_id = ?
+           AND qty > 0
+           AND unit_price_ngn IS NOT NULL
+           AND unit_price_ngn > 0
+           AND SUBSTR(COALESCE(date_iso, at_iso), 1, 10) >= ?`
+      )
+      .all(pid, since);
+  }
+  let sumQ = 0;
+  let sumVal = 0;
+  for (const r of rows) {
+    const q = Number(r.qty) || 0;
+    const p = Number(r.unit_price_ngn) || 0;
+    if (q <= 0 || p <= 0) continue;
+    sumQ += q;
+    sumVal += q * p;
+  }
+  if (sumQ <= 0) return null;
+  return Math.round(sumVal / sumQ);
+}
+
+/**
+ * Build productId → weighted avg unit price for products matching SQL LIKE pattern.
+ * @returns {Map<string, number>}
+ */
+export function purchaseUnitPriceMapByProductPrefix(db, branchId, productIdLike, days = 31) {
+  const bid = String(branchId || '').trim();
+  const like = String(productIdLike || '').trim();
+  const map = new Map();
+  if (!like || !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
+    return map;
+  }
+  const products = db.prepare(`SELECT product_id FROM products WHERE product_id LIKE ?`).all(like);
+  for (const p of products) {
+    const price = purchaseWeightedAvgUnitPriceLastDays(db, p.product_id, bid, days);
+    if (price) map.set(String(p.product_id), price);
+  }
+  return map;
+}
+
+/**
  * Data-driven kg/m conversions (2 dp): std = theory/catalog, ref = purchases (30d), hist = production checks (30d), usedSuggested = avg.
  */
 export function resolveCoilConversionsForGauge(db, materialKey, gaugeMm) {

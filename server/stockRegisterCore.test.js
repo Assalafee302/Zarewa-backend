@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStockRegisterPack,
   coilMaterialFamily,
+  enrichStockRegisterValuation,
   netKgFromGrossClosing,
   periodBoundsFromEndDate,
 } from '../shared/lib/stockRegisterCore.js';
@@ -81,5 +82,58 @@ describe('stockRegisterCore', () => {
     expect(row2222.receivedKg).toBeGreaterThan(0);
     expect(row2222.finishedInPeriod).toBe(true);
     expect(row2222.closingKg).toBeNull();
+  });
+
+  it('excludes negative or zero in-transit qty when received exceeds loaded', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      coilLots: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [
+        {
+          status: 'in_transit',
+          destinationBranchId: 'BR-KD',
+          referenceNo: 'MT-1',
+          lines: [{ itemName: 'Coil', qtyLoaded: 1000, qtyReceived: 1200, unit: 'kg' }],
+        },
+      ],
+    });
+    expect(pack.inTransit).toHaveLength(0);
+  });
+
+  it('values closing stock using fallback kg price when coil lines lack unit cost', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [{ coilNo: '3001', currentWeightKg: 500 }],
+      coilLots: [
+        {
+          coilNo: '3001',
+          colour: 'NB',
+          gaugeLabel: '0.22mm',
+          materialTypeName: 'Aluminium',
+          currentWeightKg: 500,
+          currentStatus: 'Available',
+          stockForm: 'coil',
+          receivedAtISO: '2026-01-01',
+        },
+      ],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    enrichStockRegisterValuation(pack, {
+      aluminiumUnitCostNgnPerKg: 1200,
+      aluzincUnitCostNgnPerKg: 900,
+      priceSources: { aluminium: 'purchase_31d', aluzinc: 'purchase_31d' },
+    });
+    expect(pack.summary.aluminium.unitCostNgnPerKg).toBe(1200);
+    expect(pack.summary.aluminium.netClosingKg).toBe(465);
+    expect(pack.summary.aluminium.valueNgn).toBe(465 * 1200);
   });
 });

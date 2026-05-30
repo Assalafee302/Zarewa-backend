@@ -409,11 +409,13 @@ function buildInTransitAppendix(inTransitLoads, branchId) {
     if (st === 'received' || st === 'cancelled') continue;
     if (bid && String(load.destinationBranchId || load.branchId || '').trim() !== bid) continue;
     for (const line of load.lines || []) {
+      const qtyExpected = round2(Math.max(0, Number(line.qtyLoaded) - Number(line.qtyReceived)));
+      if (qtyExpected <= 0) continue;
       rows.push({
         referenceNo: load.referenceNo || load.id,
         poId: load.purchaseOrderId || '',
         itemName: line.itemName || line.productId || '',
-        qtyExpected: round2(Number(line.qtyLoaded) - Number(line.qtyReceived)),
+        qtyExpected,
         unit: line.unit || '',
         waybillRef: load.waybillRef || load.transportReference || '',
         etaDateIso: load.etaDateIso || '',
@@ -425,10 +427,11 @@ function buildInTransitAppendix(inTransitLoads, branchId) {
   return rows;
 }
 
-function coilSectionSummary(groups, materialFamily, spoolKg) {
+function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgnPerKg = null) {
   let grossClosingKg = 0;
   let netClosingKg = 0;
   let valueNgn = 0;
+  const fallback = Number(fallbackUnitCostNgnPerKg) || 0;
   for (const g of groups || []) {
     for (const r of g.rows || []) {
       if (r.closingKg == null) continue;
@@ -436,7 +439,7 @@ function coilSectionSummary(groups, materialFamily, spoolKg) {
       grossClosingKg += gross;
       const net = netKgFromGrossClosing(gross, materialFamily, r.stockForm, spoolKg);
       netClosingKg += net;
-      const uc = Number(r.unitCostNgnPerKg) || 0;
+      const uc = Number(r.unitCostNgnPerKg) || fallback;
       if (uc > 0) valueNgn += Math.round(net * uc);
     }
   }
@@ -447,7 +450,123 @@ function coilSectionSummary(groups, materialFamily, spoolKg) {
     spoolAdjustmentKg: spoolAdj,
     netClosingKg: round2(netClosingKg),
     valueNgn: Math.round(valueNgn),
+    unitCostNgnPerKg: fallback > 0 ? Math.round(fallback) : null,
   };
+}
+
+/**
+ * Apply purchase / receipt unit prices to summary closing values (coils, stone, accessories).
+ * @param {ReturnType<typeof buildStockRegisterPack>} register
+ * @param {{
+ *   aluminiumUnitCostNgnPerKg?: number|null;
+ *   aluzincUnitCostNgnPerKg?: number|null;
+ *   stoneUnitPriceByProduct?: Map<string, number>;
+ *   stoneFallbackUnitPriceNgnPerM?: number|null;
+ *   accessoryUnitPriceByProduct?: Map<string, number>;
+ *   accessoryFallbackUnitPriceNgn?: number|null;
+ *   priceLookbackDays?: number;
+ *   priceSources?: Record<string, string>;
+ * }} pricing
+ */
+export function enrichStockRegisterValuation(register, pricing = {}) {
+  if (!register) return register;
+  const spoolKg = pricing.spoolKg || SPOOL_KG_DEFAULT;
+  const lookback = pricing.priceLookbackDays ?? 31;
+  const sources = pricing.priceSources || {};
+
+  const aluCost = Number(pricing.aluminiumUnitCostNgnPerKg) || 0;
+  const aluzCost = Number(pricing.aluzincUnitCostNgnPerKg) || 0;
+
+  register.summary = register.summary || {};
+  register.summary.aluminium = coilSectionSummary(
+    register.coilSections?.aluminium?.groups,
+    'aluminium',
+    spoolKg,
+    aluCost
+  );
+  register.summary.aluminium.unitCostNgnPerKg = aluCost > 0 ? Math.round(aluCost) : null;
+  register.summary.aluminium.priceSource = sources.aluminium || (aluCost > 0 ? 'purchase_avg' : 'none');
+  register.summary.aluminium.priceLookbackDays = lookback;
+
+  register.summary.aluzinc = coilSectionSummary(
+    register.coilSections?.aluzinc?.groups,
+    'aluzinc',
+    spoolKg,
+    aluzCost
+  );
+  register.summary.aluzinc.unitCostNgnPerKg = aluzCost > 0 ? Math.round(aluzCost) : null;
+  register.summary.aluzinc.priceSource = sources.aluzinc || (aluzCost > 0 ? 'purchase_avg' : 'none');
+  register.summary.aluzinc.priceLookbackDays = lookback;
+
+  const stoneMap = pricing.stoneUnitPriceByProduct || new Map();
+  const stoneFallback = Number(pricing.stoneFallbackUnitPriceNgnPerM) || 0;
+  let stoneRemainingM = 0;
+  let stoneValueNgn = 0;
+  let stonePriceWeighted = 0;
+  let stonePriceWeight = 0;
+  for (const g of register.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      const price = Number(stoneMap.get(r.productID)) || stoneFallback;
+      r.unitPriceNgnPerM = price > 0 ? Math.round(price) : null;
+      r.closingValueNgn = price > 0 ? Math.round((Number(r.remainingM) || 0) * price) : 0;
+      stoneRemainingM += Number(r.remainingM) || 0;
+      stoneValueNgn += r.closingValueNgn;
+      if (price > 0 && r.remainingM > 0) {
+        stonePriceWeighted += price * r.remainingM;
+        stonePriceWeight += r.remainingM;
+      }
+    }
+  }
+  register.summary.stoneCoated = {
+    totalRemainingM: round2(stoneRemainingM),
+    valueNgn: Math.round(stoneValueNgn),
+    unitPriceNgnPerM:
+      stonePriceWeight > 0 ? Math.round(stonePriceWeighted / stonePriceWeight) : stoneFallback > 0 ? Math.round(stoneFallback) : null,
+    priceSource: sources.stoneCoated || (stoneValueNgn > 0 ? 'receipt_avg' : 'none'),
+    priceLookbackDays: lookback,
+  };
+
+  const accMap = pricing.accessoryUnitPriceByProduct || new Map();
+  const accFallback = Number(pricing.accessoryFallbackUnitPriceNgn) || 0;
+  let accValueNgn = 0;
+  let accPriceWeighted = 0;
+  let accPriceWeight = 0;
+  for (const r of register.accessories?.rows || []) {
+    let rowValue = 0;
+    let rowPriceSum = 0;
+    let rowPriceWeight = 0;
+    for (const pid of r.productIds || []) {
+      const price = Number(accMap.get(pid)) || accFallback;
+      if (price <= 0) continue;
+      rowPriceSum += price;
+      rowPriceWeight += 1;
+    }
+    const unitPrice = rowPriceWeight > 0 ? rowPriceSum / rowPriceWeight : accFallback;
+    r.unitPriceNgn = unitPrice > 0 ? Math.round(unitPrice) : null;
+    r.closingValueNgn = unitPrice > 0 ? Math.round((Number(r.balance) || 0) * unitPrice) : 0;
+    rowValue = r.closingValueNgn;
+    accValueNgn += rowValue;
+    if (unitPrice > 0 && r.balance > 0) {
+      accPriceWeighted += unitPrice * r.balance;
+      accPriceWeight += r.balance;
+    }
+  }
+  register.summary.accessories = {
+    rowCount: register.accessories?.rowCount || 0,
+    valueNgn: Math.round(accValueNgn),
+    unitPriceNgn: accPriceWeight > 0 ? Math.round(accPriceWeighted / accPriceWeight) : accFallback > 0 ? Math.round(accFallback) : null,
+    priceSource: sources.accessories || (accValueNgn > 0 ? 'receipt_avg' : 'none'),
+    priceLookbackDays: lookback,
+  };
+
+  register.summary.totalClosingValueNgn = Math.round(
+    (register.summary.aluminium?.valueNgn || 0) +
+      (register.summary.aluzinc?.valueNgn || 0) +
+      (register.summary.stoneCoated?.valueNgn || 0) +
+      (register.summary.accessories?.valueNgn || 0)
+  );
+
+  return register;
 }
 
 /**
@@ -516,18 +635,23 @@ export function buildStockRegisterPack(opts = {}) {
   const inTransit = buildInTransitAppendix(opts.inTransitLoads, opts.branchId);
 
   const summary = {
-    aluminium: coilSectionSummary(coilSections.aluminium.groups, 'aluminium', spoolKg),
-    aluzinc: coilSectionSummary(coilSections.aluzinc.groups, 'aluzinc', spoolKg),
+    aluminium: coilSectionSummary(coilSections.aluminium.groups, 'aluminium', spoolKg, null),
+    aluzinc: coilSectionSummary(coilSections.aluzinc.groups, 'aluzinc', spoolKg, null),
     stoneCoated: {
       totalRemainingM: round2(
         stone.groups.flatMap((g) => g.rows).reduce((s, r) => s + r.remainingM, 0)
       ),
       valueNgn: 0,
+      unitPriceNgnPerM: null,
+      priceSource: 'none',
     },
     accessories: {
       rowCount: accessories.rowCount,
       valueNgn: 0,
+      unitPriceNgn: null,
+      priceSource: 'none',
     },
+    totalClosingValueNgn: 0,
   };
 
   return {

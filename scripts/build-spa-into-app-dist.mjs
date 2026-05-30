@@ -21,6 +21,19 @@ const appDist = path.join(backendRoot, 'app', 'dist');
 const DEFAULT_SPA_GIT_URL = 'https://github.com/Assalafee302/Zarewa-frontend.git';
 const cloneDir = path.join(backendRoot, '.build', 'spa');
 
+function readDeployIdentity() {
+  const pkg = JSON.parse(fs.readFileSync(path.join(backendRoot, 'package.json'), 'utf8'));
+  let sha = 'unknown';
+  const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
+    cwd: backendRoot,
+    encoding: 'utf8',
+  });
+  if (r.status === 0) sha = String(r.stdout || '').trim();
+  console.log(`[zarewa] DEPLOY REPO: ${pkg.name} @ ${sha}`);
+  console.log('[zarewa] Hostinger GitHub link must be: Assalafee302/Zarewa-backend');
+  return { packageName: pkg.name, sha };
+}
+
 function run(cmd, args, cwd, env = process.env) {
   const r = spawnSync(cmd, args, {
     cwd,
@@ -92,6 +105,7 @@ function resolveSpaRoot() {
 }
 
 const { spaRoot, source } = resolveSpaRoot();
+const deployIdentity = readDeployIdentity();
 
 // #region agent log
 debugAgentLog({
@@ -104,6 +118,8 @@ debugAgentLog({
     skip: process.env.ZAREWA_SKIP_SPA_BUILD || null,
     nodeEnv: process.env.NODE_ENV || null,
     cwd: process.cwd(),
+    deployPackage: deployIdentity.packageName,
+    deploySha: deployIdentity.sha,
   },
   runId: process.env.ZAREWA_DEBUG_RUN_ID || 'pre-fix',
 });

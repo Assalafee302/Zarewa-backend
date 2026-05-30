@@ -13,6 +13,7 @@ const port = Number(process.env.PORT || 8787) || 8787;
 const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefined;
 
 console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
+console.log('[zarewa] runtime package: @zarewa/backend — if Hostinger shows frontend commits, wrong Git repo is linked in hPanel');
 
 let app;
 let dbPath = '';

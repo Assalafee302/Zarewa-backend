@@ -89,6 +89,21 @@ export function colourAbbrevForRegister(masterData, rawColour) {
   return raw.slice(0, 5).toUpperCase();
 }
 
+/** Full colour name for stone-coated register lines (not abbreviated). */
+export function colourFullNameForRegister(masterData, rawColour) {
+  const raw = String(rawColour || '').trim();
+  if (!raw) return '—';
+  const colours = masterData?.colours || [];
+  const nk = normKey(raw);
+  for (const c of colours) {
+    const name = String(c.name || '').trim();
+    const abbr = String(c.abbreviation || '').trim();
+    if (name && normKey(name) === nk) return name;
+    if (abbr && normKey(abbr) === nk) return name || abbr;
+  }
+  return raw;
+}
+
 export function accessoryRegisterTypeKey(productName) {
   const name = String(productName || '').trim();
   for (const t of ACCESSORY_REGISTER_TYPES) {
@@ -341,6 +356,7 @@ function buildStoneSection(products, movements, openingByProduct, start, end, ma
     rows.push({
       gaugeLabel: gauge,
       colour,
+      colourDisplay: colourFullNameForRegister(masterData, colour),
       colourAbbrev: colourAbbrevForRegister(masterData, colour),
       productID: pid,
       openingM: opening,
@@ -360,45 +376,37 @@ function buildStoneSection(products, movements, openingByProduct, start, end, ma
     .sort((a, b) => gaugeSortKey(a[0]) - gaugeSortKey(b[0]))
     .map(([gaugeLabel, stoneRows]) => ({
       gaugeLabel,
-      rows: stoneRows.sort((a, b) => String(a.colourAbbrev).localeCompare(String(b.colourAbbrev))),
+      rows: stoneRows.sort((a, b) => String(a.colourDisplay).localeCompare(String(b.colourDisplay))),
     }));
   return { groups, rowCount: rows.length };
 }
 
-function buildAccessorySection(products, movements, openingByProduct, start, end) {
-  const bucket = new Map();
+function buildAccessorySection(products, movements, openingByProduct, start, end, itemNameByProduct) {
+  const rows = [];
   for (const p of products || []) {
     if (!isAccessoryProduct(p)) continue;
     const pid = String(p.productID || '');
-    const typeKey = accessoryRegisterTypeKey(p.name);
     const unit = String(p.unit || 'unit').trim();
-    const key = `${typeKey}|${unit}`;
     const opening = round2(openingByProduct.get(pid) || 0);
     const { received, used } = productMovementsInPeriod(movements, pid, start, end);
     const balance = round2(Number(p.stockLevel) || opening + received - used);
     if (opening <= 0 && received <= 0 && used <= 0 && balance <= 0) continue;
-    if (!bucket.has(key)) {
-      bucket.set(key, {
-        typeKey,
-        typeLabel: accessoryRegisterTypeLabel(typeKey),
-        unit,
-        opening: 0,
-        received: 0,
-        used: 0,
-        balance: 0,
-        productIds: [],
-        remark: '',
-      });
-    }
-    const b = bucket.get(key);
-    b.opening = round2(b.opening + opening);
-    b.received = round2(b.received + received);
-    b.used = round2(b.used + used);
-    b.balance = round2(b.balance + balance);
-    b.productIds.push(pid);
+    const itemName =
+      String(itemNameByProduct?.get(pid) || '').trim() || String(p.name || '').trim() || pid;
+    rows.push({
+      productID: pid,
+      itemName,
+      unit,
+      opening,
+      received,
+      used,
+      total: round2(opening + received),
+      balance,
+      remark: '',
+    });
   }
-  const rows = [...bucket.values()].sort((a, b) => String(a.typeLabel).localeCompare(String(b.typeLabel)));
-  return { rows, rowCount: rows.length };
+  const sorted = rows.sort((a, b) => String(a.itemName).localeCompare(String(b.itemName)));
+  return { rows: sorted, rowCount: sorted.length };
 }
 
 function buildInTransitAppendix(inTransitLoads, branchId) {
@@ -487,6 +495,8 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   register.summary.aluminium.unitCostNgnPerKg = aluCost > 0 ? Math.round(aluCost) : null;
   register.summary.aluminium.priceSource = sources.aluminium || (aluCost > 0 ? 'purchase_avg' : 'none');
   register.summary.aluminium.priceLookbackDays = lookback;
+  register.summary.aluminium.pricingNote =
+    'Coil PO may be per kg or per metre; closing stock valued at ₦/kg on net weight.';
 
   register.summary.aluzinc = coilSectionSummary(
     register.coilSections?.aluzinc?.groups,
@@ -497,6 +507,8 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   register.summary.aluzinc.unitCostNgnPerKg = aluzCost > 0 ? Math.round(aluzCost) : null;
   register.summary.aluzinc.priceSource = sources.aluzinc || (aluzCost > 0 ? 'purchase_avg' : 'none');
   register.summary.aluzinc.priceLookbackDays = lookback;
+  register.summary.aluzinc.pricingNote =
+    'Coil PO may be per kg or per metre; closing stock valued at ₦/kg on net weight.';
 
   const stoneMap = pricing.stoneUnitPriceByProduct || new Map();
   const stoneFallback = Number(pricing.stoneFallbackUnitPriceNgnPerM) || 0;
@@ -532,22 +544,13 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   let accPriceWeighted = 0;
   let accPriceWeight = 0;
   for (const r of register.accessories?.rows || []) {
-    let rowValue = 0;
-    let rowPriceSum = 0;
-    let rowPriceWeight = 0;
-    for (const pid of r.productIds || []) {
-      const price = Number(accMap.get(pid)) || accFallback;
-      if (price <= 0) continue;
-      rowPriceSum += price;
-      rowPriceWeight += 1;
-    }
-    const unitPrice = rowPriceWeight > 0 ? rowPriceSum / rowPriceWeight : accFallback;
-    r.unitPriceNgn = unitPrice > 0 ? Math.round(unitPrice) : null;
-    r.closingValueNgn = unitPrice > 0 ? Math.round((Number(r.balance) || 0) * unitPrice) : 0;
-    rowValue = r.closingValueNgn;
-    accValueNgn += rowValue;
-    if (unitPrice > 0 && r.balance > 0) {
-      accPriceWeighted += unitPrice * r.balance;
+    const pid = String(r.productID || '').trim();
+    const price = Number(accMap.get(pid)) || accFallback;
+    r.unitPriceNgn = price > 0 ? Math.round(price) : null;
+    r.closingValueNgn = price > 0 ? Math.round((Number(r.balance) || 0) * price) : 0;
+    accValueNgn += r.closingValueNgn;
+    if (price > 0 && r.balance > 0) {
+      accPriceWeighted += price * r.balance;
       accPriceWeight += r.balance;
     }
   }
@@ -584,6 +587,7 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
  * @param {object|null} [opts.masterData]
  * @param {Map<string, number>} [opts.stoneOpeningByProduct]
  * @param {Map<string, number>} [opts.accessoryOpeningByProduct]
+ * @param {Map<string, string>} [opts.accessoryItemNameByProduct]
  * @param {{ aluminium?: number; aluzinc?: number }} [opts.spoolKg]
  */
 export function buildStockRegisterPack(opts = {}) {
@@ -630,7 +634,8 @@ export function buildStockRegisterPack(opts = {}) {
     opts.stockMovements,
     opts.accessoryOpeningByProduct || new Map(),
     start,
-    end
+    end,
+    opts.accessoryItemNameByProduct || null
   );
   const inTransit = buildInTransitAppendix(opts.inTransitLoads, opts.branchId);
 

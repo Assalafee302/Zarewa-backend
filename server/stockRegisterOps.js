@@ -98,6 +98,38 @@ function openingMapsFromSnapshots(db, branchId, asAtIso) {
   return { stone, accessory };
 }
 
+/** Accessory line labels — prefer latest PO product_name, then catalog name. */
+function accessoryItemNameByProduct(db, branchId, products) {
+  const map = new Map();
+  for (const p of products || []) {
+    const pid = String(p.productID || '').trim();
+    if (pid) map.set(pid, String(p.name || '').trim() || pid);
+  }
+  if (!tableReady(db, 'purchase_order_lines') || !tableReady(db, 'purchase_orders')) return map;
+  const bid = String(branchId || '').trim();
+  const poRows = db
+    .prepare(
+      `SELECT pol.product_id, pol.product_name
+       FROM purchase_order_lines pol
+       INNER JOIN purchase_orders po ON po.po_id = pol.po_id
+       WHERE po.branch_id = ?
+         AND pol.product_id LIKE 'ACC%'
+         AND pol.product_name IS NOT NULL
+         AND TRIM(pol.product_name) != ''
+       ORDER BY po.order_date_iso DESC, pol.line_key ASC`
+    )
+    .all(bid);
+  const seen = new Set();
+  for (const r of poRows) {
+    const pid = String(r.product_id || '').trim();
+    const name = String(r.product_name || '').trim();
+    if (!pid || !name || seen.has(pid)) continue;
+    seen.add(pid);
+    map.set(pid, name);
+  }
+  return map;
+}
+
 function listCoilControlEventsInPeriod(db, branchId, start, end) {
   if (!tableReady(db, 'coil_control_events')) return [];
   const bid = String(branchId || '').trim();
@@ -143,6 +175,8 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     prevEnd
   );
 
+  const accessoryNames = accessoryItemNameByProduct(db, bid, products);
+
   const pack = buildStockRegisterPack({
     branchId: bid,
     periodEnd: end,
@@ -157,6 +191,7 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     masterData,
     stoneOpeningByProduct,
     accessoryOpeningByProduct,
+    accessoryItemNameByProduct: accessoryNames,
   });
 
   const lookbackDays = 31;
@@ -399,10 +434,10 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
         }
       }
       for (const r of reg.accessories?.rows || []) {
-        for (const pid of r.productIds || []) {
-          const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
-          pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
-        }
+        const pid = String(r.productID || '').trim();
+        if (!pid) continue;
+        const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
+        pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || r.balance || 0, now);
       }
     }
 

@@ -1,11 +1,10 @@
-import fs from 'node:fs';
 import net from 'node:net';
-import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import { registerHttpApi } from './httpApi.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
+import { attachStaticSpa } from './staticSpa.js';
 
 /** Browser `Origin` has no path; env entries sometimes include a trailing `/`. */
 function normalizeCorsOrigin(raw) {
@@ -134,28 +133,7 @@ export function createApp(db) {
   registerHttpApi(app, db);
   scheduleHelpAnalytics(db);
 
-  const staticRoot = path.resolve(
-    process.env.ZAREWA_STATIC_DIR || path.join(process.cwd(), 'dist')
-  );
-  const spaIndex = path.join(staticRoot, 'index.html');
-  if (fs.existsSync(spaIndex)) {
-    app.use(
-      express.static(staticRoot, {
-        index: false,
-        maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
-        setHeaders(res, filePath) {
-          if (/[/\\]assets[/\\]/.test(filePath)) {
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          }
-        },
-      })
-    );
-    app.use((req, res, next) => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-      if (req.path.startsWith('/api')) return next();
-      res.sendFile(spaIndex, (err) => (err ? next(err) : undefined));
-    });
-  }
+  attachStaticSpa(app);
 
   return app;
 }

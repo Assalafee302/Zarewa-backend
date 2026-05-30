@@ -6,8 +6,16 @@ import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { debugBootLog } from './debugBootLog.js';
+import { attachStaticSpa } from './staticSpa.js';
 
 loadProjectEnv();
+
+if (
+  process.env.NODE_ENV === 'production' &&
+  !String(process.env.ZAREWA_LISTEN_HOST || '').trim()
+) {
+  process.env.ZAREWA_LISTEN_HOST = '0.0.0.0';
+}
 
 const port = Number(process.env.PORT || 8787) || 8787;
 const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefined;
@@ -84,6 +92,7 @@ try {
   ]) {
     app.get(p, degradedProbeHandler);
   }
+  attachStaticSpa(app);
   app.use((_req, res) => {
     res.status(503).json({
       ok: false,

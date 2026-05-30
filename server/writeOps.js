@@ -30,6 +30,7 @@ import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBmPriceExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function enrichQuotationLinesWithMaterialHeader(linesJson) {
   if (!linesJson || typeof linesJson !== 'object') return;
@@ -1132,7 +1133,7 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
         l.color ?? '',
         l.gauge ?? '',
         l.metersOffered ?? null,
-        l.conversionKgPerM ?? null,
+        roundConv2(l.conversionKgPerM) ?? null,
         l.unitPricePerKgNgn ?? null,
         l.unitPriceNgn,
         l.qtyOrdered,
@@ -1283,7 +1284,7 @@ export function updatePurchaseOrderCoilDraft(db, poID, payload, branchId = DEFAU
         l.color ?? '',
         l.gauge ?? '',
         l.metersOffered ?? null,
-        l.conversionKgPerM ?? null,
+        roundConv2(l.conversionKgPerM) ?? null,
         perKg,
         unitNgn,
         qtyOrd,
@@ -2088,10 +2089,11 @@ export function confirmGrn(
         e.supplierExpectedMeters != null && e.supplierExpectedMeters !== ''
           ? Number(e.supplierExpectedMeters)
           : line.meters_offered;
-      const supplierConversionKgPerM =
+      const supplierConversionKgPerM = roundConv2(
         e.supplierConversionKgPerM != null && e.supplierConversionKgPerM !== ''
-          ? Number(e.supplierConversionKgPerM)
-          : line.conversion_kg_per_m;
+          ? e.supplierConversionKgPerM
+          : line.conversion_kg_per_m
+      );
       const econ = coilLineReceiptEconomics(
         line,
         qty,
@@ -2108,7 +2110,7 @@ export function confirmGrn(
         String(e.gaugeLabel ?? line.gauge ?? '').trim() || null,
         String(e.materialTypeName ?? product?.material_type ?? '').trim() || null,
         supplierExpectedMeters != null && !Number.isNaN(supplierExpectedMeters) ? supplierExpectedMeters : null,
-        supplierConversionKgPerM != null && !Number.isNaN(supplierConversionKgPerM) ? supplierConversionKgPerM : null,
+        supplierConversionKgPerM,
         effectiveWeightKg,
         0,
         effectiveWeightKg,
@@ -2539,8 +2541,7 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
     const supplierExpectedMeters =
       semRaw != null && semRaw !== '' && Number.isFinite(Number(semRaw)) ? Number(semRaw) : null;
     const scRaw = r.supplierConversionKgPerM ?? r.supplier_conversion_kg_per_m;
-    const supplierConversionKgPerM =
-      scRaw != null && scRaw !== '' && Number.isFinite(Number(scRaw)) ? Number(scRaw) : null;
+    const supplierConversionKgPerM = roundConv2(scRaw);
     let currentStatus = String(r.currentStatus ?? r.current_status ?? 'Available').trim() || 'Available';
     const allowed = new Set(['Available', 'Reserved', 'Consumed']);
     if (!allowed.has(currentStatus)) currentStatus = 'Available';
@@ -3139,6 +3140,18 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     args.push(v || null);
     next.materialTypeName = v;
   }
+  if (Object.prototype.hasOwnProperty.call(b, 'stockForm') || Object.prototype.hasOwnProperty.call(b, 'stock_form')) {
+    const raw = Object.prototype.hasOwnProperty.call(b, 'stockForm') ? b.stockForm : b.stock_form;
+    const form = String(raw || '').trim().toLowerCase();
+    if (form !== 'coil' && form !== 'roll') {
+      return { ok: false, error: 'stockForm must be coil or roll.' };
+    }
+    if (db.prepare(`PRAGMA table_info(coil_lots)`).all().some((c) => c.name === 'stock_form')) {
+      sets.push('stock_form = ?');
+      args.push(form);
+    }
+  }
+
   if (Object.prototype.hasOwnProperty.call(b, 'receivedKg')) {
     const rk = Number(b.receivedKg);
     if (!Number.isFinite(rk) || rk < 0) {

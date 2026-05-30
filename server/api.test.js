@@ -3223,6 +3223,59 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(Array.isArray(ar.body.rows)).toBe(true);
   });
 
+  it('stock register API: GET, print snapshot, workflow, capture closing', async () => {
+    const admin = request.agent(app);
+    await loginAs(admin);
+    const periodEnd = '2026-04-30';
+
+    const getRes = await admin.get(`/api/stock-register?periodEnd=${periodEnd}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.ok).toBe(true);
+    expect(getRes.body.register).toBeTruthy();
+    expect(getRes.body.register.periodKey).toBe('2026-04');
+    expect(getRes.body.register.coilSections).toBeTruthy();
+    expect(getRes.body.register.summary).toBeTruthy();
+
+    const printRes = await admin.post('/api/stock-register/print-snapshot').send({ periodEnd });
+    expect(printRes.status).toBe(200);
+    expect(printRes.body.ok).toBe(true);
+    expect(printRes.body.workflow?.status).toBe('printed');
+
+    const storeRes = await admin.post('/api/stock-register/workflow').send({
+      action: 'store_confirm',
+      periodKey: '2026-04',
+      countNotes: 'API test count OK',
+    });
+    expect(storeRes.status).toBe(200);
+    expect(storeRes.body.ok).toBe(true);
+    expect(storeRes.body.workflow?.status).toBe('store_confirmed');
+
+    const bmRes = await admin.post('/api/stock-register/workflow').send({
+      action: 'bm_approve',
+      periodKey: '2026-04',
+    });
+    expect(bmRes.status).toBe(200);
+    expect(bmRes.body.workflow?.status).toBe('bm_approved');
+
+    const mdRes = await admin.post('/api/stock-register/workflow').send({
+      action: 'md_approve',
+      periodKey: '2026-04',
+    });
+    expect(mdRes.status).toBe(200);
+    expect(mdRes.body.workflow?.status).toBe('md_approved');
+
+    const capRes = await admin.post('/api/stock-register/capture-closing').send({ periodEnd });
+    expect(capRes.status).toBe(200);
+    expect(capRes.body.ok).toBe(true);
+    expect(capRes.body.workflow?.status).toBe('locked');
+
+    const stockForm = await admin.patch('/api/coil-lots/1967/stock-form').send({ stockForm: 'roll' });
+    if (stockForm.status === 200) {
+      expect(stockForm.body.ok).toBe(true);
+      expect(stockForm.body.stockForm).toBe('roll');
+    }
+  });
+
   it('POST /api/coil-lots/import upserts spreadsheet rows', async () => {
     const admin = request.agent(app);
     await loginAs(admin);

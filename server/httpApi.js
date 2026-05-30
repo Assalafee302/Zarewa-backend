@@ -24,6 +24,14 @@ import {
   purchasesReceivedRows,
 } from '../shared/lib/standardReportsPurchases.js';
 import { stockCoilAsAtRows } from '../shared/lib/standardReportsStock.js';
+import {
+  advanceStockRegisterWorkflow,
+  buildStockRegisterForBranch,
+  captureStockRegisterClosing,
+  getStockRegisterWorkflow,
+  patchCoilStockForm,
+  saveStockRegisterPrintSnapshot,
+} from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
   CUSTOMER_AND_AR_READ_PERMS,
@@ -2769,6 +2777,97 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not capture coil snapshot.' });
+    }
+  });
+
+  app.get('/api/stock-register', requireManagementReportsView, (req, res) => {
+    try {
+      const periodEnd = String(req.query.periodEnd || req.query.endDate || req.query.asAtDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodEnd) {
+        return res.status(400).json({ ok: false, error: 'periodEnd (YYYY-MM-DD) required' });
+      }
+      if (branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'Select a branch workspace (not HQ roll-up).' });
+      }
+      const r = buildStockRegisterForBranch(db, branchScope, periodEnd);
+      if (!r.ok) return res.status(400).json(r);
+      res.json({ ok: true, branchScope, ...r });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build stock register.' });
+    }
+  });
+
+  app.get('/api/stock-register/workflow', requireManagementReportsView, (req, res) => {
+    try {
+      const periodKey = String(req.query.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodKey and branch workspace required.' });
+      }
+      res.json(getStockRegisterWorkflow(db, branchScope, periodKey));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load workflow.' });
+    }
+  });
+
+  app.post('/api/stock-register/print-snapshot', requireAuth, requireManagementReportsView, (req, res) => {
+    try {
+      const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodEnd || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodEnd and branch workspace required.' });
+      }
+      const r = saveStockRegisterPrintSnapshot(db, branchScope, periodEnd, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save print snapshot.' });
+    }
+  });
+
+  app.post('/api/stock-register/workflow', requireAuth, requireManagementReportsView, (req, res) => {
+    try {
+      const action = String(req.body?.action || '').trim();
+      const periodKey = String(req.body?.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!action || !periodKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'action, periodKey, and branch workspace required.' });
+      }
+      const r = advanceStockRegisterWorkflow(db, branchScope, periodKey, action, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Workflow action failed.' });
+    }
+  });
+
+  app.post('/api/stock-register/capture-closing', requireAuth, requireCoilSnapshotCapture, (req, res) => {
+    try {
+      const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodEnd || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodEnd and branch workspace required.' });
+      }
+      const r = captureStockRegisterClosing(db, branchScope, periodEnd, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not capture closing stock.' });
+    }
+  });
+
+  app.patch('/api/coil-lots/:coilNo/stock-form', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const r = patchCoilStockForm(db, req.params.coilNo, req.body?.stockForm ?? req.body?.stock_form, {
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update coil stock form.' });
     }
   });
 

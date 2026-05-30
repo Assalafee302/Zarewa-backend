@@ -16,6 +16,7 @@ import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 /** @param {import('better-sqlite3').Database} db */
 
@@ -752,7 +753,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
         color: l.color ?? '',
         gauge: l.gauge ?? '',
         metersOffered: l.meters_offered,
-        conversionKgPerM: l.conversion_kg_per_m,
+        conversionKgPerM: roundConv2(l.conversion_kg_per_m),
         unitPricePerKgNgn: l.unit_price_per_kg_ngn,
         unitPriceNgn: l.unit_price_ngn,
         qtyOrdered: l.qty_ordered,
@@ -877,11 +878,15 @@ export function listCoilLots(db, branchScope = 'ALL') {
       gaugeLabel: row.gauge_label ?? '',
       materialTypeName: row.material_type_name ?? '',
       supplierExpectedMeters: row.supplier_expected_meters,
-      supplierConversionKgPerM: row.supplier_conversion_kg_per_m,
+      supplierConversionKgPerM: roundConv2(row.supplier_conversion_kg_per_m),
       qtyRemaining: Number(row.qty_remaining) || 0,
       qtyReserved: Number(row.qty_reserved) || 0,
       currentWeightKg: Number(row.current_weight_kg) || 0,
       currentStatus: row.current_status ?? 'Available',
+      stockForm:
+        hasColumn(db, 'coil_lots', 'stock_form') && String(row.stock_form || '').toLowerCase() === 'roll'
+          ? 'roll'
+          : 'coil',
       location: row.location,
       poID: row.po_id,
       supplierID: row.supplier_id,
@@ -1822,7 +1827,7 @@ export function listProcurementCatalog(db) {
       productID: row.product_id,
       offerKg: row.offer_kg,
       offerMeters: row.offer_meters,
-      conversionKgPerM: row.conversion_kg_per_m,
+      conversionKgPerM: roundConv2(row.conversion_kg_per_m),
       label: row.label,
     }));
 }

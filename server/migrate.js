@@ -984,6 +984,7 @@ export function runMigrations(db) {
   migrateOnlineOfficeDesk2026(db);
   migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
+  migrateStockRegister2026(db);
   try {
     debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents start' });
     migrateMaterialIncidents(db);
@@ -1035,6 +1036,67 @@ function migrateInventoryCoilSnapshots(db) {
       UNIQUE(as_at_iso, branch_id, coil_no)
     );
     CREATE INDEX IF NOT EXISTS idx_inv_coil_snap_as_at ON inventory_coil_snapshots(as_at_iso DESC, branch_id);
+  `);
+}
+
+/** Month-end stock register workflow + coil roll flag. */
+function migrateStockRegister2026(db) {
+  const coilCols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
+  if (!coilCols.some((c) => c.name === 'stock_form')) {
+    db.exec(`ALTER TABLE coil_lots ADD COLUMN stock_form TEXT NOT NULL DEFAULT 'coil'`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_register_periods (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      period_key TEXT NOT NULL,
+      period_end_iso TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      register_json TEXT,
+      print_snapshot_json TEXT,
+      printed_at_iso TEXT,
+      printed_by_user_id TEXT,
+      store_confirmed_at_iso TEXT,
+      store_confirmed_by_user_id TEXT,
+      store_confirmed_by_name TEXT,
+      bm_approved_at_iso TEXT,
+      bm_approved_by_user_id TEXT,
+      bm_approved_by_name TEXT,
+      md_approved_at_iso TEXT,
+      md_approved_by_user_id TEXT,
+      md_approved_by_name TEXT,
+      locked_at_iso TEXT,
+      count_notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      UNIQUE(branch_id, period_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_register_branch_period
+      ON stock_register_periods(branch_id, period_key DESC);
+  `);
+  const snapCols = db.prepare(`PRAGMA table_info(inventory_coil_snapshots)`).all();
+  const ensureSnapCol = (name, ddl) => {
+    if (!snapCols.some((c) => c.name === name)) db.exec(ddl);
+  };
+  ensureSnapCol('opening_kg', `ALTER TABLE inventory_coil_snapshots ADD COLUMN opening_kg REAL`);
+  ensureSnapCol('received_kg', `ALTER TABLE inventory_coil_snapshots ADD COLUMN received_kg REAL`);
+  ensureSnapCol('used_kg', `ALTER TABLE inventory_coil_snapshots ADD COLUMN used_kg REAL`);
+  ensureSnapCol('stock_form', `ALTER TABLE inventory_coil_snapshots ADD COLUMN stock_form TEXT`);
+  ensureSnapCol('is_finished', `ALTER TABLE inventory_coil_snapshots ADD COLUMN is_finished INTEGER NOT NULL DEFAULT 0`);
+  ensureSnapCol('remark', `ALTER TABLE inventory_coil_snapshots ADD COLUMN remark TEXT`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_product_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      as_at_iso TEXT NOT NULL,
+      branch_id TEXT NOT NULL DEFAULT '',
+      product_id TEXT NOT NULL,
+      section_kind TEXT NOT NULL,
+      stock_level REAL NOT NULL DEFAULT 0,
+      captured_at_iso TEXT NOT NULL,
+      UNIQUE(as_at_iso, branch_id, product_id, section_kind)
+    );
+    CREATE INDEX IF NOT EXISTS idx_inv_prod_snap_as_at ON inventory_product_snapshots(as_at_iso DESC, branch_id);
   `);
 }
 

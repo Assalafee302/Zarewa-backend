@@ -2,6 +2,7 @@
  * Full-branch material pricing workbook print HTML (all coil/stone sections + accessories).
  */
 
+import { fmtConv2 } from '../shared/lib/conversionKgPerM.js';
 import { listMaterialPricingSheet, suggestedPricePerMeterNgn } from './materialPricingOps.js';
 import { roundPublishedPrice } from './pricingPolicyResolve.js';
 import { listMasterData } from './masterData.js';
@@ -13,11 +14,6 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function fmtConv2(v) {
-  if (v == null || !Number.isFinite(Number(v))) return '—';
-  return Number(v).toFixed(2);
 }
 
 function fmtNgn(n) {

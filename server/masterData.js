@@ -1,6 +1,7 @@
 import { appendAuditLog } from './controlOps.js';
 import { voidRecentQuotationsAfterMasterPriceChange } from './quotationLifecycleOps.js';
 import { canonicalColourName, normalizeColourKey } from '../shared/lib/colourCanonicalization.js';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -706,7 +707,7 @@ function getStatements(kind, row) {
           row.productID,
           row.offerKg,
           row.offerMeters,
-          row.conversionKgPerM,
+          roundConv2(row.conversionKgPerM),
           row.label,
         ],
         insertSql: `INSERT INTO procurement_catalog (id, color, gauge, product_id, offer_kg, offer_meters, conversion_kg_per_m, label) VALUES (?,?,?,?,?,?,?,?)`,

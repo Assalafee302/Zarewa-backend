@@ -2,6 +2,7 @@
  * Material exception & offcut control — incidents, approvals, pool balances, stock posting.
  */
 import { randomUUID } from 'node:crypto';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { isBranchManagerApprovalAuthority } from '../shared/workspaceGovernance.js';
@@ -122,7 +123,7 @@ function mapIncidentRow(row) {
     afterKg: row.after_kg != null ? Number(row.after_kg) : null,
     kgDeducted: row.kg_deducted != null ? Number(row.kg_deducted) : null,
     totalMeters: Number(row.total_meters) || 0,
-    conversionKgPerM: row.conversion_kg_per_m != null ? Number(row.conversion_kg_per_m) : null,
+    conversionKgPerM: roundConv2(row.conversion_kg_per_m),
     conversionSource: row.conversion_source ?? '',
     returnDisposition: row.return_disposition ?? '',
     storekeeperUserId: row.storekeeper_user_id ?? '',
@@ -261,14 +262,14 @@ function replaceAttachmentsTx(db, incidentId, attachments, actor) {
 }
 
 function resolveConversion(db, payload, coilNo) {
-  const manual = Number(payload.conversionKgPerM ?? payload.conversion_kg_per_m);
-  if (Number.isFinite(manual) && manual > 0) {
+  const manual = roundConv2(payload.conversionKgPerM ?? payload.conversion_kg_per_m);
+  if (manual != null) {
     return { conversion: manual, source: String(payload.conversionSource ?? payload.conversion_source ?? 'manual_approved') };
   }
   if (coilNo) {
     const coil = db.prepare(`SELECT supplier_conversion_kg_per_m FROM coil_lots WHERE coil_no = ?`).get(coilNo);
-    const c = Number(coil?.supplier_conversion_kg_per_m);
-    if (Number.isFinite(c) && c > 0) return { conversion: c, source: 'supplier' };
+    const c = roundConv2(coil?.supplier_conversion_kg_per_m);
+    if (c != null) return { conversion: c, source: 'supplier' };
   }
   return { conversion: null, source: '' };
 }

@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { appendAuditLog } from './controlOps.js';
 import { upsertPriceListItem } from './pricingOps.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
+
+export { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 /** @type {readonly string[]} */
 export const MATERIAL_PRICING_STANDARD_GAUGES_MM = [
@@ -68,11 +71,6 @@ function isoDateDaysAgo(days) {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - Math.max(1, Math.round(Number(days) || 30)));
   return d.toISOString().slice(0, 10);
-}
-
-function roundConv2(n) {
-  if (n == null || !Number.isFinite(Number(n)) || Number(n) <= 0) return null;
-  return Math.round(Number(n) * 100) / 100;
 }
 
 /** Match productionTraceability gauge parsing for workbook hints. */
@@ -331,11 +329,11 @@ function mapRow(row) {
     designKey: row.design_key ?? '',
     syncMinimumToPriceList,
     syncDesignKey,
-    conversionStandardKgPerM: Number.isFinite(std) && std > 0 ? std : null,
-    conversionReferenceKgPerM: Number.isFinite(ref) && ref > 0 ? ref : null,
-    conversionHistoryKgPerM: Number.isFinite(hist) && hist > 0 ? hist : null,
-    conversionAvgKgPerM: avg,
-    conversionUsedKgPerM: Number.isFinite(used) && used > 0 ? used : null,
+    conversionStandardKgPerM: roundConv2(std),
+    conversionReferenceKgPerM: roundConv2(ref),
+    conversionHistoryKgPerM: roundConv2(hist),
+    conversionAvgKgPerM: roundConv2(avg),
+    conversionUsedKgPerM: roundConv2(used),
     costPerKgNgn: costKg,
     overheadNgnPerM: oh,
     profitNgnPerM: pr,

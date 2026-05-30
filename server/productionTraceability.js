@@ -39,6 +39,7 @@ import {
   persistProductionConversionVarianceReason,
   validateConversionVarianceReason,
 } from '../shared/productionConversionReasons.js';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function nextId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -549,26 +550,24 @@ function buildReferenceSet(db, coil, actualConversionKgPerM, excludeJobId = null
            WHERE coil_no = ? AND actual_conversion_kg_per_m > 0`
         )
         .get(coil.coil_no)?.avg_value ?? null;
-  const variances = {
-    standardPct: toPercentVariance(actualConversionKgPerM, standardConversionKgPerM),
-    supplierPct: toPercentVariance(actualConversionKgPerM, supplierConversionKgPerM),
-    gaugeHistoryPct: toPercentVariance(actualConversionKgPerM, gaugeHistoryAvgKgPerM),
-    coilHistoryPct: toPercentVariance(actualConversionKgPerM, coilHistoryAvgKgPerM),
-  };
-  return {
+  const rounded = {
     gaugeLabel: coil.gauge_label ?? '',
     materialTypeName: coil.material_type_name ?? '',
-    standardConversionKgPerM,
+    standardConversionKgPerM: roundConv2(standardConversionKgPerM),
     standardConversionSource,
-    theoreticalStandardConversionKgPerM,
-    procurementCatalogConversionKgPerM,
-    supplierConversionKgPerM,
-    gaugeHistoryAvgKgPerM:
-      Number.isFinite(gaugeHistoryAvgKgPerM) && gaugeHistoryAvgKgPerM > 0 ? gaugeHistoryAvgKgPerM : null,
-    coilHistoryAvgKgPerM:
-      Number.isFinite(coilHistoryAvgKgPerM) && coilHistoryAvgKgPerM > 0 ? coilHistoryAvgKgPerM : null,
-    variances,
+    theoreticalStandardConversionKgPerM: roundConv2(theoreticalStandardConversionKgPerM),
+    procurementCatalogConversionKgPerM: roundConv2(procurementCatalogConversionKgPerM),
+    supplierConversionKgPerM: roundConv2(supplierConversionKgPerM),
+    gaugeHistoryAvgKgPerM: roundConv2(gaugeHistoryAvgKgPerM),
+    coilHistoryAvgKgPerM: roundConv2(coilHistoryAvgKgPerM),
   };
+  rounded.variances = {
+    standardPct: toPercentVariance(actualConversionKgPerM, rounded.standardConversionKgPerM),
+    supplierPct: toPercentVariance(actualConversionKgPerM, rounded.supplierConversionKgPerM),
+    gaugeHistoryPct: toPercentVariance(actualConversionKgPerM, rounded.gaugeHistoryAvgKgPerM),
+    coilHistoryPct: toPercentVariance(actualConversionKgPerM, rounded.coilHistoryAvgKgPerM),
+  };
+  return rounded;
 }
 
 function determineAlertState(actualConversionKgPerM, references) {
@@ -662,11 +661,11 @@ export function listProductionConversionChecks(db, branchScope = 'ALL', opts = {
         coilNo: row.coil_no,
         gaugeLabel: row.gauge_label ?? '',
         materialTypeName: row.material_type_name ?? '',
-        actualConversionKgPerM: positiveNumberOrNull(row.actual_conversion_kg_per_m),
-        standardConversionKgPerM: positiveNumberOrNull(row.standard_conversion_kg_per_m),
-        supplierConversionKgPerM: positiveNumberOrNull(row.supplier_conversion_kg_per_m),
-        gaugeHistoryAvgKgPerM: positiveNumberOrNull(row.gauge_history_avg_kg_per_m),
-        coilHistoryAvgKgPerM: positiveNumberOrNull(row.coil_history_avg_kg_per_m),
+        actualConversionKgPerM: roundConv2(positiveNumberOrNull(row.actual_conversion_kg_per_m)),
+        standardConversionKgPerM: roundConv2(positiveNumberOrNull(row.standard_conversion_kg_per_m)),
+        supplierConversionKgPerM: roundConv2(positiveNumberOrNull(row.supplier_conversion_kg_per_m)),
+        gaugeHistoryAvgKgPerM: roundConv2(positiveNumberOrNull(row.gauge_history_avg_kg_per_m)),
+        coilHistoryAvgKgPerM: roundConv2(positiveNumberOrNull(row.coil_history_avg_kg_per_m)),
         alertState: row.alert_state ?? 'OK',
         managerReviewRequired: Boolean(row.manager_review_required),
         varianceSummary: {
@@ -1058,7 +1057,7 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         if (partialPreview) continue;
         throw new Error(`Coil ${rowLabel} shows no consumed kg.`);
       }
-      const actualConversionKgPerM = consumedWeightKg / metersProduced;
+      const actualConversionKgPerM = roundConv2(consumedWeightKg / metersProduced);
       const coil = coilRow(db, coilNoForRow);
       if (!coil) throw new Error(`Coil ${rowLabel} was not found.`);
       const qtyRemaining = clampNonNegative(
@@ -1110,7 +1109,7 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
           coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
         );
         if (consumedWeightKg > qtyRemaining + 0.0001) continue;
-        const actualConversionKgPerM = consumedWeightKg / metersProduced;
+        const actualConversionKgPerM = roundConv2(consumedWeightKg / metersProduced);
         const references = buildReferenceSet(db, coil, actualConversionKgPerM, jobID);
         const alert = determineAlertState(actualConversionKgPerM, references);
         conversionRows.push({

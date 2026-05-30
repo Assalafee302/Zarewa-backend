@@ -113,7 +113,9 @@ export function productionTransactionReportRows(
       const materialCostNgn = Math.round(unitKg * consumed);
 
       const conv = coilRow?.actualConversionKgPerM;
-      const convNum = conv != null && Number.isFinite(Number(conv)) ? Number(conv) : null;
+      const convRaw = conv != null && Number.isFinite(Number(conv)) ? Number(conv) : null;
+      const convNum =
+        convRaw != null && convRaw > 0 ? Math.round(convRaw * 100) / 100 : null;
 
       const qtFull = qref || '—';
       out.push({

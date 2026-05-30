@@ -61,20 +61,63 @@ function resolveSiblingSpaRoot() {
   return null;
 }
 
-function cloneSpaFromGit() {
+function extractSpaFromGithubTarball(gitUrl, gitRef) {
+  const match = gitUrl.match(/github\.com[/:]([^/]+)\/(.+?)(?:\.git)?\/?$/i);
+  if (!match) {
+    console.error(`[zarewa] Cannot parse GitHub URL for tarball download: ${gitUrl}`);
+    process.exit(1);
+  }
+  const owner = match[1];
+  const repo = match[2];
+  const tarballUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${gitRef}.tar.gz`;
+  const tarballPath = path.join(path.dirname(cloneDir), 'spa.tar.gz');
+  const extractParent = path.dirname(cloneDir);
+
+  console.log(`[zarewa] SPA tarball: ${tarballUrl}`);
+  fs.mkdirSync(extractParent, { recursive: true });
+  if (fs.existsSync(cloneDir)) fs.rmSync(cloneDir, { recursive: true, force: true });
+  if (fs.existsSync(tarballPath)) fs.rmSync(tarballPath, { force: true });
+
+  run('curl', ['-fsSL', tarballUrl, '-o', tarballPath], backendRoot);
+  run('tar', ['-xzf', tarballPath, '-C', extractParent], backendRoot);
+  fs.rmSync(tarballPath, { force: true });
+
+  const extractedName = `${repo}-${gitRef}`;
+  const extractedDir = path.join(extractParent, extractedName);
+  if (!hasSpaPackage(extractedDir)) {
+    console.error(`[zarewa] Tarball extracted to ${extractedDir} but package.json is missing.`);
+    process.exit(1);
+  }
+  fs.renameSync(extractedDir, cloneDir);
+  return cloneDir;
+}
+
+function fetchSpaFromRemote() {
   const gitUrl = String(process.env.ZAREWA_SPA_GIT_URL || DEFAULT_SPA_GIT_URL).trim();
   const gitRef = String(process.env.ZAREWA_SPA_GIT_REF || 'main').trim();
   fs.mkdirSync(path.dirname(cloneDir), { recursive: true });
   if (fs.existsSync(cloneDir)) {
     fs.rmSync(cloneDir, { recursive: true, force: true });
   }
-  console.log(`[zarewa] SPA clone: ${gitUrl} (${gitRef}) → ${cloneDir}`);
-  run('git', ['clone', '--depth', '1', '--branch', gitRef, gitUrl, cloneDir], backendRoot);
-  if (!hasSpaPackage(cloneDir)) {
-    console.error(`[zarewa] Cloned repo at ${cloneDir} has no package.json.`);
-    process.exit(1);
+
+  const gitVersion = spawnSync('git', ['--version'], { encoding: 'utf8' });
+  if (gitVersion.status === 0) {
+    console.log(`[zarewa] SPA clone: ${gitUrl} (${gitRef}) → ${cloneDir}`);
+    const clone = spawnSync(
+      'git',
+      ['clone', '--depth', '1', '--branch', gitRef, gitUrl, cloneDir],
+      { cwd: backendRoot, stdio: 'inherit', shell: process.platform === 'win32' }
+    );
+    if (clone.status === 0 && hasSpaPackage(cloneDir)) {
+      return { spaRoot: cloneDir, source: 'git-clone' };
+    }
+    console.warn('[zarewa] git clone failed or incomplete — falling back to GitHub tarball');
+    if (fs.existsSync(cloneDir)) fs.rmSync(cloneDir, { recursive: true, force: true });
+  } else {
+    console.warn('[zarewa] git not available — downloading GitHub tarball');
   }
-  return cloneDir;
+
+  return { spaRoot: extractSpaFromGithubTarball(gitUrl, gitRef), source: 'github-tarball' };
 }
 
 function resolveSpaRoot() {
@@ -101,7 +144,7 @@ function resolveSpaRoot() {
     return { spaRoot: null, source: 'skipped' };
   }
 
-  return { spaRoot: cloneSpaFromGit(), source: 'git-clone' };
+  return fetchSpaFromRemote();
 }
 
 const { spaRoot, source } = resolveSpaRoot();
@@ -133,6 +176,7 @@ if (!spaRoot) {
 const spaPkg = path.join(spaRoot, 'package.json');
 const useOmitDev =
   source === 'git-clone' ||
+  source === 'github-tarball' ||
   String(process.env.ZAREWA_SPA_NPM_OMIT_DEV || '').trim() === '1' ||
   String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStockRegisterPack,
   coilMaterialFamily,
+  colourFullNameForRegister,
   enrichStockRegisterValuation,
   netKgFromGrossClosing,
   periodBoundsFromEndDate,
@@ -137,56 +138,39 @@ describe('stockRegisterCore', () => {
     expect(pack.summary.aluminium.valueNgn).toBe(465 * 1200);
   });
 
-  it('derives used qty from stock level when issue movements are missing', () => {
+  it('shows full stone colour names and per-product accessory names', () => {
     const pack = buildStockRegisterPack({
       branchId: 'BR-KD',
       periodEnd: '2026-04-30',
-      prevClosingSnapshots: [],
-      coilLots: [],
-      productionJobs: [],
-      productionJobCoils: [],
-      coilControlEvents: [],
+      masterData: { colours: [{ name: 'Premium Red', abbreviation: 'PRED' }] },
       products: [
         {
-          productID: 'ACC-TAPPING-SCREW',
-          name: 'Tapping screw 50mm (box)',
-          unit: 'box',
-          stockLevel: 40,
+          productID: 'STONE-HMB-040',
+          name: 'Stone HMB 0.40',
+          stockLevel: 100,
+          unit: 'm',
+          dashboardAttrs: { gauge: '0.40mm', colour: 'PRED', stoneDesign: 'HMB' },
+        },
+        {
+          productID: 'ACC-TAPPING-SCREW-PCS',
+          name: 'Tapping Screw (50mm) — Box',
+          stockLevel: 200,
+          unit: 'pcs',
           dashboardAttrs: { inventoryModel: 'consumable' },
         },
       ],
       stockMovements: [],
-      inTransitLoads: [],
-    });
-    const row = pack.accessories.rows[0];
-    expect(row.opening).toBe(0);
-    expect(row.used).toBe(0);
-    expect(row.balance).toBe(40);
-    const pack2 = buildStockRegisterPack({
-      branchId: 'BR-KD',
-      periodEnd: '2026-04-30',
-      prevClosingSnapshots: [],
       coilLots: [],
-      productionJobs: [],
-      productionJobCoils: [],
-      coilControlEvents: [],
-      products: [
-        {
-          productID: 'ACC-TAPPING-SCREW',
-          name: 'Tapping screw 50mm (box)',
-          unit: 'box',
-          stockLevel: 40,
-          dashboardAttrs: { inventoryModel: 'consumable' },
-        },
-      ],
-      stockMovements: [{ productID: 'ACC-TAPPING-SCREW', qty: 100, dateISO: '2026-04-05' }],
-      accessoryOpeningByProduct: new Map([['ACC-TAPPING-SCREW', 50]]),
-      inTransitLoads: [],
+      accessoryDisplayNameByProduct: new Map([
+        ['ACC-TAPPING-SCREW-PCS', 'Tapping Screw 50mm (per PO wording)'],
+      ]),
     });
-    const row2 = pack2.accessories.rows[0];
-    expect(row2.opening).toBe(50);
-    expect(row2.received).toBe(100);
-    expect(row2.used).toBe(110);
-    expect(row2.balance).toBe(40);
+    const stoneRow = pack.stoneCoated.groups[0]?.rows[0];
+    expect(stoneRow.colourDisplay).toBe('Premium Red');
+    expect(pack.accessories.rows).toHaveLength(1);
+    expect(pack.accessories.rows[0].itemName).toBe('Tapping Screw 50mm (per PO wording)');
+    expect(colourFullNameForRegister({ colours: [{ name: 'Premium Red', abbreviation: 'PRED' }] }, 'PRED')).toBe(
+      'Premium Red'
+    );
   });
 });

@@ -255,10 +255,10 @@ export function purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, da
 }
 
 /**
- * Derive ₦/kg from PO lines where coil was ordered per metre (₦/m ÷ kg/m conversion).
+ * Weighted avg ₦/kg from received PO lines on a kg basis only (excludes metre-priced coil PO lines).
  * @returns {number|null}
  */
-export function purchaseCoilCostPerKgFromMetrePoLines(db, productId, branchId, days = 31) {
+export function purchaseWeightedAvgKgPriceFromPoLinesLastDays(db, productId, branchId, days = 31) {
   const pid = String(productId || '').trim();
   const bid = String(branchId || '').trim();
   if (!pid || !bid) return null;
@@ -268,91 +268,41 @@ export function purchaseCoilCostPerKgFromMetrePoLines(db, productId, branchId, d
   const since = isoDateDaysAgo(days);
   const rows = db
     .prepare(
-      `SELECT pol.unit_price_ngn, pol.conversion_kg_per_m, pol.meters_offered, pol.gauge,
-              pol.qty_received, pol.qty_ordered, pol.line_type
+      `SELECT pol.unit_price_per_kg_ngn, pol.qty_received, pol.line_type
        FROM purchase_order_lines pol
        INNER JOIN purchase_orders po ON po.po_id = pol.po_id
        WHERE pol.product_id = ?
          AND po.branch_id = ?
-         AND SUBSTR(COALESCE(po.order_date_iso, ''), 1, 10) >= ?
-         AND pol.unit_price_ngn IS NOT NULL
-         AND pol.unit_price_ngn > 0`
-    )
-    .all(pid, bid, since);
-  let sumW = 0;
-  let sumCost = 0;
-  for (const r of rows) {
-    const upM = Number(r.unit_price_ngn) || 0;
-    let conv = Number(r.conversion_kg_per_m) || 0;
-    if (upM <= 0) continue;
-    if (conv <= 0) {
-      const gauge = parseGaugeMmFromLabel(r.gauge);
-      const mk = pid === 'COIL-ALU' ? 'alu' : pid === 'PRD-102' ? 'aluzinc' : '';
-      if (mk && gauge) conv = theoreticalStandardKgPerM(mk, gauge) || 0;
-    }
-    if (conv <= 0) continue;
-    const perKg = upM / conv;
-    const metres =
-      Number(r.meters_offered) ||
-      (String(r.line_type || '').includes('meter') ? Number(r.qty_ordered) || Number(r.qty_received) : 0) ||
-      0;
-    const weight = metres > 0 ? metres * conv : (Number(r.qty_received) || Number(r.qty_ordered) || 0);
-    if (weight <= 0 || perKg <= 0) continue;
-    sumW += weight;
-    sumCost += perKg * weight;
-  }
-  if (sumW <= 0) return null;
-  return Math.round(sumCost / sumW);
-}
-
-/**
- * ₦/kg from kg-basis PO lines (unit_price_per_kg_ngn).
- * @returns {number|null}
- */
-export function purchaseCoilCostPerKgFromKgPoLines(db, productId, branchId, days = 31) {
-  const pid = String(productId || '').trim();
-  const bid = String(branchId || '').trim();
-  if (!pid || !bid) return null;
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
-    return null;
-  }
-  const since = isoDateDaysAgo(days);
-  const rows = db
-    .prepare(
-      `SELECT pol.unit_price_per_kg_ngn, pol.qty_received, pol.qty_ordered
-       FROM purchase_order_lines pol
-       INNER JOIN purchase_orders po ON po.po_id = pol.po_id
-       WHERE pol.product_id = ?
-         AND po.branch_id = ?
-         AND SUBSTR(COALESCE(po.order_date_iso, ''), 1, 10) >= ?
+         AND pol.qty_received > 0
          AND pol.unit_price_per_kg_ngn IS NOT NULL
-         AND pol.unit_price_per_kg_ngn > 0`
+         AND pol.unit_price_per_kg_ngn > 0
+         AND SUBSTR(COALESCE(po.delivery_date_iso, po.order_date_iso), 1, 10) >= ?`
     )
     .all(pid, bid, since);
   let sumW = 0;
   let sumCost = 0;
   for (const r of rows) {
-    const upKg = Number(r.unit_price_per_kg_ngn) || 0;
-    const w = Number(r.qty_received) || Number(r.qty_ordered) || 0;
-    if (upKg <= 0 || w <= 0) continue;
+    const lt = String(r.line_type || '').trim().toLowerCase();
+    if (lt === 'coil_meter') continue;
+    const uk = Number(r.unit_price_per_kg_ngn);
+    const w = Number(r.qty_received) || 0;
+    if (!Number.isFinite(uk) || uk <= 0 || w <= 0) continue;
     sumW += w;
-    sumCost += upKg * w;
+    sumCost += uk * w;
   }
   if (sumW <= 0) return null;
   return Math.round(sumCost / sumW);
 }
 
 /**
- * Branch coil purchase avg ₦/kg — GRN lots, then kg PO, then metre PO converted to kg, then all lots.
+ * Branch coil purchase avg ₦/kg — kg PO/receipt first; metre PO excluded. Falls back to all coil lots.
  * @returns {{ cost: number|null; source: string }}
  */
 export function resolveBranchCoilCostPerKg(db, productId, branchId, days = 31) {
   const recent = purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, days);
-  if (recent) return { cost: recent, source: `purchase_grn_${days}d` };
-  const fromKgPo = purchaseCoilCostPerKgFromKgPoLines(db, productId, branchId, days);
-  if (fromKgPo) return { cost: fromKgPo, source: `purchase_kg_${days}d` };
-  const fromMetrePo = purchaseCoilCostPerKgFromMetrePoLines(db, productId, branchId, days);
-  if (fromMetrePo) return { cost: fromMetrePo, source: `purchase_metre_as_kg_${days}d` };
+  if (recent) return { cost: recent, source: `purchase_kg_${days}d` };
+  const poKg = purchaseWeightedAvgKgPriceFromPoLinesLastDays(db, productId, branchId, days);
+  if (poKg) return { cost: poKg, source: `po_kg_${days}d` };
   const pid = String(productId || '').trim();
   const bid = String(branchId || '').trim();
   if (!pid || !bid) return { cost: null, source: 'none' };

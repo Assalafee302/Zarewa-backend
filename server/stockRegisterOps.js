@@ -7,7 +7,7 @@ import { appendAuditLog } from './controlOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
-import { listCoilLots, listInventoryCoilSnapshots, listProducts, listProductionJobs, branchWhere, hasColumn } from './readModel.js';
+import { listCoilLots, listInventoryCoilSnapshots, listProducts, listProductionJobs, listStockMovements } from './readModel.js';
 import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionJobCoils } from './productionTraceability.js';
@@ -98,105 +98,72 @@ function openingMapsFromSnapshots(db, branchId, asAtIso) {
   return { stone, accessory };
 }
 
-/** Accessory line labels — prefer latest PO product_name, then catalog name. */
-function accessoryItemNameByProduct(db, branchId, products) {
-  const map = new Map();
-  for (const p of products || []) {
-    const pid = String(p.productID || '').trim();
-    if (pid) map.set(pid, String(p.name || '').trim() || pid);
-  }
-  if (!tableReady(db, 'purchase_order_lines') || !tableReady(db, 'purchase_orders')) return map;
+/** PO / quotation line names as shown on documents (exact wording). */
+function accessoryDisplayNamesByProduct(db, branchId) {
   const bid = String(branchId || '').trim();
-  const poRows = db
-    .prepare(
-      `SELECT pol.product_id, pol.product_name
-       FROM purchase_order_lines pol
-       INNER JOIN purchase_orders po ON po.po_id = pol.po_id
-       WHERE po.branch_id = ?
-         AND pol.product_id LIKE 'ACC%'
-         AND pol.product_name IS NOT NULL
-         AND TRIM(pol.product_name) != ''
-       ORDER BY po.order_date_iso DESC, pol.line_key ASC`
-    )
-    .all(bid);
-  const seen = new Set();
-  for (const r of poRows) {
-    const pid = String(r.product_id || '').trim();
-    const name = String(r.product_name || '').trim();
-    if (!pid || !name || seen.has(pid)) continue;
-    seen.add(pid);
-    map.set(pid, name);
+  const map = new Map();
+  if (!bid) return map;
+  if (tableReady(db, 'purchase_order_lines') && tableReady(db, 'purchase_orders')) {
+    const poRows = db
+      .prepare(
+        `SELECT pol.product_id, pol.product_name, po.order_date_iso
+         FROM purchase_order_lines pol
+         INNER JOIN purchase_orders po ON po.po_id = pol.po_id
+         WHERE po.branch_id = ?
+           AND pol.product_id LIKE 'ACC%'
+           AND TRIM(COALESCE(pol.product_name, '')) != ''
+         ORDER BY po.order_date_iso DESC`
+      )
+      .all(bid);
+    for (const r of poRows) {
+      const pid = String(r.product_id || '').trim();
+      if (pid && !map.has(pid)) map.set(pid, String(r.product_name).trim());
+    }
+  }
+  if (tableReady(db, 'quotation_lines') && tableReady(db, 'quotations')) {
+    const hasQBranch = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'branch_id');
+    const qRows = hasQBranch
+      ? db
+          .prepare(
+            `SELECT ql.name, q.date_iso
+             FROM quotation_lines ql
+             INNER JOIN quotations q ON q.id = ql.quotation_id
+             WHERE q.branch_id = ?
+               AND ql.category = 'accessories'
+               AND TRIM(COALESCE(ql.name, '')) != ''
+             ORDER BY q.date_iso DESC`
+          )
+          .all(bid)
+      : db
+          .prepare(
+            `SELECT ql.name, q.date_iso
+             FROM quotation_lines ql
+             INNER JOIN quotations q ON q.id = ql.quotation_id
+             WHERE ql.category = 'accessories'
+               AND TRIM(COALESCE(ql.name, '')) != ''
+             ORDER BY q.date_iso DESC`
+          )
+          .all();
+    /** Match quotation accessory names to products by normalised name when product_id absent on line. */
+    const products = db.prepare(`SELECT product_id, name FROM products WHERE product_id LIKE 'ACC%'`).all();
+    const byNorm = new Map();
+    for (const p of products) {
+      const nk = String(p.name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+      if (nk) byNorm.set(nk, String(p.product_id));
+    }
+    for (const r of qRows) {
+      const nk = String(r.name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+      const pid = byNorm.get(nk);
+      if (pid && !map.has(pid)) map.set(pid, String(r.name).trim());
+    }
   }
   return map;
-}
-
-/** Branch stock movements for register — includes production job issues/consumption, not only PO/quotation refs. */
-function listStockMovementsForRegister(db, branchId) {
-  const bid = String(branchId || '').trim();
-  if (!bid) return [];
-  const bPo = branchWhere(db, 'purchase_orders', bid);
-  const bQuo = branchWhere(db, 'quotations', bid);
-  const parts = [
-    `sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})`,
-    `sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})`,
-  ];
-  const args = [...bPo.args, ...bQuo.args];
-  if (tableReady(db, 'production_jobs')) {
-    parts.push(`sm.ref IN (SELECT job_id FROM production_jobs WHERE branch_id = ?)`);
-    args.push(bid);
-  }
-  if (hasColumn(db, 'products', 'branch_id')) {
-    parts.push(`sm.product_id IN (SELECT product_id FROM products WHERE branch_id = ?)`);
-    args.push(bid);
-  }
-  const rows = db
-    .prepare(
-      `SELECT sm.* FROM stock_movements sm
-       WHERE (${parts.join(' OR ')})
-       ORDER BY sm.at_iso DESC, sm.id DESC`
-    )
-    .all(...args);
-  return rows.map((row) => ({
-    id: row.id,
-    atISO: row.at_iso,
-    type: row.type,
-    ref: row.ref,
-    productID: row.product_id,
-    qty: row.qty,
-    detail: row.detail,
-    dateISO: row.date_iso,
-    unitPriceNgn: row.unit_price_ngn,
-    valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-  }));
-}
-
-function parsePricingOverrides(row) {
-  if (!row?.pricing_overrides_json) return null;
-  try {
-    return JSON.parse(row.pricing_overrides_json);
-  } catch {
-    return null;
-  }
-}
-
-function buildPricingFormFromRegister(register) {
-  if (!register) return null;
-  const s = register.summary || {};
-  return {
-    aluminium: {
-      suggestedNgnPerKg: s.aluminium?.suggestedUnitCostNgnPerKg ?? s.aluminium?.unitCostNgnPerKg ?? null,
-      appliedNgnPerKg: s.aluminium?.unitCostNgnPerKg ?? null,
-      priceSource: s.aluminium?.priceSource ?? 'none',
-    },
-    aluzinc: {
-      suggestedNgnPerKg: s.aluzinc?.suggestedUnitCostNgnPerKg ?? s.aluzinc?.unitCostNgnPerKg ?? null,
-      appliedNgnPerKg: s.aluzinc?.unitCostNgnPerKg ?? null,
-      priceSource: s.aluzinc?.priceSource ?? 'none',
-    },
-    stoneLines: s.stoneCoated?.lines || [],
-    accessoryLines: s.accessories?.lines || [],
-    totalClosingValueNgn: s.totalClosingValueNgn || 0,
-  };
 }
 
 function listCoilControlEventsInPeriod(db, branchId, start, end) {
@@ -232,7 +199,7 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
   const coilLots = listCoilLots(db, bid);
   const masterData = listMasterData(db);
   const products = listProducts(db, bid);
-  const movements = listStockMovementsForRegister(db, bid);
+  const movements = listStockMovements(db, bid);
   const jobs = listProductionJobs(db, bid);
   const jobCoils = listProductionJobCoils(db, bid, { limit: 0 });
   const controlEvents = listCoilControlEventsInPeriod(db, bid, start, end);
@@ -244,7 +211,7 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     prevEnd
   );
 
-  const accessoryNames = accessoryItemNameByProduct(db, bid, products);
+  const accessoryDisplayNameByProduct = accessoryDisplayNamesByProduct(db, bid);
 
   const pack = buildStockRegisterPack({
     branchId: bid,
@@ -260,7 +227,7 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     masterData,
     stoneOpeningByProduct,
     accessoryOpeningByProduct,
-    accessoryItemNameByProduct: accessoryNames,
+    accessoryDisplayNameByProduct,
   });
 
   const lookbackDays = 31;
@@ -291,20 +258,13 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     accessoryFallback = aw > 0 ? Math.round(av / aw) : null;
   }
 
-  const periodRow = getPeriodRow(db, bid, periodKey);
-  const overrides = parsePricingOverrides(periodRow);
-
   enrichStockRegisterValuation(pack, {
     aluminiumUnitCostNgnPerKg: aluResolved.cost,
     aluzincUnitCostNgnPerKg: aluzResolved.cost,
-    aluminiumUnitCostOverride: overrides?.aluminiumNgnPerKg ?? null,
-    aluzincUnitCostOverride: overrides?.aluzincNgnPerKg ?? null,
     stoneUnitPriceByProduct: stonePriceMap,
     stoneFallbackUnitPriceNgnPerM: stoneFallback,
-    stoneUnitPriceOverrides: overrides?.stoneByProduct || null,
     accessoryUnitPriceByProduct: accessoryPriceMap,
     accessoryFallbackUnitPriceNgn: accessoryFallback,
-    accessoryUnitPriceOverrides: overrides?.accessoryByProduct || null,
     priceLookbackDays: lookbackDays,
     priceSources: {
       aluminium: aluResolved.source,
@@ -314,56 +274,16 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     },
   });
 
+  pack.meta = pack.meta || {};
+  pack.meta.coilValuationNote =
+    'Coil stock valued in kg. PO may be kg or per-metre order; closing value uses ₦/kg only (metre-priced PO lines excluded).';
+
+  const periodRow = getPeriodRow(db, bid, periodKey);
   return {
     ok: true,
     register: pack,
-    pricingForm: buildPricingFormFromRegister(pack),
     workflow: mapPeriodRow(periodRow) || { status: 'draft', periodKey, periodEndIso: end, branchId: bid },
   };
-}
-
-export function saveStockRegisterPricing(db, branchId, periodEndIso, pricingBody = {}, actor = null) {
-  const bid = String(branchId || '').trim();
-  const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
-  if (!periodKey) return { ok: false, error: 'Valid period end date required.' };
-
-  const overrides = {
-    aluminiumNgnPerKg:
-      pricingBody?.aluminiumNgnPerKg != null && pricingBody.aluminiumNgnPerKg !== ''
-        ? Math.round(Number(pricingBody.aluminiumNgnPerKg))
-        : null,
-    aluzincNgnPerKg:
-      pricingBody?.aluzincNgnPerKg != null && pricingBody.aluzincNgnPerKg !== ''
-        ? Math.round(Number(pricingBody.aluzincNgnPerKg))
-        : null,
-    stoneByProduct: {},
-    accessoryByProduct: {},
-  };
-  for (const line of pricingBody?.stoneLines || []) {
-    const pid = String(line?.productID || '').trim();
-    const v = Number(line?.appliedNgnPerM ?? line?.unitPriceNgnPerM);
-    if (pid && Number.isFinite(v) && v > 0) overrides.stoneByProduct[pid] = Math.round(v);
-  }
-  for (const line of pricingBody?.accessoryLines || []) {
-    const pid = String(line?.productID || '').trim();
-    const v = Number(line?.appliedNgnPerUnit ?? line?.unitPriceNgn);
-    if (pid && Number.isFinite(v) && v > 0) overrides.accessoryByProduct[pid] = Math.round(v);
-  }
-
-  upsertPeriodRow(db, bid, periodKey, end, {
-    pricing_overrides_json: JSON.stringify(overrides),
-  });
-
-  appendAuditLog(db, {
-    actor,
-    action: 'stock_register.pricing',
-    entityKind: 'stock_register_period',
-    entityId: `${bid}:${periodKey}`,
-    note: 'Valuation prices updated',
-  });
-
-  const built = buildStockRegisterForBranch(db, bid, end);
-  return built;
 }
 
 export function getStockRegisterWorkflow(db, branchId, periodKey) {
@@ -391,7 +311,7 @@ export function saveStockRegisterPrintSnapshot(db, branchId, periodEndIso, actor
     entityId: `${branchId}:${periodKey}`,
     note: `Print snapshot saved for ${periodKey}`,
   });
-  return { ok: true, register: built.register, pricingForm: built.pricingForm, workflow: mapPeriodRow(getPeriodRow(db, branchId, periodKey)) };
+  return { ok: true, register: built.register, workflow: mapPeriodRow(getPeriodRow(db, branchId, periodKey)) };
 }
 
 function actorName(actor) {
@@ -554,10 +474,10 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
         }
       }
       for (const r of reg.accessories?.rows || []) {
-        const pid = String(r.productID || '').trim();
+        const pid = r.productID || (r.productIds || [])[0];
         if (!pid) continue;
         const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
-        pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || r.balance || 0, now);
+        pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
       }
     }
 

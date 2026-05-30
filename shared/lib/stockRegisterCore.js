@@ -7,6 +7,9 @@ import { displayCoilNumber } from './reportDisplayFormat.js';
 
 export const SPOOL_KG_DEFAULT = { aluminium: 35, aluzinc: 60 };
 
+/** Gross closing below this (kg) is treated as net — no spool deduction (tail/end pieces). */
+export const NET_KG_GROSS_THRESHOLD = 30;
+
 /** Short management groups for accessory lines. */
 export const ACCESSORY_REGISTER_TYPES = [
   { key: 'nails_fasteners', label: 'Nails & fasteners', patterns: [/nail/i, /fastener/i, /tapping screw/i] },
@@ -127,6 +130,7 @@ export function accessoryRegisterTypeLabel(key) {
 export function netKgFromGrossClosing(grossKg, materialFamily, stockForm, spoolKg = SPOOL_KG_DEFAULT) {
   const gross = Math.max(0, Number(grossKg) || 0);
   if (stockForm === 'roll') return round2(gross);
+  if (gross > 0 && gross < NET_KG_GROSS_THRESHOLD) return round2(gross);
   const spool = Number(spoolKg?.[materialFamily]) || 0;
   if (gross <= spool) return 0;
   return round2(gross - spool);

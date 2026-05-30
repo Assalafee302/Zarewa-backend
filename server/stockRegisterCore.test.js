@@ -19,6 +19,8 @@ describe('stockRegisterCore', () => {
     expect(netKgFromGrossClosing(1000, 'aluzinc', 'coil')).toBe(940);
     expect(netKgFromGrossClosing(1000, 'aluminium', 'roll')).toBe(1000);
     expect(netKgFromGrossClosing(30, 'aluminium', 'coil')).toBe(0);
+    expect(netKgFromGrossClosing(29, 'aluminium', 'coil')).toBe(29);
+    expect(netKgFromGrossClosing(25, 'aluzinc', 'coil')).toBe(25);
   });
 
   it('builds coil register with opening received used closing', () => {

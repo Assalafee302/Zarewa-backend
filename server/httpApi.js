@@ -31,7 +31,6 @@ import {
   getStockRegisterWorkflow,
   patchCoilStockForm,
   saveStockRegisterPrintSnapshot,
-  saveStockRegisterPricing,
 } from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
@@ -2828,21 +2827,6 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not save print snapshot.' });
-    }
-  });
-
-  app.post('/api/stock-register/pricing', requireAuth, requireManagementReportsView, (req, res) => {
-    try {
-      const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
-      const branchScope = resolveBootstrapBranchScope(req);
-      if (!periodEnd || branchScope === 'ALL') {
-        return res.status(400).json({ ok: false, error: 'periodEnd and branch workspace required.' });
-      }
-      const r = saveStockRegisterPricing(db, branchScope, periodEnd, req.body?.pricing || req.body || {}, req.user);
-      res.status(r.ok ? 200 : 400).json(r);
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ ok: false, error: 'Could not save valuation prices.' });
     }
   });
 

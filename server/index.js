@@ -6,27 +6,13 @@ import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { debugBootLog } from './debugBootLog.js';
-import { attachStaticSpa } from './staticSpa.js';
 
 loadProjectEnv();
-
-if (
-  process.env.NODE_ENV === 'production' &&
-  !String(process.env.ZAREWA_LISTEN_HOST || '').trim()
-) {
-  process.env.ZAREWA_LISTEN_HOST = '0.0.0.0';
-}
 
 const port = Number(process.env.PORT || 8787) || 8787;
 const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefined;
 
 console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
-console.log('[zarewa] runtime package: @zarewa/backend — if Hostinger shows frontend commits, wrong Git repo is linked in hPanel');
-
-const mysqlCfgPreview = mysqlConfigFromEnv();
-console.log(
-  `[zarewa] MySQL target: ${mysqlCfgPreview.host}:${mysqlCfgPreview.port}/${mysqlCfgPreview.database} user=${mysqlCfgPreview.user}`
-);
 
 let app;
 let dbPath = '';
@@ -97,7 +83,6 @@ try {
   ]) {
     app.get(p, degradedProbeHandler);
   }
-  attachStaticSpa(app);
   app.use((_req, res) => {
     res.status(503).json({
       ok: false,

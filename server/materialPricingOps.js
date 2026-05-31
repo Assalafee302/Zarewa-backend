@@ -255,54 +255,12 @@ export function purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, da
 }
 
 /**
- * Weighted avg ₦/kg from received PO lines on a kg basis only (excludes metre-priced coil PO lines).
- * @returns {number|null}
- */
-export function purchaseWeightedAvgKgPriceFromPoLinesLastDays(db, productId, branchId, days = 31) {
-  const pid = String(productId || '').trim();
-  const bid = String(branchId || '').trim();
-  if (!pid || !bid) return null;
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
-    return null;
-  }
-  const since = isoDateDaysAgo(days);
-  const rows = db
-    .prepare(
-      `SELECT pol.unit_price_per_kg_ngn, pol.qty_received, pol.line_type
-       FROM purchase_order_lines pol
-       INNER JOIN purchase_orders po ON po.po_id = pol.po_id
-       WHERE pol.product_id = ?
-         AND po.branch_id = ?
-         AND pol.qty_received > 0
-         AND pol.unit_price_per_kg_ngn IS NOT NULL
-         AND pol.unit_price_per_kg_ngn > 0
-         AND SUBSTR(COALESCE(po.delivery_date_iso, po.order_date_iso), 1, 10) >= ?`
-    )
-    .all(pid, bid, since);
-  let sumW = 0;
-  let sumCost = 0;
-  for (const r of rows) {
-    const lt = String(r.line_type || '').trim().toLowerCase();
-    if (lt === 'coil_meter') continue;
-    const uk = Number(r.unit_price_per_kg_ngn);
-    const w = Number(r.qty_received) || 0;
-    if (!Number.isFinite(uk) || uk <= 0 || w <= 0) continue;
-    sumW += w;
-    sumCost += uk * w;
-  }
-  if (sumW <= 0) return null;
-  return Math.round(sumCost / sumW);
-}
-
-/**
- * Branch coil purchase avg ₦/kg — kg PO/receipt first; metre PO excluded. Falls back to all coil lots.
+ * Branch coil purchase avg ₦/kg — recent receipts first, then all received lots with unit cost.
  * @returns {{ cost: number|null; source: string }}
  */
 export function resolveBranchCoilCostPerKg(db, productId, branchId, days = 31) {
   const recent = purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, days);
-  if (recent) return { cost: recent, source: `purchase_kg_${days}d` };
-  const poKg = purchaseWeightedAvgKgPriceFromPoLinesLastDays(db, productId, branchId, days);
-  if (poKg) return { cost: poKg, source: `po_kg_${days}d` };
+  if (recent) return { cost: recent, source: `purchase_${days}d` };
   const pid = String(productId || '').trim();
   const bid = String(branchId || '').trim();
   if (!pid || !bid) return { cost: null, source: 'none' };

@@ -98,74 +98,6 @@ function openingMapsFromSnapshots(db, branchId, asAtIso) {
   return { stone, accessory };
 }
 
-/** PO / quotation line names as shown on documents (exact wording). */
-function accessoryDisplayNamesByProduct(db, branchId) {
-  const bid = String(branchId || '').trim();
-  const map = new Map();
-  if (!bid) return map;
-  if (tableReady(db, 'purchase_order_lines') && tableReady(db, 'purchase_orders')) {
-    const poRows = db
-      .prepare(
-        `SELECT pol.product_id, pol.product_name, po.order_date_iso
-         FROM purchase_order_lines pol
-         INNER JOIN purchase_orders po ON po.po_id = pol.po_id
-         WHERE po.branch_id = ?
-           AND pol.product_id LIKE 'ACC%'
-           AND TRIM(COALESCE(pol.product_name, '')) != ''
-         ORDER BY po.order_date_iso DESC`
-      )
-      .all(bid);
-    for (const r of poRows) {
-      const pid = String(r.product_id || '').trim();
-      if (pid && !map.has(pid)) map.set(pid, String(r.product_name).trim());
-    }
-  }
-  if (tableReady(db, 'quotation_lines') && tableReady(db, 'quotations')) {
-    const hasQBranch = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'branch_id');
-    const qRows = hasQBranch
-      ? db
-          .prepare(
-            `SELECT ql.name, q.date_iso
-             FROM quotation_lines ql
-             INNER JOIN quotations q ON q.id = ql.quotation_id
-             WHERE q.branch_id = ?
-               AND ql.category = 'accessories'
-               AND TRIM(COALESCE(ql.name, '')) != ''
-             ORDER BY q.date_iso DESC`
-          )
-          .all(bid)
-      : db
-          .prepare(
-            `SELECT ql.name, q.date_iso
-             FROM quotation_lines ql
-             INNER JOIN quotations q ON q.id = ql.quotation_id
-             WHERE ql.category = 'accessories'
-               AND TRIM(COALESCE(ql.name, '')) != ''
-             ORDER BY q.date_iso DESC`
-          )
-          .all();
-    /** Match quotation accessory names to products by normalised name when product_id absent on line. */
-    const products = db.prepare(`SELECT product_id, name FROM products WHERE product_id LIKE 'ACC%'`).all();
-    const byNorm = new Map();
-    for (const p of products) {
-      const nk = String(p.name || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '');
-      if (nk) byNorm.set(nk, String(p.product_id));
-    }
-    for (const r of qRows) {
-      const nk = String(r.name || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '');
-      const pid = byNorm.get(nk);
-      if (pid && !map.has(pid)) map.set(pid, String(r.name).trim());
-    }
-  }
-  return map;
-}
-
 function listCoilControlEventsInPeriod(db, branchId, start, end) {
   if (!tableReady(db, 'coil_control_events')) return [];
   const bid = String(branchId || '').trim();
@@ -211,8 +143,6 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     prevEnd
   );
 
-  const accessoryDisplayNameByProduct = accessoryDisplayNamesByProduct(db, bid);
-
   const pack = buildStockRegisterPack({
     branchId: bid,
     periodEnd: end,
@@ -227,7 +157,6 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
     masterData,
     stoneOpeningByProduct,
     accessoryOpeningByProduct,
-    accessoryDisplayNameByProduct,
   });
 
   const lookbackDays = 31;
@@ -273,10 +202,6 @@ export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
       accessories: accessoryPriceMap.size ? 'receipt_avg' : 'none',
     },
   });
-
-  pack.meta = pack.meta || {};
-  pack.meta.coilValuationNote =
-    'Coil stock valued in kg. PO may be kg or per-metre order; closing value uses ₦/kg only (metre-priced PO lines excluded).';
 
   const periodRow = getPeriodRow(db, bid, periodKey);
   return {
@@ -474,10 +399,10 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
         }
       }
       for (const r of reg.accessories?.rows || []) {
-        const pid = r.productID || (r.productIds || [])[0];
-        if (!pid) continue;
-        const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
-        pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
+        for (const pid of r.productIds || []) {
+          const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
+          pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
+        }
       }
     }
 

@@ -245,7 +245,232 @@ export function buildListedNotProducedRows({ productionJobs = [], quotations = [
       String(a.txnDate || '').localeCompare(String(b.txnDate || '')) ||
       String(a.qtNoDisplay || '').localeCompare(String(b.qtNoDisplay || ''))
   );
-  return { rows, totals: { lineCount: rows.length } };
+  let totalPlannedM = 0;
+  for (const r of rows) totalPlannedM += Number(r.plannedMeters) || 0;
+  return { rows, totals: { lineCount: rows.length, totalPlannedMetres: round2(totalPlannedM) } };
+}
+
+function coilSectionMaterialRow(label, section) {
+  const t = section?.totals;
+  if (!t?.lineCount) return null;
+  return {
+    key: label.replace(/\s+/g, '_').toLowerCase(),
+    label,
+    lineCount: t.lineCount,
+    kgUsed: t.totalKgUsed,
+    metres: t.totalMeters,
+    offcutKg: t.totalOffcutKg,
+    qtyIssued: null,
+    paidNetNgn: t.totalPaidNetNgn,
+  };
+}
+
+function gaugeRowsFromCoilSection(materialLabel, section) {
+  const out = [];
+  for (const g of section?.groups || []) {
+    const s = g.subtotals;
+    if (!s?.lineCount) continue;
+    out.push({
+      material: materialLabel,
+      gaugeLabel: g.gaugeLabel,
+      lineCount: s.lineCount,
+      kgUsed: s.totalKgUsed,
+      metres: s.totalMeters,
+      avgKgM: s.weightedConversionKgM,
+      metresUsed: null,
+    });
+  }
+  return out;
+}
+
+function scanCoilSectionsForFlags(sections) {
+  let balanceGapCount = 0;
+  let newCoilCount = 0;
+  let finishedCoilCount = 0;
+  for (const section of sections) {
+    for (const g of section?.groups || []) {
+      for (const r of g.rows || []) {
+        if (r.balanceBreak) balanceGapCount += 1;
+        const rm = String(r.remark || '');
+        if (/\bNew coil\b|\bNew roll\b/.test(rm)) newCoilCount += 1;
+        if (/\bFinished\b/.test(rm)) finishedCoilCount += 1;
+      }
+    }
+  }
+  return { balanceGapCount, newCoilCount, finishedCoilCount };
+}
+
+/**
+ * Period summary tables + short rule-based observations (from built report sections).
+ */
+export function buildMaterialTransactionSummary(report) {
+  const byMaterial = [];
+  const pushMat = (row) => {
+    if (row && row.lineCount > 0) byMaterial.push(row);
+  };
+
+  pushMat(coilSectionMaterialRow('Aluminium', report.aluminium));
+  pushMat(coilSectionMaterialRow('Aluzinc', report.aluzinc));
+  pushMat(coilSectionMaterialRow('Coil (unclassified)', report.unclassifiedCoil));
+
+  const stoneT = report.stoneCoated?.totals;
+  if (stoneT?.lineCount) {
+    pushMat({
+      key: 'stone_coated',
+      label: 'Stone-coated (metre stock)',
+      lineCount: stoneT.lineCount,
+      kgUsed: null,
+      metres: stoneT.totalMetresUsed,
+      offcutKg: null,
+      qtyIssued: null,
+      paidNetNgn: stoneT.totalPaidNetNgn,
+    });
+  }
+
+  const accT = report.accessories?.totals;
+  if (accT?.lineCount) {
+    pushMat({
+      key: 'accessories',
+      label: 'Accessories',
+      lineCount: accT.lineCount,
+      kgUsed: null,
+      metres: null,
+      offcutKg: null,
+      qtyIssued: accT.totalQtyUsed,
+      paidNetNgn: null,
+    });
+  }
+
+  const offRows = report.offcutProduction?.rows || [];
+  if (offRows.length) {
+    let kg = 0;
+    let paid = 0;
+    const jobs = new Set();
+    for (const r of offRows) {
+      kg += Number(r.kgUsed) || 0;
+      if (r.amountNetNgn != null && r.jobId && !jobs.has(r.jobId)) {
+        jobs.add(r.jobId);
+        paid += Number(r.amountNetNgn) || 0;
+      }
+    }
+    pushMat({
+      key: 'offcut',
+      label: 'Offcut / no coil allocation',
+      lineCount: offRows.length,
+      kgUsed: round2(kg),
+      metres: report.offcutProduction?.totals?.totalMetres ?? round2(offRows.reduce((s, r) => s + (Number(r.metres) || 0), 0)),
+      offcutKg: null,
+      qtyIssued: null,
+      paidNetNgn: paid,
+    });
+  }
+
+  const np = report.listedNotProduced;
+  if (np?.totals?.lineCount) {
+    pushMat({
+      key: 'not_produced',
+      label: 'Listed for production — not produced',
+      lineCount: np.totals.lineCount,
+      kgUsed: null,
+      metres: np.totals.totalPlannedMetres ?? null,
+      offcutKg: null,
+      qtyIssued: null,
+      paidNetNgn: null,
+    });
+  }
+
+  const canN = report.cancelled?.totals?.lineCount || 0;
+  if (canN) {
+    pushMat({
+      key: 'cancelled',
+      label: 'Cancelled production',
+      lineCount: canN,
+      kgUsed: null,
+      metres: null,
+      offcutKg: null,
+      qtyIssued: null,
+      paidNetNgn: null,
+    });
+  }
+
+  const byGauge = [
+    ...gaugeRowsFromCoilSection('Aluminium', report.aluminium),
+    ...gaugeRowsFromCoilSection('Aluzinc', report.aluzinc),
+    ...gaugeRowsFromCoilSection('Coil (unclassified)', report.unclassifiedCoil),
+  ];
+  for (const g of report.stoneCoated?.groups || []) {
+    const s = g.subtotals;
+    if (!s?.lineCount) continue;
+    byGauge.push({
+      material: 'Stone-coated',
+      gaugeLabel: g.gaugeLabel,
+      lineCount: s.lineCount,
+      kgUsed: null,
+      metres: null,
+      avgKgM: null,
+      metresUsed: s.totalMetresUsed,
+    });
+  }
+
+  const coilFlags = scanCoilSectionsForFlags([
+    report.aluminium,
+    report.aluzinc,
+    report.unclassifiedCoil,
+  ]);
+  let stoneGapCount = 0;
+  for (const g of report.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      if (r.balanceBreak) stoneGapCount += 1;
+    }
+  }
+
+  const notes = {
+    ...coilFlags,
+    stoneGapCount,
+    notProducedCount: np?.totals?.lineCount || 0,
+    cancelledCount: canN,
+  };
+
+  const observations = [];
+  const recommendations = [];
+
+  if (coilFlags.balanceGapCount > 0) {
+    observations.push(
+      `Coil usage: ${coilFlags.balanceGapCount} line(s) where before weight does not match the previous line's after on the same coil (see highlighted Before).`
+    );
+    recommendations.push(
+      'Reconcile opening and closing coil weights on flagged production lines before month-end close.'
+    );
+  }
+  if (stoneGapCount > 0) {
+    observations.push(
+      `Stone metre stock: ${stoneGapCount} line(s) where before metres do not chain from the previous draw.`
+    );
+  }
+  if (notes.notProducedCount > 0) {
+    observations.push(
+      `${notes.notProducedCount} quotation(s) were registered for production in this period but the job did not complete.`
+    );
+    recommendations.push('Review the “Listed for production — not produced” table and follow up with operations.');
+  }
+  if (coilFlags.finishedCoilCount > 0) {
+    observations.push(`${coilFlags.finishedCoilCount} production line(s) cleared a coil (remark: Finished).`);
+  }
+  if (coilFlags.newCoilCount > 0) {
+    observations.push(`${coilFlags.newCoilCount} line(s) were the first completed use of a coil (New coil / New roll).`);
+  }
+  if (canN > 0) {
+    observations.push(`${canN} cancelled production line(s) recorded in this period.`);
+  }
+  if (offRows.length > 0) {
+    observations.push(`${offRows.length} completed job(s) used material without coil allocation (offcut / no coil).`);
+  }
+
+  if (!observations.length) {
+    observations.push('No balance gaps, not-produced listings, or cancelled lines flagged for this period.');
+  }
+
+  return { byMaterial, byGauge, notes, observations, recommendations };
 }
 
 function toIsoDate(value) {
@@ -1041,7 +1266,7 @@ export function buildMaterialTransactionReport(input = {}) {
   const coilUseTimeline = buildCoilUseTimeline(productionJobCoils, jobById);
   const coilGroupOpts = { coilByNo, coilUseTimeline };
 
-  return {
+  const body = {
     period: { startDate: startDate || '', endDate: endDate || '' },
     aluminium: groupCoilRowsByGauge(aluRows, coilGroupOpts),
     aluzinc: groupCoilRowsByGauge(aluzRows, coilGroupOpts),
@@ -1051,6 +1276,7 @@ export function buildMaterialTransactionReport(input = {}) {
       totals: {
         lineCount: offcutProductionRows.length,
         totalMetres: round2(offcutProductionRows.reduce((s, r) => s + (Number(r.metres) || 0), 0)),
+        totalKgUsed: round2(offcutProductionRows.reduce((s, r) => s + (Number(r.kgUsed) || 0), 0)),
       },
     },
     stoneCoated: groupStoneMeterRows(stoneSorted),
@@ -1063,6 +1289,8 @@ export function buildMaterialTransactionReport(input = {}) {
     }),
     cancelled,
   };
+  body.summary = buildMaterialTransactionSummary(body);
+  return body;
 }
 
 /** @deprecated Use {@link buildMaterialTransactionReport} — flat coil rows for legacy export. */

@@ -264,4 +264,39 @@ describe('buildMaterialTransactionReport', () => {
     expect(report.listedNotProduced.rows[0].qtNoDisplay).toBe('PEND');
     expect(report.listedNotProduced.rows[0].status).toBe('Planned');
   });
+
+  it('includes summary by material and gauge with observations', () => {
+    const report = buildMaterialTransactionReport({
+      productionJobs: [
+        {
+          jobID: 'J1',
+          status: 'Completed',
+          completedAtISO: '2026-05-10',
+          quotationRef: 'QT-1',
+          actualMeters: 100,
+          actualWeightKg: 50,
+        },
+      ],
+      productionJobCoils: [
+        {
+          jobID: 'J1',
+          coilNo: 'C-001',
+          gaugeLabel: '0.5mm',
+          openingWeightKg: 500,
+          closingWeightKg: 450,
+          consumedWeightKg: 50,
+          metersProduced: 100,
+        },
+      ],
+      quotations: [{ id: 'QT-1', customerName: 'Acme' }],
+      refunds: [],
+      coilLots: [{ coilNo: 'C-001', materialTypeName: 'Aluminium' }],
+      startDate: '2026-05-01',
+      endDate: '2026-05-31',
+    });
+    expect(report.summary.byMaterial.some((m) => m.label === 'Aluminium')).toBe(true);
+    expect(report.summary.byGauge.some((g) => g.gaugeLabel === '0.5mm')).toBe(true);
+    expect(report.summary.byMaterial[0].metres).toBe(100);
+    expect(Array.isArray(report.summary.observations)).toBe(true);
+  });
 });

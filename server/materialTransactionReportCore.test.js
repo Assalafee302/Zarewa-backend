@@ -135,7 +135,81 @@ describe('buildMaterialTransactionReport', () => {
     });
     const rows = report.aluminium.groups[0].rows;
     expect(rows).toHaveLength(2);
+    expect(rows[0].remark).toMatch(/New coil/);
+    expect(rows[1].remark).not.toMatch(/New coil/);
     expect(rows[1].balanceBreak).toBe(true);
     expect(rows[1].balanceNote).toMatch(/Gap:/);
+  });
+
+  it('marks Finished only on the line that depletes the coil', () => {
+    const report = buildMaterialTransactionReport({
+      productionJobs: [
+        {
+          jobID: 'J1',
+          status: 'Completed',
+          completedAtISO: '2026-05-08',
+          quotationRef: 'QT-1',
+          actualMeters: 50,
+          actualWeightKg: 500,
+        },
+      ],
+      productionJobCoils: [
+        {
+          jobID: 'J1',
+          sequenceNo: 1,
+          coilNo: 'C-END',
+          gaugeLabel: '0.5mm',
+          openingWeightKg: 500,
+          closingWeightKg: 0.5,
+          consumedWeightKg: 499.5,
+          metersProduced: 50,
+        },
+      ],
+      quotations: [{ id: 'QT-1', customerName: 'Acme' }],
+      refunds: [],
+      coilLots: [{ coilNo: 'C-END', materialTypeName: 'Aluminium' }],
+      startDate: '2026-05-01',
+      endDate: '2026-05-31',
+    });
+    const row = report.aluminium.groups[0].rows[0];
+    expect(row.remark).toMatch(/New coil/);
+    expect(row.remark).toMatch(/Finished/);
+  });
+
+  it('lists quotations registered for production in period but not completed', () => {
+    const report = buildMaterialTransactionReport({
+      productionJobs: [
+        {
+          jobID: 'JP',
+          status: 'Planned',
+          createdAtISO: '2026-05-12T10:00:00.000Z',
+          quotationRef: 'QT-PEND',
+          customerName: 'Pending Co',
+          plannedMeters: 120,
+        },
+        {
+          jobID: 'JD',
+          status: 'Completed',
+          createdAtISO: '2026-05-14T10:00:00.000Z',
+          completedAtISO: '2026-05-15',
+          quotationRef: 'QT-DONE',
+          customerName: 'Done Co',
+          actualMeters: 80,
+          actualWeightKg: 40,
+        },
+      ],
+      productionJobCoils: [],
+      quotations: [
+        { id: 'QT-PEND', customerName: 'Pending Co', projectName: 'Site P' },
+        { id: 'QT-DONE', customerName: 'Done Co' },
+      ],
+      refunds: [],
+      coilLots: [],
+      startDate: '2026-05-01',
+      endDate: '2026-05-31',
+    });
+    expect(report.listedNotProduced.rows).toHaveLength(1);
+    expect(report.listedNotProduced.rows[0].qtNoDisplay).toBe('PEND');
+    expect(report.listedNotProduced.rows[0].status).toBe('Planned');
   });
 });

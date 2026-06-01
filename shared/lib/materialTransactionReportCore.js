@@ -125,15 +125,127 @@ export function quotationDesignLabel(quote) {
   return '—';
 }
 
-function coilStockRemark(coilLot, opening, closing, consumed) {
+const COIL_FINISHED_CLOSING_KG = 1.5;
+
+/** Coil depleted on this production line only (not every line on the same coil). */
+function coilFinishedOnThisLine(consumed, closingKg) {
+  const used = Number(consumed) || 0;
+  if (used <= 0) return false;
+  return (Number(closingKg) || 0) <= COIL_FINISHED_CLOSING_KG;
+}
+
+function coilRowStockRemark(coilLot, isFirstProductionUse, isFinishedOnLine) {
   const parts = [];
   const form = String(coilLot?.stockForm || 'coil').toLowerCase();
-  if (opening > 0) parts.push(form === 'roll' ? 'Start: roll' : 'Start: new coil');
-  const st = String(coilLot?.currentStatus || '').toLowerCase();
-  const finished =
-    consumed > 0 && (closing <= 1.5 || st === 'finished' || st === 'consumed' || st === 'depleted');
-  if (finished) parts.push('Finished coil');
+  if (isFirstProductionUse) parts.push(form === 'roll' ? 'New roll' : 'New coil');
+  if (isFinishedOnLine) parts.push('Finished');
   return parts.length ? parts.join(' · ') : '—';
+}
+
+function dateInPeriod(iso, startDate, endDate) {
+  const d = toIsoDate(iso);
+  if (!d) return false;
+  return (!startDate || d >= startDate) && (!endDate || d <= endDate);
+}
+
+/** Completed production uses per coil (for first-use / remark ordering). */
+function buildCoilUseTimeline(productionJobCoils, jobById) {
+  const entries = [];
+  for (const c of productionJobCoils || []) {
+    const jid = String(c.jobID ?? c.job_id ?? '').trim();
+    const job = jobById.get(jid);
+    if (!job || !isCompleted(job)) continue;
+    const coilNo = String(c.coilNo ?? c.coil_no ?? '').trim();
+    if (!coilNo) continue;
+    entries.push({
+      coilNo,
+      jobId: jid,
+      txnDate: jobTxnDateISO(job),
+      sequenceNo: Number(c.sequenceNo ?? c.sequence_no) || 0,
+    });
+  }
+  entries.sort((a, b) => {
+    const c = String(a.coilNo).localeCompare(String(b.coilNo), undefined, { numeric: true });
+    if (c !== 0) return c;
+    const d = String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
+    if (d !== 0) return d;
+    const j = String(a.jobId).localeCompare(String(b.jobId));
+    if (j !== 0) return j;
+    return a.sequenceNo - b.sequenceNo;
+  });
+  return entries;
+}
+
+function countPriorCoilUses(coilNo, txnDate, jobId, sequenceNo, timeline) {
+  const cn = String(coilNo || '').trim();
+  let n = 0;
+  for (const e of timeline) {
+    if (e.coilNo !== cn) continue;
+    if (e.txnDate < txnDate) {
+      n++;
+      continue;
+    }
+    if (e.txnDate > txnDate) break;
+    if (e.jobId < jobId) {
+      n++;
+      continue;
+    }
+    if (e.jobId > jobId) break;
+    if (e.sequenceNo < sequenceNo) n++;
+  }
+  return n;
+}
+
+function annotateCoilRowRemarks(rows, coilByNo, coilUseTimeline) {
+  return rows.map((row) => {
+    const prior = countPriorCoilUses(
+      row.coilNo,
+      row.txnDate,
+      row.jobId,
+      row.sequenceNo ?? 0,
+      coilUseTimeline
+    );
+    const lot = coilByNo.get(String(row.coilNo || '').trim());
+    const remark = coilRowStockRemark(
+      lot,
+      prior === 0,
+      coilFinishedOnThisLine(row.kgUsed, row.afterKg)
+    );
+    return { ...row, remark };
+  });
+}
+
+/**
+ * Production jobs registered in period that did not complete (not produced).
+ */
+export function buildListedNotProducedRows({ productionJobs = [], quotations = [], startDate, endDate }) {
+  const quoteById = new Map((quotations || []).map((q) => [String(q.id ?? '').trim(), q]));
+  const rows = [];
+  for (const job of (productionJobs || []).map(normalizeJobRow)) {
+    const listedDate = toIsoDate(job.createdAtISO);
+    if (!dateInPeriod(listedDate, startDate, endDate)) continue;
+    if (isCompleted(job)) continue;
+    const qref = String(job.quotationRef || '').trim();
+    const quote = qref ? quoteById.get(qref) : null;
+    const dates = rowDateFields(listedDate);
+    rows.push({
+      ...dates,
+      quotationRef: qref,
+      qtNoDisplay: displayLast4(qref) || '—',
+      customerProject: customerProjectLabel(job, quote),
+      design: quotationDesignLabel(quote),
+      status: String(job.status || 'Planned').trim(),
+      plannedMeters: round2(Number(job.plannedMeters) || 0),
+      jobId: String(job.jobID || '').trim(),
+      machineName: String(job.machineName || '').trim() || '—',
+    });
+  }
+  rows.sort(
+    (a, b) =>
+      String(a.txnDate || '').localeCompare(String(b.txnDate || '')) ||
+      String(a.qtNoDisplay || '').localeCompare(String(b.qtNoDisplay || ''))
+  );
+  return { rows, totals: { lineCount: rows.length } };
 }
 
 function toIsoDate(value) {
@@ -387,7 +499,7 @@ function summarizeCoilRows(rows) {
   };
 }
 
-function groupCoilRowsByGauge(rows) {
+function groupCoilRowsByGauge(rows, { coilByNo, coilUseTimeline } = {}) {
   const byGauge = new Map();
   for (const r of rows) {
     const g = r.gauge || '—';
@@ -402,9 +514,14 @@ function groupCoilRowsByGauge(rows) {
         if (c !== 0) return c;
         const d = String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
         if (d !== 0) return d;
-        return String(a.jobId || '').localeCompare(String(b.jobId || ''));
+        const j = String(a.jobId || '').localeCompare(String(b.jobId || ''));
+        if (j !== 0) return j;
+        return (Number(a.sequenceNo) || 0) - (Number(b.sequenceNo) || 0);
       });
-      const linkedRows = applyBalanceContinuity(gaugeRows, {
+      let linkedRows = coilUseTimeline
+        ? annotateCoilRowRemarks(gaugeRows, coilByNo, coilUseTimeline)
+        : gaugeRows;
+      linkedRows = applyBalanceContinuity(linkedRows, {
         continuityKey: (r) => String(r.coilNo || '').trim(),
         beforeField: 'beforeKg',
         afterField: 'afterKg',
@@ -474,7 +591,8 @@ function buildCoilTxnRow({
     meters: Number(coilRow?.metersProduced) || 0,
     conversionKgM: convNum,
     offcutKg: offcut,
-    remark: coilStockRemark(coilLot, opening, closing, consumed),
+    sequenceNo: Number(coilRow?.sequenceNo) || 0,
+    remark: '—',
     amountNetNgn: paidNet,
     attributedNgn: attributed,
     gauge: gaugeLabel,
@@ -840,11 +958,14 @@ export function buildMaterialTransactionReport(input = {}) {
 
   const stoneSorted = stoneMeterRows.sort((a, b) => String(a.txnDate).localeCompare(String(b.txnDate)));
 
+  const coilUseTimeline = buildCoilUseTimeline(productionJobCoils, jobById);
+  const coilGroupOpts = { coilByNo, coilUseTimeline };
+
   return {
     period: { startDate: startDate || '', endDate: endDate || '' },
-    aluminium: groupCoilRowsByGauge(aluRows),
-    aluzinc: groupCoilRowsByGauge(aluzRows),
-    unclassifiedCoil: groupCoilRowsByGauge(unclassifiedCoilRows),
+    aluminium: groupCoilRowsByGauge(aluRows, coilGroupOpts),
+    aluzinc: groupCoilRowsByGauge(aluzRows, coilGroupOpts),
+    unclassifiedCoil: groupCoilRowsByGauge(unclassifiedCoilRows, coilGroupOpts),
     offcutProduction: {
       rows: offcutProductionRows.sort((a, b) => String(a.txnDate).localeCompare(String(b.txnDate))),
       totals: {
@@ -854,6 +975,12 @@ export function buildMaterialTransactionReport(input = {}) {
     },
     stoneCoated: groupStoneMeterRows(stoneSorted),
     accessories: groupAccessoryRows(accessoryRows),
+    listedNotProduced: buildListedNotProducedRows({
+      productionJobs,
+      quotations,
+      startDate,
+      endDate,
+    }),
     cancelled,
   };
 }

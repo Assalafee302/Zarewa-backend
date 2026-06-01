@@ -3,7 +3,7 @@
  * with PO order qty, costing, and supplier payment / outstanding summary.
  */
 
-import { displayCoilNumber, displayDocNumber, displayTxnDateShort } from './reportDisplayFormat.js';
+import { displayDocNumber, displayLast4, displayTxnDateShort } from './reportDisplayFormat.js';
 import { purchasesPaidRows } from './standardReportsPurchases.js';
 
 function coilMaterialFamily(materialTypeName) {
@@ -161,14 +161,14 @@ function buildCoilReceiptRow(lot, po, line, masterData) {
     ...dates,
     supplier: String(lot.supplierName || po?.supplierName || '').trim() || '—',
     coilNo: String(lot.coilNo || '').trim(),
-    coilNoDisplay: displayCoilNumber(lot.coilNo) || '—',
+    coilNoDisplay: displayLast4(lot.coilNo) || displayReceiptRef(lot.coilNo),
     colour: colourAbbrevForReport(masterData, lot.colour),
     gauge: String(lot.gaugeLabel || line?.gauge || '').trim() || '—',
     receivedKg,
     orderKg,
     kgAmountNgn: unitKg || null,
     totalNgn,
-    poIdDisplay: displayDocNumber(poId) || '—',
+    poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
     poId: poId || '—',
     productName: String(line?.productName || lot.productID || '').trim() || '—',
     remark: remarks.length ? remarks.join(' · ') : '—',
@@ -195,7 +195,7 @@ function buildMovementReceiptRow(m, po, line, product, masterData, kind) {
     ...dates,
     supplier: String(po?.supplierName || '').trim() || '—',
     coilNo: receiptRef,
-    coilNoDisplay: receiptRef.length > 12 ? receiptRef.slice(-12) : receiptRef,
+    coilNoDisplay: displayReceiptRef(receiptRef),
     colour: colourAbbrevForReport(masterData, line?.color || product?.dashboardAttrs?.colour),
     gauge: String(line?.gauge || product?.dashboardAttrs?.gauge || '').trim() || '—',
     receivedQty: qty,
@@ -203,7 +203,7 @@ function buildMovementReceiptRow(m, po, line, product, masterData, kind) {
     unitLabel,
     kgAmountNgn: unitNgn || null,
     totalNgn,
-    poIdDisplay: displayDocNumber(poId) || '—',
+    poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
     poId: poId || '—',
     productName: String(line?.productName || product?.name || m.productID || '').trim() || '—',
     remark: remarks.length ? remarks.join(' · ') : '—',
@@ -272,30 +272,55 @@ function collectPoIdsFromReport(sections) {
   return ids;
 }
 
-function buildPoPaymentRows(poById, poIds, paymentsByPo) {
-  const rows = [];
-  for (const poId of [...poIds].sort()) {
+function displayReceiptRef(ref) {
+  const s = String(ref || '').trim();
+  if (!s || s === '—') return '—';
+  const last4 = displayLast4(s);
+  if (last4) return last4;
+  return s.length <= 5 ? s : s.slice(-5);
+}
+
+function buildPoPaymentMeta(poById, poIds, paymentsByPo) {
+  const meta = new Map();
+  for (const poId of poIds) {
     const po = poById.get(poId);
     if (!po) continue;
     const totalVal = poTotalValueNgn(po);
     const paid = Math.round(Number(po.supplierPaidNgn) || 0);
-    const paidInPeriod = Math.round(paymentsByPo.get(poId) || 0);
-    const outstanding = Math.max(0, totalVal - paid);
-    rows.push({
-      poIdDisplay: displayDocNumber(poId) || '—',
-      poId,
-      supplier: String(po.supplierName || '').trim() || '—',
-      orderDate: toIsoDate(po.orderDateISO),
-      status: String(po.status || '').trim() || '—',
+    meta.set(poId, {
       poValueNgn: totalVal,
       supplierPaidNgn: paid,
-      paidInPeriodNgn: paidInPeriod,
-      outstandingNgn: outstanding,
-      remark: outstanding > 0 ? 'Balance due supplier' : paid >= totalVal && totalVal > 0 ? 'Fully paid' : '—',
+      paidInPeriodNgn: Math.round(paymentsByPo.get(poId) || 0),
+      outstandingNgn: Math.max(0, totalVal - paid),
     });
   }
-  rows.sort((a, b) => String(a.supplier).localeCompare(String(b.supplier)) || String(a.poId).localeCompare(String(b.poId)));
-  return rows;
+  return meta;
+}
+
+/** First line per PO in each section shows PO paid / outstanding. */
+function attachPoPaymentToSections(sections, poMeta) {
+  const seenPo = new Set();
+  for (const sec of sections) {
+    if (!sec?.groups) continue;
+    for (const g of sec.groups) {
+      for (const row of g.rows || []) {
+        const poId = String(row.poId || '').trim();
+        if (!poId || poId === '—') {
+          row.poPaidNgn = null;
+          row.poOutstandingNgn = null;
+          row.paidInPeriodNgn = null;
+          continue;
+        }
+        const m = poMeta.get(poId);
+        if (!m) continue;
+        const first = !seenPo.has(poId);
+        if (first) seenPo.add(poId);
+        row.poPaidNgn = first ? m.supplierPaidNgn : null;
+        row.poOutstandingNgn = first ? m.outstandingNgn : null;
+        row.paidInPeriodNgn = first ? m.paidInPeriodNgn : null;
+      }
+    }
+  }
 }
 
 export function buildPurchaseReportSummary(report) {
@@ -491,15 +516,37 @@ export function buildPurchaseReport(input = {}) {
     if (pid) paymentsByPo.set(pid, (paymentsByPo.get(pid) || 0) + (Number(p.amountNgn) || 0));
   }
 
+  const poMeta = buildPoPaymentMeta(poById, poIds, paymentsByPo);
+  attachPoPaymentToSections(
+    [body.aluminium, body.aluzinc, body.unclassifiedCoil, body.stoneCoated, body.accessories],
+    poMeta
+  );
+
+  const poBalanceRows = [...poIds]
+    .sort()
+    .map((poId) => {
+      const po = poById.get(poId);
+      const m = poMeta.get(poId);
+      if (!po || !m) return null;
+      return {
+        poIdDisplay: displayLast4(poId) || displayDocNumber(poId) || '—',
+        poId,
+        supplier: String(po.supplierName || '').trim() || '—',
+        status: String(po.status || '').trim() || '—',
+        poValueNgn: m.poValueNgn,
+        supplierPaidNgn: m.supplierPaidNgn,
+        paidInPeriodNgn: m.paidInPeriodNgn,
+        outstandingNgn: m.outstandingNgn,
+      };
+    })
+    .filter(Boolean);
+
   body.payments = {
     supplierPayments,
-    poBalances: buildPoPaymentRows(poById, poIds, paymentsByPo),
+    poBalances: poBalanceRows,
     totals: {
       paidInPeriodNgn: supplierPayments.reduce((s, p) => s + (Number(p.amountNgn) || 0), 0),
-      poOutstandingNgn: buildPoPaymentRows(poById, poIds, paymentsByPo).reduce(
-        (s, p) => s + (Number(p.outstandingNgn) || 0),
-        0
-      ),
+      poOutstandingNgn: poBalanceRows.reduce((s, p) => s + (Number(p.outstandingNgn) || 0), 0),
     },
   };
 

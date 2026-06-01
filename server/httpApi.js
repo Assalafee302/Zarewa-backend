@@ -10,7 +10,7 @@ import {
   receiptResultFromSavedRows,
 } from '../shared/lib/customerLedgerCore.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
-import { productionTransactionReportRows } from '../shared/lib/productionTransactionReportCore.js';
+import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -261,7 +261,11 @@ import {
   listInventoryCoilSnapshots,
   listCoilControlEvents,
   listStockMovementsForProduct,
+  listStockMovementsForBranchPeriod,
   listProductionJobs,
+  listProductionJobAccessoryUsage,
+  listProductionJobStoneFlatsheetUsage,
+  listProducts,
   getJsonBlob,
   setJsonBlob,
   workspaceReportAggregateCounts,
@@ -2587,18 +2591,73 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/reports/material-transaction', requireManagementReportsView, (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = buildMaterialTransactionReport({
+        productionJobs: listProductionJobs(db, branchScope),
+        productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
+        quotations: listQuotations(db, branchScope),
+        refunds: listRefunds(db, branchScope),
+        coilLots: listCoilLots(db, branchScope),
+        products: listProducts(db, branchScope),
+        stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
+        stoneFlatsheetUsage: listProductionJobStoneFlatsheetUsage(db, branchScope),
+        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope),
+        startDate,
+        endDate,
+      });
+      res.json({ ok: true, startDate, endDate, branchScope, report });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build material transaction report.' });
+    }
+  });
+
+  /** @deprecated Use GET /api/reports/material-transaction */
   app.get('/api/reports/production-transaction', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const jobs = listProductionJobs(db, branchScope);
-      const coils = listProductionJobCoils(db, branchScope, { limit: 0 });
-      const quotations = listQuotations(db, branchScope);
-      const refunds = listRefunds(db, branchScope);
-      const coilLots = listCoilLots(db, branchScope);
-      const rows = productionTransactionReportRows(jobs, coils, quotations, refunds, coilLots, startDate, endDate);
-      res.json({ ok: true, startDate, endDate, branchScope, rows });
+      const report = buildMaterialTransactionReport({
+        productionJobs: listProductionJobs(db, branchScope),
+        productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
+        quotations: listQuotations(db, branchScope),
+        refunds: listRefunds(db, branchScope),
+        coilLots: listCoilLots(db, branchScope),
+        startDate,
+        endDate,
+      });
+      const flat = [];
+      for (const fam of ['aluminium', 'aluzinc']) {
+        for (const g of report[fam]?.groups || []) {
+          for (const r of g.rows) {
+            flat.push({
+              qtNoDisplay: r.qtNoDisplay,
+              prodDate: r.txnDate,
+              customer: r.customerProject,
+              color: r.colour,
+              gauge: r.gauge,
+              materialType: r.materialType,
+              coilNoDisplay: r.coilNoDisplay,
+              beforeKg: r.beforeKg,
+              afterKg: r.afterKg,
+              kgUsed: r.kgUsed,
+              meters: r.meters,
+              conversionKgM: r.conversionKgM,
+              design: r.design,
+              offcutKg: r.offcutKg,
+              paidNgn: r.amountNetNgn,
+              materialCostNgn: 0,
+              jobId: r.jobId,
+            });
+          }
+        }
+      }
+      res.json({ ok: true, startDate, endDate, branchScope, rows: flat });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build production transaction report.' });

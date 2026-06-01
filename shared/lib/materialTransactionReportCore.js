@@ -473,6 +473,94 @@ function rowDateFields(iso) {
   return { txnDate, txnDateDisplay: displayTxnDateShort(txnDate) };
 }
 
+/**
+ * Within one coil, order lines so previous after ≈ next before (ledger chain).
+ * Starts at the line with the largest before (first draw on the coil).
+ */
+function orderCoilRowsAsBalanceChain(rows, tolerance = BALANCE_GAP_TOLERANCE_KG) {
+  if (rows.length <= 1) return rows;
+
+  const list = [...rows];
+  const unused = new Set(list.map((_, i) => i));
+
+  let startIdx = [...unused][0];
+  for (const i of unused) {
+    const r = list[i];
+    const best = list[startIdx];
+    const rb = Number(r.beforeKg) || 0;
+    const bb = Number(best.beforeKg) || 0;
+    if (rb > bb) startIdx = i;
+    else if (rb === bb) {
+      const d = String(r.txnDate || '').localeCompare(String(best.txnDate || ''));
+      if (d < 0) startIdx = i;
+      else if (d === 0 && String(r.jobId || '') < String(best.jobId || '')) startIdx = i;
+    }
+  }
+
+  const ordered = [];
+  let current = list[startIdx];
+  ordered.push(current);
+  unused.delete(startIdx);
+
+  while (unused.size > 0) {
+    const targetAfter = Number(current.afterKg) || 0;
+    let bestIdx = null;
+    let bestDist = Infinity;
+    let bestDate = '9999';
+    let bestJob = 'zzz';
+    for (const i of unused) {
+      const before = Number(list[i].beforeKg) || 0;
+      const dist = Math.abs(before - targetAfter);
+      const date = String(list[i].txnDate || '');
+      const job = String(list[i].jobId || '');
+      const better =
+        dist < bestDist - 1e-9 ||
+        (Math.abs(dist - bestDist) < 1e-9 &&
+          (date < bestDate || (date === bestDate && job < bestJob)));
+      if (better) {
+        bestDist = dist;
+        bestIdx = i;
+        bestDate = date;
+        bestJob = job;
+      }
+    }
+    if (bestIdx == null) break;
+    current = list[bestIdx];
+    ordered.push(current);
+    unused.delete(bestIdx);
+  }
+
+  if (unused.size > 0) {
+    const rest = [...unused]
+      .map((i) => list[i])
+      .sort(
+        (a, b) =>
+          String(a.txnDate || '').localeCompare(String(b.txnDate || '')) ||
+          String(a.jobId || '').localeCompare(String(b.jobId || '')) ||
+          (Number(a.sequenceNo) || 0) - (Number(b.sequenceNo) || 0)
+      );
+    ordered.push(...rest);
+  }
+
+  return ordered;
+}
+
+/** Sort by coil no, then chain each coil's lines by before/after continuity. */
+function arrangeCoilRowsByCoilAndBalance(rows) {
+  const byCoil = new Map();
+  for (const r of rows) {
+    const cn = String(r.coilNo || '').trim() || '—';
+    if (!byCoil.has(cn)) byCoil.set(cn, []);
+    byCoil.get(cn).push(r);
+  }
+  const coils = [...byCoil.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const out = [];
+  for (const cn of coils) {
+    out.push(...orderCoilRowsAsBalanceChain(byCoil.get(cn)));
+  }
+  return out;
+}
+
 function summarizeCoilRows(rows) {
   let totalKg = 0;
   let totalM = 0;
@@ -509,18 +597,10 @@ function groupCoilRowsByGauge(rows, { coilByNo, coilUseTimeline } = {}) {
   const groups = [...byGauge.entries()]
     .sort((a, b) => gaugeSortKey(a[0]) - gaugeSortKey(b[0]) || String(a[0]).localeCompare(String(b[0])))
     .map(([gaugeLabel, gaugeRows]) => {
-      gaugeRows.sort((a, b) => {
-        const c = String(a.coilNo || '').localeCompare(String(b.coilNo || ''), undefined, { numeric: true });
-        if (c !== 0) return c;
-        const d = String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
-        if (d !== 0) return d;
-        const j = String(a.jobId || '').localeCompare(String(b.jobId || ''));
-        if (j !== 0) return j;
-        return (Number(a.sequenceNo) || 0) - (Number(b.sequenceNo) || 0);
-      });
+      const arranged = arrangeCoilRowsByCoilAndBalance(gaugeRows);
       let linkedRows = coilUseTimeline
-        ? annotateCoilRowRemarks(gaugeRows, coilByNo, coilUseTimeline)
-        : gaugeRows;
+        ? annotateCoilRowRemarks(arranged, coilByNo, coilUseTimeline)
+        : arranged;
       linkedRows = applyBalanceContinuity(linkedRows, {
         continuityKey: (r) => String(r.coilNo || '').trim(),
         beforeField: 'beforeKg',

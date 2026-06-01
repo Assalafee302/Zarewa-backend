@@ -56,6 +56,9 @@ describe('buildMaterialTransactionReport', () => {
     expect(report.aluminium.groups).toHaveLength(1);
     expect(report.aluminium.groups[0].gaugeLabel).toBe('0.5mm');
     expect(report.aluminium.groups[0].rows.map((r) => r.coilNo)).toEqual(['C-001', 'C-002']);
+    expect(report.aluminium.groups[0].rows[0].qtNoDisplay).toBe('0001');
+    expect(report.aluminium.groups[0].rows[0].coilNoDisplay).toBe('0001');
+    expect(report.aluminium.groups[0].rows[0].txnDateDisplay).toBe('10/05');
     expect(report.aluminium.groups[0].subtotals.totalKgUsed).toBe(100);
   });
 

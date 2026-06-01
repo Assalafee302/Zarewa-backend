@@ -29,7 +29,9 @@ import {
   buildStockRegisterForBranch,
   captureStockRegisterClosing,
   getStockRegisterWorkflow,
+  listStockRegisterInbox,
   patchCoilStockForm,
+  saveStockRegisterBmAdjustments,
   saveStockRegisterPrintSnapshot,
 } from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
@@ -2782,9 +2784,15 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/stock-register', requireManagementReportsView, (req, res) => {
+  const stockRegisterReadPerms = ['reports.view', 'operations.manage', 'production.manage', 'inventory.adjust', 'procurement.manage'];
+  const stockRegisterStorePerms = ['operations.manage', 'production.manage', 'inventory.adjust'];
+  const stockRegisterManagerPerms = ['operations.manage', 'production.manage', 'sales_manager'];
+  const stockRegisterProcurementPerms = ['procurement.manage', 'operations.manage'];
+
+  app.get('/api/stock-register', requirePermission(stockRegisterReadPerms), (req, res) => {
     try {
       const periodEnd = String(req.query.periodEnd || req.query.endDate || req.query.asAtDate || '').slice(0, 10);
+      const viewMode = String(req.query.viewMode || 'store').toLowerCase();
       const branchScope = resolveBootstrapBranchScope(req);
       if (!periodEnd) {
         return res.status(400).json({ ok: false, error: 'periodEnd (YYYY-MM-DD) required' });
@@ -2792,16 +2800,30 @@ export function registerHttpApi(app, db) {
       if (branchScope === 'ALL') {
         return res.status(400).json({ ok: false, error: 'Select a branch workspace (not HQ roll-up).' });
       }
-      const r = buildStockRegisterForBranch(db, branchScope, periodEnd);
+      const r = buildStockRegisterForBranch(db, branchScope, periodEnd, { viewMode });
       if (!r.ok) return res.status(400).json(r);
-      res.json({ ok: true, branchScope, ...r });
+      res.json({ ok: true, branchScope, viewMode, ...r });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build stock register.' });
     }
   });
 
-  app.get('/api/stock-register/workflow', requireManagementReportsView, (req, res) => {
+  app.get('/api/stock-register/inbox', requirePermission(stockRegisterReadPerms), (req, res) => {
+    try {
+      const queue = String(req.query.queue || 'manager').toLowerCase();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'Select a branch workspace (not HQ roll-up).' });
+      }
+      res.json(listStockRegisterInbox(db, branchScope, queue));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load stock register inbox.' });
+    }
+  });
+
+  app.get('/api/stock-register/workflow', requirePermission(stockRegisterReadPerms), (req, res) => {
     try {
       const periodKey = String(req.query.periodKey || '').trim();
       const branchScope = resolveBootstrapBranchScope(req);
@@ -2815,7 +2837,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/stock-register/print-snapshot', requireAuth, requireManagementReportsView, (req, res) => {
+  app.post('/api/stock-register/print-snapshot', requireAuth, requirePermission(stockRegisterStorePerms), (req, res) => {
     try {
       const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
@@ -2830,7 +2852,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/stock-register/workflow', requireAuth, requireManagementReportsView, (req, res) => {
+  app.post('/api/stock-register/workflow', requireAuth, requirePermission([...stockRegisterStorePerms, ...stockRegisterManagerPerms, ...stockRegisterProcurementPerms]), (req, res) => {
     try {
       const action = String(req.body?.action || '').trim();
       const periodKey = String(req.body?.periodKey || '').trim();
@@ -2843,6 +2865,21 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Workflow action failed.' });
+    }
+  });
+
+  app.post('/api/stock-register/bm-adjustments', requireAuth, requirePermission(stockRegisterManagerPerms), (req, res) => {
+    try {
+      const periodKey = String(req.body?.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodKey and branch workspace required.' });
+      }
+      const r = saveStockRegisterBmAdjustments(db, branchScope, periodKey, req.body?.adjustments || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save adjustments.' });
     }
   });
 

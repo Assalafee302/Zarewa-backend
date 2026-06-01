@@ -543,12 +543,20 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
   let accPriceWeighted = 0;
   let accPriceWeight = 0;
   for (const r of register.accessories?.rows || []) {
-    const price = Number(accMap.get(r.productID)) || accFallback;
-    r.unitPriceNgn = price > 0 ? Math.round(price) : null;
-    r.closingValueNgn = price > 0 ? Math.round((Number(r.balance) || 0) * price) : 0;
+    let rowPriceSum = 0;
+    let rowPriceWeight = 0;
+    for (const pid of r.productIds || []) {
+      const price = Number(accMap.get(pid)) || accFallback;
+      if (price <= 0) continue;
+      rowPriceSum += price;
+      rowPriceWeight += 1;
+    }
+    const unitPrice = rowPriceWeight > 0 ? rowPriceSum / rowPriceWeight : accFallback;
+    r.unitPriceNgn = unitPrice > 0 ? Math.round(unitPrice) : null;
+    r.closingValueNgn = unitPrice > 0 ? Math.round((Number(r.balance) || 0) * unitPrice) : 0;
     accValueNgn += r.closingValueNgn;
-    if (price > 0 && r.balance > 0) {
-      accPriceWeighted += price * r.balance;
+    if (unitPrice > 0 && r.balance > 0) {
+      accPriceWeighted += unitPrice * r.balance;
       accPriceWeight += r.balance;
     }
   }
@@ -567,6 +575,212 @@ export function enrichStockRegisterValuation(register, pricing = {}) {
       (register.summary.accessories?.valueNgn || 0)
   );
 
+  return register;
+}
+
+/** @param {unknown} raw */
+export function parseBmAdjustments(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Apply branch-manager physical count overrides before procurement costing.
+ * @param {object} register
+ * @param {{ coilLines?: { coilNo: string; closingKg?: number|null; note?: string }[]; stoneLines?: { productID: string; remainingM?: number }[]; accessoryLines?: { typeKey: string; unit: string; balance?: number }[] } | null} adjustments
+ */
+export function applyBmAdjustmentsToRegister(register, adjustments) {
+  if (!register || !adjustments) return register;
+  const coilMap = new Map(
+    (adjustments.coilLines || []).map((l) => [String(l.coilNo || '').trim(), l]).filter(([k]) => k)
+  );
+  const stoneMap = new Map((adjustments.stoneLines || []).map((l) => [String(l.productID || '').trim(), l]));
+  const accMap = new Map(
+    (adjustments.accessoryLines || []).map((l) => [`${l.typeKey}|${l.unit}`, l])
+  );
+
+  for (const family of ['aluminium', 'aluzinc']) {
+    for (const g of register.coilSections?.[family]?.groups || []) {
+      for (const r of g.rows || []) {
+        const adj = coilMap.get(r.coilNo);
+        if (!adj || adj.closingKg == null || r.closingBlank) continue;
+        r.closingKg = round2(Math.max(0, Number(adj.closingKg)));
+        r.bmAdjusted = true;
+        if (adj.note) r.remarkSuggested = [r.remarkSuggested, String(adj.note).trim()].filter(Boolean).join(' · ');
+      }
+    }
+  }
+  for (const g of register.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      const adj = stoneMap.get(r.productID);
+      if (!adj || adj.remainingM == null) continue;
+      r.remainingM = round2(Math.max(0, Number(adj.remainingM)));
+      r.bmAdjusted = true;
+    }
+  }
+  for (const r of register.accessories?.rows || []) {
+    const adj = accMap.get(`${r.typeKey}|${r.unit}`);
+    if (!adj || adj.balance == null) continue;
+    r.balance = round2(Math.max(0, Number(adj.balance)));
+    r.bmAdjusted = true;
+  }
+  return register;
+}
+
+/** Net kg subtotals per gauge (after BM adjustments) for procurement costing. */
+export function buildNetKgSummaryByGauge(register) {
+  const summariseCoilFamily = (family) => {
+    const materialFamily = family;
+    const byGauge = new Map();
+    for (const g of register.coilSections?.[family]?.groups || []) {
+      let gross = 0;
+      let net = 0;
+      for (const r of g.rows || []) {
+        if (r.closingKg == null) continue;
+        const gk = Number(r.closingKg) || 0;
+        gross += gk;
+        net += netKgFromGrossClosing(gk, materialFamily, r.stockForm);
+      }
+      if (gross > 0 || net > 0) {
+        byGauge.set(g.gaugeLabel, {
+          gaugeLabel: g.gaugeLabel,
+          grossClosingKg: round2(gross),
+          netClosingKg: round2(net),
+        });
+      }
+    }
+    return [...byGauge.values()].sort(
+      (a, b) => gaugeSortKey(a.gaugeLabel) - gaugeSortKey(b.gaugeLabel) || String(a.gaugeLabel).localeCompare(String(b.gaugeLabel))
+    );
+  };
+  return {
+    aluminium: summariseCoilFamily('aluminium'),
+    aluzinc: summariseCoilFamily('aluzinc'),
+    stoneCoated: {
+      totalRemainingM: round2(register.summary?.stoneCoated?.totalRemainingM || 0),
+    },
+    accessories: {
+      rowCount: register.accessories?.rowCount || 0,
+    },
+  };
+}
+
+function stripValuationFromSummary(summary) {
+  if (!summary) return summary;
+  const out = JSON.parse(JSON.stringify(summary));
+  for (const key of ['aluminium', 'aluzinc', 'stoneCoated', 'accessories']) {
+    if (out[key]) {
+      out[key].valueNgn = undefined;
+      out[key].unitCostNgnPerKg = undefined;
+      out[key].unitPriceNgnPerM = undefined;
+      out[key].unitPriceNgn = undefined;
+      out[key].priceSource = undefined;
+    }
+  }
+  out.totalClosingValueNgn = undefined;
+  return out;
+}
+
+/**
+ * @param {object} register
+ * @param {'store'|'manager'|'procurement'|'finance'} viewMode
+ */
+export function prepareRegisterForView(register, viewMode = 'store') {
+  if (!register) return register;
+  if (viewMode === 'finance') return register;
+  if (viewMode === 'procurement') {
+    return {
+      branchId: register.branchId,
+      periodKey: register.periodKey,
+      periodStart: register.periodStart,
+      periodEnd: register.periodEnd,
+      meta: register.meta,
+      procurementSummary: buildNetKgSummaryByGauge(register),
+      summary: register.summary,
+      inTransit: [],
+    };
+  }
+  const reg = JSON.parse(JSON.stringify(register));
+  reg.summary = stripValuationFromSummary(reg.summary);
+  for (const g of reg.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      delete r.unitPriceNgnPerM;
+      delete r.closingValueNgn;
+    }
+  }
+  for (const r of reg.accessories?.rows || []) {
+    delete r.unitPriceNgn;
+    delete r.closingValueNgn;
+  }
+  return reg;
+}
+
+/**
+ * Apply procurement-entered unit prices to gauge summary and recompute section values.
+ * @param {object} register — full register (with BM adjustments applied)
+ * @param {object} pricing
+ */
+export function applyProcurementPricingToRegister(register, pricing = {}) {
+  if (!register) return register;
+  const spoolKg = SPOOL_KG_DEFAULT;
+  const gaugeSummary = buildNetKgSummaryByGauge(register);
+  let aluValue = 0;
+  let aluzValue = 0;
+  const aluPrices = pricing.aluminiumByGauge || {};
+  const aluzPrices = pricing.aluzincByGauge || {};
+
+  for (const row of gaugeSummary.aluminium) {
+    const uc = Number(aluPrices[row.gaugeLabel]) || Number(pricing.aluminiumUnitCostNgnPerKg) || 0;
+    row.unitCostNgnPerKg = uc > 0 ? Math.round(uc) : null;
+    row.valueNgn = uc > 0 ? Math.round(row.netClosingKg * uc) : 0;
+    aluValue += row.valueNgn;
+  }
+  for (const row of gaugeSummary.aluzinc) {
+    const uc = Number(aluzPrices[row.gaugeLabel]) || Number(pricing.aluzincUnitCostNgnPerKg) || 0;
+    row.unitCostNgnPerKg = uc > 0 ? Math.round(uc) : null;
+    row.valueNgn = uc > 0 ? Math.round(row.netClosingKg * uc) : 0;
+    aluzValue += row.valueNgn;
+  }
+
+  const stonePrice = Number(pricing.stoneUnitPriceNgnPerM) || 0;
+  const stoneM = gaugeSummary.stoneCoated.totalRemainingM || 0;
+  const stoneValue = stonePrice > 0 ? Math.round(stoneM * stonePrice) : 0;
+
+  const accPrice = Number(pricing.accessoryUnitPriceNgn) || 0;
+  let accBalance = 0;
+  for (const r of register.accessories?.rows || []) accBalance += Number(r.balance) || 0;
+  const accValue = accPrice > 0 ? Math.round(accBalance * accPrice) : 0;
+
+  register.procurementSummary = gaugeSummary;
+  register.summary = register.summary || {};
+  register.summary.aluminium = {
+    netClosingKg: round2(gaugeSummary.aluminium.reduce((s, r) => s + r.netClosingKg, 0)),
+    valueNgn: Math.round(aluValue),
+    priceSource: 'procurement_entry',
+  };
+  register.summary.aluzinc = {
+    netClosingKg: round2(gaugeSummary.aluzinc.reduce((s, r) => s + r.netClosingKg, 0)),
+    valueNgn: Math.round(aluzValue),
+    priceSource: 'procurement_entry',
+  };
+  register.summary.stoneCoated = {
+    totalRemainingM: stoneM,
+    unitPriceNgnPerM: stonePrice > 0 ? Math.round(stonePrice) : null,
+    valueNgn: stoneValue,
+    priceSource: 'procurement_entry',
+  };
+  register.summary.accessories = {
+    rowCount: register.accessories?.rowCount || 0,
+    unitPriceNgn: accPrice > 0 ? Math.round(accPrice) : null,
+    valueNgn: accValue,
+    priceSource: 'procurement_entry',
+  };
+  register.summary.totalClosingValueNgn = Math.round(aluValue + aluzValue + stoneValue + accValue);
   return register;
 }
 

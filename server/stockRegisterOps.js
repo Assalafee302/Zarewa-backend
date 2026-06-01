@@ -2,7 +2,16 @@
  * Month-end stock register — DB orchestration and sign-off workflow.
  */
 
-import { buildStockRegisterPack, periodBoundsFromEndDate, previousPeriodEndIso, enrichStockRegisterValuation } from '../shared/lib/stockRegisterCore.js';
+import {
+  applyBmAdjustmentsToRegister,
+  applyProcurementPricingToRegister,
+  buildStockRegisterPack,
+  enrichStockRegisterValuation,
+  parseBmAdjustments,
+  periodBoundsFromEndDate,
+  prepareRegisterForView,
+  previousPeriodEndIso,
+} from '../shared/lib/stockRegisterCore.js';
 import { appendAuditLog } from './controlOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -40,6 +49,105 @@ function mapPeriodRow(row) {
     lockedAtISO: row.locked_at_iso || '',
     countNotes: row.count_notes || '',
     updatedAtISO: row.updated_at_iso || '',
+    forwardedToManagerAtISO: row.forwarded_to_manager_at_iso || '',
+    procurementCostedAtISO: row.procurement_costed_at_iso || '',
+    procurementCostedByName: row.procurement_costed_by_name || '',
+    bmAdjustments: parseBmAdjustments(row.bm_adjustments_json),
+    procurementPricing: parseBmAdjustments(row.procurement_pricing_json),
+  };
+}
+
+function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
+  const bid = String(branchId || '').trim();
+  const viewMode = String(opts.viewMode || 'store').toLowerCase();
+  const { periodKey, start, end } = periodBoundsFromEndDate(periodEndIso);
+  if (!periodKey || !end) return { ok: false, error: 'Valid period end date required (YYYY-MM-DD).' };
+
+  const prevEnd = previousPeriodEndIso(end);
+  const prevSnapshots = listInventoryCoilSnapshots(db, prevEnd, bid);
+  const { stone: stoneOpeningByProduct, accessory: accessoryOpeningByProduct } = openingMapsFromSnapshots(
+    db,
+    bid,
+    prevEnd
+  );
+  const pack = buildStockRegisterPack({
+    branchId: bid,
+    periodEnd: end,
+    coilLots: listCoilLots(db, bid),
+    prevClosingSnapshots: prevSnapshots,
+    productionJobs: listProductionJobs(db, bid),
+    productionJobCoils: listProductionJobCoils(db, bid, { limit: 0 }),
+    coilControlEvents: listCoilControlEventsInPeriod(db, bid, start, end),
+    products: listProducts(db, bid),
+    stockMovements: listStockMovements(db, bid),
+    inTransitLoads: listInTransitLoads(db, bid),
+    masterData: listMasterData(db),
+    stoneOpeningByProduct,
+    accessoryOpeningByProduct,
+  });
+
+  const periodRow = getPeriodRow(db, bid, periodKey);
+  const adjustments = parseBmAdjustments(periodRow?.bm_adjustments_json);
+  if (adjustments) applyBmAdjustmentsToRegister(pack, adjustments);
+
+  const procurementPricing = parseBmAdjustments(periodRow?.procurement_pricing_json);
+  const needsAutoValuation = viewMode === 'finance' && !procurementPricing;
+
+  if (needsAutoValuation) {
+    const lookbackDays = 31;
+    const aluResolved = resolveBranchCoilCostPerKg(db, 'COIL-ALU', bid, lookbackDays);
+    const aluzResolved = resolveBranchCoilCostPerKg(db, 'PRD-102', bid, lookbackDays);
+    const stonePriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'STONE%', lookbackDays);
+    const accessoryPriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'ACC%', lookbackDays);
+    let stoneFallback = null;
+    if (stonePriceMap.size) {
+      let sw = 0;
+      let sv = 0;
+      for (const p of stonePriceMap.values()) {
+        sw += 1;
+        sv += p;
+      }
+      stoneFallback = sw > 0 ? Math.round(sv / sw) : null;
+    }
+    let accessoryFallback = null;
+    if (accessoryPriceMap.size) {
+      let aw = 0;
+      let av = 0;
+      for (const p of accessoryPriceMap.values()) {
+        aw += 1;
+        av += p;
+      }
+      accessoryFallback = aw > 0 ? Math.round(av / aw) : null;
+    }
+    enrichStockRegisterValuation(pack, {
+      aluminiumUnitCostNgnPerKg: aluResolved.cost,
+      aluzincUnitCostNgnPerKg: aluzResolved.cost,
+      stoneUnitPriceByProduct: stonePriceMap,
+      stoneFallbackUnitPriceNgnPerM: stoneFallback,
+      accessoryUnitPriceByProduct: accessoryPriceMap,
+      accessoryFallbackUnitPriceNgn: accessoryFallback,
+      priceLookbackDays: lookbackDays,
+      priceSources: {
+        aluminium: aluResolved.source,
+        aluzinc: aluzResolved.source,
+        stoneCoated: stonePriceMap.size ? 'receipt_avg' : 'none',
+        accessories: accessoryPriceMap.size ? 'receipt_avg' : 'none',
+      },
+    });
+  } else if (procurementPricing) {
+    applyProcurementPricingToRegister(pack, procurementPricing);
+  }
+
+  const register =
+    viewMode === 'finance' ? pack : prepareRegisterForView(pack, viewMode === 'procurement' ? 'procurement' : viewMode);
+
+  return {
+    ok: true,
+    register,
+    periodKey,
+    periodEnd: end,
+    workflow: mapPeriodRow(periodRow) || { status: 'draft', periodKey, periodEndIso: end, branchId: bid },
+    fullPack: pack,
   };
 }
 
@@ -120,94 +228,16 @@ function listCoilControlEventsInPeriod(db, branchId, start, end) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchId
  * @param {string} periodEndIso
+ * @param {{ viewMode?: string }} [opts]
  */
-export function buildStockRegisterForBranch(db, branchId, periodEndIso) {
-  const bid = String(branchId || '').trim();
-  const { periodKey, start, end } = periodBoundsFromEndDate(periodEndIso);
-  if (!periodKey || !end) return { ok: false, error: 'Valid period end date required (YYYY-MM-DD).' };
-
-  const prevEnd = previousPeriodEndIso(end);
-  const prevSnapshots = listInventoryCoilSnapshots(db, prevEnd, bid);
-  const coilLots = listCoilLots(db, bid);
-  const masterData = listMasterData(db);
-  const products = listProducts(db, bid);
-  const movements = listStockMovements(db, bid);
-  const jobs = listProductionJobs(db, bid);
-  const jobCoils = listProductionJobCoils(db, bid, { limit: 0 });
-  const controlEvents = listCoilControlEventsInPeriod(db, bid, start, end);
-  const inTransit = listInTransitLoads(db, bid);
-
-  const { stone: stoneOpeningByProduct, accessory: accessoryOpeningByProduct } = openingMapsFromSnapshots(
-    db,
-    bid,
-    prevEnd
-  );
-
-  const pack = buildStockRegisterPack({
-    branchId: bid,
-    periodEnd: end,
-    coilLots,
-    prevClosingSnapshots: prevSnapshots,
-    productionJobs: jobs,
-    productionJobCoils: jobCoils,
-    coilControlEvents: controlEvents,
-    products,
-    stockMovements: movements,
-    inTransitLoads: inTransit,
-    masterData,
-    stoneOpeningByProduct,
-    accessoryOpeningByProduct,
-  });
-
-  const lookbackDays = 31;
-  const aluResolved = resolveBranchCoilCostPerKg(db, 'COIL-ALU', bid, lookbackDays);
-  const aluzResolved = resolveBranchCoilCostPerKg(db, 'PRD-102', bid, lookbackDays);
-  const stonePriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'STONE%', lookbackDays);
-  const accessoryPriceMap = purchaseUnitPriceMapByProductPrefix(db, bid, 'ACC%', lookbackDays);
-
-  let stoneFallback = null;
-  if (stonePriceMap.size) {
-    let sw = 0;
-    let sv = 0;
-    for (const p of stonePriceMap.values()) {
-      sw += 1;
-      sv += p;
-    }
-    stoneFallback = sw > 0 ? Math.round(sv / sw) : null;
-  }
-
-  let accessoryFallback = null;
-  if (accessoryPriceMap.size) {
-    let aw = 0;
-    let av = 0;
-    for (const p of accessoryPriceMap.values()) {
-      aw += 1;
-      av += p;
-    }
-    accessoryFallback = aw > 0 ? Math.round(av / aw) : null;
-  }
-
-  enrichStockRegisterValuation(pack, {
-    aluminiumUnitCostNgnPerKg: aluResolved.cost,
-    aluzincUnitCostNgnPerKg: aluzResolved.cost,
-    stoneUnitPriceByProduct: stonePriceMap,
-    stoneFallbackUnitPriceNgnPerM: stoneFallback,
-    accessoryUnitPriceByProduct: accessoryPriceMap,
-    accessoryFallbackUnitPriceNgn: accessoryFallback,
-    priceLookbackDays: lookbackDays,
-    priceSources: {
-      aluminium: aluResolved.source,
-      aluzinc: aluzResolved.source,
-      stoneCoated: stonePriceMap.size ? 'receipt_avg' : 'none',
-      accessories: accessoryPriceMap.size ? 'receipt_avg' : 'none',
-    },
-  });
-
-  const periodRow = getPeriodRow(db, bid, periodKey);
+export function buildStockRegisterForBranch(db, branchId, periodEndIso, opts = {}) {
+  const built = buildPackWithPeriodContext(db, branchId, periodEndIso, opts);
+  if (!built.ok) return built;
   return {
     ok: true,
-    register: pack,
-    workflow: mapPeriodRow(periodRow) || { status: 'draft', periodKey, periodEndIso: end, branchId: bid },
+    register: built.register,
+    workflow: built.workflow,
+    procurementSummary: built.register?.procurementSummary || built.fullPack?.procurementSummary,
   };
 }
 
@@ -217,7 +247,7 @@ export function getStockRegisterWorkflow(db, branchId, periodKey) {
 }
 
 export function saveStockRegisterPrintSnapshot(db, branchId, periodEndIso, actor) {
-  const built = buildStockRegisterForBranch(db, branchId, periodEndIso);
+  const built = buildStockRegisterForBranch(db, branchId, periodEndIso, { viewMode: 'store' });
   if (!built.ok) return built;
   const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
   const uid = String(actor?.id || actor?.userId || '').trim();
@@ -253,7 +283,7 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
   const now = nowIso();
   const notes = String(body?.countNotes ?? body?.notes ?? '').trim();
 
-  if (action === 'store_confirm') {
+  if (action === 'store_confirm' || action === 'forward_to_manager') {
     if (!['printed', 'draft', 'store_confirmed'].includes(String(row.status))) {
       return { ok: false, error: 'Register must be printed before store confirmation.' };
     }
@@ -263,6 +293,17 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       store_confirmed_by_user_id: actor?.id || null,
       store_confirmed_by_name: actorName(actor),
       count_notes: notes || row.count_notes,
+      forwarded_to_manager_at_iso: now,
+    });
+  } else if (action === 'bm_return_to_store') {
+    if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
+      return { ok: false, error: 'Branch manager required to return register to store.' };
+    }
+    upsertPeriodRow(db, bid, pk, row.period_end_iso, {
+      status: 'printed',
+      bm_approved_at_iso: null,
+      bm_approved_by_user_id: null,
+      bm_approved_by_name: null,
     });
   } else if (action === 'bm_approve') {
     if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
@@ -271,18 +312,38 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     if (!['store_confirmed', 'bm_approved'].includes(String(row.status))) {
       return { ok: false, error: 'Store must confirm the physical count before branch manager approval.' };
     }
+    const adj = body?.adjustments;
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'bm_approved',
       bm_approved_at_iso: now,
       bm_approved_by_user_id: actor?.id || null,
       bm_approved_by_name: actorName(actor),
+      ...(adj && typeof adj === 'object' ? { bm_adjustments_json: JSON.stringify(adj) } : {}),
+    });
+  } else if (action === 'procurement_lock' || action === 'procurement_cost') {
+    if (!['procurement.manage', 'operations.manage'].some(() => false)) {
+      /* permission checked at HTTP layer */
+    }
+    if (String(row.status) !== 'bm_approved') {
+      return { ok: false, error: 'Branch manager must approve before procurement costing.' };
+    }
+    const pricing = body?.pricing || body?.procurementPricing;
+    if (!pricing || typeof pricing !== 'object') {
+      return { ok: false, error: 'Procurement pricing required.' };
+    }
+    upsertPeriodRow(db, bid, pk, row.period_end_iso, {
+      status: 'procurement_costed',
+      procurement_pricing_json: JSON.stringify(pricing),
+      procurement_costed_at_iso: now,
+      procurement_costed_by_user_id: actor?.id || null,
+      procurement_costed_by_name: actorName(actor),
     });
   } else if (action === 'md_approve') {
     if (!isExecutiveRoleKey(rk)) {
       return { ok: false, error: 'Managing director approval required.' };
     }
-    if (String(row.status) !== 'bm_approved') {
-      return { ok: false, error: 'Branch manager must approve before MD sign-off.' };
+    if (!['bm_approved', 'procurement_costed'].includes(String(row.status))) {
+      return { ok: false, error: 'Branch manager or procurement sign-off required before MD approval.' };
     }
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'md_approved',
@@ -312,13 +373,14 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
   const row = getPeriodRow(db, bid, periodKey);
   if (!row) return { ok: false, error: 'Register period not found.' };
-  if (String(row.status) !== 'md_approved') {
-    return { ok: false, error: 'MD approval required before capturing closing stock.' };
+  const st = String(row.status);
+  if (!['procurement_costed', 'md_approved'].includes(st)) {
+    return { ok: false, error: 'Procurement costing (or MD approval) required before capturing closing stock.' };
   }
 
-  const built = buildStockRegisterForBranch(db, bid, end);
+  const built = buildPackWithPeriodContext(db, bid, end, { viewMode: 'finance' });
   if (!built.ok) return built;
-  const reg = built.register;
+  const reg = built.fullPack || built.register;
   const now = nowIso();
 
   if (!tableReady(db, 'inventory_coil_snapshots')) {
@@ -453,4 +515,43 @@ export function patchCoilStockForm(db, coilNo, stockForm, opts = {}) {
     note: `Marked as ${form}`,
   });
   return { ok: true, coilNo: cn, stockForm: form };
+}
+
+export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustments, actor) {
+  const bid = String(branchId || '').trim();
+  const pk = String(periodKey || '').trim();
+  const row = getPeriodRow(db, bid, pk);
+  if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
+  if (!['store_confirmed', 'printed', 'bm_approved'].includes(String(row.status))) {
+    return { ok: false, error: 'Register must be with store or manager before saving adjustments.' };
+  }
+  upsertPeriodRow(db, bid, pk, row.period_end_iso, {
+    bm_adjustments_json: JSON.stringify(adjustments || {}),
+  });
+  appendAuditLog(db, {
+    actor,
+    action: 'stock_register.bm_adjustments',
+    entityKind: 'stock_register_period',
+    entityId: `${bid}:${pk}`,
+    note: 'BM stock count adjustments saved',
+  });
+  return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, pk)) };
+}
+
+export function listStockRegisterInbox(db, branchId, queue = 'manager') {
+  const bid = String(branchId || '').trim();
+  if (!tableReady(db, 'stock_register_periods')) return { ok: true, items: [] };
+  const statuses = queue === 'procurement' ? ['bm_approved'] : ['store_confirmed'];
+  const placeholders = statuses.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM stock_register_periods
+       WHERE branch_id = ? AND status IN (${placeholders})
+       ORDER BY period_key DESC`
+    )
+    .all(bid, ...statuses);
+  return {
+    ok: true,
+    items: rows.map((r) => mapPeriodRow(r)),
+  };
 }

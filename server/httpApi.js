@@ -11,6 +11,7 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
+import { buildPurchaseReport } from '../shared/lib/purchaseReportCore.js';
 import {
   arAsAtReportRows,
   receiptsRegisterReportRows,
@@ -2797,6 +2798,28 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build refunds pack.' });
+    }
+  });
+
+  app.get('/api/reports/purchase-register', requireManagementReportsView, (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = buildPurchaseReport({
+        purchaseOrders: listPurchaseOrders(db, branchScope),
+        coilLots: listCoilLots(db, branchScope),
+        stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
+        treasuryMovements: listTreasuryMovements(db, branchScope),
+        products: listProducts(db, branchScope),
+        masterData: listMasterData(db),
+        startDate,
+        endDate,
+      });
+      res.json({ ok: true, startDate, endDate, branchScope, report });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build purchase register report.' });
     }
   });
 

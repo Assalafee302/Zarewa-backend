@@ -87,12 +87,14 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
  *   session?: {authenticated: boolean, user?: object | null, permissions?: string[]};
  *   includeControls?: boolean;
  *   includeUsers?: boolean;
+ *   includeRegisteredPasswords?: boolean;
  *   branchScope?: 'ALL' | string;
  * }} [opts]
  */
 export function buildBootstrap(db, opts = {}) {
   const branchScope = opts.branchScope ?? 'ALL';
   const user = opts.user ?? opts.session?.user ?? null;
+  const includeRegisteredPasswords = Boolean(opts.includeRegisteredPasswords);
   const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
   const workScope = {
     viewAll: branchScope === 'ALL',
@@ -224,7 +226,9 @@ export function buildBootstrap(db, opts = {}) {
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     salesAvailableStock: availableStock,
     customerDashboard,
-    appUsers: opts.includeUsers ? listAppUsers(db) : [],
+    appUsers: opts.includeUsers
+      ? listAppUsers(db, { revealRegisteredPasswords: includeRegisteredPasswords })
+      : [],
     periodLocks: opts.includeControls ? listPeriodLocks(db) : [],
     approvalActions: opts.includeControls ? listApprovalActions(db) : [],
     auditLog: opts.includeControls ? listAuditLog(db) : [],

@@ -3275,6 +3275,29 @@ function migrateUserProfileAndPasswordReset(db) {
   if (users.size && !users.has('must_change_password')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
   }
+  if (users.size && !users.has('registered_password')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN registered_password TEXT`);
+    const defaultPasswordByUsername = [
+      ['admin', 'Admin@123'],
+      ['md', 'Md@1234567890!'],
+      ['finance.manager', 'Finance@123'],
+      ['cashier', 'Cashier@12345!'],
+      ['sales.manager', 'Sales@123'],
+      ['sales.staff', 'Sales@123'],
+      ['operations', 'Ops@123'],
+      ['ceo', 'Ceo@1234567890!'],
+      ['viewer', 'Viewer@123456!'],
+    ];
+    const backfill = db.prepare(
+      `UPDATE app_users
+       SET registered_password = ?
+       WHERE lower(trim(username)) = ?
+         AND (registered_password IS NULL OR trim(registered_password) = '')`
+    );
+    for (const [username, password] of defaultPasswordByUsername) {
+      backfill.run(password, username);
+    }
+  }
   if (users.size && !users.has('training_completed_at_iso')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN training_completed_at_iso TEXT NOT NULL DEFAULT ''`);
     db.prepare(

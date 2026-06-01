@@ -2163,6 +2163,8 @@ export function registerHttpApi(app, db) {
         userHasPermission(req.user, 'period.manage') ||
         userHasPermission(req.user, 'finance.approve');
       const includeUsers = userHasPermission(req.user, 'settings.view');
+      const includeRegisteredPasswords =
+        includeUsers && String(req.user?.roleKey || '').toLowerCase() === 'admin';
       const branchScope = resolveBootstrapBranchScope(req);
       const mode = String(req.query?.mode ?? '').trim().toLowerCase();
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
@@ -2173,6 +2175,7 @@ export function registerHttpApi(app, db) {
               session: req.session,
               includeControls,
               includeUsers,
+              includeRegisteredPasswords,
               branchScope,
               limit,
             })
@@ -2181,6 +2184,7 @@ export function registerHttpApi(app, db) {
               session: req.session,
               includeControls,
               includeUsers,
+              includeRegisteredPasswords,
               branchScope,
             });
       res.json(payload);
@@ -2241,7 +2245,13 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/users', requirePermission('settings.view'), (req, res) => {
     try {
-      res.json({ ok: true, users: listAllAppUsers(db) });
+      const revealPasswords = String(req.user?.roleKey || '').toLowerCase() === 'admin';
+      const users = listAllAppUsers(db).map((u) => {
+        if (revealPasswords) return u;
+        const { registeredPassword: _drop, ...rest } = u;
+        return rest;
+      });
+      res.json({ ok: true, users });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not list users.' });
@@ -3783,6 +3793,9 @@ export function registerHttpApi(app, db) {
           session: req.session,
           includeControls,
           includeUsers: userHasPermission(req.user, 'settings.view'),
+          includeRegisteredPasswords:
+            userHasPermission(req.user, 'settings.view') &&
+            String(req.user?.roleKey || '').toLowerCase() === 'admin',
           branchScope,
         })
       );

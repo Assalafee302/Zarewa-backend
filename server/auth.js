@@ -22,6 +22,19 @@ function appUsersHasColumn(db, name) {
   }
 }
 
+/** Last password set at registration or by an administrator (not updated on self-service change). */
+export function storeRegisteredPassword(db, userId, plainPassword) {
+  if (!appUsersHasColumn(db, 'registered_password')) return;
+  const plain = String(plainPassword ?? '').trim();
+  if (!plain) return;
+  db.prepare(`UPDATE app_users SET registered_password = ? WHERE id = ?`).run(plain, userId);
+}
+
+export function clearRegisteredPassword(db, userId) {
+  if (!appUsersHasColumn(db, 'registered_password')) return;
+  db.prepare(`UPDATE app_users SET registered_password = NULL WHERE id = ?`).run(userId);
+}
+
 function readMustChangePassword(row) {
   if (!row) return false;
   return Number(row.must_change_password) === 1;
@@ -694,6 +707,7 @@ export function seedAuthUsers(db) {
           '',
           createdAtISO
         );
+        storeRegisteredPassword(db, user.id, user.password);
       } else {
         ins.run(
           user.id,
@@ -705,6 +719,7 @@ export function seedAuthUsers(db) {
           '',
           createdAtISO
         );
+        storeRegisteredPassword(db, user.id, user.password);
       }
     }
   })();
@@ -745,6 +760,7 @@ export function ensureDefaultAdminUser(db) {
         `UPDATE app_users SET display_name = ?, password_hash = ?, role_key = ?, status = 'active' WHERE id = ?`
       ).run(admin.displayName, hash, admin.roleKey, existing.id);
     }
+    storeRegisteredPassword(db, existing.id, admin.password);
     return;
   }
   if (hasDept) {
@@ -770,6 +786,7 @@ export function ensureDefaultAdminUser(db) {
     ) VALUES (?,?,?,?,?,?,?,?)`
     ).run(admin.id, admin.username, admin.displayName, hash, admin.roleKey, 'active', '', createdAtISO);
   }
+  storeRegisteredPassword(db, admin.id, admin.password);
 }
 
 /**
@@ -862,6 +879,7 @@ export function createAppUserRecord(db, row) {
     }
     throw e;
   }
+  storeRegisteredPassword(db, userId, row.password);
   return { ok: true, userId };
 }
 
@@ -1225,6 +1243,7 @@ export function changePassword(db, userId, currentPassword, newPassword) {
   } else {
     db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(createPasswordHash(nextPassword), userId);
   }
+  clearRegisteredPassword(db, userId);
   const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
   return { ok: true, user: publicUserFromRow(next) };
 }
@@ -1489,6 +1508,7 @@ export function completePasswordReset(db, identifier, token, newPassword) {
     db.prepare(`UPDATE password_reset_tokens SET used_at_iso = ? WHERE id = ?`).run(nowIso(), matchRow.prt_id);
     db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(matchRow.user_id);
   })();
+  clearRegisteredPassword(db, matchRow.user_id);
 
   return { ok: true };
 }
@@ -1560,7 +1580,11 @@ export function listAllAppUsers(db) {
   return rows.map((r) => {
     const u = publicUserFromRow(r);
     const bid = String(r.hr_branch_id ?? r.HR_BRANCH_ID ?? '').trim();
-    return { ...u, branchId: bid || null };
+    const registeredPassword =
+      appUsersHasColumn(db, 'registered_password') && r.registered_password
+        ? String(r.registered_password)
+        : '';
+    return { ...u, branchId: bid || null, registeredPassword };
   });
 }
 

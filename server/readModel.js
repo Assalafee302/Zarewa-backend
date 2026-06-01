@@ -1883,7 +1883,8 @@ export function listProcurementCatalog(db) {
     }));
 }
 
-export function listAppUsers(db) {
+export function listAppUsers(db, opts = {}) {
+  const revealRegisteredPasswords = Boolean(opts.revealRegisteredPasswords);
   let rows;
   try {
     rows = db
@@ -1914,7 +1915,7 @@ export function listAppUsers(db) {
     }
     const branchId =
       String(row.hr_branch_id ?? row.workspace_branch_id ?? '').trim() || null;
-    return {
+    const out = {
       id: u.id,
       username: u.username,
       displayName: u.displayName,
@@ -1928,6 +1929,11 @@ export function listAppUsers(db) {
       lastLoginAtISO: u.lastLoginAtISO || '',
       createdAtISO: u.createdAtISO || row.created_at_iso || '',
     };
+    if (revealRegisteredPasswords) {
+      const plain = row.registered_password ?? row.registeredPassword;
+      out.registeredPassword = plain && String(plain).trim() ? String(plain) : '';
+    }
+    return out;
   });
 }
 

@@ -662,6 +662,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   username TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  registered_password TEXT,
   role_key TEXT NOT NULL,
   department TEXT NOT NULL DEFAULT 'general',
   status TEXT NOT NULL DEFAULT 'active',

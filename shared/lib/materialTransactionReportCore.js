@@ -144,6 +144,63 @@ function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+const BALANCE_GAP_TOLERANCE_KG = 1.5;
+const BALANCE_GAP_TOLERANCE_M = 0.5;
+
+function balancesNearlyEqual(prevAfter, nextBefore, tolerance) {
+  if (prevAfter == null || nextBefore == null) return true;
+  const a = Number(prevAfter);
+  const b = Number(nextBefore);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return true;
+  return Math.abs(a - b) <= tolerance;
+}
+
+function balanceGapNote(prevAfter, nextBefore, unit) {
+  return `Gap: prev after ${fmtBalance(prevAfter)} ≠ before ${fmtBalance(nextBefore)}${unit ? ` ${unit}` : ''}`;
+}
+
+function fmtBalance(v) {
+  return round2(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+/**
+ * Within the same continuity stream (e.g. one coil), each line's before should equal the previous line's after.
+ */
+function applyBalanceContinuity(rows, opts) {
+  const {
+    continuityKey = () => '',
+    beforeField,
+    afterField,
+    tolerance,
+    unit = '',
+  } = opts;
+  let prevRow = null;
+  let prevKey = '';
+  return rows.map((row) => {
+    const key = continuityKey(row);
+    const before = row[beforeField];
+    let balanceBreak = false;
+    let balanceNote = null;
+    if (prevRow && key && key === prevKey) {
+      const prevAfter = prevRow[afterField];
+      if (!balancesNearlyEqual(prevAfter, before, tolerance)) {
+        balanceBreak = true;
+        balanceNote = balanceGapNote(prevAfter, before, unit);
+      }
+    }
+    prevRow = row;
+    prevKey = key;
+    if (!balanceNote) return row;
+    const baseRemark = row.remark && row.remark !== '—' ? row.remark : '';
+    return {
+      ...row,
+      balanceBreak,
+      balanceNote,
+      remark: [baseRemark, balanceNote].filter(Boolean).join(' · '),
+    };
+  });
+}
+
 function gaugeSortKey(gaugeLabel) {
   const m = String(gaugeLabel || '').match(/(\d+(?:\.\d+)?)/);
   return m ? Number(m[1]) : 999;
@@ -343,9 +400,18 @@ function groupCoilRowsByGauge(rows) {
       gaugeRows.sort((a, b) => {
         const c = String(a.coilNo || '').localeCompare(String(b.coilNo || ''), undefined, { numeric: true });
         if (c !== 0) return c;
-        return String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
+        const d = String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
+        if (d !== 0) return d;
+        return String(a.jobId || '').localeCompare(String(b.jobId || ''));
       });
-      return { gaugeLabel, rows: gaugeRows, subtotals: summarizeCoilRows(gaugeRows) };
+      const linkedRows = applyBalanceContinuity(gaugeRows, {
+        continuityKey: (r) => String(r.coilNo || '').trim(),
+        beforeField: 'beforeKg',
+        afterField: 'afterKg',
+        tolerance: BALANCE_GAP_TOLERANCE_KG,
+        unit: 'kg',
+      });
+      return { gaugeLabel, rows: linkedRows, subtotals: summarizeCoilRows(linkedRows) };
     });
   return { groups, totals: summarizeCoilRows(rows) };
 }
@@ -463,6 +529,7 @@ function buildStoneMeterRow({ job, quote, refunds, cancelled, masterData, drawSn
     design: quotationDesignLabel(quote),
     beforeM: snap.beforeM != null ? round2(snap.beforeM) : null,
     afterM: snap.afterM != null ? round2(snap.afterM) : null,
+    stoneProductId: String(snap.productId || job.productID || job.product_id || '').trim(),
     metresUsed: usedM,
     amountNetNgn: amountPaidNetForJob(quote, refunds, qref),
     jobId: String(job.jobID || '').trim(),
@@ -519,11 +586,20 @@ function groupStoneMeterRows(rows) {
     .sort((a, b) => gaugeSortKey(a[0]) - gaugeSortKey(b[0]) || String(a[0]).localeCompare(String(b[0])))
     .map(([gaugeLabel, gaugeRows]) => {
       gaugeRows.sort((a, b) => {
-        const c = String(a.colour || '').localeCompare(String(b.colour || ''));
-        if (c !== 0) return c;
-        return String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
+        const p = String(a.stoneProductId || '').localeCompare(String(b.stoneProductId || ''));
+        if (p !== 0) return p;
+        const d = String(a.txnDate || '').localeCompare(String(b.txnDate || ''));
+        if (d !== 0) return d;
+        return String(a.jobId || '').localeCompare(String(b.jobId || ''));
       });
-      return { gaugeLabel, rows: gaugeRows, subtotals: summarizeStoneGaugeRows(gaugeRows) };
+      const linkedRows = applyBalanceContinuity(gaugeRows, {
+        continuityKey: (r) => String(r.stoneProductId || r.gaugeLabel || '').trim(),
+        beforeField: 'beforeM',
+        afterField: 'afterM',
+        tolerance: BALANCE_GAP_TOLERANCE_M,
+        unit: 'm',
+      });
+      return { gaugeLabel, rows: linkedRows, subtotals: summarizeStoneGaugeRows(linkedRows) };
     });
   return { groups, totals: summarizeStoneGaugeRows(rows) };
 }
@@ -560,7 +636,7 @@ function buildStoneDrawSnapshots(products, movementsThroughEnd, movementsInPerio
     const after = before + (Number(m.qty) || 0);
     running.set(pid, after);
     const ref = String(m.ref || '').trim();
-    if (ref) byJobRef.set(ref, { beforeM: before, afterM: after });
+    if (ref) byJobRef.set(ref, { beforeM: before, afterM: after, productId: pid });
   }
   return byJobRef;
 }

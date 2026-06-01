@@ -83,4 +83,59 @@ describe('buildMaterialTransactionReport', () => {
     expect(report.cancelled.totals.lineCount).toBeGreaterThan(0);
     expect(report.aluminium.groups).toHaveLength(0);
   });
+
+  it('flags balance gap when same coil after does not match next before', () => {
+    const report = buildMaterialTransactionReport({
+      productionJobs: [
+        {
+          jobID: 'J1',
+          status: 'Completed',
+          completedAtISO: '2026-05-05',
+          quotationRef: 'QT-1',
+          actualMeters: 50,
+          actualWeightKg: 25,
+        },
+        {
+          jobID: 'J2',
+          status: 'Completed',
+          completedAtISO: '2026-05-15',
+          quotationRef: 'QT-2',
+          actualMeters: 50,
+          actualWeightKg: 25,
+        },
+      ],
+      productionJobCoils: [
+        {
+          jobID: 'J1',
+          coilNo: 'C-SAME',
+          gaugeLabel: '0.5mm',
+          openingWeightKg: 500,
+          closingWeightKg: 450,
+          consumedWeightKg: 50,
+          metersProduced: 50,
+        },
+        {
+          jobID: 'J2',
+          coilNo: 'C-SAME',
+          gaugeLabel: '0.5mm',
+          openingWeightKg: 400,
+          closingWeightKg: 375,
+          consumedWeightKg: 25,
+          metersProduced: 50,
+        },
+      ],
+      quotations: [
+        { id: 'QT-1', customerName: 'A' },
+        { id: 'QT-2', customerName: 'B' },
+      ],
+      refunds: [],
+      coilLots: [{ coilNo: 'C-SAME', materialTypeName: 'Aluminium' }],
+      startDate: '2026-05-01',
+      endDate: '2026-05-31',
+    });
+    const rows = report.aluminium.groups[0].rows;
+    expect(rows).toHaveLength(2);
+    expect(rows[1].balanceBreak).toBe(true);
+    expect(rows[1].balanceNote).toMatch(/Gap:/);
+  });
 });

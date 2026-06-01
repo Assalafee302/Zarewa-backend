@@ -1022,6 +1022,48 @@ export function listStockMovementsForBranchPeriod(db, branchScope = 'ALL', start
     .map(mapRow);
 }
 
+/** Branch-scoped movements with date_iso <= endDate (for opening balances). */
+export function listStockMovementsForBranchThrough(db, branchScope = 'ALL', endDate) {
+  const end = String(endDate || '').slice(0, 10);
+  if (!end) return [];
+  const mapRow = (row) => ({
+    id: row.id,
+    atISO: row.at_iso,
+    type: row.type,
+    ref: row.ref,
+    productID: row.product_id,
+    qty: row.qty,
+    detail: row.detail,
+    dateISO: row.date_iso,
+    unitPriceNgn: row.unit_price_ngn,
+    valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
+  });
+  if (branchScope === 'ALL' || !branchScope) {
+    return db
+      .prepare(
+        `SELECT * FROM stock_movements WHERE date_iso <= ? ORDER BY date_iso ASC, at_iso ASC, id ASC`
+      )
+      .all(end)
+      .map(mapRow);
+  }
+  const bJob = branchWhere(db, 'production_jobs', branchScope);
+  const bPo = branchWhere(db, 'purchase_orders', branchScope);
+  const bQuo = branchWhere(db, 'quotations', branchScope);
+  return db
+    .prepare(
+      `SELECT sm.* FROM stock_movements sm
+       WHERE sm.date_iso <= ?
+         AND (
+           sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})
+           OR sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})
+           OR sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})
+         )
+       ORDER BY sm.date_iso ASC, sm.at_iso ASC, sm.id ASC`
+    )
+    .all(end, ...bJob.args, ...bPo.args, ...bQuo.args)
+    .map(mapRow);
+}
+
 /**
  * Stock ledger for one product (in/out), newest first.
  * @param {import('better-sqlite3').Database} db

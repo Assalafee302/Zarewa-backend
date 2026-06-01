@@ -30,11 +30,6 @@ export function storeRegisteredPassword(db, userId, plainPassword) {
   db.prepare(`UPDATE app_users SET registered_password = ? WHERE id = ?`).run(plain, userId);
 }
 
-export function clearRegisteredPassword(db, userId) {
-  if (!appUsersHasColumn(db, 'registered_password')) return;
-  db.prepare(`UPDATE app_users SET registered_password = NULL WHERE id = ?`).run(userId);
-}
-
 function readMustChangePassword(row) {
   if (!row) return false;
   return Number(row.must_change_password) === 1;
@@ -334,6 +329,36 @@ const DEFAULT_USERS = [
     password: 'Viewer@123456!',
   },
 ];
+
+/** Username → default seed password (used when DB field is empty but hash still matches). */
+export const DEFAULT_USER_PASSWORD_BY_USERNAME = Object.fromEntries(
+  DEFAULT_USERS.map((u) => [String(u.username || '').trim().toLowerCase(), u.password])
+);
+
+export function canRevealUserPasswords(user) {
+  const role = String(user?.roleKey || '').toLowerCase();
+  return role === 'admin' || role === 'md' || role === 'hr_admin';
+}
+
+/**
+ * Password shown to settings admins: stored value, else still-valid default seed password.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ username?: string, password_hash?: string, registered_password?: string }} row
+ */
+export function resolveRegisteredPasswordDisplay(db, row) {
+  const fromDb = String(row?.registered_password ?? '').trim();
+  if (fromDb) return fromDb;
+  if (!appUsersHasColumn(db, 'registered_password')) return '';
+  const username = String(row?.username ?? '').trim().toLowerCase();
+  const candidate = DEFAULT_USER_PASSWORD_BY_USERNAME[username];
+  if (!candidate || !row?.password_hash) return '';
+  try {
+    if (verifyPassword(candidate, row.password_hash)) return candidate;
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -1226,6 +1251,32 @@ export function logoutSession(db, token) {
   db.prepare(`DELETE FROM user_sessions WHERE session_token = ?`).run(token);
 }
 
+/**
+ * Admin/MD/HR Admin: set another user’s password and store it for Team & access display.
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
+export function adminSetUserPassword(db, actorUser, targetUserId, newPassword) {
+  if (!canRevealUserPasswords(actorUser)) {
+    return { ok: false, error: 'Only Admin, MD, or HR Admin can set user passwords.' };
+  }
+  const uid = String(targetUserId || '').trim();
+  if (!uid) return { ok: false, error: 'User id is required.' };
+  const row = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'User not found.' };
+  const nextPassword = String(newPassword || '');
+  const strength = validatePasswordStrength(nextPassword);
+  if (!strength.ok) return strength;
+  const hash = createPasswordHash(nextPassword);
+  if (appUsersHasColumn(db, 'must_change_password')) {
+    db.prepare(`UPDATE app_users SET password_hash = ?, must_change_password = 1 WHERE id = ?`).run(hash, uid);
+  } else {
+    db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(hash, uid);
+  }
+  storeRegisteredPassword(db, uid, nextPassword);
+  db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(uid);
+  return { ok: true };
+}
+
 export function changePassword(db, userId, currentPassword, newPassword) {
   const row = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
   if (!row) return { ok: false, error: 'User not found.' };
@@ -1243,7 +1294,7 @@ export function changePassword(db, userId, currentPassword, newPassword) {
   } else {
     db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(createPasswordHash(nextPassword), userId);
   }
-  clearRegisteredPassword(db, userId);
+  storeRegisteredPassword(db, userId, nextPassword);
   const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
   return { ok: true, user: publicUserFromRow(next) };
 }
@@ -1508,7 +1559,7 @@ export function completePasswordReset(db, identifier, token, newPassword) {
     db.prepare(`UPDATE password_reset_tokens SET used_at_iso = ? WHERE id = ?`).run(nowIso(), matchRow.prt_id);
     db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(matchRow.user_id);
   })();
-  clearRegisteredPassword(db, matchRow.user_id);
+  storeRegisteredPassword(db, matchRow.user_id, newPassword);
 
   return { ok: true };
 }
@@ -1580,10 +1631,7 @@ export function listAllAppUsers(db) {
   return rows.map((r) => {
     const u = publicUserFromRow(r);
     const bid = String(r.hr_branch_id ?? r.HR_BRANCH_ID ?? '').trim();
-    const registeredPassword =
-      appUsersHasColumn(db, 'registered_password') && r.registered_password
-        ? String(r.registered_password)
-        : '';
+    const registeredPassword = resolveRegisteredPasswordDisplay(db, r);
     return { ...u, branchId: bid || null, registeredPassword };
   });
 }

@@ -51,6 +51,8 @@ import {
   clearSessionCookie,
   completePasswordReset,
   completeUserTraining,
+  adminSetUserPassword,
+  canRevealUserPasswords,
   createAppUserRecord,
   listAllAppUsers,
   loginWithPassword,
@@ -2163,8 +2165,7 @@ export function registerHttpApi(app, db) {
         userHasPermission(req.user, 'period.manage') ||
         userHasPermission(req.user, 'finance.approve');
       const includeUsers = userHasPermission(req.user, 'settings.view');
-      const includeRegisteredPasswords =
-        includeUsers && String(req.user?.roleKey || '').toLowerCase() === 'admin';
+      const includeRegisteredPasswords = includeUsers && canRevealUserPasswords(req.user);
       const branchScope = resolveBootstrapBranchScope(req);
       const mode = String(req.query?.mode ?? '').trim().toLowerCase();
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
@@ -2245,7 +2246,7 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/users', requirePermission('settings.view'), (req, res) => {
     try {
-      const revealPasswords = String(req.user?.roleKey || '').toLowerCase() === 'admin';
+      const revealPasswords = canRevealUserPasswords(req.user);
       const users = listAllAppUsers(db).map((u) => {
         if (revealPasswords) return u;
         const { registeredPassword: _drop, ...rest } = u;
@@ -2332,6 +2333,30 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/users/:id/password', requirePermission('settings.view'), (req, res) => {
+    try {
+      if (!canRevealUserPasswords(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Only Admin, MD, or HR Admin can set user passwords.' });
+      }
+      const id = String(req.params.id || '').trim();
+      const password = String(req.body?.password ?? req.body?.newPassword ?? '').trim();
+      if (!password) return res.status(400).json({ ok: false, error: 'Password is required.' });
+      const r = adminSetUserPassword(db, req.user, id, password);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'user.set_password',
+        entityKind: 'user',
+        entityId: id,
+        note: 'Password set from Team & access',
+      });
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not set password.' });
     }
   });
 
@@ -3794,8 +3819,7 @@ export function registerHttpApi(app, db) {
           includeControls,
           includeUsers: userHasPermission(req.user, 'settings.view'),
           includeRegisteredPasswords:
-            userHasPermission(req.user, 'settings.view') &&
-            String(req.user?.roleKey || '').toLowerCase() === 'admin',
+            userHasPermission(req.user, 'settings.view') && canRevealUserPasswords(req.user),
           branchScope,
         })
       );

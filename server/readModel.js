@@ -7,7 +7,7 @@ import {
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
-import { publicUserFromRow } from './auth.js';
+import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
 import { listBranches } from './branches.js';
@@ -1930,8 +1930,7 @@ export function listAppUsers(db, opts = {}) {
       createdAtISO: u.createdAtISO || row.created_at_iso || '',
     };
     if (revealRegisteredPasswords) {
-      const plain = row.registered_password ?? row.registeredPassword;
-      out.registeredPassword = plain && String(plain).trim() ? String(plain) : '';
+      out.registeredPassword = resolveRegisteredPasswordDisplay(db, row);
     }
     return out;
   });

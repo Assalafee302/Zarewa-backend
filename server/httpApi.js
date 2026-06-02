@@ -507,6 +507,7 @@ function normalizeTreasuryLines(body) {
       amountNgn: Math.round(Number(line?.amountNgn) || 0),
       reference: String(line?.reference ?? '').trim(),
       note: String(line?.note ?? '').trim(),
+      dateISO: String(line?.dateISO ?? line?.postedAtISO ?? '').trim().slice(0, 10),
     }))
     .filter((line) => line.treasuryAccountId && line.amountNgn > 0);
 }

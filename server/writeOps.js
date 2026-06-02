@@ -635,6 +635,7 @@ function insertTreasurySplitTx(db, lines, base) {
         reference: line.reference ?? base.reference,
         note: line.note ?? base.note,
         batchId,
+        postedAtISO: line.postedAtISO ?? base.postedAtISO,
       })
     );
   }
@@ -6519,6 +6520,17 @@ export function payPaymentRequest(db, requestID, payload) {
     return { ok: false, error: 'Payment request is already fully paid.' };
   }
 
+  const defaultPaidDay = String(payload.paidAtISO ?? '').trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const linePostedDay = (line) => {
+    const raw = String(line?.dateISO ?? line?.postedAtISO ?? '').trim();
+    const day = raw.slice(0, 10);
+    return day || defaultPaidDay;
+  };
+  const linePostedAtISO = (line) => {
+    const day = linePostedDay(line);
+    return day.includes('T') ? normalizeIsoTimestamp(day) : `${day}T12:00:00.000Z`;
+  };
+
   let paymentLines = Array.isArray(payload.paymentLines)
     ? payload.paymentLines
         .map((line) => ({
@@ -6526,6 +6538,7 @@ export function payPaymentRequest(db, requestID, payload) {
           amountNgn: roundMoney(line?.amountNgn),
           reference: String(line?.reference ?? '').trim(),
           note: String(line?.note ?? '').trim(),
+          postedAtISO: linePostedAtISO(line),
         }))
         .filter((line) => line.treasuryAccountId && line.amountNgn > 0)
     : [];
@@ -6542,6 +6555,7 @@ export function payPaymentRequest(db, requestID, payload) {
         amountNgn,
         reference: String(payload.reference ?? '').trim(),
         note: String(payload.note ?? '').trim(),
+        postedAtISO: linePostedAtISO(payload),
       },
     ];
   }
@@ -6554,7 +6568,10 @@ export function payPaymentRequest(db, requestID, payload) {
     return { ok: false, error: 'Payment exceeds the approved request balance.' };
   }
 
-  const paidAtISO = String(payload.paidAtISO ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const paidAtISO = paymentLines
+    .map((line) => linePostedDay(line))
+    .sort()
+    .pop();
   const paidBy = String(payload.paidBy ?? '').trim() || payload.createdBy || 'Finance';
   const paymentNote = String(payload.note ?? payload.reference ?? '').trim();
   const linkedExpense = db
@@ -6575,7 +6592,9 @@ export function payPaymentRequest(db, requestID, payload) {
   }
 
   try {
-    assertPeriodOpen(db, paidAtISO, 'Payment request payout date');
+    for (const day of new Set(paymentLines.map((line) => linePostedDay(line)))) {
+      assertPeriodOpen(db, day, 'Payment request payout date');
+    }
     const txResult = db.transaction(() => {
       const fresh = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
       if (!fresh) throw new Error('Payment request not found.');
@@ -6595,12 +6614,15 @@ export function payPaymentRequest(db, requestID, payload) {
       const created = insertTreasurySplitTx(
         db,
         paymentLines.map((line) => ({
-          ...line,
+          treasuryAccountId: line.treasuryAccountId,
           amountNgn: -roundMoney(line.amountNgn),
+          reference: line.reference,
+          note: line.note,
+          postedAtISO: line.postedAtISO,
         })),
         {
           type: 'PAYMENT_REQUEST_OUT',
-          postedAtISO: paidAtISO,
+          postedAtISO: `${paidAtISO}T12:00:00.000Z`,
           reference: String(payload.reference ?? '').trim() || requestID,
           counterpartyKind: 'EXPENSE',
           counterpartyId: fresh.expense_id,

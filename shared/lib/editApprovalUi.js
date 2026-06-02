@@ -6,6 +6,30 @@ export function editMutationNeedsSecondApprovalRole(roleKey) {
   return r !== 'admin' && r !== 'md';
 }
 
+/** Client mirror of server `quotationHasActiveSalesReceipts`. */
+export function quotationHasActiveSalesReceiptsClient(receipts, quotationId) {
+  const id = String(quotationId || '').trim();
+  if (!id) return false;
+  for (const r of receipts || []) {
+    const ref = String(r?.quotationRef ?? r?.quotation_ref ?? '').trim();
+    if (ref !== id) continue;
+    const st = String(r?.status || '').trim().toLowerCase();
+    if (st !== 'reversed') return true;
+  }
+  return false;
+}
+
+/**
+ * Quotation save: second approval only when role is gated and the quote has receipts on file.
+ * @param {string} [roleKey]
+ * @param {object[]} [receipts]
+ * @param {string} [quotationId]
+ */
+export function quotationEditNeedsSecondApprovalClient(roleKey, receipts, quotationId) {
+  if (!editMutationNeedsSecondApprovalRole(roleKey)) return false;
+  return quotationHasActiveSalesReceiptsClient(receipts, quotationId);
+}
+
 const APPROVER_ROLES = new Set([
   'admin',
   'md',

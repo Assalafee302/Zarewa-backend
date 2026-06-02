@@ -121,4 +121,78 @@ describe('Edit approval (second-party token)', () => {
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
   });
+
+  it('sales staff may PATCH quotation without token when no receipts exist', async () => {
+    const db = createDatabase(':memory:');
+    openDbs.push(db);
+    const app = createApp(db);
+    const staff = request.agent(app);
+    await staff.post('/api/session/login').send({ username: 'sales.staff', password: 'Sales@123' });
+
+    const created = await staff.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'No receipt edit',
+      dateISO: '2026-04-01',
+      lines: {
+        products: [{ name: 'Roofing Sheet', qty: '10', unitPrice: '5000' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(created.status).toBe(201);
+    const qid = created.body.quotationId;
+
+    const patch = await staff.patch(`/api/quotations/${encodeURIComponent(qid)}`).send({
+      customerFeedback: 'Updated before payment',
+      status: 'Approved',
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body?.ok).toBe(true);
+    expect(patch.body?.quotation?.customerFeedback).toBe('Updated before payment');
+  });
+
+  it('sales staff PATCH quotation requires token once a receipt is posted', async () => {
+    const db = createDatabase(':memory:');
+    openDbs.push(db);
+    const app = createApp(db);
+    const admin = request.agent(app);
+    await admin.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    const before = await admin.get('/api/bootstrap');
+    const treasuryAccountId = before.body.treasuryAccounts[0].id;
+
+    const staff = request.agent(app);
+    await staff.post('/api/session/login').send({ username: 'sales.staff', password: 'Sales@123' });
+
+    const created = await staff.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'Receipt gated edit',
+      dateISO: '2026-04-01',
+      lines: {
+        products: [{ name: 'Roofing Sheet', qty: '10', unitPrice: '5000' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(created.status).toBe(201);
+    const qid = created.body.quotationId;
+
+    const receipt = await admin.post('/api/ledger/receipt').send({
+      customerID: 'CUS-001',
+      quotationId: qid,
+      amountNgn: 10_000,
+      paymentMethod: 'Cash',
+      bankReference: 'RCP-GATE-TEST',
+      dateISO: '2026-04-01',
+      treasuryAccountId,
+      paymentLines: [{ treasuryAccountId, amountNgn: 10_000, reference: 'RCP-GATE-TEST' }],
+    });
+    expect(receipt.status).toBe(201);
+
+    const blocked = await staff.patch(`/api/quotations/${encodeURIComponent(qid)}`).send({
+      customerFeedback: 'Should need approval',
+    });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body?.code).toBe('EDIT_APPROVAL_REQUIRED');
+    expect(String(blocked.body?.error || '')).toMatch(/receipts on file/i);
+  });
 });

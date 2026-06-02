@@ -7,6 +7,8 @@ import {
   createEditApprovalRequest,
   receiptFinanceSettlementRequiresEditApproval,
   salesReceiptReconciliationIsFinalized,
+  quotationEditRequiresEditApproval,
+  quotationHasActiveSalesReceipts,
 } from './editApproval.js';
 
 function mockRes() {
@@ -127,6 +129,66 @@ describe('editApproval (no MySQL)', () => {
     const quotation = { id: 'Q-1', status: 'Pending' };
     handlePatchWithEditApprovalQuotation(res, db, finance, { lines: {}, editApprovalId: '123456' }, 'Q-1', () => quotation);
     expect(res.payload).toEqual({ ok: true, quotation, autoOverpayAppliedNgn: 0 });
+  });
+
+  it('handlePatchWithEditApprovalQuotation: gated user without receipts skips token', () => {
+    const res = mockRes();
+    const db = {
+      exec: vi.fn(),
+      transaction(fn) {
+        return () => fn();
+      },
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('FROM sales_receipts') && s.includes('quotation_ref')) {
+          return { get: vi.fn(() => ({ c: 0 })) };
+        }
+        return { get: vi.fn(), run: vi.fn(() => ({ changes: 0 })), all: vi.fn(() => []) };
+      },
+    };
+    const sales = { roleKey: 'sales_staff' };
+    const quotation = { id: 'Q-1', status: 'Pending' };
+    const executeWrite = vi.fn(() => quotation);
+    handlePatchWithEditApprovalQuotation(res, db, sales, { lines: {} }, 'Q-1', executeWrite);
+    expect(executeWrite).toHaveBeenCalled();
+    expect(res.payload).toEqual({ ok: true, quotation, autoOverpayAppliedNgn: 0 });
+  });
+
+  it('handlePatchWithEditApprovalQuotation: gated user with receipts requires token', () => {
+    const res = mockRes();
+    const db = {
+      exec: vi.fn(),
+      transaction(fn) {
+        return () => fn();
+      },
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('FROM sales_receipts') && s.includes('quotation_ref')) {
+          return { get: vi.fn(() => ({ c: 1 })) };
+        }
+        return { get: vi.fn(), run: vi.fn(() => ({ changes: 0 })), all: vi.fn(() => []) };
+      },
+    };
+    const sales = { roleKey: 'sales_staff' };
+    handlePatchWithEditApprovalQuotation(res, db, sales, { lines: {} }, 'Q-1', () => ({ id: 'Q-1' }));
+    expect(res.statusCode).toBe(403);
+    expect(res.payload?.code).toBe('EDIT_APPROVAL_REQUIRED');
+    expect(String(res.payload?.error || '')).toMatch(/receipts on file/i);
+  });
+
+  it('quotationEditRequiresEditApproval: no receipts means open edit for sales staff', () => {
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('FROM sales_receipts') && s.includes('quotation_ref')) {
+          return { get: vi.fn(() => ({ c: 0 })) };
+        }
+        return { get: vi.fn() };
+      },
+    };
+    expect(quotationHasActiveSalesReceipts(db, 'Q-1')).toBe(false);
+    expect(quotationEditRequiresEditApproval(db, { roleKey: 'sales_staff' }, 'Q-1')).toBe(false);
+    expect(quotationEditRequiresEditApproval(db, { roleKey: 'admin' }, 'Q-1')).toBe(false);
   });
 
   it('consumeEditApprovalInTransaction throws when UPDATE affects 0 rows', () => {

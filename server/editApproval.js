@@ -212,6 +212,29 @@ export function salesReceiptReconciliationIsFinalized(db, receiptId) {
   );
 }
 
+/** True when quotation has at least one non-reversed sales receipt (payment on file). */
+export function quotationHasActiveSalesReceipts(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return false;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
+    )
+    .get(qid);
+  return Number(row?.c) > 0;
+}
+
+/**
+ * Quotation PATCH: open edit while no receipts exist; require manager token once payments are posted.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function quotationEditRequiresEditApproval(db, user, quotationId) {
+  if (!editMutationRequiresSecondApproval(user)) return false;
+  return quotationHasActiveSalesReceipts(db, quotationId);
+}
+
 /** Admin, MD, or finance.approve may revise reconciled receipts without a second-party token. */
 export function userMayBypassReceiptSettlementEditApproval(user) {
   if (!editMutationRequiresSecondApproval(user)) return true;
@@ -393,7 +416,7 @@ function quotationPatchResultPayload(result) {
 
 export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotationId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
-  if (!editMutationRequiresSecondApproval(user)) {
+  if (!quotationEditRequiresEditApproval(db, user, quotationId)) {
     try {
       const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(executeWrite(stripped));
       return res.json({ ok: true, quotation, autoOverpayAppliedNgn });
@@ -411,11 +434,13 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
   }
   const aid = String(body?.editApprovalId ?? '').trim();
   if (!aid) {
+    const hasReceipts = quotationHasActiveSalesReceipts(db, quotationId);
     return res.status(403).json({
       ok: false,
       code: 'EDIT_APPROVAL_REQUIRED',
-      error:
-        'A manager or administrator must approve this change first. Request an approval, then retry with the 6-digit approval code.',
+      error: hasReceipts
+        ? 'This quotation has payment receipts on file. A manager must approve before you can change it — request approval, then enter the 6-digit code and retry.'
+        : 'A manager or administrator must approve this change first. Request an approval, then retry with the 6-digit approval code.',
     });
   }
   try {

@@ -31,6 +31,11 @@ import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBmPriceExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
+import {
+  latestPayoutDay,
+  payoutLinePostedAtISO,
+  payoutLinePostedDay,
+} from '../shared/lib/treasuryPayoutDates.js';
 
 function enrichQuotationLinesWithMaterialHeader(linesJson) {
   if (!linesJson || typeof linesJson !== 'object') return;
@@ -680,12 +685,25 @@ function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = 
   return created;
 }
 
+function treasuryLinesWithPostedDates(rawLines, fallbackDay) {
+  return (rawLines || []).map((line) => ({
+    ...line,
+    amountNgn: roundMoney(line.amountNgn),
+    postedAtISO: payoutLinePostedAtISO(line, fallbackDay, normalizeIsoTimestamp),
+  }));
+}
+
 export function recordCustomerReceiptCash(db, payload) {
-  const total = (payload.paymentLines || []).reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
+  const fallback = payoutLinePostedDay(payload, payload.dateISO);
+  const lines = treasuryLinesWithPostedDates(payload.paymentLines, fallback);
+  const total = lines.reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
   if (total <= 0) return [];
-  return insertTreasurySplitTx(db, payload.paymentLines, {
+  for (const day of new Set(lines.map((line) => payoutLinePostedDay(line, fallback)))) {
+    assertPeriodOpen(db, day, 'Receipt date');
+  }
+  return insertTreasurySplitTx(db, lines, {
     type: 'RECEIPT_IN',
-    postedAtISO: payload.dateISO,
+    postedAtISO: payoutLinePostedAtISO(payload, fallback, normalizeIsoTimestamp),
     reference: payload.reference || payload.sourceId,
     counterpartyKind: 'CUSTOMER',
     counterpartyId: payload.customerID,
@@ -701,11 +719,16 @@ export function recordCustomerReceiptCash(db, payload) {
 }
 
 export function recordCustomerAdvanceCash(db, payload) {
-  const total = (payload.paymentLines || []).reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
+  const fallback = payoutLinePostedDay(payload, payload.dateISO);
+  const lines = treasuryLinesWithPostedDates(payload.paymentLines, fallback);
+  const total = lines.reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
   if (total <= 0) return [];
-  return insertTreasurySplitTx(db, payload.paymentLines, {
+  for (const day of new Set(lines.map((line) => payoutLinePostedDay(line, fallback)))) {
+    assertPeriodOpen(db, day, 'Advance payment date');
+  }
+  return insertTreasurySplitTx(db, lines, {
     type: 'ADVANCE_IN',
-    postedAtISO: payload.dateISO,
+    postedAtISO: payoutLinePostedAtISO(payload, fallback, normalizeIsoTimestamp),
     reference: payload.reference || payload.sourceId,
     counterpartyKind: 'CUSTOMER',
     counterpartyId: payload.customerID,
@@ -721,27 +744,31 @@ export function recordCustomerAdvanceCash(db, payload) {
 }
 
 export function recordCustomerAdvanceRefundCash(db, payload) {
-  const total = (payload.paymentLines || []).reduce((sum, line) => sum + roundMoney(line.amountNgn), 0);
+  const fallback = payoutLinePostedDay(payload, payload.dateISO);
+  const lines = treasuryLinesWithPostedDates(payload.paymentLines, fallback).map((line) => ({
+    ...line,
+    amountNgn: -roundMoney(line.amountNgn),
+  }));
+  const total = lines.reduce((sum, line) => sum + Math.abs(roundMoney(line.amountNgn)), 0);
   if (total <= 0) return [];
-  return insertTreasurySplitTx(
-    db,
-    payload.paymentLines.map((line) => ({ ...line, amountNgn: -roundMoney(line.amountNgn) })),
-    {
-      type: 'ADVANCE_REFUND_OUT',
-      postedAtISO: payload.dateISO,
-      reference: payload.reference || payload.sourceId,
-      counterpartyKind: 'CUSTOMER',
-      counterpartyId: payload.customerID,
-      counterpartyName: payload.customerName,
-      sourceKind: 'LEDGER_ADVANCE_REFUND',
-      sourceId: payload.sourceId,
-      note: payload.note || 'Advance refunded to customer',
-      createdBy: payload.createdBy ?? 'Finance',
-      workspaceBranchId: payload.workspaceBranchId,
-      workspaceViewAll: payload.workspaceViewAll,
-      actor: payload.actor,
-    }
-  );
+  for (const day of new Set(lines.map((line) => payoutLinePostedDay(line, fallback)))) {
+    assertPeriodOpen(db, day, 'Advance refund date');
+  }
+  return insertTreasurySplitTx(db, lines, {
+    type: 'ADVANCE_REFUND_OUT',
+    postedAtISO: payoutLinePostedAtISO(payload, fallback, normalizeIsoTimestamp),
+    reference: payload.reference || payload.sourceId,
+    counterpartyKind: 'CUSTOMER',
+    counterpartyId: payload.customerID,
+    counterpartyName: payload.customerName,
+    sourceKind: 'LEDGER_ADVANCE_REFUND',
+    sourceId: payload.sourceId,
+    note: payload.note || 'Advance refunded to customer',
+    createdBy: payload.createdBy ?? 'Finance',
+    workspaceBranchId: payload.workspaceBranchId,
+    workspaceViewAll: payload.workspaceViewAll,
+    actor: payload.actor,
+  });
 }
 
 /**
@@ -6520,16 +6547,9 @@ export function payPaymentRequest(db, requestID, payload) {
     return { ok: false, error: 'Payment request is already fully paid.' };
   }
 
-  const defaultPaidDay = String(payload.paidAtISO ?? '').trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const linePostedDay = (line) => {
-    const raw = String(line?.dateISO ?? line?.postedAtISO ?? '').trim();
-    const day = raw.slice(0, 10);
-    return day || defaultPaidDay;
-  };
-  const linePostedAtISO = (line) => {
-    const day = linePostedDay(line);
-    return day.includes('T') ? normalizeIsoTimestamp(day) : `${day}T12:00:00.000Z`;
-  };
+  const defaultPaidDay =
+    String(payload.paidAtISO ?? payload.dateISO ?? '').trim().slice(0, 10) ||
+    new Date().toISOString().slice(0, 10);
 
   let paymentLines = Array.isArray(payload.paymentLines)
     ? payload.paymentLines
@@ -6538,7 +6558,7 @@ export function payPaymentRequest(db, requestID, payload) {
           amountNgn: roundMoney(line?.amountNgn),
           reference: String(line?.reference ?? '').trim(),
           note: String(line?.note ?? '').trim(),
-          postedAtISO: linePostedAtISO(line),
+          postedAtISO: payoutLinePostedAtISO(line, defaultPaidDay, normalizeIsoTimestamp),
         }))
         .filter((line) => line.treasuryAccountId && line.amountNgn > 0)
     : [];
@@ -6555,7 +6575,7 @@ export function payPaymentRequest(db, requestID, payload) {
         amountNgn,
         reference: String(payload.reference ?? '').trim(),
         note: String(payload.note ?? '').trim(),
-        postedAtISO: linePostedAtISO(payload),
+        postedAtISO: payoutLinePostedAtISO(payload, defaultPaidDay, normalizeIsoTimestamp),
       },
     ];
   }
@@ -6568,10 +6588,9 @@ export function payPaymentRequest(db, requestID, payload) {
     return { ok: false, error: 'Payment exceeds the approved request balance.' };
   }
 
-  const paidAtISO = paymentLines
-    .map((line) => linePostedDay(line))
-    .sort()
-    .pop();
+  const paidAtISO = latestPayoutDay(paymentLines, (line) =>
+    payoutLinePostedDay(line, defaultPaidDay)
+  );
   const paidBy = String(payload.paidBy ?? '').trim() || payload.createdBy || 'Finance';
   const paymentNote = String(payload.note ?? payload.reference ?? '').trim();
   const linkedExpense = db
@@ -6592,7 +6611,7 @@ export function payPaymentRequest(db, requestID, payload) {
   }
 
   try {
-    for (const day of new Set(paymentLines.map((line) => linePostedDay(line)))) {
+    for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
       assertPeriodOpen(db, day, 'Payment request payout date');
     }
     const txResult = db.transaction(() => {
@@ -6622,7 +6641,7 @@ export function payPaymentRequest(db, requestID, payload) {
         })),
         {
           type: 'PAYMENT_REQUEST_OUT',
-          postedAtISO: `${paidAtISO}T12:00:00.000Z`,
+          postedAtISO: payoutLinePostedAtISO({ dateISO: paidAtISO }, defaultPaidDay, normalizeIsoTimestamp),
           reference: String(payload.reference ?? '').trim() || requestID,
           counterpartyKind: 'EXPENSE',
           counterpartyId: fresh.expense_id,
@@ -6696,8 +6715,12 @@ export function payAccountsPayable(db, apId, payload) {
   const outstanding = effectiveOutstandingNgn(roundMoney(row.amount_ngn), roundMoney(row.paid_ngn));
   if (outstanding <= 0) return { ok: false, error: 'Invoice is already fully paid.' };
   const apply = Math.min(amountNgn, outstanding);
+  const defaultDay =
+    String(payload.dateISO ?? payload.paidAtISO ?? '').trim().slice(0, 10) ||
+    new Date().toISOString().slice(0, 10);
+  const postDay = payoutLinePostedDay(payload, defaultDay);
   try {
-    assertPeriodOpen(db, payload.dateISO || new Date().toISOString().slice(0, 10), 'AP payment date');
+    assertPeriodOpen(db, postDay, 'AP payment date');
     db.transaction(() => {
       db.prepare(`UPDATE accounts_payable SET paid_ngn = ?, payment_method = ? WHERE ap_id = ?`).run(
         roundMoney(row.paid_ngn) + apply,
@@ -6722,7 +6745,7 @@ export function payAccountsPayable(db, apId, payload) {
         type: 'AP_PAYMENT',
         treasuryAccountId: payload.treasuryAccountId,
         amountNgn: -apply,
-        postedAtISO: payload.dateISO,
+        postedAtISO: payoutLinePostedAtISO(payload, defaultDay, normalizeIsoTimestamp),
         reference: payload.reference || row.invoice_ref || apId,
         counterpartyKind: 'SUPPLIER',
         counterpartyName: row.supplier_name,
@@ -6772,7 +6795,9 @@ export function payRefundEntry(db, refundId, payload) {
   if (outstandingAmountNgn <= 0) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
-  const paidAtISO = String(payload.paidAtISO ?? '').trim() || new Date().toISOString().slice(0, 10);
+  const defaultPaidDay =
+    String(payload.paidAtISO ?? payload.dateISO ?? '').trim().slice(0, 10) ||
+    new Date().toISOString().slice(0, 10);
   const paidBy = String(payload.paidBy ?? '').trim() || 'Finance';
   const paymentNote = String(payload.paymentNote ?? '').trim();
   const fromExplicit = Array.isArray(payload.paymentLines)
@@ -6782,6 +6807,7 @@ export function payRefundEntry(db, refundId, payload) {
           amountNgn: roundMoney(line?.amountNgn),
           reference: String(line?.reference ?? '').trim(),
           note: String(line?.note ?? '').trim(),
+          postedAtISO: payoutLinePostedAtISO(line, defaultPaidDay, normalizeIsoTimestamp),
         }))
         .filter((line) => line.treasuryAccountId && line.amountNgn > 0)
     : [];
@@ -6795,6 +6821,7 @@ export function payRefundEntry(db, refundId, payload) {
               amountNgn: outstandingAmountNgn,
               reference: String(payload.reference ?? '').trim(),
               note: String(payload.note ?? '').trim(),
+              postedAtISO: payoutLinePostedAtISO(payload, defaultPaidDay, normalizeIsoTimestamp),
             },
           ]
         : [];
@@ -6805,8 +6832,11 @@ export function payRefundEntry(db, refundId, payload) {
   if (payoutAmountNgn > outstandingAmountNgn) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
+  const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
   try {
-    assertPeriodOpen(db, paidAtISO, 'Refund payout date');
+    for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
+      assertPeriodOpen(db, day, 'Refund payout date');
+    }
     const result = db.transaction(() => {
       const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
       if (!fresh) throw new Error('Refund not found.');
@@ -6823,21 +6853,31 @@ export function payRefundEntry(db, refundId, payload) {
         throw new Error('Payout exceeds the approved refund balance.');
       }
 
-      const movements = insertTreasurySplitTx(db, paymentLines.map((line) => ({ ...line, amountNgn: -line.amountNgn })), {
-        type: 'REFUND_PAYOUT',
-        postedAtISO: paidAtISO,
-        counterpartyKind: 'CUSTOMER',
-        counterpartyId: fresh.customer_id,
-        counterpartyName: fresh.customer_name,
-        sourceKind: 'REFUND',
-        sourceId: refundId,
-        reference: payload.reference || refundId,
-        note: paymentNote || fresh.reason || 'Customer refund',
-        createdBy: paidBy,
-        workspaceBranchId: payload.workspaceBranchId,
-        workspaceViewAll: Boolean(payload.workspaceViewAll),
-        actor: payload.actor,
-      });
+      const movements = insertTreasurySplitTx(
+        db,
+        paymentLines.map((line) => ({
+          treasuryAccountId: line.treasuryAccountId,
+          amountNgn: -line.amountNgn,
+          reference: line.reference,
+          note: line.note,
+          postedAtISO: line.postedAtISO,
+        })),
+        {
+          type: 'REFUND_PAYOUT',
+          postedAtISO: payoutLinePostedAtISO({ dateISO: paidAtISO }, defaultPaidDay, normalizeIsoTimestamp),
+          counterpartyKind: 'CUSTOMER',
+          counterpartyId: fresh.customer_id,
+          counterpartyName: fresh.customer_name,
+          sourceKind: 'REFUND',
+          sourceId: refundId,
+          reference: payload.reference || refundId,
+          note: paymentNote || fresh.reason || 'Customer refund',
+          createdBy: paidBy,
+          workspaceBranchId: payload.workspaceBranchId,
+          workspaceViewAll: Boolean(payload.workspaceViewAll),
+          actor: payload.actor,
+        }
+      );
       const nextPaidAmountNgn = paidFresh + payoutAmountNgn;
       const fullyPaid = nextPaidAmountNgn >= approvedFresh;
       db.prepare(

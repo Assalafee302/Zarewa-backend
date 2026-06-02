@@ -6950,8 +6950,17 @@ export function registerHttpApi(app, db) {
       const postingBr = assertCustomerLedgerPostingBranch(cust, req);
       if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
 
+      const treasuryLinesEarly = normalizeTreasuryLines(req.body || {});
+      const advancePostDays = new Set(
+        [
+          String(dateISO || '').trim().slice(0, 10),
+          ...treasuryLinesEarly.map((line) => String(line.dateISO || '').trim().slice(0, 10)),
+        ].filter(Boolean)
+      );
       try {
-        assertPeriodOpen(db, dateISO || new Date().toISOString().slice(0, 10), 'Advance date');
+        for (const day of advancePostDays) {
+          assertPeriodOpen(db, day, 'Advance date');
+        }
       } catch (pe) {
         return res.status(400).json({
           ok: false,
@@ -7190,8 +7199,17 @@ export function registerHttpApi(app, db) {
         });
       }
 
+      const treasuryLinesEarly = normalizeTreasuryLines(req.body || {});
+      const receiptPostDays = new Set(
+        [
+          String(dateISO || '').trim().slice(0, 10),
+          ...treasuryLinesEarly.map((line) => String(line.dateISO || '').trim().slice(0, 10)),
+        ].filter(Boolean)
+      );
       try {
-        assertPeriodOpen(db, dateISO || new Date().toISOString().slice(0, 10), 'Receipt date');
+        for (const day of receiptPostDays) {
+          assertPeriodOpen(db, day, 'Receipt date');
+        }
       } catch (pe) {
         return res.status(400).json({
           ok: false,

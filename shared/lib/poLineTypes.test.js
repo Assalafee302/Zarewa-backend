@@ -47,6 +47,16 @@ describe('poLineTypes', () => {
       }).ok
     ).toBe(true);
     expect(validatePoLine({ lineType: 'coil_kg', productID: 'COIL-ALU', qtyOrdered: 0 }).ok).toBe(false);
+    expect(
+      validatePoLine({
+        lineType: 'service',
+        productID: 'SVC-PO',
+        productName: 'Loading fee',
+        qtyOrdered: 1,
+        unitPriceNgn: 25_000,
+      }).ok
+    ).toBe(true);
+    expect(poLineOpenQtyForReceiving({ lineType: 'service', qtyOrdered: 1, qtyReceived: 0 })).toBe(0);
   });
 
   it('derives procurement kind including mixed', () => {
@@ -67,7 +77,8 @@ describe('poLineTypes', () => {
   it('maps GRN UI kind per line', () => {
     expect(grnKindForPoLine({ lineType: 'stone_flatsheet' })).toBe('stone_flatsheet');
     expect(grnKindForPoLine({ lineType: 'coil_meter' })).toBe('coil');
-    expect(PO_LINE_TYPES.length).toBe(5);
+    expect(PO_LINE_TYPES.length).toBe(6);
+    expect(inferLineTypeFromProduct('SVC-PO')).toBe('service');
   });
 
   it('treats coil weighbridge short-land within tolerance as fully received', () => {

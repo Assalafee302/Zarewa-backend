@@ -32,7 +32,18 @@ import {
   resolveCoilMaterialFamilyKey,
 } from '../shared/lib/coilMaterialFamily.js';
 import { listMasterData } from './masterData.js';
-import { DEFAULT_BRANCH_ID } from './branches.js';
+function coilProductionBlocked(db, coilNo) {
+  const cn = String(coilNo || '').trim();
+  if (!cn) return false;
+  const cols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
+  if (!cols.some((c) => c.name === 'production_blocked')) return false;
+  const row = db.prepare(`SELECT production_blocked, production_block_reason FROM coil_lots WHERE coil_no = ?`).get(cn);
+  return row?.production_blocked ? String(row.production_block_reason || 'Coil blocked for production.') : false;
+}
+
+function roundWholeKg(n) {
+  return Math.round(Number(n) || 0);
+}
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
 import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
 import {
@@ -1697,11 +1708,18 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
+  const productionDateISO = String(payload.productionDateISO || payload.production_date_iso || completedAtISO).slice(0, 10);
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
     const computed = computeCompletionConversionRows(db, jobID, payload);
     if (!computed.ok) return computed;
     const { conversionRows, totalMeters, totalWeightKg, aggregatedAlertState, managerReviewRequired } = computed;
+    for (const row of conversionRows) {
+      const blockReason = coilProductionBlocked(db, row.coilNo);
+      if (blockReason) {
+        return { ok: false, error: `Coil ${row.coilNo} is blocked: ${blockReason}` };
+      }
+    }
     const reasonCheck = validateConversionVarianceReason(payload, aggregatedAlertState);
     if (!reasonCheck.ok) return reasonCheck;
     const offInv = offcutInventoryMetersFromPayload(payload);
@@ -1878,7 +1896,27 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       }
       const pjColsComplete = db.prepare(`PRAGMA table_info(production_jobs)`).all();
       const hasOffcutSupplyCol = pjColsComplete.some((c) => c.name === 'offcut_supply_json');
-      if (hasOffcutSupplyCol) {
+      const hasProdDateCol = pjColsComplete.some((c) => c.name === 'production_date_iso');
+      if (hasOffcutSupplyCol && hasProdDateCol) {
+        db.prepare(
+          `UPDATE production_jobs
+           SET status = ?, end_date_iso = ?, completed_at_iso = ?, production_date_iso = ?, actual_meters = ?, actual_weight_kg = ?,
+               conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?, offcut_supply_json = ?
+           WHERE job_id = ?`
+        ).run(
+          'Completed',
+          completedAtISO.slice(0, 10),
+          completedAtISO,
+          productionDateISO,
+          outputMeters,
+          roundWholeKg(totalWeightKg),
+          aggregatedAlertState,
+          managerReviewRequired ? 1 : 0,
+          offInv,
+          offcutSupplyJson,
+          jobID
+        );
+      } else if (hasOffcutSupplyCol) {
         db.prepare(
           `UPDATE production_jobs
            SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,

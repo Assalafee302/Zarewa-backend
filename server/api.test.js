@@ -3242,20 +3242,55 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(printRes.body.workflow?.status).toBe('printed');
 
     const storeRes = await admin.post('/api/stock-register/workflow').send({
-      action: 'store_confirm',
+      action: 'forward_to_manager',
       periodKey: '2026-04',
       countNotes: 'API test count OK',
+      storeChecklist: {
+        coilsCounted: true,
+        finishedVerified: true,
+        stoneCounted: true,
+        accessoriesCounted: true,
+        inTransitReviewed: true,
+      },
     });
     expect(storeRes.status).toBe(200);
     expect(storeRes.body.ok).toBe(true);
     expect(storeRes.body.workflow?.status).toBe('store_confirmed');
 
+    const clearance = { lines: {} };
+    const reg = getRes.body.register;
+    for (const fam of ['aluminium', 'aluzinc']) {
+      for (const g of reg.coilSections?.[fam]?.groups || []) {
+        for (const r of g.rows || []) {
+          const key = r.finishedInPeriod ? `finished:${r.coilNo}` : `coil:${r.coilNo}`;
+          clearance.lines[key] = r.finishedInPeriod
+            ? { status: 'cleared', finishedConfirm: 'confirmed' }
+            : { status: 'cleared' };
+        }
+      }
+    }
+    await admin.post('/api/stock-register/line-clearance').send({ periodKey: '2026-04', lineClearance: clearance });
+
     const bmRes = await admin.post('/api/stock-register/workflow').send({
       action: 'bm_approve',
       periodKey: '2026-04',
+      lineClearance: clearance,
     });
     expect(bmRes.status).toBe(200);
     expect(bmRes.body.workflow?.status).toBe('bm_approved');
+
+    const procRes = await admin.post('/api/stock-register/workflow').send({
+      action: 'procurement_cost',
+      periodKey: '2026-04',
+      pricing: {
+        aluminiumUnitCostNgnPerKg: 1200,
+        aluzincUnitCostNgnPerKg: 900,
+        stoneUnitPriceNgnPerM: 500,
+        accessoryUnitPriceNgn: 50,
+      },
+    });
+    expect(procRes.status).toBe(200);
+    expect(procRes.body.workflow?.status).toBe('procurement_costed');
 
     const mdRes = await admin.post('/api/stock-register/workflow').send({
       action: 'md_approve',

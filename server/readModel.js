@@ -1305,6 +1305,7 @@ export function listProductionJobs(db, branchScope = 'ALL') {
         status: row.status ?? 'Planned',
         createdAtISO: row.created_at_iso,
         completedAtISO: row.completed_at_iso ?? '',
+        productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
         actualMeters: baseActual,
         fgAdjustmentMetersTotal: fgAdj,
         effectiveOutputMeters: baseActual + fgAdj,

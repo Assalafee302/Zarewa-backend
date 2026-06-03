@@ -29,11 +29,14 @@ import {
   advanceStockRegisterWorkflow,
   buildStockRegisterForBranch,
   captureStockRegisterClosing,
+  getStockRegisterLineDetail,
   getStockRegisterWorkflow,
   listStockRegisterInbox,
   patchCoilStockForm,
   saveStockRegisterBmAdjustments,
+  saveStockRegisterLineClearance,
   saveStockRegisterPrintSnapshot,
+  saveStockRegisterStoreChecklist,
 } from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
@@ -2957,7 +2960,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/stock-register/print-snapshot', requireAuth, requirePermission(stockRegisterStorePerms), (req, res) => {
+  app.post('/api/stock-register/print-snapshot', requireAuth, requirePermission([...stockRegisterStorePerms, ...stockRegisterManagerPerms]), (req, res) => {
     try {
       const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
@@ -3003,7 +3006,53 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/stock-register/capture-closing', requireAuth, requireCoilSnapshotCapture, (req, res) => {
+  app.post('/api/stock-register/line-clearance', requireAuth, requirePermission(stockRegisterManagerPerms), (req, res) => {
+    try {
+      const periodKey = String(req.body?.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodKey and branch workspace required.' });
+      }
+      const r = saveStockRegisterLineClearance(db, branchScope, periodKey, req.body?.lineClearance, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save line clearance.' });
+    }
+  });
+
+  app.post('/api/stock-register/store-checklist', requireAuth, requirePermission(stockRegisterStorePerms), (req, res) => {
+    try {
+      const periodKey = String(req.body?.periodKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodKey and branch workspace required.' });
+      }
+      const r = saveStockRegisterStoreChecklist(db, branchScope, periodKey, req.body?.checklist, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not save store checklist.' });
+    }
+  });
+
+  app.get('/api/stock-register/line-detail', requirePermission(stockRegisterReadPerms), (req, res) => {
+    try {
+      const periodKey = String(req.query.periodKey || '').trim();
+      const lineKey = String(req.query.lineKey || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodKey || !lineKey || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodKey, lineKey, and branch workspace required.' });
+      }
+      const r = getStockRegisterLineDetail(db, branchScope, periodKey, lineKey);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load line detail.' });
+    }
+  });
+
+  app.post('/api/stock-register/capture-closing', requireAuth, requirePermission(stockRegisterProcurementPerms), (req, res) => {
     try {
       const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);

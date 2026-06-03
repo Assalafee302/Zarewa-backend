@@ -1084,6 +1084,21 @@ function migrateStockRegister2026(db) {
   ensureSrCol('procurement_costed_by_user_id', `ALTER TABLE stock_register_periods ADD COLUMN procurement_costed_by_user_id TEXT`);
   ensureSrCol('procurement_costed_by_name', `ALTER TABLE stock_register_periods ADD COLUMN procurement_costed_by_name TEXT`);
   ensureSrCol('forwarded_to_manager_at_iso', `ALTER TABLE stock_register_periods ADD COLUMN forwarded_to_manager_at_iso TEXT`);
+  ensureSrCol('line_clearance_json', `ALTER TABLE stock_register_periods ADD COLUMN line_clearance_json TEXT`);
+  ensureSrCol('store_checklist_json', `ALTER TABLE stock_register_periods ADD COLUMN store_checklist_json TEXT`);
+  ensureSrCol('count_cutoff_iso', `ALTER TABLE stock_register_periods ADD COLUMN count_cutoff_iso TEXT`);
+  ensureSrCol('print_version', `ALTER TABLE stock_register_periods ADD COLUMN print_version INTEGER NOT NULL DEFAULT 1`);
+  const coilLotCols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
+  const ensureCoilCol = (name, ddl) => {
+    if (!coilLotCols.some((c) => c.name === name)) db.exec(ddl);
+  };
+  ensureCoilCol('production_blocked', `ALTER TABLE coil_lots ADD COLUMN production_blocked INTEGER NOT NULL DEFAULT 0`);
+  ensureCoilCol('production_block_reason', `ALTER TABLE coil_lots ADD COLUMN production_block_reason TEXT`);
+  ensureCoilCol('production_block_set_at_iso', `ALTER TABLE coil_lots ADD COLUMN production_block_set_at_iso TEXT`);
+  const pjCols = db.prepare(`PRAGMA table_info(production_jobs)`).all();
+  if (!pjCols.some((c) => c.name === 'production_date_iso')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN production_date_iso TEXT`);
+  }
   const snapCols = db.prepare(`PRAGMA table_info(inventory_coil_snapshots)`).all();
   const ensureSnapCol = (name, ddl) => {
     if (!snapCols.some((c) => c.name === name)) db.exec(ddl);

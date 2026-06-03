@@ -145,6 +145,11 @@ describe('stockRegisterCore', () => {
       branchId: 'BR-KD',
       periodEnd: '2026-04-30',
       masterData: { colours: [{ name: 'Premium Red', abbreviation: 'PRED' }] },
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      stoneOpeningByProduct: new Map([['STONE-HMB-040', 100]]),
       products: [
         {
           productID: 'STONE-HMB-040',

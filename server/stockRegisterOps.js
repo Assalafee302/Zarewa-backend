@@ -6,12 +6,27 @@ import {
   applyBmAdjustmentsToRegister,
   applyProcurementPricingToRegister,
   buildStockRegisterPack,
+  coilProductionJobsInPeriod,
   enrichStockRegisterValuation,
   parseBmAdjustments,
   periodBoundsFromEndDate,
   prepareRegisterForView,
   previousPeriodEndIso,
 } from '../shared/lib/stockRegisterCore.js';
+import {
+  applyLineClearanceToRegister,
+  buildAdjustmentsFromClearance,
+  enumerateRegisterLineKeys,
+  FINISHED_CONFIRM,
+  lineEligibleForClosing,
+  LINE_STATUS,
+  lineKeyFinished,
+  parseLineClearance,
+  parseStoreChecklist,
+  setLineEntry,
+  validateBmApprove,
+  validateStoreChecklist,
+} from '../shared/lib/stockRegisterLineClearance.js';
 import { appendAuditLog } from './controlOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -54,6 +69,10 @@ function mapPeriodRow(row) {
     procurementCostedByName: row.procurement_costed_by_name || '',
     bmAdjustments: parseBmAdjustments(row.bm_adjustments_json),
     procurementPricing: parseBmAdjustments(row.procurement_pricing_json),
+    lineClearance: parseLineClearance(row.line_clearance_json),
+    storeChecklist: parseStoreChecklist(row.store_checklist_json),
+    countCutoffIso: row.count_cutoff_iso || '',
+    printVersion: Number(row.print_version) || 1,
   };
 }
 
@@ -89,6 +108,7 @@ function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
   const periodRow = getPeriodRow(db, bid, periodKey);
   const adjustments = parseBmAdjustments(periodRow?.bm_adjustments_json);
   if (adjustments) applyBmAdjustmentsToRegister(pack, adjustments);
+  applyLineClearanceToRegister(pack, periodRow?.line_clearance_json);
 
   const procurementPricing = parseBmAdjustments(periodRow?.procurement_pricing_json);
   const needsAutoValuation = viewMode === 'finance' && !procurementPricing;
@@ -252,19 +272,23 @@ export function saveStockRegisterPrintSnapshot(db, branchId, periodEndIso, actor
   const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
   const uid = String(actor?.id || actor?.userId || '').trim();
   const now = nowIso();
-  upsertPeriodRow(db, branchId, periodKey, end, {
-    status: 'printed',
+  const existing = getPeriodRow(db, branchId, periodKey);
+  const print_version = (Number(existing?.print_version) || 0) + 1;
+  const patch = {
+    status: existing?.status && !['draft'].includes(String(existing.status)) ? existing.status : 'printed',
     register_json: JSON.stringify(built.register),
     print_snapshot_json: JSON.stringify(built.register),
     printed_at_iso: now,
     printed_by_user_id: uid || null,
-  });
+    print_version,
+  };
+  upsertPeriodRow(db, branchId, periodKey, end, patch);
   appendAuditLog(db, {
     actor,
     action: 'stock_register.print',
     entityKind: 'stock_register_period',
     entityId: `${branchId}:${periodKey}`,
-    note: `Print snapshot saved for ${periodKey}`,
+    note: `Print snapshot v${patch.print_version} for ${periodKey} (clearance preserved)`,
   });
   return { ok: true, register: built.register, workflow: mapPeriodRow(getPeriodRow(db, branchId, periodKey)) };
 }
@@ -287,6 +311,9 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     if (!['printed', 'draft', 'store_confirmed'].includes(String(row.status))) {
       return { ok: false, error: 'Register must be printed before store confirmation.' };
     }
+    const checklist = body?.storeChecklist || parseStoreChecklist(row.store_checklist_json);
+    const checklistOk = validateStoreChecklist(checklist);
+    if (!checklistOk.ok) return checklistOk;
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'store_confirmed',
       store_confirmed_at_iso: now,
@@ -294,6 +321,8 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
       store_confirmed_by_name: actorName(actor),
       count_notes: notes || row.count_notes,
       forwarded_to_manager_at_iso: now,
+      store_checklist_json: JSON.stringify(checklist),
+      count_cutoff_iso: String(body?.countCutoffIso || row.count_cutoff_iso || now).slice(0, 19),
     });
   } else if (action === 'bm_return_to_store') {
     if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
@@ -312,14 +341,22 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     if (!['store_confirmed', 'bm_approved'].includes(String(row.status))) {
       return { ok: false, error: 'Store must confirm the physical count before branch manager approval.' };
     }
-    const adj = body?.adjustments;
+    const built = buildPackWithPeriodContext(db, bid, row.period_end_iso, { viewMode: 'manager' });
+    if (!built.ok) return built;
+    const reg = built.fullPack || built.register;
+    const clearanceRaw = body?.lineClearance || row.line_clearance_json;
+    const approveCheck = validateBmApprove(reg, clearanceRaw, row.bm_adjustments_json);
+    if (!approveCheck.ok) return approveCheck;
+    const adjFromClearance = buildAdjustmentsFromClearance(reg, clearanceRaw);
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'bm_approved',
       bm_approved_at_iso: now,
       bm_approved_by_user_id: actor?.id || null,
       bm_approved_by_name: actorName(actor),
-      ...(adj && typeof adj === 'object' ? { bm_adjustments_json: JSON.stringify(adj) } : {}),
+      bm_adjustments_json: JSON.stringify(adjFromClearance),
+      line_clearance_json: typeof clearanceRaw === 'string' ? clearanceRaw : JSON.stringify(clearanceRaw || parseLineClearance(row.line_clearance_json)),
     });
+    syncCoilProductionBlocks(db, reg, clearanceRaw, actor);
   } else if (action === 'procurement_lock' || action === 'procurement_cost') {
     if (!['procurement.manage', 'operations.manage'].some(() => false)) {
       /* permission checked at HTTP layer */
@@ -342,8 +379,8 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
     if (!isExecutiveRoleKey(rk)) {
       return { ok: false, error: 'Managing director approval required.' };
     }
-    if (!['bm_approved', 'procurement_costed'].includes(String(row.status))) {
-      return { ok: false, error: 'Branch manager or procurement sign-off required before MD approval.' };
+    if (String(row.status) !== 'procurement_costed') {
+      return { ok: false, error: 'Procurement must complete costing before MD approval.' };
     }
     upsertPeriodRow(db, bid, pk, row.period_end_iso, {
       status: 'md_approved',
@@ -374,8 +411,8 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   const row = getPeriodRow(db, bid, periodKey);
   if (!row) return { ok: false, error: 'Register period not found.' };
   const st = String(row.status);
-  if (!['procurement_costed', 'md_approved'].includes(st)) {
-    return { ok: false, error: 'Procurement costing (or MD approval) required before capturing closing stock.' };
+  if (st !== 'md_approved') {
+    return { ok: false, error: 'MD approval required before capturing closing stock.' };
   }
 
   const built = buildPackWithPeriodContext(db, bid, end, { viewMode: 'finance' });
@@ -386,6 +423,15 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   if (!tableReady(db, 'inventory_coil_snapshots')) {
     return { ok: false, error: 'Snapshot table missing; run migrations.' };
   }
+
+  const clearanceRaw = row.line_clearance_json;
+  const lineItems = enumerateRegisterLineKeys(reg);
+  const eligibleCoils = new Set(
+    lineItems.filter((it) => it.kind === 'coil' && lineEligibleForClosing(it, clearanceRaw)).map((it) => it.row.coilNo)
+  );
+  const eligibleFinished = new Set(
+    lineItems.filter((it) => it.kind === 'finished' && lineEligibleForClosing(it, clearanceRaw)).map((it) => it.row.coilNo)
+  );
 
   const allCoilRows = [
     ...(reg.coilSections?.aluminium?.groups || []).flatMap((g) => g.rows),
@@ -403,6 +449,7 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
     );
     for (const line of allCoilRows) {
       if (line.finishedInPeriod) {
+        if (!eligibleFinished.has(line.coilNo)) continue;
         ins.run(
           end,
           bid,
@@ -425,6 +472,7 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
         );
         continue;
       }
+      if (!eligibleCoils.has(line.coilNo)) continue;
       if (line.closingKg == null || line.closingKg <= 0) continue;
       const lot = db.prepare(`SELECT product_id, po_id, supplier_name FROM coil_lots WHERE coil_no = ?`).get(line.coilNo);
       ins.run(
@@ -538,10 +586,121 @@ export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustme
   return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, pk)) };
 }
 
+export function saveStockRegisterLineClearance(db, branchId, periodKey, lineClearance, actor) {
+  const bid = String(branchId || '').trim();
+  const pk = String(periodKey || '').trim();
+  const row = getPeriodRow(db, bid, pk);
+  if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
+  if (!['store_confirmed', 'printed', 'bm_approved'].includes(String(row.status))) {
+    return { ok: false, error: 'Register must be with store or manager before saving line clearance.' };
+  }
+  const payload = typeof lineClearance === 'string' ? lineClearance : JSON.stringify(lineClearance || { lines: {} });
+  upsertPeriodRow(db, bid, pk, row.period_end_iso, { line_clearance_json: payload });
+  const built = buildPackWithPeriodContext(db, bid, row.period_end_iso, { viewMode: 'manager' });
+  const adj = buildAdjustmentsFromClearance(built.fullPack || built.register, payload);
+  upsertPeriodRow(db, bid, pk, row.period_end_iso, { bm_adjustments_json: JSON.stringify(adj) });
+  appendAuditLog(db, {
+    actor,
+    action: 'stock_register.line_clearance',
+    entityKind: 'stock_register_period',
+    entityId: `${bid}:${pk}`,
+    note: 'Line clearance saved',
+  });
+  return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, pk)), adjustments: adj };
+}
+
+export function saveStockRegisterStoreChecklist(db, branchId, periodKey, checklist, actor) {
+  const bid = String(branchId || '').trim();
+  const pk = String(periodKey || '').trim();
+  const row = getPeriodRow(db, bid, pk);
+  if (!row) return { ok: false, error: 'Register period not found.' };
+  upsertPeriodRow(db, bid, pk, row.period_end_iso, {
+    store_checklist_json: JSON.stringify(checklist || {}),
+    count_cutoff_iso: String(checklist?.countCutoffIso || row.count_cutoff_iso || '').slice(0, 19) || null,
+  });
+  return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, pk)) };
+}
+
+export function getStockRegisterLineDetail(db, branchId, periodKey, lineKey) {
+  const bid = String(branchId || '').trim();
+  const pk = String(periodKey || '').trim();
+  const row = getPeriodRow(db, bid, pk);
+  if (!row) return { ok: false, error: 'Register period not found.' };
+  const built = buildPackWithPeriodContext(db, bid, row.period_end_iso, { viewMode: 'manager' });
+  if (!built.ok) return built;
+  const reg = built.fullPack || built.register;
+  const { start, end } = periodBoundsFromEndDate(row.period_end_iso);
+  const item = enumerateRegisterLineKeys(reg).find((it) => it.key === lineKey);
+  if (!item) return { ok: false, error: 'Line not found on register.' };
+  const clearance = parseLineClearance(row.line_clearance_json);
+  let productionJobs = [];
+  if (item.kind === 'coil' || item.kind === 'finished') {
+    productionJobs = coilProductionJobsInPeriod(
+      listProductionJobs(db, bid),
+      listProductionJobCoils(db, bid, { limit: 0 }),
+      item.row.coilNo,
+      start,
+      end
+    );
+  }
+  return {
+    ok: true,
+    lineKey,
+    item,
+    entry: clearance.lines[lineKey] || null,
+    productionJobs,
+    workflow: mapPeriodRow(row),
+  };
+}
+
+function syncCoilProductionBlocks(db, register, clearanceRaw, actor) {
+  const clearance = parseLineClearance(clearanceRaw);
+  if (!tableReady(db, 'coil_lots')) return;
+  const hasBlockCol = db.prepare(`PRAGMA table_info(coil_lots)`).all().some((c) => c.name === 'production_blocked');
+  if (!hasBlockCol) return;
+  const now = nowIso();
+  const stmtBlock = db.prepare(
+    `UPDATE coil_lots SET production_blocked = 1, production_block_reason = ?, production_block_set_at_iso = ? WHERE coil_no = ?`
+  );
+  const stmtUnblock = db.prepare(
+    `UPDATE coil_lots SET production_blocked = 0, production_block_reason = NULL, production_block_set_at_iso = NULL WHERE coil_no = ?`
+  );
+  for (const item of enumerateRegisterLineKeys(register)) {
+    if (item.kind !== 'finished') continue;
+    const entry = clearance.lines[item.key] || {};
+    const cn = item.row.coilNo;
+    if (entry.finishedConfirm === FINISHED_CONFIRM.DISPUTED) {
+      stmtBlock.run('Stock register: finished disputed — still on floor', now, cn);
+      appendAuditLog(db, {
+        actor,
+        action: 'coil.production_block',
+        entityKind: 'coil_lot',
+        entityId: cn,
+        note: 'Blocked pending stock register resolution',
+      });
+    } else if (entry.finishedConfirm === FINISHED_CONFIRM.CONFIRMED) {
+      stmtUnblock.run(cn);
+    }
+  }
+}
+
+export function isCoilProductionBlocked(db, coilNo) {
+  const cn = String(coilNo || '').trim();
+  if (!cn || !tableReady(db, 'coil_lots')) return false;
+  const cols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
+  if (!cols.some((c) => c.name === 'production_blocked')) return false;
+  const row = db.prepare(`SELECT production_blocked FROM coil_lots WHERE coil_no = ?`).get(cn);
+  return Boolean(row?.production_blocked);
+}
+
 export function listStockRegisterInbox(db, branchId, queue = 'manager') {
   const bid = String(branchId || '').trim();
   if (!tableReady(db, 'stock_register_periods')) return { ok: true, items: [] };
-  const statuses = queue === 'procurement' ? ['bm_approved'] : ['store_confirmed'];
+  let statuses;
+  if (queue === 'procurement') statuses = ['bm_approved'];
+  else if (queue === 'md') statuses = ['procurement_costed'];
+  else if (queue === 'capture') statuses = ['md_approved'];
+  else statuses = ['store_confirmed'];
   const placeholders = statuses.map(() => '?').join(',');
   const rows = db
     .prepare(

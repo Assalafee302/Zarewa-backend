@@ -3,7 +3,8 @@
  * Sections: aluminium coils, aluzinc coils, stone-coated (m), accessories, summary, in-transit.
  */
 
-import { displayCoilNumber } from './reportDisplayFormat.js';
+import { displayCoilNumber, displayLast4 } from './reportDisplayFormat.js';
+import { roundKg, roundM } from './stockRegisterLineClearance.js';
 
 export const SPOOL_KG_DEFAULT = { aluminium: 35, aluzinc: 60 };
 
@@ -24,6 +25,11 @@ export const ACCESSORY_REGISTER_TYPES = [
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** Business date for production job — production_date_iso when set, else completion date. */
+export function jobBusinessDateISO(job) {
+  return toIsoDate(job?.productionDateISO || job?.production_date_iso || job?.completedAtISO || job?.endDateISO);
 }
 
 function toIsoDate(v) {
@@ -150,7 +156,7 @@ export function coilProductionUsedByCoil(productionJobs, productionJobCoils, sta
   const completed = new Set();
   for (const j of productionJobs || []) {
     if (String(j.status || '').trim() !== 'Completed') continue;
-    const d = toIsoDate(j.completedAtISO || j.endDateISO);
+    const d = jobBusinessDateISO(j);
     if (!inPeriod(d, start, end)) continue;
     completed.add(String(j.jobID || j.job_id || '').trim());
   }
@@ -160,10 +166,68 @@ export function coilProductionUsedByCoil(productionJobs, productionJobCoils, sta
     if (!completed.has(jid)) continue;
     const cn = String(c.coilNo || c.coil_no || '').trim();
     if (!cn) continue;
-    const used = Number(c.consumedWeightKg ?? c.consumed_weight_kg) || 0;
-    byCoil.set(cn, round2((byCoil.get(cn) || 0) + used));
+    const used = roundKg(c.consumedWeightKg ?? c.consumed_weight_kg);
+    if (used <= 0) continue;
+    byCoil.set(cn, roundKg((byCoil.get(cn) || 0) + used));
   }
   return byCoil;
+}
+
+/** Metres produced from completed jobs in period, by coil. */
+export function coilProductionUsedMByCoil(productionJobs, productionJobCoils, start, end) {
+  const jobMeters = new Map();
+  for (const j of productionJobs || []) {
+    if (String(j.status || '').trim() !== 'Completed') continue;
+    const d = jobBusinessDateISO(j);
+    if (!inPeriod(d, start, end)) continue;
+    const jid = String(j.jobID || j.job_id || '').trim();
+    jobMeters.set(jid, roundM(j.actualMeters ?? j.actual_meters ?? j.metres ?? 0));
+  }
+  const byCoil = new Map();
+  for (const c of productionJobCoils || []) {
+    const jid = String(c.jobID || c.job_id || '').trim();
+    if (!jobMeters.has(jid)) continue;
+    const cn = String(c.coilNo || c.coil_no || '').trim();
+    if (!cn) continue;
+    const jobM = jobMeters.get(jid) || 0;
+    const coilCount = (productionJobCoils || []).filter(
+      (x) => String(x.jobID || x.job_id) === jid && String(x.coilNo || x.coil_no || '').trim()
+    ).length;
+    const share = coilCount > 0 ? roundM(jobM / coilCount) : 0;
+    const coilM = roundM(c.metresUsed ?? c.metres_used ?? c.metres ?? share);
+    if (coilM > 0) byCoil.set(cn, roundM((byCoil.get(cn) || 0) + coilM));
+  }
+  return byCoil;
+}
+
+/** Production jobs on a coil in period (for BM line detail). */
+export function coilProductionJobsInPeriod(productionJobs, productionJobCoils, coilNo, start, end) {
+  const cn = String(coilNo || '').trim();
+  const jobIds = new Set(
+    (productionJobCoils || [])
+      .filter((c) => String(c.coilNo || c.coil_no || '').trim() === cn)
+      .map((c) => String(c.jobID || c.job_id || '').trim())
+      .filter(Boolean)
+  );
+  const rows = [];
+  for (const j of productionJobs || []) {
+    const jid = String(j.jobID || j.job_id || '').trim();
+    if (!jobIds.has(jid)) continue;
+    if (String(j.status || '').trim() !== 'Completed') continue;
+    const d = jobBusinessDateISO(j);
+    if (!inPeriod(d, start, end)) continue;
+    rows.push({
+      jobID: jid,
+      jobIdDisplay: displayLast4(jid) || jid,
+      productionDateISO: d,
+      quotationRef: String(j.quotationRef || j.quotation_ref || '').trim(),
+      qtDisplay: displayLast4(j.quotationRef || j.quotation_ref) || '—',
+      metres: roundM(j.actualMeters ?? j.actual_meters ?? 0),
+      kgUsed: roundKg(j.actualWeightKg ?? j.actual_weight_kg ?? 0),
+      customerProject: String(j.customerName || j.customer_name || j.projectName || '').trim() || '—',
+    });
+  }
+  return rows.sort((a, b) => String(a.productionDateISO).localeCompare(String(b.productionDateISO)));
 }
 
 /** Coil control scrap/adjustment outflows (kg). */
@@ -176,7 +240,7 @@ export function coilControlUsedByCoil(coilControlEvents, start, end) {
     if (!cn) continue;
     const delta = Number(e.kgCoilDelta ?? e.kg_coil_delta) || 0;
     if (delta >= 0) continue;
-    byCoil.set(cn, round2((byCoil.get(cn) || 0) + Math.abs(delta)));
+    byCoil.set(cn, roundKg((byCoil.get(cn) || 0) + Math.abs(delta)));
   }
   return byCoil;
 }
@@ -196,7 +260,7 @@ function coilReceivedInPeriod(coilLots, start, end) {
     const rd = toIsoDate(lot.receivedAtISO);
     if (!cn || !inPeriod(rd, start, end)) continue;
     const kg = Number(lot.weightKg ?? lot.qtyReceived) || 0;
-    byCoil.set(cn, round2(kg));
+    byCoil.set(cn, roundKg(kg));
   }
   return byCoil;
 }
@@ -207,7 +271,7 @@ function openingFromPrevSnapshot(prevSnapshots) {
     const cn = String(row.coilNo || row.coil_no || '').trim();
     if (!cn) continue;
     const kg = Number(row.currentWeightKg ?? row.current_weight_kg ?? row.closingKg) || 0;
-    map.set(cn, round2(kg));
+    map.set(cn, roundKg(kg));
   }
   return map;
 }
@@ -217,7 +281,7 @@ function systemTagsForCoilRow(row) {
   if (row.receivedKg > 0 && row.openingKg <= 0) tags.push('NEW');
   if (row.finishedInPeriod) tags.push('FINISHED');
   if (row.stockForm === 'roll') tags.push('ROLL');
-  if (row.countVarianceKg != null && Math.abs(row.countVarianceKg) >= 0.5) tags.push('COUNT_VAR');
+  if (row.countVarianceKg != null && Math.abs(row.countVarianceKg) >= 1) tags.push('COUNT_VAR');
   return tags;
 }
 
@@ -226,15 +290,18 @@ function buildCoilLine(lot, ctx) {
   const family = coilMaterialFamily(lot.materialTypeName);
   if (!family) return null;
 
-  const openingKg = round2(ctx.openingByCoil.get(cn) || 0);
-  const receivedKg = round2(ctx.receivedByCoil.get(cn) || 0);
-  const usedKg = round2(ctx.usedByCoil.get(cn) || 0);
+  const openingKg = roundKg(ctx.openingByCoil.get(cn) || 0);
+  const receivedKg = roundKg(ctx.receivedByCoil.get(cn) || 0);
+  const usedKg = roundKg(ctx.usedByCoil.get(cn) || 0);
+  const usedM = roundM(ctx.usedMByCoil?.get(cn) || 0);
+  const kgPerM = usedM > 0 && usedKg > 0 ? roundM(usedKg / usedM) : null;
   const stockForm = String(lot.stockForm || lot.stock_form || 'coil').toLowerCase() === 'roll' ? 'roll' : 'coil';
 
   const liveKg = Number(lot.currentWeightKg) || 0;
-  const closingCalc = round2(openingKg + receivedKg - usedKg);
+  const closingCalc = roundKg(openingKg + receivedKg - usedKg);
   const consumedNow = liveKg <= 0.0001 || String(lot.currentStatus || '').trim() === 'Consumed';
   const finishedInPeriod = consumedNow && (usedKg > 0 || receivedKg > 0 || openingKg > 0);
+  const liveKgWhole = roundKg(liveKg);
 
   if (!finishedInPeriod && openingKg <= 0 && receivedKg <= 0 && usedKg <= 0 && liveKg <= 0.0001) {
     return null;
@@ -243,19 +310,21 @@ function buildCoilLine(lot, ctx) {
     return null;
   }
 
-  const closingKg = finishedInPeriod ? null : closingCalc > 0 ? closingCalc : liveKg > 0 ? round2(liveKg) : 0;
+  const closingKg = finishedInPeriod ? null : closingCalc > 0 ? closingCalc : liveKgWhole > 0 ? liveKgWhole : 0;
   const countVarianceKg =
-    closingKg != null && liveKg > 0 && Math.abs(closingCalc - liveKg) >= 0.5 ? round2(liveKg - closingCalc) : null;
+    closingKg != null && liveKgWhole > 0 && closingCalc !== liveKgWhole ? roundKg(liveKgWhole - closingCalc) : null;
 
   const row = {
     colourAbbrev: colourAbbrevForRegister(ctx.masterData, lot.colour),
     coilNo: cn,
-    coilNoDisplay: displayCoilNumber(cn) || cn,
+    coilNoDisplay: displayLast4(cn) || displayCoilNumber(cn) || cn,
     gaugeLabel: String(lot.gaugeLabel || '').trim() || '—',
     materialFamily: family,
     openingKg,
     receivedKg,
     usedKg,
+    usedM,
+    kgPerM,
     closingKg,
     closingBlank: finishedInPeriod,
     finishedInPeriod,
@@ -285,9 +354,10 @@ function groupCoilRowsByGauge(rows) {
           String(a.colourAbbrev).localeCompare(String(b.colourAbbrev)) ||
           String(a.coilNo).localeCompare(String(b.coilNo))
       ),
-      subtotalOpeningKg: round2(coilRows.reduce((s, r) => s + r.openingKg, 0)),
-      subtotalUsedKg: round2(coilRows.reduce((s, r) => s + r.usedKg, 0)),
-      subtotalClosingKg: round2(coilRows.reduce((s, r) => s + (r.closingKg ?? 0), 0)),
+      subtotalOpeningKg: roundKg(coilRows.reduce((s, r) => s + r.openingKg, 0)),
+      subtotalUsedKg: roundKg(coilRows.reduce((s, r) => s + r.usedKg, 0)),
+      subtotalUsedM: roundM(coilRows.reduce((s, r) => s + (r.usedM || 0), 0)),
+      subtotalClosingKg: roundKg(coilRows.reduce((s, r) => s + (r.closingKg ?? 0), 0)),
     }));
 }
 
@@ -609,7 +679,7 @@ export function applyBmAdjustmentsToRegister(register, adjustments) {
       for (const r of g.rows || []) {
         const adj = coilMap.get(r.coilNo);
         if (!adj || adj.closingKg == null || r.closingBlank) continue;
-        r.closingKg = round2(Math.max(0, Number(adj.closingKg)));
+        r.closingKg = roundKg(Math.max(0, Number(adj.closingKg)));
         r.bmAdjusted = true;
         if (adj.note) r.remarkSuggested = [r.remarkSuggested, String(adj.note).trim()].filter(Boolean).join(' · ');
       }
@@ -812,6 +882,7 @@ export function buildStockRegisterPack(opts = {}) {
     coilProductionUsedByCoil(opts.productionJobs, opts.productionJobCoils, start, end),
     coilControlUsedByCoil(opts.coilControlEvents, start, end)
   );
+  const usedMByCoil = coilProductionUsedMByCoil(opts.productionJobs, opts.productionJobCoils, start, end);
 
   for (const lot of opts.coilLots || []) {
     const cn = String(lot.coilNo || '').trim();
@@ -821,7 +892,7 @@ export function buildStockRegisterPack(opts = {}) {
       const live = Number(lot.currentWeightKg) || 0;
       const rec = receivedByCoil.get(cn) || 0;
       const used = usedByCoil.get(cn) || 0;
-      openingByCoil.set(cn, round2(Math.max(0, live + used - rec)));
+      openingByCoil.set(cn, roundKg(Math.max(0, live + used - rec)));
     }
   }
 
@@ -829,6 +900,7 @@ export function buildStockRegisterPack(opts = {}) {
     openingByCoil,
     receivedByCoil,
     usedByCoil,
+    usedMByCoil,
     masterData: opts.masterData || null,
   };
 

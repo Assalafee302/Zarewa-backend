@@ -8,8 +8,10 @@
  * - Company-wide counts: payroll MD sign-off, bank reconciliation (when not branch-filterable).
  */
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
-import { receivableDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
-import { firstProductionDateISO } from '../shared/lib/liveAnalytics.js';
+import {
+  firstProductionDateISO,
+  receivableDueOnQuotationFromEntries,
+} from '../shared/lib/customerLedgerCore.js';
 import { getBranch } from './branches.js';
 import { canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';

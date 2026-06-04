@@ -3335,6 +3335,25 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(Array.isArray(ar.body.rows)).toBe(true);
   });
 
+  it('GET /api/finance/reconciliation-pack returns management draft envelope', async () => {
+    const fin = request.agent(app);
+    await loginAs(fin, 'finance.manager', 'Finance@123');
+    const bad = await fin.get('/api/finance/reconciliation-pack?period=bad');
+    expect(bad.status).toBe(400);
+    expect(bad.body.ok).toBe(false);
+    expect(bad.body.error).toMatch(/Invalid period/i);
+
+    const res = await fin.get('/api/finance/reconciliation-pack?period=2026-05');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.status).toBe('management_draft');
+    expect(res.body.disclaimer).toMatch(/not statutory/i);
+    expect(res.body.cashConfirmationBasis).toMatch(/Receipt confirmation/i);
+    expect(res.body.pack?.ok).toBe(true);
+    expect(res.body.cashFlowSummary?.ok).toBe(true);
+    expect(res.body.departmentOwnership?.accounting).toMatch(/Head of Accounts/i);
+  });
+
   it('stock register API: GET, print snapshot, workflow, capture closing', async () => {
     const admin = request.agent(app);
     await loginAs(admin);

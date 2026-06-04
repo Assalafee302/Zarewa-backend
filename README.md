@@ -239,6 +239,7 @@ See [`package.json`](package.json) for the full list and exact command names.
 
 | Topic | Document |
 |-------|----------|
+| **Operations & IT manual (full system)** | [`docs/OPERATIONS_MANUAL.md`](docs/OPERATIONS_MANUAL.md) |
 | Environment variables | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) |
 | Access control | [`docs/ACCESS_CONTROL.md`](docs/ACCESS_CONTROL.md) |
 | RBAC matrix | [`docs/RBAC_MATRIX.md`](docs/RBAC_MATRIX.md) |

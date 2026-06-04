@@ -669,7 +669,8 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(anyCanAct).toBe(false);
     expect(Array.isArray(ceoRes.body.dataScopeNotes)).toBe(true);
     expect(ceoRes.body.dataScopeNotes.length).toBeGreaterThan(0);
-    expect(ceoRes.body.period.biPeriodKey).toBe('month');
+    expect(ceoRes.body.period.biPeriodKey).toBe('custom');
+    expect(ceoRes.body.period.kpiPeriodAware).toBe(true);
     const stubIds = (ceoRes.body.workTray.items || []).filter((i) =>
       /:queue:\d+$/.test(String(i.id || ''))
     );
@@ -680,6 +681,13 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     }
     expect(ceoRes.body.cash.pendingRefundsIsCount).toBe(true);
     expect(ceoRes.body.kpis.collectionRateLabel).toBeTruthy();
+    expect(ceoRes.body.workingCapital?.notWithdrawableCash).toBe(true);
+    expect(ceoRes.body.materialCosting?.excludes).toEqual(
+      expect.arrayContaining(['labour', 'diesel'])
+    );
+    expect(ceoRes.body.staffActivity?.notPerformanceRanking).toBe(true);
+    expect(ceoRes.body.reservePolicy?.headroomHidden).toBe(true);
+    expect(ceoRes.body.targets?.basis).toBe('company');
   });
 
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {

@@ -51,6 +51,18 @@ function periodStartISO(periodKey = 'month', baseDate = new Date()) {
   return `${ty}-${String(tm + 1).padStart(2, '0')}-01`;
 }
 
+/**
+ * Resolve inclusive period bounds for analytics (explicit ISO range overrides periodKey).
+ * @param {{ periodKey?: string; asOfISO?: string; periodStartISO?: string; periodEndISO?: string }} opts
+ */
+export function resolveBiPeriodBounds(opts = {}) {
+  const endIso = toIsoDate(opts.periodEndISO || opts.asOfISO || new Date().toISOString());
+  const startIso = opts.periodStartISO
+    ? toIsoDate(opts.periodStartISO)
+    : periodStartISO(opts.periodKey || 'month', new Date(`${endIso}T12:00:00`));
+  return { startIso, endIso };
+}
+
 function addDaysISO(iso, days) {
   const d = new Date(`${toIsoDate(iso)}T12:00:00`);
   if (Number.isNaN(d.getTime())) return toIsoDate(new Date());
@@ -384,8 +396,7 @@ export function computeBranchBreakdown(data, opts = {}) {
     return { scopeSingle: scope, byBranch: [] };
   }
 
-  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
-  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const { startIso, endIso: asOfISO } = resolveBiPeriodBounds(opts);
   const quoteById = new Map((data.quotations || []).map((q) => [String(q.id || '').trim(), q]));
   const metersByRef = metersProducedByQuotationRef(data.productionJobs || []);
 
@@ -939,8 +950,7 @@ export function computeInventoryAnalytics(data, opts = {}) {
  * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
  */
 export function computeSalesAnalytics(data, opts = {}) {
-  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
-  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const { startIso, endIso: asOfISO } = resolveBiPeriodBounds(opts);
   const quotations = data.quotations || [];
   const productionJobs = data.productionJobs || [];
   const cuttingLists = data.cuttingLists || [];
@@ -1533,8 +1543,7 @@ export function computeInventoryForecast(data, inventory, opts = {}) {
  * @param {{ periodKey?: BiPeriodKey; asOfISO?: string }} opts
  */
 export function computeExpenseAnalysis(data, sales, opts = {}) {
-  const asOfISO = toIsoDate(opts.asOfISO || new Date().toISOString());
-  const startIso = periodStartISO(opts.periodKey || 'month', new Date(`${asOfISO}T12:00:00`));
+  const { startIso, endIso: asOfISO } = resolveBiPeriodBounds(opts);
   const windowDays = daysBetween(startIso, asOfISO);
   const priorEnd = addDaysISO(startIso, -1);
   const priorStart = addDaysISO(startIso, -windowDays);

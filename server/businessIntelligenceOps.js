@@ -97,6 +97,8 @@ export function loadBusinessIntelligencePack(db, branchScope = 'ALL', opts = {})
   return buildBusinessIntelligencePack(data, {
     periodKey: opts.periodKey || 'month',
     asOfISO: opts.asOfISO,
+    periodStartISO: opts.periodStartISO,
+    periodEndISO: opts.periodEndISO,
     branchScope: scope,
   });
 }

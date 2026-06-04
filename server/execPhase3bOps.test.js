@@ -124,7 +124,8 @@ describe('exec Phase 3B ops', () => {
       expect(readiness.headroomHidden).toBe(true);
       expect(readiness.configured).toBe(false);
       expect(readiness.missingKeys.length).toBe(RESERVE_POLICY_KEYS.length);
-      expect(readiness.note).toMatch(/Reserve policy is not configured/i);
+      expect(readiness.note).toMatch(/incomplete|not configured/i);
+      expect(readiness.completionPct).toBe(0);
     } finally {
       db.close();
     }

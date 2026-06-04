@@ -72,13 +72,42 @@
 - **Not performance ranking** — sorted for display only; excludes text-only `handled_by` / operator fields (see `legacyNote`).
 - Do not use for bonus or pay without HR policy.
 
-### Reserve policy readiness (`reservePolicy`)
+### Reserve policy (`reservePolicy` + `/api/exec/reserve-policy`)
 
-- Read-only checklist of `org_policy_kv` keys under `treasury.reserves.*` and withdrawal inclusion flags.
-- **No safe withdrawal amount** and **no indicative expansion headroom** until MD/Finance approves reserve assumptions (`headroomHidden: true`).
+**Phase 3C** adds controlled configuration via `org_policy_kv` and `org_policy_audit` (no headroom formula yet).
+
+| Key | Meaning |
+|-----|---------|
+| `treasury.reserves.operating_ngn` | Minimum operating cash buffer |
+| `treasury.reserves.emergency_ngn` | Emergency reserve |
+| `treasury.reserves.payroll_ngn` | Payroll reserve |
+| `treasury.reserves.supplier_payment_ngn` | Supplier payment reserve |
+| `treasury.reserves.stock_purchase_ngn` | Stock purchase reserve |
+| `treasury.reserves.tax_statutory_ngn` | Tax / statutory reserve |
+| `treasury.headroom.include_receivables` | Whether receivables count toward indicative expansion headroom (default **false**) |
+| `treasury.headroom.include_inventory` | Whether inventory counts toward headroom (default **false**) |
+| `treasury.headroom.include_po_commitments` | Whether open PO commitment gap reduces headroom (default **true**) |
+| `treasury.headroom.policy_notes` | Optional MD/Finance notes |
+
+**Why receivables and inventory default to excluded:** Outstanding customer debt and stock valuation are not cash. Treating them as withdrawable capacity misstates treasury risk.
+
+**Why PO commitments may reduce headroom:** Open purchase orders (ordered − received) are a **commitment proxy** for future cash outflow even before AP is booked.
+
+**Who can configure:** `treasury.reserve_policy.manage` (MD, finance manager, administrator). CEO and other exec viewers with `exec.dashboard.view` can **read** policy status only.
+
+**Audit:** Each `PUT /api/exec/reserve-policy` writes `org_policy_audit` rows per changed key plus an application audit log entry.
+
+**API:**
+
+- `GET /api/exec/reserve-policy` — read policy + readiness (`exec.dashboard.view`)
+- `PUT /api/exec/reserve-policy` — update policy (`treasury.reserve_policy.manage`)
+
+**UI wording:** Use “Reserve policy” and “Indicative expansion headroom”. Do not show “Safe withdrawal amount” or “You can withdraw” on `/exec`. Documentation may explain why safe withdrawal is not shown.
+
+**Phase 3D (not yet):** When policy is complete, the next phase may enable the indicative expansion headroom **formula**. Until then `headroomHidden: true` on dashboard and policy APIs.
 
 ## Intentionally not implemented
 
-- Safe withdrawal amount (requires approved reserve policies and formula sign-off)
+- Safe withdrawal amount / withdrawal recommendation (requires Phase 3D+ formula sign-off)
 - True cost per metre, live break-even KPI, branch profit, staff performance ranking
 - Major schema / SKU master redesign

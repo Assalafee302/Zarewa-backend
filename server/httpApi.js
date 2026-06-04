@@ -207,6 +207,11 @@ import { registerHrApi } from './hrApi.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope } from './execDashboardOps.js';
+import {
+  getExecReservePolicyResponse,
+  RESERVE_POLICY_MANAGE_PERMISSION,
+  setExecReservePolicy,
+} from './execReservePolicyOps.js';
 import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
 import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
 import { OFFICE_OPERATION_TEMPLATES } from '../shared/officeComposeTemplates.js';
@@ -3102,6 +3107,39 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
+    }
+  });
+
+  app.get('/api/exec/reserve-policy', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      res.json(getExecReservePolicyResponse(db));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load reserve policy.' });
+    }
+  });
+
+  app.put('/api/exec/reserve-policy', requirePermission(RESERVE_POLICY_MANAGE_PERMISSION), (req, res) => {
+    try {
+      const result = setExecReservePolicy(db, req.body || {}, req.user);
+      if (result.ok) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'treasury.reserve_policy.put',
+          entityKind: 'org_policy',
+          entityId: 'treasury_reserve_policy',
+          note: 'Executive reserve policy updated via /api/exec/reserve-policy',
+          details: {
+            configured: result.configured,
+            completionPct: result.completionPct,
+          },
+        });
+        return res.json(result);
+      }
+      return res.status(400).json(result);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
 

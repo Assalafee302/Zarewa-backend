@@ -688,6 +688,73 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(ceoRes.body.staffActivity?.notPerformanceRanking).toBe(true);
     expect(ceoRes.body.reservePolicy?.headroomHidden).toBe(true);
     expect(ceoRes.body.targets?.basis).toBe('company');
+    expect(ceoRes.body.actor.canManageReservePolicy).toBe(false);
+    expect(mdRes.body.actor.canManageReservePolicy).toBe(true);
+    expect(typeof mdRes.body.reservePolicy?.completionPct).toBe('number');
+  });
+
+  it('GET/PUT /api/exec/reserve-policy enforces RBAC and validation', async () => {
+    const mdAgent = request.agent(app);
+    await loginAs(mdAgent, 'md', 'Md@1234567890!');
+    const get0 = await mdAgent.get('/api/exec/reserve-policy');
+    expect(get0.status).toBe(200);
+    expect(get0.body.ok).toBe(true);
+    expect(get0.body.headroomHidden).toBe(true);
+
+    const badPut = await mdAgent.put('/api/exec/reserve-policy').send({
+      operatingReserveNgn: 'lots',
+      emergencyReserveNgn: 0,
+      payrollReserveNgn: 0,
+      supplierPaymentReserveNgn: 0,
+      stockPurchaseReserveNgn: 0,
+      taxStatutoryReserveNgn: 0,
+      includeReceivables: false,
+      includeInventory: false,
+      includePoCommitments: true,
+    });
+    expect(badPut.status).toBe(400);
+
+    const goodPut = await mdAgent.put('/api/exec/reserve-policy').send({
+      operatingReserveNgn: 2_000_000,
+      emergencyReserveNgn: 1_000_000,
+      payrollReserveNgn: 500_000,
+      supplierPaymentReserveNgn: 400_000,
+      stockPurchaseReserveNgn: 300_000,
+      taxStatutoryReserveNgn: 200_000,
+      includeReceivables: false,
+      includeInventory: false,
+      includePoCommitments: true,
+      policyNotes: 'Test reserve policy',
+    });
+    expect(goodPut.status).toBe(200);
+    expect(goodPut.body.configured).toBe(true);
+    expect(goodPut.body.completionPct).toBe(100);
+
+    const auditRow = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM org_policy_audit WHERE policy_key = 'treasury.reserves.operating_ngn'`
+      )
+      .get();
+    expect(Number(auditRow?.c)).toBeGreaterThan(0);
+
+    const ceoAgent = request.agent(app);
+    await loginAs(ceoAgent, 'ceo', 'Ceo@1234567890!');
+    const ceoPut = await ceoAgent.put('/api/exec/reserve-policy').send({
+      operatingReserveNgn: 1,
+      emergencyReserveNgn: 1,
+      payrollReserveNgn: 1,
+      supplierPaymentReserveNgn: 1,
+      stockPurchaseReserveNgn: 1,
+      taxStatutoryReserveNgn: 1,
+      includeReceivables: false,
+      includeInventory: false,
+      includePoCommitments: true,
+    });
+    expect(ceoPut.status).toBe(403);
+
+    const dash = await mdAgent.get('/api/exec/dashboard?periodKey=month');
+    expect(dash.body.reservePolicy?.configured).toBe(true);
+    expect(dash.body.reservePolicy?.headroomHidden).toBe(true);
   });
 
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {

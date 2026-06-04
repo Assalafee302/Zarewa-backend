@@ -117,6 +117,7 @@ export const ROLE_DEFINITIONS = {
       'material_incidents.approve',
       ...HR_ROLE_PERMISSION_BUNDLES.mdExecutive,
       'hr.payroll.md_approve',
+      'treasury.reserve_policy.manage',
     ],
   },
   finance_manager: {
@@ -140,6 +141,7 @@ export const ROLE_DEFINITIONS = {
       'audit.view',
       'period.manage',
       'settings.view',
+      'treasury.reserve_policy.manage',
       /** Management reports (`/api/reports/*`, `/reports`) — same gate as `userMayViewManagementReports`. */
       'reports.view',
       ...HR_ROLE_PERMISSION_BUNDLES.financeHr,

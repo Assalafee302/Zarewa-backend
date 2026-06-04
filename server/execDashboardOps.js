@@ -19,7 +19,10 @@ import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
 import { listUnifiedWorkItems, workRegistryTablesReady } from './workItems.js';
 import { buildMaterialCostingPanel } from './execCostingOps.js';
-import { buildReservePolicyReadiness } from './execReservePolicyOps.js';
+import {
+  actorCanManageReservePolicy,
+  buildReservePolicyReadiness,
+} from './execReservePolicyOps.js';
 import { buildStaffActivitySummary } from './execStaffActivityOps.js';
 import { buildExecTargetsPanel } from './execTargetsOps.js';
 import {
@@ -1464,6 +1467,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     readOnlyExecutiveView,
     canViewAudit,
     canUseAllBranches: canUseAllBranchesRollup(user),
+    canManageReservePolicy: actorCanManageReservePolicy(user),
   };
 
   let purchaseOrders = [];

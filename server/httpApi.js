@@ -206,6 +206,7 @@ import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { registerHrApi } from './hrApi.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { buildExecutiveDashboard, resolveExecDashboardBranchScope } from './execDashboardOps.js';
 import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
 import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
 import { OFFICE_OPERATION_TEMPLATES } from '../shared/officeComposeTemplates.js';
@@ -3085,6 +3086,22 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load executive summary.' });
+    }
+  });
+
+  app.get('/api/exec/dashboard', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const payload = buildExecutiveDashboard(db, req.user, {
+        branchScope,
+        periodKey: req.query.periodKey,
+        startISO: req.query.startISO,
+        endISO: req.query.endISO,
+      });
+      res.json(payload);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
     }
   });
 

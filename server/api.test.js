@@ -645,6 +645,43 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(typeof res.body.materialIncidentsPendingApproval).toBe('number');
   });
 
+  it('GET /api/exec/dashboard composes executive command centre for MD and CEO', async () => {
+    const mdAgent = request.agent(app);
+    await loginAs(mdAgent, 'md', 'Md@1234567890!');
+    const mdRes = await mdAgent.get('/api/exec/dashboard?periodKey=month&branchId=ALL');
+    expect(mdRes.status).toBe(200);
+    expect(mdRes.body.ok).toBe(true);
+    expect(mdRes.body.actor.role).toBe('md');
+    expect(mdRes.body.kpis).toBeTruthy();
+    expect(Array.isArray(mdRes.body.decisionAlerts)).toBe(true);
+    expect(mdRes.body.workTray).toBeTruthy();
+    expect(Array.isArray(mdRes.body.sales.topCustomersByDebt)).toBe(true);
+
+    const ceoAgent = request.agent(app);
+    await loginAs(ceoAgent, 'ceo', 'Ceo@1234567890!');
+    const ceoRes = await ceoAgent.get('/api/exec/dashboard?periodKey=today');
+    expect(ceoRes.status).toBe(200);
+    expect(ceoRes.body.ok).toBe(true);
+    expect(ceoRes.body.actor.role).toBe('ceo');
+    expect(ceoRes.body.actor.readOnlyExecutiveView).toBe(true);
+    expect(ceoRes.body.workTray.readOnlyForActor).toBe(true);
+    const anyCanAct = (ceoRes.body.workTray.items || []).some((i) => i.canAct === true);
+    expect(anyCanAct).toBe(false);
+    expect(Array.isArray(ceoRes.body.dataScopeNotes)).toBe(true);
+    expect(ceoRes.body.dataScopeNotes.length).toBeGreaterThan(0);
+    expect(ceoRes.body.period.biPeriodKey).toBe('month');
+    const stubIds = (ceoRes.body.workTray.items || []).filter((i) =>
+      /:queue:\d+$/.test(String(i.id || ''))
+    );
+    expect(stubIds).toHaveLength(0);
+    const summaryRows = (ceoRes.body.workTray.items || []).filter((i) => i.summaryOnly);
+    if (summaryRows.length) {
+      expect(summaryRows.every((i) => i.canAct === false)).toBe(true);
+    }
+    expect(ceoRes.body.cash.pendingRefundsIsCount).toBe(true);
+    expect(ceoRes.body.kpis.collectionRateLabel).toBeTruthy();
+  });
+
   it('GET /api/advance-deposits requires sign-in and ledger-related permission', async () => {
     const anon = await request(app).get('/api/advance-deposits');
     expect(anon.status).toBe(401);

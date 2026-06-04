@@ -111,7 +111,11 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
         message: 'seed failed',
         data: { err: String(e?.message || e), code: e?.code, errno: e?.errno },
       });
-      throw e;
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[zarewa] Boot seed failed in production — continuing without seed:', e?.message || e);
+      } else {
+        throw e;
+      }
     }
   }
   debugBootLog({ hypothesisId: 'C', location: 'db.js:createDatabase', message: 'boot phase complete' });

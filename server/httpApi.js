@@ -630,6 +630,7 @@ export function registerHttpApi(app, db) {
         businessIntelligence: BI_ENGINE_REV,
         /** Phase B3a trial exception API (GET /api/finance/trial-exceptions). */
         trialExceptionsB3a: 'v1',
+        fastProductionBoot: 'v1',
       },
     });
   };

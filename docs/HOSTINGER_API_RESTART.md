@@ -12,7 +12,23 @@ npm ci --omit=dev
 node scripts/hostinger-boot-check.mjs
 ```
 
-Then in **hPanel → Websites → Node.js → your API app → Restart**.
+**hPanel → Node.js app → Environment variables** (required for fast boot):
+
+| Variable | Value |
+|----------|--------|
+| `NODE_ENV` | `production` |
+| `PORT` | (leave Hostinger default — do not hard-code 8787 unless hPanel says so) |
+| `ZAREWA_MYSQL_HOST` | `localhost` (on-server MySQL) |
+| `ZAREWA_MYSQL_*` | match hPanel MySQL database |
+
+Optional: `ZAREWA_SKIP_BOOT_SEED=1` (same effect as `NODE_ENV=production` — skips heavy seed on restart).
+
+**Application startup file:** `server/index.js`  
+**Run command:** `npm start`
+
+Then **Restart** the Node.js application.
+
+If the app was down because boot seed timed out, `NODE_ENV=production` lets the API listen in seconds instead of minutes.
 
 ## Verify
 

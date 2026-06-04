@@ -1,6 +1,7 @@
 import os from 'node:os';
 import express from 'express';
 import { readAiAssistConfig } from './aiAssist.js';
+import { bootSeedEnabled } from './bootSeedPolicy.js';
 import { createDatabase, defaultDbPath, lastBootPhase } from './db.js';
 import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
@@ -12,7 +13,15 @@ loadProjectEnv();
 const port = Number(process.env.PORT || 8787) || 8787;
 const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefined;
 
-console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
+const runBootSeed = bootSeedEnabled();
+console.log(
+  '[zarewa] boot',
+  new Date().toISOString(),
+  process.version,
+  `PORT=${port}`,
+  `NODE_ENV=${process.env.NODE_ENV || 'development'}`,
+  `bootSeed=${runBootSeed}`
+);
 
 process.on('uncaughtException', (err) => {
   console.error('[zarewa] uncaughtException', err);
@@ -26,7 +35,7 @@ let dbPath = '';
 let bootDegraded = false;
 
 try {
-  const db = createDatabase();
+  const db = createDatabase({ seed: runBootSeed });
   dbPath = defaultDbPath();
   app = createApp(db);
 } catch (e) {

@@ -81,6 +81,15 @@ function hashResetToken(token) {
   return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex');
 }
 
+/** Phase B desk separation — visibility foundation; mutation rules unchanged until Phase B3. */
+export const FINANCE_DESK_PERMISSION_KEYS = [
+  'cashier.desk.view',
+  'cashier.receipts.confirm',
+  'accounting.desk.view',
+  'accounting.reconciliation.view',
+  'accounting.gl.view',
+];
+
 export const ROLE_DEFINITIONS = {
   admin: {
     label: 'Administrator',
@@ -118,6 +127,9 @@ export const ROLE_DEFINITIONS = {
       ...HR_ROLE_PERMISSION_BUNDLES.mdExecutive,
       'hr.payroll.md_approve',
       'treasury.reserve_policy.manage',
+      'accounting.desk.view',
+      'accounting.reconciliation.view',
+      'accounting.gl.view',
     ],
   },
   finance_manager: {
@@ -144,6 +156,9 @@ export const ROLE_DEFINITIONS = {
       'treasury.reserve_policy.manage',
       /** Management reports (`/api/reports/*`, `/reports`) — same gate as `userMayViewManagementReports`. */
       'reports.view',
+      'accounting.desk.view',
+      'accounting.reconciliation.view',
+      'accounting.gl.view',
       ...HR_ROLE_PERMISSION_BUNDLES.financeHr,
     ],
   },
@@ -167,6 +182,9 @@ export const ROLE_DEFINITIONS = {
       'treasury.manage',
       'audit.view',
       'reports.view',
+      /** Phase B: desk routes — legacy finance perms retained for compatibility until B3. */
+      'cashier.desk.view',
+      'cashier.receipts.confirm',
     ],
   },
   sales_manager: {
@@ -1656,6 +1674,7 @@ export function allKnownPermissionKeys() {
     for (const p of def.permissions) s.add(p);
   }
   for (const p of HR_PERMISSION_KEYS) s.add(p);
+  for (const p of FINANCE_DESK_PERMISSION_KEYS) s.add(p);
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 

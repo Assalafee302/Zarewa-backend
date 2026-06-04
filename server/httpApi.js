@@ -88,6 +88,8 @@ import {
   financeProfileTokenMatches,
   openFinanceProfileMysqlConnection,
 } from './financeLiveProfileReadonly.js';
+import { userMayViewFinanceTrialExceptions } from './financeDeskAccess.js';
+import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 import {
   assertCustomerLedgerPostingBranch,
@@ -661,6 +663,35 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[finance-live-profile]', e);
       return res.status(500).json({ ok: false, error: 'Profile failed.' });
+    }
+  });
+
+  /**
+   * Phase B3a — trial exception counts & role adoption (no PII, SELECT only).
+   * Warnings only; strict RBAC flags remain off unless env enables them.
+   */
+  app.get('/api/finance/trial-exceptions', requireAuth, async (req, res) => {
+    try {
+      if (!userMayViewFinanceTrialExceptions(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view finance trial exceptions.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const cfg = mysqlConfigFromEnv();
+      const conn = await openFinanceProfileMysqlConnection(cfg);
+      try {
+        const summary = await buildFinanceTrialExceptionSummary(conn, { branchId });
+        return res.json(summary);
+      } finally {
+        await conn.end();
+      }
+    } catch (e) {
+      console.error('[finance-trial-exceptions]', e);
+      return res.status(500).json({ ok: false, error: 'Trial exception summary failed.' });
     }
   });
 

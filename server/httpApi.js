@@ -628,6 +628,8 @@ export function registerHttpApi(app, db) {
         materialIncidentBoot: 'po-line-type-migrate-v4',
         /** Present when BI analytics engine includes productionKgInRange fix (42372a4+). */
         businessIntelligence: BI_ENGINE_REV,
+        /** Phase B3a trial exception API (GET /api/finance/trial-exceptions). */
+        trialExceptionsB3a: 'v1',
       },
     });
   };
@@ -681,14 +683,8 @@ export function registerHttpApi(app, db) {
       }
       const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
       const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const cfg = mysqlConfigFromEnv();
-      const conn = await openFinanceProfileMysqlConnection(cfg);
-      try {
-        const summary = await buildFinanceTrialExceptionSummary(conn, { branchId });
-        return res.json(summary);
-      } finally {
-        await conn.end();
-      }
+      const summary = await buildFinanceTrialExceptionSummary(db, { branchId });
+      return res.json(summary);
     } catch (e) {
       console.error('[finance-trial-exceptions]', e);
       return res.status(500).json({ ok: false, error: 'Trial exception summary failed.' });

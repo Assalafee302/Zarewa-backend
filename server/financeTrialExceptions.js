@@ -3,6 +3,23 @@
  */
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 
+/**
+ * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
+ * @param {unknown} source
+ */
+export function wrapFinanceQuerySource(source) {
+  if (source && typeof source.prepare === 'function') {
+    return {
+      async query(sql, args = []) {
+        const rows = source.prepare(sql).all(...args);
+        return [rows];
+      },
+      async end() {},
+    };
+  }
+  return source;
+}
+
 async function q(conn, sql, args = []) {
   const [rows] = await conn.query(sql, args);
   return rows;
@@ -46,10 +63,11 @@ function receiptBranchFilter(branchId, hasSrBranch) {
 }
 
 /**
- * @param {import('mysql2/promise').Connection} conn
+ * @param {import('mysql2/promise').Connection | ReturnType<import('./mysqlDatabase.js').createMysqlDatabase>} source
  * @param {{ branchId?: string | null }} [opts]
  */
-export async function buildFinanceTrialExceptionSummary(conn, opts = {}) {
+export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
+  const conn = wrapFinanceQuerySource(source);
   const branchId = opts.branchId ?? null;
   const flags = readFinanceFeatureFlags();
   const hasSrBranch = await columnExists(conn, 'sales_receipts', 'branch_id');
@@ -180,30 +198,33 @@ export async function buildFinanceTrialExceptionSummary(conn, opts = {}) {
   exceptions.treasuryBalanceDriftCount = driftRows.length;
 
   const now = new Date();
-  for (let i = 0; i < 6; i += 1) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-    const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-    const endIso = end.toISOString().slice(0, 10);
-    const srSum = await scalar(
-      conn,
-      `SELECT COALESCE(SUM(amount_ngn),0) FROM sales_receipts
-       WHERE date_iso >= ? AND date_iso <= ?
-         AND (status IS NULL OR UPPER(TRIM(status)) != 'REVERSED')`,
-      [start, endIso]
-    );
-    const leSum = await scalar(
-      conn,
-      `SELECT COALESCE(SUM(CASE WHEN type IN ('RECEIPT','ADVANCE_IN') THEN amount_ngn
-           WHEN type = 'RECEIPT_REVERSAL' THEN -amount_ngn ELSE 0 END),0)
-       FROM ledger_entries WHERE substr(at_iso,1,10) >= ? AND substr(at_iso,1,10) <= ?`,
-      [start, endIso]
-    );
-    const diff = Math.abs(Number(srSum) - Number(leSum));
-    if (diff > 50_000) {
-      exceptions.reconciliationMaterialMismatch = true;
-      exceptions.reconciliationMaterialMismatchPeriod = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      break;
+  const hasLedger = await tableExists(conn, 'ledger_entries');
+  if (hasLedger) {
+    for (let i = 0; i < 6; i += 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const endIso = end.toISOString().slice(0, 10);
+      const srSum = await scalar(
+        conn,
+        `SELECT COALESCE(SUM(amount_ngn),0) FROM sales_receipts
+         WHERE date_iso >= ? AND date_iso <= ?
+           AND (status IS NULL OR UPPER(TRIM(status)) != 'REVERSED')`,
+        [start, endIso]
+      );
+      const leSum = await scalar(
+        conn,
+        `SELECT COALESCE(SUM(CASE WHEN type IN ('RECEIPT','ADVANCE_IN') THEN amount_ngn
+             WHEN type = 'RECEIPT_REVERSAL' THEN -amount_ngn ELSE 0 END),0)
+         FROM ledger_entries WHERE substr(at_iso,1,10) >= ? AND substr(at_iso,1,10) <= ?`,
+        [start, endIso]
+      );
+      const diff = Math.abs(Number(srSum) - Number(leSum));
+      if (diff > 50_000) {
+        exceptions.reconciliationMaterialMismatch = true;
+        exceptions.reconciliationMaterialMismatchPeriod = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        break;
+      }
     }
   }
 

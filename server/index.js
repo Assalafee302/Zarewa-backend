@@ -14,6 +14,13 @@ const listenHost = String(process.env.ZAREWA_LISTEN_HOST || '').trim() || undefi
 
 console.log('[zarewa] boot', new Date().toISOString(), process.version, `PORT=${port}`);
 
+process.on('uncaughtException', (err) => {
+  console.error('[zarewa] uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[zarewa] unhandledRejection', reason);
+});
+
 let app;
 let dbPath = '';
 let bootDegraded = false;
@@ -57,6 +64,7 @@ try {
     bootError: errMsg,
     bootPhase: lastBootPhase,
     bootMarker: 'po-line-type-migrate-v4',
+    capabilities: { trialExceptionsB3a: 'v1' },
     mysqlTarget,
     mysqlUser: cfg.user,
     fixHint:

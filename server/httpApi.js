@@ -84,6 +84,12 @@ import {
   userMayViewManagementReports,
 } from './auth.js';
 import {
+  buildFinanceLiveProfileReport,
+  financeProfileTokenMatches,
+  openFinanceProfileMysqlConnection,
+} from './financeLiveProfileReadonly.js';
+import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
+import {
   assertCustomerLedgerPostingBranch,
   assertSingleBranchWorkspaceForCreate,
   resolveBootstrapBranchScope,
@@ -378,6 +384,12 @@ import {
   tryPostCustomerReceiptGl,
 } from './glOps.js';
 import {
+  buildFinanceReconciliationPackEnvelope,
+  getCashFlowPack,
+  getReconciliationPack,
+  isValidFinancePackPeriodKey,
+} from './accountingReconciliationOps.js';
+import {
   listInTransitLoads,
   syncInTransitLoadFromGrn,
   syncInTransitLoadFromPoLink,
@@ -620,6 +632,37 @@ export function registerHttpApi(app, db) {
   for (const p of livenessPaths) {
     app.get(p, sendLiveness);
   }
+
+  /**
+   * Read-only finance desk data profile (aggregates only, no PII).
+   * Auth: header X-Finance-Profile-Token matching env ZAREWA_FINANCE_PROFILE_TOKEN (temporary),
+   * or signed-in user with audit.view or settings.view.
+   */
+  app.get('/api/admin/finance-live-profile', async (req, res) => {
+    try {
+      const tokenOk = financeProfileTokenMatches(req);
+      const userOk =
+        req.user &&
+        (userHasPermission(req.user, 'audit.view') || userHasPermission(req.user, 'settings.view'));
+      if (!tokenOk && !userOk) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Forbidden. Set ZAREWA_FINANCE_PROFILE_TOKEN or sign in as admin/audit.',
+        });
+      }
+      const cfg = mysqlConfigFromEnv();
+      const conn = await openFinanceProfileMysqlConnection(cfg);
+      try {
+        const report = await buildFinanceLiveProfileReport(conn, { target: databaseLabel(cfg) });
+        return res.json(report);
+      } finally {
+        await conn.end();
+      }
+    } catch (e) {
+      console.error('[finance-live-profile]', e);
+      return res.status(500).json({ ok: false, error: 'Profile failed.' });
+    }
+  });
 
   const coilMaterialPerms = ['inventory.adjust', 'operations.manage', 'production.manage'];
 
@@ -2626,6 +2669,33 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/finance/reconciliation-pack', requirePermission('finance.view'), (req, res) => {
+    try {
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const pack = getReconciliationPack(db, periodKey, branchScope);
+      if (!pack.ok) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const cashFlowSummary = getCashFlowPack(db, periodKey);
+      if (!cashFlowSummary.ok) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const body = buildFinanceReconciliationPackEnvelope({
+        pack,
+        cashFlowSummary,
+        periodKey,
+        branchScope,
+      });
+      res.json(body);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load finance reconciliation pack.' });
+    }
+  });
 
   app.get('/api/reports/summary', requireManagementReportsView, (req, res) => {
     try {

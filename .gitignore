@@ -6,6 +6,9 @@ dist-ssr
 coverage
 logs
 *.log
+finance-profile-live.json
+finance-profile.json
+finance-profile-run.log
 npm-debug.log*
 data/*.sqlite
 data/*.sqlite-*

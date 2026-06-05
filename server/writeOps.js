@@ -87,6 +87,10 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
+import {
+  deliveryGateShouldBlockMutation,
+  evaluateDeliveryPaymentRelease,
+} from './deliveryReleaseGate.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import {
   nextBankReconLineHumanId,
@@ -1755,7 +1759,7 @@ export function attachSupplierInvoice(db, poID, invoiceNo, invoiceDateISO, deliv
   return { ok: true };
 }
 
-export function confirmDelivery(db, deliveryId, payload = {}) {
+export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
   const row = db.prepare(`SELECT * FROM deliveries WHERE id = ?`).get(deliveryId);
   if (!row) return { ok: false, error: 'Delivery not found.' };
   const status = payload.status?.trim() || 'Delivered';
@@ -1763,6 +1767,29 @@ export function confirmDelivery(db, deliveryId, payload = {}) {
   const podNotes = payload.podNotes?.trim?.() ?? '';
   const courierConfirmed = payload.courierConfirmed ? 1 : 0;
   const customerSignedPod = payload.customerSignedPod ? 1 : 0;
+
+  let deliveryGate = null;
+  if (String(status).trim() === 'Delivered') {
+    deliveryGate = evaluateDeliveryPaymentRelease(db, {
+      deliveryId,
+      quotationRef: row.quotation_ref,
+      actor: opts.actor ?? null,
+      mdOverride: Boolean(payload.mdOverride ?? payload.md_delivery_override),
+      mdOverrideReason: String(payload.mdOverrideReason ?? payload.md_override_reason ?? '').trim(),
+      acknowledgePolicyWarning: Boolean(
+        payload.acknowledgePolicyWarning ?? payload.acknowledge_policy_warning
+      ),
+    });
+    if (deliveryGateShouldBlockMutation(deliveryGate)) {
+      return {
+        ok: false,
+        error: deliveryGate.message,
+        code: deliveryGate.code,
+        deliveryGate,
+      };
+    }
+  }
+
   try {
     db.transaction(() => {
       const lines = db.prepare(`SELECT * FROM delivery_lines WHERE delivery_id = ? ORDER BY sort_order`).all(deliveryId);
@@ -1817,7 +1844,23 @@ export function confirmDelivery(db, deliveryId, payload = {}) {
         deliveryId
       );
     })();
-    return { ok: true };
+    if (deliveryGate?.wouldBlock && deliveryGate.mode === 'warn') {
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'delivery.payment_gate_warning',
+        entityKind: 'delivery',
+        entityId: deliveryId,
+        note: deliveryGate.message,
+        details: {
+          quotationRef: deliveryGate.quotationRef,
+          balanceNgn: deliveryGate.balanceNgn,
+          reason: deliveryGate.reason,
+          acknowledged: Boolean(payload.acknowledgePolicyWarning ?? payload.acknowledge_policy_warning),
+        },
+      });
+      return { ok: true, deliveryGateWarning: deliveryGate };
+    }
+    return { ok: true, deliveryGate: deliveryGate?.mode !== 'off' ? deliveryGate : undefined };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

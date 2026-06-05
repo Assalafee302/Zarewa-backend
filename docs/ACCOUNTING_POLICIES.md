@@ -1,12 +1,25 @@
-# Zarewa accounting policies (Phase 0)
+# Zarewa accounting policies (Phase 0 + Policy v1)
 
 This document is the **single reference** for how operational data in Zarewa should be interpreted for management reporting, month-end packs, and (where implemented) general-ledger posting. Finance and operations should use the same vocabulary.
 
+**Approved customer revenue timing:** see **`docs/ACCOUNTING_POLICY_V1.md`** (production completion = earn; pre-production payments = deposits).
+
+## Basis matrix (use these labels in exports)
+
+| Layer | Customer revenue / balance | Reports / API |
+|-------|---------------------------|---------------|
+| **Policy v1 (target)** | Earn at **production job completion**; deposits until earned; AR after production | `revenue-production`, `ar-as-at`, `paymentPolicy` on quotations |
+| **Management order book** | Quotation **date** and **total** (pipeline / booked orders) | Sales dashboard `salesMtdNgn`, quotation-date filters |
+| **Management production KPI** | Metre-allocated value from **cutting list dates** (proxy) | Legacy production-attributed KPIs — label as proxy |
+| **GL (current live)** | Mixed: receipt may hit **1200** at payment; earn posts at completion | Trial diagnostics when `ACCOUNTING_POLICY_V1_DIAGNOSTICS=1` |
+| **Cash** | Receipt / treasury movement date | Receipts register, reconciliation pack |
+
 ## Revenue (management reporting)
 
-- **Order register / quotation revenue:** Recognise **quotation date** (`quotations.date_iso`). This is the primary “sales booked” view in Reports.
-- **Production-attributed revenue:** Allocates each quotation’s total across **all cutting lists for that quotation** by meter share; only lists whose **cutting list date** falls in the period contribute. This is a **management proxy** for value of work released in the period. It is **not** the same as cash collected and may differ from **invoice or delivery** basis used for tax — if those differ in your jurisdiction, keep both definitions and label exports clearly.
-- **Official board / tax definition:** Must be chosen and signed off by Finance + MD. Until then, default **operational** reporting uses quotation date for order value and cutting-list allocation for production KPIs.
+- **Order register / quotation revenue:** **Quotation date** (`quotations.date_iso`) — label **Management order book (quotation date)**. Not Policy v1 earned revenue.
+- **Policy v1 revenue:** **Production completion date** — report `GET /api/reports/revenue-production` and GL `PRODUCTION_RECOGNITION_GL` when posted.
+- **Production-attributed revenue (cutting list):** Metre share by **cutting list date** — **management proxy** only; not cash, not Policy v1 official, not delivery/tax basis unless MD signs otherwise.
+- **Official board / tax definition:** Finance + MD sign-off required beyond Policy v1 management rules.
 
 ## Cash vs accounts receivable
 

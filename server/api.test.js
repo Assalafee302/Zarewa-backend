@@ -56,6 +56,9 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.capabilities?.officeDesk).toBe(true);
+    expect(res.body.capabilities?.accountingPolicyV1).toBe('ap1b');
+    expect(res.body.capabilities?.deliveryPaymentGate).toBe('off');
+    expect(res.body.capabilities?.accountingPolicyV1Labels).toBe('off');
   });
 
   it('GET /readyz matches /api/health liveness payload', async () => {

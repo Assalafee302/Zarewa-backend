@@ -2,6 +2,7 @@
  * Phase B3a — trial exception counts & role adoption (SELECT only).
  */
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { countAccountingPolicyV1Diagnostics } from './accountingPolicyV1Diagnostics.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -333,6 +334,16 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
       : 'Trial phase: same-user approve/pay shown as warnings only; not blocked.',
   };
 
+  /** @type {Record<string, number> | null} */
+  let accountingPolicyV1 = null;
+  if (flags.accountingPolicyV1Diagnostics && source && typeof source.prepare === 'function') {
+    try {
+      accountingPolicyV1 = countAccountingPolicyV1Diagnostics(source, branchId && branchId !== 'ALL' ? branchId : 'ALL');
+    } catch {
+      accountingPolicyV1 = null;
+    }
+  }
+
   return {
     ok: true,
     phase: flags.phase,
@@ -345,5 +356,14 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     dualControlWarnings,
     confirmedReceipts: { today: confirmedToday, thisWeek: confirmedThisWeek },
     roleAdoption,
+    accountingPolicyV1,
+    deliveryPaymentGateMode: flags.deliveryPaymentGateMode,
+    accountingPolicyV1Note: accountingPolicyV1
+      ? flags.deliveryPaymentGateMode === 'enforce'
+        ? 'Policy v1 delivery payment gate is ENFORCING blocks on confirm. GL timing unchanged until AP1c.'
+        : flags.deliveryPaymentGateMode === 'warn'
+          ? 'Policy v1 delivery gate in WARN mode: confirm succeeds but audit + API warnings when unpaid.'
+          : 'Read-only Policy v1 indicators (AP1a). Set DELIVERY_PAYMENT_GATE=1 for warn mode.'
+      : null,
   };
 }

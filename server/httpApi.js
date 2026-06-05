@@ -9,6 +9,9 @@ import {
   planRefundAdvance,
   receiptResultFromSavedRows,
 } from '../shared/lib/customerLedgerCore.js';
+import { quotationPaymentPolicySnapshot } from '../shared/lib/accountingPolicyV1.js';
+import { readFinanceFeatureFlags, accountingPolicyV1HealthCapabilities } from './financeFeatureFlags.js';
+import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
 import { buildPurchaseReport } from '../shared/lib/purchaseReportCore.js';
@@ -284,6 +287,7 @@ import {
   listStockMovementsForBranchPeriod,
   listStockMovementsForBranchThrough,
   listProductionJobs,
+  listDeliveries,
   listProductionJobAccessoryUsage,
   listProductionJobStoneFlatsheetUsage,
   listProducts,
@@ -631,6 +635,7 @@ export function registerHttpApi(app, db) {
         /** Phase B3a trial exception API (GET /api/finance/trial-exceptions). */
         trialExceptionsB3a: 'v1',
         fastProductionBoot: 'v1',
+        ...accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()),
       },
     });
   };
@@ -4536,6 +4541,55 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/deliveries', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json({ ok: true, deliveries: listDeliveries(db, branchScope) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to load deliveries' });
+    }
+  });
+
+  app.get('/api/deliveries/:id/payment-release-check', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
+    try {
+      const gate = evaluateDeliveryPaymentRelease(db, {
+        deliveryId: req.params.id,
+        actor: req.user,
+      });
+      res.json({ ok: true, deliveryGate: gate });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Delivery payment release check failed' });
+    }
+  });
+
+  app.post('/api/deliveries', requirePermission('deliveries.manage'), (req, res) => {
+    try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      const r = write.insertDelivery(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/deliveries/:id/confirm', requirePermission('deliveries.manage'), (req, res) => {
+    try {
+      const r = write.confirmDelivery(db, req.params.id, req.body || {}, { actor: req.user });
+      if (!r.ok) {
+        const status = r.code === 'DELIVERY_PAYMENT_GATE_BLOCKED' ? 403 : 400;
+        return res.status(status).json(r);
+      }
+      res.status(200).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.post('/api/production-jobs/:jobId/cancel', requirePermission('production.manage'), (req, res) => {
     try {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
@@ -6811,12 +6865,19 @@ export function registerHttpApi(app, db) {
 
       const quotations = listQuotations(db, branchScope).filter((q) => q.customerID === id);
       const ledgerScope = listLedgerEntries(db, branchScope);
-      const outstandingByQuotation = quotations.map((q) => ({
-        quotationId: q.id,
-        totalNgn: q.totalNgn,
-        paidNgn: q.paidNgn,
-        amountDueNgn: amountDueOnQuotationFromEntries(ledgerScope, q),
-      }));
+      const productionJobs = listProductionJobs(db, branchScope);
+      const policyFlags = readFinanceFeatureFlags();
+      const outstandingByQuotation = quotations.map((q) => {
+        const paymentPolicy = quotationPaymentPolicySnapshot(q, productionJobs);
+        const legacyDue = amountDueOnQuotationFromEntries(ledgerScope, q);
+        return {
+          quotationId: q.id,
+          totalNgn: q.totalNgn,
+          paidNgn: q.paidNgn,
+          amountDueNgn: policyFlags.accountingPolicyV1Labels ? paymentPolicy.amountDueNgn : legacyDue,
+          paymentPolicy: policyFlags.accountingPolicyV1Labels ? paymentPolicy : undefined,
+        };
+      });
 
       res.json({
         ok: true,
@@ -6826,6 +6887,7 @@ export function registerHttpApi(app, db) {
         receiptTotalNgn,
         entries,
         outstandingByQuotation,
+        accountingPolicyV1Labels: policyFlags.accountingPolicyV1Labels,
       });
     } catch (e) {
       console.error(e);
@@ -6868,13 +6930,20 @@ export function registerHttpApi(app, db) {
       if (!row) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const branchScope = resolveBootstrapBranchScope(req);
       const allEntries = listLedgerEntries(db, branchScope);
-      const amountDueNgn = amountDueOnQuotationFromEntries(allEntries, row);
+      const productionJobs = listProductionJobs(db, branchScope);
+      const policyFlags = readFinanceFeatureFlags();
+      const paymentPolicy = quotationPaymentPolicySnapshot(row, productionJobs);
+      const amountDueNgn = policyFlags.accountingPolicyV1Labels
+        ? paymentPolicy.amountDueNgn
+        : amountDueOnQuotationFromEntries(allEntries, row);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(req.params.id);
       const pv = quotationPriceViolations(db, rawPv);
       res.json({
         ok: true,
         quotation: { ...row, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
         amountDueNgn,
+        paymentPolicy: policyFlags.accountingPolicyV1Labels ? paymentPolicy : undefined,
+        accountingPolicyV1Labels: policyFlags.accountingPolicyV1Labels,
       });
     } catch (e) {
       console.error(e);

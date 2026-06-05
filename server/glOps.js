@@ -102,6 +102,7 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-ar', '1200', 'Accounts receivable', 'asset', 20);
   ins.run('acc-adv', '2500', 'Customer advances / deposits', 'liability', 75);
   ins.run('acc-revenue', '4000', 'Sales revenue (management)', 'revenue', 35);
+  ins.run('acc-supplier-adv', '1400', 'Supplier advances / prepayments', 'asset', 28);
   ins.run('acc-accum-dep', '1398', 'Accumulated depreciation', 'asset', 31);
   ins.run('acc-dep-exp', '6100', 'Depreciation expense', 'expense', 92);
 }

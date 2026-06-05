@@ -88,6 +88,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
+import { apReceivedBasisEnabled, receivedBasisAmountForPoSync } from './ap2ReceivedBasisOps.js';
 import {
   deliveryGateShouldBlockMutation,
   evaluateDeliveryPaymentRelease,
@@ -1201,16 +1202,20 @@ export function syncAccountsPayableFromPurchaseOrder(db, poID) {
     db.prepare(`DELETE FROM accounts_payable WHERE po_ref = ?`).run(poID);
     return;
   }
-  const lineRows = db
-    .prepare(
-      `SELECT qty_ordered, unit_price_ngn, unit_price_per_kg_ngn FROM purchase_order_lines WHERE po_id = ?`
-    )
-    .all(poID);
   let amountNgn = 0;
-  for (const l of lineRows) {
-    const qty = Number(l.qty_ordered) || 0;
-    const up = roundMoney(l.unit_price_ngn ?? l.unit_price_per_kg_ngn);
-    amountNgn += roundMoney(qty * up);
+  if (apReceivedBasisEnabled()) {
+    amountNgn = receivedBasisAmountForPoSync(db, poID);
+  } else {
+    const lineRows = db
+      .prepare(
+        `SELECT qty_ordered, unit_price_ngn, unit_price_per_kg_ngn FROM purchase_order_lines WHERE po_id = ?`
+      )
+      .all(poID);
+    for (const l of lineRows) {
+      const qty = Number(l.qty_ordered) || 0;
+      const up = roundMoney(l.unit_price_ngn ?? l.unit_price_per_kg_ngn);
+      amountNgn += roundMoney(qty * up);
+    }
   }
   const paidNgn = roundMoney(row.supplier_paid_ngn);
   const inv = String(row.invoice_no || '').trim();

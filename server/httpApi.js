@@ -95,8 +95,14 @@ import {
   userMayViewFinanceTrialExceptions,
   userMayViewAp1cDryRun,
   userMayViewAp2SupplierDiagnostics,
+  userMayViewAp2ApRebuildPreview,
+  userMayApplyAp2ApRebuild,
 } from './financeDeskAccess.js';
 import { buildAp2SupplierDiagnosticsReport } from './ap2SupplierDiagnosticsOps.js';
+import { applyAp2ReceivedBasisRebuild, buildAp2ApRebuildPreview, logAp2RebuildPreviewed } from './ap2ApRebuildOps.js';
+import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
+import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
+import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
@@ -741,6 +747,122 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[ap2-supplier-diagnostics]', e);
       return res.status(500).json({ ok: false, error: 'Supplier diagnostics failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap2-ap-rebuild-preview', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp2ApRebuildPreview(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to preview AP rebuild.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const period = String(req.query?.period || '').trim() || null;
+      const supplierId = String(req.query?.supplierId || '').trim() || null;
+      const status = String(req.query?.status || '').trim() || null;
+      const logPreview = String(req.query?.logPreview || '').trim() === '1';
+      const scope = { branchId, period, supplierId, status };
+      const report = logPreview
+        ? logAp2RebuildPreviewed(db, req.user, scope)
+        : buildAp2ApRebuildPreview(db, scope);
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap2-ap-rebuild-preview]', e);
+      return res.status(500).json({ ok: false, error: 'AP rebuild preview failed.' });
+    }
+  });
+
+  app.post('/api/finance/ap2-ap-rebuild', requireAuth, (req, res) => {
+    try {
+      if (!userMayApplyAp2ApRebuild(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to apply AP rebuild.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const result = applyAp2ReceivedBasisRebuild(db, req.user, {
+        branchId: body.branchId,
+        period: body.period,
+        supplierId: body.supplierId,
+        status: body.status,
+        confirmPreviewHash: body.confirmPreviewHash,
+        approvalNote: body.approvalNote,
+        dryRunAccepted: body.dryRunAccepted === true,
+      });
+      if (!result.ok) {
+        const status = result.code === 'PREVIEW_STALE' ? 409 : 400;
+        return res.status(status).json(result);
+      }
+      return res.json(result);
+    } catch (e) {
+      console.error('[ap2-ap-rebuild]', e);
+      return res.status(500).json({ ok: false, error: 'AP rebuild failed.' });
+    }
+  });
+
+  app.get('/api/finance/supplier-advance-report', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildSupplierAdvanceReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+        supplierId: String(req.query?.supplierId || '').trim() || null,
+        status: String(req.query?.status || '').trim() || null,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[supplier-advance-report]', e);
+      return res.status(500).json({ ok: false, error: 'Supplier advance report failed.' });
+    }
+  });
+
+  app.get('/api/finance/inventory-valuation-report', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildInventoryValuationReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+        materialFamily: String(req.query?.materialFamily || '').trim() || undefined,
+        gauge: String(req.query?.gauge || '').trim() || undefined,
+        colour: String(req.query?.colour || '').trim() || undefined,
+        valuationBasis: String(req.query?.valuationBasis || '').trim() || undefined,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[inventory-valuation-report]', e);
+      return res.status(500).json({ ok: false, error: 'Inventory valuation report failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap-inventory-gl-alignment', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildApInventoryGlAlignmentReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap-inventory-gl-alignment]', e);
+      return res.status(500).json({ ok: false, error: 'AP/GL alignment report failed.' });
     }
   });
 

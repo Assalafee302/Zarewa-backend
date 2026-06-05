@@ -6,6 +6,9 @@ import { countAccountingPolicyV1Diagnostics } from './accountingPolicyV1Diagnost
 import { buildAp1cDryRunTrialSummary } from './ap1cDryRunOps.js';
 import { countCreditExceptionTrialDiagnostics } from './creditExceptionOps.js';
 import { buildAp2SupplierDiagnosticsTrialSummary } from './ap2SupplierDiagnosticsOps.js';
+import { buildSupplierAdvanceTrialSummary } from './ap2SupplierAdvanceOps.js';
+import { buildInventoryValuationTrialSummary } from './ap2InventoryValuationOps.js';
+import { buildGlAlignmentTrialSummary } from './ap2GlAlignmentOps.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -369,6 +372,7 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
   }
 
   let ap2Supplier = null;
+  let ap2c = null;
   if (source && typeof source.prepare === 'function') {
     try {
       ap2Supplier = buildAp2SupplierDiagnosticsTrialSummary(
@@ -377,6 +381,14 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
       );
     } catch {
       ap2Supplier = null;
+    }
+    try {
+      const adv = buildSupplierAdvanceTrialSummary(source, branchId && branchId !== 'ALL' ? branchId : 'ALL');
+      const inv = buildInventoryValuationTrialSummary(source, branchId && branchId !== 'ALL' ? branchId : 'ALL');
+      const align = buildGlAlignmentTrialSummary(source, branchId && branchId !== 'ALL' ? branchId : 'ALL');
+      ap2c = { supplierAdvance: adv, inventoryValuation: inv, glAlignment: align };
+    } catch {
+      ap2c = null;
     }
   }
 
@@ -396,6 +408,7 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     ap1cDryRun,
     creditExceptions,
     ap2Supplier,
+    ap2c,
     deliveryPaymentGateMode: flags.deliveryPaymentGateMode,
     accountingPolicyV1Note: accountingPolicyV1
       ? flags.deliveryPaymentGateMode === 'enforce'

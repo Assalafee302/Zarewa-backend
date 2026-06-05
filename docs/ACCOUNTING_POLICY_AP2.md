@@ -44,10 +44,51 @@ For each purchase order:
 
 Head of Accounts must review diagnostics before any AP basis change in **AP2b**.
 
-## AP2b (planned)
+## AP2b (current) — received-basis correction with approval
 
-Received-goods AP basis correction with HoA approval workflow.
+### Feature flags (default off)
 
-## AP2c (planned)
+| Flag | Purpose |
+|------|---------|
+| `AP_RECEIVED_BASIS_ENABLED=0` | When `1`, `syncAccountsPayableFromPurchaseOrder` uses received goods value for `AP-PO-%` rows. |
+| `AP_RECEIVED_BASIS_REBUILD_ENABLED=0` | When `1`, allows `POST /api/finance/ap2-ap-rebuild` after preview hash + HoA note. |
 
-Supplier advance journals and inventory/GL alignment.
+### API
+
+- `GET /api/finance/ap2-ap-rebuild-preview` — SELECT-only preview + `previewHash`
+- `POST /api/finance/ap2-ap-rebuild` — updates only `AP-PO-%` rows; manual AP untouched
+
+### Audit actions
+
+- `ap.received_basis.previewed`
+- `ap.received_basis.rebuilt`
+
+### Rules
+
+- `amount_ngn` on rebuild/sync (received basis) = received value, or `0` if paid > received or no receipt
+- Supplier advance journals **not** created in AP2b (AP2c)
+- No rebuild on app boot
+
+## AP2c (current) — advances, valuation, GL alignment
+
+### Feature flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `SUPPLIER_ADVANCE_ACCOUNTING_ENABLED` | `0` | Optional GL for prepayment (not wired to Treasury payments) |
+| `INVENTORY_VALUATION_REPORTS_ENABLED` | `1` | Coil accounting value reports |
+| `AP_GL_ALIGNMENT_DIAGNOSTICS_ENABLED` | `1` | Management tie-out warnings |
+
+### APIs (read-only)
+
+- `GET /api/finance/supplier-advance-report`
+- `GET /api/finance/inventory-valuation-report`
+- `GET /api/finance/ap-inventory-gl-alignment`
+
+### Settlement classes
+
+`normal_payable`, `fully_paid`, `supplier_advance`, `partially_received_advance`, `missing_grn`, plus `missing_cost` label.
+
+### GL account 1400
+
+Seeded as **Supplier advances / prepayments** when missing. Posting only via explicit helper when flag on — no retroactive supplier payment reclassification.

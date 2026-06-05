@@ -1,4 +1,5 @@
 import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
+import { evaluateRefundPayoutGlPolicy } from './ap1cReversalRefundOps.js';
 import {
   tryPostCustomerAdvanceReversalGl,
   tryPostCustomerReceiptReversalGl,
@@ -1845,19 +1846,34 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
       );
     })();
     if (deliveryGate?.wouldBlock && deliveryGate.mode === 'warn') {
-      appendAuditLog(db, {
-        actor: opts.actor,
-        action: 'delivery.payment_gate_warning',
-        entityKind: 'delivery',
-        entityId: deliveryId,
-        note: deliveryGate.message,
-        details: {
-          quotationRef: deliveryGate.quotationRef,
-          balanceNgn: deliveryGate.balanceNgn,
-          reason: deliveryGate.reason,
-          acknowledged: Boolean(payload.acknowledgePolicyWarning ?? payload.acknowledge_policy_warning),
-        },
-      });
+      if (deliveryGate.code === 'DELIVERY_RELEASE_CREDIT_EXCEPTION') {
+        appendAuditLog(db, {
+          actor: opts.actor,
+          action: 'delivery.allowed_by_credit_exception',
+          entityKind: 'delivery',
+          entityId: deliveryId,
+          note: deliveryGate.message,
+          details: {
+            quotationRef: deliveryGate.quotationRef,
+            balanceNgn: deliveryGate.balanceNgn,
+            creditExceptionId: deliveryGate.creditException?.id ?? '',
+          },
+        });
+      } else {
+        appendAuditLog(db, {
+          actor: opts.actor,
+          action: 'delivery.payment_gate_warning',
+          entityKind: 'delivery',
+          entityId: deliveryId,
+          note: deliveryGate.message,
+          details: {
+            quotationRef: deliveryGate.quotationRef,
+            balanceNgn: deliveryGate.balanceNgn,
+            reason: deliveryGate.reason,
+            acknowledged: Boolean(payload.acknowledgePolicyWarning ?? payload.acknowledge_policy_warning),
+          },
+        });
+      }
       return { ok: true, deliveryGateWarning: deliveryGate };
     }
     return { ok: true, deliveryGate: deliveryGate?.mode !== 'off' ? deliveryGate : undefined };
@@ -6948,6 +6964,11 @@ export function payRefundEntry(db, refundId, payload) {
           treasuryAccountIds: movements.map((movement) => movement.treasuryAccountId),
         },
       });
+      const refundGlPolicy = evaluateRefundPayoutGlPolicy(db, {
+        quotationRef: fresh.quotation_ref,
+        customerId: fresh.customer_id,
+        refundId,
+      });
       const glPay = tryPostCustomerRefundPayoutGlTx(db, {
         refundId,
         payoutAmountNgn,
@@ -6955,9 +6976,20 @@ export function payRefundEntry(db, refundId, payload) {
         entryDateISO: paidAtISO.slice(0, 10),
         branchId: fresh.branch_id ?? null,
         createdByUserId: payload.actor?.id != null ? String(payload.actor.id) : null,
+        needsRevenueReview: refundGlPolicy.needsRevenueReview,
       });
       if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
         throw new Error(glPay.error || 'Refund payout GL failed.');
+      }
+      if (refundGlPolicy.needsRevenueReview) {
+        appendAuditLog(db, {
+          actor: payload.actor,
+          action: 'refund.pay.revenue_review_warning',
+          entityKind: 'refund',
+          entityId: refundId,
+          note: refundGlPolicy.note,
+          details: { glTreatment: refundGlPolicy.glTreatment, quotationRef: fresh.quotation_ref || '' },
+        });
       }
       const cid = String(row.customer_id || '').trim();
       if (cid && payoutAmountNgn > 0) {
@@ -7001,7 +7033,7 @@ export function payRefundEntry(db, refundId, payload) {
         }
         if (rows.length > 0) insertLedgerRows(db, rows, wb);
       }
-      return { movements, nextPaidAmountNgn, fullyPaid };
+      return { movements, nextPaidAmountNgn, fullyPaid, refundGlPolicy };
     })();
     const outstandingAfterNgn = approvedAmountNgn - result.nextPaidAmountNgn;
     return {
@@ -7012,6 +7044,10 @@ export function payRefundEntry(db, refundId, payload) {
       outstandingNgn: Math.max(0, outstandingAfterNgn),
       fullyPaid: result.fullyPaid,
       movements: result.movements,
+      refundPayoutGlPolicy: result.refundGlPolicy,
+      refundPayoutGlWarning: result.refundGlPolicy?.needsRevenueReview
+        ? result.refundGlPolicy.note
+        : null,
     };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

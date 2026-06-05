@@ -6,6 +6,8 @@
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { nextGlJournalHumanId, nextGlJournalLineHumanId } from './humanId.js';
+import { resolveCustomerReceiptGlCreditAccount } from './ap1cReceiptGl.js';
+import { resolveReceiptReversalAccountFromMetaOrJournalLines } from './ap1cReversalRefundOps.js';
 import { recordReceiptPolicyMetaAfterCustomerReceiptGl } from './receiptPolicyMetaOps.js';
 
 export function ensureGlSchema(db) {
@@ -339,6 +341,11 @@ export function tryPostCustomerReceiptGl(
   if (amt <= 0) return { ok: true, skipped: true };
   const date = String(entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid entry date for GL.' };
+  const creditAccount = resolveCustomerReceiptGlCreditAccount(db, {
+    quotationRef,
+    entryDateISO: date,
+    receiptAtISO: receiptAtISO || date,
+  });
   try {
     const result = postBalancedJournalTx(db, {
       entryDateISO: date,
@@ -349,7 +356,7 @@ export function tryPostCustomerReceiptGl(
       createdByUserId,
       lines: [
         { accountCode: '1000', debitNgn: amt, memo: String(ledgerEntryId) },
-        { accountCode: '1200', creditNgn: amt, memo: String(ledgerEntryId) },
+        { accountCode: creditAccount, creditNgn: amt, memo: String(ledgerEntryId) },
       ],
     });
     if (result.ok && result.journalId) {
@@ -404,7 +411,7 @@ export function tryPostCustomerAdvanceGl(db, { ledgerEntryId, amountNgn, entryDa
   }
 }
 
-/** Reverses receipt GL (Dr AR, Cr Cash) when a receipt GL journal exists for the original entry. */
+/** Reverses receipt GL (Dr original credit account, Cr Cash) when a receipt GL journal exists. */
 export function tryPostCustomerReceiptReversalGl(db, payload) {
   const original = String(payload.originalReceiptLedgerId || '').trim();
   const rev = String(payload.reversalLedgerId || '').trim();
@@ -417,19 +424,43 @@ export function tryPostCustomerReceiptReversalGl(db, payload) {
   if (amt <= 0) return { ok: true, skipped: true };
   const date = String(payload.entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid reversal date for GL.' };
+
+  const resolved = resolveReceiptReversalAccountFromMetaOrJournalLines(db, original);
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      error: resolved.message,
+      code: resolved.reasonCode,
+      requiresManualReview: true,
+    };
+  }
+
+  const debitAccount = resolved.accountCode;
+  const memoBase = `Reverse receipt GL ${original}`;
+  const memo =
+    resolved.warning || resolved.source !== 'metadata'
+      ? `${memoBase} [${resolved.source}${resolved.warning ? `: ${resolved.warning}` : ''}]`
+      : memoBase;
+
   try {
-    return postBalancedJournalTx(db, {
+    const result = postBalancedJournalTx(db, {
       entryDateISO: date,
-      memo: `Reverse receipt GL ${original}`,
+      memo,
       sourceKind: 'CUSTOMER_RECEIPT_REV_GL',
       sourceId: rev,
       branchId: payload.branchId ?? null,
       createdByUserId: payload.createdByUserId ?? null,
       lines: [
-        { accountCode: '1200', debitNgn: amt, memo: `Rev ${original}` },
+        { accountCode: debitAccount, debitNgn: amt, memo: `Rev ${original}` },
         { accountCode: '1000', creditNgn: amt, memo: `Rev ${original}` },
       ],
     });
+    if (result.ok) {
+      result.reversalAccountCode = debitAccount;
+      result.reversalAccountSource = resolved.source;
+      if (resolved.warning) result.reversalWarning = resolved.warning;
+    }
+    return result;
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -479,9 +510,13 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
   const date = String(payload.entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL date.' };
   ensureSupplementalGlAccounts(db);
-  return postBalancedJournalTx(db, {
+  const revenueReview = Boolean(payload.needsRevenueReview);
+  const memo = revenueReview
+    ? `Customer refund payout ${refundId} [AP1c-4: post-production — revenue/AR review may be required]`
+    : `Customer refund payout ${refundId}`;
+  const result = postBalancedJournalTx(db, {
     entryDateISO: date,
-    memo: `Customer refund payout ${refundId}`,
+    memo,
     sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
     sourceId: `${refundId}:paid:${cum}`,
     branchId: payload.branchId ?? null,
@@ -491,6 +526,11 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
       { accountCode: '1000', creditNgn: amt, memo: refundId },
     ],
   });
+  if (result.ok && revenueReview) {
+    result.refundPayoutGlWarning =
+      'Post-production refund: payout debits 2500 only; revenue/AR correction is not automated in AP1c-4.';
+  }
+  return result;
 }
 
 /**

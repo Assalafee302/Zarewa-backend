@@ -4,6 +4,7 @@
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { countAccountingPolicyV1Diagnostics } from './accountingPolicyV1Diagnostics.js';
 import { buildAp1cDryRunTrialSummary } from './ap1cDryRunOps.js';
+import { countCreditExceptionTrialDiagnostics } from './creditExceptionOps.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -354,6 +355,18 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     }
   }
 
+  let creditExceptions = null;
+  if (source && typeof source.prepare === 'function') {
+    try {
+      creditExceptions = countCreditExceptionTrialDiagnostics(
+        source,
+        branchId && branchId !== 'ALL' ? branchId : 'ALL'
+      );
+    } catch {
+      creditExceptions = null;
+    }
+  }
+
   return {
     ok: true,
     phase: flags.phase,
@@ -368,6 +381,7 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     roleAdoption,
     accountingPolicyV1,
     ap1cDryRun,
+    creditExceptions,
     deliveryPaymentGateMode: flags.deliveryPaymentGateMode,
     accountingPolicyV1Note: accountingPolicyV1
       ? flags.deliveryPaymentGateMode === 'enforce'

@@ -3,6 +3,7 @@
  */
 import { firstProductionDateISO } from '../shared/lib/customerLedgerCore.js';
 import { productionStatusAtReceipt } from '../shared/lib/ap1cSimulator.js';
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { listProductionJobs } from './readModel.js';
 
 /** @typedef {'legacy_ar_at_receipt' | 'policy_v1_deposit_before_production' | 'policy_v1_ar_after_production' | 'unknown'} ReceiptPolicyBasis */
@@ -358,12 +359,62 @@ export function recordReceiptPolicyMetaAfterCustomerReceiptGl(db, receiptPayload
       entryDateISO: receiptPayload.entryDateISO,
       receiptAtISO,
       productionJobs: jobs,
-      postingUsesPolicyV1ReceiptGl: false,
+      postingUsesPolicyV1ReceiptGl: readFinanceFeatureFlags().accountingPolicyV1ReceiptGl,
     });
   } catch (e) {
     console.error('[receipt-policy-meta]', e);
     return { ok: false, error: String(e.message || e) };
   }
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ */
+export function sumPolicyV1DepositReceiptMetaNgn(db, quotationRef) {
+  return sumReceiptPolicyMetaNgnForQuotation(db, quotationRef, { creditedAccountCode: '2500' });
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ */
+export function sumLegacyBridgeReceiptMetaNgn(db, quotationRef) {
+  return sumReceiptPolicyMetaNgnForQuotation(db, quotationRef, {
+    policyBasis: RECEIPT_POLICY_BASIS.LEGACY_AR,
+    creditedAccountCode: '1200',
+  });
+}
+
+/**
+ * Active receipt GL meta sums (exclude reversed sales_receipts when linked).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {{ creditedAccountCode?: string, policyBasis?: string }} [filter]
+ */
+export function sumReceiptPolicyMetaNgnForQuotation(db, quotationRef, filter = {}) {
+  const qref = String(quotationRef || '').trim();
+  if (!qref || !receiptPolicyMetaTableExists(db)) return 0;
+
+  let sql = `
+    SELECT COALESCE(SUM(m.amount_ngn), 0) AS s
+    FROM gl_receipt_policy_meta m
+    LEFT JOIN sales_receipts sr ON sr.ledger_entry_id = m.ledger_entry_id
+    WHERE m.quotation_ref = ?
+      AND (sr.id IS NULL OR sr.status IS NULL OR TRIM(LOWER(sr.status)) NOT IN ('reversed'))`;
+  const args = [qref];
+
+  if (filter.creditedAccountCode) {
+    sql += ` AND m.credited_account_code = ?`;
+    args.push(filter.creditedAccountCode);
+  }
+  if (filter.policyBasis) {
+    sql += ` AND m.policy_basis = ?`;
+    args.push(filter.policyBasis);
+  }
+
+  const row = db.prepare(sql).get(...args);
+  return Math.max(0, Math.round(Number(row?.s) || 0));
 }
 
 /**

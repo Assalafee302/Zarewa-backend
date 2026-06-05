@@ -66,6 +66,7 @@ describe('financeFeatureFlags', () => {
     expect(caps.accountingPolicyV1).toBe('ap1b');
     expect(caps.accountingPolicyV1Ap1c).toBe('dry-run-v1');
     expect(caps.accountingPolicyV1Ap1cMetadata).toBe('enabled');
+    expect(caps.accountingPolicyV1Ap1cReversal).toBe('enabled');
     expect(caps.accountingPolicyV1ReceiptGl).toBe('off');
   });
 });

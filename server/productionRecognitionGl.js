@@ -1,10 +1,11 @@
 /**
  * Auto GL when production completes (earn revenue from customer advances + AR) and COGS vs RM inventory.
- * Policy: February-style cash is posted to 2500 via customer advance; ADVANCE_APPLIED links deposit to quote;
- * completion releases min(earned, applied advance) from 2500, remainder from 1200, credits 4000.
+ * AP1c-3: when ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE=1, release policy deposits + advances; optional legacy bridge.
  * @param {import('better-sqlite3').Database} db
  */
 
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { resolveProductionRecognitionAmounts } from './ap1cProductionRecognition.js';
 import { postBalancedJournalTx } from './glOps.js';
 
 function parseQuotedProductMeters(linesJson) {
@@ -53,24 +54,34 @@ export function tryPostProductionRecognitionGlTx(db, payload) {
 
   const denom = quotedMeters > 0 ? quotedMeters : actualMeters;
   const rawEarned = totalNgn * (actualMeters / denom);
-  const earnedNgn = Math.min(totalNgn, Math.max(0, Math.round(rawEarned)));
-  if (earnedNgn <= 0) return { ok: true, skipped: true, reason: 'zero_earned' };
+  const rawEarnedNgn = Math.min(totalNgn, Math.max(0, Math.round(rawEarned)));
+  if (rawEarnedNgn <= 0) return { ok: true, skipped: true, reason: 'zero_earned' };
 
-  const advRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries WHERE quotation_ref = ? AND type = 'ADVANCE_APPLIED'`
-    )
-    .get(qref);
-  const advanceApplied = Math.max(0, Math.round(Number(advRow?.s) || 0));
+  const flags = readFinanceFeatureFlags();
+  const amounts = resolveProductionRecognitionAmounts(db, {
+    quotationRef: qref,
+    earnedNgn: rawEarnedNgn,
+    totalNgn,
+    excludeJobId: jobId,
+    flags,
+  });
 
-  const release2500 = Math.min(earnedNgn, advanceApplied);
-  const arPart = earnedNgn - release2500;
+  const earnedNgn = amounts.earnedNgn;
+  if (earnedNgn <= 0) return { ok: true, skipped: true, reason: 'capped_to_quote_total' };
+
+  const release2500 = amounts.release2500Ngn;
+  const arPart = amounts.arPartNgn;
+  const legacyBridgeApplied = amounts.legacyBridgeAppliedNgn ?? 0;
 
   const entryDate = String(payload.completedAtISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
     return { ok: false, error: 'Invalid completion date for production GL.' };
   }
 
+  const memoSuffix =
+    amounts.mode === 'policy_v1'
+      ? ` AP1v1 rel2500=${release2500} ar=${arPart} bridge=${legacyBridgeApplied}`
+      : '';
   const revLines = [];
   if (release2500 > 0) revLines.push({ accountCode: '2500', debitNgn: release2500, memo: jobId });
   if (arPart > 0) revLines.push({ accountCode: '1200', debitNgn: arPart, memo: jobId });
@@ -78,7 +89,7 @@ export function tryPostProductionRecognitionGlTx(db, payload) {
 
   const rev = postBalancedJournalTx(db, {
     entryDateISO: entryDate,
-    memo: `Production revenue ${jobId} (${qref})`,
+    memo: `Production revenue ${jobId} (${qref})${memoSuffix}`,
     sourceKind: 'PRODUCTION_RECOGNITION_GL',
     sourceId: jobId,
     branchId: payload.branchId ?? null,
@@ -93,6 +104,8 @@ export function tryPostProductionRecognitionGlTx(db, payload) {
       earnedNgn,
       releaseFrom2500Ngn: release2500,
       arDebitNgn: arPart,
+      legacyBridgeAppliedNgn: legacyBridgeApplied,
+      recognitionMode: amounts.mode,
       cogsNgn: 0,
       revenueJournalId: rev.journalId ?? null,
       cogsJournalId: null,
@@ -122,6 +135,10 @@ export function tryPostProductionRecognitionGlTx(db, payload) {
     earnedNgn,
     releaseFrom2500Ngn: release2500,
     arDebitNgn: arPart,
+    legacyBridgeAppliedNgn: legacyBridgeApplied,
+    policyDepositNgn: amounts.policyDepositNgn ?? 0,
+    advanceAppliedNgn: amounts.advanceAppliedNgn ?? 0,
+    recognitionMode: amounts.mode,
     cogsNgn: totalCogs,
     revenueJournalId: rev.journalId ?? null,
     cogsJournalId: cogs.journalId ?? null,

@@ -1105,6 +1105,35 @@ CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_quotation ON gl_receipt_po
 CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_credited ON gl_receipt_policy_meta(credited_account_code);
 CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_basis ON gl_receipt_policy_meta(policy_basis);
 
+CREATE TABLE IF NOT EXISTS credit_exceptions (
+  id TEXT PRIMARY KEY,
+  quotation_id TEXT NOT NULL,
+  quotation_ref TEXT NOT NULL,
+  customer_id TEXT,
+  branch_id TEXT,
+  amount_ngn INTEGER NOT NULL DEFAULT 0,
+  outstanding_ngn_at_request INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  requested_by_user_id TEXT,
+  requested_at_iso TEXT NOT NULL,
+  approved_by_user_id TEXT,
+  approved_at_iso TEXT,
+  approval_level TEXT,
+  credit_terms_days INTEGER,
+  due_date_iso TEXT,
+  expires_at_iso TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  decision_note TEXT,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_quotation_ref ON credit_exceptions(quotation_ref);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_customer_id ON credit_exceptions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_branch_id ON credit_exceptions(branch_id);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_status ON credit_exceptions(status);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_due_date ON credit_exceptions(due_date_iso);
+CREATE INDEX IF NOT EXISTS idx_credit_exceptions_approved_by ON credit_exceptions(approved_by_user_id);
+
 CREATE TABLE IF NOT EXISTS hr_staff_profiles (
   user_id TEXT PRIMARY KEY,
   branch_id TEXT,

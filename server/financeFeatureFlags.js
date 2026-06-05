@@ -47,6 +47,8 @@ export function accountingPolicyV1HealthCapabilities(flags = readFinanceFeatureF
     accountingPolicyV1: 'ap1b',
     accountingPolicyV1Ap1c: 'dry-run-v1',
     accountingPolicyV1Ap1cMetadata: 'enabled',
+    accountingPolicyV1Ap1cReversal: 'enabled',
+    accountingPolicyV1CreditExceptions: 'ap1d',
     accountingPolicyV1Labels: flags.accountingPolicyV1Labels ? 'v1' : 'off',
     accountingPolicyV1Diagnostics: flags.accountingPolicyV1Diagnostics ? 'v1' : 'off',
     accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl ? 'on' : 'off',

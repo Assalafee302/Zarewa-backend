@@ -152,7 +152,8 @@ export function simulateProductionRecognition(input) {
   const currentArDebitNgn = Math.max(0, earned - currentRelease2500Ngn);
 
   const expectedRelease2500Ngn = Math.min(earned, deposits + advance);
-  const expectedArDebitNgn = Math.max(0, earned - expectedRelease2500Ngn - bridge);
+  const legacyBridgeAppliedNgn = Math.min(bridge, Math.max(0, earned - expectedRelease2500Ngn));
+  const expectedArDebitNgn = Math.max(0, earned - expectedRelease2500Ngn - legacyBridgeAppliedNgn);
 
   const releaseGapNgn = Math.max(0, expectedRelease2500Ngn - currentRelease2500Ngn);
   const potentialArOverstatementNgn = Math.max(0, currentArDebitNgn - expectedArDebitNgn);
@@ -168,6 +169,7 @@ export function simulateProductionRecognition(input) {
     advanceAppliedNgn: advance,
     policyDepositsNgn: deposits,
     legacyBridgeNgn: bridge,
+    legacyBridgeAppliedNgn,
     currentRelease2500Ngn,
     currentArDebitNgn,
     expectedRelease2500Ngn,

@@ -208,6 +208,15 @@ import {
   saveOfficeThreadFilingFromAi,
 } from './officeFilingOps.js';
 import { getOrgGovernanceLimits, setOrgGovernanceLimits } from './orgPolicy.js';
+import { getCreditPolicyConfig } from './creditPolicy.js';
+import {
+  createCreditExceptionRequest,
+  decideCreditException,
+  getQuotationCreditStatus,
+  listCreditExceptions,
+  revokeCreditException,
+  userMayViewCreditExceptions,
+} from './creditExceptionOps.js';
 import { issueZarewaFilingReference } from './referenceIssuance.js';
 import {
   createInterBranchRequest,
@@ -1663,6 +1672,84 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/credit-exceptions/policy', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewCreditExceptions(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      return res.json({ ok: true, policy: getCreditPolicyConfig(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load credit policy.' });
+    }
+  });
+
+  app.get('/api/credit-exceptions', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewCreditExceptions(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      const status = String(req.query?.status || '').trim();
+      const quotationRef = String(req.query?.quotationRef || '').trim();
+      const branchId = String(req.query?.branchId || req.query?.branch || '').trim();
+      const rows = listCreditExceptions(db, {
+        status: status || undefined,
+        quotationRef: quotationRef || undefined,
+        branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
+        limit: Number(req.query?.limit) || 100,
+      });
+      return res.json({ ok: true, creditExceptions: rows, policy: getCreditPolicyConfig(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list credit exceptions.' });
+    }
+  });
+
+  app.post('/api/credit-exceptions', requireAuth, (req, res) => {
+    try {
+      const body = req.body || {};
+      const r = createCreditExceptionRequest(db, body, req.user);
+      return res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/credit-exceptions/:id/decision', requireAuth, (req, res) => {
+    try {
+      const decision = String(req.body?.decision || '').trim().toLowerCase();
+      const r = decideCreditException(db, req.params.id, decision, req.body || {}, req.user);
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/credit-exceptions/:id/revoke', requireAuth, (req, res) => {
+    try {
+      const r = revokeCreditException(db, req.params.id, req.body || {}, req.user);
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/quotations/:id/credit-status', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewCreditExceptions(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      const status = getQuotationCreditStatus(db, req.params.id);
+      return res.json(status);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load quotation credit status.' });
     }
   });
 

@@ -43,6 +43,20 @@ See **`docs/ACCOUNTING_POLICY_AP1C.md`** and `GET /api/finance/ap1c-dry-run` (wh
 - Earn at production → release deposit, credit **4000**, debit **1200** only for true post-production balance.
 - See `docs/ACCOUNTING_POLICIES.md` for legacy Phase 0 notes superseded by this document for customer revenue timing.
 
+### Delivery credit exceptions (AP1d)
+
+- **Credit does not clear debt** — receivable stays until cash is received.
+- **Credit allows delivery** when an approved exception covers the outstanding balance on the quotation.
+- Workflow: request → approve (branch limit or MD per `CREDIT_*` env / org policy KV) → optional revoke.
+- APIs: `GET/POST /api/credit-exceptions`, `POST .../decision`, `POST .../revoke`, `GET /api/quotations/:id/credit-status`.
+- Delivery gate (`payment-release-check`) returns credit status; hard block remains **AP1e** (`DELIVERY_PAYMENT_GATE=enforce`).
+
+### Receipt reversal & refunds (AP1c-4)
+
+- **Reversal** mirrors the original receipt credit: Dr **2500** or **1200**, Cr **1000**, resolved from `gl_receipt_policy_meta` then journal-line inference; legacy default **1200** only when AP1c posting flags are off.
+- **Refund payout** (treasury): Dr **2500** / Cr **1000** for deposit and overpayment refunds; **no automatic Dr 4000** for post-production revenue correction — flagged for Head of Accounts review when production revenue was recognized.
+- Detail: **`docs/ACCOUNTING_POLICY_AP1C.md`** (AP1c-4 section).
+
 ## Environment flags
 
 | Variable | Default | Effect |
@@ -52,6 +66,11 @@ See **`docs/ACCOUNTING_POLICY_AP1C.md`** and `GET /api/finance/ap1c-dry-run` (wh
 | `ACCOUNTING_POLICY_V1_RECEIPT_GL` | `0` | AP1c-2: status-dependent receipt GL (not in AP1c-0) |
 | `ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE` | `0` | AP1c-3: full deposit release at production |
 | `ACCOUNTING_POLICY_V1_LEGACY_BRIDGE` | `0` | AP1c-3: legacy pre-prod 1200 bridge at production |
+| *(no new flag)* | — | AP1c-4 reversal/refund hardening follows AP1c-2/3 flags; unresolvable reversals fail when any AP1c posting flag is on |
+| `CREDIT_BRANCH_MANAGER_LIMIT_NGN` | *(unset)* | Branch manager may approve credit up to this amount |
+| `CREDIT_MD_REQUIRED_ABOVE_NGN` | *(unset)* | Amounts above require MD/admin approval |
+| `CREDIT_DEFAULT_TERMS_DAYS` | `14` | Default payment terms on new requests |
+| `CREDIT_MAX_TERMS_DAYS` | `90` | Maximum terms days |
 | `RECLASS_PRE_PRODUCTION_RECEIPTS` | `0` | AP1c-5+: optional reclass journals |
 | `DELIVERY_PAYMENT_GATE` | `0` | `0/off` = off; `1`/`warn` = warn on confirm; `enforce` = block confirm (AP1e) |
 | `DELIVERY_PAYMENT_GATE_STRICT_FINANCE` | `0` | When on, unpaid + uncleared receipts add to gate message |

@@ -6,14 +6,19 @@ import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingToleranc
 import { quotationHasCompletedProduction } from '../shared/lib/customerLedgerCore.js';
 import {
   classifyReceiptGlPolicyBasis,
-  simulateProductionRecognition,
   sumLegacyBridgeFromReceiptClasses,
 } from '../shared/lib/ap1cSimulator.js';
 import { branchWhere, listProductionJobs } from './readModel.js';
+import { countAp1cReversalRefundDiagnostics } from './ap1cReversalRefundOps.js';
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { resolveProductionRecognitionAmounts } from './ap1cProductionRecognition.js';
 import {
   classifyFromReceiptPolicyMeta,
   mapReceiptPolicyMetaRow,
+  RECEIPT_POLICY_BASIS,
   receiptPolicyMetaTableExists,
+  sumLegacyBridgeReceiptMetaNgn,
+  sumPolicyV1DepositReceiptMetaNgn,
 } from './receiptPolicyMetaOps.js';
 
 const DEFAULT_SAMPLE_CAP = 10;
@@ -131,6 +136,20 @@ export function buildAp1cDryRunReport(db, opts = {}) {
     potentialDepositUnderstatementNgn: 0,
     productionDuplicateRiskCount: 0,
     periodLockCollisionCount: 0,
+    policyV1ReceiptsCredited2500Count: 0,
+    policyV1ReceiptsCredited1200Count: 0,
+    policyV1DepositMetaNgn: 0,
+    legacyBridgeMetaNgn: 0,
+    flagsEnabled: {
+      receiptGl: false,
+      productionRelease: false,
+      legacyBridge: false,
+    },
+    receiptReversalsMissingResolvableMetaCount: 0,
+    refundPayoutsRevenueReviewCount: 0,
+    depositRefundsBeforeProductionCount: 0,
+    legacyReceiptReversalManualReviewCount: 0,
+    mixedLegacyAp1cRefundRiskCount: 0,
   };
 
   const byBranchMap = new Map();
@@ -185,6 +204,16 @@ export function buildAp1cDryRunReport(db, opts = {}) {
     jobsByQuote.get(ref).push(j);
   }
 
+  const flags = readFinanceFeatureFlags();
+  summary.flagsEnabled = {
+    receiptGl: flags.accountingPolicyV1ReceiptGl,
+    productionRelease: flags.accountingPolicyV1ProductionRelease,
+    legacyBridge: flags.accountingPolicyV1LegacyBridge,
+  };
+
+  const revRefundDiag = countAp1cReversalRefundDiagnostics(db, branchScope);
+  Object.assign(summary, revRefundDiag);
+
   const lockedPeriods = lockedPeriodKeys(db);
   const receiptClassesByQuote = new Map();
   const journalsFromMeta = new Set();
@@ -199,6 +228,14 @@ export function buildAp1cDryRunReport(db, opts = {}) {
     if (periodFilter) {
       const pk = periodKeyFromIso(recMeta?.dateISO);
       if (pk && pk !== periodFilter) return;
+    }
+
+    if (classified.policyBasis === RECEIPT_POLICY_BASIS.V1_DEPOSIT) {
+      summary.policyV1ReceiptsCredited2500Count += 1;
+      summary.policyV1DepositMetaNgn += classified.amountNgn || 0;
+    }
+    if (classified.policyBasis === RECEIPT_POLICY_BASIS.V1_AR) {
+      summary.policyV1ReceiptsCredited1200Count += 1;
     }
 
     if (classified.isLegacyPreProd1200) {
@@ -355,48 +392,58 @@ export function buildAp1cDryRunReport(db, opts = {}) {
     const earned = computeEarnedNgn(q, completedJob);
     if (earned <= 0) continue;
 
-    const advRow = db
-      .prepare(
-        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
-         WHERE quotation_ref = ? AND type = 'ADVANCE_APPLIED'`
-      )
-      .get(ref);
-    const advanceApplied = Math.max(0, Math.round(Number(advRow?.s) || 0));
+    const policyDepositMeta = sumPolicyV1DepositReceiptMetaNgn(db, ref);
+    const legacyBridgeMeta = sumLegacyBridgeReceiptMetaNgn(db, ref);
+    summary.legacyBridgeMetaNgn += legacyBridgeMeta;
 
-    let policyDeposits = agg.policyDepositsNgn;
-    if (policyDeposits <= 0 && paid > 0 && agg.legacyBridgeNgn > 0) {
-      policyDeposits = Math.max(0, paid - agg.legacyBridgeNgn);
-    } else if (policyDeposits <= 0 && paid > 0 && classes.length === 0) {
-      policyDeposits = paid;
-    }
-
-    const sim = simulateProductionRecognition({
+    const currentAmounts = resolveProductionRecognitionAmounts(db, {
       quotationRef: ref,
       earnedNgn: earned,
-      advanceAppliedNgn: advanceApplied,
-      policyDepositsNgn: policyDeposits,
-      legacyBridgeNgn: agg.legacyBridgeNgn,
-      productionJobs: jobs,
+      totalNgn: total,
+      excludeJobId: String(completedJob.jobID || completedJob.id || ''),
+      flags,
     });
-    if (!sim.ok) continue;
 
-    summary.expectedRelease2500Ngn += sim.expectedRelease2500Ngn;
-    summary.currentAdvanceOnlyReleaseNgn += sim.currentRelease2500Ngn;
-    summary.releaseGapNgn += sim.releaseGapNgn;
-    summary.potentialArOverstatementNgn += sim.potentialArOverstatementNgn;
-    summary.potentialDepositUnderstatementNgn += sim.potentialDepositUnderstatementNgn;
-    if (sim.productionDuplicateRisk) summary.productionDuplicateRiskCount += 1;
+    const policyV1Flags = {
+      ...flags,
+      accountingPolicyV1ProductionRelease: true,
+      accountingPolicyV1LegacyBridge: true,
+    };
+    const targetAmounts = resolveProductionRecognitionAmounts(db, {
+      quotationRef: ref,
+      earnedNgn: earned,
+      totalNgn: total,
+      excludeJobId: String(completedJob.jobID || completedJob.id || ''),
+      flags: policyV1Flags,
+    });
 
-    bumpBranch(branchId, 'releaseGapNgn', sim.releaseGapNgn);
-    bumpBranch(branchId, 'potentialArOverstatementNgn', sim.potentialArOverstatementNgn);
+    const releaseGap = Math.max(
+      0,
+      targetAmounts.release2500Ngn - currentAmounts.release2500Ngn
+    );
+    const arOver =
+      Math.max(0, currentAmounts.arPartNgn - targetAmounts.arPartNgn);
 
-    if (sim.releaseGapNgn > 0 || sim.potentialArOverstatementNgn > 0) {
+    summary.expectedRelease2500Ngn += targetAmounts.release2500Ngn;
+    summary.currentAdvanceOnlyReleaseNgn += currentAmounts.release2500Ngn;
+    summary.releaseGapNgn += releaseGap;
+    summary.potentialArOverstatementNgn += arOver;
+    summary.potentialDepositUnderstatementNgn += releaseGap;
+    if (legacyBridgeMeta > 0 && currentAmounts.arPartNgn > 0 && !flags.accountingPolicyV1LegacyBridge) {
+      summary.productionDuplicateRiskCount += 1;
+    }
+
+    bumpBranch(branchId, 'releaseGapNgn', releaseGap);
+    bumpBranch(branchId, 'potentialArOverstatementNgn', arOver);
+
+    if (releaseGap > 0 || arOver > 0) {
       pushSample('releaseMismatch', {
         quotationRefMasked: maskQuotationRefForSample(ref),
         earnedNgn: earned,
-        releaseGapNgn: sim.releaseGapNgn,
-        potentialArOverstatementNgn: sim.potentialArOverstatementNgn,
-        legacyBridgeNgn: agg.legacyBridgeNgn,
+        releaseGapNgn: releaseGap,
+        potentialArOverstatementNgn: arOver,
+        legacyBridgeNgn: legacyBridgeMeta,
+        policyDepositMetaNgn: policyDepositMeta,
         branchId: branchId || null,
       });
     }
@@ -423,6 +470,7 @@ function dryRunNotes() {
     'Dry-run only. No journals were posted.',
     'Legacy journals are not reclassified.',
     'Head of Accounts should review before AP1c posting flags are enabled.',
+    'AP1c-4: receipt reversals use metadata or journal inference; post-production refunds may need manual revenue/AR review.',
   ];
 }
 
@@ -436,5 +484,8 @@ export function buildAp1cDryRunTrialSummary(db, branchScope = 'ALL') {
     receiptsBeforeProductionCredited1200Count: s.receiptsBeforeProductionCredited1200Count ?? 0,
     releaseGapNgn: s.releaseGapNgn ?? 0,
     potentialArOverstatementNgn: s.potentialArOverstatementNgn ?? 0,
+    receiptReversalsMissingResolvableMetaCount: s.receiptReversalsMissingResolvableMetaCount ?? 0,
+    refundPayoutsRevenueReviewCount: s.refundPayoutsRevenueReviewCount ?? 0,
+    mixedLegacyAp1cRefundRiskCount: s.mixedLegacyAp1cRefundRiskCount ?? 0,
   };
 }

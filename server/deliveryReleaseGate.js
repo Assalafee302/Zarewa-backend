@@ -4,6 +4,7 @@
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { quotationHasCompletedProduction } from '../shared/lib/customerLedgerCore.js';
 import { listProductionJobs } from './readModel.js';
+import { resolveActiveCreditForQuotation, creditExceptionsTableReady } from './creditExceptionOps.js';
 import { quotationHasUnclearedReceipts } from './writeOps.js';
 
 /** @typedef {'off' | 'warn' | 'enforce'} DeliveryPaymentGateMode */
@@ -112,7 +113,43 @@ export function evaluateDeliveryPaymentRelease(db, opts = {}) {
   const pay = evaluateQuotationPaymentForDeliveryRelease(db, quotationRef, productionJobs);
 
   if (!pay.wouldBlock) {
-    return { ...base, reason: pay.reason, policyPhase: pay.policyPhase };
+    return {
+      ...base,
+      reason: pay.reason,
+      policyPhase: pay.policyPhase,
+      outstandingReceivableNgn: 0,
+      creditException: null,
+    };
+  }
+
+  /** AP1d — approved credit exception covering outstanding balance. */
+  let creditException = null;
+  if (creditExceptionsTableReady(db)) {
+    creditException = resolveActiveCreditForQuotation(db, quotationRef, pay.balanceNgn);
+    if (creditException?.coversBalance) {
+      return {
+        ...base,
+        wouldBlock: false,
+        allowed: true,
+        code: 'DELIVERY_RELEASE_CREDIT_EXCEPTION',
+        message: `Approved credit exception covers outstanding balance (₦${formatNgn(pay.balanceNgn)}). Customer debt remains until paid.`,
+        reason: pay.reason,
+        balanceNgn: pay.balanceNgn,
+        outstandingReceivableNgn: pay.balanceNgn,
+        policyPhase: pay.policyPhase,
+        creditException: {
+          id: creditException.id,
+          status: creditException.status,
+          amountNgn: creditException.amountNgn,
+          coversBalance: true,
+          dueDateISO: creditException.dueDateISO,
+          approvalLevel: creditException.approvalLevel,
+          expiresAtISO: creditException.expiresAtISO,
+        },
+        creditAllowed: true,
+        warningOnly: mode === 'warn',
+      };
+    }
   }
 
   const mdOverride =
@@ -148,6 +185,25 @@ export function evaluateDeliveryPaymentRelease(db, opts = {}) {
     message += ' One or more receipts are still pending finance clearance.';
   }
 
+  const creditPartial =
+    creditException && !creditException.coversBalance
+      ? {
+          id: creditException.id,
+          status: creditException.status,
+          amountNgn: creditException.amountNgn,
+          coversBalance: false,
+          coverageGapNgn: creditException.coverageGapNgn,
+          dueDateISO: creditException.dueDateISO,
+          approvalLevel: creditException.approvalLevel,
+        }
+      : creditException && isCreditRowExpired(creditException)
+        ? { id: creditException.id, status: 'expired', coversBalance: false }
+        : null;
+
+  if (creditPartial && !creditPartial.coversBalance) {
+    message += ' Approved credit does not fully cover the outstanding balance.';
+  }
+
   const gate = {
     ok: mode !== 'enforce',
     mode,
@@ -159,9 +215,12 @@ export function evaluateDeliveryPaymentRelease(db, opts = {}) {
     message,
     reason: pay.reason,
     balanceNgn: pay.balanceNgn,
+    outstandingReceivableNgn: pay.balanceNgn,
     policyPhase: pay.policyPhase,
     financePendingClearance: financePending,
     requiresAcknowledgement: mode === 'warn',
+    creditException: creditPartial,
+    creditAllowed: false,
   };
 
   if (mode === 'warn') {
@@ -185,4 +244,10 @@ export function deliveryGateShouldBlockMutation(gate) {
 
 function formatNgn(n) {
   return Math.round(Number(n) || 0).toLocaleString('en-NG');
+}
+
+function isCreditRowExpired(credit) {
+  const exp = String(credit?.expiresAtISO || '').trim();
+  if (!exp) return false;
+  return exp.slice(0, 10) < new Date().toISOString().slice(0, 10);
 }

@@ -1,6 +1,64 @@
 # Accounting Policy v1 — AP1c (Receipt & production GL)
 
-**Status:** AP1c-0 dry-run live; **AP1c-1** = receipt GL metadata tagging (no GL amount/account changes).
+**Status:** AP1c-0 through AP1c-4 implemented; posting flags default **off**. Legacy journals are never reclassified.
+
+## AP1c-4 — Receipt reversal & refund GL hardening
+
+### Receipt reversal (`tryPostCustomerReceiptReversalGl`)
+
+Uses `resolveReceiptReversalAccountFromMetaOrJournalLines`:
+
+| Priority | Source | Dr account |
+|----------|--------|------------|
+| 1 | `gl_receipt_policy_meta.credited_account_code` | 2500 or 1200 |
+| 2 | Original `CUSTOMER_RECEIPT_GL` journal lines | Inferred Cr account |
+| 3 | AP1c flags **off** | Legacy default **1200** (with warning) |
+| Fail | AP1c flags **on** and cannot resolve | Error — manual HoA review |
+
+- Pre-production Policy v1 receipt (Cr **2500**) → reversal Dr **2500** / Cr **1000**
+- Post-production receipt (Cr **1200**) → reversal Dr **1200** / Cr **1000**
+- Legacy pre-prod Cr **1200** → reversal Dr **1200** (unchanged journals)
+
+### Refund payout GL (`tryPostCustomerRefundPayoutGlTx`)
+
+| Situation | GL (AP1c-4) | Revenue reversal |
+|-----------|-------------|------------------|
+| Refund before production on quote | Dr **2500** / Cr **1000** | Not automated |
+| Overpayment / advance refund | Dr **2500** / Cr **1000** | Not automated |
+| Refund after production (revenue recognized) | Dr **2500** / Cr **1000** + audit warning | **Manual** — no automatic Dr **4000** |
+
+Treasury refund flow unchanged; ledger `REFUND_ADVANCE` / `REFUND_OVERPAY` still reduce subledger pools.
+
+### Diagnostics (`GET /api/finance/ap1c-dry-run`)
+
+Counts: reversals missing resolvable meta, refund payouts needing revenue review, deposit refunds pre-production, legacy reversal review, mixed legacy/AP1c refund risk.
+
+Health: `accountingPolicyV1Ap1cReversal: enabled`.
+
+## AP1c-2 — Receipt GL basis (flag: `ACCOUNTING_POLICY_V1_RECEIPT_GL`)
+
+When **on**, `tryPostCustomerReceiptGl` credits:
+
+| Production at receipt | Credit |
+|---------------------|--------|
+| Not complete | **2500** |
+| Complete | **1200** |
+
+When **off**, legacy behaviour remains Cr **1200** always. Existing journals are never modified.
+
+See **AP1c-4** for reversal rules.
+
+## AP1c-3 — Production deposit release (flags)
+
+When `ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE=1`:
+
+- `release2500 = min(earned, policyDeposits + advanceApplied)` from receipt meta (Cr 2500) + `ADVANCE_APPLIED`
+- `legacyBridgeApplied = min(legacyBridge, earned − release2500)` when `ACCOUNTING_POLICY_V1_LEGACY_BRIDGE=1`
+- `arPart = max(0, earned − release2500 − legacyBridgeApplied)`
+- Cumulative revenue per quotation capped at quote total
+- COGS journal unchanged
+
+When flags **off**, legacy production recognition (advance-only release) applies.
 
 ## AP1c-1 — Receipt GL metadata (`gl_receipt_policy_meta`)
 
@@ -14,7 +72,7 @@ Each `CUSTOMER_RECEIPT_GL` journal can have one metadata row recording:
 | `quotation_ref`, `ledger_entry_id`, `receipt_id` | Links for reversal and dry-run |
 
 - Boot migration creates the table and **backfills** existing receipt journals (no line changes).
-- `tryPostCustomerReceiptGl` writes metadata after each post (GL lines unchanged: still Cr **1200**).
+- `tryPostCustomerReceiptGl` writes metadata after each post.
 - Dry-run prefers metadata; falls back to journal-line inference when missing.
 - Health: `accountingPolicyV1Ap1cMetadata: enabled`.
 

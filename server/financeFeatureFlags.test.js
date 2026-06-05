@@ -15,6 +15,10 @@ describe('financeFeatureFlags', () => {
       'ENFORCE_DUAL_CONTROL_PAYMENTS',
       'ACCOUNTING_POLICY_V1_LABELS',
       'ACCOUNTING_POLICY_V1_DIAGNOSTICS',
+      'ACCOUNTING_POLICY_V1_RECEIPT_GL',
+      'ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE',
+      'ACCOUNTING_POLICY_V1_LEGACY_BRIDGE',
+      'RECLASS_PRE_PRODUCTION_RECEIPTS',
     ]) {
       prev[k] = process.env[k];
       delete process.env[k];
@@ -49,6 +53,10 @@ describe('financeFeatureFlags', () => {
     const f = readFinanceFeatureFlags();
     expect(f.accountingPolicyV1Labels).toBe(false);
     expect(f.accountingPolicyV1Diagnostics).toBe(false);
+    expect(f.accountingPolicyV1ReceiptGl).toBe(false);
+    expect(f.accountingPolicyV1ProductionRelease).toBe(false);
+    expect(f.accountingPolicyV1LegacyBridge).toBe(false);
+    expect(f.reclassPreProductionReceipts).toBe(false);
   });
 
   it('accountingPolicyV1HealthCapabilities reflects env', () => {
@@ -56,5 +64,7 @@ describe('financeFeatureFlags', () => {
     const caps = accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags());
     expect(caps.accountingPolicyV1Labels).toBe('v1');
     expect(caps.accountingPolicyV1).toBe('ap1b');
+    expect(caps.accountingPolicyV1Ap1c).toBe('dry-run-v1');
+    expect(caps.accountingPolicyV1ReceiptGl).toBe('off');
   });
 });

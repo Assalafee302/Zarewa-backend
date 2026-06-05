@@ -35,7 +35,9 @@ Management-approved policy for customer revenue, deposits, receivables, and deli
 | AR as-at | Balance due after completed production | **Receivable (post-production)** |
 | Pre-production balance | Total − paid on quote | **Deposit pending** (not receivable) |
 
-## GL target state (AP1c+, not yet enforced in AP1a)
+## GL target state (AP1c — dry-run in AP1c-0; posting in AP1c-2+)
+
+See **`docs/ACCOUNTING_POLICY_AP1C.md`** and `GET /api/finance/ap1c-dry-run` (when `ACCOUNTING_POLICY_V1_DIAGNOSTICS=1`).
 
 - Customer cash on quote **before production** → liability **2500** (customer deposits).
 - Earn at production → release deposit, credit **4000**, debit **1200** only for true post-production balance.
@@ -46,7 +48,11 @@ Management-approved policy for customer revenue, deposits, receivables, and deli
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `ACCOUNTING_POLICY_V1_LABELS` | `0` | UI/report policy labels via API fields |
-| `ACCOUNTING_POLICY_V1_DIAGNOSTICS` | `0` | Extra counts on Finance trial-exceptions API |
+| `ACCOUNTING_POLICY_V1_DIAGNOSTICS` | `0` | Extra counts on Finance trial-exceptions API + AP1c dry-run UI |
+| `ACCOUNTING_POLICY_V1_RECEIPT_GL` | `0` | AP1c-2: status-dependent receipt GL (not in AP1c-0) |
+| `ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE` | `0` | AP1c-3: full deposit release at production |
+| `ACCOUNTING_POLICY_V1_LEGACY_BRIDGE` | `0` | AP1c-3: legacy pre-prod 1200 bridge at production |
+| `RECLASS_PRE_PRODUCTION_RECEIPTS` | `0` | AP1c-5+: optional reclass journals |
 | `DELIVERY_PAYMENT_GATE` | `0` | `0/off` = off; `1`/`warn` = warn on confirm; `enforce` = block confirm (AP1e) |
 | `DELIVERY_PAYMENT_GATE_STRICT_FINANCE` | `0` | When on, unpaid + uncleared receipts add to gate message |
 | `ALLOW_MD_DELIVERY_OVERRIDE` | `0` | MD/Admin may pass `mdOverride` + reason on confirm (AP1e) |

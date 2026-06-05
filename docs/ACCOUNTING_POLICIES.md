@@ -11,7 +11,7 @@ This document is the **single reference** for how operational data in Zarewa sho
 | **Policy v1 (target)** | Earn at **production job completion**; deposits until earned; AR after production | `revenue-production`, `ar-as-at`, `paymentPolicy` on quotations |
 | **Management order book** | Quotation **date** and **total** (pipeline / booked orders) | Sales dashboard `salesMtdNgn`, quotation-date filters |
 | **Management production KPI** | Metre-allocated value from **cutting list dates** (proxy) | Legacy production-attributed KPIs — label as proxy |
-| **GL (current live)** | Mixed: receipt may hit **1200** at payment; earn posts at completion | Trial diagnostics when `ACCOUNTING_POLICY_V1_DIAGNOSTICS=1` |
+| **GL (current live)** | Mixed: receipt may hit **1200** at payment; earn posts at completion | Trial diagnostics when `ACCOUNTING_POLICY_V1_DIAGNOSTICS=1`; AP1c dry-run: `docs/ACCOUNTING_POLICY_AP1C.md`, `GET /api/finance/ap1c-dry-run` |
 | **Cash** | Receipt / treasury movement date | Receipts register, reconciliation pack |
 
 ## Revenue (management reporting)

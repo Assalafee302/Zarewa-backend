@@ -91,8 +91,9 @@ import {
   financeProfileTokenMatches,
   openFinanceProfileMysqlConnection,
 } from './financeLiveProfileReadonly.js';
-import { userMayViewFinanceTrialExceptions } from './financeDeskAccess.js';
+import { userMayViewFinanceTrialExceptions, userMayViewAp1cDryRun } from './financeDeskAccess.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
+import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 import {
   assertCustomerLedgerPostingBranch,
@@ -694,6 +695,36 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[finance-trial-exceptions]', e);
       return res.status(500).json({ ok: false, error: 'Trial exception summary failed.' });
+    }
+  });
+
+  /**
+   * AP1c-0 — Policy v1 receipt/production GL dry-run (SELECT only; no PII in samples).
+   */
+  app.get('/api/finance/ap1c-dry-run', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp1cDryRun(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view AP1c dry-run diagnostics.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const period = String(req.query?.period || '').trim() || null;
+      const limitSamples = Number(req.query?.limitSamples) || undefined;
+      const report = buildAp1cDryRunReport(db, { branchId, period, limitSamples });
+      const flags = readFinanceFeatureFlags();
+      return res.json({ ...report, flags: {
+        accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl,
+        accountingPolicyV1ProductionRelease: flags.accountingPolicyV1ProductionRelease,
+        accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge,
+        reclassPreProductionReceipts: flags.reclassPreProductionReceipts,
+      } });
+    } catch (e) {
+      console.error('[ap1c-dry-run]', e);
+      return res.status(500).json({ ok: false, error: 'AP1c dry-run failed.' });
     }
   });
 

@@ -16,6 +16,10 @@ import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
  *   enforceDualControlPayments: boolean,
  *   accountingPolicyV1Labels: boolean,
  *   accountingPolicyV1Diagnostics: boolean,
+ *   accountingPolicyV1ReceiptGl: boolean,
+ *   accountingPolicyV1ProductionRelease: boolean,
+ *   accountingPolicyV1LegacyBridge: boolean,
+ *   reclassPreProductionReceipts: boolean,
  *   deliveryPaymentGateMode: import('./deliveryReleaseGate.js').DeliveryPaymentGateMode,
  *   allowMdDeliveryOverride: boolean,
  *   phase: string,
@@ -28,17 +32,26 @@ export function readFinanceFeatureFlags() {
     enforceDualControlPayments: envFlag('ENFORCE_DUAL_CONTROL_PAYMENTS', false),
     accountingPolicyV1Labels: envFlag('ACCOUNTING_POLICY_V1_LABELS', false),
     accountingPolicyV1Diagnostics: envFlag('ACCOUNTING_POLICY_V1_DIAGNOSTICS', false),
+    accountingPolicyV1ReceiptGl: envFlag('ACCOUNTING_POLICY_V1_RECEIPT_GL', false),
+    accountingPolicyV1ProductionRelease: envFlag('ACCOUNTING_POLICY_V1_PRODUCTION_RELEASE', false),
+    accountingPolicyV1LegacyBridge: envFlag('ACCOUNTING_POLICY_V1_LEGACY_BRIDGE', false),
+    reclassPreProductionReceipts: envFlag('RECLASS_PRE_PRODUCTION_RECEIPTS', false),
     deliveryPaymentGateMode: readDeliveryPaymentGateMode(),
     allowMdDeliveryOverride: envFlag('ALLOW_MD_DELIVERY_OVERRIDE', false),
   };
 }
 
-/** Surfaced on GET /api/health when labels flag is on (deploy check). */
+/** Surfaced on GET /api/health (deploy check). */
 export function accountingPolicyV1HealthCapabilities(flags = readFinanceFeatureFlags()) {
   return {
     accountingPolicyV1: 'ap1b',
+    accountingPolicyV1Ap1c: 'dry-run-v1',
     accountingPolicyV1Labels: flags.accountingPolicyV1Labels ? 'v1' : 'off',
     accountingPolicyV1Diagnostics: flags.accountingPolicyV1Diagnostics ? 'v1' : 'off',
+    accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl ? 'on' : 'off',
+    accountingPolicyV1ProductionRelease: flags.accountingPolicyV1ProductionRelease ? 'on' : 'off',
+    accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge ? 'on' : 'off',
+    reclassPreProductionReceipts: flags.reclassPreProductionReceipts ? 'on' : 'off',
     deliveryPaymentGate: flags.deliveryPaymentGateMode,
   };
 }

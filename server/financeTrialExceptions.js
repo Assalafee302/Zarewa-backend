@@ -3,6 +3,7 @@
  */
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { countAccountingPolicyV1Diagnostics } from './accountingPolicyV1Diagnostics.js';
+import { buildAp1cDryRunTrialSummary } from './ap1cDryRunOps.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -344,6 +345,15 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     }
   }
 
+  let ap1cDryRun = null;
+  if (flags.accountingPolicyV1Diagnostics && source && typeof source.prepare === 'function') {
+    try {
+      ap1cDryRun = buildAp1cDryRunTrialSummary(source, branchId && branchId !== 'ALL' ? branchId : 'ALL');
+    } catch {
+      ap1cDryRun = null;
+    }
+  }
+
   return {
     ok: true,
     phase: flags.phase,
@@ -357,6 +367,7 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     confirmedReceipts: { today: confirmedToday, thisWeek: confirmedThisWeek },
     roleAdoption,
     accountingPolicyV1,
+    ap1cDryRun,
     deliveryPaymentGateMode: flags.deliveryPaymentGateMode,
     accountingPolicyV1Note: accountingPolicyV1
       ? flags.deliveryPaymentGateMode === 'enforce'

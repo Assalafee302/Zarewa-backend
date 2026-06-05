@@ -40,3 +40,25 @@ export function userMayViewFinanceTrialOversight(user) {
   if (OVERSIGHT_ROLES.has(rk)) return true;
   return userHasPermission(user, 'audit.view');
 }
+
+/**
+ * AP1c-0 dry-run — Head of Accounts, MD, admin, finance_manager, accounting/reconciliation perms.
+ * Excludes cashier-only roles unless they hold accounting permissions.
+ * @param {import('./auth.js').SessionUser | null | undefined} user
+ */
+export function userMayViewAp1cDryRun(user) {
+  if (!user) return false;
+  if (userHasPermission(user, '*')) return true;
+  const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
+  if (OVERSIGHT_ROLES.has(rk)) return true;
+  if (ACCOUNTING_DESK_ROLES.has(rk)) return true;
+  if (
+    userHasPermission(user, 'accounting.desk.view') ||
+    userHasPermission(user, 'accounting.reconciliation.view') ||
+    userHasPermission(user, 'finance.view') ||
+    userHasPermission(user, 'audit.view')
+  ) {
+    return true;
+  }
+  return false;
+}

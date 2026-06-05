@@ -6,6 +6,7 @@
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { nextGlJournalHumanId, nextGlJournalLineHumanId } from './humanId.js';
+import { recordReceiptPolicyMetaAfterCustomerReceiptGl } from './receiptPolicyMetaOps.js';
 
 export function ensureGlSchema(db) {
   db.exec(`
@@ -320,13 +321,26 @@ export function trialBalanceRows(db, startDate, endDate, opts = {}) {
 }
 
 /** Dr Cash, Cr AR — posted when customer receipt hits treasury (idempotent on ledger entry id). */
-export function tryPostCustomerReceiptGl(db, { ledgerEntryId, amountNgn, entryDateISO, branchId, createdByUserId }) {
+export function tryPostCustomerReceiptGl(
+  db,
+  {
+    ledgerEntryId,
+    amountNgn,
+    entryDateISO,
+    branchId,
+    createdByUserId,
+    quotationRef,
+    customerId,
+    receiptId,
+    receiptAtISO,
+  }
+) {
   const amt = Math.round(Number(amountNgn) || 0);
   if (amt <= 0) return { ok: true, skipped: true };
   const date = String(entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid entry date for GL.' };
   try {
-    return postBalancedJournalTx(db, {
+    const result = postBalancedJournalTx(db, {
       entryDateISO: date,
       memo: `Customer receipt ${ledgerEntryId}`,
       sourceKind: 'CUSTOMER_RECEIPT_GL',
@@ -338,6 +352,28 @@ export function tryPostCustomerReceiptGl(db, { ledgerEntryId, amountNgn, entryDa
         { accountCode: '1200', creditNgn: amt, memo: String(ledgerEntryId) },
       ],
     });
+    if (result.ok && result.journalId) {
+      try {
+        recordReceiptPolicyMetaAfterCustomerReceiptGl(
+          db,
+          {
+            ledgerEntryId,
+            amountNgn: amt,
+            entryDateISO: date,
+            branchId,
+            createdByUserId,
+            quotationRef,
+            customerId,
+            receiptId,
+            receiptAtISO,
+          },
+          result
+        );
+      } catch (metaErr) {
+        console.error('[receipt-policy-meta]', metaErr);
+      }
+    }
+    return result;
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

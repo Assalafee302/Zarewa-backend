@@ -7619,6 +7619,9 @@ export function registerHttpApi(app, db) {
             entryDateISO: dateISO,
             branchId: wb,
             createdByUserId: req.user.id,
+            quotationRef: quotationId,
+            customerId,
+            receiptAtISO: dateISO,
           });
           if (!glR.ok && !glR.skipped && !glR.duplicate) {
             throw new Error(glR.error || 'Could not post receipt to general ledger.');

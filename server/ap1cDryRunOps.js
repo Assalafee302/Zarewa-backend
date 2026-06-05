@@ -10,6 +10,11 @@ import {
   sumLegacyBridgeFromReceiptClasses,
 } from '../shared/lib/ap1cSimulator.js';
 import { branchWhere, listProductionJobs } from './readModel.js';
+import {
+  classifyFromReceiptPolicyMeta,
+  mapReceiptPolicyMetaRow,
+  receiptPolicyMetaTableExists,
+} from './receiptPolicyMetaOps.js';
 
 const DEFAULT_SAMPLE_CAP = 10;
 const MAX_SAMPLE_CAP = 10;
@@ -182,6 +187,68 @@ export function buildAp1cDryRunReport(db, opts = {}) {
 
   const lockedPeriods = lockedPeriodKeys(db);
   const receiptClassesByQuote = new Map();
+  const journalsFromMeta = new Set();
+
+  const applyReceiptClassification = (classified, recMeta) => {
+    if (!classified?.ok) return;
+    const qref = String(classified.quotationRef || '').trim();
+    if (!qref) return;
+    if (!receiptClassesByQuote.has(qref)) receiptClassesByQuote.set(qref, []);
+    receiptClassesByQuote.get(qref).push(classified);
+
+    if (periodFilter) {
+      const pk = periodKeyFromIso(recMeta?.dateISO);
+      if (pk && pk !== periodFilter) return;
+    }
+
+    if (classified.isLegacyPreProd1200) {
+      const ngn = classified.actualCreditNgn || classified.amountNgn;
+      summary.receiptsBeforeProductionCredited1200Count += 1;
+      summary.receiptsBeforeProductionCredited1200Ngn += ngn;
+      summary.expected2500InsteadOf1200Ngn += classified.expected2500InsteadOf1200Ngn || ngn;
+      bumpBranch(recMeta?.branchId, 'receiptsBeforeProductionCredited1200Count', 1);
+      bumpBranch(recMeta?.branchId, 'receiptsBeforeProductionCredited1200Ngn', ngn);
+      pushSample('receiptsBeforeProductionCredited1200', {
+        quotationRefMasked: maskQuotationRefForSample(qref),
+        amountNgn: ngn,
+        branchId: recMeta?.branchId || null,
+        productionPhaseAtReceipt: classified.productionPhaseAtReceipt,
+        policyCreditAccount: classified.policyCreditAccount,
+        policyBasis: classified.policyBasis || null,
+        dataSource: classified.source || 'inferred',
+      });
+      const pk = periodKeyFromIso(recMeta?.dateISO);
+      if (pk && lockedPeriods.has(pk)) summary.periodLockCollisionCount += 1;
+    }
+  };
+
+  if (receiptPolicyMetaTableExists(db)) {
+    const brMeta =
+      branchScope !== 'ALL' && tableExists(db, 'gl_receipt_policy_meta')
+        ? ` AND (m.branch_id = ? OR sr.branch_id = ?) `
+        : '';
+    const brArgs = branchScope !== 'ALL' ? [branchScope, branchScope] : [];
+    const metaRows = db
+      .prepare(
+        `SELECT m.*, sr.date_iso AS sr_date_iso, sr.branch_id AS sr_branch_id, sr.status AS sr_status
+         FROM gl_receipt_policy_meta m
+         LEFT JOIN sales_receipts sr ON sr.ledger_entry_id = m.ledger_entry_id
+         WHERE m.quotation_ref IS NOT NULL AND TRIM(m.quotation_ref) != ''
+           AND (sr.id IS NULL OR sr.status IS NULL OR TRIM(LOWER(sr.status)) NOT IN ('reversed')) ${brMeta}`
+      )
+      .all(...brArgs);
+
+    for (const row of metaRows) {
+      const journalId = String(row.journal_id || '').trim();
+      if (journalId) journalsFromMeta.add(journalId);
+      const meta = mapReceiptPolicyMetaRow(row);
+      const classified = classifyFromReceiptPolicyMeta(meta);
+      applyReceiptClassification(classified, {
+        dateISO: row.sr_date_iso || meta?.postedAtISO,
+        branchId: row.sr_branch_id || meta?.branchId,
+      });
+    }
+  }
 
   if (
     tableExists(db, 'sales_receipts') &&
@@ -207,6 +274,8 @@ export function buildAp1cDryRunReport(db, opts = {}) {
 
     const byReceipt = new Map();
     for (const r of receiptRows) {
+      const jid = String(r.journal_id || '').trim();
+      if (jid && journalsFromMeta.has(jid)) continue;
       const rid = String(r.id || '');
       if (!byReceipt.has(rid)) {
         byReceipt.set(rid, {
@@ -237,33 +306,8 @@ export function buildAp1cDryRunReport(db, opts = {}) {
         journalLines: rec.journalLines,
         productionJobs: jobs,
       });
-      if (!classified.ok) continue;
-
-      if (!receiptClassesByQuote.has(qref)) receiptClassesByQuote.set(qref, []);
-      receiptClassesByQuote.get(qref).push(classified);
-
-      if (periodFilter) {
-        const pk = periodKeyFromIso(rec.dateISO);
-        if (pk && pk !== periodFilter) continue;
-      }
-
-      if (classified.isLegacyPreProd1200) {
-        const ngn = classified.actualCreditNgn || classified.amountNgn;
-        summary.receiptsBeforeProductionCredited1200Count += 1;
-        summary.receiptsBeforeProductionCredited1200Ngn += ngn;
-        summary.expected2500InsteadOf1200Ngn += classified.expected2500InsteadOf1200Ngn || ngn;
-        bumpBranch(rec.branchId, 'receiptsBeforeProductionCredited1200Count', 1);
-        bumpBranch(rec.branchId, 'receiptsBeforeProductionCredited1200Ngn', ngn);
-        pushSample('receiptsBeforeProductionCredited1200', {
-          quotationRefMasked: maskQuotationRefForSample(qref),
-          amountNgn: ngn,
-          branchId: rec.branchId || null,
-          productionPhaseAtReceipt: classified.productionPhaseAtReceipt,
-          policyCreditAccount: classified.policyCreditAccount,
-        });
-        const pk = periodKeyFromIso(rec.dateISO);
-        if (pk && lockedPeriods.has(pk)) summary.periodLockCollisionCount += 1;
-      }
+      if (classified.ok) classified.source = 'inferred';
+      applyReceiptClassification(classified, rec);
     }
   }
 

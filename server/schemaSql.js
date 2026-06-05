@@ -1084,6 +1084,27 @@ CREATE INDEX IF NOT EXISTS idx_gl_lines_account ON gl_journal_lines(account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gl_journal_source ON gl_journal_entries(source_kind, source_id)
   WHERE source_kind IS NOT NULL AND source_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS gl_receipt_policy_meta (
+  id TEXT PRIMARY KEY,
+  journal_id TEXT NOT NULL,
+  ledger_entry_id TEXT,
+  receipt_id TEXT,
+  quotation_ref TEXT,
+  customer_id TEXT,
+  branch_id TEXT,
+  policy_basis TEXT NOT NULL,
+  credited_account_code TEXT NOT NULL,
+  production_completed_at_receipt INTEGER,
+  amount_ngn INTEGER NOT NULL DEFAULT 0,
+  posted_at_iso TEXT,
+  created_at_iso TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_journal ON gl_receipt_policy_meta(journal_id);
+CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_ledger ON gl_receipt_policy_meta(ledger_entry_id);
+CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_quotation ON gl_receipt_policy_meta(quotation_ref);
+CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_credited ON gl_receipt_policy_meta(credited_account_code);
+CREATE INDEX IF NOT EXISTS idx_gl_receipt_policy_meta_basis ON gl_receipt_policy_meta(policy_basis);
+
 CREATE TABLE IF NOT EXISTS hr_staff_profiles (
   user_id TEXT PRIMARY KEY,
   branch_id TEXT,

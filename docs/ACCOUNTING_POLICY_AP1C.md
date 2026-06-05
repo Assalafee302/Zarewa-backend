@@ -1,6 +1,22 @@
 # Accounting Policy v1 — AP1c (Receipt & production GL)
 
-**Status:** AP1c-0 = dry-run diagnostics only (no GL posting, no reclassification).
+**Status:** AP1c-0 dry-run live; **AP1c-1** = receipt GL metadata tagging (no GL amount/account changes).
+
+## AP1c-1 — Receipt GL metadata (`gl_receipt_policy_meta`)
+
+Each `CUSTOMER_RECEIPT_GL` journal can have one metadata row recording:
+
+| Field | Purpose |
+|-------|---------|
+| `policy_basis` | `legacy_ar_at_receipt`, `policy_v1_deposit_before_production`, `policy_v1_ar_after_production`, `unknown` |
+| `credited_account_code` | Actual Cr account from journal lines (`1200` or `2500`) |
+| `production_completed_at_receipt` | Inferred from quotation production completion vs receipt date |
+| `quotation_ref`, `ledger_entry_id`, `receipt_id` | Links for reversal and dry-run |
+
+- Boot migration creates the table and **backfills** existing receipt journals (no line changes).
+- `tryPostCustomerReceiptGl` writes metadata after each post (GL lines unchanged: still Cr **1200**).
+- Dry-run prefers metadata; falls back to journal-line inference when missing.
+- Health: `accountingPolicyV1Ap1cMetadata: enabled`.
 
 Management-approved customer GL timing under Policy v1. AP1a (labels/diagnostics) and AP1b (delivery payment gate warn/enforce) are already live without changing receipt or production journals.
 

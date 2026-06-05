@@ -1,6 +1,7 @@
 import { mapLegacyExpenseCategoryToCanonical, isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import { ensureEditApprovalTable } from './editApproval.js';
 import { seedDefaultGlAccounts } from './glOps.js';
+import { migrateGlReceiptPolicyMeta } from './receiptPolicyMetaOps.js';
 import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
 import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../shared/lib/poLineTypes.js';
 import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
@@ -959,6 +960,7 @@ export function runMigrations(db) {
   migrateOrganisationRoles2026(db);
   migrateHrStaffProfileColumns(db);
   migrateAccountingLayer(db);
+  migrateGlReceiptPolicyMeta(db);
   migrateExpenseCategoriesToCanonical(db);
   migrateAccessoryOperations(db);
   migratePriceListAndPayrollMd(db);

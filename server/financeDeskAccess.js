@@ -62,3 +62,19 @@ export function userMayViewAp1cDryRun(user) {
   }
   return false;
 }
+
+/**
+ * AP2a supplier / GRN / payables diagnostics — accounting, finance, MD; not cashier-only.
+ * @param {import('./auth.js').SessionUser | null | undefined} user
+ */
+export function userMayViewAp2SupplierDiagnostics(user) {
+  if (!user) return false;
+  if (userMayViewAp1cDryRun(user)) return true;
+  if (userHasPermission(user, 'procurement.view')) return true;
+  const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
+  if (rk === 'cashier') return false;
+  if (userHasPermission(user, 'finance.view') || userHasPermission(user, 'accounting.reconciliation.view')) {
+    return true;
+  }
+  return false;
+}

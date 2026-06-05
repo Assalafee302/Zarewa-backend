@@ -91,7 +91,12 @@ import {
   financeProfileTokenMatches,
   openFinanceProfileMysqlConnection,
 } from './financeLiveProfileReadonly.js';
-import { userMayViewFinanceTrialExceptions, userMayViewAp1cDryRun } from './financeDeskAccess.js';
+import {
+  userMayViewFinanceTrialExceptions,
+  userMayViewAp1cDryRun,
+  userMayViewAp2SupplierDiagnostics,
+} from './financeDeskAccess.js';
+import { buildAp2SupplierDiagnosticsReport } from './ap2SupplierDiagnosticsOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
@@ -708,8 +713,37 @@ export function registerHttpApi(app, db) {
   });
 
   /**
-   * AP1c-0 — Policy v1 receipt/production GL dry-run (SELECT only; no PII in samples).
+   * AP2a — Supplier / GRN / payables diagnostics (read-only; no AP or GL mutations).
    */
+  app.get('/api/finance/ap2-supplier-diagnostics', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view supplier payables diagnostics.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const period = String(req.query?.period || '').trim() || null;
+      const supplierId = String(req.query?.supplierId || '').trim() || null;
+      const status = String(req.query?.status || '').trim() || null;
+      const limitSamples = Number(req.query?.limitSamples) || undefined;
+      const report = buildAp2SupplierDiagnosticsReport(db, {
+        branchId,
+        period,
+        supplierId,
+        status,
+        limitSamples,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap2-supplier-diagnostics]', e);
+      return res.status(500).json({ ok: false, error: 'Supplier diagnostics failed.' });
+    }
+  });
+
   app.get('/api/finance/ap1c-dry-run', requireAuth, (req, res) => {
     try {
       if (!userMayViewAp1cDryRun(req.user)) {

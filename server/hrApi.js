@@ -90,6 +90,27 @@ import {
   upsertHrDailyRollCall,
   upsertHrSalaryMatrixRow,
   upsertHrStaffProfile,
+  listChairmanSchoolFees,
+  upsertChairmanSchoolFee,
+  deleteChairmanSchoolFee,
+  listChairmanExpenses,
+  upsertChairmanExpense,
+  deleteChairmanExpense,
+  listHrIdCardRequests,
+  createHrIdCardRequest,
+  patchHrIdCardRequest,
+  getStaffSeverancePreview,
+  getStaffDisciplinaryQueryCount,
+  detectThreeDayNoShows,
+  getAttendanceTrends,
+  getChronicAbsentees,
+  getLoanPortfolioAnalytics,
+  getPayrollVarianceAlerts,
+  getStaffTurnoverTrend,
+  getHeadcountSummary,
+  applyBonusToPayrollRun,
+  runLeaveYearEndCarryOver,
+  getHrDashboardAlerts,
 } from './hrOps.js';
 import {
   deleteHrStaffDocument,
@@ -1894,6 +1915,153 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not list draft payroll runs.' });
+    }
+  });
+
+  // ── Chairman School Fees ──────────────────────────
+  app.get('/api/hr/chairman/school-fees', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; return res.json({ok:true,fees:listChairmanSchoolFees(db)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load school fees.'});}
+  });
+  app.post('/api/hr/chairman/school-fees', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to save school fee.'});}
+  });
+  app.put('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update school fee.'});}
+  });
+  app.delete('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; deleteChairmanSchoolFee(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to delete.'});}
+  });
+
+  // ── Chairman Expenses ────────────────────────────
+  app.get('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; return res.json({ok:true,expenses:listChairmanExpenses(db,req.query.period||null)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load expenses.'});}
+  });
+  app.post('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to save expense.'});}
+  });
+  app.put('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update expense.'});}
+  });
+  app.delete('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; deleteChairmanExpense(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to delete.'});}
+  });
+
+  // ── ID Cards ─────────────────────────────────────
+  app.get('/api/hr/id-cards', (req,res) => {
+    try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load ID card requests.'});}
+  });
+  app.post('/api/hr/id-cards', (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=createHrIdCardRequest(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to create ID card request.'});}
+  });
+  app.patch('/api/hr/id-cards/:id', requireHrAny('hr.*','hr.staff.manage'), (req,res) => {
+    try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update ID card request.'});}
+  });
+
+  app.get('/api/hr/staff/:userId/severance-preview', requireHrAny('hr.*', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = getStaffSeverancePreview(db, req.params.userId);
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not calculate severance.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/disciplinary-summary', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getStaffDisciplinaryQueryCount(db, req.params.userId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load disciplinary summary.' });
+    }
+  });
+
+  app.get('/api/hr/attendance/no-show-alerts', requireHrAny('hr.*', 'hr.attendance.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const flagged = detectThreeDayNoShows(db, req.query.branchId || null);
+      return res.json({ ok: true, flagged });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not check no-show alerts.' });
+    }
+  });
+
+  // ── Analytics ─────────────────────────────────────
+
+  app.get('/api/hr/analytics/attendance-trends', requireHrAny('hr.*', 'hr.attendance.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const trends = getAttendanceTrends(db, req.query.branchId || null, Number(req.query.months) || 6);
+      const chronic = getChronicAbsentees(db, req.query.branchId || null, Number(req.query.threshold) || 5);
+      return res.json({ ok: true, trends, chronicAbsentees: chronic });
+    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load attendance analytics.' }); }
+  });
+
+  app.get('/api/hr/analytics/loan-portfolio', requireHrAny('hr.*', 'hr.loans.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getLoanPortfolioAnalytics(db) });
+    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load loan portfolio.' }); }
+  });
+
+  app.get('/api/hr/payroll-runs/:runId/variance-alerts', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getPayrollVarianceAlerts(db, req.params.runId, req.query.threshold) });
+    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not run variance check.' }); }
+  });
+
+  app.get('/api/hr/analytics/turnover-trend', requireHrAny('hr.*', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, trend: getStaffTurnoverTrend(db, Number(req.query.months) || 12) });
+    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load turnover trend.' }); }
+  });
+
+  app.get('/api/hr/analytics/headcount', requireHrAny('hr.*', 'hr.reports.view', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getHeadcountSummary(db) });
+    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load headcount.' }); }
+  });
+
+  // ── Phase 10: Bonus, Leave Carry-Over, Dashboard Alerts ───────────────────
+
+  app.post('/api/hr/payroll-runs/:runId/apply-bonus', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = applyBonusToPayrollRun(db, req.params.runId, req.body?.bonusType || 'half_month', req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not apply bonus.' });
+    }
+  });
+
+  app.post('/api/hr/leave/year-end-carryover', requireHrAny('hr.*', 'hr.leave.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const year = Number(req.body?.year) || new Date().getFullYear();
+      const r = runLeaveYearEndCarryOver(db, req.user, year);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not run year-end carry-over.' });
+    }
+  });
+
+  app.get('/api/hr/dashboard/alerts', requireHrAny('hr.*', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getHrDashboardAlerts(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load dashboard alerts.' });
     }
   });
 }

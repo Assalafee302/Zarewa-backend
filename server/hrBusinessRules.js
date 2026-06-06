@@ -6,12 +6,15 @@
 const DEFAULT_POLICY = {
   loanMinServiceYears: 3,
   loanMaxSalaryMonths: 4,
-  loanMaxRepaymentMonths: 12,
+  loanMaxRepaymentMonths: 4,
   maxConcurrentBranchLoans: 5,
   annualLeaveDaysSenior: 21,
   annualLeaveDaysJunior: 14,
   casualLeaveDaysPerYear: 7,
   maternityLeaveDays: 60,
+  itfRateEmployer: 0.01,      // 1% of gross payroll — employer pays to ITF
+  nsitfRateEmployer: 0.01,    // 1% of gross payroll — employer pays to NSITF
+  halfMonthBonusRate: 0.5,    // 50% of monthly base salary
 };
 
 export function getHrPolicyPayload(db) {
@@ -194,6 +197,50 @@ export function isApprovedLeaveOnDay(db, userId, dayIso) {
     if (t >= ts && t <= te) return { onLeave: true, leaveType: row.leave_type };
   }
   return { onLeave: false, leaveType: null };
+}
+
+export const WORKING_HOURS_CONFIG = {
+  weekdayStartHour: 8,      // 8:00 AM
+  weekdayEndHour: 17,       // 5:00 PM
+  weekdayOvertimeAfterHours: 9,  // overtime after 9 hrs Mon-Fri
+  saturdayStartHour: 9,     // 9:00 AM
+  saturdayEndHour: 16,      // 4:00 PM
+  saturdayOvertimeAfterHours: 7, // overtime after 7 hrs Saturday
+  workDays: [1, 2, 3, 4, 5, 6], // Mon=1 through Sat=6 (0=Sun)
+  lunchBreakMinutes: 60,
+  salaryPaymentDay: 25,     // 25th of each month
+};
+
+/**
+ * Calculates severance entitlement per the Zarewa employee handbook.
+ * @param {number} yearsOfService
+ * @param {number} annualSalaryNgn  (base_salary_ngn * 12)
+ * @returns {{ pensionOnly: boolean, bonusYears: number, severanceNgn: number, description: string }}
+ */
+export function calculateSeveranceEntitlement(yearsOfService, annualSalaryNgn) {
+  const yrs = Math.max(0, Math.floor(Number(yearsOfService) || 0));
+  const annual = Math.max(0, Number(annualSalaryNgn) || 0);
+  let bonusYears = 0;
+  let description = '';
+  if (yrs < 1) { return { pensionOnly: true, bonusYears: 0, severanceNgn: 0, description: 'Less than 1 year — no severance' }; }
+  if (yrs <= 5)  { bonusYears = 0; description = 'Contributory pension only (1–5 years)'; }
+  else if (yrs <= 10) { bonusYears = 1;   description = 'Pension + 1 year salary (6–10 years)'; }
+  else if (yrs <= 15) { bonusYears = 1.5; description = 'Pension + 1.5 years salary (11–15 years)'; }
+  else if (yrs <= 20) { bonusYears = 2;   description = 'Pension + 2 years salary (16–20 years)'; }
+  else if (yrs <= 30) { bonusYears = 2.5; description = 'Pension + 2.5 years salary (21–30 years)'; }
+  else                { bonusYears = 3;   description = 'Pension + 3 years salary (31+ years)'; }
+  return { pensionOnly: bonusYears === 0, bonusYears, severanceNgn: bonusYears * annual, description };
+}
+
+export function validateLeaveEligibility(leaveType, probationEndIso) {
+  if (!leaveType) return { ok: false, error: 'Leave type is required.' };
+  const now = new Date();
+  const probationEnd = probationEndIso ? new Date(probationEndIso) : null;
+  const onProbation = probationEnd && probationEnd > now;
+  if (String(leaveType).toLowerCase() === 'casual' && onProbation) {
+    return { ok: false, error: `Casual leave is not available during probation. Probation ends ${probationEndIso}.` };
+  }
+  return { ok: true };
 }
 
 /**

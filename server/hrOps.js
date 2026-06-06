@@ -3,6 +3,7 @@ import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, userHasPermiss
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   annualLeaveEntitlementDaysForUser,
+  calculateSeveranceEntitlement,
   countWorkingDaysInclusive,
   getHrPolicyPayload,
   isApprovedLeaveOnDay,
@@ -667,29 +668,75 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     payroll_group: payrollGroup,
     salary_level: salaryLevel,
     salary_step: salaryStep,
+    // New Phase 10 fields
+    gender:
+      body?.gender !== undefined
+        ? String(body.gender ?? '').trim() || null
+        : prevRow?.gender ?? null,
+    date_of_birth:
+      body?.dateOfBirth !== undefined
+        ? String(body.dateOfBirth ?? '').trim() || null
+        : prevRow?.date_of_birth ?? null,
+    contract_end_iso:
+      body?.contractEndIso !== undefined
+        ? String(body.contractEndIso ?? '').trim() || null
+        : prevRow?.contract_end_iso ?? null,
+    nhis_deduction_ngn:
+      body?.nhisDeductionNgn !== undefined
+        ? nullableNonNegNumber(body.nhisDeductionNgn) ?? 0
+        : prevRow?.nhis_deduction_ngn ?? 0,
+    nhis_provider:
+      body?.nhisProvider !== undefined
+        ? String(body.nhisProvider ?? '').trim() || null
+        : prevRow?.nhis_provider ?? null,
   };
 
   if (existing) {
     const prevBranchId = prevRow?.branch_id ? String(prevRow.branch_id) : null;
-    db.prepare(
-      `UPDATE hr_staff_profiles SET
-        branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
-        employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
-        bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-        tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
-        base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
-        transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
-        minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
-        promotion_grade=@promotion_grade,
-        welfare_notes=@welfare_notes, training_summary=@training_summary,
-        paye_tax_percent=@paye_tax_percent, pension_percent_override=@pension_percent_override,
-        profile_extra_json=@profile_extra_json,
-        self_service_eligible=@self_service_eligible,
-        line_manager_user_id=@line_manager_user_id, leave_entitlement_band=@leave_entitlement_band,
-        payroll_group=@payroll_group, salary_level=@salary_level, salary_step=@salary_step,
-        updated_at_iso=@updated_at_iso, updated_by_user_id=@updated_by_user_id
-      WHERE user_id=@user_id`
-    ).run(row);
+    try {
+      db.prepare(
+        `UPDATE hr_staff_profiles SET
+          branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
+          employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
+          bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
+          base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
+          transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
+          minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
+          promotion_grade=@promotion_grade,
+          welfare_notes=@welfare_notes, training_summary=@training_summary,
+          paye_tax_percent=@paye_tax_percent, pension_percent_override=@pension_percent_override,
+          profile_extra_json=@profile_extra_json,
+          self_service_eligible=@self_service_eligible,
+          line_manager_user_id=@line_manager_user_id, leave_entitlement_band=@leave_entitlement_band,
+          payroll_group=@payroll_group, salary_level=@salary_level, salary_step=@salary_step,
+          gender=@gender, date_of_birth=@date_of_birth, contract_end_iso=@contract_end_iso,
+          nhis_deduction_ngn=@nhis_deduction_ngn, nhis_provider=@nhis_provider,
+          updated_at_iso=@updated_at_iso, updated_by_user_id=@updated_by_user_id
+        WHERE user_id=@user_id`
+      ).run(row);
+    } catch {
+      // Fallback for old DBs where new columns may not exist yet (migration should have run)
+      db.prepare(
+        `UPDATE hr_staff_profiles SET
+          branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
+          employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
+          bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
+          base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
+          transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
+          minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
+          promotion_grade=@promotion_grade,
+          welfare_notes=@welfare_notes, training_summary=@training_summary,
+          paye_tax_percent=@paye_tax_percent, pension_percent_override=@pension_percent_override,
+          profile_extra_json=@profile_extra_json,
+          self_service_eligible=@self_service_eligible,
+          line_manager_user_id=@line_manager_user_id, leave_entitlement_band=@leave_entitlement_band,
+          payroll_group=@payroll_group, salary_level=@salary_level, salary_step=@salary_step,
+          updated_at_iso=@updated_at_iso, updated_by_user_id=@updated_by_user_id
+        WHERE user_id=@user_id`
+      ).run(row);
+    }
     if (prevBranchId && branchId && prevBranchId !== branchId) {
       try {
         const hid = newId('HRBH');
@@ -720,25 +767,50 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
       }
     }
   } else {
-    db.prepare(
-      `INSERT INTO hr_staff_profiles (
-        user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
-        bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
-        base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
-        minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
-        paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
-        line_manager_user_id, leave_entitlement_band, payroll_group, salary_level, salary_step,
-        updated_at_iso, updated_by_user_id
-      ) VALUES (
-        @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
-        @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
-        @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
-        @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
-        @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
-        @line_manager_user_id, @leave_entitlement_band, @payroll_group, @salary_level, @salary_step,
-        @updated_at_iso, @updated_by_user_id
-      )`
-    ).run(row);
+    try {
+      db.prepare(
+        `INSERT INTO hr_staff_profiles (
+          user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
+          base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
+          minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
+          paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
+          line_manager_user_id, leave_entitlement_band, payroll_group, salary_level, salary_step,
+          gender, date_of_birth, contract_end_iso, nhis_deduction_ngn, nhis_provider,
+          updated_at_iso, updated_by_user_id
+        ) VALUES (
+          @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
+          @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
+          @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
+          @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
+          @line_manager_user_id, @leave_entitlement_band, @payroll_group, @salary_level, @salary_step,
+          @gender, @date_of_birth, @contract_end_iso, @nhis_deduction_ngn, @nhis_provider,
+          @updated_at_iso, @updated_by_user_id
+        )`
+      ).run(row);
+    } catch {
+      // Fallback for old DBs where new columns may not exist yet
+      db.prepare(
+        `INSERT INTO hr_staff_profiles (
+          user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
+          base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
+          minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
+          paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
+          line_manager_user_id, leave_entitlement_band, payroll_group, salary_level, salary_step,
+          updated_at_iso, updated_by_user_id
+        ) VALUES (
+          @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
+          @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
+          @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
+          @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
+          @line_manager_user_id, @leave_entitlement_band, @payroll_group, @salary_level, @salary_step,
+          @updated_at_iso, @updated_by_user_id
+        )`
+      ).run(row);
+    }
   }
   if (existing && prevRow) {
     const before = compensationSnapshotFromProfileRow(prevRow);
@@ -2302,6 +2374,7 @@ export function computePayrollRun(db, runId) {
   );
   const computedAt = nowIso();
 
+  let totalGross = 0;
   for (const s of staff) {
     const base = Math.round(Number(s.base_salary_ngn) || 0);
     const housing = Math.round(Number(s.housing_allowance_ngn) || 0);
@@ -2331,7 +2404,18 @@ export function computePayrollRun(db, runId) {
     for (const ln of loanParts) {
       insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
     }
+    totalGross += Math.max(0, gross);
   }
+
+  // Compute ITF and NSITF employer levies (1% each of total gross payroll)
+  const itfNgn = Math.round(totalGross * 0.01);
+  const nsitfNgn = Math.round(totalGross * 0.01);
+  try {
+    db.prepare(`UPDATE hr_payroll_runs SET itf_ngn = ?, nsitf_ngn = ? WHERE id = ?`).run(itfNgn, nsitfNgn, runId);
+  } catch {
+    /* itf_ngn/nsitf_ngn columns may not exist on very old DBs — migration adds them */
+  }
+
   return { ok: true };
 }
 
@@ -2570,6 +2654,8 @@ export function listPayrollRuns(db) {
       filingStatus: row.filing_status ?? null,
       filingReference: row.filing_reference ?? null,
       filingAtIso: row.filing_at_iso ?? null,
+      itfNgn: row.itf_ngn != null ? Number(row.itf_ngn) : 0,
+      nsitfNgn: row.nsitf_ngn != null ? Number(row.nsitf_ngn) : 0,
     }));
 }
 
@@ -2644,6 +2730,8 @@ export function getPayrollRunById(db, runId) {
     filingStatus: row.filing_status ?? null,
     filingReference: row.filing_reference ?? null,
     filingAtIso: row.filing_at_iso ?? null,
+    itfNgn: row.itf_ngn != null ? Number(row.itf_ngn) : 0,
+    nsitfNgn: row.nsitf_ngn != null ? Number(row.nsitf_ngn) : 0,
   };
 }
 
@@ -2887,16 +2975,151 @@ export function exportPayrollStatutoryPackCsv(db, runId) {
   const run = getPayrollRunById(db, runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   const lines = listPayrollLines(db, runId);
-  const headers = ['period_yyyymm', 'run_id', 'user_id', 'display_name', 'tax_ngn', 'pension_ngn'];
+  const headers = ['period_yyyymm', 'run_id', 'user_id', 'display_name', 'tax_ngn', 'pension_ngn', 'itf_ngn_employer', 'nsitf_ngn_employer'];
   const esc = (v) => String(v ?? '');
   const rows = lines.map((l) =>
-    [run.periodYyyymm, run.id, l.userId, l.displayName, l.taxNgn, l.pensionNgn].map(esc)
+    [run.periodYyyymm, run.id, l.userId, l.displayName, l.taxNgn, l.pensionNgn, '', ''].map(esc)
   );
   const totalTax = lines.reduce((s, l) => s + (Number(l.taxNgn) || 0), 0);
   const totalPension = lines.reduce((s, l) => s + (Number(l.pensionNgn) || 0), 0);
-  rows.push([run.periodYyyymm, run.id, '', 'TOTAL', totalTax, totalPension]);
+  // ITF and NSITF are run-level employer costs (not per-line)
+  const runItf = Number(run.itfNgn) || 0;
+  const runNsitf = Number(run.nsitfNgn) || 0;
+  rows.push([run.periodYyyymm, run.id, '', 'TOTAL', totalTax, totalPension, runItf, runNsitf].map(esc));
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
   return { ok: true, csv, filename: `statutory-${run.periodYyyymm}-${run.id}.csv` };
+}
+
+/**
+ * Apply a half-month (or other) bonus to all lines in a payroll run.
+ * bonusType: 'half_month'
+ */
+export function applyBonusToPayrollRun(db, runId, bonusType, actorUser) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const run = db.prepare('SELECT * FROM hr_payroll_runs WHERE id=?').get(runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  if (run.status === 'locked' || run.status === 'paid') return { ok: false, error: 'Cannot modify a locked or paid payroll run.' };
+  const lines = db.prepare('SELECT pl.user_id, sp.base_salary_ngn FROM hr_payroll_lines pl JOIN hr_staff_profiles sp ON sp.user_id = pl.user_id WHERE pl.run_id=?').all(runId);
+  const stmt = db.prepare('UPDATE hr_payroll_lines SET bonus_ngn=?, net_ngn=net_ngn+(? - bonus_ngn) WHERE run_id=? AND user_id=?');
+  let updated = 0;
+  for (const line of lines) {
+    const bonus = Math.round((Number(line.base_salary_ngn) || 0) * 0.5);
+    stmt.run(bonus, bonus, runId, line.user_id);
+    updated++;
+  }
+  appendHrAuditEvent(db, { actorUserId: actorUser?.id, actorDisplayName: actorUser?.displayName, action: 'payroll.bonus_applied', entityKind: 'payroll_run', entityId: runId, details: { bonusType, updated } });
+  return { ok: true, updated, bonusType };
+}
+
+/**
+ * Year-end carry-over of unused annual leave to the following year.
+ * targetYear: the year being closed (e.g. 2025)
+ */
+export function runLeaveYearEndCarryOver(db, actorUser, targetYear) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const period = String(targetYear) + '12'; // December of target year
+  const balances = db.prepare(
+    `SELECT * FROM hr_leave_balances WHERE leave_type='annual' AND period_yyyymm=?`
+  ).all(period);
+  let processed = 0, forfeited = 0;
+  const nextPeriod = String(Number(targetYear) + 1) + '01';
+  for (const bal of balances) {
+    const carryDays = Math.min(bal.closing_days || 0, 21); // max carry = 21 days (senior entitlement)
+    const forfeitedDays = Math.max(0, (bal.closing_days || 0) - carryDays);
+    if (carryDays > 0) {
+      const existing = db.prepare(`SELECT * FROM hr_leave_balances WHERE user_id=? AND leave_type='annual' AND period_yyyymm=?`).get(bal.user_id, nextPeriod);
+      if (!existing) {
+        db.prepare(`INSERT INTO hr_leave_balances (user_id, leave_type, period_yyyymm, opening_days, accrued_days, used_days, adjusted_days, closing_days, updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(bal.user_id, 'annual', nextPeriod, carryDays, 0, 0, 0, carryDays, new Date().toISOString());
+      }
+    }
+    if (forfeitedDays > 0) forfeited++;
+    processed++;
+  }
+  appendHrAuditEvent(db, { actorUserId: actorUser?.id, action: 'leave.year_end_carryover', entityKind: 'leave_balances', details: { targetYear, processed, forfeited } });
+  return { ok: true, processed, forfeited };
+}
+
+/**
+ * Returns dashboard alert collections: probation ending, contracts expiring, birthdays,
+ * anniversaries, documents expiring, training expiring.
+ */
+export function getHrDashboardAlerts(db) {
+  if (!hrTablesReady(db)) return { probationEnding: [], contractsExpiring: [], birthdaysThisWeek: [], anniversariesThisWeek: [], docsExpiring: [], trainingExpiring: [] };
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const in30 = new Date(now); in30.setDate(now.getDate() + 30);
+  const in30Iso = in30.toISOString().slice(0, 10);
+  const in60 = new Date(now); in60.setDate(now.getDate() + 60);
+  const in60Iso = in60.toISOString().slice(0, 10);
+
+  // Probation ending within 30 days
+  const probationEnding = db.prepare(`
+    SELECT sp.user_id, u.display_name, sp.probation_end_iso, sp.job_title, sp.branch_id
+    FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
+    WHERE sp.probation_end_iso BETWEEN ? AND ? AND sp.status='active'
+  `).all(todayIso, in30Iso);
+
+  // Contracts expiring within 60 days
+  let contractsExpiring = [];
+  try {
+    contractsExpiring = db.prepare(`
+      SELECT sp.user_id, u.display_name, sp.contract_end_iso, sp.job_title, sp.branch_id
+      FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
+      WHERE sp.contract_end_iso BETWEEN ? AND ? AND sp.employment_type='contract' AND sp.status='active'
+    `).all(todayIso, in60Iso);
+  } catch { /* contract_end_iso may not exist yet */ }
+
+  // Birthdays this week
+  let birthdaysThisWeek = [];
+  try {
+    const dayOfYear = (d) => { const s = new Date(d.getFullYear(), 0, 0); return Math.floor((d - s) / (1000 * 60 * 60 * 24)); };
+    const todayDoy = dayOfYear(now);
+    const allDob = db.prepare(`SELECT sp.user_id, u.display_name, sp.date_of_birth FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id WHERE sp.date_of_birth IS NOT NULL AND u.status='active'`).all();
+    birthdaysThisWeek = allDob.filter(r => {
+      const dob = new Date(r.date_of_birth);
+      const dobDoy = dayOfYear(new Date(now.getFullYear(), dob.getMonth(), dob.getDate()));
+      return dobDoy >= todayDoy && dobDoy <= todayDoy + 7;
+    });
+  } catch { /* date_of_birth may not exist yet */ }
+
+  // Work anniversaries this week
+  let anniversariesThisWeek = [];
+  try {
+    const dayOfYear = (d) => { const s = new Date(d.getFullYear(), 0, 0); return Math.floor((d - s) / (1000 * 60 * 60 * 24)); };
+    const todayDoy = dayOfYear(now);
+    const allJoined = db.prepare(`SELECT sp.user_id, u.display_name, sp.date_joined_iso FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id WHERE sp.date_joined_iso IS NOT NULL AND u.status='active'`).all();
+    anniversariesThisWeek = allJoined.filter(r => {
+      const joined = new Date(r.date_joined_iso);
+      const thisDoy = dayOfYear(new Date(now.getFullYear(), joined.getMonth(), joined.getDate()));
+      const years = now.getFullYear() - joined.getFullYear();
+      return thisDoy >= todayDoy && thisDoy <= todayDoy + 7 && years > 0;
+    }).map(r => ({ ...r, years: now.getFullYear() - new Date(r.date_joined_iso).getFullYear() }));
+  } catch {}
+
+  // Documents expiring within 60 days
+  let docsExpiring = [];
+  try {
+    docsExpiring = db.prepare(`
+      SELECT d.user_id, u.display_name, d.doc_kind, d.file_name, d.expiry_date_iso
+      FROM hr_staff_documents d JOIN app_users u ON u.id=d.user_id
+      WHERE d.expiry_date_iso BETWEEN ? AND ?
+      ORDER BY d.expiry_date_iso ASC
+    `).all(todayIso, in60Iso);
+  } catch { /* expiry_date_iso may not exist yet */ }
+
+  // Training records expiring within 60 days
+  let trainingExpiring = [];
+  try {
+    trainingExpiring = db.prepare(`
+      SELECT tr.user_id, u.display_name, tr.course_name, tr.expiry_at_iso
+      FROM hr_training_records tr JOIN app_users u ON u.id=tr.user_id
+      WHERE tr.expiry_at_iso BETWEEN ? AND ? AND tr.completion_status='completed'
+      ORDER BY tr.expiry_at_iso ASC
+    `).all(todayIso, in60Iso);
+  } catch {}
+
+  return { probationEnding, contractsExpiring, birthdaysThisWeek, anniversariesThisWeek, docsExpiring, trainingExpiring };
 }
 
 /**
@@ -4262,4 +4485,324 @@ export function seedHrIfEmpty(db) {
     },
   });
   db.prepare(`UPDATE hr_staff_profiles SET profile_extra_json = ? WHERE profile_extra_json IS NULL`).run(leaveDemo);
+
+  // Seed default salary matrix from handbook if matrix is empty
+  if (salaryMatrixReady(db)) {
+    const matrixCount = db.prepare('SELECT COUNT(*) as cnt FROM hr_salary_matrix').get();
+    if ((matrixCount?.cnt || 0) === 0) {
+      const defaultMatrix = [
+        { level: 1, label: 'Cleaners / Security / Factory Workers', min_ngn: 15000, max_ngn: 18000 },
+        { level: 2, label: 'Supervisors / Store / Operators', min_ngn: 25000, max_ngn: 30000 },
+        { level: 3, label: 'Marketers / Estimators', min_ngn: 30000, max_ngn: 35000 },
+        { level: 4, label: 'Accountants', min_ngn: 30000, max_ngn: 40000 },
+        { level: 5, label: 'Branch Managers', min_ngn: 40000, max_ngn: 55000 },
+        { level: 6, label: 'Senior Managers / Directors', min_ngn: 50000, max_ngn: 70000 },
+        { level: 7, label: 'Executive Directors', min_ngn: 70000, max_ngn: 100000 },
+      ];
+      const ins = db.prepare(`INSERT OR IGNORE INTO hr_salary_matrix (id, payroll_group, salary_level, salary_step, base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, notes, updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?)`);
+      for (const r of defaultMatrix) {
+        ins.run(newId('HRMXSEED'), 'branch_ops', r.level, 1, r.min_ngn, 0, 0, r.label, now);
+      }
+    }
+  }
+}
+
+// ── CHAIRMAN SCHOOL FEES ──────────────────────────────────────
+export function listChairmanSchoolFees(db) {
+  return db.prepare(`SELECT * FROM hr_chairman_school_fees ORDER BY created_at_iso DESC`).all();
+}
+export function upsertChairmanSchoolFee(db, actorUser, data) {
+  const now = nowIso();
+  if (data.id) {
+    db.prepare(`UPDATE hr_chairman_school_fees SET child_name=?,school_name=?,term=?,academic_year=?,fee_amount_ngn=?,fee_type=?,payment_status=?,amount_paid_ngn=?,payment_date_iso=?,notes=?,updated_at_iso=? WHERE id=?`)
+      .run(data.childName,data.schoolName,data.term,data.academicYear,data.feeAmountNgn||0,data.feeType||'tuition',data.paymentStatus||'pending',data.amountPaidNgn||0,data.paymentDateIso||null,data.notes||null,now,data.id);
+    return { ok:true, id:data.id };
+  }
+  const id = newId('CHSF');
+  db.prepare(`INSERT INTO hr_chairman_school_fees (id,child_name,school_name,term,academic_year,fee_amount_ngn,fee_type,payment_status,amount_paid_ngn,payment_date_iso,notes,created_at_iso,created_by_user_id,updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id,data.childName,data.schoolName,data.term,data.academicYear,data.feeAmountNgn||0,data.feeType||'tuition',data.paymentStatus||'pending',data.amountPaidNgn||0,data.paymentDateIso||null,data.notes||null,now,actorUser.id,now);
+  return { ok:true, id };
+}
+export function deleteChairmanSchoolFee(db, id) {
+  db.prepare(`DELETE FROM hr_chairman_school_fees WHERE id=?`).run(id);
+  return { ok:true };
+}
+
+// ── CHAIRMAN EXPENSES ────────────────────────────────────────
+export function listChairmanExpenses(db, periodYyyymm) {
+  if (periodYyyymm) return db.prepare(`SELECT * FROM hr_chairman_expenses WHERE period_yyyymm=? ORDER BY created_at_iso DESC`).all(periodYyyymm);
+  return db.prepare(`SELECT * FROM hr_chairman_expenses ORDER BY created_at_iso DESC`).all();
+}
+export function upsertChairmanExpense(db, actorUser, data) {
+  const now = nowIso();
+  if (data.id) {
+    db.prepare(`UPDATE hr_chairman_expenses SET expense_type=?,description=?,amount_ngn=?,quantity=?,unit=?,period_yyyymm=?,payment_status=?,payment_date_iso=?,vendor_name=?,notes=? WHERE id=?`)
+      .run(data.expenseType,data.description,data.amountNgn||0,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,data.id);
+    return { ok:true, id:data.id };
+  }
+  const id = newId('CHEX');
+  db.prepare(`INSERT INTO hr_chairman_expenses (id,expense_type,description,amount_ngn,quantity,unit,period_yyyymm,payment_status,payment_date_iso,vendor_name,notes,created_at_iso,created_by_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id,data.expenseType,data.description,data.amountNgn||0,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,now,actorUser.id);
+  return { ok:true, id };
+}
+export function deleteChairmanExpense(db, id) {
+  db.prepare(`DELETE FROM hr_chairman_expenses WHERE id=?`).run(id);
+  return { ok:true };
+}
+
+// ── ID CARDS ─────────────────────────────────────────────────
+export function listHrIdCardRequests(db, userId) {
+  if (userId) return db.prepare(`SELECT r.*, u.display_name FROM hr_id_cards r LEFT JOIN users u ON u.id=r.user_id WHERE r.user_id=? ORDER BY r.requested_at_iso DESC`).all(userId);
+  return db.prepare(`SELECT r.*, u.display_name FROM hr_id_cards r LEFT JOIN users u ON u.id=r.user_id ORDER BY r.requested_at_iso DESC`).all();
+}
+export function createHrIdCardRequest(db, actorUser, data) {
+  const id = newId('IDC');
+  const now = nowIso();
+  db.prepare(`INSERT INTO hr_id_cards (id,user_id,request_type,reason,status,requested_at_iso,notes) VALUES (?,?,?,?,?,?,?)`)
+    .run(id,actorUser.id,data.requestType||'new',data.reason||null,'pending',now,data.notes||null);
+  return { ok:true, id };
+}
+export function patchHrIdCardRequest(db, actorUser, requestId, data) {
+  const now = nowIso();
+  const row = db.prepare(`SELECT * FROM hr_id_cards WHERE id=?`).get(requestId);
+  if (!row) return { ok:false, error:'ID card request not found.' };
+  const status = data.status || row.status;
+  const tempIssued = data.tempCardIssued ? 1 : row.temp_card_issued;
+  db.prepare(`UPDATE hr_id_cards SET status=?,processed_at_iso=?,collected_at_iso=?,processed_by_user_id=?,notes=?,temp_card_issued=?,temp_card_issued_at_iso=? WHERE id=?`)
+    .run(status, data.status?now:row.processed_at_iso, data.status==='collected'?now:row.collected_at_iso, actorUser.id, data.notes||row.notes, tempIssued, data.tempCardIssued?now:row.temp_card_issued_at_iso, requestId);
+  return { ok:true };
+}
+
+export function getStaffSeverancePreview(db, userId) {
+  const profile = db.prepare(`SELECT base_salary_ngn, date_joined_iso FROM hr_staff_profiles WHERE user_id=?`).get(userId);
+  if (!profile) return { ok: false, error: 'Staff profile not found.' };
+  const joinedMs = Date.parse(String(profile.date_joined_iso || '').slice(0, 10));
+  if (!Number.isFinite(joinedMs)) return { ok: false, error: 'Invalid join date.' };
+  const yearsOfService = (Date.now() - joinedMs) / (365.25 * 24 * 60 * 60 * 1000);
+  const annualSalary = (Number(profile.base_salary_ngn) || 0) * 12;
+  const entitlement = calculateSeveranceEntitlement(yearsOfService, annualSalary);
+  return { ok: true, yearsOfService: Math.floor(yearsOfService * 10) / 10, annualSalary, ...entitlement };
+}
+
+export function getStaffDisciplinaryQueryCount(db, userId) {
+  const events = db.prepare(
+    `SELECT discipline_kind, created_at_iso FROM hr_discipline_events WHERE user_id=? ORDER BY created_at_iso ASC`
+  ).all(userId);
+  // Also check hr_disciplinary_events table (older pattern)
+  let allEvents = [...events];
+  try {
+    const alt = db.prepare(`SELECT discipline_kind, created_at_iso FROM hr_disciplinary_events WHERE user_id=? ORDER BY created_at_iso ASC`).all(userId);
+    allEvents = [...allEvents, ...alt];
+  } catch { /* table may not exist */ }
+  const queries = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('query'));
+  const warnings = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('warning'));
+  const suspensions = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('suspension'));
+  const queryCount = queries.length;
+  let consequence = null;
+  if (queryCount >= 3) consequence = 'termination_due';
+  else if (queryCount === 2) consequence = 'promotion_blocked';
+  else if (queryCount === 1) consequence = 'none';
+  return {
+    queryCount,
+    warningCount: warnings.length,
+    suspensionCount: suspensions.length,
+    consequence,
+    consequenceLabel: queryCount >= 3 ? 'Termination recommended (3rd query)' : queryCount === 2 ? 'Next promotion blocked (2nd query)' : null,
+    promotionBlocked: queryCount >= 2,
+    terminationDue: queryCount >= 3,
+  };
+}
+
+// ── ANALYTICS ─────────────────────────────────────────────────
+
+export function getAttendanceTrends(db, branchId, months) {
+  // Returns last N months of attendance summary per branch
+  const results = [];
+  const now = new Date();
+  for (let i = 0; i < (months || 6); i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const yyyymm = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const startIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const endIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(endD.getDate()).padStart(2, '0')}`;
+
+    let query = `SELECT status, COUNT(*) as cnt FROM hr_attendance_events WHERE event_date_iso BETWEEN ? AND ?`;
+    const params = [startIso, endIso];
+    if (branchId) { query += ' AND branch_id=?'; params.push(branchId); }
+    query += ' GROUP BY status';
+
+    const rows = db.prepare(query).all(...params);
+    const summary = { period: yyyymm, label: d.toLocaleString('en', { month: 'short', year: '2-digit' }), present: 0, absent: 0, late: 0, on_leave: 0 };
+    for (const r of rows) {
+      const s = String(r.status || '').toLowerCase();
+      if (s === 'present') summary.present = r.cnt;
+      else if (s === 'absent') summary.absent = r.cnt;
+      else if (s === 'late') summary.late = r.cnt;
+      else if (s === 'on_leave' || s === 'leave') summary.on_leave = r.cnt;
+    }
+    const total = summary.present + summary.absent + summary.late + summary.on_leave;
+    summary.attendanceRate = total > 0 ? Math.round((summary.present / total) * 100) : 0;
+    results.push(summary);
+  }
+  return results.reverse(); // chronological
+}
+
+export function getChronicAbsentees(db, branchId, thresholdDays) {
+  // Staff with more than N absent days in the last 90 days
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90);
+  const cutoffIso = cutoff.toISOString().slice(0, 10);
+  let query = `
+    SELECT ae.user_id, u.display_name, sp.branch_id, sp.job_title, COUNT(*) as absent_days
+    FROM hr_attendance_events ae
+    JOIN users u ON u.id = ae.user_id
+    JOIN hr_staff_profiles sp ON sp.user_id = ae.user_id
+    WHERE ae.status = 'absent' AND ae.event_date_iso >= ?
+  `;
+  const params = [cutoffIso];
+  if (branchId) { query += ' AND ae.branch_id=?'; params.push(branchId); }
+  query += ` GROUP BY ae.user_id HAVING absent_days >= ? ORDER BY absent_days DESC`;
+  params.push(thresholdDays || 5);
+  return db.prepare(query).all(...params);
+}
+
+export function getLoanPortfolioAnalytics(db) {
+  // Active loans summary
+  const activeLoans = db.prepare(`
+    SELECT r.user_id, u.display_name, sp.branch_id, sp.job_title,
+           rl.amount_ngn, rl.repayment_months, rl.deduction_per_month_ngn,
+           r.created_at_iso, r.status
+    FROM hr_requests r
+    JOIN hr_request_loan rl ON rl.request_id = r.id
+    JOIN users u ON u.id = r.user_id
+    JOIN hr_staff_profiles sp ON sp.user_id = r.user_id
+    WHERE r.kind = 'loan' AND r.status = 'approved'
+    ORDER BY rl.amount_ngn DESC
+  `).all();
+
+  // By branch summary
+  const byBranch = {};
+  for (const l of activeLoans) {
+    if (!byBranch[l.branch_id]) byBranch[l.branch_id] = { branchId: l.branch_id, count: 0, totalNgn: 0, monthlyDeductNgn: 0 };
+    byBranch[l.branch_id].count++;
+    byBranch[l.branch_id].totalNgn += Number(l.amount_ngn) || 0;
+    byBranch[l.branch_id].monthlyDeductNgn += Number(l.deduction_per_month_ngn) || 0;
+  }
+
+  const totalOutstanding = activeLoans.reduce((s, l) => s + (Number(l.amount_ngn) || 0), 0);
+  const totalMonthlyDeductions = activeLoans.reduce((s, l) => s + (Number(l.deduction_per_month_ngn) || 0), 0);
+
+  return {
+    activeCount: activeLoans.length,
+    totalOutstandingNgn: totalOutstanding,
+    totalMonthlyDeductionsNgn: totalMonthlyDeductions,
+    byBranch: Object.values(byBranch),
+    loans: activeLoans,
+  };
+}
+
+export function getPayrollVarianceAlerts(db, runId, thresholdPct) {
+  const threshold = Number(thresholdPct) || 20; // default 20% change flags alert
+  // Get current run lines
+  const currentLines = db.prepare(`SELECT user_id, gross_ngn, net_ngn FROM hr_payroll_lines WHERE run_id=?`).all(runId);
+  if (!currentLines.length) return { alerts: [], checked: 0 };
+
+  // Get the previous run
+  const currentRun = db.prepare(`SELECT period_yyyymm FROM hr_payroll_runs WHERE id=?`).get(runId);
+  if (!currentRun) return { alerts: [], checked: 0 };
+
+  const prevRun = db.prepare(`SELECT id FROM hr_payroll_runs WHERE period_yyyymm < ? AND status != 'draft' ORDER BY period_yyyymm DESC LIMIT 1`).get(currentRun.period_yyyymm);
+  if (!prevRun) return { alerts: [], checked: currentLines.length, note: 'No previous run to compare.' };
+
+  const prevLines = db.prepare(`SELECT user_id, gross_ngn, net_ngn FROM hr_payroll_lines WHERE run_id=?`).all(prevRun.id);
+  const prevByUser = {};
+  for (const p of prevLines) prevByUser[p.user_id] = p;
+
+  const alerts = [];
+  for (const curr of currentLines) {
+    const prev = prevByUser[curr.user_id];
+    if (!prev) { alerts.push({ userId: curr.user_id, type: 'new_staff', currentGross: curr.gross_ngn, previousGross: 0, changePct: 100 }); continue; }
+    if (prev.gross_ngn === 0) continue;
+    const changePct = Math.abs(((curr.gross_ngn - prev.gross_ngn) / prev.gross_ngn) * 100);
+    if (changePct >= threshold) {
+      alerts.push({ userId: curr.user_id, type: curr.gross_ngn > prev.gross_ngn ? 'increase' : 'decrease', currentGross: curr.gross_ngn, previousGross: prev.gross_ngn, changePct: Math.round(changePct * 10) / 10 });
+    }
+  }
+  // Check for staff in prev but not in current (dropped off)
+  for (const prev of prevLines) {
+    if (!currentLines.find(c => c.user_id === prev.user_id)) {
+      alerts.push({ userId: prev.user_id, type: 'missing_staff', currentGross: 0, previousGross: prev.gross_ngn, changePct: -100 });
+    }
+  }
+  return { alerts, checked: currentLines.length, threshold };
+}
+
+export function getStaffTurnoverTrend(db, months) {
+  const results = [];
+  const now = new Date();
+  for (let i = 0; i < (months || 12); i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const startIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    const endD = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const endIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(endD.getDate()).padStart(2, '0')}`;
+    const label = d.toLocaleString('en', { month: 'short', year: '2-digit' });
+    const period = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const joiners = db.prepare(`SELECT COUNT(*) as cnt FROM hr_staff_profiles WHERE date_joined_iso BETWEEN ? AND ?`).get(startIso, endIso)?.cnt || 0;
+    // Leavers: check lifecycle separation last_working_day in this period
+    // Since lifecycle is in JSON, we count staff whose status changed to separated in this period
+    const leavers = db.prepare(`SELECT COUNT(*) as cnt FROM hr_staff_profiles WHERE status='separated' AND updated_at_iso BETWEEN ? AND ?`).get(startIso + 'T00:00:00', endIso + 'T23:59:59')?.cnt || 0;
+    results.push({ period, label, joiners, leavers, net: joiners - leavers });
+  }
+  return results.reverse();
+}
+
+export function getHeadcountSummary(db) {
+  const all = db.prepare(`
+    SELECT sp.user_id, sp.branch_id, sp.department, sp.employment_type, sp.status, sp.gender, sp.job_title,
+           sp.date_joined_iso, u.display_name
+    FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
+    WHERE sp.status='active'
+  `).all();
+
+  const total = all.length;
+  const byBranch = {}; const byDept = {}; const byType = {}; const byGender = { male: 0, female: 0, other: 0, unknown: 0 };
+  for (const s of all) {
+    byBranch[s.branch_id] = (byBranch[s.branch_id] || 0) + 1;
+    byDept[s.department || 'Unknown'] = (byDept[s.department || 'Unknown'] || 0) + 1;
+    byType[s.employment_type || 'Unknown'] = (byType[s.employment_type || 'Unknown'] || 0) + 1;
+    const g = String(s.gender || '').toLowerCase();
+    if (g === 'male') byGender.male++;
+    else if (g === 'female') byGender.female++;
+    else if (g === 'other') byGender.other++;
+    else byGender.unknown++;
+  }
+  return { total, byBranch, byDepartment: byDept, byEmploymentType: byType, byGender, staff: all };
+}
+
+export function detectThreeDayNoShows(db, branchId) {
+  // Get last 5 working days of attendance events
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  const cutoffIso = cutoff.toISOString().slice(0, 10);
+  const events = db.prepare(
+    `SELECT user_id, event_date_iso, status FROM hr_attendance_events WHERE branch_id=? AND event_date_iso >= ? AND status='absent' ORDER BY user_id, event_date_iso`
+  ).all(branchId || null, cutoffIso);
+  // Group consecutive absences per user
+  const byUser = {};
+  for (const e of events) {
+    if (!byUser[e.user_id]) byUser[e.user_id] = [];
+    byUser[e.user_id].push(e.event_date_iso);
+  }
+  const flagged = [];
+  for (const [userId, dates] of Object.entries(byUser)) {
+    // Check for 3+ consecutive absent days
+    let streak = 1;
+    for (let i = 1; i < dates.length; i++) {
+      const prev = Date.parse(dates[i - 1]);
+      const curr = Date.parse(dates[i]);
+      if ((curr - prev) <= 2 * 24 * 60 * 60 * 1000) { streak++; } // allow weekend gap
+      else { streak = 1; }
+      if (streak >= 3) { flagged.push({ userId, consecutiveDays: streak, lastAbsentDate: dates[i] }); break; }
+    }
+  }
+  return flagged;
 }

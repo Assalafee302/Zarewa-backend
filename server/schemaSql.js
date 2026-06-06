@@ -1915,4 +1915,52 @@ CREATE TABLE IF NOT EXISTS office_inter_branch_requests (
   resolved_at_iso TEXT,
   resolved_note TEXT
 );
+
+CREATE TABLE IF NOT EXISTS hr_chairman_school_fees (
+  id TEXT PRIMARY KEY,
+  child_name TEXT,
+  school_name TEXT,
+  term TEXT,
+  academic_year TEXT,
+  fee_amount_ngn REAL,
+  fee_type TEXT,
+  payment_status TEXT,
+  amount_paid_ngn REAL DEFAULT 0,
+  payment_date_iso TEXT,
+  notes TEXT,
+  created_at_iso TEXT,
+  created_by_user_id TEXT,
+  updated_at_iso TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hr_chairman_expenses (
+  id TEXT PRIMARY KEY,
+  expense_type TEXT,
+  description TEXT,
+  amount_ngn REAL,
+  quantity INTEGER DEFAULT 1,
+  unit TEXT,
+  period_yyyymm TEXT,
+  payment_status TEXT,
+  payment_date_iso TEXT,
+  vendor_name TEXT,
+  notes TEXT,
+  created_at_iso TEXT,
+  created_by_user_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hr_id_cards (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  request_type TEXT,
+  reason TEXT,
+  status TEXT,
+  requested_at_iso TEXT,
+  processed_at_iso TEXT,
+  collected_at_iso TEXT,
+  processed_by_user_id TEXT,
+  notes TEXT,
+  temp_card_issued INTEGER DEFAULT 0,
+  temp_card_issued_at_iso TEXT
+);
 `;

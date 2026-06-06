@@ -2722,6 +2722,52 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrStaffDocumentsSchema(db);
   migrateHrLifecycleAndNotificationsSchema(db);
   migrateHrRecruitingLearningEngagementSchema(db);
+  migrateHrNewFieldsPhase10(db);
+}
+
+/** New HR fields: gender/DOB/contract/NHIS on profiles; expiry on documents; ITF/NSITF on payroll runs (Phase 10). */
+function migrateHrNewFieldsPhase10(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+
+  // hr_staff_profiles new fields
+  const hr = tableCols('hr_staff_profiles');
+  if (hr.size && !hr.has('gender')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN gender TEXT`);
+  }
+  if (hr.size && !hr.has('date_of_birth')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN date_of_birth TEXT`);
+  }
+  if (hr.size && !hr.has('contract_end_iso')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN contract_end_iso TEXT`);
+  }
+  if (hr.size && !hr.has('nhis_deduction_ngn')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN nhis_deduction_ngn REAL DEFAULT 0`);
+  }
+  if (hr.size && !hr.has('nhis_provider')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN nhis_provider TEXT`);
+  }
+
+  // hr_staff_documents: expiry date
+  const docs = tableCols('hr_staff_documents');
+  if (docs.size && !docs.has('expiry_date_iso')) {
+    db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN expiry_date_iso TEXT`);
+  }
+
+  // hr_payroll_runs: ITF and NSITF employer levies
+  const runs = tableCols('hr_payroll_runs');
+  if (runs.size && !runs.has('itf_ngn')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN itf_ngn REAL DEFAULT 0`);
+  }
+  if (runs.size && !runs.has('nsitf_ngn')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN nsitf_ngn REAL DEFAULT 0`);
+  }
 }
 
 /** Recruiting, L&D training records, engagement surveys (Phase 9). */

@@ -2132,7 +2132,7 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.put('/api/hr/departments/:id?', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+  const putHrDepartment = (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const body = { ...req.body, id: req.params.id || req.body?.id };
@@ -2143,7 +2143,9 @@ export function registerHrApi(app, db) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not save department.' });
     }
-  });
+  };
+  app.put('/api/hr/departments', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDepartment);
+  app.put('/api/hr/departments/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDepartment);
 
   app.get('/api/hr/designations', requireHrAny('hr.settings.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
     try {
@@ -2158,7 +2160,7 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.put('/api/hr/designations/:id?', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+  const putHrDesignation = (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const body = { ...req.body, id: req.params.id || req.body?.id };
@@ -2169,7 +2171,9 @@ export function registerHrApi(app, db) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not save designation.' });
     }
-  });
+  };
+  app.put('/api/hr/designations', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDesignation);
+  app.put('/api/hr/designations/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDesignation);
 
   app.get('/api/hr/transfer-requests', requireHrAny('hr.transfers.manage', 'hr.team.view', 'hr.staff.manage'), (req, res) => {
     try {

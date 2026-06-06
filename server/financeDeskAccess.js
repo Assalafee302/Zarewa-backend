@@ -102,3 +102,11 @@ export function userMayApplyAp2ApRebuild(user) {
   }
   return false;
 }
+
+/**
+ * AP3a costing readiness — MD, HoA, finance_manager; not cashier-only.
+ * @param {import('./auth.js').SessionUser | null | undefined} user
+ */
+export function userMayViewAp3CostingReadiness(user) {
+  return userMayViewAp1cDryRun(user);
+}

@@ -235,6 +235,23 @@ export function quotationEditRequiresEditApproval(db, user, quotationId) {
   return quotationHasActiveSalesReceipts(db, quotationId);
 }
 
+/** True when the cutting list has been sent to the production queue. */
+export function cuttingListIsPushedToProduction(db, cuttingListId) {
+  const id = String(cuttingListId || '').trim();
+  if (!id) return false;
+  const row = db.prepare(`SELECT production_registered FROM cutting_lists WHERE id = ?`).get(id);
+  return Number(row?.production_registered) > 0;
+}
+
+/**
+ * Cutting list PATCH: open edit while still waiting; require manager token once pushed to production.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function cuttingListEditRequiresEditApproval(db, user, cuttingListId) {
+  if (!editMutationRequiresSecondApproval(user)) return false;
+  return cuttingListIsPushedToProduction(db, cuttingListId);
+}
+
 /** Admin, MD, or finance.approve may revise reconciled receipts without a second-party token. */
 export function userMayBypassReceiptSettlementEditApproval(user) {
   if (!editMutationRequiresSecondApproval(user)) return true;

@@ -97,12 +97,15 @@ import {
   userMayViewAp2SupplierDiagnostics,
   userMayViewAp2ApRebuildPreview,
   userMayApplyAp2ApRebuild,
+  userMayViewAp3CostingReadiness,
 } from './financeDeskAccess.js';
 import { buildAp2SupplierDiagnosticsReport } from './ap2SupplierDiagnosticsOps.js';
 import { applyAp2ReceivedBasisRebuild, buildAp2ApRebuildPreview, logAp2RebuildPreviewed } from './ap2ApRebuildOps.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
+import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
+import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
@@ -167,6 +170,7 @@ import {
   approveEditApproval,
   consumeEditApprovalInTransaction,
   createEditApprovalRequest,
+  cuttingListEditRequiresEditApproval,
   getEditApproval,
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
@@ -863,6 +867,59 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[ap-inventory-gl-alignment]', e);
       return res.status(500).json({ ok: false, error: 'AP/GL alignment report failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap3-material-cost-report', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp3CostingReadiness(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view material cost reports.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildAp3MaterialCostReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+        materialFamily: String(req.query?.materialFamily || '').trim() || null,
+        gauge: String(req.query?.gauge || '').trim() || null,
+        colour: String(req.query?.colour || '').trim() || null,
+        trustFilter: String(req.query?.trustFilter || '').trim() || null,
+        limitJobs: Number(req.query?.limitJobs) || undefined,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap3-material-cost-report]', e);
+      return res.status(500).json({ ok: false, error: 'Material cost report failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap3-costing-readiness', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp3CostingReadiness(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view costing readiness.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildAp3CostingReadinessReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+        materialFamily: String(req.query?.materialFamily || '').trim() || null,
+        gauge: String(req.query?.gauge || '').trim() || null,
+        colour: String(req.query?.colour || '').trim() || null,
+        limitSamples: Number(req.query?.limitSamples) || undefined,
+      });
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap3-costing-readiness]', e);
+      return res.status(500).json({ ok: false, error: 'Costing readiness report failed.' });
     }
   });
 
@@ -4550,12 +4607,21 @@ export function registerHttpApi(app, db) {
       const cl0 = getCuttingList(db, cid);
       const bg = assertCuttingListRowInWorkspace(req, cl0);
       if (!bg.ok) return res.status(bg.status).json({ ok: false, error: bg.error });
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'cutting_list', cid, (stripped) => {
-        const r = write.updateCuttingList(db, cid, stripped || {});
-        if (!r.ok) return r;
-        const cuttingList = getCuttingList(db, cid);
-        return { ok: true, cuttingList };
-      });
+      return handlePatchWithEditApproval(
+        res,
+        db,
+        req.user,
+        req.body || {},
+        'cutting_list',
+        cid,
+        (stripped) => {
+          const r = write.updateCuttingList(db, cid, stripped || {});
+          if (!r.ok) return r;
+          const cuttingList = getCuttingList(db, cid);
+          return { ok: true, cuttingList };
+        },
+        { requiresEditApproval: cuttingListEditRequiresEditApproval }
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

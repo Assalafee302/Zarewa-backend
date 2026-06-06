@@ -129,6 +129,36 @@ function isMissingIndexColumnError(e) {
   return errno === 1072 || code === 'ER_KEY_COLUMN_DOES_NOT_EXITS';
 }
 
+function isDeadlockError(e) {
+  const errno = /** @type {{ errno?: number }} */ (e).errno;
+  const code = /** @type {{ code?: string }} */ (e).code;
+  return errno === 1213 || code === 'ER_LOCK_DEADLOCK';
+}
+
+function deadlockBackoffMs(attempt) {
+  return Math.min(40 * attempt, 200);
+}
+
+/**
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @param {{ attempts?: number }} [opts]
+ */
+async function withDeadlockRetry(fn, opts = {}) {
+  const attempts = Math.max(Number(opts.attempts) || 4, 1);
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (!isDeadlockError(e) || i >= attempts) throw e;
+      await new Promise((r) => setTimeout(r, deadlockBackoffMs(i)));
+    }
+  }
+  throw lastErr;
+}
+
 function isSkippableBootstrapIndexError(e, stmt) {
   if (!/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(String(stmt || ''))) return false;
   return isDuplicateIndexNameError(e) || isMissingIndexColumnError(e);
@@ -235,15 +265,17 @@ async function execRaw(sql) {
 }
 
 async function runStatement(sql, args) {
-  const { sql: sql2, args: a2 } = adaptSqlForMysql(sql, args);
-  assertBindCount(sql2, a2);
-  const conn = execTarget();
-  try {
-    const [res] = await conn.query(sql2, a2);
-    return res;
-  } catch (e) {
-    throw annotateSqlError(e, sql2, a2);
-  }
+  return withDeadlockRetry(async () => {
+    const { sql: sql2, args: a2 } = adaptSqlForMysql(sql, args);
+    assertBindCount(sql2, a2);
+    const conn = execTarget();
+    try {
+      const [res] = await conn.query(sql2, a2);
+      return res;
+    } catch (e) {
+      throw annotateSqlError(e, sql2, a2);
+    }
+  });
 }
 
 runAsWorker(async (payload) => {
@@ -297,28 +329,32 @@ runAsWorker(async (payload) => {
   }
 
   if (op === 'get') {
-    const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
-    assertBindCount(sql, args);
-    const conn = execTarget();
-    try {
-      const [rows] = await conn.query(sql, args);
-      const list = /** @type {Record<string, unknown>[]} */ (rows);
-      return list[0] ?? undefined;
-    } catch (e) {
-      throw annotateSqlError(e, sql, args);
-    }
+    return withDeadlockRetry(async () => {
+      const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
+      assertBindCount(sql, args);
+      const conn = execTarget();
+      try {
+        const [rows] = await conn.query(sql, args);
+        const list = /** @type {Record<string, unknown>[]} */ (rows);
+        return list[0] ?? undefined;
+      } catch (e) {
+        throw annotateSqlError(e, sql, args);
+      }
+    });
   }
 
   if (op === 'all') {
-    const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
-    assertBindCount(sql, args);
-    const conn = execTarget();
-    try {
-      const [rows] = await conn.query(sql, args);
-      return /** @type {Record<string, unknown>[]} */ (rows);
-    } catch (e) {
-      throw annotateSqlError(e, sql, args);
-    }
+    return withDeadlockRetry(async () => {
+      const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);
+      assertBindCount(sql, args);
+      const conn = execTarget();
+      try {
+        const [rows] = await conn.query(sql, args);
+        return /** @type {Record<string, unknown>[]} */ (rows);
+      } catch (e) {
+        throw annotateSqlError(e, sql, args);
+      }
+    });
   }
 
   if (op === 'txBegin') {

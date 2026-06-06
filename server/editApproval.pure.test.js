@@ -7,6 +7,8 @@ import {
   createEditApprovalRequest,
   receiptFinanceSettlementRequiresEditApproval,
   salesReceiptReconciliationIsFinalized,
+  cuttingListEditRequiresEditApproval,
+  cuttingListIsPushedToProduction,
   quotationEditRequiresEditApproval,
   quotationHasActiveSalesReceipts,
 } from './editApproval.js';
@@ -189,6 +191,27 @@ describe('editApproval (no MySQL)', () => {
     expect(quotationHasActiveSalesReceipts(db, 'Q-1')).toBe(false);
     expect(quotationEditRequiresEditApproval(db, { roleKey: 'sales_staff' }, 'Q-1')).toBe(false);
     expect(quotationEditRequiresEditApproval(db, { roleKey: 'admin' }, 'Q-1')).toBe(false);
+  });
+
+  it('cuttingListEditRequiresEditApproval: waiting list is open; pushed list needs token', () => {
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('production_registered FROM cutting_lists')) {
+          return {
+            get: vi.fn((id) =>
+              id === 'CL-PUSHED' ? { production_registered: 1 } : { production_registered: 0 }
+            ),
+          };
+        }
+        return { get: vi.fn() };
+      },
+    };
+    expect(cuttingListIsPushedToProduction(db, 'CL-WAIT')).toBe(false);
+    expect(cuttingListIsPushedToProduction(db, 'CL-PUSHED')).toBe(true);
+    expect(cuttingListEditRequiresEditApproval(db, { roleKey: 'sales_staff' }, 'CL-WAIT')).toBe(false);
+    expect(cuttingListEditRequiresEditApproval(db, { roleKey: 'sales_staff' }, 'CL-PUSHED')).toBe(true);
+    expect(cuttingListEditRequiresEditApproval(db, { roleKey: 'admin' }, 'CL-PUSHED')).toBe(false);
   });
 
   it('consumeEditApprovalInTransaction throws when UPDATE affects 0 rows', () => {

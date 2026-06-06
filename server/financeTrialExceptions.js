@@ -9,6 +9,8 @@ import { buildAp2SupplierDiagnosticsTrialSummary } from './ap2SupplierDiagnostic
 import { buildSupplierAdvanceTrialSummary } from './ap2SupplierAdvanceOps.js';
 import { buildInventoryValuationTrialSummary } from './ap2InventoryValuationOps.js';
 import { buildGlAlignmentTrialSummary } from './ap2GlAlignmentOps.js';
+import { buildAp3CostingReadinessTrialSummary } from './ap3CostingReadinessOps.js';
+import { buildAp3MaterialCostTrialSummary } from './ap3MaterialCostOps.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -373,6 +375,8 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
 
   let ap2Supplier = null;
   let ap2c = null;
+  let ap3Costing = null;
+  let ap3MaterialCost = null;
   if (source && typeof source.prepare === 'function') {
     try {
       ap2Supplier = buildAp2SupplierDiagnosticsTrialSummary(
@@ -389,6 +393,22 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
       ap2c = { supplierAdvance: adv, inventoryValuation: inv, glAlignment: align };
     } catch {
       ap2c = null;
+    }
+    try {
+      ap3Costing = buildAp3CostingReadinessTrialSummary(
+        source,
+        branchId && branchId !== 'ALL' ? branchId : 'ALL'
+      );
+    } catch {
+      ap3Costing = null;
+    }
+    try {
+      ap3MaterialCost = buildAp3MaterialCostTrialSummary(
+        source,
+        branchId && branchId !== 'ALL' ? branchId : 'ALL'
+      );
+    } catch {
+      ap3MaterialCost = null;
     }
   }
 
@@ -409,6 +429,8 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
     creditExceptions,
     ap2Supplier,
     ap2c,
+    ap3Costing,
+    ap3MaterialCost,
     deliveryPaymentGateMode: flags.deliveryPaymentGateMode,
     accountingPolicyV1Note: accountingPolicyV1
       ? flags.deliveryPaymentGateMode === 'enforce'

@@ -10,6 +10,7 @@ import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
 import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
+import { withMigrationLock } from './migrationLock.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -47,6 +48,11 @@ function repairMaterialIncidentIndexesMysql(db) {
 }
 
 export function runMigrations(db) {
+  return withMigrationLock(db, () => runMigrationsUnlocked(db));
+}
+
+/** @param {import('better-sqlite3').Database} db */
+function runMigrationsUnlocked(db) {
   repairMaterialIncidentIndexesMysql(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS help_query_log (

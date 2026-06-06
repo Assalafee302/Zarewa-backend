@@ -1604,7 +1604,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(patch.body?.ok).toBe(true);
   });
 
-  it('sales officer PATCH cutting list requires edit approval token', async () => {
+  it('sales officer PATCH cutting list is open before push; requires token after push', async () => {
     const staffAgent = request.agent(app);
     await loginAs(staffAgent, 'sales.staff', 'Sales@123');
     const created = await staffAgent.post('/api/cutting-lists').send({
@@ -1619,8 +1619,25 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     });
     expect(created.status).toBe(201);
     const clId = created.body.id || created.body.cuttingList?.id;
-    const blocked = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
+
+    const openEdit = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
       machineName: 'Machine 02',
+    });
+    expect(openEdit.status).toBe(200);
+    expect(openEdit.body?.ok).toBe(true);
+
+    const job = await staffAgent.post('/api/production-jobs').send({
+      cuttingListId: clId,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 6,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+
+    const blocked = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
+      machineName: 'Machine 03',
     });
     expect(blocked.status).toBe(403);
     expect(blocked.body?.code).toBe('EDIT_APPROVAL_REQUIRED');
@@ -1632,12 +1649,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       entityId: clId,
     });
     expect(reqTok.status).toBe(200);
-    const tokenId = reqTok.body.approval?.id;
+    const tokenId = reqTok.body.approvalId || reqTok.body.approval?.id;
     const approved = await mgrAgent.post(`/api/edit-approvals/${encodeURIComponent(tokenId)}/approve`).send({});
     expect(approved.status).toBe(200);
 
     const patched = await staffAgent.patch(`/api/cutting-lists/${encodeURIComponent(clId)}`).send({
-      machineName: 'Machine 02',
+      machineName: 'Machine 03',
       editApprovalId: tokenId,
     });
     expect(patched.status).toBe(200);

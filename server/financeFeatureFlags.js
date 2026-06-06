@@ -27,11 +27,13 @@ import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
  *   supplierAdvanceAccountingEnabled: boolean,
  *   inventoryValuationReportsEnabled: boolean,
  *   apGlAlignmentDiagnosticsEnabled: boolean,
+ *   ap3MaterialCostReportEnabled: boolean,
  *   phase: string,
  * }} */
 export function readFinanceFeatureFlags() {
   return {
     phase: 'B3a',
+    ap3MaterialCostReportEnabled: envFlag('AP3_MATERIAL_COST_REPORT_ENABLED', true),
     apReceivedBasisEnabled: envFlag('AP_RECEIVED_BASIS_ENABLED', false),
     apReceivedBasisRebuildEnabled: envFlag('AP_RECEIVED_BASIS_REBUILD_ENABLED', false),
     supplierAdvanceAccountingEnabled: envFlag('SUPPLIER_ADVANCE_ACCOUNTING_ENABLED', false),
@@ -64,6 +66,7 @@ export function accountingPolicyV1HealthCapabilities(flags = readFinanceFeatureF
     ap2SupplierAdvanceReports: 'ap2c',
     ap2InventoryValuation: 'ap2c',
     ap2GlAlignment: 'ap2c',
+    ap3MaterialCostReport: 'ap3b',
     accountingPolicyV1Labels: flags.accountingPolicyV1Labels ? 'v1' : 'off',
     accountingPolicyV1Diagnostics: flags.accountingPolicyV1Diagnostics ? 'v1' : 'off',
     accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl ? 'on' : 'off',

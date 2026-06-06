@@ -57,6 +57,7 @@ import {
   listRecentDisciplinaryEvents,
   appendHrDisciplinaryEvent,
   listHrAuditEventsForStaff,
+  listHrAuditEventsGlobal,
   listHrAttendanceDeductionPreview,
   listHrBranchPayrollContributions,
   listHrPayslipsForUser,
@@ -120,6 +121,7 @@ import {
   listHrStaffDocumentMeta,
   setHrStaffPassportPhoto,
   uploadHrStaffDocument,
+  verifyHrStaffDocument,
 } from './hrStaffDocuments.js';
 import {
   getHrStaffLifecycle,
@@ -145,6 +147,29 @@ import {
   patchHrJobPosting,
 } from './hrRecruiting.js';
 import { buildHrModuleBlockers, buildHrReadiness, getHrModuleHealth } from './hrModuleHealth.js';
+import { lastBootPhase } from './db.js';
+import { getHrTableDiagnostics } from './hrTableChecks.js';
+import { mysqlConfigFromEnv } from './mysqlDatabase.js';
+import {
+  approvePayrollBonusRequest,
+  getPayrollReconciliation,
+  listPayrollBonusRequests,
+  recordPayrollBankExport,
+  rejectPayrollBonusRequest,
+  requestPayrollBonus,
+  setPayrollLineHold,
+  setStaffSalaryHold,
+} from './hrPayrollControl.js';
+import {
+  createGrievance,
+  getExitInterview,
+  getPromotionReadiness,
+  listGrievances,
+  listStaffSkills,
+  patchGrievance,
+  upsertExitInterview,
+  upsertStaffSkill,
+} from './hrGovernanceOps.js';
 import {
   exportHrEngagementTrendsCsv,
   exportHrTrainingExpiryCsv,
@@ -172,6 +197,10 @@ import {
   patchHrTransferRequest,
   TRANSFER_TYPES,
 } from './hrTransferRequests.js';
+import { decryptBankAccount } from './hrBankCrypto.js';
+import { getTeamRosterSummary, resolveHrScopeMode } from './hrTeamScope.js';
+import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
+import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
   adminClearHrExit,
   approveHrOvertimeRequest,
@@ -238,8 +267,36 @@ import {
 import { hrSensitiveTokenMiddleware, issueHrSensitiveToken } from './hrSensitiveGate.js';
 
 function hrReady(res, db) {
+  if (!db) {
+    console.warn('[hr] 503 DB_UNAVAILABLE — database handle missing; bootPhase=%s', lastBootPhase);
+    res.status(503).json({
+      ok: false,
+      code: 'DB_UNAVAILABLE',
+      error: 'Database connection is not available.',
+      bootPhase: lastBootPhase,
+      fixHint: 'Start MySQL and restart the API. Run: npm run mysql:smoke',
+    });
+    return false;
+  }
   if (!hrTablesReady(db)) {
-    res.status(503).json({ ok: false, error: 'HR module is not initialised on this database.' });
+    const cfg = mysqlConfigFromEnv();
+    const diagnostics = getHrTableDiagnostics(db);
+    console.warn(
+      '[hr] 503 HR_NOT_INITIALIZED — missing tables: %s; target=%s:%s/%s',
+      (diagnostics.missingCore || []).join(', ') || 'unknown',
+      cfg.host,
+      cfg.port,
+      cfg.database
+    );
+    res.status(503).json({
+      ok: false,
+      code: 'HR_NOT_INITIALIZED',
+      error: 'HR module is not initialised on this database.',
+      bootPhase: lastBootPhase,
+      mysqlTarget: `${cfg.host}:${cfg.port}/${cfg.database}`,
+      diagnostics: getHrTableDiagnostics(db),
+      fixHint: 'Run npm run db:migrate then restart the server.',
+    });
     return false;
   }
   return true;
@@ -262,9 +319,13 @@ export function registerHrApi(app, db) {
 
   app.get('/api/hr/health', (_req, res) => {
     const modules = getHrModuleHealth(db);
+    const cfg = mysqlConfigFromEnv();
     res.json({
-      ok: true,
+      ok: hrTablesReady(db),
       hrReady: hrTablesReady(db),
+      bootPhase: lastBootPhase,
+      mysqlTarget: `${cfg.host}:${cfg.port}/${cfg.database}`,
+      diagnostics: getHrTableDiagnostics(db),
       modules,
       productionReady: modules.allReady,
       blockers: buildHrModuleBlockers(modules),
@@ -425,10 +486,25 @@ export function registerHrApi(app, db) {
       const row = getHrStaffOne(db, userId);
       if (!row) return res.status(404).json({ ok: false, error: 'Staff record not found.' });
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: userId });
+      let staff = redactStaffProfile(row, ctx);
+      if (ctx.canViewSensitive && userCanViewOrgSensitiveHr(req.user)) {
+        const bankRow = db.prepare(`SELECT bank_account_no FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+        if (bankRow?.bank_account_no) {
+          staff = { ...staff, bankAccountNo: decryptBankAccount(bankRow.bank_account_no) };
+          appendHrAuditEvent(db, {
+            actorUserId: req.user?.id,
+            action: 'hr.staff.bank_viewed',
+            entityKind: 'hr_staff_profile',
+            entityId: userId,
+            branchId: row.branchId,
+            details: { context: 'staff_profile_get' },
+          });
+        }
+      }
       const branchHistory = listHrStaffBranchHistory(db, userId);
       return res.json({
         ok: true,
-        staff: redactStaffProfile(row, ctx),
+        staff,
         branchHistory: userCanViewOrgSensitiveHr(req.user) || isSelf ? branchHistory : [],
       });
     } catch (e) {
@@ -463,6 +539,22 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load audit trail.' });
+    }
+  });
+
+  app.get('/api/hr/audit-events', requireHrAny('hr.staff.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const events = listHrAuditEventsGlobal(db, hrListScope(req), {
+        limit: Number(req.query.limit) || 150,
+        fromIso: req.query.fromIso,
+        toIso: req.query.toIso,
+        action: req.query.action,
+      });
+      return res.json({ ok: true, events });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load HR audit log.' });
     }
   });
 
@@ -614,6 +706,19 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not delete document.' });
+    }
+  });
+
+  app.patch('/api/hr/staff/:userId/documents/:docId/verify', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const r = verifyHrStaffDocument(db, req.user?.id, userId, req.params.docId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update document verification.' });
     }
   });
 
@@ -1172,6 +1277,15 @@ export function registerHrApi(app, db) {
       }
       const r = handler(db, req.params.runId);
       if (!r.ok) return res.status(400).json(r);
+      if (String(filename || '').includes('bank-upload')) {
+        appendHrAuditEvent(db, {
+          actorUserId: req.user?.id,
+          action: 'hr.payroll.bank_export',
+          entityKind: 'hr_payroll_run',
+          entityId: req.params.runId,
+          details: { filename: r.filename || filename },
+        });
+      }
       if (binary && r.pdf) {
         res.setHeader('Content-Type', r.contentType || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${r.filename || filename}"`);
@@ -1940,6 +2054,74 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get('/api/hr/team/summary', requireHrAny('hr.team.view', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const scopeMode = resolveHrScopeMode(req.user, req.query?.scope || scope.scopeMode || 'team');
+      const roster = getTeamRosterSummary(db, scope, req.user, scopeMode);
+      const staff = listHrStaff(db, { ...scope, scopeMode }, { includeInactive: false });
+      const ctx = hrRedactionContextFromReq(req);
+      const teamUserIds = new Set(staff.map((s) => s.userId));
+      let pendingLeave = 0;
+      try {
+        pendingLeave = listHrRequests(db, scope, { kind: 'leave', status: 'submitted' }).filter((r) =>
+          teamUserIds.has(r.userId)
+        ).length;
+      } catch {
+        pendingLeave = 0;
+      }
+      return res.json({
+        ok: true,
+        scopeMode: roster.scopeMode,
+        count: staff.length,
+        roster: redactStaffList(staff.slice(0, 200), ctx),
+        pendingLeave,
+        pendingOvertime: 0,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load team summary.' });
+    }
+  });
+
+  app.get('/api/hr/analytics/dashboard', requireHrAny('hr.*', 'hr.reports.view', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const canViewSensitive = userCanViewOrgSensitiveHr(req.user);
+      return res.json({ ok: true, analytics: getHrAnalyticsDashboard(db, scope, { canViewSensitive }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load HR analytics.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/loan-schedule', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (!isSelf && !hrUserHas(req.user, 'hr.loans.manage') && !hrUserHas(req.user, 'hr.staff.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      return res.json({ ok: true, schedule: getStaffLoanSchedule(db, userId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load loan schedule.' });
+    }
+  });
+
+  app.get('/api/hr/loan-schedule-issues', requireHrAny('hr.loans.manage', 'hr.payroll.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, issues: listLoanScheduleIssues(db, hrListScope(req)) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load loan schedule issues.' });
+    }
+  });
+
   app.get('/api/hr/departments', requireHrAny('hr.settings.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -2604,6 +2786,193 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load promotion due report.' });
+    }
+  });
+
+  // ── Phase 6: Payroll control ─────────────────────
+  app.get('/api/hr/payroll-runs/:runId/reconciliation', requireHrAny('hr.*', 'hr.payroll.manage', 'hr.payroll.view_sensitive'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = getPayrollReconciliation(db, req.params.runId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load payroll reconciliation.' });
+    }
+  });
+
+  app.post('/api/hr/payroll-runs/:runId/bank-export-record', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = recordPayrollBankExport(db, req.params.runId, req.body?.totalNgn, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record bank export.' });
+    }
+  });
+
+  app.patch('/api/hr/payroll-runs/:runId/lines/:userId/hold', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = setPayrollLineHold(db, req.params.runId, req.params.userId, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update payroll hold.' });
+    }
+  });
+
+  app.patch('/api/hr/staff/:userId/salary-hold', requireHrAny('hr.*', 'hr.payroll.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = setStaffSalaryHold(db, req.params.userId, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update salary hold.' });
+    }
+  });
+
+  app.get('/api/hr/payroll-runs/:runId/bonus-requests', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, requests: listPayrollBonusRequests(db, req.params.runId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load bonus requests.' });
+    }
+  });
+
+  app.post('/api/hr/payroll-runs/:runId/bonus-requests', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = requestPayrollBonus(db, req.params.runId, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not request bonus.' });
+    }
+  });
+
+  app.post('/api/hr/bonus-requests/:id/approve', requireHrAny('hr.*', 'hr.payroll.gm_approve', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = approvePayrollBonusRequest(db, req.params.id, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not approve bonus.' });
+    }
+  });
+
+  app.post('/api/hr/bonus-requests/:id/reject', requireHrAny('hr.*', 'hr.payroll.gm_approve', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = rejectPayrollBonusRequest(db, req.params.id, req.body?.reason, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not reject bonus.' });
+    }
+  });
+
+  // ── Phase 6: Skills, grievances, exit interviews ─
+  app.get('/api/hr/staff/:userId/skills', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, skills: listStaffSkills(db, req.params.userId) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load skills.' });
+    }
+  });
+
+  app.put('/api/hr/staff/:userId/skills', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertStaffSkill(db, req.params.userId, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save skill.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/promotion-readiness', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = getPromotionReadiness(db, req.params.userId);
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load promotion readiness.' });
+    }
+  });
+
+  app.get('/api/hr/grievances', requireHrAny('hr.staff.manage', 'hr.discipline.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, grievances: listGrievances(db, hrListScope(req)) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load grievances.' });
+    }
+  });
+
+  app.post('/api/hr/grievances', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createGrievance(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit grievance.' });
+    }
+  });
+
+  app.patch('/api/hr/grievances/:id', requireHrAny('hr.staff.manage', 'hr.discipline.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchGrievance(db, req.params.id, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update grievance.' });
+    }
+  });
+
+  app.get('/api/hr/exit-clearance/:id/interview', requireHrAny('hr.exit.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const interview = getExitInterview(db, req.params.id);
+      return res.json({ ok: true, interview });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load exit interview.' });
+    }
+  });
+
+  app.put('/api/hr/exit-clearance/:id/interview', requireHrAny('hr.exit.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExitInterview(db, req.params.id, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save exit interview.' });
     }
   });
 }

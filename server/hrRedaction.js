@@ -15,7 +15,8 @@ const STAFF_SENSITIVE_KEYS = [
   'pensionRsaPin',
   'bankName',
   'bankAccountName',
-  'bankAccountNoMasked',
+  'bankAccountNo',
+  'bankCode',
   'bonusAccrualNote',
 ];
 
@@ -35,15 +36,19 @@ const PAYROLL_LINE_SENSITIVE = [
  */
 export function redactStaffProfile(row, ctx = {}) {
   if (!row || typeof row !== 'object') return row;
-  if (ctx.canViewSensitive) {
-    if (ctx.maskBank && row.bankAccountNoMasked) {
-      return { ...row, bankAccountNoMasked: maskAccount(row.bankAccountNoMasked) };
-    }
-    return row;
-  }
   const out = { ...row };
+  if (ctx.canViewSensitive) {
+    if (ctx.maskBank) {
+      if (out.bankAccountNo) out.bankAccountNo = maskAccount(out.bankAccountNo);
+      if (out.bankAccountNoMasked) out.bankAccountNoMasked = maskAccount(out.bankAccountNoMasked);
+    }
+    return out;
+  }
   for (const k of STAFF_SENSITIVE_KEYS) {
     if (k in out) out[k] = null;
+  }
+  if (row.bankAccountNoMasked) {
+    out.bankAccountNoMasked = maskAccount(row.bankAccountNoMasked);
   }
   if ('profileExtra' in out && out.profileExtra && typeof out.profileExtra === 'object') {
     const pe = { ...out.profileExtra };

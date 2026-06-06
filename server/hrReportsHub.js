@@ -17,6 +17,7 @@ import {
 import { listHrTransferRequests } from './hrTransferRequests.js';
 import {
   hrTablesReady,
+  listHrAuditEventsGlobal,
   listHrLeaveBalances,
   listHrPolicyAcknowledgements,
   listHrRequests,
@@ -25,6 +26,8 @@ import {
   listPayrollRuns,
   listRecentDisciplinaryEvents,
 } from './hrOps.js';
+import { listGrievances } from './hrGovernanceOps.js';
+import { getPayrollReconciliation } from './hrPayrollControl.js';
 
 const COMPANY = 'Zarewa Aluminium & Plastics Ltd';
 
@@ -52,6 +55,9 @@ export const HR_REPORT_CATALOG = [
   { id: 'property-return', category: 'discipline', label: 'Property return report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch'] },
   { id: 'document-expiry', category: 'compliance', label: 'Document expiry / missing', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch'] },
   { id: 'policy-acknowledgement', category: 'compliance', label: 'Policy acknowledgement report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch'] },
+  { id: 'hr-audit-trail', category: 'compliance', label: 'HR audit trail', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'fromIso', 'toIso'] },
+  { id: 'grievance-report', category: 'compliance', label: 'Grievance report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'fromIso', 'toIso', 'status'] },
+  { id: 'payroll-exceptions', category: 'payroll', label: 'Payroll exception report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['periodYyyymm'], sensitive: true },
   { id: 'headcount', category: 'employee', label: 'Headcount (legacy)', csv: true, xlsx: true, pdf: true, hidden: true },
   { id: 'turnover', category: 'discipline', label: 'Turnover / exit (legacy)', csv: true, xlsx: false, pdf: false, hidden: true },
   { id: 'pending-transfers', category: 'discipline', label: 'Pending transfers', csv: true, xlsx: true, pdf: true, filters: ['branch', 'status'] },
@@ -521,6 +527,100 @@ function runPolicyAcknowledgement(db, scope, filters, opts) {
   return wrapResult('policy-acknowledgement', 'Policy Acknowledgement Report', cols, rows, filters, opts.actor);
 }
 
+function runHrAuditTrail(db, scope, filters, opts) {
+  const events = listHrAuditEventsGlobal(db, scope, {
+    limit: 300,
+    fromIso: filters.fromIso,
+    toIso: filters.toIso,
+  });
+  const rows = events.map((e) => ({
+    atIso: e.atIso || '',
+    actorDisplayName: e.actorDisplayName || e.actorUserId || '',
+    action: e.action || '',
+    entityKind: e.entityKind || '',
+    entityId: e.entityId || '',
+    branchId: e.branchId || '',
+    reason: e.reason || '',
+  }));
+  const cols = [
+    { key: 'atIso', label: 'When' },
+    { key: 'actorDisplayName', label: 'Actor' },
+    { key: 'action', label: 'Action' },
+    { key: 'entityKind', label: 'Entity' },
+    { key: 'entityId', label: 'Entity ID' },
+    { key: 'branchId', label: 'Branch' },
+    { key: 'reason', label: 'Reason' },
+  ];
+  return wrapResult('hr-audit-trail', 'HR Audit Trail', cols, rows, filters, opts.actor);
+}
+
+function runGrievanceReport(db, scope, filters, opts) {
+  let items = listGrievances(db, scope);
+  if (filters.status) items = items.filter((g) => g.status === filters.status);
+  if (filters.fromIso) items = items.filter((g) => String(g.createdAtIso || '').slice(0, 10) >= filters.fromIso);
+  if (filters.toIso) items = items.filter((g) => String(g.createdAtIso || '').slice(0, 10) <= filters.toIso);
+  const rows = items.map((g) => ({
+    summary: g.summary,
+    category: g.category,
+    status: g.status,
+    submitterDisplayName: g.submitterDisplayName,
+    branchId: g.branchId || '',
+    createdAtIso: g.createdAtIso || '',
+    resolvedAtIso: g.resolvedAtIso || '',
+  }));
+  const cols = [
+    { key: 'summary', label: 'Summary' },
+    { key: 'category', label: 'Category' },
+    { key: 'status', label: 'Status' },
+    { key: 'submitterDisplayName', label: 'Submitter' },
+    { key: 'branchId', label: 'Branch' },
+    { key: 'createdAtIso', label: 'Submitted' },
+    { key: 'resolvedAtIso', label: 'Resolved' },
+  ];
+  return wrapResult('grievance-report', 'Grievance Report', cols, rows, filters, opts.actor);
+}
+
+function runPayrollExceptions(db, scope, filters, opts) {
+  const runs = listPayrollRuns(db, scope).filter((r) => {
+    if (filters.periodYyyymm && String(r.periodYyyymm) !== String(filters.periodYyyymm)) return false;
+    return r.status !== 'draft';
+  });
+  const rows = [];
+  for (const run of runs.slice(0, 12)) {
+    const recon = getPayrollReconciliation(db, run.id);
+    if (!recon?.ok) continue;
+    for (const a of recon.anomalies || []) {
+      rows.push({
+        periodYyyymm: run.periodYyyymm,
+        runStatus: run.status,
+        anomalyType: a.type,
+        message: a.message,
+        heldCount: recon.heldCount ?? '',
+        varianceNgn: recon.varianceNgn ?? '',
+      });
+    }
+    if (!(recon.anomalies || []).length && recon.heldCount > 0) {
+      rows.push({
+        periodYyyymm: run.periodYyyymm,
+        runStatus: run.status,
+        anomalyType: 'held_lines',
+        message: `${recon.heldCount} staff on hold`,
+        heldCount: recon.heldCount,
+        varianceNgn: recon.varianceNgn ?? 0,
+      });
+    }
+  }
+  const cols = [
+    { key: 'periodYyyymm', label: 'Period' },
+    { key: 'runStatus', label: 'Run Status' },
+    { key: 'anomalyType', label: 'Type' },
+    { key: 'message', label: 'Detail' },
+    { key: 'heldCount', label: 'Held Count' },
+    { key: 'varianceNgn', label: 'Variance (NGN)' },
+  ];
+  return wrapResult('payroll-exceptions', 'Payroll Exception Report', cols, rows, filters, opts.actor);
+}
+
 function runTurnover(db, scope, filters, opts) {
   const staff = filterStaffList(listHrStaff(db, scope, { includeInactive: true }), filters);
   const rows = staff
@@ -593,6 +693,9 @@ const RUNNERS = {
   'property-return': runPropertyReturn,
   'document-expiry': runDocumentExpiry,
   'policy-acknowledgement': runPolicyAcknowledgement,
+  'hr-audit-trail': runHrAuditTrail,
+  'grievance-report': runGrievanceReport,
+  'payroll-exceptions': runPayrollExceptions,
   turnover: runTurnover,
   'pending-transfers': (db, scope, f, o) => runTransferReport(db, scope, f, o, { pendingOnly: true }),
   'completed-transfers': (db, scope, f, o) => runTransferReport(db, scope, f, o, { completedOnly: true }),

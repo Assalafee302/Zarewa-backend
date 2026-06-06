@@ -149,6 +149,47 @@ export function buildHrLetterContent(letterKind, staff, extra = {}) {
       extra.purposeOfLetter ? `Purpose: ${extra.purposeOfLetter}` : '',
       '', 'Yours faithfully,', 'Human Resources (HQ)',
     ].filter(Boolean),
+    transfer_inter_branch: () => [
+      COMPANY, '', `Date: ${date}`, '', name, '',
+      'Dear ' + name.split(' ')[0] + ',', '',
+      `You are hereby notified of your transfer from ${extra.fromBranch || staff.branchId || '—'} to ${extra.toBranch || '—'}, effective ${extra.effectiveDate || date}.`,
+      extra.toDepartment ? `New department: ${extra.toDepartment}` : '',
+      extra.toDesignation ? `New designation: ${extra.toDesignation}` : '',
+      extra.reason ? `Reason: ${extra.reason}` : '',
+      '', 'Please report to your new line manager on the effective date.', '',
+      'Yours faithfully,', 'Human Resources (HQ)',
+    ].filter(Boolean),
+    transfer_in_branch: () => [
+      COMPANY, '', `Date: ${date}`, '', name, '',
+      'Dear ' + name.split(' ')[0] + ',', '',
+      `This letter confirms your transfer within ${extra.fromBranch || staff.branchId || 'your branch'} from ${extra.fromDepartment || dept} to ${extra.toDepartment || '—'}, effective ${extra.effectiveDate || date}.`,
+      extra.toDesignation ? `New designation: ${extra.toDesignation}` : '',
+      '', 'Yours faithfully,', 'Human Resources (HQ)',
+    ].filter(Boolean),
+    transfer_hq_to_branch: () => [
+      COMPANY, '', `Date: ${date}`, '', name, '',
+      'Dear ' + name.split(' ')[0] + ',', '',
+      `You are assigned from HQ to ${extra.toBranch || 'branch operations'}, effective ${extra.effectiveDate || date}.`,
+      extra.toDepartment ? `Department: ${extra.toDepartment}` : '',
+      extra.toDesignation ? `Designation: ${extra.toDesignation}` : '',
+      '', 'Yours faithfully,', 'Human Resources (HQ)',
+    ].filter(Boolean),
+    transfer_branch_to_hq: () => [
+      COMPANY, '', `Date: ${date}`, '', name, '',
+      'Dear ' + name.split(' ')[0] + ',', '',
+      `You are transferred from ${extra.fromBranch || 'branch'} to HQ, effective ${extra.effectiveDate || date}.`,
+      extra.toDepartment ? `HQ department: ${extra.toDepartment}` : '',
+      extra.toDesignation ? `Designation: ${extra.toDesignation}` : '',
+      '', 'Yours faithfully,', 'Human Resources (HQ)',
+    ].filter(Boolean),
+    transfer_temporary: () => [
+      COMPANY, '', `Date: ${date}`, '', name, '',
+      'Dear ' + name.split(' ')[0] + ',', '',
+      `You are temporarily assigned to ${extra.toBranch || extra.toDepartment || '—'} from ${extra.effectiveDate || date} until ${extra.endDate || 'further notice'}.`,
+      extra.reason ? `Purpose: ${extra.reason}` : '',
+      '', 'This assignment does not alter your permanent terms unless stated otherwise.', '',
+      'Yours faithfully,', 'Human Resources (HQ)',
+    ].filter(Boolean),
   };
 
   const fn = templates[kind];

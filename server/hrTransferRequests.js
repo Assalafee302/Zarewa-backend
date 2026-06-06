@@ -1,9 +1,9 @@
 /**
- * HR transfer request workflow (Phase 4).
+ * HR transfer request workflow (Phase 4–5).
  * @module server/hrTransferRequests
  */
 
-import { hrTablesReady, upsertHrStaffProfile } from './hrOps.js';
+import { hrTablesReady, listHrStaff, upsertHrStaffProfile } from './hrOps.js';
 
 const TRANSFER_STATUSES = [
   'draft',
@@ -35,21 +35,44 @@ function newId() {
   return `xfer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function hrTransferRequestsTableReady(db) {
+function safeJsonParse(v, fallback) {
+  if (v == null || v === '') return fallback;
   try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_transfer_requests'`).get()
-    );
+    return JSON.parse(String(v));
   } catch {
-    return false;
+    return fallback;
   }
 }
 
-function mapRow(row, staffName) {
+export function transferRequiresGmApproval(transferType) {
+  return ['inter_branch', 'hq_to_branch', 'branch_to_hq'].includes(String(transferType || ''));
+}
+
+export function transferRequiresBranchReview(transferType) {
+  return String(transferType || '') === 'inter_branch';
+}
+
+function initialStatusOnSubmit(transferType) {
+  if (transferRequiresBranchReview(transferType)) return 'branch_review';
+  return 'hr_review';
+}
+
+function parseTimeline(row) {
+  return safeJsonParse(row?.timeline_json, []);
+}
+
+function appendTimeline(existing, entry) {
+  const list = Array.isArray(existing) ? [...existing] : [];
+  list.push(entry);
+  return list;
+}
+
+function mapRow(row) {
+  const timeline = parseTimeline(row);
   return {
     id: row.id,
     userId: row.user_id,
-    staffDisplayName: staffName || row.staffDisplayName,
+    staffDisplayName: row.staffDisplayName,
     transferType: row.transfer_type,
     fromBranchId: row.from_branch_id,
     toBranchId: row.to_branch_id,
@@ -64,10 +87,24 @@ function mapRow(row, staffName) {
     recommendedByUserId: row.recommended_by_user_id,
     approvedByUserId: row.approved_by_user_id,
     notes: row.notes,
+    rejectionReason: row.rejection_reason || null,
+    resubmittedFromId: row.resubmitted_from_id || null,
+    timeline,
+    requiresGmApproval: transferRequiresGmApproval(row.transfer_type),
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
     completedAtIso: row.completed_at_iso,
   };
+}
+
+export function hrTransferRequestsTableReady(db) {
+  try {
+    return Boolean(
+      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_transfer_requests'`).get()
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function listHrTransferRequests(db, scope = {}, filters = {}) {
@@ -75,10 +112,21 @@ export function listHrTransferRequests(db, scope = {}, filters = {}) {
   let sql = `SELECT t.*, u.display_name AS staffDisplayName FROM hr_transfer_requests t
              JOIN app_users u ON u.id = t.user_id WHERE 1=1`;
   const params = [];
-  if (scope.branchId) {
-    sql += ` AND (t.from_branch_id = ? OR t.to_branch_id = ?)`;
-    params.push(scope.branchId, scope.branchId);
+
+  const scopeMode = scope.scopeMode || 'branch';
+  if (!scope.viewAll && scopeMode !== 'org') {
+    if (scopeMode === 'team' || scopeMode === 'department') {
+      const staff = listHrStaff(db, scope, { includeInactive: true });
+      const ids = staff.map((s) => s.userId);
+      if (!ids.length) return [];
+      sql += ` AND t.user_id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    } else if (scope.branchId) {
+      sql += ` AND (t.from_branch_id = ? OR t.to_branch_id = ?)`;
+      params.push(scope.branchId, scope.branchId);
+    }
   }
+
   if (filters.userId) {
     sql += ` AND t.user_id = ?`;
     params.push(filters.userId);
@@ -125,13 +173,21 @@ export function createHrTransferRequest(db, body, actor) {
   const profile = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   const id = newId();
   const ts = nowIso();
-  const status = body?.submit ? 'submitted' : 'draft';
+  const status = body?.submit ? initialStatusOnSubmit(transferType) : 'draft';
+  const timeline = appendTimeline([], {
+    at: ts,
+    action: body?.submit ? 'submit' : 'create',
+    actorUserId: actor?.id || null,
+    status,
+    note: reason,
+  });
+
   db.prepare(
     `INSERT INTO hr_transfer_requests (
       id, user_id, transfer_type, from_branch_id, to_branch_id, from_department, to_department,
       from_designation, to_designation, effective_date_iso, reason, status, requested_by_user_id,
-      recommended_by_user_id, notes, created_at_iso, updated_at_iso
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      recommended_by_user_id, notes, created_at_iso, updated_at_iso, timeline_json, resubmitted_from_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id,
     userId,
@@ -149,9 +205,29 @@ export function createHrTransferRequest(db, body, actor) {
     body?.recommendedByUserId || null,
     body?.notes || null,
     ts,
-    ts
+    ts,
+    JSON.stringify(timeline),
+    body?.resubmittedFromId || null
   );
   return { ok: true, transfer: getHrTransferRequest(db, id) };
+}
+
+function persistTransferUpdate(db, id, { status, timeline, rejectionReason, approvedByUserId, ts }) {
+  try {
+    db.prepare(
+      `UPDATE hr_transfer_requests SET status = ?, updated_at_iso = ?,
+       approved_by_user_id = COALESCE(?, approved_by_user_id),
+       rejection_reason = COALESCE(?, rejection_reason),
+       timeline_json = ?
+       WHERE id = ?`
+    ).run(status, ts, approvedByUserId ?? null, rejectionReason ?? null, JSON.stringify(timeline), id);
+  } catch {
+    db.prepare(
+      `UPDATE hr_transfer_requests SET status = ?, updated_at_iso = ?,
+       approved_by_user_id = CASE WHEN ? IS NOT NULL THEN ? ELSE approved_by_user_id END
+       WHERE id = ?`
+    ).run(status, ts, approvedByUserId, approvedByUserId, id);
+  }
 }
 
 export function patchHrTransferRequest(db, id, body, actor) {
@@ -161,20 +237,28 @@ export function patchHrTransferRequest(db, id, body, actor) {
 
   const action = String(body?.action || '').trim();
   const ts = nowIso();
-  let status = row.status;
+  let timeline = parseTimeline(row);
+  const actorId = actor?.id || null;
 
-  if (action === 'submit' && row.status === 'draft') status = 'submitted';
-  else if (action === 'branch_review' && ['submitted'].includes(row.status)) status = 'branch_review';
-  else if (action === 'hr_review' && ['submitted', 'branch_review'].includes(row.status)) status = 'hr_review';
-  else if (action === 'gm_approval' && ['hr_review'].includes(row.status)) status = 'gm_approval';
-  else if (action === 'approve' && ['submitted', 'branch_review', 'hr_review', 'gm_approval'].includes(row.status)) {
-    status = 'approved';
-  } else if (action === 'reject') status = 'rejected';
-  else if (action === 'cancel' && !['completed', 'cancelled'].includes(row.status)) status = 'cancelled';
-  else if (action === 'complete' && row.status === 'approved') {
-    const complete = completeHrTransferRequest(db, id, actor);
-    return complete;
-  } else if (!action) {
+  if (action === 'resubmit' && row.status === 'rejected') {
+    const newBody = {
+      ...body,
+      userId: row.user_id,
+      transferType: row.transfer_type,
+      fromBranchId: row.from_branch_id,
+      toBranchId: body?.toBranchId ?? row.to_branch_id,
+      toDepartment: body?.toDepartment ?? row.to_department,
+      toDesignation: body?.toDesignation ?? row.to_designation,
+      effectiveDateIso: body?.effectiveDateIso ?? row.effective_date_iso,
+      reason: body?.reason ?? row.reason,
+      notes: body?.notes ?? row.notes,
+      submit: true,
+      resubmittedFromId: id,
+    };
+    return createHrTransferRequest(db, newBody, actor);
+  }
+
+  if (!action) {
     db.prepare(
       `UPDATE hr_transfer_requests SET
         to_branch_id = COALESCE(?, to_branch_id),
@@ -196,16 +280,51 @@ export function patchHrTransferRequest(db, id, body, actor) {
       id
     );
     return { ok: true, transfer: getHrTransferRequest(db, id) };
+  }
+
+  if (action === 'complete' && row.status === 'approved') {
+    return completeHrTransferRequest(db, id, actor);
+  }
+
+  let status = row.status;
+  let rejectionReason = null;
+  let approvedByUserId = null;
+
+  if (action === 'submit' && row.status === 'draft') {
+    status = initialStatusOnSubmit(row.transfer_type);
+  } else if (action === 'branch_review' && row.status === 'submitted') {
+    status = 'branch_review';
+  } else if (action === 'hr_review' && ['submitted', 'branch_review'].includes(row.status)) {
+    status = 'hr_review';
+  } else if (action === 'gm_approval' && row.status === 'hr_review') {
+    status = 'gm_approval';
+  } else if (action === 'approve') {
+    if (row.status === 'hr_review' && transferRequiresGmApproval(row.transfer_type)) {
+      status = 'gm_approval';
+    } else if (['submitted', 'branch_review', 'hr_review', 'gm_approval'].includes(row.status)) {
+      status = 'approved';
+      approvedByUserId = actorId;
+    } else {
+      return { ok: false, error: `Cannot approve transfer in status ${row.status}.` };
+    }
+  } else if (action === 'reject') {
+    status = 'rejected';
+    rejectionReason = String(body?.rejectionReason || body?.reason || '').trim() || 'Rejected';
+    approvedByUserId = actorId;
+  } else if (action === 'cancel' && !['completed', 'cancelled'].includes(row.status)) {
+    status = 'cancelled';
   } else {
     return { ok: false, error: `Cannot ${action} transfer in status ${row.status}.` };
   }
 
-  db.prepare(
-    `UPDATE hr_transfer_requests SET status = ?, updated_at_iso = ?,
-     approved_by_user_id = CASE WHEN ? IN ('approved','rejected') THEN ? ELSE approved_by_user_id END
-     WHERE id = ?`
-  ).run(status, ts, action, actor?.id || null, id);
-
+  timeline = appendTimeline(timeline, {
+    at: ts,
+    action,
+    actorUserId: actorId,
+    status,
+    note: rejectionReason || body?.note || null,
+  });
+  persistTransferUpdate(db, id, { status, timeline, rejectionReason, approvedByUserId, ts });
   return { ok: true, transfer: getHrTransferRequest(db, id) };
 }
 
@@ -225,9 +344,22 @@ export function completeHrTransferRequest(db, id, actor) {
   const r = upsertHrStaffProfile(db, actor?.id || null, patch);
   if (!r.ok) return r;
 
-  db.prepare(
-    `UPDATE hr_transfer_requests SET status = 'completed', completed_at_iso = ?, updated_at_iso = ? WHERE id = ?`
-  ).run(ts, ts, id);
+  let timeline = parseTimeline(row);
+  timeline = appendTimeline(timeline, {
+    at: ts,
+    action: 'complete',
+    actorUserId: actor?.id || null,
+    status: 'completed',
+  });
+  try {
+    db.prepare(
+      `UPDATE hr_transfer_requests SET status = 'completed', completed_at_iso = ?, updated_at_iso = ?, timeline_json = ? WHERE id = ?`
+    ).run(ts, ts, JSON.stringify(timeline), id);
+  } catch {
+    db.prepare(
+      `UPDATE hr_transfer_requests SET status = 'completed', completed_at_iso = ?, updated_at_iso = ? WHERE id = ?`
+    ).run(ts, ts, id);
+  }
 
   return { ok: true, transfer: getHrTransferRequest(db, id) };
 }

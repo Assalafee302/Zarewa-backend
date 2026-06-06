@@ -2731,6 +2731,157 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrNewFieldsPhase10(db);
   migrateHrPhase2Policy2026(db);
   migrateHrPhase4Ops2026(db);
+  migrateHrPhase5Ops2026(db);
+  migrateHrPhase5aCompleteness2026(db);
+  migrateHrPhase6Governance2026(db);
+}
+
+/** Phase 5A: document verification, ID card metadata. */
+function migrateHrPhase5aCompleteness2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const docs = cols('hr_staff_documents');
+  if (docs.size) {
+    if (!docs.has('expiry_date_iso')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN expiry_date_iso TEXT`);
+    if (!docs.has('issue_date_iso')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN issue_date_iso TEXT`);
+    if (!docs.has('verification_status')) {
+      db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending'`);
+    }
+    if (!docs.has('verified_by_user_id')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN verified_by_user_id TEXT`);
+    if (!docs.has('verified_at_iso')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN verified_at_iso TEXT`);
+    if (!docs.has('rejection_reason')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN rejection_reason TEXT`);
+    if (!docs.has('notes')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN notes TEXT`);
+    if (!docs.has('doc_category')) db.exec(`ALTER TABLE hr_staff_documents ADD COLUMN doc_category TEXT`);
+  }
+  const cards = cols('hr_id_cards');
+  if (cards.size) {
+    if (!cards.has('issue_date_iso')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN issue_date_iso TEXT`);
+    if (!cards.has('expiry_date_iso')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN expiry_date_iso TEXT`);
+    if (!cards.has('blood_group')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN blood_group TEXT`);
+    if (!cards.has('emergency_contact')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN emergency_contact TEXT`);
+    if (!cards.has('replacement_reason')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN replacement_reason TEXT`);
+    if (!cards.has('lost_damaged_flag')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN lost_damaged_flag INTEGER NOT NULL DEFAULT 0`);
+    if (!cards.has('approved_by_user_id')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN approved_by_user_id TEXT`);
+    if (!cards.has('printed_by_user_id')) db.exec(`ALTER TABLE hr_id_cards ADD COLUMN printed_by_user_id TEXT`);
+  }
+}
+
+/** Phase 6 governance: payroll control, skills, grievances, exit interviews. */
+function migrateHrPhase6Governance2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const lines = cols('hr_payroll_lines');
+  if (lines.size) {
+    if (!lines.has('pay_hold')) db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN pay_hold INTEGER NOT NULL DEFAULT 0`);
+    if (!lines.has('hold_reason')) db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN hold_reason TEXT`);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_bonus_requests (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      bonus_type TEXT NOT NULL DEFAULT 'half_month',
+      status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
+      requested_at_iso TEXT NOT NULL,
+      requested_by_user_id TEXT,
+      approved_at_iso TEXT,
+      approved_by_user_id TEXT,
+      rejected_at_iso TEXT,
+      rejection_reason TEXT,
+      applied_at_iso TEXT,
+      FOREIGN KEY (run_id) REFERENCES hr_payroll_runs(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_bonus_requests_run ON hr_bonus_requests(run_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_payroll_reconciliations (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL UNIQUE,
+      bank_export_total_ngn INTEGER NOT NULL DEFAULT 0,
+      exported_at_iso TEXT,
+      exported_by_user_id TEXT,
+      reconciled_at_iso TEXT,
+      reconciled_by_user_id TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES hr_payroll_runs(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_staff_skills (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      proficiency_level INTEGER NOT NULL DEFAULT 3,
+      verified INTEGER NOT NULL DEFAULT 0,
+      verified_at_iso TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      updated_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_staff_skills_user ON hr_staff_skills(user_id);
+
+    CREATE TABLE IF NOT EXISTS hr_grievances (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      branch_id TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'general',
+      summary TEXT NOT NULL,
+      details TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      anonymous_flag INTEGER NOT NULL DEFAULT 0,
+      assigned_to_user_id TEXT,
+      resolution_note TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      resolved_at_iso TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_grievances_branch ON hr_grievances(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_exit_interviews (
+      id TEXT PRIMARY KEY,
+      clearance_id TEXT NOT NULL UNIQUE,
+      user_id TEXT,
+      responses_json TEXT NOT NULL,
+      conducted_at_iso TEXT,
+      conducted_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+  `);
+}
+
+/** Phase 5: transfer timeline, letter linking metadata. */
+function migrateHrPhase5Ops2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const xfer = cols('hr_transfer_requests');
+  if (xfer.size) {
+    if (!xfer.has('rejection_reason')) db.exec(`ALTER TABLE hr_transfer_requests ADD COLUMN rejection_reason TEXT`);
+    if (!xfer.has('timeline_json')) db.exec(`ALTER TABLE hr_transfer_requests ADD COLUMN timeline_json TEXT`);
+    if (!xfer.has('resubmitted_from_id')) db.exec(`ALTER TABLE hr_transfer_requests ADD COLUMN resubmitted_from_id TEXT`);
+  }
+  const letters = cols('hr_employment_letters');
+  if (letters.size && !letters.has('source_record_kind')) {
+    db.exec(`ALTER TABLE hr_employment_letters ADD COLUMN source_record_kind TEXT`);
+    db.exec(`ALTER TABLE hr_employment_letters ADD COLUMN source_record_id TEXT`);
+  }
 }
 
 /** Phase 4: master data, transfer requests, bank fields (2026). */

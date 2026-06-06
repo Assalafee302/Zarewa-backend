@@ -19,6 +19,11 @@ import {
   notifyHrRequestOutcome,
   notifyPayrollRunStatus,
 } from './hrNotifications.js';
+import { encryptBankAccount, maskBankAccount, decryptBankAccount, storedBankToMasked } from './hrBankCrypto.js';
+import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
+import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
+import { computeProfileCompleteness } from './hrProfileCompleteness.js';
+import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 
 const REQUEST_KINDS = new Set([
   'leave',
@@ -34,7 +39,7 @@ const REQUEST_KINDS = new Set([
   'other',
 ]);
 
-function nowIso() {
+export function nowIso() {
   return new Date().toISOString();
 }
 
@@ -235,9 +240,7 @@ export function appendHrAuditEvent(db, event = {}) {
  * @param {import('better-sqlite3').Database} db
  */
 export function hrTablesReady(db) {
-  return Boolean(
-    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_profiles'`).get()
-  );
+  return hrCoreTablesReady(db);
 }
 
 /**
@@ -246,7 +249,9 @@ export function hrTablesReady(db) {
 export function hrListScope(req) {
   const viewAll = Boolean(req.workspaceViewAll) && canUseAllBranchesRollup(req.user);
   const branchId = String(req.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID;
-  return { viewAll, branchId };
+  const scopeMode = resolveHrScopeMode(req.user, req.query?.scope);
+  const actorUserId = String(req.user?.id || '').trim() || null;
+  return { viewAll, branchId, scopeMode, actorUserId };
 }
 
 /**
@@ -263,6 +268,7 @@ export function listHrStaff(db, scope, opts = {}) {
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
            u.avatar_url AS avatarUrl,
            p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
+           p.department_id AS departmentId, p.designation_id AS designationId,
            p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
            p.contract_end_iso AS contractEndIso,
            p.probation_end_iso AS probationEndIso,
@@ -278,6 +284,8 @@ export function listHrStaff(db, scope, opts = {}) {
            p.self_service_eligible AS selfServiceEligible,
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
+           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
+           p.nhis_deduction_ngn AS nhisDeductionNgn,
            p.profile_extra_json AS profileExtraJson,
            p.line_manager_user_id AS lineManagerUserId,
            p.leave_entitlement_band AS leaveEntitlementBand,
@@ -293,7 +301,22 @@ export function listHrStaff(db, scope, opts = {}) {
     sql += ` AND u.status = 'active'`;
   }
   if (!viewAll) {
-    if (includeUnassigned) {
+    const scopeMode = scope.scopeMode || 'branch';
+    const actorUserId = scope.actorUserId;
+    if (scopeMode === 'team' && actorUserId) {
+      sql += ` AND p.line_manager_user_id = ?`;
+      args.push(actorUserId);
+    } else if (scopeMode === 'department' && actorUserId) {
+      const deptIds = getDepartmentHeadDepartmentIds(db, actorUserId);
+      if (deptIds.length) {
+        const ph = deptIds.map(() => '?').join(',');
+        sql += ` AND (p.department_id IN (${ph}) OR p.line_manager_user_id = ?)`;
+        args.push(...deptIds, actorUserId);
+      } else {
+        sql += ` AND p.line_manager_user_id = ?`;
+        args.push(actorUserId);
+      }
+    } else if (includeUnassigned) {
       sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL)`;
       args.push(branchId);
     } else {
@@ -324,15 +347,22 @@ export function listHrStaff(db, scope, opts = {}) {
       },
     ])
   );
-  return rows.map((row) => ({
-    ...row,
-    selfServiceEligible: Boolean(Number(row.selfServiceEligible)),
-    nextOfKin: safeJsonParse(row.nextOfKinJson, null),
-    nextOfKinJson: undefined,
-    profileExtra: safeJsonParse(row.profileExtraJson, {}),
-    profileExtraJson: undefined,
-    ...buildStaffDerived(row, complianceByUserId),
-  }));
+  return rows.map((row) => {
+    const base = {
+      ...row,
+      selfServiceEligible: Boolean(Number(row.selfServiceEligible)),
+      nextOfKin: safeJsonParse(row.nextOfKinJson, null),
+      nextOfKinJson: undefined,
+      profileExtra: safeJsonParse(row.profileExtraJson, {}),
+      profileExtraJson: undefined,
+      ...buildStaffDerived(row, complianceByUserId),
+    };
+    const compliance = complianceByUserId.get(String(row.userId)) || {};
+    base.profileCompleteness = computeProfileCompleteness(base, {
+      handbookAcknowledged: compliance.handbookAcknowledged,
+    });
+    return base;
+  });
 }
 
 export function listHrCompensationInsights(db, scope, opts = {}) {
@@ -620,12 +650,111 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
   const salaryStep =
     body?.salaryStep !== undefined ? nullablePosInt(body.salaryStep) : prevRow?.salary_step ?? null;
 
+  let departmentId =
+    body?.departmentId !== undefined
+      ? String(body.departmentId || '').trim() || null
+      : prevRow?.department_id ?? null;
+  let designationId =
+    body?.designationId !== undefined
+      ? String(body.designationId || '').trim() || null
+      : prevRow?.designation_id ?? null;
+  let department =
+    body?.department !== undefined ? String(body.department ?? '').trim() || null : prevRow?.department ?? null;
+  let jobTitle =
+    body?.jobTitle !== undefined ? String(body.jobTitle ?? '').trim() || null : prevRow?.job_title ?? null;
+  let resolvedSalaryLevel = salaryLevel;
+  let resolvedSalaryStep = salaryStep;
+  let resolvedPromotionGrade =
+    body?.promotionGrade !== undefined
+      ? String(body.promotionGrade ?? '').trim() || null
+      : prevRow?.promotion_grade ?? null;
+
+  if (departmentId) {
+    const dept = getHrDepartment(db, departmentId);
+    if (dept?.name) department = dept.name;
+  }
+  if (designationId) {
+    const des = getHrDesignation(db, designationId);
+    if (des) {
+      if (des.title) jobTitle = des.title;
+      if (body?.salaryLevel === undefined && des.defaultSalaryLevel != null) {
+        resolvedSalaryLevel = des.defaultSalaryLevel;
+      }
+      if (body?.salaryStep === undefined && des.defaultSalaryStep != null) {
+        resolvedSalaryStep = des.defaultSalaryStep;
+      }
+      if (body?.promotionGrade === undefined && des.seniorityBand) {
+        resolvedPromotionGrade = des.seniorityBand;
+      }
+    }
+  }
+
+  const prevExtra = safeJsonParse(prevExtraRow?.profile_extra_json, {});
+  const personalPatch = body?.personal && typeof body.personal === 'object' ? body.personal : null;
+  const profileExtraMerged = (() => {
+    if (body?.profileExtra != null) return body.profileExtra;
+    const extra = { ...prevExtra };
+    if (personalPatch) extra.personal = { ...(extra.personal || {}), ...personalPatch };
+    if (body?.employmentStatus !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), employmentStatus: body.employmentStatus || null };
+    }
+    if (body?.confirmationDateIso !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), confirmationDateIso: body.confirmationDateIso || null };
+    }
+    if (body?.hrInternalNotes !== undefined) {
+      extra.hrNotes = { ...(extra.hrNotes || {}), internalRemarks: body.hrInternalNotes || null };
+    }
+    if (body?.specialConditions !== undefined) {
+      extra.hrNotes = { ...(extra.hrNotes || {}), specialConditions: body.specialConditions || null };
+    }
+    if (body?.supervisorName !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), supervisorName: body.supervisorName || null };
+    }
+    if (body?.salaryStatus !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), salaryStatus: body.salaryStatus || null };
+    }
+    if (body?.payrollRemarks !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), payrollRemarks: body.payrollRemarks || null };
+    }
+    if (body?.pensionAdministrator !== undefined) {
+      extra.statutory = { ...(extra.statutory || {}), pensionAdministrator: body.pensionAdministrator || null };
+    }
+    if (body?.nhisNumber !== undefined) {
+      extra.statutory = { ...(extra.statutory || {}), nhisNumber: body.nhisNumber || null };
+    }
+    if (body?.professionalCertificates !== undefined) {
+      extra.qualifications = { ...(extra.qualifications || {}), professionalCertificates: body.professionalCertificates || null };
+    }
+    if (body?.firstName !== undefined || body?.phone !== undefined) {
+      extra.personal = {
+        ...(extra.personal || {}),
+        ...(body.firstName !== undefined ? { firstName: String(body.firstName || '').trim() || null } : {}),
+        ...(body.middleName !== undefined ? { middleName: String(body.middleName || '').trim() || null } : {}),
+        ...(body.surname !== undefined ? { surname: String(body.surname || '').trim() || null } : {}),
+        ...(body.phone !== undefined ? { phone: String(body.phone || '').trim() || null } : {}),
+        ...(body.personalEmail !== undefined ? { email: String(body.personalEmail || '').trim() || null } : {}),
+        ...(body.maritalStatus !== undefined ? { maritalStatus: String(body.maritalStatus || '').trim() || null } : {}),
+        ...(body.residentialAddress !== undefined ? { residentialAddress: String(body.residentialAddress || '').trim() || null } : {}),
+        ...(body.stateOfOrigin !== undefined ? { stateOfOrigin: String(body.stateOfOrigin || '').trim() || null } : {}),
+        ...(body.localGovernment !== undefined ? { localGovernment: String(body.localGovernment || '').trim() || null } : {}),
+        ...(body.nationality !== undefined ? { nationality: String(body.nationality || '').trim() || null } : {}),
+        ...(body.bloodGroup !== undefined ? { bloodGroup: String(body.bloodGroup || '').trim() || null } : {}),
+        ...(body.institution !== undefined ? { institution: String(body.institution || '').trim() || null } : {}),
+        ...(body.courseField !== undefined ? { courseField: String(body.courseField || '').trim() || null } : {}),
+        ...(body.yearCompleted !== undefined ? { yearCompleted: String(body.yearCompleted || '').trim() || null } : {}),
+      };
+    }
+    return Object.keys(extra).length ? extra : prevExtraRow ? prevExtra : null;
+  })();
+
   const row = {
     user_id: userId,
     branch_id: branchId,
     employee_no: String(body?.employeeNo ?? '').trim() || null,
-    job_title: String(body?.jobTitle ?? '').trim() || null,
-    department: String(body?.department ?? '').trim() || null,
+    job_title: jobTitle,
+    department,
+    department_id: departmentId,
+    designation_id: designationId,
     employment_type: String(body?.employmentType ?? '').trim() || null,
     date_joined_iso: String(body?.dateJoinedIso ?? '').trim() || null,
     probation_end_iso: String(body?.probationEndIso ?? '').trim() || null,
@@ -650,14 +779,14 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     bonus_accrual_note: String(body?.bonusAccrualNote ?? '').trim() || null,
     minimum_qualification: String(body?.minimumQualification ?? '').trim() || null,
     academic_qualification: String(body?.academicQualification ?? '').trim() || null,
-    promotion_grade: String(body?.promotionGrade ?? '').trim() || null,
+    promotion_grade: resolvedPromotionGrade,
     welfare_notes: String(body?.welfareNotes ?? '').trim() || null,
     training_summary: String(body?.trainingSummary ?? '').trim() || null,
     paye_tax_percent: nullableNonNegNumber(body?.payeTaxPercent),
     pension_percent_override: nullableNonNegNumber(body?.pensionPercentOverride),
     profile_extra_json:
-      body?.profileExtra != null
-        ? JSON.stringify(body.profileExtra)
+      profileExtraMerged != null
+        ? JSON.stringify(profileExtraMerged)
         : prevExtraRow
           ? prevExtraRow.profile_extra_json
           : null,
@@ -667,8 +796,8 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     line_manager_user_id: lineManagerUserId,
     leave_entitlement_band: leaveEntitlementBand,
     payroll_group: payrollGroup,
-    salary_level: salaryLevel,
-    salary_step: salaryStep,
+    salary_level: resolvedSalaryLevel,
+    salary_step: resolvedSalaryStep,
     // New Phase 10 fields
     gender:
       body?.gender !== undefined
@@ -677,7 +806,9 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     date_of_birth:
       body?.dateOfBirth !== undefined
         ? String(body.dateOfBirth ?? '').trim() || null
-        : prevRow?.date_of_birth ?? null,
+        : body?.dateOfBirthIso !== undefined
+          ? String(body.dateOfBirthIso ?? '').trim() || null
+          : prevRow?.date_of_birth ?? null,
     contract_end_iso:
       body?.contractEndIso !== undefined
         ? String(body.contractEndIso ?? '').trim() || null
@@ -685,7 +816,9 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     nhis_deduction_ngn:
       body?.nhisDeductionNgn !== undefined
         ? nullableNonNegNumber(body.nhisDeductionNgn) ?? 0
-        : prevRow?.nhis_deduction_ngn ?? 0,
+        : body?.nhisMonthlyDeductionNgn !== undefined
+          ? nullableNonNegNumber(body.nhisMonthlyDeductionNgn) ?? 0
+          : prevRow?.nhis_deduction_ngn ?? 0,
     nhis_provider:
       body?.nhisProvider !== undefined
         ? String(body.nhisProvider ?? '').trim() || null
@@ -698,6 +831,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
       db.prepare(
         `UPDATE hr_staff_profiles SET
           branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
+          department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
           tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
@@ -721,6 +855,7 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
       db.prepare(
         `UPDATE hr_staff_profiles SET
           branch_id=@branch_id, employee_no=@employee_no, job_title=@job_title, department=@department,
+          department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
           tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
@@ -771,7 +906,8 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     try {
       db.prepare(
         `INSERT INTO hr_staff_profiles (
-          user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
+          user_id, branch_id, employee_no, job_title, department, department_id, designation_id,
+          employment_type, date_joined_iso, probation_end_iso,
           bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
@@ -780,7 +916,8 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
           gender, date_of_birth, contract_end_iso, nhis_deduction_ngn, nhis_provider,
           updated_at_iso, updated_by_user_id
         ) VALUES (
-          @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
+          @user_id, @branch_id, @employee_no, @job_title, @department, @department_id, @designation_id,
+          @employment_type, @date_joined_iso, @probation_end_iso,
           @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
@@ -833,14 +970,29 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
 
   if (body?.bankAccountNo !== undefined || body?.bankCode !== undefined) {
     try {
-      db.prepare(
-        `UPDATE hr_staff_profiles SET bank_account_no = ?, bank_code = ? WHERE user_id = ?`
-      ).run(
-        body?.bankAccountNo != null ? String(body.bankAccountNo).trim() || null : prevRow?.bank_account_no ?? null,
-        body?.bankCode != null ? String(body.bankCode).trim() || null : prevRow?.bank_code ?? null,
-        userId
-      );
-    } catch { /* column may not exist pre-migration */ }
+      if (body?.bankAccountNo !== undefined) {
+        const plain = String(body.bankAccountNo || '').replace(/\s/g, '');
+        if (plain) {
+          const encrypted = encryptBankAccount(plain);
+          const masked = maskBankAccount(plain);
+          db.prepare(
+            `UPDATE hr_staff_profiles SET bank_account_no = ?, bank_account_no_masked = ? WHERE user_id = ?`
+          ).run(encrypted, masked, userId);
+        } else {
+          db.prepare(
+            `UPDATE hr_staff_profiles SET bank_account_no = NULL, bank_account_no_masked = NULL WHERE user_id = ?`
+          ).run(userId);
+        }
+      }
+      if (body?.bankCode !== undefined) {
+        db.prepare(`UPDATE hr_staff_profiles SET bank_code = ? WHERE user_id = ?`).run(
+          body?.bankCode != null ? String(body.bankCode).trim() || null : prevRow?.bank_code ?? null,
+          userId
+        );
+      }
+    } catch {
+      /* column may not exist pre-migration */
+    }
   }
 
   appendHrAuditEvent(db, {
@@ -2414,6 +2566,19 @@ export function computePayrollRun(db, runId) {
     const other = loanTotal + discFix;
     const net = gross - tax - pension - other;
     ins.run(runId, s.user_id, gross, bonus, deductionNgn, other, tax, pension, net);
+    const extraHold = safeJsonParse(s.profile_extra_json, {});
+    const salaryHeld = ['held', 'suspended'].includes(
+      String(extraHold?.employmentMeta?.salaryStatus || '').toLowerCase()
+    );
+    if (salaryHeld) {
+      try {
+        db.prepare(
+          `UPDATE hr_payroll_lines SET pay_hold = 1, hold_reason = ?, net_ngn = 0 WHERE run_id = ? AND user_id = ?`
+        ).run(extraHold?.employmentMeta?.payrollHoldReason || 'Salary on hold', runId, s.user_id);
+      } catch {
+        /* pay_hold column optional until migrate */
+      }
+    }
     for (const ln of loanParts) {
       insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
     }
@@ -2922,7 +3087,10 @@ function payrollLinesWithProfile(db, runId) {
     )
     .all(runId)
     .map((row) => {
-      const acct = String(row.bankAccountNo || row.bankAccountNoMasked || '').replace(/\s/g, '');
+      const acctRaw = row.bankAccountNo
+        ? decryptBankAccount(row.bankAccountNo)
+        : String(row.bankAccountNoMasked || '');
+      const acct = String(acctRaw || '').replace(/\s/g, '');
       const loanTotal = (loansByUser.get(row.user_id) || []).reduce(
         (s, x) => s + Math.round(Number(x.amountNgn) || 0),
         0
@@ -3860,13 +4028,56 @@ export function listHrAuditEventsForStaff(db, userId, limit = 50) {
         `SELECT e.id, e.occurred_at_iso AS atIso, e.actor_user_id AS actorUserId, e.actor_display_name AS actorDisplayName,
                 e.action, e.entity_kind AS entityKind, e.entity_id AS entityId, e.branch_id AS branchId, e.reason, e.details_json AS detailsJson
          FROM hr_audit_events e
-         WHERE e.entity_kind = 'hr_staff_profile' AND e.entity_id = ?
+         WHERE (e.entity_kind = 'hr_staff_profile' AND e.entity_id = ?)
+            OR (e.entity_kind = 'staff' AND e.entity_id = ?)
             OR e.entity_id IN (SELECT id FROM hr_requests WHERE user_id = ?)
          ORDER BY e.occurred_at_iso DESC
          LIMIT ?`
       )
-      .all(uid, uid, cap);
+      .all(uid, uid, uid, cap);
     return rows.map((row) => ({
+      ...row,
+      details: safeJsonParse(row.detailsJson, {}),
+      detailsJson: undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Global HR audit log (scoped by branch when not HQ).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll: boolean; branchId: string }} scope
+ * @param {{ limit?: number; fromIso?: string; toIso?: string; action?: string }} [opts]
+ */
+export function listHrAuditEventsGlobal(db, scope, opts = {}) {
+  if (!hrTablesReady(db)) return [];
+  const cap = Math.min(500, Math.max(1, Math.round(Number(opts.limit) || 150)));
+  let sql = `SELECT e.id, e.occurred_at_iso AS atIso, e.actor_user_id AS actorUserId, e.actor_display_name AS actorDisplayName,
+                    e.action, e.entity_kind AS entityKind, e.entity_id AS entityId, e.branch_id AS branchId, e.reason, e.details_json AS detailsJson
+             FROM hr_audit_events e WHERE 1=1`;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND (e.branch_id = ? OR e.branch_id IS NULL)`;
+    args.push(scope?.branchId || 'HQ');
+  }
+  if (opts.fromIso) {
+    sql += ` AND e.occurred_at_iso >= ?`;
+    args.push(String(opts.fromIso));
+  }
+  if (opts.toIso) {
+    sql += ` AND e.occurred_at_iso <= ?`;
+    args.push(String(opts.toIso));
+  }
+  if (opts.action) {
+    sql += ` AND e.action LIKE ?`;
+    args.push(`%${String(opts.action).trim()}%`);
+  }
+  sql += ` ORDER BY e.occurred_at_iso DESC LIMIT ?`;
+  args.push(cap);
+  try {
+    return db.prepare(sql).all(...args).map((row) => ({
       ...row,
       details: safeJsonParse(row.detailsJson, {}),
       detailsJson: undefined,
@@ -4311,11 +4522,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body) {
 }
 
 function hrPhase6TablesReady(db) {
-  try {
-    return Boolean(db.prepare(`SELECT 1 FROM hr_beneficiaries LIMIT 1`).get());
-  } catch {
-    return false;
-  }
+  return hrTableExists(db, 'hr_beneficiaries');
 }
 
 export function listHrBeneficiaries(db, scope) {
@@ -4765,25 +4972,83 @@ export function deleteChairmanExpense(db, id) {
 
 // ── ID CARDS ─────────────────────────────────────────────────
 export function listHrIdCardRequests(db, userId) {
-  if (userId) return db.prepare(`SELECT r.*, u.display_name FROM hr_id_cards r LEFT JOIN users u ON u.id=r.user_id WHERE r.user_id=? ORDER BY r.requested_at_iso DESC`).all(userId);
-  return db.prepare(`SELECT r.*, u.display_name FROM hr_id_cards r LEFT JOIN users u ON u.id=r.user_id ORDER BY r.requested_at_iso DESC`).all();
+  const sql = `SELECT r.*, u.display_name AS displayName, u.email,
+    p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department, p.branch_id AS branchId,
+    u.avatar_url AS avatarUrl
+    FROM hr_id_cards r
+    LEFT JOIN app_users u ON u.id = r.user_id
+    LEFT JOIN hr_staff_profiles p ON p.user_id = r.user_id`;
+  if (userId) {
+    return db.prepare(`${sql} WHERE r.user_id=? ORDER BY r.requested_at_iso DESC`).all(userId);
+  }
+  return db.prepare(`${sql} ORDER BY r.requested_at_iso DESC`).all();
 }
 export function createHrIdCardRequest(db, actorUser, data) {
   const id = newId('IDC');
   const now = nowIso();
-  db.prepare(`INSERT INTO hr_id_cards (id,user_id,request_type,reason,status,requested_at_iso,notes) VALUES (?,?,?,?,?,?,?)`)
-    .run(id,actorUser.id,data.requestType||'new',data.reason||null,'pending',now,data.notes||null);
-  return { ok:true, id };
+  const uid = String(data?.userId || actorUser?.id || '').trim();
+  if (!uid) return { ok: false, error: 'Employee is required.' };
+  db.prepare(
+    `INSERT INTO hr_id_cards (
+      id, user_id, request_type, reason, status, requested_at_iso, notes,
+      blood_group, emergency_contact, replacement_reason, lost_damaged_flag
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    uid,
+    data.requestType || 'new',
+    data.reason || data.replacementReason || null,
+    'pending',
+    now,
+    data.notes || null,
+    data.bloodGroup || null,
+    data.emergencyContact || null,
+    data.replacementReason || null,
+    data.lostDamaged ? 1 : 0
+  );
+  return { ok: true, id };
 }
 export function patchHrIdCardRequest(db, actorUser, requestId, data) {
   const now = nowIso();
   const row = db.prepare(`SELECT * FROM hr_id_cards WHERE id=?`).get(requestId);
-  if (!row) return { ok:false, error:'ID card request not found.' };
+  if (!row) return { ok: false, error: 'ID card request not found.' };
   const status = data.status || row.status;
   const tempIssued = data.tempCardIssued ? 1 : row.temp_card_issued;
-  db.prepare(`UPDATE hr_id_cards SET status=?,processed_at_iso=?,collected_at_iso=?,processed_by_user_id=?,notes=?,temp_card_issued=?,temp_card_issued_at_iso=? WHERE id=?`)
-    .run(status, data.status?now:row.processed_at_iso, data.status==='collected'?now:row.collected_at_iso, actorUser.id, data.notes||row.notes, tempIssued, data.tempCardIssued?now:row.temp_card_issued_at_iso, requestId);
-  return { ok:true };
+  try {
+    db.prepare(
+      `UPDATE hr_id_cards SET status=?, processed_at_iso=?, collected_at_iso=?, processed_by_user_id=?,
+       notes=?, temp_card_issued=?, temp_card_issued_at_iso=?, issue_date_iso=?, expiry_date_iso=?,
+       approved_by_user_id=?, printed_by_user_id=?
+       WHERE id=?`
+    ).run(
+      status,
+      data.status && data.status !== 'pending' ? now : row.processed_at_iso,
+      data.status === 'collected' ? now : row.collected_at_iso,
+      actorUser.id,
+      data.notes ?? row.notes,
+      tempIssued,
+      data.tempCardIssued ? now : row.temp_card_issued_at_iso,
+      data.issueDateIso ?? row.issue_date_iso,
+      data.expiryDateIso ?? row.expiry_date_iso,
+      data.status === 'ready' || data.status === 'collected' ? actorUser.id : row.approved_by_user_id,
+      data.printed ? actorUser.id : row.printed_by_user_id,
+      requestId
+    );
+  } catch {
+    db.prepare(
+      `UPDATE hr_id_cards SET status=?, processed_at_iso=?, collected_at_iso=?, processed_by_user_id=?, notes=?, temp_card_issued=?, temp_card_issued_at_iso=? WHERE id=?`
+    ).run(
+      status,
+      data.status ? now : row.processed_at_iso,
+      data.status === 'collected' ? now : row.collected_at_iso,
+      actorUser.id,
+      data.notes || row.notes,
+      tempIssued,
+      data.tempCardIssued ? now : row.temp_card_issued_at_iso,
+      requestId
+    );
+  }
+  return { ok: true };
 }
 
 export function getStaffSeverancePreview(db, userId) {
@@ -4972,8 +5237,8 @@ export function getHeadcountSummary(db) {
   const all = db.prepare(`
     SELECT sp.user_id, sp.branch_id, sp.department, sp.employment_type, sp.status, sp.gender, sp.job_title,
            sp.date_joined_iso, u.display_name
-    FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
-    WHERE sp.status='active'
+    FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
+    WHERE sp.status='active' OR u.status='active'
   `).all();
 
   const total = all.length;

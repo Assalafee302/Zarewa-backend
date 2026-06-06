@@ -7,6 +7,9 @@ import { hrLearningTablesReady } from './hrLearning.js';
 import { hrNotificationsTableReady } from './hrNotifications.js';
 import { hrRecruitingTablesReady } from './hrRecruiting.js';
 import { hrNextUatReadiness, hrTablesReady } from './hrOps.js';
+import { hrPhase6BenefitsTablesReady } from './hrTableChecks.js';
+import { hrGovernanceTablesReady } from './hrGovernanceOps.js';
+import { hrPayrollControlTablesReady } from './hrPayrollControl.js';
 
 const MODULE_LABELS = {
   core: 'Core HR',
@@ -14,6 +17,9 @@ const MODULE_LABELS = {
   recruiting: 'Recruiting',
   learning: 'Learning & development',
   engagement: 'Engagement surveys',
+  phase6Benefits: 'Benefits & incidents',
+  payrollControl: 'Payroll control',
+  governance: 'Skills & grievances',
 };
 
 export function getHrModuleHealth(db) {
@@ -23,12 +29,18 @@ export function getHrModuleHealth(db) {
     recruiting: hrRecruitingTablesReady(db),
     learning: hrLearningTablesReady(db),
     engagement: hrEngagementTablesReady(db),
+    phase6Benefits: hrPhase6BenefitsTablesReady(db),
+    payrollControl: hrPayrollControlTablesReady(db),
+    governance: hrGovernanceTablesReady(db),
     allReady:
       hrTablesReady(db) &&
       hrNotificationsTableReady(db) &&
       hrRecruitingTablesReady(db) &&
       hrLearningTablesReady(db) &&
-      hrEngagementTablesReady(db),
+      hrEngagementTablesReady(db) &&
+      hrPhase6BenefitsTablesReady(db) &&
+      hrPayrollControlTablesReady(db) &&
+      hrGovernanceTablesReady(db),
   };
 }
 

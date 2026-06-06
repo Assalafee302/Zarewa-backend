@@ -940,10 +940,19 @@ export function generateHrLetterFromTemplate(db, actor, body) {
   const content = buildHrLetterContent(letterKind, staff, extra);
   const id = newId('HRL');
   const now = nowIso();
-  db.prepare(
-    `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
-     VALUES (?,?,?,?,?,?)`
-  ).run(id, userId, letterKind, content, now, actor?.id);
+  const sourceRecordKind = String(body?.sourceRecordKind || extra?.sourceRecordKind || '').trim() || null;
+  const sourceRecordId = String(body?.sourceRecordId || extra?.sourceRecordId || '').trim() || null;
+  try {
+    db.prepare(
+      `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id, source_record_kind, source_record_id)
+       VALUES (?,?,?,?,?,?,?,?)`
+    ).run(id, userId, letterKind, content, now, actor?.id, sourceRecordKind, sourceRecordId);
+  } catch {
+    db.prepare(
+      `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
+       VALUES (?,?,?,?,?,?)`
+    ).run(id, userId, letterKind, content, now, actor?.id);
+  }
   appendHrAuditEvent(db, {
     actorUserId: actor?.id,
     action: 'hr.letter.generated',

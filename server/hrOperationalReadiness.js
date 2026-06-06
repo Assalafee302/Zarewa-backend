@@ -21,6 +21,7 @@ import {
   listHrStaff,
 } from './hrOps.js';
 import { listPendingTransfersPastEffective, listHrTransferRequests, hrTransferRequestsTableReady } from './hrTransferRequests.js';
+import { listLoanScheduleIssues } from './hrLoanSchedule.js';
 
 function checkList(items, id, label, severity = 'medium', fixPath = null) {
   return {
@@ -198,34 +199,121 @@ export function getHrNotificationSummary(db, scope, user) {
   const perms = user?.permissions || [];
   const has = (p) => perms.includes('*') || perms.includes(p);
   const items = [];
+  const seen = new Set();
+  const push = (item) => {
+    if (!item?.count || seen.has(item.key)) return;
+    seen.add(item.key);
+    items.push(item);
+  };
 
   if (has('hr.absence.review') || has('hr.staff.manage')) {
-    const n = alerts.absenceAwaitingReview?.length || 0;
-    if (n) items.push({ key: 'absence-review', count: n, path: '/hr/attendance?tab=exceptions', title: 'Absence awaiting HR review' });
+    push({ key: 'absence-review', count: alerts.absenceAwaitingReview?.length || 0, path: '/hr/attendance?tab=exceptions', title: 'Absence awaiting HR review' });
   }
   if (has('hr.overtime.approve') || has('hr.staff.manage')) {
-    const n = alerts.overtimeAwaitingApproval?.length || 0;
-    if (n) items.push({ key: 'overtime-approval', count: n, path: '/hr/attendance?tab=overtime', title: 'Overtime awaiting approval' });
+    push({ key: 'overtime-approval', count: alerts.overtimeAwaitingApproval?.length || 0, path: '/hr/attendance?tab=overtime', title: 'Overtime awaiting approval' });
   }
-  if (has('hr.transfers.manage') || has('hr.team.view')) {
-    const n = alerts.pendingTransfers?.length || 0;
-    if (n) items.push({ key: 'transfer-pending', count: n, path: '/hr/discipline-exit?tab=transfers', title: 'Pending transfer requests' });
+  if (has('hr.transfers.manage') || has('hr.team.view') || has('hr.staff.manage')) {
+    const pending = alerts.pendingTransfers || [];
+    const byStage = {
+      branch_review: pending.filter((t) => t.status === 'branch_review').length,
+      hr_review: pending.filter((t) => t.status === 'hr_review').length,
+      gm_approval: pending.filter((t) => t.status === 'gm_approval').length,
+      approved: pending.filter((t) => t.status === 'approved').length,
+    };
+    if (byStage.branch_review) {
+      push({ key: 'transfer-branch', count: byStage.branch_review, path: '/hr/discipline-exit?tab=transfers', title: 'Transfers awaiting branch review' });
+    }
+    if (byStage.hr_review) {
+      push({ key: 'transfer-hr', count: byStage.hr_review, path: '/hr/discipline-exit?tab=transfers', title: 'Transfers awaiting HR review' });
+    }
+    if (byStage.gm_approval) {
+      push({ key: 'transfer-gm', count: byStage.gm_approval, path: '/hr/discipline-exit?tab=transfers', title: 'Transfers awaiting GM/MD approval' });
+    }
+    if (byStage.approved) {
+      push({ key: 'transfer-complete', count: byStage.approved, path: '/hr/discipline-exit?tab=transfers', title: 'Approved transfers pending completion' });
+    }
+    const overdueComplete = listPendingTransfersPastEffective(db, scope).length;
+    if (overdueComplete) {
+      push({ key: 'transfer-overdue', count: overdueComplete, path: '/hr/discipline-exit?tab=transfers', title: 'Transfers past effective date' });
+    }
   }
   if (has('hr.exit.manage') || has('hr.staff.manage')) {
-    const n = alerts.exitClearancePending?.length || 0;
-    if (n) items.push({ key: 'exit-clearance', count: n, path: '/hr/discipline-exit?tab=exit-clearance', title: 'Exit clearance pending' });
+    push({ key: 'exit-clearance', count: alerts.exitClearancePending?.length || 0, path: '/hr/discipline-exit?tab=exit-clearance', title: 'Exit clearance pending' });
+    const staleExit = (alerts.exitClearancePending || []).filter((c) => {
+      const d = String(c.updatedAtIso || c.createdAtIso || '').slice(0, 10);
+      if (!d) return false;
+      const age = (Date.now() - new Date(d).getTime()) / 86400000;
+      return age > 14;
+    }).length;
+    if (staleExit) {
+      push({ key: 'exit-stale', count: staleExit, path: '/hr/discipline-exit?tab=exit-clearance', title: 'Exit clearance pending over 14 days' });
+    }
+  }
+  if (has('hr.leave.manage') || has('hr.team.view') || has('hr.staff.manage')) {
+    try {
+      const staleLeave = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM hr_requests WHERE kind = 'leave' AND status IN ('submitted','branch_review','hr_review')
+           AND datetime(created_at_iso) < datetime('now', '-5 days')`
+        )
+        .get()?.c || 0;
+      if (staleLeave) {
+        push({ key: 'leave-stale', count: staleLeave, path: '/hr/leave-requests', title: 'Leave requests pending over 5 days' });
+      }
+    } catch { /* ignore */ }
   }
   if (has('hr.reports.view') || has('hr.staff.manage')) {
-    const n = (alerts.promotionDue?.length || 0) + (alerts.missingPolicyAck?.length || 0) + (alerts.expiredDocuments?.length || 0);
-    if (n) items.push({ key: 'hr-compliance', count: n, path: '/hr/dashboard', title: 'HR compliance & promotion alerts' });
+    const complianceN =
+      (alerts.promotionDue?.length || 0) +
+      (alerts.missingPolicyAck?.length || 0) +
+      (alerts.expiredDocuments?.length || 0) +
+      (alerts.temporaryEmployees?.length || 0);
+    if (complianceN) {
+      push({ key: 'hr-compliance', count: complianceN, path: '/hr/dashboard', title: 'HR compliance & promotion alerts' });
+    }
+    const expSoon = (readiness.checks || []).find((c) => c.id === 'expired_documents');
+    const docExp = (expSoon?.items || []).length;
+    if (docExp) {
+      push({ key: 'doc-expiry', count: docExp, path: '/hr/reports?tab=readiness', title: 'Documents expired or expiring' });
+    }
+    const promo = alerts.promotionDue?.length || 0;
+    if (promo) {
+      push({ key: 'promotion-due', count: promo, path: '/hr/reports?tab=promotion-due', title: 'Promotions due for review' });
+    }
+    const temp = alerts.temporaryEmployees?.length || 0;
+    if (temp) {
+      push({ key: 'temp-contract', count: temp, path: '/hr/reports?tab=temp-monitoring', title: 'Temporary contracts ending soon' });
+    }
   }
   if (has('hr.payroll.prepare') || has('hr.payroll.manage')) {
     const draft = readiness.checks?.find((c) => c.id === 'draft_payroll_runs');
-    if (draft?.count) items.push({ key: 'payroll-draft', count: draft.count, path: '/hr/payroll', title: 'Payroll pending approval' });
+    if (draft?.count) {
+      push({ key: 'payroll-draft', count: draft.count, path: '/hr/payroll', title: 'Payroll pending approval' });
+    }
+    try {
+      const ym = new Date().toISOString().slice(0, 7);
+      const day = new Date().getDate();
+      if (day >= 20) {
+        const approved = db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE period_yyyymm = ? AND status IN ('locked','paid','gm_approved','md_approved')`
+          )
+          .get(ym)?.c || 0;
+        if (!approved) {
+          push({ key: 'payroll-salary-date', count: 1, path: '/hr/payroll', title: 'Payroll not approved before salary date' });
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  if (has('hr.loans.manage') || has('hr.payroll.manage')) {
+    const loanIssues = listLoanScheduleIssues(db, scope).length;
+    if (loanIssues) {
+      push({ key: 'loan-schedule', count: loanIssues, path: '/hr/loans', title: 'Loan deduction schedule issues' });
+    }
   }
   const risk = alerts.voluntaryTerminationRisk?.length || 0;
   if (risk && (has('hr.absence.review') || has('hr.staff.manage'))) {
-    items.push({ key: 'absence-risk', count: risk, path: '/hr/attendance?tab=exceptions', title: '3-day no-show risk' });
+    push({ key: 'absence-risk', count: risk, path: '/hr/attendance?tab=exceptions', title: '3-day no-show risk' });
   }
   return { items, totalCount: items.reduce((s, i) => s + i.count, 0) };
 }

@@ -2729,6 +2729,196 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrLifecycleAndNotificationsSchema(db);
   migrateHrRecruitingLearningEngagementSchema(db);
   migrateHrNewFieldsPhase10(db);
+  migrateHrPhase2Policy2026(db);
+  migrateHrPhase4Ops2026(db);
+}
+
+/** Phase 4: master data, transfer requests, bank fields (2026). */
+function migrateHrPhase4Ops2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_departments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      branch_scope TEXT,
+      head_user_id TEXT,
+      description TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_departments_active ON hr_departments(active, name);
+
+    CREATE TABLE IF NOT EXISTS hr_designations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      department_id TEXT,
+      grade_category TEXT,
+      seniority_band TEXT,
+      default_salary_level INTEGER,
+      default_salary_step INTEGER,
+      job_description TEXT,
+      duties_responsibilities TEXT,
+      reporting_line TEXT,
+      required_qualification TEXT,
+      skills_required TEXT,
+      working_conditions TEXT,
+      salary_range_note TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT,
+      FOREIGN KEY (department_id) REFERENCES hr_departments(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_designations_dept ON hr_designations(department_id, active);
+
+    CREATE TABLE IF NOT EXISTS hr_transfer_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      transfer_type TEXT NOT NULL,
+      from_branch_id TEXT,
+      to_branch_id TEXT,
+      from_department TEXT,
+      to_department TEXT,
+      from_designation TEXT,
+      to_designation TEXT,
+      effective_date_iso TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      requested_by_user_id TEXT,
+      recommended_by_user_id TEXT,
+      approved_by_user_id TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      completed_at_iso TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_transfer_requests_user ON hr_transfer_requests(user_id, created_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_hr_transfer_requests_status ON hr_transfer_requests(status, effective_date_iso);
+  `);
+
+  const tableCols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const hr = tableCols('hr_staff_profiles');
+  if (hr.size && !hr.has('bank_account_no')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN bank_account_no TEXT`);
+  }
+  if (hr.size && !hr.has('bank_code')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN bank_code TEXT`);
+  }
+  if (hr.size && !hr.has('department_id')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN department_id TEXT`);
+  }
+  if (hr.size && !hr.has('designation_id')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN designation_id TEXT`);
+  }
+  if (hr.size && !hr.has('onboarding_complete')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN onboarding_complete INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
+/** Phase 2 HR policy workflows: absence, overtime, exit clearance (2026). */
+function migrateHrPhase2Policy2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_absence_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      branch_id TEXT,
+      department TEXT,
+      absence_start_iso TEXT NOT NULL,
+      expected_return_iso TEXT NOT NULL,
+      actual_return_iso TEXT,
+      reason TEXT NOT NULL,
+      absence_type TEXT NOT NULL DEFAULT 'other',
+      illness_related INTEGER NOT NULL DEFAULT 0,
+      doctor_note_document_id TEXT,
+      status TEXT NOT NULL DEFAULT 'reported',
+      reported_by_user_id TEXT NOT NULL,
+      reviewed_by_user_id TEXT,
+      reviewed_at_iso TEXT,
+      review_note TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_absence_reports_user ON hr_absence_reports(user_id, absence_start_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_hr_absence_reports_branch ON hr_absence_reports(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_overtime_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      branch_id TEXT,
+      work_date_iso TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      calculated_hours REAL NOT NULL DEFAULT 0,
+      eligible_overtime_hours REAL NOT NULL DEFAULT 0,
+      special_sunday_overtime INTEGER NOT NULL DEFAULT 0,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      requested_by_user_id TEXT NOT NULL,
+      branch_reviewed_by_user_id TEXT,
+      hr_reviewed_by_user_id TEXT,
+      approved_by_user_id TEXT,
+      approval_note TEXT,
+      rejection_reason TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_overtime_user_date ON hr_overtime_requests(user_id, work_date_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_hr_overtime_branch ON hr_overtime_requests(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_exit_clearance (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      separation_type TEXT NOT NULL,
+      initiated_by_user_id TEXT NOT NULL,
+      last_working_day_iso TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      finance_cleared_by_user_id TEXT,
+      finance_cleared_at_iso TEXT,
+      finance_notes TEXT,
+      admin_cleared_by_user_id TEXT,
+      admin_cleared_at_iso TEXT,
+      admin_notes TEXT,
+      hr_final_cleared_by_user_id TEXT,
+      hr_final_cleared_at_iso TEXT,
+      hr_final_notes TEXT,
+      completed_at_iso TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_exit_clearance_user ON hr_exit_clearance(user_id, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_exit_property_items (
+      id TEXT PRIMARY KEY,
+      clearance_id TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      item_category TEXT NOT NULL DEFAULT 'other',
+      serial_or_reference TEXT,
+      condition_on_return TEXT,
+      expected_return INTEGER NOT NULL DEFAULT 1,
+      returned INTEGER NOT NULL DEFAULT 0,
+      waived INTEGER NOT NULL DEFAULT 0,
+      waived_note TEXT,
+      returned_at_iso TEXT,
+      received_by_user_id TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      FOREIGN KEY (clearance_id) REFERENCES hr_exit_clearance(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_exit_property_clearance ON hr_exit_property_items(clearance_id);
+  `);
 }
 
 /** New HR fields: gender/DOB/contract/NHIS on profiles; expiry on documents; ITF/NSITF on payroll runs (Phase 10). */

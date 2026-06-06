@@ -264,6 +264,7 @@ export function listHrStaff(db, scope, opts = {}) {
            u.avatar_url AS avatarUrl,
            p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
            p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
+           p.contract_end_iso AS contractEndIso,
            p.probation_end_iso AS probationEndIso,
            p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
            p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
@@ -828,6 +829,18 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
         reason,
       });
     }
+  }
+
+  if (body?.bankAccountNo !== undefined || body?.bankCode !== undefined) {
+    try {
+      db.prepare(
+        `UPDATE hr_staff_profiles SET bank_account_no = ?, bank_code = ? WHERE user_id = ?`
+      ).run(
+        body?.bankAccountNo != null ? String(body.bankAccountNo).trim() || null : prevRow?.bank_account_no ?? null,
+        body?.bankCode != null ? String(body.bankCode).trim() || null : prevRow?.bank_code ?? null,
+        userId
+      );
+    } catch { /* column may not exist pre-migration */ }
   }
 
   appendHrAuditEvent(db, {
@@ -2851,6 +2864,206 @@ export function exportPayrollTreasuryPackCsv(db, runId) {
     ok: true,
     csv,
     filename: `treasury-payroll-${run.periodYyyymm}-${String(run.id).replace(/[^\w-]/g, '').slice(0, 12)}.csv`,
+  };
+}
+
+const NIGERIAN_BANK_CODES = {
+  gtbank: '058',
+  'guaranty trust': '058',
+  uba: '033',
+  zenith: '057',
+  access: '044',
+  'first bank': '011',
+  fidelity: '070',
+  stanbic: '221',
+  union: '032',
+  wema: '035',
+  sterling: '232',
+  fcmb: '214',
+  keystone: '082',
+  polaris: '076',
+};
+
+function resolveBankCode(bankName, storedCode) {
+  if (storedCode) return String(storedCode).trim();
+  const key = String(bankName || '').toLowerCase();
+  for (const [name, code] of Object.entries(NIGERIAN_BANK_CODES)) {
+    if (key.includes(name)) return code;
+  }
+  return '';
+}
+
+function payrollLinesWithProfile(db, runId) {
+  if (!hrTablesReady(db)) return [];
+  const loanRows = db
+    .prepare(`SELECT user_id, hr_request_id, amount_ngn, loan_title FROM hr_payroll_line_loans WHERE run_id = ?`)
+    .all(runId);
+  const loansByUser = new Map();
+  for (const lr of loanRows) {
+    if (!loansByUser.has(lr.user_id)) loansByUser.set(lr.user_id, []);
+    loansByUser.get(lr.user_id).push({
+      hrRequestId: lr.hr_request_id,
+      amountNgn: lr.amount_ngn,
+      title: lr.loan_title || lr.hr_request_id,
+    });
+  }
+  return db
+    .prepare(
+      `SELECT l.*, u.display_name AS displayName,
+              p.employee_no AS employeeNo, p.branch_id AS branchId, p.department, p.job_title AS jobTitle,
+              p.bank_account_name AS bankAccountName, p.bank_name AS bankName,
+              p.bank_account_no AS bankAccountNo, p.bank_account_no_masked AS bankAccountNoMasked,
+              p.bank_code AS bankCode, p.payroll_group AS payrollGroup
+       FROM hr_payroll_lines l
+       JOIN app_users u ON u.id = l.user_id
+       LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
+       WHERE l.run_id = ?
+       ORDER BY u.display_name ASC`
+    )
+    .all(runId)
+    .map((row) => {
+      const acct = String(row.bankAccountNo || row.bankAccountNoMasked || '').replace(/\s/g, '');
+      const loanTotal = (loansByUser.get(row.user_id) || []).reduce(
+        (s, x) => s + Math.round(Number(x.amountNgn) || 0),
+        0
+      );
+      return {
+        userId: row.user_id,
+        displayName: row.displayName,
+        employeeNo: row.employeeNo,
+        branchId: row.branchId,
+        department: row.department,
+        jobTitle: row.jobTitle,
+        grossNgn: row.gross_ngn,
+        bonusNgn: row.bonus_ngn,
+        attendanceDeductionNgn: row.attendance_deduction_ngn,
+        otherDeductionNgn: row.other_deduction_ngn,
+        taxNgn: row.tax_ngn,
+        pensionNgn: row.pension_ngn,
+        netNgn: row.net_ngn,
+        loanDeductions: loansByUser.get(row.user_id) || [],
+        loanDeductionTotalNgn: loanTotal,
+        bankAccountName: row.bankAccountName,
+        bankName: row.bankName,
+        bankAccountNo: acct,
+        bankCode: resolveBankCode(row.bankName, row.bankCode),
+        held: Math.round(Number(row.net_ngn) || 0) <= 0,
+      };
+    });
+}
+
+function csvEsc(v) {
+  const t = String(v ?? '');
+  if (/[",\r\n]/.test(t)) return `"${t.replace(/"/g, '""')}"`;
+  return t;
+}
+
+/** Bank bulk salary upload format for treasury. */
+export function exportPayrollBankUploadCsv(db, runId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  if (!['locked', 'paid', 'gm_approved', 'md_approved'].includes(String(run.status || ''))) {
+    return { ok: false, error: 'Approve and lock payroll before bank export.' };
+  }
+  const lines = payrollLinesWithProfile(db, runId).filter((l) => !l.held && l.netNgn > 0);
+  const missing = lines.filter((l) => !l.bankAccountNo || l.bankAccountNo.length < 10);
+  if (missing.length) {
+    return {
+      ok: false,
+      error: `${missing.length} staff missing valid bank account numbers. Update profiles before export.`,
+      missingStaff: missing.slice(0, 10).map((l) => l.displayName),
+    };
+  }
+  const narration = `Zarewa Salary ${run.periodYyyymm}`;
+  const headers = ['Receiver Name', 'Receiver Account No', 'Amount', 'Sender Narration', 'Bank Code'];
+  const rows = lines.map((l) =>
+    [
+      l.bankAccountName || l.displayName,
+      l.bankAccountNo,
+      Math.round(Number(l.netNgn) || 0),
+      narration,
+      l.bankCode || '',
+    ].map(csvEsc)
+  );
+  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+  return {
+    ok: true,
+    csv,
+    filename: `bank-upload-salary-${run.periodYyyymm}.csv`,
+  };
+}
+
+/** HR/GM/MD payroll approval report before bank payment. */
+export function exportPayrollHrApprovalCsv(db, runId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  const lines = payrollLinesWithProfile(db, runId);
+  const headers = [
+    'Employee Name',
+    'Employee No',
+    'Branch/HQ',
+    'Department',
+    'Designation',
+    'Gross Salary',
+    'Loan Deduction',
+    'Other Deductions',
+    'Net Salary',
+    'Remark',
+  ];
+  let sumGross = 0;
+  let sumLoan = 0;
+  let sumOther = 0;
+  let sumNet = 0;
+  const rows = lines.map((l) => {
+    const gross = Math.round(Number(l.grossNgn) || 0) + Math.round(Number(l.bonusNgn) || 0);
+    const loan = l.loanDeductionTotalNgn;
+    const other =
+      Math.round(Number(l.attendanceDeductionNgn) || 0) +
+      Math.round(Number(l.otherDeductionNgn) || 0) +
+      Math.round(Number(l.taxNgn) || 0) +
+      Math.round(Number(l.pensionNgn) || 0);
+    const net = Math.round(Number(l.netNgn) || 0);
+    sumGross += gross;
+    sumLoan += loan;
+    sumOther += other;
+    sumNet += net;
+    const remark = l.held ? 'HELD' : l.bankAccountNo ? '' : 'MISSING BANK';
+    return [
+      l.displayName,
+      l.employeeNo || '',
+      l.branchId || 'HQ',
+      l.department || '',
+      l.jobTitle || '',
+      gross,
+      loan,
+      other,
+      net,
+      remark,
+    ].map(csvEsc);
+  });
+  const summary = [
+    '',
+    '',
+    '',
+    '',
+    'TOTALS',
+    sumGross,
+    sumLoan,
+    sumOther,
+    sumNet,
+    '',
+  ].map(csvEsc);
+  const meta = [
+    `# Zarewa Aluminium & Plastics Ltd — Payroll Approval Report`,
+    `# Period: ${run.periodYyyymm} · Run: ${run.id} · Status: ${run.status}`,
+    `# Generated: ${new Date().toISOString().slice(0, 19)}`,
+    '',
+  ];
+  const csv = [...meta, headers.join(','), ...rows.map((r) => r.join(',')), summary.join(',')].join('\r\n');
+  return {
+    ok: true,
+    csv,
+    filename: `hr-approval-payroll-${run.periodYyyymm}.csv`,
   };
 }
 

@@ -6,6 +6,13 @@
 import { listHrEngagementSurveys, getHrEngagementSurveySummary } from './hrEngagement.js';
 import { hrLearningTablesReady } from './hrLearning.js';
 import { listHrStaff } from './hrOps.js';
+import {
+  getPromotionDueReport,
+  getTemporaryEmployeeAlerts,
+  listHrAbsenceReports,
+  listHrExitClearance,
+  listHrOvertimeRequests,
+} from './hrPhase2Ops.js';
 
 function esc(v) {
   const s = String(v ?? '');
@@ -114,4 +121,56 @@ export function exportHrEngagementTrendsCsv(db) {
     }
   }
   return { ok: true, csv: toCsv(headers, rows), filename: 'hr-engagement-surveys.csv' };
+}
+
+export function exportHrAbsenceReportsCsv(db, scope) {
+  const rows = listHrAbsenceReports(db, scope, {});
+  const headers = ['id', 'userId', 'displayName', 'branchId', 'absenceStartIso', 'expectedReturnIso', 'absenceType', 'status', 'reason'];
+  const data = rows.map((r) => [r.id, r.userId, r.displayName, r.branchId, r.absenceStartIso, r.expectedReturnIso, r.absenceType, r.status, r.reason]);
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-absence-reports.csv' };
+}
+
+export function exportHrOvertimeCsv(db, scope) {
+  const rows = listHrOvertimeRequests(db, scope, {});
+  const headers = ['id', 'userId', 'displayName', 'branchId', 'workDateIso', 'calculatedHours', 'eligibleOvertimeHours', 'status', 'approvedByUserId'];
+  const data = rows.map((r) => [r.id, r.userId, r.displayName, r.branchId, r.workDateIso, r.calculatedHours, r.eligibleOvertimeHours, r.status, r.approvedByUserId || '']);
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-overtime-requests.csv' };
+}
+
+export function exportHrExitClearanceCsv(db, scope) {
+  const rows = listHrExitClearance(db, scope, {});
+  const headers = ['id', 'userId', 'displayName', 'separationType', 'lastWorkingDayIso', 'status', 'completedAtIso'];
+  const data = rows.map((r) => [r.id, r.userId, r.displayName, r.separationType, r.lastWorkingDayIso, r.status, r.completedAtIso || '']);
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-exit-clearance.csv' };
+}
+
+export function exportHrPropertyReturnCsv(db, scope) {
+  const clearances = listHrExitClearance(db, scope, {});
+  const headers = ['clearanceId', 'userId', 'displayName', 'itemName', 'itemCategory', 'returned', 'waived', 'returnedAtIso'];
+  const data = [];
+  for (const c of clearances) {
+    for (const it of c.propertyItems || []) {
+      data.push([c.id, c.userId, c.displayName, it.itemName, it.itemCategory, it.returned, it.waived, it.returnedAtIso || '']);
+    }
+  }
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-property-return.csv' };
+}
+
+export function exportHrPromotionDueCsv(db, scope) {
+  const rows = getPromotionDueReport(db, scope, { dueOnly: false });
+  const headers = ['userId', 'displayName', 'branchId', 'department', 'jobTitle', 'lastPromotionIso', 'yearsSince', 'queryCount', 'eligibility', 'suggestedAction'];
+  const data = rows.map((r) => [r.userId, r.displayName, r.branchId, r.department, r.jobTitle, r.lastPromotionIso, r.yearsSince, r.queryCount, r.eligibility, r.suggestedAction]);
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-promotion-due.csv' };
+}
+
+export function exportHrTemporaryEmployeeCsv(db, scope) {
+  const alerts = getTemporaryEmployeeAlerts(db, scope);
+  const headers = ['userId', 'displayName', 'branchId', 'alertType', 'contractEndIso', 'dateJoinedIso'];
+  const data = [];
+  for (const bucket of ['missingContractEnd', 'contractEndingSoon', 'exceedsSixMonths', 'pastContractEnd']) {
+    for (const r of alerts[bucket] || []) {
+      data.push([r.userId, r.displayName, r.branchId, r.alertType, r.contractEndIso || '', r.dateJoinedIso || '']);
+    }
+  }
+  return { ok: true, csv: toCsv(headers, data), filename: 'hr-temporary-employees.csv' };
 }

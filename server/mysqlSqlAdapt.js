@@ -1,4 +1,4 @@
-import { mysqlTypeForSqliteTextColumnName } from './schemaMysqlTransform.js';
+import { escapeMysqlReservedColumnNames, mysqlTypeForSqliteTextColumnName } from './schemaMysqlTransform.js';
 
 /**
  * Rewrites SQLite-oriented DDL fragments (e.g. migrate.js `db.exec`) for MySQL.
@@ -30,6 +30,7 @@ export function adaptExecSqlForMysql(sql) {
   s = s.replace(/\b([a-z_][a-z0-9_]*)\s+TEXT\b/gi, (full, col) => {
     return `${col} ${mysqlTypeForSqliteTextColumnName(col)}`;
   });
+  s = escapeMysqlReservedColumnNames(s);
   return s;
 }
 

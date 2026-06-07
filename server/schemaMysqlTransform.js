@@ -17,7 +17,7 @@ export function sqliteDdlToMysql(ddl) {
   return s;
 }
 
-function escapeMysqlReservedColumnNames(sql) {
+export function escapeMysqlReservedColumnNames(sql) {
   return sql.replace(/(^|\n)(\s*)key(\s+VARCHAR|\s+MEDIUMTEXT)/gim, '$1$2`key`$3');
 }
 

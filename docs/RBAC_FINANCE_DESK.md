@@ -1,4 +1,16 @@
-# Finance desk separation — Phase B & B3a (trial)
+# Finance desk separation — Phase B, B3a & Phase 10 hardening
+
+## Phase 10 — RBAC & legacy `/accounts` (current)
+
+- **Role key `finance_manager`** displays as **Accountant / Head of Accounts** (key unchanged for DB compatibility).
+- **Cashier** primary UI: `/cashier`. Legacy `/accounts` nav **hidden**; tab RBAC allows receipts/movements/disbursements/treasury only — **not** audit/GL.
+- **Branch manager** (`sales_manager`): **no** `/accounts`, **no** `/accounting`; default `finance.approve` removed — branch refunds use `refunds.approve` in Management inbox.
+- **Accountant** primary UI: `/accounting`. Full reconciliation tabs on `/accounts` when needed.
+- **MD / admin**: oversight on all finance routes; delivery payment gate mode shown on Management dashboard (from `GET /api/health` → `capabilities.deliveryPaymentGate`).
+- **GL APIs** (`/api/gl/*`, reconciliation pack): require accounting GL access — cashier and BM blocked server-side.
+- **Preserve UI**: Cashier Desk, Accounting Desk, Sales — no visual redesign in Phase 10.
+
+See also: [ROLE_DASHBOARD_MATRIX.md](./ROLE_DASHBOARD_MATRIX.md).
 
 ## Trial / onboarding context (first live month)
 

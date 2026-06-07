@@ -1,6 +1,6 @@
 # PHASE 7 — Professional Discipline, Case Management, and Complete Company Letters
 
-**Status:** Planned — do not implement inside Phase 6.
+**Status:** Implemented — see `PHASE-7-COMPLETION.md`.
 
 Phase 6 delivers governance, payroll control, staff development, engagement, analytics, and API stability. Phase 7 makes discipline and company letters fully professional, complete, and audit-ready.
 

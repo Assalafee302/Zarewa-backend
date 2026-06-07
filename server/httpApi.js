@@ -99,6 +99,8 @@ import {
   userMayApplyAp2ApRebuild,
   userMayViewAp3CostingReadiness,
 } from './financeDeskAccess.js';
+import { userMayAccessAccountingGlApis } from './legacyAccountsAccess.js';
+import { buildCustomPermissionOverrideAudit } from './customPermissionAudit.js';
 import { buildAp2SupplierDiagnosticsReport } from './ap2SupplierDiagnosticsOps.js';
 import { applyAp2ReceivedBasisRebuild, buildAp2ApRebuildPreview, logAp2RebuildPreviewed } from './ap2ApRebuildOps.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
@@ -2822,6 +2824,17 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Phase 10 — users with custom `permissions_json` overrides and risk classification. */
+  app.get('/api/admin/permission-overrides-audit', requirePermission('settings.view'), (_req, res) => {
+    try {
+      const report = buildCustomPermissionOverrideAudit(db);
+      return res.json({ ok: true, ...report });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build permission override audit.' });
+    }
+  });
+
   app.get('/api/admin/data-reset-presets', requireAuth, (req, res) => {
     try {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
@@ -2976,7 +2989,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/gl/accounts', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/gl/accounts', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
     try {
       res.json({ ok: true, accounts: listGlAccounts(db) });
     } catch (e) {
@@ -2984,7 +3000,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/gl/trial-balance', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/gl/trial-balance', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
     const costCenter = String(req.query.costCenter || '').trim();
@@ -2993,7 +3012,10 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.get('/api/gl/journals', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/gl/journals', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
     const r = listGlJournalEntries(db, startDate, endDate);
@@ -3001,13 +3023,19 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.get('/api/gl/journals/:journalId/lines', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/gl/journals/:journalId/lines', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
     const r = listGlJournalLinesForJournal(db, String(req.params.journalId || ''));
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
 
-  app.get('/api/gl/activity', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/gl/activity', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
     const costCenter = String(req.query.costCenter || '').trim();
@@ -3016,7 +3044,13 @@ export function registerHttpApi(app, db) {
     res.json(r);
   });
 
-  app.post('/api/gl/journal', requirePermission('finance.post'), (req, res) => {
+  app.post('/api/gl/journal', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
     try {
       const r = postBalancedJournal(db, {
         entryDateISO: req.body?.entryDateISO,
@@ -3033,7 +3067,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/reconciliation-pack', requirePermission('finance.view'), (req, res) => {
+  app.get('/api/finance/reconciliation-pack', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / reconciliation access required.', code: 'FORBIDDEN' });
+    }
     try {
       const periodKey = String(req.query.period || req.query.periodKey || '').trim();
       if (!isValidFinancePackPeriodKey(periodKey)) {

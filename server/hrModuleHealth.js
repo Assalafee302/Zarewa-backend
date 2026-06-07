@@ -7,7 +7,7 @@ import { hrLearningTablesReady } from './hrLearning.js';
 import { hrNotificationsTableReady } from './hrNotifications.js';
 import { hrRecruitingTablesReady } from './hrRecruiting.js';
 import { hrNextUatReadiness, hrTablesReady } from './hrOps.js';
-import { hrPhase6BenefitsTablesReady } from './hrTableChecks.js';
+import { hrPhase6BenefitsTablesReady, hrPhase8OperationalTablesReady, hrPhase9ExecutiveBenefitsTablesReady } from './hrTableChecks.js';
 import { hrGovernanceTablesReady } from './hrGovernanceOps.js';
 import { hrPayrollControlTablesReady } from './hrPayrollControl.js';
 
@@ -18,6 +18,8 @@ const MODULE_LABELS = {
   learning: 'Learning & development',
   engagement: 'Engagement surveys',
   phase6Benefits: 'Benefits & incidents',
+  phase8Operational: 'Letter workflow & bulk import',
+  phase9ExecutiveBenefits: 'Executive benefits & domestic staff',
   payrollControl: 'Payroll control',
   governance: 'Skills & grievances',
 };
@@ -30,6 +32,8 @@ export function getHrModuleHealth(db) {
     learning: hrLearningTablesReady(db),
     engagement: hrEngagementTablesReady(db),
     phase6Benefits: hrPhase6BenefitsTablesReady(db),
+    phase8Operational: hrPhase8OperationalTablesReady(db),
+    phase9ExecutiveBenefits: hrPhase9ExecutiveBenefitsTablesReady(db),
     payrollControl: hrPayrollControlTablesReady(db),
     governance: hrGovernanceTablesReady(db),
     allReady:
@@ -39,6 +43,7 @@ export function getHrModuleHealth(db) {
       hrLearningTablesReady(db) &&
       hrEngagementTablesReady(db) &&
       hrPhase6BenefitsTablesReady(db) &&
+      hrPhase8OperationalTablesReady(db) &&
       hrPayrollControlTablesReady(db) &&
       hrGovernanceTablesReady(db),
   };

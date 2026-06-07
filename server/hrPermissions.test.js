@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hrApiPathAllowedWithoutMainWorkspace,
+  userCanAccessExecutiveHrModule,
   userCanAccessHrModule,
+  userCanAccessMainHrWorkspace,
   userCanViewOrgSensitiveHr,
   userCanViewStaffCompensation,
 } from './hrPermissions.js';
@@ -36,5 +39,23 @@ describe('hrPermissions', () => {
     expect(userCanViewStaffCompensation(staff, 'USR-SS', { sensitiveUnlocked: false })).toBe(false);
     expect(userCanViewStaffCompensation(staff, 'USR-SS', { sensitiveUnlocked: true })).toBe(true);
     expect(userCanViewStaffCompensation(staff, 'USR-OTHER', { sensitiveUnlocked: true })).toBe(false);
+  });
+
+  it('MD executive-only does not unlock main HR workspace', () => {
+    const md = {
+      id: 'USR-MD',
+      roleKey: 'md',
+      permissions: ['hr.executive.view', 'hr.payroll.md_approve'],
+    };
+    expect(userCanAccessExecutiveHrModule(md)).toBe(true);
+    expect(userCanAccessMainHrWorkspace(md)).toBe(false);
+    expect(userCanAccessHrModule(md)).toBe(false);
+  });
+
+  it('team and self API paths allowed without main HR workspace', () => {
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/my/discipline-cases', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/team/summary', { teamUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/payroll-runs', { teamUser: true })).toBe(false);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/dashboard', { selfUser: true })).toBe(false);
   });
 });

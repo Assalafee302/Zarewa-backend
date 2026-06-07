@@ -112,7 +112,9 @@ Legacy aliases kept in checks: `hr.requests.hr_review` → `hr.requests.review`,
 - [x] Employment letter generate + list UI
 - [x] Letter PDF export (`exportEmploymentLetterPdf`)
 
-### Phase 8 — Workspace and Zare ✅
+### Phase 8 — Workspace and Zare ✅ *(legacy roadmap)*
+
+> **Revised Phase 8 (2026):** Operational go-live scope — bulk basic staff import, letter approval/print lock, letter reference reset, staff ID reservation. See **[PHASE-8-PLAN.md](./PHASE-8-PLAN.md)**.
 
 - [x] Work items for HR approval queues (`listLegacyHrRequestWorkItems` in `workItems.js`)
 - [x] Discipline / incident memos and open appraisal forms in unified work items

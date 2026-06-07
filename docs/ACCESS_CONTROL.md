@@ -1,6 +1,15 @@
 # Access control (Zarewa)
 
-This document summarizes how roles, API routes, and the workspace bootstrap relate. For the canonical permission matrix, see `ROLE_DEFINITIONS` in `server/auth.js`.
+This document summarizes how roles, API routes, and the workspace bootstrap relate. For the canonical permission matrix, see `ROLE_DEFINITIONS` in `server/auth.js`. Phase 10 role→dashboard map: [ROLE_DASHBOARD_MATRIX.md](./ROLE_DASHBOARD_MATRIX.md).
+
+## Phase 10 hardening (summary)
+
+- **Accountant** — role key `finance_manager`, label **Accountant / Head of Accounts**; narrowed default perms (no branch ops/sales/settings).
+- **Branch manager** — no main `/hr`, no `/accounting`, no broad `/accounts`; Team HR at `/team-hr` with dashboard landing.
+- **Cashier / Accountant segregation** — desk route guards + legacy tab RBAC + GL API enforcement (`server/legacyAccountsAccess.js`).
+- **MD HR** — Executive HR nav (`/hr/executive`); main HR admin shell requires HR operations perms (not `hr.payroll.md_approve` alone).
+- **Custom overrides** — `GET /api/admin/permission-overrides-audit` (settings); audited on `PATCH /api/users/:id/permissions`.
+- **Delivery gate** — env `DELIVERY_PAYMENT_GATE` (`off` | `warn` | `enforce`); exposed on `/api/health` and Management dashboard.
 
 ## Roles
 

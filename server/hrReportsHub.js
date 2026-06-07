@@ -28,6 +28,14 @@ import {
 } from './hrOps.js';
 import { listGrievances } from './hrGovernanceOps.js';
 import { getPayrollReconciliation } from './hrPayrollControl.js';
+import { listDisciplineCases } from './hrDisciplineCasesOps.js';
+import {
+  listDomesticStaffProfiles,
+  listExecutiveBeneficiaries,
+  listExecutivePayments,
+  listExecutiveSchoolFees,
+  listExecutiveStipends,
+} from './hrExecutiveBenefitsOps.js';
 
 const COMPANY = 'Zarewa Aluminium & Plastics Ltd';
 
@@ -50,7 +58,12 @@ export const HR_REPORT_CATALOG = [
   { id: 'promotion-due', category: 'development', label: 'Promotion due report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'department'] },
   { id: 'training-expiry', category: 'development', label: 'Training expiry report', csv: true, xlsx: false, pdf: false, filters: ['branch'] },
   { id: 'engagement-trends', category: 'development', label: 'Engagement trends', csv: true, xlsx: false, pdf: false },
-  { id: 'disciplinary-report', category: 'discipline', label: 'Disciplinary report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'fromIso', 'toIso'] },
+  { id: 'disciplinary-report', category: 'discipline', label: 'Disciplinary report (legacy events)', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'fromIso', 'toIso'] },
+  { id: 'discipline-cases-open', category: 'discipline', label: 'Open discipline cases', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'status', 'severity', 'fromIso', 'toIso'] },
+  { id: 'discipline-cases-history', category: 'discipline', label: 'Discipline case history', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'fromIso', 'toIso', 'status'] },
+  { id: 'discipline-pending-response', category: 'discipline', label: 'Pending employee response', csv: true, xlsx: true, pdf: true, filters: ['branch'] },
+  { id: 'discipline-pending-decision', category: 'discipline', label: 'Pending management decision', csv: true, xlsx: true, pdf: true, filters: ['branch'] },
+  { id: 'letter-issuance-report', category: 'compliance', label: 'Letter issuance report', csv: true, xlsx: true, pdf: true, filters: ['branch', 'fromIso', 'toIso'] },
   { id: 'exit-clearance', category: 'discipline', label: 'Exit report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'status'] },
   { id: 'property-return', category: 'discipline', label: 'Property return report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch'] },
   { id: 'document-expiry', category: 'compliance', label: 'Document expiry / missing', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch'] },
@@ -64,6 +77,12 @@ export const HR_REPORT_CATALOG = [
   { id: 'completed-transfers', category: 'discipline', label: 'Completed transfers', csv: true, xlsx: true, pdf: true, filters: ['branch', 'fromIso', 'toIso'] },
   { id: 'inter-branch-transfers', category: 'discipline', label: 'Inter-branch transfer report', csv: true, xlsx: true, pdf: true, filters: ['branch'] },
   { id: 'transfer-history', category: 'discipline', label: 'Employee transfer history', csv: true, xlsx: true, pdf: true, filters: ['userId', 'branch'] },
+  { id: 'executive-beneficiaries', category: 'executive', label: 'Executive beneficiaries register', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['linkedExecutive', 'beneficiaryType'] },
+  { id: 'executive-school-fees', category: 'executive', label: 'Scholarship / school fees report', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['linkedExecutive', 'paymentStatus', 'fromIso', 'toIso'] },
+  { id: 'executive-stipends', category: 'executive', label: 'Monthly stipend report', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['linkedExecutive', 'status'] },
+  { id: 'executive-domestic-staff', category: 'executive', label: 'Domestic staff register', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['linkedExecutive', 'status'] },
+  { id: 'executive-payments', category: 'executive', label: 'Executive beneficiary payments', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['paymentStatus', 'fromIso', 'toIso'] },
+  { id: 'executive-payment-audit', category: 'executive', label: 'Executive payment audit trail', csv: true, xlsx: true, pdf: true, executiveOnly: true, filters: ['fromIso', 'toIso'] },
 ];
 
 export const LEGACY_EXPORT_KIND_MAP = {
@@ -80,13 +99,27 @@ export const LEGACY_EXPORT_KIND_MAP = {
 };
 
 export function getHrReportCatalog(opts = {}) {
-  const list = HR_REPORT_CATALOG.filter((r) => !r.hidden || opts.includeHidden);
+  const list = HR_REPORT_CATALOG.filter((r) => {
+    if (r.hidden && !opts.includeHidden) return false;
+    if (r.executiveOnly && !opts.canViewExecutive) return false;
+    return true;
+  });
   const byCategory = {};
   for (const r of list) {
     if (!byCategory[r.category]) byCategory[r.category] = [];
     byCategory[r.category].push(r);
   }
   return { reports: list, byCategory };
+}
+
+/** @param {object} meta
+ * @param {{ canViewExecutive?: boolean }} opts
+ */
+function assertExecutiveReportAccess(meta, opts = {}) {
+  if (meta?.executiveOnly && !opts.canViewExecutive) {
+    return { ok: false, error: 'Executive benefits permission required for this report.' };
+  }
+  return { ok: true };
 }
 
 export function parseReportFilters(query = {}) {
@@ -424,6 +457,7 @@ function runDisciplinary(db, scope, filters, opts) {
     kind: e.kind || '',
     dateIso: e.dateIso || e.createdAtIso || '',
     summary: e.summary || '',
+    deepLink: `/hr/discipline-exit?tab=discipline`,
   }));
   const cols = [
     { key: 'displayName', label: 'Staff' },
@@ -433,6 +467,99 @@ function runDisciplinary(db, scope, filters, opts) {
     { key: 'summary', label: 'Summary' },
   ];
   return wrapResult('disciplinary-report', 'Disciplinary Report', cols, rows, filters, opts.actor);
+}
+
+function mapDisciplineCaseRows(cases) {
+  return cases.map((c) => ({
+    caseNumber: c.caseNumber || c.id,
+    displayName: c.staffDisplayName || '',
+    employeeNo: c.staffEmployeeNo || '',
+    caseType: c.caseType || '',
+    severity: c.severity || '',
+    status: c.status || '',
+    reportedDateIso: c.reportedDateIso || c.openedAtIso || '',
+    branchId: c.branchId || '',
+    deepLink: `/hr/discipline-exit?tab=cases&caseId=${c.id}`,
+  }));
+}
+
+function runDisciplineCases(db, scope, filters, opts, { statusFilter } = {}) {
+  const f = { ...filters };
+  if (statusFilter) f.status = statusFilter;
+  let cases = listDisciplineCases(db, scope, f);
+  if (statusFilter === 'open') {
+    cases = cases.filter((c) => !['closed', 'cancelled'].includes(c.status));
+  }
+  const cols = [
+    { key: 'caseNumber', label: 'Case No' },
+    { key: 'displayName', label: 'Staff' },
+    { key: 'caseType', label: 'Type' },
+    { key: 'severity', label: 'Severity' },
+    { key: 'status', label: 'Status' },
+    { key: 'reportedDateIso', label: 'Reported' },
+    { key: 'branchId', label: 'Branch' },
+  ];
+  const title = statusFilter === 'awaiting_employee_response'
+    ? 'Pending Employee Response'
+    : statusFilter === 'awaiting_management_decision'
+      ? 'Pending Management Decision'
+      : statusFilter === 'open'
+        ? 'Open Discipline Cases'
+        : 'Discipline Case History';
+  const id = statusFilter === 'awaiting_employee_response'
+    ? 'discipline-pending-response'
+    : statusFilter === 'awaiting_management_decision'
+      ? 'discipline-pending-decision'
+      : statusFilter === 'open'
+        ? 'discipline-cases-open'
+        : 'discipline-cases-history';
+  return wrapResult(id, title, cols, mapDisciplineCaseRows(cases), filters, opts.actor);
+}
+
+function runLetterIssuance(db, scope, filters, opts) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR not initialised.' };
+  let sql = `SELECT l.id, l.user_id, l.letter_kind, l.issued_at_iso, l.source_record_kind, l.source_record_id,
+                    u.display_name AS displayName, p.employee_no AS employeeNo, p.branch_id AS branchId
+             FROM hr_employment_letters l
+             LEFT JOIN app_users u ON u.id = l.user_id
+             LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
+             WHERE 1=1`;
+  const args = [];
+  if (!scope?.viewAll) {
+    sql += ` AND p.branch_id = ?`;
+    args.push(scope?.branchId || 'BR-HQ');
+  }
+  if (filters.fromIso) {
+    sql += ` AND date(l.issued_at_iso) >= date(?)`;
+    args.push(filters.fromIso);
+  }
+  if (filters.toIso) {
+    sql += ` AND date(l.issued_at_iso) <= date(?)`;
+    args.push(filters.toIso);
+  }
+  sql += ` ORDER BY l.issued_at_iso DESC LIMIT 1000`;
+  let rows = [];
+  try {
+    rows = db.prepare(sql).all(...args).map((r) => ({
+      displayName: r.displayName || '',
+      employeeNo: r.employeeNo || '',
+      letterKind: r.letter_kind,
+      issuedAtIso: r.issued_at_iso,
+      sourceRecordKind: r.source_record_kind || '',
+      sourceRecordId: r.source_record_id || '',
+      deepLink: `/hr/documents?tab=letters&letterKind=${encodeURIComponent(r.letter_kind)}&userId=${encodeURIComponent(r.user_id)}`,
+    }));
+  } catch {
+    rows = [];
+  }
+  const cols = [
+    { key: 'displayName', label: 'Staff' },
+    { key: 'letterKind', label: 'Letter type' },
+    { key: 'issuedAtIso', label: 'Issued' },
+    { key: 'sourceRecordKind', label: 'Source kind' },
+    { key: 'sourceRecordId', label: 'Source ID' },
+  ];
+  return wrapResult('letter-issuance-report', 'Letter Issuance Report', cols, rows, filters, opts.actor);
 }
 
 function runExitClearance(db, scope, filters, opts) {
@@ -671,6 +798,150 @@ function runTransferReport(db, scope, filters, opts, { pendingOnly, completedOnl
   return wrapResult('transfers', 'Transfer Report', cols, rows, filters, opts.actor);
 }
 
+function runExecutiveBeneficiariesReport(db, _scope, filters, opts) {
+  const rows = listExecutiveBeneficiaries(db, {
+    linkedExecutive: filters.linkedExecutive,
+    beneficiaryType: filters.beneficiaryType,
+  }).map((b) => ({
+    name: b.name,
+    beneficiaryType: b.beneficiaryType,
+    linkedExecutive: b.linkedExecutive,
+    relationship: b.relationship,
+    status: b.status,
+    bankAccount: b.bankAccountNo,
+  }));
+  const cols = [
+    { key: 'name', label: 'Name' },
+    { key: 'beneficiaryType', label: 'Type' },
+    { key: 'linkedExecutive', label: 'Executive' },
+    { key: 'relationship', label: 'Relationship' },
+    { key: 'status', label: 'Status' },
+    { key: 'bankAccount', label: 'Bank (masked)' },
+  ];
+  return wrapResult('executive-beneficiaries', 'Executive Beneficiaries', cols, rows, filters, opts.actor);
+}
+
+function runExecutiveSchoolFeesReport(db, _scope, filters, opts) {
+  let rows = listExecutiveSchoolFees(db, {
+    linkedExecutive: filters.linkedExecutive,
+    paymentStatus: filters.paymentStatus || filters.status,
+  });
+  if (filters.fromIso) rows = rows.filter((r) => (r.paymentDateIso || r.createdAtIso || '') >= filters.fromIso);
+  if (filters.toIso) rows = rows.filter((r) => (r.paymentDateIso || r.createdAtIso || '') <= filters.toIso);
+  const mapped = rows.map((f) => ({
+    beneficiary: f.beneficiaryName,
+    school: f.schoolName,
+    term: f.term,
+    session: f.academicSession,
+    amountRequested: f.amountRequestedNgn,
+    amountApproved: f.amountApprovedNgn,
+    amountPaid: f.amountPaidNgn,
+    status: f.paymentStatus,
+    executive: f.linkedExecutive,
+  }));
+  const cols = [
+    { key: 'beneficiary', label: 'Beneficiary' },
+    { key: 'school', label: 'School' },
+    { key: 'term', label: 'Term' },
+    { key: 'session', label: 'Session' },
+    { key: 'amountRequested', label: 'Requested (NGN)' },
+    { key: 'amountApproved', label: 'Approved (NGN)' },
+    { key: 'amountPaid', label: 'Paid (NGN)' },
+    { key: 'status', label: 'Status' },
+    { key: 'executive', label: 'Executive' },
+  ];
+  return wrapResult('executive-school-fees', 'School Fees Report', cols, mapped, filters, opts.actor);
+}
+
+function runExecutiveStipendsReport(db, _scope, filters, opts) {
+  const rows = listExecutiveStipends(db, {
+    linkedExecutive: filters.linkedExecutive,
+    status: filters.status,
+  }).map((s) => ({
+    beneficiary: s.beneficiaryName,
+    executive: s.linkedExecutive,
+    monthlyAmount: s.monthlyAmountNgn,
+    status: s.status,
+    lastPaidPeriod: s.lastPaidPeriod,
+    bankAccount: s.bankAccountNo,
+  }));
+  const cols = [
+    { key: 'beneficiary', label: 'Beneficiary' },
+    { key: 'executive', label: 'Executive' },
+    { key: 'monthlyAmount', label: 'Monthly (NGN)' },
+    { key: 'status', label: 'Status' },
+    { key: 'lastPaidPeriod', label: 'Last paid' },
+    { key: 'bankAccount', label: 'Bank (masked)' },
+  ];
+  return wrapResult('executive-stipends', 'Stipend Report', cols, rows, filters, opts.actor);
+}
+
+function runExecutiveDomesticStaffReport(db, _scope, filters, opts) {
+  const rows = listDomesticStaffProfiles(db, {
+    assignedExecutive: filters.linkedExecutive,
+    status: filters.status,
+  }).map((d) => ({
+    name: d.staffName,
+    designation: d.designation,
+    executive: d.assignedExecutive,
+    salary: d.salaryAmountNgn,
+    status: d.status,
+    joined: d.dateJoinedIso,
+  }));
+  const cols = [
+    { key: 'name', label: 'Name' },
+    { key: 'designation', label: 'Role' },
+    { key: 'executive', label: 'Executive' },
+    { key: 'salary', label: 'Salary (NGN)' },
+    { key: 'status', label: 'Status' },
+    { key: 'joined', label: 'Joined' },
+  ];
+  return wrapResult('executive-domestic-staff', 'Domestic Staff Register', cols, rows, filters, opts.actor);
+}
+
+function runExecutivePaymentsReport(db, _scope, filters, opts) {
+  let rows = listExecutivePayments(db, { status: filters.paymentStatus || filters.status });
+  if (filters.fromIso) rows = rows.filter((p) => (p.createdAtIso || '') >= filters.fromIso);
+  if (filters.toIso) rows = rows.filter((p) => (p.createdAtIso || '') <= filters.toIso);
+  const mapped = rows.map((p) => ({
+    payee: p.payeeName,
+    type: p.paymentType,
+    amount: p.amountNgn,
+    period: p.periodYyyymm,
+    status: p.status,
+    narration: p.narration,
+  }));
+  const cols = [
+    { key: 'payee', label: 'Payee' },
+    { key: 'type', label: 'Type' },
+    { key: 'amount', label: 'Amount (NGN)' },
+    { key: 'period', label: 'Period' },
+    { key: 'status', label: 'Status' },
+    { key: 'narration', label: 'Narration' },
+  ];
+  return wrapResult('executive-payments', 'Executive Payments', cols, mapped, filters, opts.actor);
+}
+
+function runExecutivePaymentAuditReport(db, scope, filters, opts) {
+  let events = listHrAuditEventsGlobal(db, scope, filters);
+  events = events.filter((e) => String(e.action || '').startsWith('hr.executive'));
+  const rows = events.map((e) => ({
+    at: e.createdAtIso,
+    action: e.action,
+    entityKind: e.entityKind,
+    entityId: e.entityId,
+    actorUserId: e.actorUserId,
+  }));
+  const cols = [
+    { key: 'at', label: 'When' },
+    { key: 'action', label: 'Action' },
+    { key: 'entityKind', label: 'Entity' },
+    { key: 'entityId', label: 'Entity ID' },
+    { key: 'actorUserId', label: 'Actor' },
+  ];
+  return wrapResult('executive-payment-audit', 'Executive Payment Audit', cols, rows, filters, opts.actor);
+}
+
 const RUNNERS = {
   'employee-master': runEmployeeMaster,
   'active-employees': runActiveEmployees,
@@ -689,6 +960,11 @@ const RUNNERS = {
   'staff-loan': runStaffLoan,
   'promotion-due': runPromotionDue,
   'disciplinary-report': runDisciplinary,
+  'discipline-cases-open': (db, s, f, o) => runDisciplineCases(db, s, f, o, { statusFilter: 'open' }),
+  'discipline-cases-history': (db, s, f, o) => runDisciplineCases(db, s, f, o, {}),
+  'discipline-pending-response': (db, s, f, o) => runDisciplineCases(db, s, f, o, { statusFilter: 'awaiting_employee_response' }),
+  'discipline-pending-decision': (db, s, f, o) => runDisciplineCases(db, s, f, o, { statusFilter: 'awaiting_management_decision' }),
+  'letter-issuance-report': runLetterIssuance,
   'exit-clearance': runExitClearance,
   'property-return': runPropertyReturn,
   'document-expiry': runDocumentExpiry,
@@ -702,6 +978,12 @@ const RUNNERS = {
   'inter-branch-transfers': (db, scope, f, o) => runTransferReport(db, scope, f, o, { interBranchOnly: true }),
   'transfer-history': (db, scope, f, o) => runTransferReport(db, scope, f, o, {}),
   headcount: runActiveEmployees,
+  'executive-beneficiaries': runExecutiveBeneficiariesReport,
+  'executive-school-fees': runExecutiveSchoolFeesReport,
+  'executive-stipends': runExecutiveStipendsReport,
+  'executive-domestic-staff': runExecutiveDomesticStaffReport,
+  'executive-payments': runExecutivePaymentsReport,
+  'executive-payment-audit': runExecutivePaymentAuditReport,
 };
 
 export function previewHrReport(db, scope, reportId, filters, opts = {}) {
@@ -711,6 +993,8 @@ export function previewHrReport(db, scope, reportId, filters, opts = {}) {
   if (meta.sensitive && !opts.canViewSensitive) {
     return { ok: false, error: 'This report requires payroll sensitive permission.' };
   }
+  const execGate = assertExecutiveReportAccess(meta, opts);
+  if (!execGate.ok) return execGate;
   const runner = RUNNERS[id];
   if (!runner) return { ok: false, error: 'Report runner not implemented.' };
   return runner(db, scope, filters, opts);

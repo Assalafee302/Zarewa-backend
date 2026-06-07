@@ -1,0 +1,40 @@
+import { describe, expect, it } from 'vitest';
+import {
+  getAllowedLegacyAccountTabs,
+  resolveLegacyAccountsRedirect,
+  userMayAccessAccountingGlApis,
+  userMayAccessLegacyAccountsRoute,
+} from './legacyAccountsAccess.js';
+
+describe('legacyAccountsAccess', () => {
+  const bm = { roleKey: 'sales_manager', permissions: ['finance.approve', 'reports.view'] };
+  const cashier = { roleKey: 'cashier', permissions: ['cashier.desk.view', 'finance.view', 'finance.pay'] };
+  const accountant = {
+    roleKey: 'finance_manager',
+    permissions: ['accounting.desk.view', 'finance.view', 'reports.view'],
+  };
+  const md = { roleKey: 'md', permissions: ['finance.view', 'accounting.desk.view'] };
+
+  it('branch manager cannot access legacy accounts route', () => {
+    expect(userMayAccessLegacyAccountsRoute(bm)).toBe(false);
+    expect(resolveLegacyAccountsRedirect(bm)?.to).toBe('/manager');
+  });
+
+  it('cashier can access route but not audit tab', () => {
+    expect(userMayAccessLegacyAccountsRoute(cashier)).toBe(true);
+    expect(getAllowedLegacyAccountTabs(cashier)).not.toContain('audit');
+    expect(resolveLegacyAccountsRedirect(cashier, 'audit')?.to).toBe('/cashier');
+  });
+
+  it('accountant can access audit tab', () => {
+    expect(userMayAccessLegacyAccountsRoute(accountant)).toBe(true);
+    expect(getAllowedLegacyAccountTabs(accountant)).toContain('audit');
+  });
+
+  it('cashier and BM blocked from GL APIs', () => {
+    expect(userMayAccessAccountingGlApis(cashier)).toBe(false);
+    expect(userMayAccessAccountingGlApis(bm)).toBe(false);
+    expect(userMayAccessAccountingGlApis(accountant)).toBe(true);
+    expect(userMayAccessAccountingGlApis(md)).toBe(true);
+  });
+});

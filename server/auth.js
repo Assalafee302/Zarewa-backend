@@ -132,17 +132,13 @@ export const ROLE_DEFINITIONS = {
       'accounting.gl.view',
     ],
   },
+  /** Role key `finance_manager` retained for backward compatibility; label matches company structure. */
   finance_manager: {
-    label: 'Finance manager',
+    label: 'Accountant / Head of Accounts',
     permissions: [
       'dashboard.view',
       'office.use',
-      'sales.view',
       'procurement.view',
-      'procurement.manage',
-      'suppliers.manage',
-      'purchase_orders.manage',
-      'operations.view',
       'finance.view',
       'finance.post',
       'finance.approve',
@@ -152,7 +148,6 @@ export const ROLE_DEFINITIONS = {
       'treasury.manage',
       'audit.view',
       'period.manage',
-      'settings.view',
       'treasury.reserve_policy.manage',
       /** Management reports (`/api/reports/*`, `/reports`) — same gate as `userMayViewManagementReports`. */
       'reports.view',
@@ -208,7 +203,6 @@ export const ROLE_DEFINITIONS = {
       'deliveries.manage',
       'inventory.receive',
       'inventory.adjust',
-      'finance.approve',
       'material_incidents.approve',
       ...HR_ROLE_PERMISSION_BUNDLES.branchManager,
     ],

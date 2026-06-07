@@ -2734,6 +2734,339 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrPhase5Ops2026(db);
   migrateHrPhase5aCompleteness2026(db);
   migrateHrPhase6Governance2026(db);
+  migrateHrPhase7DisciplineLetters2026(db);
+  migrateHrPhase8Operational2026(db);
+  migrateHrPhase9ExecutiveBenefits2026(db);
+}
+
+/** Phase 9: executive benefits — scholarships, stipends, domestic staff, beneficiary payments. */
+function migrateHrPhase9ExecutiveBenefits2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_chairman_school_fees (
+      id TEXT PRIMARY KEY,
+      child_name TEXT,
+      school_name TEXT,
+      term TEXT,
+      academic_year TEXT,
+      fee_amount_ngn REAL,
+      fee_type TEXT,
+      payment_status TEXT,
+      amount_paid_ngn REAL DEFAULT 0,
+      payment_date_iso TEXT,
+      notes TEXT,
+      created_at_iso TEXT,
+      created_by_user_id TEXT,
+      updated_at_iso TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_chairman_expenses (
+      id TEXT PRIMARY KEY,
+      expense_type TEXT,
+      description TEXT,
+      amount_ngn REAL,
+      quantity INTEGER DEFAULT 1,
+      unit TEXT,
+      period_yyyymm TEXT,
+      payment_status TEXT,
+      payment_date_iso TEXT,
+      vendor_name TEXT,
+      notes TEXT,
+      created_at_iso TEXT,
+      created_by_user_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_executive_beneficiaries (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      beneficiary_type TEXT,
+      relationship TEXT,
+      linked_executive TEXT,
+      school_name TEXT,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      bank_name TEXT,
+      bank_code TEXT,
+      bank_account_name TEXT,
+      bank_account_enc TEXT,
+      created_at_iso TEXT,
+      created_by_user_id TEXT,
+      updated_at_iso TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_ex_ben_exec ON hr_executive_beneficiaries(linked_executive);
+
+    CREATE TABLE IF NOT EXISTS hr_executive_stipends (
+      id TEXT PRIMARY KEY,
+      beneficiary_id TEXT,
+      beneficiary_name TEXT,
+      beneficiary_type TEXT,
+      linked_executive TEXT,
+      monthly_amount_ngn REAL NOT NULL DEFAULT 0,
+      start_date_iso TEXT,
+      end_date_iso TEXT,
+      payment_frequency TEXT NOT NULL DEFAULT 'monthly',
+      bank_name TEXT,
+      bank_code TEXT,
+      bank_account_name TEXT,
+      bank_account_enc TEXT,
+      narration TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      approval_status TEXT NOT NULL DEFAULT 'draft',
+      approved_by_user_id TEXT,
+      last_paid_period TEXT,
+      notes TEXT,
+      created_at_iso TEXT,
+      created_by_user_id TEXT,
+      updated_at_iso TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_domestic_staff_profiles (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      staff_name TEXT NOT NULL,
+      employee_no TEXT,
+      designation TEXT,
+      assigned_executive TEXT,
+      work_location TEXT,
+      employment_type TEXT,
+      date_joined_iso TEXT,
+      salary_amount_ngn REAL DEFAULT 0,
+      bank_name TEXT,
+      bank_code TEXT,
+      bank_account_name TEXT,
+      bank_account_enc TEXT,
+      emergency_contact TEXT,
+      next_of_kin TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at_iso TEXT,
+      created_by_user_id TEXT,
+      updated_at_iso TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_domestic_exec ON hr_domestic_staff_profiles(assigned_executive);
+
+    CREATE TABLE IF NOT EXISTS hr_executive_payments (
+      id TEXT PRIMARY KEY,
+      payment_type TEXT NOT NULL,
+      source_kind TEXT,
+      source_id TEXT,
+      payee_name TEXT,
+      amount_ngn REAL NOT NULL DEFAULT 0,
+      period_yyyymm TEXT,
+      term TEXT,
+      academic_session TEXT,
+      bank_name TEXT,
+      bank_code TEXT,
+      bank_account_name TEXT,
+      bank_account_enc TEXT,
+      narration TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      requested_by_user_id TEXT,
+      reviewed_by_user_id TEXT,
+      approved_by_user_id TEXT,
+      paid_by_user_id TEXT,
+      paid_at_iso TEXT,
+      document_ref TEXT,
+      proof_ref TEXT,
+      rejection_reason TEXT,
+      export_id TEXT,
+      created_at_iso TEXT,
+      updated_at_iso TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_ex_pay_status ON hr_executive_payments(status, payment_type);
+
+    CREATE TABLE IF NOT EXISTS hr_executive_payment_exports (
+      id TEXT PRIMARY KEY,
+      period_yyyymm TEXT,
+      payment_type TEXT,
+      row_count INTEGER NOT NULL DEFAULT 0,
+      total_ngn REAL NOT NULL DEFAULT 0,
+      exported_by_user_id TEXT,
+      exported_at_iso TEXT,
+      meta_json TEXT
+    );
+  `);
+  const fees = cols('hr_chairman_school_fees');
+  if (fees.size) {
+    const add = (name, ddl) => {
+      if (!fees.has(name)) db.exec(`ALTER TABLE hr_chairman_school_fees ADD COLUMN ${ddl}`);
+    };
+    add('beneficiary_id', 'beneficiary_id TEXT');
+    add('beneficiary_type', 'beneficiary_type TEXT');
+    add('linked_executive', 'linked_executive TEXT');
+    add('relationship', 'relationship TEXT');
+    add('class_level', 'class_level TEXT');
+    add('academic_session', 'academic_session TEXT');
+    add('amount_requested_ngn', 'amount_requested_ngn REAL');
+    add('amount_approved_ngn', 'amount_approved_ngn REAL');
+    add('due_date_iso', 'due_date_iso TEXT');
+    add('approval_status', 'approval_status TEXT');
+    add('approved_by_user_id', 'approved_by_user_id TEXT');
+    add('paid_by_user_id', 'paid_by_user_id TEXT');
+    add('document_ref', 'document_ref TEXT');
+    add('workflow_status', 'workflow_status TEXT');
+    add('payment_id', 'payment_id TEXT');
+    add('beneficiary_name', 'beneficiary_name TEXT');
+  }
+}
+
+/** Phase 8: letter workflow, settings, bulk import, staff numbering. */
+function migrateHrPhase8Operational2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at_iso TEXT,
+      updated_by_user_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hr_staff_import_runs (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      summary_json TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_staff_import_runs_at ON hr_staff_import_runs(created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS hr_employee_number_history (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      old_employee_no TEXT,
+      new_employee_no TEXT,
+      batch_id TEXT,
+      changed_at_iso TEXT NOT NULL,
+      changed_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_empno_hist_user ON hr_employee_number_history(user_id, changed_at_iso DESC);
+  `);
+  const letters = cols('hr_employment_letters');
+  if (letters.size) {
+    const add = (name, ddl) => {
+      if (!letters.has(name)) db.exec(`ALTER TABLE hr_employment_letters ADD COLUMN ${ddl}`);
+    };
+    add('reference_number', 'reference_number TEXT');
+    add('draft_id', 'draft_id TEXT');
+    add('prepared_by_user_id', 'prepared_by_user_id TEXT');
+    add('submitted_at_iso', 'submitted_at_iso TEXT');
+    add('submitted_by_user_id', 'submitted_by_user_id TEXT');
+    add('hr_reviewed_at_iso', 'hr_reviewed_at_iso TEXT');
+    add('hr_reviewed_by_user_id', 'hr_reviewed_by_user_id TEXT');
+    add('gm_reviewed_at_iso', 'gm_reviewed_at_iso TEXT');
+    add('gm_reviewed_by_user_id', 'gm_reviewed_by_user_id TEXT');
+    add('md_approved_at_iso', 'md_approved_at_iso TEXT');
+    add('md_approved_by_user_id', 'md_approved_by_user_id TEXT');
+    add('rejection_reason', 'rejection_reason TEXT');
+    add('download_count', 'download_count INTEGER NOT NULL DEFAULT 0');
+    add('print_count', 'print_count INTEGER NOT NULL DEFAULT 0');
+    if (letters.has('status')) {
+      /* existing rows stay issued; new letters use draft via app code */
+    } else {
+      db.exec(`ALTER TABLE hr_employment_letters ADD COLUMN status TEXT NOT NULL DEFAULT 'issued'`);
+    }
+  }
+  const ack = cols('hr_policy_acknowledgements');
+  if (ack.size) {
+    if (!ack.has('expires_at_iso')) db.exec(`ALTER TABLE hr_policy_acknowledgements ADD COLUMN expires_at_iso TEXT`);
+    if (!ack.has('witness_user_id')) db.exec(`ALTER TABLE hr_policy_acknowledgements ADD COLUMN witness_user_id TEXT`);
+    if (!ack.has('client_meta_json')) db.exec(`ALTER TABLE hr_policy_acknowledgements ADD COLUMN client_meta_json TEXT`);
+  }
+}
+
+/** Phase 7: discipline case management, evidence, witnesses, appeals. */
+function migrateHrPhase7DisciplineLetters2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const cases = cols('hr_discipline_cases');
+  if (cases.size) {
+    const addCol = (name, ddl) => {
+      if (!cases.has(name)) db.exec(`ALTER TABLE hr_discipline_cases ADD COLUMN ${ddl}`);
+    };
+    addCol('case_number', 'case_number TEXT');
+    addCol('case_type', 'case_type TEXT');
+    addCol('severity', "severity TEXT NOT NULL DEFAULT 'medium'");
+    addCol('description', 'description TEXT');
+    addCol('department', 'department TEXT');
+    addCol('designation', 'designation TEXT');
+    addCol('incident_date_iso', 'incident_date_iso TEXT');
+    addCol('reported_date_iso', 'reported_date_iso TEXT');
+    addCol('reported_by_user_id', 'reported_by_user_id TEXT');
+    addCol('employee_response', 'employee_response TEXT');
+    addCol('investigation_officer_user_id', 'investigation_officer_user_id TEXT');
+    addCol('investigation_findings', 'investigation_findings TEXT');
+    addCol('hr_recommendation', 'hr_recommendation TEXT');
+    addCol('management_decision', 'management_decision TEXT');
+    addCol('sanction', 'sanction TEXT');
+    addCol('appeal_status', 'appeal_status TEXT');
+    addCol('final_outcome', 'final_outcome TEXT');
+    addCol('closure_date_iso', 'closure_date_iso TEXT');
+    addCol('closed_by_user_id', 'closed_by_user_id TEXT');
+    addCol('related_letter_ids_json', 'related_letter_ids_json TEXT');
+    addCol('payroll_block_flags_json', 'payroll_block_flags_json TEXT');
+    addCol('meta_json', 'meta_json TEXT');
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_discipline_case_evidence (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      file_ref TEXT,
+      document_id TEXT,
+      uploaded_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (case_id) REFERENCES hr_discipline_cases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_discipline_evidence_case ON hr_discipline_case_evidence(case_id, created_at_iso);
+
+    CREATE TABLE IF NOT EXISTS hr_discipline_case_witnesses (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      witness_name TEXT NOT NULL,
+      witness_role TEXT,
+      statement TEXT,
+      contact TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (case_id) REFERENCES hr_discipline_cases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_discipline_witness_case ON hr_discipline_case_witnesses(case_id);
+
+    CREATE TABLE IF NOT EXISTS hr_discipline_appeals (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      grounds TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      outcome TEXT,
+      filed_at_iso TEXT NOT NULL,
+      decided_at_iso TEXT,
+      FOREIGN KEY (case_id) REFERENCES hr_discipline_cases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_discipline_appeals_case ON hr_discipline_appeals(case_id, filed_at_iso DESC);
+  `);
+  const letters = cols('hr_employment_letters');
+  if (letters.size && !letters.has('status')) {
+    db.exec(`ALTER TABLE hr_employment_letters ADD COLUMN status TEXT NOT NULL DEFAULT 'issued'`);
+  }
 }
 
 /** Phase 5A: document verification, ID card metadata. */

@@ -130,6 +130,7 @@ import {
 } from './hrStaffLifecycle.js';
 import {
   countUnreadHrNotifications,
+  createHrNotification,
   listHrNotifications,
   markAllHrNotificationsRead,
   markHrNotificationRead,
@@ -241,12 +242,86 @@ import {
   patchHrEngagementSurvey,
   submitHrEngagementResponse,
 } from './hrEngagement.js';
-import { HR_POLICY_REGISTRY } from './hrPolicy.js';
+import { HR_POLICY_REGISTRY, requiredHrPoliciesFor } from './hrPolicy.js';
 import { validateStaffLoanApplication } from './hrBusinessRules.js';
 import {
+  applyStaffRenumbering,
+  getStaffNumberConfig,
+  listEmployeeNumberHistory,
+  listStaffWithoutEmployeeNo,
+  previewStaffRenumbering,
+  saveStaffNumberConfig,
+} from './hrStaffNumbering.js';
+import {
+  buildBulkImportTemplateXlsx,
+  commitBulkStaffImport,
+  listBulkImportRuns,
+  previewBulkStaffImport,
+} from './hrStaffBulkImport.js';
+import {
+  approveExecutivePayment,
+  buildExecutiveBeneficiaryBankExport,
+  deleteChairmanExpenseMapped,
+  deleteExecutiveSchoolFee,
+  getExecutiveBenefitsDashboard,
+  getExecutivePayment,
+  listChairmanExpensesMapped,
+  listDomesticStaffProfiles,
+  listExecutiveBeneficiaries,
+  listExecutivePayments,
+  listExecutiveSchoolFees,
+  listExecutiveStipends,
+  markExecutivePaymentPaid,
+  rejectExecutivePayment,
+  submitExecutiveSchoolFee,
+  upsertChairmanExpenseMapped,
+  upsertDomesticStaffProfile,
+  upsertExecutiveBeneficiary,
+  upsertExecutiveSchoolFee,
+  upsertExecutiveStipend,
+} from './hrExecutiveBenefitsOps.js';
+import {
+  createDraftLetter,
+  exportLetterPreviewPdf,
+  exportOfficialLetterDocx,
+  exportOfficialLetterPdf,
+  getLetterReferenceConfig,
+  gmReviewLetter,
+  hrReviewLetter,
+  issueLetter,
+  listEmploymentLettersDetailed,
+  mdApproveLetter,
+  previewNextLetterReferences,
+  recordLetterPrint,
+  rejectLetter,
+  resetLetterReferencesForLiveUse,
+  saveLetterReferenceConfig,
+  submitLetter,
+} from './hrLetterWorkflowOps.js';
+import {
+  addDisciplineCaseEvidence,
+  addDisciplineCaseWitness,
+  appendDisciplineCaseEvent,
+  createDisciplineCase,
+  fileDisciplineCaseAppeal,
+  generateDisciplineCaseLetter,
+  getDisciplineCase,
+  getDisciplineCaseAudit,
+  getDisciplineCaseDashboard,
+  listDisciplineCases,
+  patchDisciplineCase,
+  staffDisciplinePayrollBlocks,
+} from './hrDisciplineCasesOps.js';
+import {
   hrUserHas,
-  userCanAccessHrModule,
+  userCanAccessMainHrWorkspace,
+  userCanAccessTeamHr,
+  userCanApproveHrLetters,
+  userCanBulkImportStaff,
+  userCanViewExecutiveBenefits,
+  userCanManageExecutiveBenefits,
   userCanAccessMyProfileHr,
+  hrApiPathAllowedWithoutMainWorkspace,
   userCanEndorseBranchHr,
   userCanGmApproveHr,
   userCanGmApprovePayroll,
@@ -302,6 +377,42 @@ function hrReady(res, db) {
   return true;
 }
 
+function assertHrPolicyGate(db, userId, actionKey) {
+  const required = requiredHrPoliciesFor(actionKey);
+  const missing = listMissingHrPolicyAcceptances(db, userId, required);
+  if (missing.length) {
+    return {
+      ok: false,
+      error: 'Complete required policy acknowledgements before this action.',
+      code: 'POLICY_ACK_REQUIRED',
+      missing,
+    };
+  }
+  return { ok: true };
+}
+
+function requireMainHrWorkspace(req, res, next) {
+  if (userCanAccessMainHrWorkspace(req.user)) return next();
+  const team = userCanAccessTeamHr(req.user);
+  return res.status(403).json({
+    ok: false,
+    code: 'HR_WORKSPACE_DENIED',
+    error: team
+      ? 'Access restricted. Use Management / Team workspace for branch HR actions.'
+      : 'Access restricted. Use My Profile for self-service HR.',
+  });
+}
+
+function requireExecutiveBenefitsView(req, res, next) {
+  if (userCanViewExecutiveBenefits(req.user)) return next();
+  return res.status(403).json({ ok: false, error: 'Executive benefits access restricted.' });
+}
+
+function requireExecutiveBenefitsManage(req, res, next) {
+  if (userCanManageExecutiveBenefits(req.user)) return next();
+  return res.status(403).json({ ok: false, error: 'You cannot manage executive benefits.' });
+}
+
 /** @param {string[]} perms — any one grants access */
 function requireHrAny(...perms) {
   return (req, res, next) => {
@@ -316,6 +427,30 @@ function requireHrAny(...perms) {
  */
 export function registerHrApi(app, db) {
   app.use('/api/hr', hrSensitiveTokenMiddleware(db));
+
+  app.use('/api/hr', (req, res, next) => {
+    if (req.path === '/api/hr/health') return next();
+    if (userCanAccessMainHrWorkspace(req.user)) return next();
+    const team = userCanAccessTeamHr(req.user);
+    const self = userCanAccessMyProfileHr(req.user);
+    if (!team && !self) {
+      return res.status(403).json({
+        ok: false,
+        code: 'HR_WORKSPACE_DENIED',
+        error: 'Access restricted. Use My Profile for self-service HR.',
+      });
+    }
+    if (hrApiPathAllowedWithoutMainWorkspace(req.path, { teamUser: team, selfUser: self && !team })) {
+      return next();
+    }
+    return res.status(403).json({
+      ok: false,
+      code: 'HR_WORKSPACE_DENIED',
+      error: team
+        ? 'Access restricted. Use Management / Team workspace for branch HR actions.'
+        : 'Access restricted. Use My Profile for self-service HR.',
+    });
+  });
 
   app.get('/api/hr/health', (_req, res) => {
     const modules = getHrModuleHealth(db);
@@ -593,6 +728,158 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load disciplinary events.' });
+    }
+  });
+
+  app.get('/api/hr/discipline-cases/dashboard', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.directory.view', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      return res.json({ ok: true, dashboard: getDisciplineCaseDashboard(db, scope) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load discipline dashboard.' });
+    }
+  });
+
+  app.get('/api/hr/discipline-cases', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.directory.view', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const filters = {
+        status: req.query.status,
+        caseType: req.query.caseType,
+        severity: req.query.severity,
+        userId: req.query.userId,
+        fromIso: req.query.fromIso,
+        toIso: req.query.toIso,
+      };
+      return res.json({ ok: true, cases: listDisciplineCases(db, scope, filters) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load discipline cases.' });
+    }
+  });
+
+  app.get('/api/hr/discipline-cases/:id', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.directory.view', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const c = getDisciplineCase(db, req.params.id);
+      if (!c) return res.status(404).json({ ok: false, error: 'Case not found.' });
+      const scope = hrListScope(req);
+      const isSubject = String(c.userId) === String(req.user?.id);
+      if (!scope.viewAll && !isSubject && c.branchId !== scope.branchId && !hrUserHas(req.user, 'hr.discipline.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      return res.json({ ok: true, case: c });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load discipline case.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = createDisciplineCase(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create discipline case.' });
+    }
+  });
+
+  app.patch('/api/hr/discipline-cases/:id', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.requests.gm_approve'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchDisciplineCase(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update discipline case.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases/:id/events', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = appendDisciplineCaseEvent(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not add case event.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases/:id/evidence', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = addDisciplineCaseEvidence(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not add evidence.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases/:id/witnesses', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = addDisciplineCaseWitness(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not add witness.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases/:id/appeals', requireHrAny('hr.discipline.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = fileDisciplineCaseAppeal(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not file appeal.' });
+    }
+  });
+
+  app.post('/api/hr/discipline-cases/:id/letters/:letterType', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.letters.generate'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = generateDisciplineCaseLetter(db, req.user, req.params.id, req.params.letterType, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+    }
+  });
+
+  app.get('/api/hr/discipline-cases/:id/audit', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...getDisciplineCaseAudit(db, req.params.id) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load case audit.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/discipline-payroll-blocks', requireHrAny('hr.discipline.manage', 'hr.payroll.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const blocks = staffDisciplinePayrollBlocks(db, req.params.userId);
+      return res.json({ ok: true, ...blocks });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load discipline payroll blocks.' });
     }
   });
 
@@ -944,6 +1231,8 @@ export function registerHrApi(app, db) {
   app.patch('/api/hr/requests/:requestId/hr-review', requireHrAny('hr.requests.review', 'hr.requests.hr_review'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      const gate = assertHrPolicyGate(db, req.user?.id, 'hr_leave_approve');
+      if (!gate.ok) return res.status(403).json(gate);
       const { approve, note, reasonCode } = req.body || {};
       const r = hrReviewRequest(db, req.params.requestId, req.user, Boolean(approve), note, reasonCode);
       if (!r.ok) return res.status(400).json(r);
@@ -1207,6 +1496,8 @@ export function registerHrApi(app, db) {
   app.post('/api/hr/payroll-runs/:runId/recompute', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      const gate = assertHrPolicyGate(db, req.user?.id, 'hr_payroll_edit');
+      if (!gate.ok) return res.status(403).json(gate);
       const r = computePayrollRun(db, req.params.runId);
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
@@ -1822,7 +2113,11 @@ export function registerHrApi(app, db) {
       if (userId !== req.user?.id && !canOther) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
-      return res.json({ ok: true, letters: listEmploymentLetters(db, userId) });
+      const letters = listEmploymentLettersDetailed(db, userId);
+      const filtered = userId === req.user?.id
+        ? letters.filter((l) => ['approved', 'issued'].includes(String(l.status)))
+        : letters;
+      return res.json({ ok: true, letters: filtered.length ? filtered : letters });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not list employment letters.' });
@@ -1833,15 +2128,158 @@ export function registerHrApi(app, db) {
     try {
       if (!hrReady(res, db)) return;
       const body = req.body || {};
-      const r =
-        body.letterKind && body.letterKind !== 'employment'
-          ? generateHrLetterFromTemplate(db, req.user, body)
-          : generateEmploymentLetter(db, req.user, body);
+      const r = createDraftLetter(db, req.user, body);
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+    }
+  });
+
+  app.post('/api/hr/employment-letters/:letterId/submit', requireHrAny('hr.letters.generate', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = submitLetter(db, req.user, req.params.letterId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit letter.' });
+    }
+  });
+
+  app.patch('/api/hr/employment-letters/:letterId/hr-review', requireHrAny('hr.requests.review', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = hrReviewLetter(db, req.user, req.params.letterId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not review letter.' });
+    }
+  });
+
+  app.patch('/api/hr/employment-letters/:letterId/gm-review', requireHrAny('hr.requests.gm_approve', 'hr.letters.approve'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = gmReviewLetter(db, req.user, req.params.letterId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not GM-review letter.' });
+    }
+  });
+
+  app.patch('/api/hr/employment-letters/:letterId/md-approve', requireHrAny('hr.payroll.md_approve', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = mdApproveLetter(db, req.user, req.params.letterId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not MD-approve letter.' });
+    }
+  });
+
+  app.post('/api/hr/employment-letters/:letterId/issue', requireHrAny('hr.letters.approve', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = issueLetter(db, req.user, req.params.letterId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not issue letter.' });
+    }
+  });
+
+  app.post('/api/hr/employment-letters/:letterId/reject', requireHrAny('hr.letters.approve', 'hr.requests.review', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = rejectLetter(db, req.user, req.params.letterId, req.body?.reason);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not reject letter.' });
+    }
+  });
+
+  app.get('/api/hr/employment-letters/:letterId/preview', requireHrAny('hr.letters.generate', 'hr.staff.manage', 'hr.self'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const letterId = String(req.params.letterId || '').trim();
+      const row = db.prepare(`SELECT user_id FROM hr_employment_letters WHERE id = ?`).get(letterId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Letter not found.' });
+      if (row.user_id !== req.user?.id && !hrUserHas(req.user, 'hr.letters.generate') && !hrUserHas(req.user, 'hr.staff.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = exportLetterPreviewPdf(db, letterId);
+      if (!r.ok) return res.status(400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${r.filename}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not preview letter.' });
+    }
+  });
+
+  app.get('/api/hr/employment-letters/:letterId/pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const letterId = String(req.params.letterId || '').trim();
+      const row = db.prepare(`SELECT user_id, status FROM hr_employment_letters WHERE id = ?`).get(letterId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Letter not found.' });
+      const isSelf = row.user_id === req.user?.id;
+      if (!isSelf && !hrUserHas(req.user, 'hr.letters.generate') && !hrUserHas(req.user, 'hr.staff.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = exportOfficialLetterPdf(db, letterId, req.user);
+      if (!r.ok) return res.status(r.code === 'LETTER_NOT_APPROVED' ? 403 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export letter PDF.' });
+    }
+  });
+
+  app.get('/api/hr/employment-letters/:letterId/docx', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const letterId = String(req.params.letterId || '').trim();
+      const row = db.prepare(`SELECT user_id FROM hr_employment_letters WHERE id = ?`).get(letterId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Letter not found.' });
+      const isSelf = row.user_id === req.user?.id;
+      if (!isSelf && !hrUserHas(req.user, 'hr.letters.generate') && !hrUserHas(req.user, 'hr.staff.manage')) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const r = exportOfficialLetterDocx(db, letterId, req.user);
+      if (!r.ok) return res.status(r.code === 'LETTER_NOT_APPROVED' ? 403 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/msword');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(r.body);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export letter Word document.' });
+    }
+  });
+
+  app.post('/api/hr/employment-letters/:letterId/print', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = recordLetterPrint(db, req.params.letterId, req.user);
+      if (!r.ok) return res.status(r.code === 'LETTER_NOT_APPROVED' ? 403 : 400).json(r);
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record print.' });
     }
   });
 
@@ -1866,31 +2304,6 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not generate loan agreement.' });
-    }
-  });
-
-  app.get('/api/hr/employment-letters/:letterId/pdf', (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const letterId = String(req.params.letterId || '').trim();
-      const row = db.prepare(`SELECT user_id FROM hr_employment_letters WHERE id = ?`).get(letterId);
-      if (!row) return res.status(404).json({ ok: false, error: 'Letter not found.' });
-      const isSelf = row.user_id === req.user?.id;
-      if (
-        !isSelf &&
-        !hrUserHas(req.user, 'hr.letters.generate') &&
-        !hrUserHas(req.user, 'hr.staff.manage')
-      ) {
-        return res.status(403).json({ ok: false, error: 'Permission denied.' });
-      }
-      const r = exportEmploymentLetterPdf(db, letterId);
-      if (!r.ok) return res.status(400).json(r);
-      res.setHeader('Content-Type', r.contentType || 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
-      return res.send(Buffer.from(r.pdf));
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export letter PDF.' });
     }
   });
 
@@ -2977,6 +3390,487 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not save exit interview.' });
+    }
+  });
+
+  app.get('/api/hr/staff-import/template', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage'), (_req, res) => {
+    try {
+      const buf = buildBulkImportTemplateXlsx();
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="zarewa-staff-import-template.xlsx"');
+      return res.send(buf);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not build template.' });
+    }
+  });
+
+  app.post('/api/hr/staff-import/preview', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const b64 = req.body?.fileBase64 || req.body?.data;
+      if (!b64) return res.status(400).json({ ok: false, error: 'fileBase64 is required.' });
+      const buf = Buffer.from(String(b64), 'base64');
+      const r = previewBulkStaffImport(db, buf, hrListScope(req));
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not preview import.' });
+    }
+  });
+
+  app.post('/api/hr/staff-import/commit', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const b64 = req.body?.fileBase64 || req.body?.data;
+      if (!b64) return res.status(400).json({ ok: false, error: 'fileBase64 is required.' });
+      const buf = Buffer.from(String(b64), 'base64');
+      const r = commitBulkStaffImport(db, req.user, buf, hrListScope(req));
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not import staff.' });
+    }
+  });
+
+  app.get('/api/hr/staff-import/runs', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage', 'hr.reports.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, runs: listBulkImportRuns(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list import runs.' });
+    }
+  });
+
+  app.get('/api/hr/settings/letter-references', requireMainHrWorkspace, requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const config = getLetterReferenceConfig(db);
+      return res.json({ ok: true, config, previewNext: previewNextLetterReferences(db, req.query.letterKind || 'appointment', 5) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load letter reference settings.' });
+    }
+  });
+
+  app.put('/api/hr/settings/letter-references', requireMainHrWorkspace, requireHrAny('hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = saveLetterReferenceConfig(db, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, config: getLetterReferenceConfig(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save letter reference settings.' });
+    }
+  });
+
+  app.post('/api/hr/settings/letter-references/reset', requireMainHrWorkspace, requireHrAny('hr.settings.manage', 'hr.payroll.md_approve'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = resetLetterReferencesForLiveUse(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not reset letter references.' });
+    }
+  });
+
+  app.get('/api/hr/settings/staff-numbering', requireMainHrWorkspace, requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const config = getStaffNumberConfig(db);
+      const preview = previewStaffRenumbering(db, config);
+      return res.json({ ok: true, config, preview, missingNumbers: listStaffWithoutEmployeeNo(db, hrListScope(req)) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load staff numbering settings.' });
+    }
+  });
+
+  app.put('/api/hr/settings/staff-numbering', requireMainHrWorkspace, requireHrAny('hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = saveStaffNumberConfig(db, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save staff numbering settings.' });
+    }
+  });
+
+  app.post('/api/hr/settings/staff-numbering/apply', requireMainHrWorkspace, requireHrAny('hr.settings.manage', 'hr.payroll.md_approve'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const config = getStaffNumberConfig(db);
+      const r = applyStaffRenumbering(db, req.user, { ...config, ...(req.body?.config || {}) }, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not apply staff renumbering.' });
+    }
+  });
+
+  app.get('/api/hr/my/discipline-cases', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = { subjectUserId: req.user?.id, viewAll: false };
+      const cases = listDisciplineCases(db, scope, {}).map((c) => ({
+        id: c.id,
+        caseNumber: c.caseNumber,
+        status: c.status,
+        caseType: c.caseType,
+        severity: c.severity,
+        summary: c.summary,
+        description: c.description,
+        incidentDateIso: c.incidentDateIso,
+        employeeResponse: c.employeeResponse,
+        managementDecision: c.managementDecision,
+        finalOutcome: c.finalOutcome,
+        appealStatus: c.appealStatus,
+        openedAtIso: c.openedAtIso,
+      }));
+      return res.json({ ok: true, cases });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load your discipline cases.' });
+    }
+  });
+
+  app.patch('/api/hr/my/discipline-cases/:id/response', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const c = getDisciplineCase(db, req.params.id);
+      if (!c || c.userId !== req.user?.id) return res.status(404).json({ ok: false, error: 'Case not found.' });
+      const r = patchDisciplineCase(db, req.user, req.params.id, { employeeResponse: req.body?.response || req.body?.employeeResponse });
+      if (!r.ok) return res.status(400).json(r);
+      createHrNotification(db, {
+        userId: c.openedByUserId || req.user?.id,
+        kind: 'discipline_response',
+        title: 'Employee discipline response submitted',
+        body: `${c.caseNumber || c.id}: response received.`,
+        routePath: `/hr/discipline-exit?tab=cases&caseId=${encodeURIComponent(c.id)}`,
+        entityKind: 'hr_discipline_case',
+        entityId: c.id,
+      });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit response.' });
+    }
+  });
+
+  app.post('/api/hr/my/discipline-cases/:id/appeal', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const c = getDisciplineCase(db, req.params.id);
+      if (!c || c.userId !== req.user?.id) return res.status(404).json({ ok: false, error: 'Case not found.' });
+      const r = fileDisciplineCaseAppeal(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      createHrNotification(db, {
+        userId: c.openedByUserId || req.user?.id,
+        kind: 'discipline_appeal',
+        title: 'Discipline appeal submitted',
+        body: `${c.caseNumber || c.id}: employee filed an appeal.`,
+        routePath: `/hr/discipline-exit?tab=cases&caseId=${encodeURIComponent(c.id)}`,
+        entityKind: 'hr_discipline_case',
+        entityId: c.id,
+      });
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not file appeal.' });
+    }
+  });
+
+  // ── Phase 9: Executive benefits ─────────────────────────────
+  app.get('/api/hr/executive/dashboard', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, dashboard: getExecutiveBenefitsDashboard(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
+    }
+  });
+
+  app.get('/api/hr/executive/beneficiaries', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, beneficiaries: listExecutiveBeneficiaries(db, req.query || {}) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load beneficiaries.' });
+    }
+  });
+
+  app.post('/api/hr/executive/beneficiaries', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveBeneficiary(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save beneficiary.' });
+    }
+  });
+
+  app.put('/api/hr/executive/beneficiaries/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveBeneficiary(db, req.user, { ...(req.body || {}), id: req.params.id });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update beneficiary.' });
+    }
+  });
+
+  app.get('/api/hr/executive/school-fees', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, fees: listExecutiveSchoolFees(db, req.query || {}) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load school fees.' });
+    }
+  });
+
+  app.post('/api/hr/executive/school-fees', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveSchoolFee(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save school fee.' });
+    }
+  });
+
+  app.put('/api/hr/executive/school-fees/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveSchoolFee(db, req.user, { ...(req.body || {}), id: req.params.id });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update school fee.' });
+    }
+  });
+
+  app.post('/api/hr/executive/school-fees/:id/submit', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = submitExecutiveSchoolFee(db, req.user, req.params.id);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit school fee.' });
+    }
+  });
+
+  app.delete('/api/hr/executive/school-fees/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json(deleteExecutiveSchoolFee(db, req.user, req.params.id));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not delete school fee.' });
+    }
+  });
+
+  app.get('/api/hr/executive/stipends', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, stipends: listExecutiveStipends(db, req.query || {}) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load stipends.' });
+    }
+  });
+
+  app.post('/api/hr/executive/stipends', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveStipend(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save stipend.' });
+    }
+  });
+
+  app.put('/api/hr/executive/stipends/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertExecutiveStipend(db, req.user, { ...(req.body || {}), id: req.params.id });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update stipend.' });
+    }
+  });
+
+  app.get('/api/hr/executive/domestic-staff', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, staff: listDomesticStaffProfiles(db, req.query || {}) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load domestic staff.' });
+    }
+  });
+
+  app.post('/api/hr/executive/domestic-staff', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertDomesticStaffProfile(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save domestic staff.' });
+    }
+  });
+
+  app.put('/api/hr/executive/domestic-staff/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertDomesticStaffProfile(db, req.user, { ...(req.body || {}), id: req.params.id });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update domestic staff.' });
+    }
+  });
+
+  app.get('/api/hr/executive/payments', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, payments: listExecutivePayments(db, req.query || {}) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load payments.' });
+    }
+  });
+
+  app.get('/api/hr/executive/payments/:id', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const payment = getExecutivePayment(db, req.params.id);
+      if (!payment) return res.status(404).json({ ok: false, error: 'Payment not found.' });
+      return res.json({ ok: true, payment });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load payment.' });
+    }
+  });
+
+  app.post('/api/hr/executive/payments/:id/approve', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = approveExecutivePayment(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not approve payment.' });
+    }
+  });
+
+  app.post('/api/hr/executive/payments/:id/reject', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = rejectExecutivePayment(db, req.user, req.params.id, req.body?.reason);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not reject payment.' });
+    }
+  });
+
+  app.post('/api/hr/executive/payments/:id/mark-paid', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = markExecutivePaymentPaid(db, req.user, req.params.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not mark payment paid.' });
+    }
+  });
+
+  app.post('/api/hr/executive/payments/export', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = buildExecutiveBeneficiaryBankExport(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(r.csv);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export payments.' });
+    }
+  });
+
+  app.get('/api/hr/executive/expenses', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, expenses: listChairmanExpensesMapped(db, req.query?.period || null) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Failed to load expenses.' });
+    }
+  });
+
+  app.post('/api/hr/executive/expenses', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertChairmanExpenseMapped(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Failed to save expense.' });
+    }
+  });
+
+  app.put('/api/hr/executive/expenses/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertChairmanExpenseMapped(db, req.user, { ...(req.body || {}), id: req.params.id });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Failed to update expense.' });
+    }
+  });
+
+  app.delete('/api/hr/executive/expenses/:id', requireExecutiveBenefitsManage, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json(deleteChairmanExpenseMapped(db, req.params.id));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Failed to delete expense.' });
     }
   });
 }

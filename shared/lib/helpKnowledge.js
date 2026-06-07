@@ -33,10 +33,13 @@ const CORE_HELP_ARTICLES = [
       'Go to the Payments tab (sometimes labelled receipts).',
       'Click Record payment (or use the dashboard quick action Record payment).',
       'Select the quotation, enter amount, date, and treasury account(s), then save.',
+      'Amounts **≥ ₦100,000** require typing the amount twice to confirm.',
       'Print or share the receipt reference (RCP-…) if the customer needs proof.',
+      'Bank/cash **clearance** is a separate step — Cashier desk or Finance confirms the deposit matched (see receipt clearance guide).',
     ],
     links: [
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
+      { label: 'Cashier desk', to: '/cashier' },
       { label: 'Dashboard quick actions', to: '/' },
     ],
   },
@@ -105,16 +108,16 @@ const CORE_HELP_ARTICLES = [
     title: 'Refunds',
     keywords: ['refund', 'return money', 'customer refund', 'overpay', 'rf-'],
     answer:
-      'Refunds go through Sales with eligibility rules tied to quotation balances and approvals. Payout may still sit in Finance until treasury processes it.',
+      'Refunds use a **request → approve → pay** chain: Sales or Cashier **requests**; Branch manager or MD **approves** (Cashier cannot approve); Finance/Cashier **pays** from treasury after approval. All receipts on the quote must be **cleared** before a refund can proceed.',
     steps: [
       'Open Sales → Refunds (or the refund action on the quotation/customer).',
-      'Start a refund request with reason and amount; the app will show if the quote is eligible.',
-      'Route through manager/finance approval if required.',
-      'Track payout status in Finance → Payments when treasury disburses.',
+      'Start a refund request with category and amount; review system preview lines as starting points only.',
+      'Branch manager or MD approves in Sales or Manager dashboard (MD required above governance threshold, default ₦1,000,000).',
+      'Cashier or Finance **pays** the approved refund from **Cashier desk** (`/cashier`) or Finance payments — treasury disburses.',
     ],
     links: [
-      { label: 'Sales', to: '/sales' },
-      { label: 'Finance — Payments', to: '/accounts', state: { tab: 'payments' } },
+      { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
+      { label: 'Cashier desk', to: '/cashier' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -381,17 +384,17 @@ const CORE_HELP_ARTICLES = [
       'refund stuck',
     ],
     answer:
-      'Refunds combine Sales eligibility rules, manager/finance approvals, and treasury payout. A customer hold may block new receipts until the refund clears.',
+      'Refunds combine Sales eligibility rules, manager/finance approvals, and treasury payout. **Cashiers may request but never approve** refunds. Duplicate **same category** on one quote is blocked. A customer hold may block new receipts until the refund clears.',
     steps: [
-      'Start the refund from Sales on the quotation or customer record; confirm eligible balance and reason codes.',
-      'Submit for manager approval when prompted; track status on the quotation or Refunds tab.',
-      'Finance reviews payout readiness in Finance → Payments; treasury disburses from the correct account.',
-      'If receipts are blocked, check Manager dashboard clearance and any open refund on the same customer.',
-      'After payout, verify the quotation balance and customer hold flags refreshed.',
+      'Start the refund from Sales on the quotation or customer record; confirm eligible balance, categories, and headroom.',
+      'Ensure all receipts on the quote are **cleared** (Cashier desk or Finance) — refunds fail if clearance is pending.',
+      'Submit for **manager or MD approval** (or finance.approve where granted); track status on Refunds tab or Manager inbox.',
+      'After **Approved**, Cashier opens **Cashier desk** → **Pay approved refunds** (Accountant may pay from Finance tabs).',
+      'Verify treasury movement and quotation balance after payout.',
     ],
     links: [
-      { label: 'Sales', to: '/sales' },
-      { label: 'Finance — Payments', to: '/accounts', state: { tab: 'payments' } },
+      { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
+      { label: 'Cashier desk', to: '/cashier' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -617,11 +620,11 @@ const CORE_HELP_ARTICLES = [
       'Each category shows what is eligible; only include lines that apply — do not stack categories past total headroom.',
       'If submit is blocked, reduce included lines or confirm extra receipts were posted on **this** quotation.',
       'Stone flatsheet m² and coil substitution follow different rules — use the preview suggestions rather than forcing coil lines on stone-only quotes.',
-      'Route through manager/finance approval; payout still requires treasury disbursement.',
+      'Route through manager/finance approval; payout still requires treasury disbursement from **Cashier desk** or Finance after Approved status.',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'Refund workflow', to: '/sales' },
+      { label: 'Cashier desk', to: '/cashier' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -669,12 +672,14 @@ const CORE_HELP_ARTICLES = [
       'Finance may require **receipt clearance** (bank confirmed / delivery cleared) before refunds or certain downstream actions proceed, even when Sales shows a posted receipt.',
     steps: [
       'Sales → Payments: check clearance flags on the receipt row.',
-      'Finance → Receipts & recon: confirm bank received amount and mark clearance when matched.',
-      'If refund submit fails for clearance, finish Finance steps first — do not bypass in Sales.',
+      '**Cashier desk** (`/cashier`) → **Confirm payment received** when bank/cash evidence matches (primary execution desk).',
+      'Accountant may also clear from **Finance & accounts** → Receipts & recon when reconciling.',
+      'If refund submit fails for clearance, finish clearance first — do not bypass in Sales.',
       'Manager clearance on the customer or quote is separate — resolve holds on Manager dashboard if shown.',
     ],
     links: [
-      { label: 'Finance', to: '/accounts' },
+      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'Finance & accounts', to: '/accounts' },
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
       { label: 'Manager dashboard', to: '/manager' },
     ],
@@ -1212,6 +1217,121 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [{ label: 'Workspace', to: '/' }],
   },
+  {
+    id: 'cashier-desk-workflow',
+    title: 'Cashier desk — confirm receipts and pay refunds',
+    keywords: [
+      'cashier',
+      'cashier desk',
+      '/cashier',
+      'confirm receipt',
+      'confirm payment received',
+      'refund payout',
+      'pay approved refund',
+      'clearance',
+      'cashier cannot approve',
+    ],
+    answer:
+      'The **Cashier desk** (`/cashier`) is for **execution**: confirm bank deposits on receipts and **pay** approved refunds and payment requests. Cashiers **request** refunds in Sales but **cannot approve** them — segregation of duties is enforced in the app.',
+    steps: [
+      'Open **Cashier** from the sidebar (`/cashier`).',
+      '**Confirm payment received** — match each pending receipt to bank/cash evidence.',
+      '**Pay approved refunds** — only refunds already in **Approved** status; post treasury payout.',
+      '**Pay approved payment requests** — expenses and other approved PRs awaiting payout.',
+      'If Accounting desk or GL tabs are missing, that is normal for Cashier role (Phase 10 desk split).',
+    ],
+    links: [
+      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
+    ],
+  },
+  {
+    id: 'accounting-desk-workflow',
+    title: 'Accounting desk — reconciliation and month-end',
+    keywords: [
+      'accounting desk',
+      '/accounting',
+      'accountant',
+      'head of accounts',
+      'finance manager desk',
+      'reconciliation',
+      'month end',
+      'GL pilot',
+      'AP1c',
+    ],
+    answer:
+      'The **Accounting desk** (`/accounting`) is for **Accountant / Head of Accounts**: reconciliation exceptions, AP diagnostics, costing readiness, GL pilot, and month-end — not day-to-day receipt confirmation (that is primarily **Cashier desk**).',
+    steps: [
+      'Open **Accounting** from the sidebar (`/accounting`).',
+      'Review Overview KPIs: recon warnings, treasury drift, AP difference, costing readiness.',
+      'Use **Reconciliation** tab for receipt/deposit tie-out and month-end pack.',
+      'Branch managers and cashiers are redirected away from this desk by design (Phase 10).',
+    ],
+    links: [
+      { label: 'Accounting desk', to: '/accounting' },
+      { label: 'Reports', to: '/reports' },
+    ],
+  },
+  {
+    id: 'phase10-module-access',
+    title: 'Why a screen is forbidden (Phase 10 desk split)',
+    keywords: [
+      'forbidden',
+      '403',
+      'greyed out',
+      'cannot access accounting',
+      'cannot access hr',
+      'phase 10',
+      'desk split',
+      'redirected',
+      'access denied accounting',
+    ],
+    answer:
+      'Phase 10 separates **Cashier**, **Accounting**, **Manager**, and **HR** desks. If a module is hidden or returns forbidden, your **role** does not include that path — escalate to the role in staff approvals, not IT bypass.',
+    steps: [
+      '**Cashier** — uses `/cashier`; not `/accounting` or GL audit tabs.',
+      '**Branch manager** — uses `/manager`, `/team-hr`; not main `/hr`, `/executive-hr`, or `/accounting`.',
+      '**Accountant** — uses `/accounting` and `/reports`; not branch production ops or cashier desk by default.',
+      '**MD** — uses `/exec` and `/executive-hr`; optional oversight of `/manager` and `/accounting`.',
+      '**CEO** — executive summary only; not customer line screens.',
+      'Custom permission overrides are listed in Settings → Team.',
+    ],
+    links: [
+      { label: 'Settings — Team', to: '/settings/team' },
+      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'Accounting desk', to: '/accounting' },
+    ],
+  },
+  {
+    id: 'role-dashboard-home',
+    title: 'Which dashboard should I use?',
+    keywords: [
+      'home dashboard',
+      'where do i start',
+      'primary route',
+      'landing page',
+      'role dashboard',
+      'sales manager home',
+      'my desk',
+    ],
+    answer:
+      'After login, Zarewa sends you to the desk that matches your **role**. Use the sidebar if you need another module you are permitted to access.',
+    steps: [
+      '**Branch manager** → `/manager` (approvals inbox).',
+      '**Cashier** → `/cashier` (confirm receipts, pay refunds).',
+      '**Accountant** → `/accounting` (reconciliation, month-end).',
+      '**Managing Director** → `/exec` (company command centre).',
+      '**HR admin / GM HR** → `/hr/dashboard`.',
+      '**Sales officer** → Workspace `/` or `/sales`.',
+      '**Operations officer** → `/operations`.',
+    ],
+    links: [
+      { label: 'Manager dashboard', to: '/manager' },
+      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'Accounting desk', to: '/accounting' },
+      { label: 'Executive Command Centre', to: '/exec' },
+    ],
+  },
 ];
 
 let allArticlesCache = null;
@@ -1652,10 +1772,33 @@ export function quickQuestionsForPath(pathname) {
   }
   if (p.startsWith('/operations')) {
     return [
+      { label: 'Tour this page', query: 'Walk me through production from cutting list to completion step by step' },
       { label: 'Production job', query: 'Production job from cutting list to completion' },
       { label: 'Coil reservation', query: 'Orphan coil qty_reserved reconcile' },
       { label: 'Accessories only', query: 'Accessories-only quotation production complete' },
       { label: 'Material incident', query: 'How do material incidents and approvals work?' },
+    ];
+  }
+  if (p.startsWith('/cashier')) {
+    return [
+      { label: 'Tour Cashier desk', query: 'Walk me through the cashier desk step by step — confirm receipts and pay approved refunds' },
+      { label: 'Confirm receipt', query: 'Finance clearance before refunds — cashier desk confirm payment received' },
+      { label: 'Pay refund', query: 'How do I pay an approved refund as cashier' },
+      { label: 'Cannot approve', query: 'Why can’t cashier approve refund' },
+    ];
+  }
+  if (p.startsWith('/accounting')) {
+    return [
+      { label: 'Tour Accounting desk', query: 'Walk me through the accounting desk step by step — reconciliation and month-end' },
+      { label: 'Month-end', query: 'Accounting desk reconciliation and month-end pack' },
+      { label: 'Receipt clearance', query: 'Finance clearance before refunds' },
+      { label: 'Bank reconciliation', query: 'How do I reconcile bank lines to receipts?' },
+    ];
+  }
+  if (p.startsWith('/exec')) {
+    return [
+      { label: 'Tour Command Centre', query: 'Walk me through the executive command centre — what should I review first?' },
+      { label: 'What next?', query: 'What should I do next based on my briefing?' },
     ];
   }
   if (p.startsWith('/accounts')) {

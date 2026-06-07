@@ -88,6 +88,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
+import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync } from './ap2ReceivedBasisOps.js';
 import {
   deliveryGateShouldBlockMutation,
@@ -6897,6 +6898,9 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
+  const hasPerm = (p) => userHasPermission(payload.actor, p);
+  const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
+  if (!segPay.ok) return { ok: false, error: segPay.error };
   try {
     for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
       assertPeriodOpen(db, day, 'Refund payout date');
@@ -6946,13 +6950,14 @@ export function payRefundEntry(db, refundId, payload) {
       const fullyPaid = nextPaidAmountNgn >= approvedFresh;
       db.prepare(
         `UPDATE customer_refunds
-         SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, payment_note = ?
+         SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, paid_by_user_id = ?, payment_note = ?
          WHERE refund_id = ?`
       ).run(
         fullyPaid ? 'Paid' : 'Approved',
         nextPaidAmountNgn,
         paidAtISO,
         paidBy,
+        actorId(payload.actor),
         paymentNote || fresh.payment_note || null,
         refundId
       );
@@ -6969,6 +6974,16 @@ export function payRefundEntry(db, refundId, payload) {
           treasuryAccountIds: movements.map((movement) => movement.treasuryAccountId),
         },
       });
+      if (segPay.adminTrial) {
+        appendAuditLog(db, {
+          actor: payload.actor,
+          action: 'refund.dual_control.admin_trial',
+          entityKind: 'refund',
+          entityId: refundId,
+          note: 'Admin trial exception: refund payout bypassed approver≠payer check.',
+          details: { bypass: segPay.bypass || 'admin_trial' },
+        });
+      }
       const refundGlPolicy = evaluateRefundPayoutGlPolicy(db, {
         quotationRef: fresh.quotation_ref,
         customerId: fresh.customer_id,

@@ -242,7 +242,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     const bJob = branchWhere(db, 'production_jobs', scope);
     pendingProductionJobs = countRow(
       `SELECT COUNT(*) AS c FROM production_jobs
-       WHERE status IN ('Scheduled', 'In Progress', 'Paused')${bJob.sql}`,
+       WHERE status IN ('Planned', 'Running')${bJob.sql}`,
       bJob.args,
       isAll ? 'company' : 'branch'
     );
@@ -1123,7 +1123,7 @@ function countPendingProductionByBranch(db, branchScope) {
     const rows = db
       .prepare(
         `SELECT branch_id, COUNT(*) AS c FROM production_jobs
-         WHERE status IN ('Scheduled', 'In Progress', 'Paused')
+         WHERE status IN ('Planned', 'Running')
          ${bJob.sql}
          GROUP BY branch_id`
       )

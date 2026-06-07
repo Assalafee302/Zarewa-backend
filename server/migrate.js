@@ -257,6 +257,18 @@ function runMigrationsUnlocked(db) {
   if (!q.has('manager_production_approved_at_iso')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_approved_at_iso TEXT`);
   }
+  if (!q.has('manager_production_approved_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_approved_by_user_id TEXT`);
+  }
+  if (!q.has('manager_production_approved_by_name')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_approved_by_name TEXT`);
+  }
+  if (!q.has('manager_production_approval_note')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_approval_note TEXT`);
+  }
+  if (!q.has('manager_production_paid_fraction_at_approval')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_paid_fraction_at_approval REAL`);
+  }
   if (!q.has('md_price_exception_approved_at_iso')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN md_price_exception_approved_at_iso TEXT`);
   }
@@ -574,6 +586,12 @@ function runMigrationsUnlocked(db) {
   if (!refunds.has('requested_by_user_id')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN requested_by_user_id TEXT`);
   }
+  if (!refunds.has('approved_by_user_id')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN approved_by_user_id TEXT`);
+  }
+  if (!refunds.has('paid_by_user_id')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN paid_by_user_id TEXT`);
+  }
   if (!refunds.has('preview_snapshot_json')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN preview_snapshot_json TEXT`);
   }
@@ -588,6 +606,9 @@ function runMigrationsUnlocked(db) {
   }
   if (refunds.size > 0 && !refunds.has('branch_id')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN branch_id TEXT`);
+  }
+  if (refunds.size > 0 && !refunds.has('production_alignment_ack_json')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN production_alignment_ack_json TEXT`);
   }
   // Legacy index blocked multiple refund requests per quotation (product defaulted to "—").
   const hasRefundPendingIdx = db

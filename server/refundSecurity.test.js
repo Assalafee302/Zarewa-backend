@@ -874,3 +874,214 @@ describe('Refund Security & Substitution Logic', () => {
     expect(String(bad.body.error || '')).toMatch(/sum of included breakdown lines/i);
   });
 });
+
+describe('Refund Phase 11A controls', () => {
+  let app;
+  let db;
+  const savedEnv = {};
+
+  async function loginAs(client, username = 'admin', password = 'Admin@123') {
+    const res = await client.post('/api/session/login').send({ username, password });
+    expect(res.status).toBe(200);
+    return client;
+  }
+
+  beforeEach(async () => {
+    savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS = process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
+    db = createDatabase(':memory:');
+    seedData(db);
+    app = createApp(db);
+  });
+
+  afterEach(() => {
+    db?.close();
+    if (savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS === undefined) {
+      delete process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
+    } else {
+      process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS;
+    }
+  });
+
+  it('blocks branch manager from approving own refund request', async () => {
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-SELF-002',
+      reasonCategory: ['Order cancellation'],
+      amountNgn: 5000,
+      calculationLines: [{ label: 'Cancellation', amountNgn: 5000, category: 'Order cancellation' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+    const refundID = create.body.refundID;
+    db.prepare(`UPDATE customer_refunds SET requested_by_user_id = ? WHERE refund_id = ?`).run(
+      'USR-SM',
+      refundID
+    );
+
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const approve = await mgr.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 5000,
+    });
+    expect(approve.status).toBe(400);
+    expect(String(approve.body.error || '')).toMatch(/cannot approve a refund you requested/i);
+  });
+
+  it('allows admin full request → approve → pay chain with audit trail', async () => {
+    const admin = request.agent(app);
+    await loginAs(admin);
+    const before = await admin.get('/api/bootstrap');
+    const treasuryAccountId = before.body.treasuryAccounts[0].id;
+
+    const create = await admin.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-DUP-001',
+      reasonCategory: ['Other'],
+      amountNgn: 500,
+      calculationLines: [{ label: 'Adjustment', amountNgn: 500, category: 'Other' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+    const refundID = create.body.refundID;
+
+    const approve = await admin.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 500,
+    });
+    expect(approve.status).toBe(200);
+
+    const pay = await admin.post(`/api/refunds/${refundID}/pay`).send({
+      treasuryAccountId,
+      amountNgn: 500,
+    });
+    expect(pay.status).toBe(200);
+
+    const audit = db
+      .prepare(`SELECT action FROM audit_log WHERE entity_id = ? AND action LIKE 'refund.dual_control.admin_trial%'`)
+      .all(refundID);
+    expect(audit.length).toBeGreaterThan(0);
+  });
+
+  it('blocks branch manager from approving refunds above MD threshold', async () => {
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES (?,?,?,?,?,?,?,?)`
+    ).run(
+      'QT-RFS-HIVAL',
+      'CUS-001',
+      'High Value Co',
+      2_500_000,
+      2_500_000,
+      'Paid',
+      'Finished',
+      JSON.stringify({ products: [{ name: 'Roof', qty: 500, unitPrice: 5000 }], accessories: [], services: [] })
+    );
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-HIVAL', 'CUS-001', 'High Value Co', 'QT-RFS-HIVAL', 2500000, 'Confirmed', '2026-04-01')`
+    ).run();
+
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'High Value Co',
+      quotationRef: 'QT-RFS-HIVAL',
+      reasonCategory: ['Overpayment'],
+      amountNgn: 1_500_000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 1_500_000, category: 'Overpayment' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+    const refundID = create.body.refundID;
+
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const bm = await mgr.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 1_500_000,
+    });
+    expect(bm.status).toBe(400);
+    expect(String(bm.body.error || '')).toMatch(/MD\/CEO-level approval/i);
+
+    const md = request.agent(app);
+    await loginAs(md, 'md', 'Md@1234567890!');
+    const mdOk = await md.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 1_500_000,
+    });
+    expect(mdOk.status).toBe(200);
+  });
+
+  it('blocks cashier from approving refunds (payout only)', async () => {
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-PRICE-027',
+      reasonCategory: ['Calculation error'],
+      amountNgn: 100,
+      calculationLines: [{ label: 'Fix', amountNgn: 100, category: 'Calculation error' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+
+    const cashier = request.agent(app);
+    await loginAs(cashier, 'cashier', 'Cashier@12345!');
+    const approve = await cashier.post(`/api/refunds/${encodeURIComponent(create.body.refundID)}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 100,
+    });
+    expect(approve.status).toBe(400);
+    expect(String(approve.body.error || '')).toMatch(/cashiers may only pay/i);
+  });
+
+  it('blocks approver from paying same refund when ENFORCE_DUAL_CONTROL_PAYMENTS=1', async () => {
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '1';
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-SELF-002',
+      reasonCategory: ['Order cancellation'],
+      amountNgn: 5000,
+      calculationLines: [{ label: 'Cancellation', amountNgn: 5000, category: 'Order cancellation' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+    const refundID = create.body.refundID;
+
+    const fin = request.agent(app);
+    await loginAs(fin, 'finance.manager', 'Finance@123');
+    const approve = await fin.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 5000,
+    });
+    expect(approve.status).toBe(200);
+
+    const before = await fin.get('/api/bootstrap');
+    const treasuryAccountId = before.body.treasuryAccounts[0].id;
+
+    const finPayBlocked = await fin.post(`/api/refunds/${refundID}/pay`).send({
+      treasuryAccountId,
+      amountNgn: 5000,
+    });
+    expect(finPayBlocked.status).toBe(400);
+    expect(String(finPayBlocked.body.error || '')).toMatch(/cannot pay out a refund you approved/i);
+
+    const cashier = request.agent(app);
+    await loginAs(cashier, 'cashier', 'Cashier@12345!');
+    const cashierPay = await cashier.post(`/api/refunds/${refundID}/pay`).send({
+      treasuryAccountId,
+      amountNgn: 5000,
+    });
+    expect(cashierPay.status).toBe(200);
+  });
+});

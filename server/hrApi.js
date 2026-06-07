@@ -1910,7 +1910,10 @@ export function registerHrApi(app, db) {
   app.get('/api/hr/reports/catalog', requireHrAny('hr.reports.view', 'hr.staff.manage', 'hr.executive.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      return res.json({ ok: true, ...getHrReportCatalog() });
+      return res.json({
+        ok: true,
+        ...getHrReportCatalog({ canViewExecutive: userCanViewExecutiveBenefits(req.user) }),
+      });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load report catalog.' });
@@ -1926,6 +1929,7 @@ export function registerHrApi(app, db) {
       const r = previewHrReport(db, scope, req.params.kind, filters, {
         actor: req.user,
         canViewSensitive: ctx.canViewSensitive,
+        canViewExecutive: userCanViewExecutiveBenefits(req.user),
       });
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
@@ -1961,6 +1965,7 @@ export function registerHrApi(app, db) {
       const r = exportHrReportDocument(db, scope, hubId, filters, format, {
         actor: req.user,
         canViewSensitive: ctx.canViewSensitive,
+        canViewExecutive: userCanViewExecutiveBenefits(req.user),
       });
       if (!r.ok) return res.status(400).json(r);
       res.setHeader('Content-Type', r.contentType);
@@ -3871,6 +3876,24 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Failed to delete expense.' });
+    }
+  });
+
+  app.get('/api/hr/executive/reports/:kind', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const filters = parseReportFilters(req.query || {});
+      const r = previewHrReport(db, scope, req.params.kind, filters, {
+        actor: req.user,
+        canViewExecutive: true,
+        canViewSensitive: userCanViewOrgSensitiveHr(req.user),
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Report failed.' });
     }
   });
 }

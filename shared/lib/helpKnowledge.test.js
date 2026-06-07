@@ -37,6 +37,19 @@ describe('helpKnowledge', () => {
     expect(m.article.id).toBe('overpayment-quotation-credit');
   });
 
+  it('matches cashier desk payout questions', () => {
+    const m = matchHelpArticle('How do I pay an approved refund as cashier');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('cashier-desk-workflow');
+    expect(formatHelpArticleReply(m.article)).toContain('/cashier');
+  });
+
+  it('matches accounting desk questions', () => {
+    const m = matchHelpArticle('Where does accountant reconcile month end accounting desk');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('accounting-desk-workflow');
+  });
+
   it('matches stone flatsheet topic', () => {
     const m = matchHelpArticle('Stone coated flatsheet m2 refund');
     expect(m).not.toBeNull();

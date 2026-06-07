@@ -60,11 +60,48 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 | GM HR final (incl. loan provisioning) | `PATCH …/gm-hr-review` | `hr.requests.gm_approve` (legacy `hr.requests.final_approve` still accepted where mapped) |
 | Staff file edits, discipline cases, payroll manage | Various `/api/hr/staff/*`, `/api/hr/discipline/*`, payroll routes | `hr.staff.manage`, `hr.payroll.manage`, etc. |
 
+## Phase 11A — Refund dual control & MD gate
+
+- **Self-approval blocked**: a user cannot approve a refund they requested (`server/refundHandlers.js` → `decideRefundRequest` in `server/controlOps.js`). **Administrator** (`admin` / `*`) may still request → approve → pay during trial; each bypass is logged to `audit_log` (`refund.dual_control.admin_trial`) and `approval_actions` (`dual_control_bypass`).
+- **Approver ≠ payer**: when `ENFORCE_DUAL_CONTROL_PAYMENTS=1`, the user who approved a refund cannot execute treasury payout for that refund (`payRefundEntry` in `server/writeOps.js`). Set this flag **on in production** once finance desk staffing supports dual control.
+- **MD high-value gate**: refund approvals **strictly above** `refundExecutiveThresholdNgn` (default ₦1,000,000) require **MD/CEO** (or administrator). Branch managers and finance desk roles with `refunds.approve` / `finance.approve` cannot approve above the threshold (`actorMayApproveRefundAmount` in `shared/workspaceGovernance.js`).
+- **Cashier**: role `cashier` holds `refunds.request` and `finance.pay` only — **`refunds.approve` removed** (Phase 11A). Cashiers may pay approved refunds from Cashier desk / Accounts disbursements; approval is blocked server-side even if `finance.approve` remains for payment-request workflows.
+- **Audit columns**: `customer_refunds.approved_by_user_id` and `paid_by_user_id` support reliable segregation checks (legacy rows fall back to name matching).
+- **Manager UI**: Management → Refunds inbox shows MD-threshold badge, payment %, delivery gate context, multi-category overlap warnings, partial production flags, and prior refunds on the same quotation (`RefundManagerApprovalPreview.jsx`).
+
+## Phase 11B — Production controls & operational insights
+
+- **Job intelligence**: `GET /api/production-jobs/:jobId/intel` — conversion alert, planned vs actual metre variance (>5%), stone/accessory rollup, quote paid % and BM production-gate override status. Surfaced in **LiveProductionMonitor** (collapsible Job intelligence panel).
+- **BM production override recording**: `POST /api/management/review` with `approve_production` now stores `manager_production_approved_by_*`, approval note, and paid fraction at override on `quotations` (in addition to `manager_production_approved_at_iso`).
+- **Refund ↔ production alignment**: `server/refundProductionAlignment.js` feeds `previewRefundRequest`, `/api/refunds/intelligence`, and refund approval warnings (Unproduced meterage vs Order cancellation, multi-category overlap). Preview engine version **9**.
+- **Operational reports** (`reports.view` / management reports): `GET /api/reports/pending-approvals`, `GET /api/reports/production-status` — pending refunds/payments, production gate queue, conversion QC gaps, payment gate breaches, dual-control warnings. UI: **Reports → Operational control centre**.
+- **Lifecycle timeline**: `GET /api/quotations/:id/lifecycle-timeline` — quote → cutting list → production → refund → treasury payout. Shown on refund approval review.
+- **Conversion reason options**: `GET /api/production/conversion-reason-options?band=High|Low`.
+- **Exec dashboard fix**: pending production job count uses statuses `Planned` / `Running` (not legacy Scheduled/In Progress).
+
+## Phase 11C — Governance enforcement & go-live hardening
+
+- **Refund submit enforcement**: `validateRefundProductionAlignmentAtSubmit` blocks `Order cancellation` when production shows completed output unless BM/MD override note (≥10 chars). Partial-production and multi-category overlap require acknowledgement at submit. Column `customer_refunds.production_alignment_ack_json`; audit `refund.production_alignment.override`.
+- **Alignment check API**: `POST /api/refunds/production-alignment-check` (same permission as refund request).
+- **Governance pack**: `GET /api/reports/governance-pack` (JSON) and `?format=csv` for go-live export — misaligned refunds, dual-control warnings, payment gate breaches, QC gaps.
+- **MD attention inbox**: dual-control warnings and payment gate exceptions added to `GET /api/management/attention`.
+- **Dashboard widgets**: **OperationalSummaryWidget** on Manager Dashboard and Executive Command Centre (`reports.view`).
+- **Material incident quick-create**: Live production monitor → **Report material issue** (`material_incidents.create`).
+- **Operations queue**: active register rows show **Conv** / **Var** badges for conversion High/Low and >5% metre variance.
+- Go-live checklist: [GO-LIVE-PHASE-11C.md](./GO-LIVE-PHASE-11C.md).
+
+## Phase 12 — Go-live cutover & continuous governance
+
+- **Approval-stage alignment**: `decideRefundRequest` re-validates production alignment on **Approved**; merges submit-time `production_alignment_ack_json` with manager ack/override. **RefundManagerApprovalPreview** blocks Approve until resolved.
+- **Production payment gate UX**: **ProductionPaymentGateOverridePanel** in Live Production Monitor (`quotations.manage` → `approve_production` with audited note).
+- **Attention inbox actions**: `governance` items route to refund review or production gate quotation review. Deep link **`/manager?refundId=`**.
+- Cutover checklist: [GO-LIVE-PHASE-12.md](./GO-LIVE-PHASE-12.md).
+
 ## Approvals and segregation (quick reference)
 
 | Area | Who requests / creates | Who approves / confirms | Notes |
 |------|-------------------------|-------------------------|--------|
-| Customer refund | Sales-facing roles (`refunds.request`) | Branch manager or **MD** (`refunds.approve`), or **finance** (`finance.approve` on the same decision API), or **admin** (`*`) | Who acts first is organisational; segregation of duties still requires **Finance** to pay out (`finance.pay` / treasury). Operational checklist: [REFUND_OPERATIONS.md](./REFUND_OPERATIONS.md). |
+| Customer refund | Sales-facing roles (`refunds.request`) | Branch manager or **MD** (`refunds.approve`), or **finance** (`finance.approve` on the same decision API), or **admin** (`*`) | **Phase 11A**: requester ≠ approver; approver ≠ payer when `ENFORCE_DUAL_CONTROL_PAYMENTS=1`; amounts **> ₦1M** need MD/CEO; **cashier pays only**. Finance executes payout (`finance.pay` / treasury). Operational checklist: [REFUND_OPERATIONS.md](./REFUND_OPERATIONS.md). |
 | Payment request / expense payout | Requesters per module | `finance.approve` / manager flows | Cashier / finance executes pay after approval. |
 | Payroll lock → export | HR (`hr.payroll.manage`) | GM HR (`hr.payroll.gm_approve`) **or** MD (`hr.payroll.md_approve`) | Draft run must have `gm_approved_at_iso` **or** `md_approved_at_iso` before lock (unless `admin` `*`). See `patchPayrollRun` in `server/hrOps.js`. |
 | Staff loan agreement PDF | HR (`hr.letters.generate` or `hr.loans.manage`) | — | Only for **approved** loan requests: `POST /api/hr/loan-requests/:requestId/agreement-letter`. |
@@ -110,4 +147,6 @@ Playwright starts `server/playwrightServer.js` (deletes and recreates `data/play
 | Domain helpers | `server/workspaceAccess.js` |
 | Bootstrap builder | `server/bootstrap.js` |
 | HTTP routes | `server/httpApi.js` |
+| Refund segregation (Phase 11A) | `server/refundHandlers.js`, `server/controlOps.js`, `server/writeOps.js` |
+| Production intel & ops reports (Phase 11B) | `server/productionJobIntelOps.js`, `server/operationalReportsOps.js`, `server/refundProductionAlignment.js` |
 | Aggregate report counts | `server/readModel.js` → `workspaceReportAggregateCounts` |

@@ -6,8 +6,8 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 | Role key | Label | Primary route | Also uses |
 |----------|-------|---------------|-----------|
-| `md` | Managing Director | `/manager` | `/exec`, `/procurement`, `/accounting`, `/accounts` (oversight), Executive HR `/hr/executive` |
-| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations` — **not** `/hr`, `/accounting`, `/accounts` |
+| `md` | Managing Director | `/exec` (Control Center) | `/executive-hr`, `/procurement`, `/accounting`, `/manager` (oversight) |
+| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations` — **not** `/hr`, `/executive-hr`, `/accounting` |
 | `finance_manager` | Accountant / Head of Accounts | `/accounting` | `/accounts` (reconciliation tabs), `/reports` |
 | `cashier` | Cashier | `/cashier` | Limited `/accounts` tabs only — **not** `/accounting` |
 | `hr_admin` | HR / Admin | `/hr` | `/reports` |
@@ -22,11 +22,11 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 | Role | Must NOT access |
 |------|-----------------|
-| Branch manager | Main `/hr`, `/accounting`, broad `/accounts`, org payroll/bank |
+| Branch manager | Main `/hr`, `/executive-hr`, `/accounting`, broad `/accounts`, org payroll/bank, executive benefits |
 | Cashier | `/accounting`, GL/audit tabs on `/accounts` |
 | Accountant | Branch production ops, cashier desk (default), HR admin |
 | Staff | `/hr`, `/team-hr` (unless granted), finance desks |
-| MD | Full HR **admin** shell (uses Executive HR + approvals only) |
+| MD | Full HR **admin** shell optional; uses `/executive-hr` + approvals (not day-to-day `/hr` ops) |
 
 ## Approvals (summary)
 

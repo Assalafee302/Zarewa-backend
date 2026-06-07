@@ -167,7 +167,6 @@ export const ROLE_DEFINITIONS = {
       'quotations.manage',
       'receipts.post',
       'refunds.request',
-      'refunds.approve',
       'expenses.create',
       'finance.view',
       'finance.post',

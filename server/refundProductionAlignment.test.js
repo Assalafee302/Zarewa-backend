@@ -1,0 +1,162 @@
+import { describe, it, expect } from 'vitest';
+import {
+  refundProductionAlignmentWarnings,
+  suggestRefundCategoriesFromProduction,
+  validateRefundProductionAlignmentAtSubmit,
+  actorMayOverrideProductionAlignmentBlock,
+  parseStoredProductionAlignmentAck,
+  resolveRefundReasonCategoriesForDecision,
+  mergeProductionAlignmentAckJson,
+} from './refundProductionAlignment.js';
+
+describe('refundProductionAlignment', () => {
+  function memDb() {
+    const db = {
+      data: {
+        quotations: [],
+        production_jobs: [],
+        customer_refunds: [],
+      },
+      prepare(sql) {
+        const s = String(sql);
+        return {
+          get(ref) {
+            if (s.includes('FROM quotations')) {
+              return db.data.quotations.find((q) => q.id === ref) || undefined;
+            }
+            return undefined;
+          },
+          all(ref) {
+            if (s.includes('FROM production_jobs')) {
+              return db.data.production_jobs.filter((j) => j.quotation_ref === ref);
+            }
+            if (s.includes('FROM customer_refunds')) {
+              return db.data.customer_refunds.filter((r) => r.quotation_ref === ref);
+            }
+            return [];
+          },
+        };
+      },
+    };
+    return db;
+  }
+
+  it('suggests unproduced meterage for cancelled job with no output', () => {
+    const db = memDb();
+    db.data.production_jobs.push({
+      quotation_ref: 'Q1',
+      status: 'Cancelled',
+      planned_meters: 100,
+      actual_meters: 0,
+    });
+    expect(suggestRefundCategoriesFromProduction(db, 'Q1')).toContain('Unproduced meterage');
+  });
+
+  it('warns on cancellation with completed production', () => {
+    const db = memDb();
+    db.data.production_jobs.push({
+      quotation_ref: 'Q1',
+      status: 'Completed',
+      planned_meters: 100,
+      actual_meters: 80,
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
+    expect(issues.some((i) => i.code === 'cancellation_with_production')).toBe(true);
+  });
+
+  it('flags multi-category overlap', () => {
+    const db = memDb();
+    db.data.customer_refunds.push({
+      quotation_ref: 'Q1',
+      reason_category: 'Overpayment',
+      status: 'Paid',
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
+    expect(issues.some((i) => i.code === 'multi_category_overlap')).toBe(true);
+  });
+
+  it('blocks cancellation with production unless BM override note', () => {
+    const db = memDb();
+    db.data.production_jobs.push({
+      quotation_ref: 'Q1',
+      status: 'Completed',
+      planned_meters: 100,
+      actual_meters: 100,
+    });
+    const blocked = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.code).toBe('PRODUCTION_ALIGNMENT_BLOCKED');
+
+    const overridden = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
+      actor: { roleKey: 'branch_manager' },
+      overrideNote: 'Customer confirmed full cancellation despite completed run.',
+    });
+    expect(overridden.ok).toBe(true);
+    expect(overridden.overrideUsed).toBe(true);
+  });
+
+  it('requires acknowledgement for partial production cancellation', () => {
+    const db = memDb();
+    db.data.production_jobs.push({
+      quotation_ref: 'Q1',
+      status: 'Completed',
+      planned_meters: 100,
+      actual_meters: 50,
+    });
+    const needAck = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
+      actor: { roleKey: 'branch_manager' },
+      overrideNote: 'Customer confirmed full cancellation despite partial run.',
+    });
+    expect(needAck.ok).toBe(false);
+    expect(needAck.code).toBe('PRODUCTION_ALIGNMENT_ACK_REQUIRED');
+
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
+      actor: { roleKey: 'branch_manager' },
+      overrideNote: 'Customer confirmed full cancellation despite partial run.',
+      acknowledgedCodes: ['partial_production_cancellation'],
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  it('allows BM override authority check', () => {
+    expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'branch_manager' })).toBe(true);
+    expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'sales' })).toBe(false);
+    expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'md' })).toBe(true);
+  });
+
+  it('parses stored alignment ack and merges at approval', () => {
+    const stored = parseStoredProductionAlignmentAck(
+      JSON.stringify({
+        acknowledgedCodes: ['partial_production_cancellation'],
+        overrideUsed: true,
+        overrideNote: 'Customer confirmed cancellation despite run.',
+      })
+    );
+    expect(stored.overrideUsed).toBe(true);
+    expect(stored.acknowledgedCodes).toContain('partial_production_cancellation');
+
+    const merged = mergeProductionAlignmentAckJson(
+      stored,
+      {
+        ok: true,
+        acknowledgedCodes: ['partial_production_cancellation'],
+        overrideUsed: true,
+        overrideNote: 'Customer confirmed cancellation despite run.',
+      },
+      'approval'
+    );
+    expect(merged).toContain('approval');
+
+    const cats = resolveRefundReasonCategoriesForDecision(
+      { reason_category: '["Order cancellation"]' },
+      { calculationLines: [{ category: 'Unproduced meterage', include: true, amountNgn: 100 }] },
+      (raw) => {
+        const v = JSON.parse(String(raw));
+        return Array.isArray(v) ? v : [];
+      }
+    );
+    expect(cats).toEqual(['Unproduced meterage']);
+  });
+});

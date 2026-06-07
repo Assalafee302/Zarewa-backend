@@ -116,7 +116,7 @@ Optional query: `?branchId=BR-KD`
 |-----|---------|---------|
 | `STRICT_CASHIER_RBAC` | `0` | When `1`, tighten cashier-only receipt confirmation |
 | `ALLOW_ACCOUNTANT_RECEIPT_CONFIRMATION` | `1` | When `0` with strict on, block finance_manager/accountant receipt confirm |
-| `ENFORCE_DUAL_CONTROL_PAYMENTS` | `0` | When `1`, block same-user approve+pay (future hook) |
+| `ENFORCE_DUAL_CONTROL_PAYMENTS` | `0` | When `1`, block same-user approve+pay on refunds (Phase 11A — `server/refundHandlers.js`) |
 
 Server helper: `financeStrictBlockWouldApply()` — returns whether a block **would** apply; B3a keeps enforcement off.
 

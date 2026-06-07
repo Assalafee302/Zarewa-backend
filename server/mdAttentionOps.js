@@ -4,6 +4,7 @@
 import { listManagementItems } from './readModel.js';
 import { listPendingEditApprovals } from './editApproval.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { buildPendingApprovalsReport, buildProductionStatusReport } from './operationalReportsOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -174,6 +175,41 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       branchId: e.branchId || '',
       reasons: ['Second approval required before save'],
       row: e,
+    });
+  }
+
+  const opsPending = buildPendingApprovalsReport(db, branchScope);
+  for (const w of opsPending.dualControlWarnings || []) {
+    pushItem(items, {
+      id: `dual_control:${w.refundId}:${w.kind}`,
+      kind: 'governance',
+      priority: 88,
+      refundId: w.refundId,
+      title: w.refundId,
+      subtitle: w.message || 'Dual-control segregation warning',
+      amountNgn: null,
+      atIso: null,
+      branchId: '',
+      reasons: ['Dual-control segregation', w.kind === 'same_requester_approver' ? 'Requester = approver' : 'Approver = payer'],
+      row: w,
+    });
+  }
+
+  const prodStatus = buildProductionStatusReport(db, branchScope);
+  for (const pg of prodStatus.paymentGateExceptions || []) {
+    pushItem(items, {
+      id: `payment_gate:${pg.jobId}`,
+      kind: 'governance',
+      priority: 80,
+      quotationRef: pg.quotationRef || '',
+      jobId: pg.jobId,
+      title: pg.quotationRef || pg.jobId,
+      subtitle: `Completed job · ${pg.paidPct ?? '?'}% paid · no BM production override`,
+      amountNgn: null,
+      atIso: null,
+      branchId: '',
+      reasons: ['Payment gate breach on completed production'],
+      row: pg,
     });
   }
 

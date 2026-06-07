@@ -87,8 +87,6 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
   if (hasPermission('*')) return true;
   const rk = String(actor?.roleKey || '').trim().toLowerCase();
   if (rk === 'admin') return true;
-  if (isBranchManagerApprovalAuthority(rk) && hasPermission('refunds.approve')) return true;
-  if (isFinanceDeskApproverRoleKey(rk) && hasPermission('finance.approve')) return true;
   return isExecutiveRoleKey(rk);
 }
 

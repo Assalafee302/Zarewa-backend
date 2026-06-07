@@ -1,0 +1,104 @@
+/**
+ * Phase 11A — refund approval / payout segregation helpers.
+ * Enforced in decideRefundRequest (controlOps) and payRefundEntry (writeOps).
+ */
+import { financeStrictBlockWouldApply } from './financeFeatureFlags.js';
+
+/** @param {unknown} name */
+export function normalizeRefundActorName(name) {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Admin may request → approve → pay during trial (logged in audit_log / approval_actions).
+ * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function isRefundAdminTrialActor(actor, hasPermission) {
+  if (hasPermission('*')) return true;
+  const rk = String(actor?.roleKey || '').trim().toLowerCase();
+  return rk === 'admin';
+}
+
+/**
+ * Cashiers execute payouts only — not refund approval decisions.
+ * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function assertCashierMayNotApproveRefund(actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true };
+  }
+  const rk = String(actor?.roleKey || '').trim().toLowerCase();
+  if (rk === 'cashier') {
+    return {
+      ok: false,
+      error: 'Cashiers may only pay approved refunds. Escalate approval to a manager or MD.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}
+
+/**
+ * Block requester from approving their own refund (admin trial exempt).
+ * @param {Record<string, unknown>} row
+ * @param {{ id?: string; roleKey?: string; displayName?: string; username?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function assertRefundApproverNotRequester(row, actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true, bypass: 'admin_trial' };
+  }
+  const requesterId = row?.requested_by_user_id != null ? String(row.requested_by_user_id) : '';
+  const approverId = actor?.id != null ? String(actor.id) : '';
+  if (requesterId && approverId && requesterId === approverId) {
+    return {
+      ok: false,
+      error: 'You cannot approve a refund you requested. Another approver must review it.',
+    };
+  }
+  const reqName = normalizeRefundActorName(row?.requested_by);
+  const apprName = normalizeRefundActorName(actor?.displayName || actor?.username);
+  if (reqName && apprName && reqName === apprName) {
+    return {
+      ok: false,
+      error: 'You cannot approve a refund you requested. Another approver must review it.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}
+
+/**
+ * When ENFORCE_DUAL_CONTROL_PAYMENTS=1, block approver from paying the same refund (admin trial exempt).
+ * @param {Record<string, unknown>} row
+ * @param {{ id?: string; roleKey?: string; displayName?: string; username?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function assertRefundPayerNotApprover(row, actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) {
+    return { ok: true, adminTrial: true, bypass: 'admin_trial' };
+  }
+  if (!financeStrictBlockWouldApply('same_user_approve_pay')) {
+    return { ok: true, adminTrial: false };
+  }
+  const payerId = actor?.id != null ? String(actor.id) : '';
+  const approverId = row?.approved_by_user_id != null ? String(row.approved_by_user_id) : '';
+  if (approverId && payerId && approverId === payerId) {
+    return {
+      ok: false,
+      error: 'You cannot pay out a refund you approved. Another finance user must execute the payout.',
+    };
+  }
+  const payerName = normalizeRefundActorName(actor?.displayName || actor?.username);
+  const approverName = normalizeRefundActorName(row?.approved_by);
+  if (payerName && approverName && payerName === approverName) {
+    return {
+      ok: false,
+      error: 'You cannot pay out a refund you approved. Another finance user must execute the payout.',
+    };
+  }
+  return { ok: true, adminTrial: false };
+}

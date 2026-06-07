@@ -110,6 +110,15 @@ import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
+import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
+import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
+import { getProductionJobIntel } from './productionJobIntelOps.js';
+import { buildQuotationLifecycleTimeline } from './quotationLifecycleTimelineOps.js';
+import {
+  buildPendingApprovalsReport,
+  buildProductionStatusReport,
+} from './operationalReportsOps.js';
+import { conversionReasonOptionsForBand } from '../shared/productionConversionReasons.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 import {
   assertCustomerLedgerPostingBranch,
@@ -3109,6 +3118,47 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/reports/pending-approvals', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json(buildPendingApprovalsReport(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load pending approvals report.' });
+    }
+  });
+
+  app.get('/api/reports/production-status', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json(buildProductionStatusReport(db, branchScope));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load production status report.' });
+    }
+  });
+
+  app.get('/api/reports/governance-pack', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const pack = buildGovernancePack(db, branchScope);
+      const format = String(req.query.format || 'json').trim().toLowerCase();
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="governance-pack-${branchScope}-${new Date().toISOString().slice(0, 10)}.csv"`
+        );
+        res.send(governancePackToCsv(pack));
+        return;
+      }
+      res.json(pack);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load governance pack.' });
+    }
+  });
+
   app.get('/api/reports/material-transaction', requireManagementReportsView, (req, res) => {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
@@ -4807,6 +4857,19 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/production/conversion-reason-options', requirePermission('production.manage'), (req, res) => {
+    try {
+      const band = String(req.query.band || '').trim();
+      if (!band) {
+        return res.status(400).json({ ok: false, error: 'band query param is required (High or Low).' });
+      }
+      res.json({ ok: true, band, options: conversionReasonOptionsForBand(band) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load conversion reason options.' });
+    }
+  });
+
   app.post('/api/cutting-lists/:id/production/conversion-preview', requirePermission('production.manage'), (req, res) => {
     try {
       const wg = assertCuttingListIdInWorkspace(db, req, req.params.id);
@@ -4850,6 +4913,18 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/production-jobs/:jobId/intel', requirePermission(['production.manage', 'operations.view']), (req, res) => {
+    try {
+      const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      const r = getProductionJobIntel(db, req.params.jobId);
+      res.status(r.ok ? 200 : 404).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load production job intelligence.' });
     }
   });
 
@@ -6303,8 +6378,10 @@ export function registerHttpApi(app, db) {
       const dataQualityIssues = [
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
+        ...refundProductionAlignmentWarnings(db, quotationRef),
       ];
-      res.json({ ok: true, receipts, cuttingLists, summary, dataQualityIssues });
+      const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
+      res.json({ ok: true, receipts, cuttingLists, summary, dataQualityIssues, productionSuggestedCategories });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load refund intelligence' });
@@ -6320,6 +6397,27 @@ export function registerHttpApi(app, db) {
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
       res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/refunds/production-alignment-check', requirePermission('refunds.request'), (req, res) => {
+    try {
+      const body = req.body || {};
+      const quotationRef = String(body.quotationRef ?? '').trim();
+      const reasonCategory = body.reasonCategory ?? body.reason_category ?? [];
+      if (!quotationRef) {
+        res.status(400).json({ ok: false, error: 'quotationRef is required.' });
+        return;
+      }
+      const result = validateRefundProductionAlignmentAtSubmit(db, quotationRef, reasonCategory, {
+        actor: req.user,
+        acknowledgedCodes: body.productionAlignmentAcknowledgedCodes ?? body.productionAlignmentAcknowledged ?? [],
+        overrideNote: body.productionAlignmentOverrideNote ?? body.productionAlignmentOverride ?? '',
+      });
+      res.json(result);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7298,6 +7396,18 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load quotations' });
+    }
+  });
+
+  app.get('/api/quotations/:id/lifecycle-timeline', requirePermission(['quotations.manage', 'refunds.approve', 'sales.view', 'operations.view']), (req, res) => {
+    try {
+      const qg = assertQuotationIdInWorkspace(db, req, req.params.id);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
+      const r = buildQuotationLifecycleTimeline(db, req.params.id);
+      res.status(r.ok ? 200 : 404).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load quotation lifecycle timeline.' });
     }
   });
 

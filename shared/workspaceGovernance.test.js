@@ -34,7 +34,10 @@ describe('workspaceGovernance', () => {
     expect(actorMayApproveRefundAmount({ roleKey: 'sales_manager' }, has, hi + 1)).toBe(false);
     expect(
       actorMayApproveRefundAmount({ roleKey: 'sales_manager' }, (p) => p === 'refunds.approve', hi + 1)
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      actorMayApproveRefundAmount({ roleKey: 'finance_manager' }, (p) => p === 'finance.approve', hi + 1)
+    ).toBe(false);
     expect(actorMayApproveRefundAmount({ roleKey: 'md' }, has, hi + 1)).toBe(true);
     expect(actorMayApproveRefundAmount({ roleKey: 'finance_manager' }, (p) => p === '*', hi + 1)).toBe(true);
     expect(actorMayApproveRefundAmount({ roleKey: 'finance_manager' }, has, hi)).toBe(true);

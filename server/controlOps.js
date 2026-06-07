@@ -46,6 +46,19 @@ import {
 } from '../shared/lib/refundQuotationMoney.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import {
+  assertCashierMayNotApproveRefund,
+  assertRefundApproverNotRequester,
+} from './refundHandlers.js';
+import {
+  enrichProductionAlignmentIssuesForSubmit,
+  mergeProductionAlignmentAckJson,
+  parseStoredProductionAlignmentAck,
+  refundProductionAlignmentWarnings,
+  resolveRefundReasonCategoriesForDecision,
+  suggestRefundCategoriesFromProduction,
+  validateRefundProductionAlignmentAtSubmit,
+} from './refundProductionAlignment.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -1442,6 +1455,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
   if (amountNgn <= 0) return { ok: false, error: 'Refund amount must be positive.' };
   const refundID = nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
   const requestedAtISO = String(payload.requestedAtISO ?? '').trim() || nowIso();
+  let submitAlignmentResult = null;
   try {
     assertPeriodOpen(db, requestedAtISO, 'Refund request date');
     const quotationRef = String(payload.quotationRef ?? '').trim();
@@ -1562,6 +1576,14 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           error: `Refund amount (₦${amountNgn.toLocaleString('en-NG')}) exceeds cash received on this quotation after prior refunds (max ₦${lineValidation.hardCapNgn.toLocaleString('en-NG')}).`,
         };
       }
+
+      const alignment = validateRefundProductionAlignmentAtSubmit(db, quotationRef, requestedCats, {
+        actor,
+        acknowledgedCodes: payload.productionAlignmentAcknowledgedCodes ?? payload.productionAlignmentAcknowledged ?? [],
+        overrideNote: payload.productionAlignmentOverrideNote ?? payload.productionAlignmentOverride ?? '',
+      });
+      if (!alignment.ok) return alignment;
+      submitAlignmentResult = alignment;
     }
 
     let quotationCustomerName = '';
@@ -1571,6 +1593,20 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     }
 
     const reasonCategory = JSON.stringify(requestedCats);
+
+    let productionAlignmentAckJson = null;
+    if (submitAlignmentResult?.ok && (submitAlignmentResult.acknowledgedCodes?.length || submitAlignmentResult.overrideUsed)) {
+      try {
+        productionAlignmentAckJson = JSON.stringify({
+          acknowledgedCodes: submitAlignmentResult.acknowledgedCodes || [],
+          overrideUsed: Boolean(submitAlignmentResult.overrideUsed),
+          overrideNote: submitAlignmentResult.overrideNote || '',
+          validatedAtISO: nowIso(),
+        }).slice(0, 8000);
+      } catch {
+        productionAlignmentAckJson = null;
+      }
+    }
 
     let previewSnapshotJson = null;
     if (payload.previewSnapshot != null && typeof payload.previewSnapshot === 'object') {
@@ -1589,10 +1625,10 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       db.prepare(
         `INSERT INTO customer_refunds (
           refund_id, customer_id, customer_name, quotation_ref, cutting_list_ref, product, reason_category, reason,
-          amount_ngn, calculation_lines_json, suggested_lines_json, preview_snapshot_json, calculation_notes, status, requested_by, requested_by_user_id, requested_at_iso,
+          amount_ngn, calculation_lines_json, suggested_lines_json, preview_snapshot_json, production_alignment_ack_json, calculation_notes, status, requested_by, requested_by_user_id, requested_at_iso,
           approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note,
           payee_name, payee_account_no, payee_bank_name, branch_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         refundID,                                                                                                  // refund_id
         customerID,                                                                                                // customer_id
@@ -1606,6 +1642,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         JSON.stringify(payload.calculationLines || []),                                                            // calculation_lines_json
         JSON.stringify(payload.suggestedLines || payload.calculationLines || []),                                  // suggested_lines_json
         previewSnapshotJson,                                                                                       // preview_snapshot_json
+        productionAlignmentAckJson,                                                                                // production_alignment_ack_json
         String(payload.calculationNotes ?? '').trim(),                                                             // calculation_notes
         'Pending',                                                                                                 // status
         actorName(actor),                                                                                          // requested_by
@@ -1632,6 +1669,23 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         note: `Refund request ${refundID} submitted`,
         details: { amountNgn, customerID },
       });
+      if (productionAlignmentAckJson) {
+        try {
+          const ack = JSON.parse(productionAlignmentAckJson);
+          if (ack.overrideUsed) {
+            appendAuditLog(db, {
+              actor,
+              action: 'refund.production_alignment.override',
+              entityKind: 'refund',
+              entityId: refundID,
+              note: ack.overrideNote || 'Production alignment override at submit',
+              details: { acknowledgedCodes: ack.acknowledgedCodes || [] },
+            });
+          }
+        } catch {
+          /* optional */
+        }
+      }
     })();
     return { ok: true, refundID };
   } catch (e) {
@@ -1645,17 +1699,11 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   if (String(row.status || 'Pending') !== 'Pending') {
     return { ok: false, error: 'Only pending refunds can be reviewed.' };
   }
-  if (row.requested_by_user_id === actorId(actor)) {
-    // Allow the requester to approve their own refund when they are an approver (manager/finance).
-    const canSelfApprove =
-      userHasPermission(actor, 'refunds.approve') || userHasPermission(actor, 'finance.approve');
-    if (!canSelfApprove) {
-      return {
-        ok: false,
-        error: 'Self-approval is prohibited unless you have refunds.approve or finance.approve permissions.',
-      };
-    }
-  }
+  const hasPerm = (p) => userHasPermission(actor, p);
+  const cashierGate = assertCashierMayNotApproveRefund(actor, hasPerm);
+  if (!cashierGate.ok) return { ok: false, error: cashierGate.error };
+  const segApprove = assertRefundApproverNotRequester(row, actor, hasPerm);
+  if (!segApprove.ok) return { ok: false, error: segApprove.error };
   const status = String(payload.status ?? '').trim();
   if (!['Approved', 'Rejected'].includes(status)) {
     return { ok: false, error: 'Decision status must be Approved or Rejected.' };
@@ -1707,6 +1755,8 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   const bdR = backdateWarningForActedDate(actedAtISO, 'Refund approval date');
   if (bdR) refundWarnings.push(bdR);
   const qref = String(row.quotation_ref ?? '').trim();
+  let approvalAlignmentAckJson = null;
+  let approvalAlignmentOverrideIsNew = false;
   if (status === 'Approved' && qref) {
     const qRow = db.prepare(`SELECT paid_ngn, total_ngn FROM quotations WHERE id = ?`).get(qref);
     const cashInNgn = quotationCashInNgn(db, qref);
@@ -1728,6 +1778,29 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         error: `Approved amount exceeds quotation refundable headroom (max ₦${maxApprovableNgn.toLocaleString('en-NG')} for this request given other open refunds on the same quotation).`,
       };
     }
+
+    const decisionCats = resolveRefundReasonCategoriesForDecision(row, payload, normalizeRefundReasonCategoriesForApi);
+    const storedAlign = parseStoredProductionAlignmentAck(row.production_alignment_ack_json);
+    const payloadAck = payload.productionAlignmentAcknowledgedCodes ?? payload.productionAlignmentAcknowledged ?? [];
+    const mergedAck = [
+      ...new Set([
+        ...storedAlign.acknowledgedCodes,
+        ...(Array.isArray(payloadAck) ? payloadAck.map((c) => String(c).trim()).filter(Boolean) : []),
+      ]),
+    ];
+    const approvalOverrideNote = String(
+      payload.productionAlignmentOverrideNote ?? payload.productionAlignmentOverride ?? ''
+    ).trim();
+    approvalAlignmentOverrideIsNew = approvalOverrideNote.length >= 10;
+    const effectiveOverride =
+      approvalOverrideNote || (storedAlign.overrideUsed ? storedAlign.overrideNote : '');
+    const alignment = validateRefundProductionAlignmentAtSubmit(db, qref, decisionCats, {
+      actor,
+      acknowledgedCodes: mergedAck,
+      overrideNote: effectiveOverride,
+    });
+    if (!alignment.ok) return alignment;
+    approvalAlignmentAckJson = mergeProductionAlignmentAckJson(storedAlign, alignment, 'approval');
   }
   try {
     assertPeriodOpen(db, actedAtISO, 'Refund approval date');
@@ -1761,28 +1834,41 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       if (calculationLinesJson != null || calcNotes != null || suggestedLinesJson != null) {
         db.prepare(
           `UPDATE customer_refunds
-           SET status = ?, approval_date = ?, approved_by = ?, approved_amount_ngn = ?, manager_comments = ?,
+           SET status = ?, approval_date = ?, approved_by = ?, approved_by_user_id = ?, approved_amount_ngn = ?, manager_comments = ?,
                calculation_lines_json = COALESCE(?, calculation_lines_json),
                calculation_notes = COALESCE(?, calculation_notes),
-               suggested_lines_json = COALESCE(?, suggested_lines_json)
+               suggested_lines_json = COALESCE(?, suggested_lines_json),
+               production_alignment_ack_json = COALESCE(?, production_alignment_ack_json)
            WHERE refund_id = ?`
         ).run(
           status,
           actedAtISO,
           actorName(actor),
+          actorId(actor),
           approvedAmountNgn,
           comment,
           calculationLinesJson,
           calcNotes,
           suggestedLinesJson,
+          approvalAlignmentAckJson,
           refundID
         );
       } else {
         db.prepare(
           `UPDATE customer_refunds
-           SET status = ?, approval_date = ?, approved_by = ?, approved_amount_ngn = ?, manager_comments = ?
+           SET status = ?, approval_date = ?, approved_by = ?, approved_by_user_id = ?, approved_amount_ngn = ?, manager_comments = ?,
+               production_alignment_ack_json = COALESCE(?, production_alignment_ack_json)
            WHERE refund_id = ?`
-        ).run(status, actedAtISO, actorName(actor), approvedAmountNgn, comment, refundID);
+        ).run(
+          status,
+          actedAtISO,
+          actorName(actor),
+          actorId(actor),
+          approvedAmountNgn,
+          comment,
+          approvalAlignmentAckJson,
+          refundID
+        );
       }
       recordApprovalAction(db, {
         actor,
@@ -1801,6 +1887,40 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         note: comment || `Refund ${status.toLowerCase()}`,
         details: { status, approvedAmountNgn },
       });
+      if (approvalAlignmentAckJson && approvalAlignmentOverrideIsNew) {
+        try {
+          const ack = JSON.parse(approvalAlignmentAckJson);
+          appendAuditLog(db, {
+            actor,
+            action: 'refund.production_alignment.override',
+            entityKind: 'refund',
+            entityId: refundID,
+            note: ack.overrideNote || 'Production alignment override at approval',
+            details: { phase: 'approval', acknowledgedCodes: ack.acknowledgedCodes || [] },
+          });
+        } catch {
+          /* optional */
+        }
+      }
+      if (cashierGate.adminTrial || segApprove.adminTrial) {
+        appendAuditLog(db, {
+          actor,
+          action: 'refund.dual_control.admin_trial',
+          entityKind: 'refund',
+          entityId: refundID,
+          note: 'Admin trial exception: refund approval bypassed segregation-of-duties check.',
+          details: { bypass: segApprove.bypass || 'admin_trial' },
+        });
+        recordApprovalAction(db, {
+          actor,
+          entityKind: 'refund',
+          entityId: refundID,
+          action: 'dual_control_bypass',
+          status: 'admin_trial',
+          note: 'Admin trial exception on refund approval.',
+          actedAtISO,
+        });
+      }
     })();
     return { ok: true, warnings: refundWarnings };
   } catch (e) {
@@ -2566,8 +2686,19 @@ export function previewRefundRequest(db, payload) {
       dataQualityIssues: [
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
+        ...refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory),
       ],
     };
+  }
+
+  const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
+  const alignmentIssues = enrichProductionAlignmentIssuesForSubmit(
+    refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory)
+  );
+  for (const issue of alignmentIssues) {
+    if (issue.message && !warnings.includes(issue.message)) {
+      warnings.push(issue.message);
+    }
   }
 
   return {
@@ -2595,6 +2726,8 @@ export function previewRefundRequest(db, payload) {
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,
       eligibleRefundCategories,
+      productionSuggestedCategories,
+      productionAlignmentIssues: alignmentIssues,
       ...(substitutionDiagnosis ? { substitutionDiagnosis } : {}),
     },
   };
@@ -3111,11 +3244,27 @@ export function reviewQuotation(db, quoteId, payload, actor) {
            WHERE id = ?`
         ).run(now, note, quoteId);
       } else if (decision === 'approve_production') {
+        const total = Math.round(Number(row.total_ngn) || 0);
+        const paid = Math.round(Number(row.paid_ngn) || 0);
+        const paidFraction = total > 0 ? paid / total : paid > 0 ? 1 : 0;
         db.prepare(
           `UPDATE quotations 
-           SET manager_production_approved_at_iso = ? 
+           SET manager_production_approved_at_iso = ?,
+               manager_production_approved_by_user_id = ?,
+               manager_production_approved_by_name = ?,
+               manager_production_approval_note = ?,
+               manager_production_paid_fraction_at_approval = ?
            WHERE id = ?`
-        ).run(now, quoteId);
+        ).run(now, actorId(actor), actorName(actor), note || null, paidFraction, quoteId);
+        recordApprovalAction(db, {
+          actor,
+          entityKind: 'quotation',
+          entityId: quoteId,
+          action: 'production_gate_override',
+          status: 'approved',
+          note: note || 'BM production gate override',
+          actedAtISO: now.slice(0, 10),
+        });
       } else {
         throw new Error('Invalid manager decision.');
       }

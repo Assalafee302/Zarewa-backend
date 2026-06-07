@@ -1,8 +1,7 @@
 /**
  * Phase 11B — operational reporting (pending approvals, production status).
  */
-import { branchWhere } from './branches.js';
-import { listManagementItems } from './readModel.js';
+import { branchWhere, listManagementItems } from './readModel.js';
 import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.js';
 import { metreVarianceExceedsThreshold } from '../shared/lib/productionMetreVariance.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';

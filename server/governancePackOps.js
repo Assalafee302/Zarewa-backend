@@ -1,7 +1,7 @@
 /**
  * Phase 11C — go-live governance pack (mirrors scripts/phase11-analyze-exports.py against live DB).
  */
-import { branchWhere } from './branches.js';
+import { branchWhere } from './readModel.js';
 import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.js';
 import { buildPendingApprovalsReport, buildProductionStatusReport } from './operationalReportsOps.js';
 import {

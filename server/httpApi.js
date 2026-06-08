@@ -2287,9 +2287,8 @@ export function registerHttpApi(app, db) {
       return res.json({
         ok: true,
         message:
-          'If an account matches, a single-use reset code was created. It expires in one hour. ' +
-          'Delivered only through your configured channel (for example email from your administrator). ' +
-          'Use the same username or email together with the code on the reset screen.',
+          'If a matching new-user account exists, a single-use reset code was created. It expires in one hour. ' +
+          'Delivered only through your administrator. Use New user setup on the sign-in screen with the code.',
         ...(process.env.NODE_ENV !== 'production' && result.devResetToken
           ? { devResetToken: result.devResetToken }
           : {}),

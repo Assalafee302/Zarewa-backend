@@ -11,13 +11,19 @@ Phase 12 strengthens sign-in, session timeout, failed-login handling, and passwo
 - Use your **username and password** on the Zarewa sign-in screen.
 - Google sign-in is no longer available.
 - After **5 failed attempts**, your account is **locked for 30 minutes**.
-- If you are locked out, wait for the lock to expire or ask an administrator for a **reset code**.
+- If you are locked out, wait for the lock to expire or contact an administrator.
 
-### Password reset
+### New users and passwords
 
-1. On the sign-in screen, choose **Forgot password**.
-2. Enter your username or email. An administrator delivers the **one-time reset code** (the app does not email it automatically unless your organisation configures that separately).
-3. Enter the code and set a **new password** (minimum 8 characters with upper, lower, number, and special character).
+**First sign-in (recommended):** Sign in with the temporary password from your administrator. A **password change popup** appears immediately and must be completed before you can use the workspace.
+
+**Reset code (new users only):** If your administrator gave you a one-time code before your first sign-in:
+
+1. On the sign-in screen, choose **New user? Set up your password**.
+2. Enter your username or email, the **reset code**, and a **new password** (minimum 8 characters with upper, lower, number, and special character).
+3. Sign in with your new password.
+
+Self-service “forgot password” is not available for existing users. Administrators set new passwords from **Team & access** for staff who have already signed in.
 
 ### Session timeout
 
@@ -44,7 +50,7 @@ Phase 12 strengthens sign-in, session timeout, failed-login handling, and passwo
 
 - Demo users (`admin`, `sales.staff`, etc.) are **not created** unless `ZAREWA_ALLOW_SEEDED_USERS=1` or `NODE_ENV=test`.
 - Migration clears `registered_password` and forces `must_change_password` on known demo usernames when seeded users are disabled.
-- **Passwords are never shown** in Team & access; use **Reset code** only.
+- **Passwords are never shown** in Team & access. **Reset code** is only for new users who have not completed first sign-in.
 
 ### Audit events
 

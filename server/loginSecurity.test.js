@@ -10,6 +10,7 @@ import {
   sessionTimeoutMinutes,
   validatePasswordStrength,
   resolveRegisteredPasswordDisplay,
+  userRequiresInitialPasswordSetup,
 } from './auth.js';
 import { buildLoginSecuritySummary, listActiveSessions } from './sessionSecurityOps.js';
 
@@ -42,6 +43,20 @@ describe('Phase 12 login security (pure)', () => {
     expect(sessionTimeoutMinutes()).toBe(15);
     if (prev === undefined) delete process.env.SESSION_TIMEOUT_MINUTES;
     else process.env.SESSION_TIMEOUT_MINUTES = prev;
+  });
+
+  it('userRequiresInitialPasswordSetup applies only to new accounts', () => {
+    expect(userRequiresInitialPasswordSetup({ status: 'active', must_change_password: 1 })).toBe(true);
+    expect(
+      userRequiresInitialPasswordSetup({ status: 'active', must_change_password: 0, last_login_at_iso: '' })
+    ).toBe(true);
+    expect(
+      userRequiresInitialPasswordSetup({
+        status: 'active',
+        must_change_password: 0,
+        last_login_at_iso: '2026-01-01T00:00:00.000Z',
+      })
+    ).toBe(false);
   });
 
   it('resolveRegisteredPasswordDisplay never returns plaintext', () => {

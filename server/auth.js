@@ -38,6 +38,14 @@ function readTrainingCompleted(row) {
   return Boolean(String(row.training_completed_at_iso ?? '').trim());
 }
 
+/** New users must finish first-time password setup (modal or admin reset code). */
+export function userRequiresInitialPasswordSetup(row) {
+  if (!row || String(row.status || 'active') !== 'active') return false;
+  if (readMustChangePassword(row)) return true;
+  const lastLogin = String(row.last_login_at_iso ?? row.lastLoginAtISO ?? '').trim();
+  return !lastLogin;
+}
+
 export const SESSION_COOKIE = 'zarewa_session';
 export const CSRF_COOKIE = 'zarewa_csrf';
 export const SESSION_WARNING_SECONDS = 60;
@@ -1578,7 +1586,7 @@ function issuePasswordResetTokenForUserId(db, userId) {
 export function requestPasswordReset(db, identifier) {
   const row = findUserByIdentifier(db, identifier);
 
-  if (row) {
+  if (row && userRequiresInitialPasswordSetup(row)) {
     const issued = issuePasswordResetTokenForUserId(db, row.id);
     const plain = issued?.token || '';
 
@@ -1598,7 +1606,19 @@ export function requestPasswordReset(db, identifier) {
  * @returns {{ ok: true, resetToken: string, expiresAtISO: string, identifier: string } | { ok: false, error: string }}
  */
 export function issuePasswordResetForAdmin(db, userId) {
-  const issued = issuePasswordResetTokenForUserId(db, userId);
+  const uid = String(userId || '').trim();
+  const row = uid ? db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(uid) : null;
+  if (!row || row.status !== 'active') {
+    return { ok: false, error: 'Active user not found.' };
+  }
+  if (!userRequiresInitialPasswordSetup(row)) {
+    return {
+      ok: false,
+      error:
+        'Reset codes are only for new users who have not completed first sign-in. Set a new password from Team & access instead.',
+    };
+  }
+  const issued = issuePasswordResetTokenForUserId(db, row.id);
   if (!issued?.token) {
     return { ok: false, error: 'Active user not found.' };
   }
@@ -1636,6 +1656,14 @@ export function completePasswordReset(db, identifier, token, newPassword) {
       (matchRow.email && String(matchRow.email).trim().toLowerCase() === lower));
   if (!identOk) {
     return { ok: false, error: 'Invalid or expired reset link. Request a new reset.' };
+  }
+
+  const userRow = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(matchRow.user_id);
+  if (!userRequiresInitialPasswordSetup(userRow)) {
+    return {
+      ok: false,
+      error: 'Password reset codes are only for new users. Contact your administrator.',
+    };
   }
 
   const strength = validatePasswordStrength(newPassword);

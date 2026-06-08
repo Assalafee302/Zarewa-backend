@@ -21,9 +21,10 @@ Phase 12 strengthens sign-in, session timeout, failed-login handling, and passwo
 
 ### Session timeout
 
-- After **15 minutes without API activity**, your session ends.
-- You will see a **warning 1 minute before** expiry; click **Continue working** to stay signed in.
-- You are redirected to sign in when the session expires.
+- After **15 minutes without a click** anywhere in the app, your session ends (sliding timer resets on each click).
+- You will see a **warning 1 minute before** expiry; click anywhere or use **Continue working** to stay signed in.
+- **Open forms with unsaved changes** pause automatic sign-out until you save or discard your work.
+- You are redirected to sign in when the session expires (unless unsaved work is blocking).
 
 ### Access denied
 

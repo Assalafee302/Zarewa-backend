@@ -596,6 +596,12 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
         scope.viewAll = false;
+      } else if (
+        userCanAccessMainHrWorkspace(req.user) &&
+        (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
+      ) {
+        // Main HR employee hub lists company-wide staff (bulk import spans all branches).
+        scope.viewAll = true;
       }
       if (String(req.query?.includeSalary || '') === '1' && !userCanViewOrgSensitiveHr(req.user)) {
         return res.status(403).json({ ok: false, error: 'Sensitive compensation data is restricted.' });

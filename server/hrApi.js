@@ -258,6 +258,7 @@ import {
   listBulkImportRuns,
   previewBulkStaffImport,
 } from './hrStaffBulkImport.js';
+import { cleanupHrStaffDuplicates, scanHrStaffDuplicates } from './hrStaffDuplicateCleanup.js';
 import {
   approveExecutivePayment,
   buildExecutiveBeneficiaryBankExport,
@@ -3464,6 +3465,41 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not list import runs.' });
+    }
+  });
+
+  app.get('/api/hr/staff-import/duplicates', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const report = scanHrStaffDuplicates(db);
+      if (!report.ok) return res.status(400).json(report);
+      return res.json(report);
+    } catch (e) {
+      console.error('[staff-import/duplicates]', e);
+      return res.status(500).json({ ok: false, error: 'Could not scan for duplicate staff.' });
+    }
+  });
+
+  app.post('/api/hr/staff-import/duplicates/cleanup', requireMainHrWorkspace, requireHrAny('hr.staff.import', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const dryRun = body.dryRun !== false;
+      const r = cleanupHrStaffDuplicates(db, req.user, {
+        dryRun,
+        removeOrphans: body.removeOrphans !== false,
+        removeDuplicates: body.removeDuplicates !== false,
+        userIds: Array.isArray(body.userIds) ? body.userIds : undefined,
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error('[staff-import/duplicates/cleanup]', e);
+      const detail = String(e?.message || '').trim();
+      return res.status(500).json({
+        ok: false,
+        error: detail ? `Could not clean duplicate staff: ${detail}` : 'Could not clean duplicate staff.',
+      });
     }
   });
 

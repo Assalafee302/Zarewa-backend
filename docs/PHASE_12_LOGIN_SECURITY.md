@@ -63,6 +63,21 @@ Phase 12 strengthens sign-in, session timeout, failed-login handling, and passwo
 - `GET /api/admin/security/login-summary?hours=24` — failed logins, locks, timeouts (requires `settings.view`)
 - `GET /api/admin/security/active-sessions` — active sessions list (requires `settings.view`)
 
+### Post-deploy smoke
+
+```bash
+ZAREWA_VERIFY_API_ORIGIN=https://api.example.com npm run verify:login-security
+```
+
+Optional successful-login check with a dedicated smoke account:
+
+```bash
+ZAREWA_VERIFY_API_ORIGIN=https://api.example.com \
+ZAREWA_VERIFY_LOGIN_USER=smoke.user \
+ZAREWA_VERIFY_LOGIN_PASSWORD='YourSmoke@Pass1!' \
+npm run verify:login-security
+```
+
 Settings → **Team** tab includes the **Login & session security** panel.
 
 ### Removed

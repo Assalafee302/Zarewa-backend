@@ -45,6 +45,7 @@
     "test:e2e:ops-finance": "playwright test e2e/complete-gate.spec.js --grep \"finance manager|operations: Store\"",
     "verify:ci": "npm run lint && npm run test:transactions",
     "verify:split-deploy": "node scripts/verify-split-deploy.mjs",
+    "verify:login-security": "node scripts/verify-login-security.mjs",
     "verify:complete": "node scripts/verify-complete.mjs",
     "hr:import-staff": "node server/importZarewaStaffFromXlsx.js",
     "import:access-sales": "node server/importAccessSalesPack.mjs",

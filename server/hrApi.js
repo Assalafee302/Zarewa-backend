@@ -314,6 +314,7 @@ import {
 } from './hrDisciplineCasesOps.js';
 import {
   hrUserHas,
+  userCanAccessHrModule,
   userCanAccessMainHrWorkspace,
   userCanAccessTeamHr,
   userCanApproveHrLetters,

@@ -265,6 +265,10 @@ export function listHrStaff(db, scope, opts = {}) {
   if (!hrTablesReady(db)) return [];
   const { viewAll, branchId, includeUnassigned } = scope;
   const includeInactive = Boolean(opts.includeInactive);
+  const requireProfile = Boolean(opts.requireProfile);
+  const scopeMode = scope.scopeMode || 'branch';
+  const orgWide = Boolean(viewAll) || scopeMode === 'org';
+  const joinType = requireProfile ? 'INNER' : 'LEFT';
 
   let sql = `
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
@@ -295,15 +299,14 @@ export function listHrStaff(db, scope, opts = {}) {
            p.salary_level AS salaryLevel,
            p.salary_step AS salaryStep
     FROM app_users u
-    LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+    ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1
   `;
   const args = [];
   if (!includeInactive) {
     sql += ` AND u.status = 'active'`;
   }
-  if (!viewAll) {
-    const scopeMode = scope.scopeMode || 'branch';
+  if (!orgWide) {
     const actorUserId = scope.actorUserId;
     if (scopeMode === 'team' && actorUserId) {
       sql += ` AND p.line_manager_user_id = ?`;

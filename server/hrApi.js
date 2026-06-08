@@ -540,7 +540,7 @@ export function registerHrApi(app, db) {
       const observability = listHrObservability(db, scope);
       const inbox = getHrInboxSummary(db, scope);
       const readiness = buildHrReadiness(db, scope);
-      const staffAll = listHrStaff(db, scope, { includeInactive: true });
+      const staffAll = listHrStaff(db, scope, { includeInactive: true, requireProfile: true });
       const staffCounts = {
         total: staffAll.length,
         active: staffAll.filter((s) => String(s.status || '') === 'active').length,
@@ -600,19 +600,23 @@ export function registerHrApi(app, db) {
         userCanAccessMainHrWorkspace(req.user) &&
         (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
       ) {
-        // Main HR employee hub lists company-wide staff (bulk import spans all branches).
         scope.viewAll = true;
       }
       if (String(req.query?.includeSalary || '') === '1' && !userCanViewOrgSensitiveHr(req.user)) {
         return res.status(403).json({ ok: false, error: 'Sensitive compensation data is restricted.' });
       }
       const includeInactive = String(req.query?.includeInactive || '') === '1';
-      const staff = listHrStaff(db, scope, { includeInactive });
+      const requireProfile = String(req.query?.allUsers || '') !== '1';
+      const staff = listHrStaff(db, scope, { includeInactive, requireProfile });
       const ctx = hrRedactionContextFromReq(req);
       return res.json({ ok: true, staff: redactStaffList(staff, ctx) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list staff.' });
+      console.error('[hr/staff/list]', e);
+      const detail = String(e?.message || '').trim();
+      return res.status(500).json({
+        ok: false,
+        error: detail ? `Could not list staff: ${detail}` : 'Could not list staff.',
+      });
     }
   });
 

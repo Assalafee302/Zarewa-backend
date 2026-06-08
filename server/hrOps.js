@@ -4525,7 +4525,15 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     },
     { skipEnrichedReturn: skipProfileFetch }
   );
-  if (!up.ok) return up;
+  if (!up.ok) {
+    try {
+      db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(created.userId);
+      db.prepare(`DELETE FROM app_users WHERE id = ?`).run(created.userId);
+    } catch {
+      /* best-effort rollback when profile insert fails */
+    }
+    return up;
+  }
   return { ok: true, userId: created.userId, profile: up.profile };
 }
 

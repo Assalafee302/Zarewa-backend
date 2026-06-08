@@ -1035,12 +1035,31 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
       const body = rowToProfileBody(db, { ...row, proposedUsername: username }, scope, { includeCredentials: true });
       body.username = username;
       body.displayName = displayName;
-      const r = registerNewStaffWithProfile(db, actor?.id, body, { skipProfileFetch: true });
-      if (!r.ok) {
-        skipped += 1;
-        results.push({ rowNum: row.rowNum, status: 'failed', error: r.error });
-        continue;
+    let r = registerNewStaffWithProfile(db, actor?.id, body, { skipProfileFetch: true });
+    if (!r.ok && String(r.error || '').toLowerCase().includes('username already exists')) {
+      const orphan = db
+        .prepare(
+          `SELECT u.id FROM app_users u
+           LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+           WHERE lower(trim(u.username)) = ? AND p.user_id IS NULL
+           LIMIT 1`
+        )
+        .get(String(username).toLowerCase());
+      if (orphan?.id) {
+        try {
+          db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(orphan.id);
+          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(orphan.id);
+        } catch {
+          /* ignore */
+        }
+        r = registerNewStaffWithProfile(db, actor?.id, body, { skipProfileFetch: true });
       }
+    }
+    if (!r.ok) {
+      skipped += 1;
+      results.push({ rowNum: row.rowNum, status: 'failed', error: r.error });
+      continue;
+    }
       imported += 1;
       results.push({
         rowNum: row.rowNum,

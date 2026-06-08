@@ -34,10 +34,36 @@ export function adaptExecSqlForMysql(sql) {
   return s;
 }
 
-export function adaptSqlForMysql(sql, args) {
-  const s0 = String(sql || '').trim();
-  let s = adaptExecSqlForMysql(s0);
+/**
+ * better-sqlite3 accepts `.run({ user_id: 'x' })` with `@user_id` placeholders.
+ * mysql2 needs `?` with positional values — expand when a single object bind is passed.
+ * @param {string} sql
+ * @param {unknown[]} args
+ */
+export function expandNamedBindParams(sql, args) {
+  const s0 = String(sql || '');
+  if (!/@([a-zA-Z_][a-zA-Z0-9_]*)/.test(s0)) {
+    return { sql: s0, args: args != null ? [...args] : [] };
+  }
   const outArgs = args != null ? [...args] : [];
+  if (outArgs.length !== 1 || outArgs[0] == null || typeof outArgs[0] !== 'object' || Array.isArray(outArgs[0])) {
+    return { sql: s0, args: outArgs };
+  }
+  const bind = /** @type {Record<string, unknown>} */ (outArgs[0]);
+  const order = [];
+  const sql2 = s0.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, (_, name) => {
+    order.push(name);
+    return '?';
+  });
+  const values = order.map((name) => bind[name]);
+  return { sql: sql2, args: values };
+}
+
+export function adaptSqlForMysql(sql, args) {
+  const expanded = expandNamedBindParams(sql, args);
+  const s0 = String(expanded.sql || '').trim();
+  let s = adaptExecSqlForMysql(s0);
+  const outArgs = expanded.args != null ? [...expanded.args] : [];
 
   const pragma = /^PRAGMA\s+table_info\((['"`]?)([\w]+)\1\)\s*$/i.exec(s0);
   if (pragma) {

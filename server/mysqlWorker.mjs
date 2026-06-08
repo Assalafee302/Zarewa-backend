@@ -266,7 +266,7 @@ async function execRaw(sql) {
 
 async function runStatement(sql, args) {
   return withDeadlockRetry(async () => {
-    const { sql: sql2, args: a2 } = adaptSqlForMysql(sql, args);
+    const { sql: sql2, args: a2 } = adaptSqlForMysql(String(sql || ''), args || []);
     assertBindCount(sql2, a2);
     const conn = execTarget();
     try {

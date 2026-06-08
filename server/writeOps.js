@@ -5489,13 +5489,31 @@ function formatMetersLabel(totalMeters) {
 }
 
 const CUTTING_LIST_LINE_TYPES = new Set(['Roof', 'Flatsheet', 'Cladding']);
+const CUTTING_LIST_DRAFT_STATUS = 'Draft';
 
-function normalizeCuttingListLines(lines) {
+function isCuttingListDraftStatus(status) {
+  return String(status ?? '').trim() === CUTTING_LIST_DRAFT_STATUS;
+}
+
+function normalizeCuttingListLines(lines, { allowPartial = false } = {}) {
   const out = [];
   let order = 0;
   for (const raw of lines || []) {
     const sheets = Number(raw?.sheets ?? raw?.qty ?? 0);
     const lengthM = Number(raw?.lengthM ?? raw?.length_m ?? raw?.length ?? 0);
+    const hasPartialInput =
+      allowPartial &&
+      (String(raw?.sheets ?? raw?.qty ?? '').trim() || String(raw?.lengthM ?? raw?.length_m ?? raw?.length ?? '').trim());
+    if (allowPartial && hasPartialInput) {
+      if (!Number.isFinite(sheets)) continue;
+      if (!Number.isFinite(lengthM)) continue;
+      order += 1;
+      const totalM = sheets > 0 && lengthM > 0 ? Number((sheets * lengthM).toFixed(2)) : 0;
+      const rawType = String(raw?.lineType ?? raw?.line_type ?? 'Roof').trim();
+      const lineType = CUTTING_LIST_LINE_TYPES.has(rawType) ? rawType : 'Roof';
+      out.push({ sortOrder: order, sheets: Math.max(0, sheets), lengthM: Math.max(0, lengthM), totalM, lineType });
+      continue;
+    }
     if (!Number.isFinite(sheets) || !Number.isFinite(lengthM) || sheets <= 0 || lengthM <= 0) continue;
     order += 1;
     const totalM = Number((sheets * lengthM).toFixed(2));
@@ -5605,7 +5623,7 @@ export function countCoilLotsForProductInWorkspace(db, productID, workspaceBranc
   return Number(row?.c) || 0;
 }
 
-function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId) {
+function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId, { forDraft = false } = {}) {
   const qref = String(quotationRef ?? '').trim();
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
@@ -5628,7 +5646,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
     minPaidFrac = 0.7;
   }
   const threshold = total * minPaidFrac - 1e-6;
-  if (!managerOk && bookPaid < threshold) {
+  if (!forDraft && !managerOk && bookPaid < threshold) {
     const qKey = normalizeQuotRefDashKey(qref);
     const receiptRows = listSalesReceipts(db, 'ALL').filter(
       (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
@@ -5656,10 +5674,13 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
   }
   const existing = excludeCuttingListId
     ? db
-        .prepare(`SELECT id, branch_id FROM cutting_lists WHERE quotation_ref = ? AND id != ?`)
+        .prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ? AND id != ?`)
         .get(qref, excludeCuttingListId)
-    : db.prepare(`SELECT id, branch_id FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
+    : db.prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
   if (existing?.id) {
+    if (forDraft && isCuttingListDraftStatus(existing.status)) {
+      return { ok: true, existingDraftId: existing.id };
+    }
     const br = String(existing.branch_id || '').trim() || DEFAULT_BRANCH_ID;
     return {
       ok: false,
@@ -5670,6 +5691,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId)
 }
 
 export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_ID) {
+  const isDraft = Boolean(payload.draft || payload.isDraft);
   const quotationRef = String(payload.quotationRef ?? '').trim();
   const quote = quotationRef
     ? db
@@ -5682,11 +5704,16 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
     db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(customerID) ||
     null;
   if (!customer) return { ok: false, error: 'Customer not found.' };
-  const qCheck = validateQuotationForCuttingList(db, quotationRef, null);
+  const qCheck = validateQuotationForCuttingList(db, quotationRef, null, { forDraft: isDraft });
   if (!qCheck.ok) return qCheck;
-  const lines = normalizeCuttingListLines(payload.lines);
+  if (isDraft && qCheck.existingDraftId) {
+    return updateCuttingList(db, qCheck.existingDraftId, { ...payload, autosave: true });
+  }
+  const lines = normalizeCuttingListLines(payload.lines, { allowPartial: isDraft });
   const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
-  if (!lines.length && !accessoriesOnly) return { ok: false, error: 'Add at least one valid cutting line.' };
+  if (!isDraft && !lines.length && !accessoriesOnly) {
+    return { ok: false, error: 'Add at least one valid cutting line.' };
+  }
   const branchId =
     String(quote?.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
   const id = nextCuttingListHumanId(db, branchId);
@@ -5701,10 +5728,13 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const productID = accessoriesOnly ? '' : String(payload.productID ?? '').trim();
   const productName = accessoriesOnly ? 'Accessories only' : String(payload.productName ?? '').trim();
   const machineName = String(payload.machineName ?? '').trim();
-  const status = 'Waiting';
+  const status = isDraft ? CUTTING_LIST_DRAFT_STATUS : 'Waiting';
   const handledBy = String(payload.handledBy ?? '').trim() || 'Sales';
   const productionReleasePending =
-    Boolean(payload.holdForProductionApproval) || Boolean(payload.holdProductionRelease) ? 1 : 0;
+    !isDraft &&
+    (Boolean(payload.holdForProductionApproval) || Boolean(payload.holdProductionRelease))
+      ? 1
+      : 0;
 
   db.transaction(() => {
     db.prepare(
@@ -5767,6 +5797,9 @@ export function clearCuttingListProductionHold(db, cuttingListId, actor = null) 
 export function updateCuttingList(db, cuttingListId, payload) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
+  const isAutosave = Boolean(payload.autosave);
+  const finalize = Boolean(payload.finalize);
+  const existingIsDraft = isCuttingListDraftStatus(existing.status);
   if (isCuttingListProductionCompleted(db, existing)) {
     return { ok: false, error: 'Cutting list cannot be edited after production is completed.' };
   }
@@ -5794,7 +5827,9 @@ export function updateCuttingList(db, cuttingListId, payload) {
     payload.quotationRef !== undefined ? String(payload.quotationRef ?? '').trim() : existing.quotation_ref || '';
   const prevRef = String(existing.quotation_ref ?? '').trim();
   if (payload.quotationRef !== undefined && quotationRef !== prevRef) {
-    const qCheck = validateQuotationForCuttingList(db, quotationRef, cuttingListId);
+    const qCheck = validateQuotationForCuttingList(db, quotationRef, cuttingListId, {
+      forDraft: existingIsDraft && !finalize,
+    });
     if (!qCheck.ok) return qCheck;
   }
   const quote = quotationRef
@@ -5809,7 +5844,7 @@ export function updateCuttingList(db, cuttingListId, payload) {
     null;
   if (!customer) return { ok: false, error: 'Customer not found.' };
   const lines = payload.lines
-    ? normalizeCuttingListLines(payload.lines)
+    ? normalizeCuttingListLines(payload.lines, { allowPartial: existingIsDraft && (isAutosave || !finalize) })
     : db
         .prepare(`SELECT * FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`)
         .all(cuttingListId)
@@ -5821,8 +5856,18 @@ export function updateCuttingList(db, cuttingListId, payload) {
           lineType: row.line_type || 'Roof',
         }));
   const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
-  if (!lines.length && !accessoriesOnly) {
+  if (!isAutosave && !existingIsDraft && !lines.length && !accessoriesOnly) {
     return { ok: false, error: 'Cutting list must keep at least one valid line.' };
+  }
+  if (finalize && !existingIsDraft) {
+    return { ok: false, error: 'Only draft cutting lists can be finalized from this action.' };
+  }
+  if (finalize) {
+    const qFinalize = validateQuotationForCuttingList(db, quotationRef, cuttingListId, { forDraft: false });
+    if (!qFinalize.ok) return qFinalize;
+    if (!lines.length && !accessoriesOnly) {
+      return { ok: false, error: 'Add at least one valid cutting line before saving the list.' };
+    }
   }
   const dateISO = payload.dateISO ?? existing.date_iso;
   const totalMeters =
@@ -5849,15 +5894,21 @@ export function updateCuttingList(db, cuttingListId, payload) {
     payload.machineName !== undefined
       ? String(payload.machineName ?? '').trim()
       : existing.machine_name ?? '';
-  const status = existing.status;
+  const status = finalize ? 'Waiting' : existing.status;
   const handledBy = payload.handledBy ?? existing.handled_by;
+  const productionReleasePending = finalize
+    ? Boolean(payload.holdForProductionApproval) || Boolean(payload.holdProductionRelease)
+      ? 1
+      : 0
+    : Number(existing.production_release_pending) || 0;
 
   db.transaction(() => {
     db.prepare(
       `UPDATE cutting_lists
        SET customer_id = ?, customer_name = ?, quotation_ref = ?, product_id = ?, product_name = ?,
            date_label = ?, date_iso = ?, sheets_to_cut = ?, total_meters = ?, total_label = ?,
-           status = ?, machine_name = ?, operator_name = ?, handled_by = ?
+           status = ?, machine_name = ?, operator_name = ?, handled_by = ?,
+           production_release_pending = ?
        WHERE id = ?`
     ).run(
       customer.customer_id,
@@ -5874,6 +5925,7 @@ export function updateCuttingList(db, cuttingListId, payload) {
       machineName || null,
       null,
       handledBy,
+      productionReleasePending,
       cuttingListId
     );
     syncCuttingListLineRows(db, cuttingListId, lines);
@@ -5923,6 +5975,12 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
   if (cuttingListId && !cuttingList) return { ok: false, error: 'Cutting list not found.' };
   if (cuttingList?.production_registered) {
     return { ok: false, error: 'Production is already registered for this cutting list.' };
+  }
+  if (cuttingListId && cuttingList && isCuttingListDraftStatus(cuttingList.status)) {
+    return {
+      ok: false,
+      error: 'Finish and save this cutting list before sending it to production.',
+    };
   }
   if (cuttingListId && cuttingList && Number(cuttingList.production_release_pending) === 1) {
     return {

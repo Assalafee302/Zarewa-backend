@@ -3437,8 +3437,12 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not import staff.' });
+      console.error('[staff-import/commit]', e);
+      const detail = String(e?.message || '').trim();
+      return res.status(500).json({
+        ok: false,
+        error: detail ? `Could not import staff: ${detail}` : 'Could not import staff.',
+      });
     }
   });
 

@@ -126,6 +126,28 @@ const JOB_TITLE_ALIASES = {
   steward: 'Steward',
   'domestic assistant': 'Domestic Assistant',
   'domestic staff': 'Domestic Assistant',
+  ceo: 'CEO',
+  'chief executive': 'CEO',
+  'chief executive officer': 'CEO',
+  'managing director': 'Managing Director',
+  'general manager': 'General Manager',
+  gm: 'General Manager',
+  'asst branch manager': 'Assistant Branch Manager',
+  'assistant branch manager': 'Assistant Branch Manager',
+  'asst store keeper': 'Assistant Store Keeper',
+  'assistant store keeper': 'Assistant Store Keeper',
+  estimator: 'Estimator',
+  'factory worker': 'Factory Worker',
+  operatpr: 'Machine Operator',
+  'operator ii': 'Machine Operator',
+  'operator i i': 'Machine Operator',
+  'machine operator ii': 'Machine Operator',
+  intern: 'Intern',
+  nysc: 'NYSC Intern',
+  scholarship: 'Scholarship Beneficiary',
+  scholaship: 'Scholarship Beneficiary',
+  'site engineer': 'Site Engineer',
+  'truck driver': 'Truck Driver',
   'it officer': 'IT Officer',
   'logistics officer': 'Logistics Officer',
   'warehouse officer': 'Warehouse Officer',
@@ -346,6 +368,7 @@ function resolveBranchId(db, row, scope) {
   if (mapped) return mapped;
   if (bag.includes('yola')) return lookupBranchId(db, 'BR-YL', 'Yola') || 'BR-YL';
   if (bag.includes('maiduguri') || bag.includes('maig')) return lookupBranchId(db, 'BR-MDG', 'Maiduguri') || 'BR-MDG';
+  if (bag.includes('jalingo')) return lookupBranchId(db, row.branchCode, row.branchName) || DEFAULT_BRANCH_ID;
   if (bag.includes('kaduna') || bag.includes('kd')) return lookupBranchId(db, 'BR-KD', 'Kaduna') || DEFAULT_BRANCH_ID;
   return scope?.branchId || DEFAULT_BRANCH_ID;
 }
@@ -554,6 +577,9 @@ export function mapRoleKeyFromJob(jobTitle, department, payrollGroup) {
   const s = normTitleToken(`${jobTitle || ''} ${department || ''}`);
   if (payrollGroup === 'scholarship' || payrollGroup === 'chairman_staffs') return 'sales_staff';
   if (!s) return 'sales_staff';
+  if (/\bceo\b|chief executive/.test(s)) return 'ceo';
+  if (/managing director|\bmd\b/.test(s)) return 'md';
+  if (/general manager|\bgm\b/.test(s)) return 'sales_manager';
   if (/human\s*resource|^hr\b|hr\s*admin|personnel/.test(s)) return 'hr_admin';
   if (/finance|accountant|account\s*officer|treasury/.test(s)) return 'finance_manager';
   if (/cashier|cash\s*office/.test(s)) return 'cashier';
@@ -964,95 +990,116 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
   let skipped = 0;
   const results = [];
   for (const row of prev.preview) {
-    if (!row.valid) {
-      skipped += 1;
-      results.push({ rowNum: row.rowNum, status: 'skipped', errors: row.errors });
-      continue;
-    }
-    const displayName = deriveDisplayName(row);
-
-    if (row.importAction === 'update' && row.existingUserId) {
-      const profilePatch = rowToProfileBody(db, row, scope, {
-        userId: row.existingUserId,
-        includeCredentials: false,
-      });
-      const up = upsertHrStaffProfile(db, actor?.id, profilePatch);
-      if (!up.ok) {
+    try {
+      if (!row.valid) {
         skipped += 1;
-        results.push({ rowNum: row.rowNum, status: 'failed', error: up.error });
+        results.push({ rowNum: row.rowNum, status: 'skipped', errors: row.errors });
         continue;
       }
-      db.prepare(`UPDATE app_users SET display_name = ?, status = 'active' WHERE id = ?`).run(displayName, row.existingUserId);
-      updated += 1;
+      const displayName = deriveDisplayName(row);
+
+      if (row.importAction === 'update' && row.existingUserId) {
+        db.prepare(`UPDATE app_users SET display_name = ?, status = 'active' WHERE id = ?`).run(
+          displayName,
+          row.existingUserId
+        );
+        const profilePatch = rowToProfileBody(db, row, scope, {
+          userId: row.existingUserId,
+          includeCredentials: false,
+        });
+        const up = upsertHrStaffProfile(db, actor?.id, profilePatch, { skipEnrichedReturn: true });
+        if (!up.ok) {
+          skipped += 1;
+          results.push({ rowNum: row.rowNum, status: 'failed', error: up.error });
+          continue;
+        }
+        updated += 1;
+        results.push({
+          rowNum: row.rowNum,
+          status: 'updated',
+          userId: row.existingUserId,
+          username: row.proposedUsername,
+          mappedJobTitle: profilePatch.jobTitle || null,
+          roleKey: row.roleKey,
+        });
+        continue;
+      }
+
+      let username = row.proposedUsername || buildSurnameIdUsername(row, row.rowNum, new Set());
+      let suffix = 0;
+      const baseUsername = username;
+      while (db.prepare(`SELECT 1 FROM app_users WHERE lower(trim(username)) = ?`).get(username)) {
+        suffix += 1;
+        username = `${baseUsername}${suffix}`.slice(0, 48);
+      }
+      const body = rowToProfileBody(db, { ...row, proposedUsername: username }, scope, { includeCredentials: true });
+      body.username = username;
+      body.displayName = displayName;
+      const r = registerNewStaffWithProfile(db, actor?.id, body, { skipProfileFetch: true });
+      if (!r.ok) {
+        skipped += 1;
+        results.push({ rowNum: row.rowNum, status: 'failed', error: r.error });
+        continue;
+      }
+      imported += 1;
       results.push({
         rowNum: row.rowNum,
-        status: 'updated',
-        userId: row.existingUserId,
-        username: row.proposedUsername,
-        mappedJobTitle: profilePatch.jobTitle || null,
-        roleKey: row.roleKey,
+        status: 'imported',
+        userId: r.userId,
+        username,
+        mappedJobTitle: body.jobTitle || null,
+        roleKey: body.roleKey,
       });
-      continue;
-    }
-
-    let username = row.proposedUsername || buildSurnameIdUsername(row, row.rowNum, new Set());
-    let suffix = 0;
-    const baseUsername = username;
-    while (db.prepare(`SELECT 1 FROM app_users WHERE lower(trim(username)) = ?`).get(username)) {
-      suffix += 1;
-      username = `${baseUsername}${suffix}`.slice(0, 48);
-    }
-    const body = rowToProfileBody(db, { ...row, proposedUsername: username }, scope, { includeCredentials: true });
-    body.username = username;
-    body.displayName = displayName;
-    const r = registerNewStaffWithProfile(db, actor?.id, body);
-    if (!r.ok) {
+      if (row.warnings?.length) {
+        try {
+          createHrNotification(db, {
+            userId: actor?.id,
+            kind: 'import_cleanup',
+            title: 'Staff import needs cleanup',
+            body: `${body.displayName} — review master data mapping.`,
+            routePath: `/hr/employees/${encodeURIComponent(r.userId)}`,
+            entityKind: 'hr_staff_profile',
+            entityId: r.userId,
+          });
+        } catch {
+          /* notifications are optional */
+        }
+      }
+    } catch (e) {
       skipped += 1;
-      results.push({ rowNum: row.rowNum, status: 'failed', error: r.error });
-      continue;
-    }
-    imported += 1;
-    results.push({
-      rowNum: row.rowNum,
-      status: 'imported',
-      userId: r.userId,
-      username,
-      mappedJobTitle: body.jobTitle || null,
-      roleKey: body.roleKey,
-    });
-    if (row.warnings?.length) {
-      createHrNotification(db, {
-        userId: actor?.id,
-        kind: 'import_cleanup',
-        title: 'Staff import needs cleanup',
-        body: `${body.displayName} — review master data mapping.`,
-        routePath: `/hr/employees/${encodeURIComponent(r.userId)}`,
-        entityKind: 'hr_staff_profile',
-        entityId: r.userId,
+      results.push({
+        rowNum: row.rowNum,
+        status: 'failed',
+        error: String(e?.message || e || 'Unexpected import error'),
       });
     }
   }
-  if (hrTableExists(db, 'hr_staff_import_runs')) {
-    db.prepare(
-      `INSERT INTO hr_staff_import_runs (id, actor_user_id, imported_count, skipped_count, failed_count, summary_json, created_at_iso)
-       VALUES (?,?,?,?,?,?,?)`
-    ).run(
-      runId,
-      actor?.id,
-      imported,
-      skipped,
-      prev.summary.failed,
-      JSON.stringify({ results, summary: prev.summary, importMode, suspended }),
-      now,
-    );
+  try {
+    if (hrTableExists(db, 'hr_staff_import_runs')) {
+      db.prepare(
+        `INSERT INTO hr_staff_import_runs (id, actor_user_id, imported_count, skipped_count, failed_count, summary_json, created_at_iso)
+         VALUES (?,?,?,?,?,?,?)`
+      ).run(
+        runId,
+        actor?.id,
+        imported,
+        skipped,
+        prev.summary.failed,
+        JSON.stringify({ results, summary: prev.summary, importMode, suspended }),
+        now
+      );
+    }
+    appendHrAuditEvent(db, {
+      actorUserId: actor?.id,
+      action: 'hr.bulk_staff.import',
+      entityKind: 'hr_staff_import_run',
+      entityId: runId,
+      details: { imported, updated, suspended, skipped, total: prev.summary.total, importMode },
+    });
+  } catch (e) {
+    console.error('[hrStaffBulkImport] run log failed', e);
   }
-  appendHrAuditEvent(db, {
-    actorUserId: actor?.id,
-    action: 'hr.bulk_staff.import',
-    entityKind: 'hr_staff_import_run',
-    entityId: runId,
-    details: { imported, updated, suspended, skipped, total: prev.summary.total, importMode },
-  });
+  const commitFailed = results.filter((r) => r.status === 'failed').length;
   return {
     ok: true,
     runId,
@@ -1061,7 +1108,9 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
     updated,
     suspended,
     skipped,
-    failed: prev.summary.failed,
+    failed: prev.summary.failed + commitFailed,
+    previewFailed: prev.summary.failed,
+    commitFailed,
     duplicates: prev.summary.duplicates,
     needsCleanup: prev.summary.needsCleanup,
     total: prev.summary.total,

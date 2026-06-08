@@ -590,12 +590,15 @@ export function appendHrDisciplinaryEvent(db, userId, body, actorUserId) {
  * @param {string} actorUserId
  * @param {object} body
  */
-export function upsertHrStaffProfile(db, actorUserId, body) {
+export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const userId = String(body?.userId || '').trim();
   if (!userId) return { ok: false, error: 'userId is required.' };
-  const u = db.prepare(`SELECT id FROM app_users WHERE id = ? AND status = 'active'`).get(userId);
-  if (!u) return { ok: false, error: 'User not found or inactive.' };
+  const allowInactive = Boolean(opts.allowInactive);
+  const u = allowInactive
+    ? db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(userId)
+    : db.prepare(`SELECT id FROM app_users WHERE id = ? AND status = 'active'`).get(userId);
+  if (!u) return { ok: false, error: allowInactive ? 'User not found.' : 'User not found or inactive.' };
 
   const branchId = String(body?.branchId || '').trim() || DEFAULT_BRANCH_ID;
   const now = nowIso();
@@ -1008,7 +1011,10 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     branchId,
     details: { employeeNo: row.employee_no, jobTitle: row.job_title },
   });
-  return { ok: true, profile: getHrStaffOne(db, userId) };
+  return {
+    ok: true,
+    profile: opts.skipEnrichedReturn ? null : getHrStaffOne(db, userId),
+  };
 }
 
 function compensationSnapshotFromProfileRow(row) {
@@ -4484,7 +4490,7 @@ export function deleteHrRequestDraft(db, requestId, userId) {
   return { ok: true };
 }
 
-export function registerNewStaffWithProfile(db, actorUserId, body) {
+export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const {
     username,
@@ -4493,8 +4499,10 @@ export function registerNewStaffWithProfile(db, actorUserId, body) {
     roleKey,
     workspaceDepartment,
     applicantId: _applicantId,
+    skipProfileFetch: _skipInBody,
     ...profileFields
   } = body || {};
+  const skipProfileFetch = Boolean(opts.skipProfileFetch || _skipInBody);
   const created = createAppUserRecord(db, {
     username,
     displayName,
@@ -4503,15 +4511,20 @@ export function registerNewStaffWithProfile(db, actorUserId, body) {
     workspaceDepartment,
   });
   if (!created.ok) return created;
-  const up = upsertHrStaffProfile(db, actorUserId, {
-    ...profileFields,
-    userId: created.userId,
-    branchId: String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID,
-    employmentType: profileFields?.employmentType || 'permanent',
-    baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,
-    housingAllowanceNgn: profileFields?.housingAllowanceNgn ?? 0,
-    transportAllowanceNgn: profileFields?.transportAllowanceNgn ?? 0,
-  });
+  const up = upsertHrStaffProfile(
+    db,
+    actorUserId,
+    {
+      ...profileFields,
+      userId: created.userId,
+      branchId: String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID,
+      employmentType: profileFields?.employmentType || 'permanent',
+      baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,
+      housingAllowanceNgn: profileFields?.housingAllowanceNgn ?? 0,
+      transportAllowanceNgn: profileFields?.transportAllowanceNgn ?? 0,
+    },
+    { skipEnrichedReturn: skipProfileFetch }
+  );
   if (!up.ok) return up;
   return { ok: true, userId: created.userId, profile: up.profile };
 }

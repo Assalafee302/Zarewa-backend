@@ -223,29 +223,20 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.body.operationsInventoryAttention.crossModule).toBeDefined();
   });
 
-  it('POST /api/session/firebase returns 400 without id token', async () => {
-    const res = await request(app).post('/api/session/firebase').send({});
-    expect(res.status).toBe(400);
-    expect(res.body.ok).toBe(false);
-    expect(res.body.code).toBe('ID_TOKEN_REQUIRED');
+  it('POST /api/session/firebase is removed (Phase 12)', async () => {
+    const res = await request(app).post('/api/session/firebase').send({ idToken: 'x' });
+    expect(res.status).toBe(404);
   });
 
-  it('POST /api/session/firebase returns 503 when Firebase Admin is not configured', async () => {
-    const prevP = process.env.FIREBASE_PROJECT_ID;
-    const prevC = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    delete process.env.FIREBASE_PROJECT_ID;
-    delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    try {
-      const res = await request(app).post('/api/session/firebase').send({ idToken: 'x' });
-      expect(res.status).toBe(503);
-      expect(res.body.ok).toBe(false);
-      expect(res.body.code).toBe('FIREBASE_NOT_CONFIGURED');
-    } finally {
-      if (prevP === undefined) delete process.env.FIREBASE_PROJECT_ID;
-      else process.env.FIREBASE_PROJECT_ID = prevP;
-      if (prevC === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-      else process.env.GOOGLE_APPLICATION_CREDENTIALS = prevC;
+  it('locks account after five failed login attempts', async () => {
+    const lockAgent = request.agent(app);
+    for (let i = 0; i < 5; i++) {
+      const res = await lockAgent.post('/api/session/login').send({ username: 'admin', password: 'wrong' });
+      expect([401, 423]).toContain(res.status);
     }
+    const locked = await lockAgent.post('/api/session/login').send({ username: 'admin', password: 'wrong' });
+    expect(locked.status).toBe(423);
+    expect(locked.body.code).toBe('ACCOUNT_LOCKED');
   });
 
   it('GET /api/workspace/search works for managing director', async () => {

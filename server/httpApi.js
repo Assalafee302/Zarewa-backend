@@ -63,8 +63,8 @@ import {
   createAppUserRecord,
   listAllAppUsers,
   loginWithPassword,
-  loginWithFirebaseIdToken,
   logoutSession,
+  setSessionTimeoutAuditHook,
   patchAppUserWorkspaceDepartment,
   issuePasswordResetForAdmin,
   requestPasswordReset,
@@ -451,6 +451,7 @@ import { runHelpAnalyticsJob } from './helpAnalytics.js';
 import { reviewSuggestedArticle } from '../shared/lib/helpGapAnalysis.js';
 import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 import { readRunaAiConfig } from './helpAiService.js';
+import { buildLoginSecuritySummary, listActiveSessions } from './sessionSecurityOps.js';
 import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
 const loginAttemptBuckets = new Map();
 const ledgerPostBuckets = new Map();
@@ -644,6 +645,16 @@ function requireCoilSnapshotCapture(req, res, next) {
  * @param {import('better-sqlite3').Database} db
  */
 export function registerHttpApi(app, db) {
+  setSessionTimeoutAuditHook(({ user }) => {
+    appendAuditLog(db, {
+      actor: user,
+      action: 'session.timeout',
+      entityKind: 'user',
+      entityId: user?.id ?? '',
+      note: 'Session expired due to inactivity',
+    });
+  });
+
   const livenessPaths = [
     '/api/health',
     '/api/readyz',
@@ -2201,15 +2212,27 @@ export function registerHttpApi(app, db) {
       const { username, password } = req.body || {};
       const result = loginWithPassword(db, username, password);
       if (!result.ok) {
+        if (Array.isArray(result.audits)) {
+          for (const audit of result.audits) {
+            appendAuditLog(db, audit);
+          }
+        }
         if (!allowRateLimit(loginAttemptBuckets, userKey, 12, 30 * 60 * 1000)) {
           await loginDelayMs();
           return res.status(429).json({
             ok: false,
+            code: 'RATE_LIMITED',
             error: 'Too many sign-in attempts. Wait up to 30 minutes or try another network.',
           });
         }
         await loginDelayMs();
-        return res.status(401).json({ ok: false, error: result.error });
+        const status = result.code === 'ACCOUNT_LOCKED' ? 423 : 401;
+        return res.status(status).json({
+          ok: false,
+          code: result.code || 'INVALID_CREDENTIALS',
+          error: result.error,
+          lockedUntilIso: result.lockedUntilIso,
+        });
       }
       setSessionCookie(res, result.sessionToken);
       // CSRF cookie used by the SPA to protect cookie-authenticated write requests.
@@ -2228,44 +2251,26 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/session/firebase', async (req, res) => {
+  app.post('/api/session/timeout', (req, res) => {
     try {
-      const ip = clientIp(req);
-      const userKey = `${ip}:firebase`;
-      if (!allowRateLimit(loginAttemptBuckets, userKey, 12, 30 * 60 * 1000)) {
-        await loginDelayMs();
-        return res.status(429).json({
-          ok: false,
-          error: 'Too many sign-in attempts. Wait up to 30 minutes or try another network.',
+      if (req.user) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'session.timeout',
+          entityKind: 'user',
+          entityId: req.user?.id ?? '',
+          note: 'Session ended due to inactivity (client timeout)',
         });
+        logoutSession(db, req.sessionToken);
       }
-      await loginDelayMs();
-
-      const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(\S+)/i);
-      const idToken = String(req.body?.idToken || '').trim() || (bearer ? bearer[1] : '');
-      const result = await loginWithFirebaseIdToken(db, idToken);
-      if (!result.ok) {
-        if (result.code === 'FIREBASE_NOT_CONFIGURED') {
-          return res.status(503).json(result);
-        }
-        if (result.code === 'ID_TOKEN_REQUIRED') {
-          return res.status(400).json(result);
-        }
-        return res.status(401).json(result);
-      }
-      setSessionCookie(res, result.sessionToken);
-      setCsrfCookie(res);
-      appendAuditLog(db, {
-        actor: result.session.user,
-        action: 'session.login_firebase',
-        entityKind: 'user',
-        entityId: result.session.user?.id ?? '',
-        note: 'User signed in with Firebase',
-      });
-      return res.json({ ok: true, ...result.session });
+      clearSessionCookie(res);
+      clearCsrfCookie(res);
+      return res.json({ ok: true, code: 'SESSION_TIMEOUT' });
     } catch (e) {
       console.error(e);
-      return res.status(500).json({ ok: false, error: 'Firebase sign-in failed' });
+      clearSessionCookie(res);
+      clearCsrfCookie(res);
+      return res.status(500).json({ ok: false, error: 'Could not end session.' });
     }
   });
 
@@ -2830,6 +2835,26 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load roles.' });
+    }
+  });
+
+  app.get('/api/admin/security/login-summary', requirePermission('settings.view'), (req, res) => {
+    try {
+      const hours = parseInt(String(req.query?.hours ?? '24'), 10) || 24;
+      const summary = buildLoginSecuritySummary(db, { hours });
+      return res.json({ ok: true, ...summary });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load login security summary.' });
+    }
+  });
+
+  app.get('/api/admin/security/active-sessions', requirePermission('settings.view'), (_req, res) => {
+    try {
+      return res.json({ ok: true, sessions: listActiveSessions(db) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load active sessions.' });
     }
   });
 

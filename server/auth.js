@@ -22,12 +22,9 @@ function appUsersHasColumn(db, name) {
   }
 }
 
-/** Last password set at registration or by an administrator (not updated on self-service change). */
-export function storeRegisteredPassword(db, userId, plainPassword) {
-  if (!appUsersHasColumn(db, 'registered_password')) return;
-  const plain = String(plainPassword ?? '').trim();
-  if (!plain) return;
-  db.prepare(`UPDATE app_users SET registered_password = ? WHERE id = ?`).run(plain, userId);
+/** Phase 12: plaintext password storage removed — no-op for backward compatibility. */
+export function storeRegisteredPassword(_db, _userId, _plainPassword) {
+  /* intentionally empty */
 }
 
 function readMustChangePassword(row) {
@@ -43,8 +40,24 @@ function readTrainingCompleted(row) {
 
 export const SESSION_COOKIE = 'zarewa_session';
 export const CSRF_COOKIE = 'zarewa_csrf';
-const SESSION_TTL_HOURS = 12;
+export const SESSION_WARNING_SECONDS = 60;
+export const FAILED_LOGIN_LOCK_THRESHOLD = 5;
+export const ACCOUNT_LOCK_MINUTES = 30;
 const RESET_TOKEN_TTL_MINUTES = 60;
+
+/** Inactivity timeout (sliding window). Override with SESSION_TIMEOUT_MINUTES (5–480). */
+export function sessionTimeoutMinutes() {
+  const raw = Number(process.env.SESSION_TIMEOUT_MINUTES ?? 15);
+  if (Number.isFinite(raw) && raw >= 5 && raw <= 480) return Math.floor(raw);
+  return 15;
+}
+
+/** @type {((payload: { user: object; token: string }) => void) | null} */
+let sessionTimeoutAuditHook = null;
+
+export function setSessionTimeoutAuditHook(fn) {
+  sessionTimeoutAuditHook = typeof fn === 'function' ? fn : null;
+}
 /** Max stored profile image (data URL or https URL). */
 export const MAX_AVATAR_URL_LEN = 180_000;
 const RESET_TOKEN_BYTES = 32;
@@ -358,18 +371,8 @@ export function canRevealUserPasswords(user) {
  * @param {import('better-sqlite3').Database} db
  * @param {{ username?: string, password_hash?: string, registered_password?: string }} row
  */
-export function resolveRegisteredPasswordDisplay(db, row) {
-  const fromDb = String(row?.registered_password ?? '').trim();
-  if (fromDb) return fromDb;
-  if (!appUsersHasColumn(db, 'registered_password')) return '';
-  const username = String(row?.username ?? '').trim().toLowerCase();
-  const candidate = DEFAULT_USER_PASSWORD_BY_USERNAME[username];
-  if (!candidate || !row?.password_hash) return '';
-  try {
-    if (verifyPassword(candidate, row.password_hash)) return candidate;
-  } catch {
-    /* ignore */
-  }
+/** Phase 12: passwords are never displayed in admin UIs. */
+export function resolveRegisteredPasswordDisplay(_db, _row) {
   return '';
 }
 
@@ -377,10 +380,94 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function addHoursToIso(iso, hours) {
+function addMinutesToIso(iso, minutes) {
   const dt = new Date(iso);
-  dt.setHours(dt.getHours() + hours);
+  dt.setMinutes(dt.getMinutes() + minutes);
   return dt.toISOString();
+}
+
+function sessionCookieMaxAgeSeconds() {
+  return sessionTimeoutMinutes() * 60;
+}
+
+function sessionSecurityMeta(expiresAtISO) {
+  return {
+    sessionExpiresAtIso: expiresAtISO,
+    sessionTimeoutMinutes: sessionTimeoutMinutes(),
+    sessionWarningSeconds: SESSION_WARNING_SECONDS,
+  };
+}
+
+function allowSeedDefaultUsers() {
+  return (
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1' ||
+    process.env.NODE_ENV === 'test'
+  );
+}
+
+function clearAccountLock(db, userId) {
+  if (!appUsersHasColumn(db, 'failed_login_count')) return;
+  db.prepare(
+    `UPDATE app_users SET failed_login_count = 0, locked_until_iso = NULL WHERE id = ?`
+  ).run(userId);
+}
+
+function clearFailedLoginAttempts(db, userId) {
+  if (!appUsersHasColumn(db, 'failed_login_count')) return;
+  db.prepare(`UPDATE app_users SET failed_login_count = 0 WHERE id = ?`).run(userId);
+}
+
+/**
+ * @returns {{ locked: boolean; lockedUntilIso?: string; userId?: string; attemptCount?: number }}
+ */
+function recordFailedLoginAttempt(db, row) {
+  if (!appUsersHasColumn(db, 'failed_login_count')) {
+    return { locked: false, userId: row?.id };
+  }
+  const count = Number(row.failed_login_count || 0) + 1;
+  if (count >= FAILED_LOGIN_LOCK_THRESHOLD) {
+    const lockedUntil = addMinutesToIso(nowIso(), ACCOUNT_LOCK_MINUTES);
+    db.prepare(
+      `UPDATE app_users SET failed_login_count = ?, locked_until_iso = ? WHERE id = ?`
+    ).run(count, lockedUntil, row.id);
+    return { locked: true, lockedUntilIso: lockedUntil, userId: row.id, attemptCount: count };
+  }
+  db.prepare(`UPDATE app_users SET failed_login_count = ? WHERE id = ?`).run(count, row.id);
+  return { locked: false, userId: row.id, attemptCount: count };
+}
+
+function buildLoginFailureAudits(row, username, fail) {
+  const actor = {
+    id: row?.id ?? null,
+    displayName: row?.displayName || row?.display_name || username,
+    username,
+  };
+  const audits = [
+    {
+      actor,
+      action: 'session.login_failed',
+      entityKind: 'user',
+      entityId: row?.id ?? username,
+      note: fail.locked
+        ? `Failed sign-in (${fail.attemptCount}/${FAILED_LOGIN_LOCK_THRESHOLD}); account locked`
+        : fail.attemptCount
+          ? `Failed sign-in (${fail.attemptCount}/${FAILED_LOGIN_LOCK_THRESHOLD})`
+          : 'Failed sign-in (unknown or inactive account)',
+      details: { attemptCount: fail.attemptCount, locked: fail.locked },
+    },
+  ];
+  if (fail.locked) {
+    audits.push({
+      actor,
+      action: 'session.account_locked',
+      entityKind: 'user',
+      entityId: row?.id ?? username,
+      note: `Account locked for ${ACCOUNT_LOCK_MINUTES} minutes after ${FAILED_LOGIN_LOCK_THRESHOLD} failed attempts`,
+      details: { lockedUntilIso: fail.lockedUntilIso },
+    });
+  }
+  return audits;
 }
 
 function parseCookies(cookieHeader = '') {
@@ -688,26 +775,18 @@ export function actorId(actor) {
 }
 
 export function seedAuthUsers(db) {
-  // Prevent re-introducing known credentials in production by default.
-  // On a brand-new production database (0 users), allow a one-time bootstrap
-  // so an operator can sign in and rotate credentials immediately.
-  const allowSeededUsers =
-    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
-    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1';
-  const count = db.prepare(`SELECT COUNT(*) AS c FROM app_users`).get().c;
-  const isFirstBootstrap = Number(count || 0) === 0;
+  // Phase 12: default demo accounts are disabled unless ZAREWA_ALLOW_SEEDED_USERS=1 (or NODE_ENV=test).
+  if (!allowSeedDefaultUsers()) {
+    return;
+  }
   const seedMissingFlag =
     process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === 'true' ||
     process.env.ZAREWA_SEED_MISSING_DEFAULT_USERS === '1';
   const adminRow = db
     .prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = 'admin'`)
     .get();
-  // If production already has users but no `admin`, still insert missing defaults (at least admin).
-  // Otherwise set ZAREWA_SEED_MISSING_DEFAULT_USERS=1 once to backfill any missing demo accounts.
   if (
     process.env.NODE_ENV === 'production' &&
-    !allowSeededUsers &&
-    !isFirstBootstrap &&
     adminRow &&
     !seedMissingFlag
   ) {
@@ -715,37 +794,78 @@ export function seedAuthUsers(db) {
   }
   const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
   const hasDept = cols.some((c) => c.name === 'department');
+  const hasMustChange = cols.some((c) => c.name === 'must_change_password');
   const findByUsername = db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ?`);
   const ins = hasDept
-    ? db.prepare(
-        `INSERT INTO app_users (
-      id, username, display_name, password_hash, role_key, department, status, last_login_at_iso, created_at_iso
-    ) VALUES (?,?,?,?,?,?,?,?,?)`
-      )
-    : db.prepare(
-        `INSERT INTO app_users (
-      id, username, display_name, password_hash, role_key, status, last_login_at_iso, created_at_iso
-    ) VALUES (?,?,?,?,?,?,?,?)`
-      );
+    ? hasMustChange
+      ? db.prepare(
+          `INSERT INTO app_users (
+        id, username, display_name, password_hash, role_key, department, status, last_login_at_iso, created_at_iso, must_change_password
+      ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+        )
+      : db.prepare(
+          `INSERT INTO app_users (
+        id, username, display_name, password_hash, role_key, department, status, last_login_at_iso, created_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?)`
+        )
+    : hasMustChange
+      ? db.prepare(
+          `INSERT INTO app_users (
+        id, username, display_name, password_hash, role_key, status, last_login_at_iso, created_at_iso, must_change_password
+      ) VALUES (?,?,?,?,?,?,?,?,?)`
+        )
+      : db.prepare(
+          `INSERT INTO app_users (
+        id, username, display_name, password_hash, role_key, status, last_login_at_iso, created_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?)`
+        );
+  const forcePasswordChange = process.env.NODE_ENV !== 'test';
   const createdAtISO = nowIso();
   db.transaction(() => {
     for (const user of DEFAULT_USERS) {
       const existing = findByUsername.get(String(user.username || '').trim().toLowerCase());
       if (existing?.id) continue;
       const dept = normalizeWorkspaceDepartment(user.department);
+      const mustChange = forcePasswordChange ? 1 : 0;
       if (hasDept) {
+        if (hasMustChange) {
+          ins.run(
+            user.id,
+            user.username,
+            user.displayName,
+            createPasswordHash(user.password),
+            user.roleKey,
+            dept,
+            'active',
+            '',
+            createdAtISO,
+            mustChange
+          );
+        } else {
+          ins.run(
+            user.id,
+            user.username,
+            user.displayName,
+            createPasswordHash(user.password),
+            user.roleKey,
+            dept,
+            'active',
+            '',
+            createdAtISO
+          );
+        }
+      } else if (hasMustChange) {
         ins.run(
           user.id,
           user.username,
           user.displayName,
           createPasswordHash(user.password),
           user.roleKey,
-          dept,
           'active',
           '',
-          createdAtISO
+          createdAtISO,
+          mustChange
         );
-        storeRegisteredPassword(db, user.id, user.password);
       } else {
         ins.run(
           user.id,
@@ -757,7 +877,6 @@ export function seedAuthUsers(db) {
           '',
           createdAtISO
         );
-        storeRegisteredPassword(db, user.id, user.password);
       }
     }
   })();
@@ -771,6 +890,9 @@ const DEFAULT_ADMIN_ROW = DEFAULT_USERS.find((u) => u.username === 'admin');
  * @param {import('better-sqlite3').Database} db
  */
 export function ensureDefaultAdminUser(db) {
+  if (!allowSeedDefaultUsers()) {
+    return;
+  }
   if (
     process.env.NODE_ENV === 'production' &&
     process.env.ZAREWA_ALLOW_SEEDED_USERS !== 'true' &&
@@ -798,7 +920,6 @@ export function ensureDefaultAdminUser(db) {
         `UPDATE app_users SET display_name = ?, password_hash = ?, role_key = ?, status = 'active' WHERE id = ?`
       ).run(admin.displayName, hash, admin.roleKey, existing.id);
     }
-    storeRegisteredPassword(db, existing.id, admin.password);
     return;
   }
   if (hasDept) {
@@ -824,7 +945,6 @@ export function ensureDefaultAdminUser(db) {
     ) VALUES (?,?,?,?,?,?,?,?)`
     ).run(admin.id, admin.username, admin.displayName, hash, admin.roleKey, 'active', '', createdAtISO);
   }
-  storeRegisteredPassword(db, admin.id, admin.password);
 }
 
 /**
@@ -1013,6 +1133,13 @@ export function attachAuthContext(db) {
     }
     const now = nowIso();
     if (row.expires_at_iso && row.expires_at_iso < now) {
+      if (sessionTimeoutAuditHook) {
+        try {
+          sessionTimeoutAuditHook({ user: publicUserFromRow(row), token });
+        } catch {
+          /* ignore audit hook errors */
+        }
+      }
       db.prepare(`DELETE FROM user_sessions WHERE session_token = ?`).run(token);
       req.sessionToken = null;
       return next();
@@ -1039,13 +1166,15 @@ export function attachAuthContext(db) {
 
     req.workspaceBranchId = currentBranchId;
     req.workspaceViewAll = viewAllBranches;
+    const expiresAtISO = addMinutesToIso(now, sessionTimeoutMinutes());
     req.session = {
       ...buildSessionPayload(user),
       currentBranchId,
       viewAllBranches,
       branches: listBranches(db),
+      ...sessionSecurityMeta(expiresAtISO),
     };
-    refreshSessionTouch(db, token, addHoursToIso(now, SESSION_TTL_HOURS));
+    refreshSessionTouch(db, token, expiresAtISO);
     return next();
   };
 }
@@ -1116,7 +1245,7 @@ export function setSessionCookie(res, token) {
   const extra = sessionCookieFlags();
   pushSetCookie(
     res,
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${SESSION_TTL_HOURS * 60 * 60}${extra}`
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${sessionCookieMaxAgeSeconds()}${extra}`
   );
 }
 
@@ -1130,7 +1259,7 @@ export function setCsrfCookie(res, token = createCsrfToken()) {
   // Non-HttpOnly on purpose: the SPA must read it and send it back in `X-CSRF-Token`.
   pushSetCookie(
     res,
-    `${CSRF_COOKIE}=${token}; Path=/; Max-Age=${SESSION_TTL_HOURS * 60 * 60}${extra}`
+    `${CSRF_COOKIE}=${token}; Path=/; Max-Age=${sessionCookieMaxAgeSeconds()}${extra}`
   );
 }
 
@@ -1143,7 +1272,7 @@ export function clearCsrfCookie(res) {
 function openSessionForUser(db, row) {
   const sessionToken = createSessionToken();
   const createdAtISO = nowIso();
-  const expiresAtISO = addHoursToIso(createdAtISO, SESSION_TTL_HOURS);
+  const expiresAtISO = addMinutesToIso(createdAtISO, sessionTimeoutMinutes());
   const branchId = defaultBranchIdForDb(db);
   db.transaction(() => {
     db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(row.id);
@@ -1171,6 +1300,7 @@ function openSessionForUser(db, row) {
       currentBranchId: branchId,
       viewAllBranches: false,
       branches: listBranches(db),
+      ...sessionSecurityMeta(expiresAtISO),
     },
   };
 }
@@ -1181,81 +1311,42 @@ export function loginWithPassword(db, username, password) {
     .prepare(`SELECT * FROM app_users WHERE lower(trim(username)) = ?`)
     .get(key);
   if (!row || row.status !== 'active') {
-    return { ok: false, error: 'Invalid username or password.' };
+    return {
+      ok: false,
+      error: 'Invalid username or password.',
+      code: 'INVALID_CREDENTIALS',
+      audits: buildLoginFailureAudits(row, key, { locked: false, attemptCount: null }),
+    };
   }
+
+  const lockedUntil = String(row.locked_until_iso ?? '').trim();
+  if (lockedUntil && lockedUntil > nowIso()) {
+    return {
+      ok: false,
+      error: `Account locked after too many failed sign-in attempts. Try again after ${new Date(lockedUntil).toLocaleString()}.`,
+      code: 'ACCOUNT_LOCKED',
+      lockedUntilIso: lockedUntil,
+    };
+  }
+  if (lockedUntil && lockedUntil <= nowIso()) {
+    clearAccountLock(db, row.id);
+  }
+
   if (!verifyPassword(password, row.password_hash)) {
-    return { ok: false, error: 'Invalid username or password.' };
-  }
-  return openSessionForUser(db, row);
-}
-
-/**
- * Verify a Firebase ID token and open the same cookie session as password login.
- * Links Firebase users to `app_users` by **verified email** (`app_users.email`).
- */
-export async function loginWithFirebaseIdToken(db, idToken) {
-  const trimmed = String(idToken || '').trim();
-  if (!trimmed) {
-    return { ok: false, code: 'ID_TOKEN_REQUIRED', error: 'Sign-in token is required.' };
-  }
-
-  const projectId = String(process.env.FIREBASE_PROJECT_ID || '').trim();
-  if (!projectId) {
+    const fresh = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(row.id);
+    const fail = recordFailedLoginAttempt(db, fresh || row);
     return {
       ok: false,
-      code: 'FIREBASE_NOT_CONFIGURED',
-      error: 'Firebase Admin is not configured. Set FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS on the API server.',
+      error: fail.locked
+        ? `Account locked after ${FAILED_LOGIN_LOCK_THRESHOLD} failed attempts. Try again in ${ACCOUNT_LOCK_MINUTES} minutes.`
+        : 'Invalid username or password.',
+      code: fail.locked ? 'ACCOUNT_LOCKED' : 'INVALID_CREDENTIALS',
+      lockedUntilIso: fail.lockedUntilIso,
+      audits: buildLoginFailureAudits(fresh || row, key, fail),
     };
   }
 
-  const { verifyFirebaseIdToken, getFirebaseAdminApp } = await import('./firebaseAdmin.js');
-  if (!getFirebaseAdminApp()) {
-    return {
-      ok: false,
-      code: 'FIREBASE_NOT_CONFIGURED',
-      error:
-        'Firebase Admin could not be initialized. Check FIREBASE_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS (service account JSON path).',
-    };
-  }
-
-  const decoded = await verifyFirebaseIdToken(trimmed);
-  if (!decoded) {
-    return { ok: false, error: 'Invalid or expired sign-in. Please try again.' };
-  }
-
-  const emailNorm = normalizeEmail(decoded.email);
-  if (!emailNorm) {
-    return {
-      ok: false,
-      error: 'Your Firebase account has no usable email. Use username/password or link an email in Firebase.',
-    };
-  }
-  if (decoded.email_verified !== true) {
-    return {
-      ok: false,
-      error: 'Verify your email in Firebase before signing in to Zarewa.',
-    };
-  }
-
-  if (!appUsersHasEmailColumn(db)) {
-    return {
-      ok: false,
-      error: 'This database has no email column on app_users. Run migrations, then set user emails in Settings.',
-    };
-  }
-
-  const row = db.prepare(`SELECT * FROM app_users WHERE lower(trim(email)) = ?`).get(emailNorm);
-  if (!row) {
-    return {
-      ok: false,
-      error:
-        'No Zarewa user matches this email. Ask an administrator to set your account email to the same address as your Google (Firebase) account.',
-    };
-  }
-  if (row.status !== 'active') {
-    return { ok: false, error: 'This account is not active.' };
-  }
-
+  clearAccountLock(db, row.id);
   return openSessionForUser(db, row);
 }
 
@@ -1307,7 +1398,6 @@ export function changePassword(db, userId, currentPassword, newPassword) {
   } else {
     db.prepare(`UPDATE app_users SET password_hash = ? WHERE id = ?`).run(createPasswordHash(nextPassword), userId);
   }
-  storeRegisteredPassword(db, userId, nextPassword);
   const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
   return { ok: true, user: publicUserFromRow(next) };
 }
@@ -1519,12 +1609,6 @@ export function issuePasswordResetForAdmin(db, userId) {
     expiresAtISO: issued.expiresAtISO,
     identifier: preferredIdentifier,
   };
-}
-
-function addMinutesToIso(iso, minutes) {
-  const dt = new Date(iso);
-  dt.setMinutes(dt.getMinutes() + minutes);
-  return dt.toISOString();
 }
 
 /**

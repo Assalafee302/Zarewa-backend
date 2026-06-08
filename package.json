@@ -23,6 +23,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:edit-approval": "vitest run server/editApproval.pure.test.js",
+    "test:login-security": "vitest run server/loginSecurity.test.js",
     "test:watch": "vitest",
     "test:office-mysql": "node scripts/test-office-mysql.mjs",
     "test:e2e": "playwright test",

@@ -985,6 +985,7 @@ function runMigrationsUnlocked(db) {
   migrateMaterialPricingWorkbook(db);
   migratePricingPolicy2026(db);
   migrateUserProfileAndPasswordReset(db);
+  migrateLoginSecurityPhase12(db);
   migrateOrganisationRoles2026(db);
   migrateHrStaffProfileColumns(db);
   migrateAccountingLayer(db);
@@ -4133,6 +4134,54 @@ function migrateUserProfileAndPasswordReset(db) {
     CREATE INDEX IF NOT EXISTS idx_pwreset_expires ON password_reset_tokens(expires_at_iso);
     CREATE INDEX IF NOT EXISTS idx_pwreset_token_hash ON password_reset_tokens(token_hash);
   `);
+}
+
+/** Phase 12 — account lockout columns, remove plaintext password display data. */
+function migrateLoginSecurityPhase12(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const users = tableCols('app_users');
+  if (!users.size) return;
+
+  if (!users.has('failed_login_count')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!users.has('locked_until_iso')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN locked_until_iso TEXT`);
+  }
+  if (users.has('registered_password')) {
+    db.prepare(`UPDATE app_users SET registered_password = NULL WHERE registered_password IS NOT NULL`).run();
+  }
+
+  const allowSeeded =
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
+    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1' ||
+    process.env.NODE_ENV === 'test';
+  if (!allowSeeded && users.has('must_change_password')) {
+    const defaultUsernames = [
+      'admin',
+      'md',
+      'finance.manager',
+      'cashier',
+      'sales.manager',
+      'sales.staff',
+      'operations',
+      'ceo',
+      'viewer',
+    ];
+    const placeholders = defaultUsernames.map(() => '?').join(',');
+    db.prepare(
+      `UPDATE app_users SET must_change_password = 1
+       WHERE lower(trim(username)) IN (${placeholders})
+         AND status = 'active'`
+    ).run(...defaultUsernames);
+  }
 }
 
 /** Cutting-list production hold, price-list book versioning. */

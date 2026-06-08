@@ -3506,6 +3506,123 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
   return { ok: true, coilNo, kg, reason };
 }
 
+/** Max unreserved kg for profile “finish roll” — unusable spool/core tail only (matches manual close guard). */
+const COIL_PROFILE_FINISH_MAX_KG = 100;
+
+/**
+ * Clear unusable spool/core tail from a near-finished coil (missed “Roll finished” at production complete).
+ * Mirrors production completion tail clearance — reduces raw SKU stock; no scrap credit; no new FG metres.
+ */
+export function postCoilRollFinished(db, payload = {}, opts = {}) {
+  const coilNo = String(payload.coilNo ?? '').trim();
+  const note = String(payload.note ?? payload.reason ?? '').trim();
+  const cuttingListRef = String(payload.cuttingListRef ?? payload.cutting_list_ref ?? '').trim();
+  const dateISO = String(payload.dateISO ?? new Date().toISOString().slice(0, 10)).trim();
+  const workspaceBranchId = opts.workspaceBranchId;
+  const actor = opts.actor;
+
+  if (!coilNo) return { ok: false, error: 'Coil number is required.' };
+  if (note.length < 8) {
+    return { ok: false, error: 'Enter a note (at least 8 characters) for the audit trail.' };
+  }
+
+  try {
+    assertPeriodOpen(db, dateISO, 'Finish roll date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const row = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(coilNo);
+  if (!row) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(row, workspaceBranchId);
+  if (!br.ok) return br;
+
+  const qtyRem = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
+  const qtyRes = Math.max(0, Number(row.qty_reserved) || 0);
+  if (qtyRes > 1e-6) {
+    return {
+      ok: false,
+      error:
+        'Release shop-floor reservations on this coil first (Operations → coil profile → Clear orphan reservation, or complete/cancel the open job).',
+    };
+  }
+  if (qtyRem <= 1e-6) {
+    return { ok: false, error: 'This coil has no remaining kg to clear.' };
+  }
+  if (qtyRem >= COIL_PROFILE_FINISH_MAX_KG) {
+    return {
+      ok: false,
+      error: `Only near-finished coils below ${COIL_PROFILE_FINISH_MAX_KG} kg can be closed with Finish roll. Usable steel may still be on the roll — use Scrap or coil adjust instead.`,
+    };
+  }
+
+  const productID = String(row.product_id ?? '').trim();
+  if (!productID) return { ok: false, error: 'Coil product id missing.' };
+  const tailKg = qtyRem;
+  const refDetail = cuttingListRef ? ` · CL ${cuttingListRef}` : '';
+  const movementDetail = `${coilNo} roll finished — tail ${tailKg.toFixed(2)} kg removed from yard stock (profile)${refDetail}`;
+
+  try {
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE coil_lots SET qty_remaining = 0, qty_reserved = 0, current_weight_kg = 0 WHERE coil_no = ?`
+      ).run(coilNo);
+      finalizeCoilLotStateTx(db, coilNo);
+
+      db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(tailKg, productID);
+      const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
+      if (!p || Number(p.stock_level) < -1e-6) {
+        throw new Error('Raw material product stock would go negative — check coil vs book stock.');
+      }
+
+      appendMovementTx(db, {
+        type: 'COIL_CONSUMPTION',
+        productID,
+        qty: -tailKg,
+        ref: cuttingListRef || coilNo,
+        dateISO,
+        detail: movementDetail,
+      });
+
+      insertCoilControlEventTx(db, {
+        branchId: String(row.branch_id || workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+        eventKind: 'finish_roll',
+        coilNo,
+        productId: productID,
+        gaugeLabel: row.gauge_label,
+        colour: row.colour,
+        meters: null,
+        kgCoilDelta: -tailKg,
+        bookRef: cuttingListRef || null,
+        cuttingListRef: cuttingListRef || null,
+        scrapReason: 'Roll finished — tail cleared',
+        note: note || null,
+        dateISO,
+        creditScrapInventory: false,
+        actorUserId: actorId(actor),
+        actorDisplay: actorName(actor),
+      });
+
+      appendAuditLog(db, {
+        actor,
+        action: 'coil.finish_roll',
+        entityKind: 'coil_lot',
+        entityId: coilNo,
+        status: 'success',
+        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+        details: { coilNo, tailKg, cuttingListRef: cuttingListRef || null, movementDetail },
+      });
+
+      const bid = String(row.branch_id ?? workspaceBranchId ?? DEFAULT_BRANCH_ID).trim();
+      reconcileCoilProductStockFromLots(db, productID, bid);
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  return { ok: true, coilNo, tailKgCleared: tailKg, currentStatus: 'Consumed' };
+}
+
 /**
  * Return weighed material onto an existing coil (correction, physical return to roll, recount).
  */

@@ -5588,6 +5588,20 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+  app.post('/api/coil-lots/:coilNo/finish-roll', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = write.postCoilRollFinished(
+        db,
+        { ...req.body, coilNo },
+        { workspaceBranchId: req.workspaceBranchId, actor: req.user }
+      );
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
   app.post('/api/coil-lots/:coilNo/return-material', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = write.returnCoilMaterialToStock(

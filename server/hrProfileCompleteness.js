@@ -10,6 +10,40 @@ function pct(filled, total) {
   return Math.round((filled / total) * 100);
 }
 
+function normNameToken(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Bank account name should resemble staff first name or surname (profile review only).
+ * @param {object} staff
+ */
+export function bankAccountNameMatchesStaff(staff) {
+  const bankName = normNameToken(staff?.bankAccountName);
+  if (!bankName) return true;
+  const personal = staff?.profileExtra?.personal || {};
+  const candidates = [
+    personal.firstName,
+    personal.surname,
+    personal.middleName,
+    staff?.displayName,
+  ]
+    .map(normNameToken)
+    .filter((t) => t.length >= 3);
+  if (!candidates.length) return true;
+  return candidates.some((token) => {
+    if (bankName.includes(token)) return true;
+    const parts = token.split(' ').filter((p) => p.length >= 3);
+    return parts.some((p) => bankName.includes(p));
+  });
+}
+
 /**
  * @param {object} staff — enriched staff row from listHrStaff / getHrStaffOne
  * @param {{ handbookAcknowledged?: boolean; uploadedDocKinds?: string[] }} [ctx]
@@ -120,5 +154,16 @@ export function computeProfileCompleteness(staff, ctx = {}) {
   if (!staff.nextOfKin?.name) missingCritical.push('next_of_kin');
   if (sections.find((s) => s.id === 'documents')?.pct < 100) missingCritical.push('documents');
 
-  return { overallPct, sections, missingCritical };
+  const profileWarnings = [];
+  if (staff.bankAccountName && !bankAccountNameMatchesStaff(staff)) {
+    profileWarnings.push({
+      id: 'bank_account_name_mismatch',
+      field: 'bankAccountName',
+      message:
+        'Bank account name does not closely match the staff first name or surname — verify before payroll.',
+      fixTab: 'compensation',
+    });
+  }
+
+  return { overallPct, sections, missingCritical, profileWarnings };
 }

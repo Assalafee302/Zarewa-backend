@@ -3416,7 +3416,8 @@ export function registerHrApi(app, db) {
       const b64 = req.body?.fileBase64 || req.body?.data;
       if (!b64) return res.status(400).json({ ok: false, error: 'fileBase64 is required.' });
       const buf = Buffer.from(String(b64), 'base64');
-      const r = previewBulkStaffImport(db, buf, hrListScope(req));
+      const importMode = req.body?.importMode === 'replace' ? 'replace' : 'update';
+      const r = previewBulkStaffImport(db, buf, { ...hrListScope(req), importMode });
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
@@ -3431,7 +3432,8 @@ export function registerHrApi(app, db) {
       const b64 = req.body?.fileBase64 || req.body?.data;
       if (!b64) return res.status(400).json({ ok: false, error: 'fileBase64 is required.' });
       const buf = Buffer.from(String(b64), 'base64');
-      const r = commitBulkStaffImport(db, req.user, buf, hrListScope(req));
+      const importMode = req.body?.importMode === 'replace' ? 'replace' : 'update';
+      const r = commitBulkStaffImport(db, req.user, buf, { ...hrListScope(req), importMode });
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {

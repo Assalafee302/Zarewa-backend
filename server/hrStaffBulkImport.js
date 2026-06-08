@@ -6,27 +6,148 @@
 import crypto from 'node:crypto';
 import XLSX from 'xlsx';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { appendHrAuditEvent, hrTablesReady, registerNewStaffWithProfile } from './hrOps.js';
+import { updateAppUserStatus } from './auth.js';
+import { appendHrAuditEvent, hrTablesReady, registerNewStaffWithProfile, upsertHrStaffProfile } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification } from './hrNotifications.js';
-import { listHrDepartments, listHrDesignations } from './hrMasterData.js';
+import { listHrDesignations } from './hrMasterData.js';
 
+export const BULK_IMPORT_DEFAULT_PASSWORD = 'Zarewa@123';
+
+/** Physical branch for HQ, scholarship, and chairman/domestic payroll groups. */
+export const BULK_IMPORT_HQ_BRANCH = { id: 'BR-KD', code: 'KD', name: 'Kaduna (HQ)' };
+
+export const BULK_IMPORT_BRANCH_GUIDE = [
+  {
+    staffType: 'Kaduna branch staff (NOT HQ)',
+    workLocation: 'Branch',
+    branchCode: 'BR-KD',
+    branchName: 'Kaduna',
+    notes: 'Factory/branch operations in Kaduna. Work Location must be Branch — not HQ.',
+  },
+  {
+    staffType: 'Yola branch staff',
+    workLocation: 'Branch',
+    branchCode: 'BR-YL',
+    branchName: 'Yola Factory',
+    notes: 'Yola factory / branch staff.',
+  },
+  {
+    staffType: 'Maiduguri branch staff',
+    workLocation: 'Branch',
+    branchCode: 'BR-MDG',
+    branchName: 'Maiduguri Factory',
+    notes: 'Maiduguri factory / branch staff.',
+  },
+  {
+    staffType: 'HQ staff (central office)',
+    workLocation: 'HQ',
+    branchCode: 'BR-KD',
+    branchName: 'Head Office',
+    notes: 'Central HQ roles (Finance HQ, HR HQ, Procurement, MD office). Work Location must be HQ.',
+  },
+  {
+    staffType: 'Scholarship beneficiaries',
+    workLocation: 'HQ',
+    branchCode: 'BR-KD',
+    branchName: 'Head Office',
+    notes: 'Department should include Scholarship or School.',
+  },
+  {
+    staffType: 'Chairman / domestic staff',
+    workLocation: 'HQ',
+    branchCode: 'BR-KD',
+    branchName: 'Head Office',
+    notes: 'Department should include Chairman or Domestic.',
+  },
+];
+
+const DOMESTIC_ROLE_TITLES = new Set(
+  ['cook', 'driver', 'housekeeper', 'cleaner', 'gardener', 'security', 'steward', 'nanny', 'domestic assistant', 'other'].map(
+    (s) => s.toLowerCase()
+  )
+);
+
+/** Uploaded spreadsheet titles → canonical Zarewa job titles. */
+const JOB_TITLE_ALIASES = {
+  'acct officer': 'Accounts Officer',
+  'account officer': 'Accounts Officer',
+  'accounts off': 'Accounts Officer',
+  'accts officer': 'Accounts Officer',
+  'accountant': 'Accountant',
+  'chief accountant': 'Chief Accountant',
+  'head of accounts': 'Head of Accounts',
+  'finance officer': 'Finance Officer',
+  'finance manager': 'Finance Manager',
+  'cashier': 'Cashier',
+  'cash office': 'Cashier',
+  'sales rep': 'Sales Officer',
+  'sales representative': 'Sales Officer',
+  'sales man': 'Sales Officer',
+  'salesman': 'Sales Officer',
+  'sales officer': 'Sales Officer',
+  'marketing officer': 'Sales Officer',
+  'marketer': 'Sales Officer',
+  bm: 'Branch Manager',
+  'branch mgr': 'Branch Manager',
+  'branch manager': 'Branch Manager',
+  'sales manager': 'Sales Manager',
+  'commercial manager': 'Sales Manager',
+  'operations officer': 'Operations Officer',
+  'operations manager': 'Operations Manager',
+  'production manager': 'Production Manager',
+  'factory manager': 'Factory Manager',
+  'machine operator': 'Machine Operator',
+  operator: 'Machine Operator',
+  'store keeper': 'Store Keeper',
+  storekeeper: 'Store Keeper',
+  'warehouse supervisor': 'Warehouse Supervisor',
+  'procurement officer': 'Procurement Officer',
+  buyer: 'Procurement Officer',
+  'hr officer': 'HR Officer',
+  'human resource officer': 'HR Officer',
+  'hr manager': 'HR Manager',
+  'hr admin': 'HR Administrator',
+  'admin officer': 'Administrative Officer',
+  secretary: 'Secretary',
+  'office assistant': 'Office Assistant',
+  driver: 'Driver',
+  'company driver': 'Driver',
+  cook: 'Cook',
+  chef: 'Cook',
+  housekeeper: 'Housekeeper',
+  'house keeper': 'Housekeeper',
+  cleaner: 'Cleaner',
+  gardener: 'Gardener',
+  security: 'Security Officer',
+  'security guard': 'Security Officer',
+  'security officer': 'Security Officer',
+  nanny: 'Nanny',
+  steward: 'Steward',
+  'domestic assistant': 'Domestic Assistant',
+  'domestic staff': 'Domestic Assistant',
+  'it officer': 'IT Officer',
+  'logistics officer': 'Logistics Officer',
+  'warehouse officer': 'Warehouse Officer',
+};
+
+/** At least one of firstName, surname, displayName, or employeeNumber must be present per row. */
 export const BULK_IMPORT_COLUMNS = [
-  { key: 'firstName', header: 'First Name', required: true },
-  { key: 'surname', header: 'Surname', required: true },
-  { key: 'displayName', header: 'Display Name', required: true },
-  { key: 'phoneNumber', header: 'Phone Number', required: true },
+  { key: 'firstName', header: 'First Name', required: false },
+  { key: 'surname', header: 'Surname', required: false },
+  { key: 'displayName', header: 'Display Name', required: false },
+  { key: 'phoneNumber', header: 'Phone Number', required: false },
   { key: 'email', header: 'Email', required: false },
   { key: 'employeeNumber', header: 'Employee Number', required: false },
-  { key: 'workLocation', header: 'Work Location', required: true },
+  { key: 'workLocation', header: 'Work Location', required: false },
   { key: 'branchCode', header: 'Branch Code', required: false },
   { key: 'branchName', header: 'Branch Name', required: false },
   { key: 'departmentCode', header: 'Department Code', required: false },
   { key: 'departmentName', header: 'Department Name', required: false },
-  { key: 'designation', header: 'Designation / Job Title', required: true },
-  { key: 'employmentType', header: 'Employment Type', required: true },
-  { key: 'employmentStatus', header: 'Employment Status', required: true },
-  { key: 'dateJoined', header: 'Date Joined', required: true },
+  { key: 'designation', header: 'Designation / Job Title', required: false },
+  { key: 'employmentType', header: 'Employment Type', required: false },
+  { key: 'employmentStatus', header: 'Employment Status', required: false },
+  { key: 'dateJoined', header: 'Date Joined', required: false },
   { key: 'basicSalary', header: 'Basic Salary', required: false },
   { key: 'bankName', header: 'Bank Name', required: false },
   { key: 'bankCode', header: 'Bank Code', required: false },
@@ -124,19 +245,19 @@ function buildHeaderMap(sheetHeaders) {
 
 export function buildBulkImportTemplateXlsx() {
   const headers = BULK_IMPORT_COLUMNS.map((c) => c.header);
-  const sample = [
+  const kadunaBranchSample = [
     'Amina',
     'Bello',
     'Amina Bello',
     '08030000001',
     'amina.bello@example.com',
-    '',
+    'KD-001',
     'Branch',
     'BR-KD',
     'Kaduna',
-    'FIN',
-    'Finance',
-    'Accounts Officer',
+    'SAL',
+    'Sales',
+    'Sales Officer',
     'permanent',
     'active',
     '2020-01-15',
@@ -150,62 +271,532 @@ export function buildBulkImportTemplateXlsx() {
     'Kaduna',
     'Ibrahim Bello',
     '08030000002',
+    'B.Sc Business',
+  ];
+  const hqSample = [
+    'Musa',
+    'Ibrahim',
+    'Musa Ibrahim',
+    '08030000003',
+    'musa.ibrahim@example.com',
+    'HQ-010',
+    'HQ',
+    'BR-KD',
+    'Head Office',
+    'FIN',
+    'Finance HQ',
+    'Accountant',
+    'permanent',
+    'active',
+    '2019-06-01',
+    '280000',
+    '',
+    '',
+    '',
+    '',
+    'Male',
+    '1985-03-12',
+    'Kaduna',
+    '',
+    '',
     'B.Sc Accounting',
   ];
-  const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+  const guideHeaders = ['Staff type', 'Work Location', 'Branch Code', 'Branch Name', 'Notes'];
+  const guideRows = BULK_IMPORT_BRANCH_GUIDE.map((g) => [
+    g.staffType,
+    g.workLocation,
+    g.branchCode,
+    g.branchName,
+    g.notes || '',
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([headers, kadunaBranchSample, hqSample]);
+  const guideWs = XLSX.utils.aoa_to_sheet([guideHeaders, ...guideRows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Staff Import');
+  XLSX.utils.book_append_sheet(wb, guideWs, 'Branch guide');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
-function resolveBranchId(db, row, scope) {
-  const code = String(row.branchCode || '').trim();
-  const name = String(row.branchName || '').trim();
+function lookupBranchId(db, codeOrId, name) {
+  const code = String(codeOrId || '').trim();
   if (code) {
     const b = db.prepare(`SELECT id FROM branches WHERE id = ? OR code = ? LIMIT 1`).get(code, code);
     if (b) return b.id;
   }
-  if (name) {
-    const b = db.prepare(`SELECT id FROM branches WHERE name LIKE ? LIMIT 1`).get(`%${name}%`);
+  const nameQ = String(name || '').trim();
+  if (nameQ) {
+    const b = db.prepare(`SELECT id FROM branches WHERE name LIKE ? LIMIT 1`).get(`%${nameQ}%`);
     if (b) return b.id;
   }
-  if (String(row.workLocation || '').toLowerCase().includes('hq')) return 'BR-HQ';
+  return null;
+}
+
+function resolveBranchId(db, row, scope) {
+  const payrollGroup = detectStaffPayrollGroup(row);
+  if (payrollGroup === 'scholarship' || payrollGroup === 'chairman_staffs') {
+    return lookupBranchId(db, BULK_IMPORT_HQ_BRANCH.id, BULK_IMPORT_HQ_BRANCH.name) || BULK_IMPORT_HQ_BRANCH.id;
+  }
+  const bag = normTitleToken(
+    `${row.workLocation || ''} ${row.branchCode || ''} ${row.branchName || ''} ${row.departmentName || ''}`
+  );
+  if (bag.includes('hq') || bag.includes('head office') || bag.includes('kaduna hq')) {
+    return lookupBranchId(db, BULK_IMPORT_HQ_BRANCH.id, BULK_IMPORT_HQ_BRANCH.name) || BULK_IMPORT_HQ_BRANCH.id;
+  }
+  const mapped = lookupBranchId(db, row.branchCode, row.branchName);
+  if (mapped) return mapped;
+  if (bag.includes('yola')) return lookupBranchId(db, 'BR-YL', 'Yola') || 'BR-YL';
+  if (bag.includes('maiduguri') || bag.includes('maig')) return lookupBranchId(db, 'BR-MDG', 'Maiduguri') || 'BR-MDG';
+  if (bag.includes('kaduna') || bag.includes('kd')) return lookupBranchId(db, 'BR-KD', 'Kaduna') || DEFAULT_BRANCH_ID;
   return scope?.branchId || DEFAULT_BRANCH_ID;
 }
 
-function validateRow(db, row, rowNum, existingKeys) {
+const VALID_EMPLOYMENT_TYPES = new Set(['permanent', 'contract', 'casual', 'intern', 'temporary']);
+const VALID_GENDERS = new Set(['male', 'female', 'other']);
+const VALID_EMPLOYMENT_STATUSES = new Set(['active', 'probation', 'suspended', 'inactive', 'terminated', 'resigned']);
+
+function sanitizeEmail(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return '';
+  return s;
+}
+
+function sanitizePhone(v) {
+  const digits = String(v ?? '').replace(/\D/g, '');
+  if (digits.length < 7) return '';
+  return String(v ?? '').trim();
+}
+
+function sanitizeEmploymentType(v) {
+  const s = normTitleToken(v);
+  if (!s) return '';
+  if (s.includes('permanent') || s.includes('full')) return 'permanent';
+  if (s.includes('contract') || s.includes('temp')) return 'contract';
+  if (s.includes('casual')) return 'casual';
+  if (s.includes('intern') || s.includes('siwes')) return 'intern';
+  if (VALID_EMPLOYMENT_TYPES.has(s)) return s;
+  return '';
+}
+
+function sanitizeEmploymentStatus(v) {
+  const s = normTitleToken(v);
+  if (!s) return '';
+  if (VALID_EMPLOYMENT_STATUSES.has(s)) return s;
+  if (s.includes('active')) return 'active';
+  if (s.includes('probation')) return 'probation';
+  return '';
+}
+
+function sanitizeGender(v) {
+  const s = normTitleToken(v);
+  if (!s) return '';
+  if (s.startsWith('m')) return 'male';
+  if (s.startsWith('f')) return 'female';
+  if (VALID_GENDERS.has(s)) return s;
+  return '';
+}
+
+function sanitizeSalary(v) {
+  const n = Math.round(Number(String(v ?? '').replace(/[^\d.]/g, '')) || 0);
+  return n > 0 ? String(n) : '';
+}
+
+function sanitizeAccountNumber(v) {
+  const digits = String(v ?? '').replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 12) return '';
+  return digits;
+}
+
+/** Drop or normalize values that do not match import spec — never block import for these. */
+export function sanitizeImportRow(row) {
+  const out = { ...row };
+  out.email = sanitizeEmail(out.email);
+  out.phoneNumber = sanitizePhone(out.phoneNumber);
+  out.employmentType = sanitizeEmploymentType(out.employmentType);
+  out.employmentStatus = sanitizeEmploymentStatus(out.employmentStatus);
+  out.gender = sanitizeGender(out.gender);
+  out.basicSalary = sanitizeSalary(out.basicSalary);
+  const joined = parseDateIso(out.dateJoined);
+  out.dateJoined = joined || '';
+  const dob = parseDateIso(out.dateOfBirth);
+  out.dateOfBirth = dob || '';
+  const acct = sanitizeAccountNumber(out.accountNumber);
+  out.accountNumber = acct;
+  if (!acct) out.bankCode = '';
+  return out;
+}
+
+function normTitleToken(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[_/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toTitleCase(s) {
+  return String(s || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function slugToken(s, max = 30) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, max);
+}
+
+function buildDesignationIndex(db) {
+  const designations = listHrDesignations(db, { includeInactive: false });
+  const byNormTitle = new Map();
+  for (const d of designations) {
+    byNormTitle.set(normTitleToken(d.title), d);
+  }
+  return { designations, byNormTitle };
+}
+
+function canonicalDomesticTitle(raw) {
+  const norm = normTitleToken(raw);
+  if (!norm) return null;
+  if (DOMESTIC_ROLE_TITLES.has(norm)) return toTitleCase(norm === 'other' ? 'Domestic Assistant' : norm);
+  for (const role of DOMESTIC_ROLE_TITLES) {
+    if (norm.includes(role)) return toTitleCase(role === 'other' ? 'Domestic Assistant' : role);
+  }
+  return null;
+}
+
+export function resolveUploadedJobTitle(rawTitle, designationIndex) {
+  const raw = String(rawTitle || '').trim();
+  if (!raw) {
+    return { jobTitle: null, designationId: null, titleCorrected: false, originalTitle: '', matchKind: 'missing' };
+  }
+  const norm = normTitleToken(raw);
+  const aliasTarget = JOB_TITLE_ALIASES[norm];
+  const candidate = aliasTarget || raw;
+  const candidateNorm = normTitleToken(candidate);
+
+  const exact = designationIndex.byNormTitle.get(candidateNorm);
+  if (exact) {
+    return {
+      jobTitle: exact.title,
+      designationId: exact.id,
+      titleCorrected: exact.title !== raw,
+      originalTitle: raw,
+      matchKind: 'master_exact',
+    };
+  }
+
+  let best = null;
+  let bestScore = 0;
+  for (const d of designationIndex.designations) {
+    const dn = normTitleToken(d.title);
+    if (!dn || (!dn.includes(candidateNorm) && !candidateNorm.includes(dn))) continue;
+    const score = Math.min(dn.length, candidateNorm.length) / Math.max(dn.length, candidateNorm.length);
+    if (score > bestScore) {
+      bestScore = score;
+      best = d;
+    }
+  }
+  if (best && bestScore >= 0.55) {
+    return {
+      jobTitle: best.title,
+      designationId: best.id,
+      titleCorrected: best.title !== raw,
+      originalTitle: raw,
+      matchKind: 'master_fuzzy',
+    };
+  }
+
+  const domestic = canonicalDomesticTitle(candidate);
+  if (domestic) {
+    return {
+      jobTitle: domestic,
+      designationId: null,
+      titleCorrected: domestic !== raw,
+      originalTitle: raw,
+      matchKind: 'domestic',
+    };
+  }
+
+  const cleaned = aliasTarget ? aliasTarget : toTitleCase(raw);
+  return {
+    jobTitle: cleaned,
+    designationId: null,
+    titleCorrected: cleaned !== raw,
+    originalTitle: raw,
+    matchKind: aliasTarget ? 'alias' : 'free_text',
+  };
+}
+
+export function detectStaffPayrollGroup(row) {
+  const bag = normTitleToken(
+    `${row.departmentName || ''} ${row.departmentCode || ''} ${row.workLocation || ''} ${row.designation || ''}`
+  );
+  if (bag.includes('scholar') || bag.includes('school fee') || bag.includes('student')) return 'scholarship';
+  if (
+    bag.includes('chairman') ||
+    bag.includes('domestic') ||
+    canonicalDomesticTitle(row.designation) ||
+    DOMESTIC_ROLE_TITLES.has(normTitleToken(row.designation))
+  ) {
+    return 'chairman_staffs';
+  }
+  if (bag.includes('mining')) return 'mining_div';
+  return 'branch_ops';
+}
+
+export function mapRoleKeyFromJob(jobTitle, department, payrollGroup) {
+  const s = normTitleToken(`${jobTitle || ''} ${department || ''}`);
+  if (payrollGroup === 'scholarship' || payrollGroup === 'chairman_staffs') return 'sales_staff';
+  if (!s) return 'sales_staff';
+  if (/human\s*resource|^hr\b|hr\s*admin|personnel/.test(s)) return 'hr_admin';
+  if (/finance|accountant|account\s*officer|treasury/.test(s)) return 'finance_manager';
+  if (/cashier|cash\s*office/.test(s)) return 'cashier';
+  if (/branch\s*manager|\bbm\b/.test(s)) return 'sales_manager';
+  if (/sales\s*manager|commercial\s*manager/.test(s)) return 'sales_manager';
+  if (/procurement|buyer/.test(s)) return 'operations_officer';
+  if (/operation|production|factory|logistics|warehouse|machine|store/.test(s)) return 'operations_officer';
+  if (/driver|security|cleaner|cook|housekeeper|gardener|nanny|steward|domestic/.test(s)) return 'sales_staff';
+  if (/viewer|read\s*only|audit/.test(s)) return 'viewer';
+  if (/sales|marketer|rep|officer/.test(s)) return 'sales_staff';
+  return 'sales_staff';
+}
+
+export function buildSurnameIdUsername(row, rowNum, usedUsernames) {
+  const surname = slugToken(row.surname || deriveDisplayName(row).split(/\s+/).pop(), 24);
+  const empId = slugToken(String(row.employeeNumber || '').replace(/^emp[-\s]*/i, ''), 20);
+  let base = '';
+  if (surname && empId) base = `${surname}.${empId}`;
+  else if (surname) base = `${surname}.r${rowNum}`;
+  else if (empId) base = `staff.${empId}`;
+  else base = slugUsername(deriveDisplayName(row), row.employeeNumber);
+  let username = base.slice(0, 48);
+  let suffix = 0;
+  while (usedUsernames.has(username)) {
+    suffix += 1;
+    username = `${base}${suffix}`.slice(0, 48);
+  }
+  usedUsernames.add(username);
+  return username;
+}
+
+function deriveDisplayName(row) {
+  const explicit = String(row.displayName || '').trim();
+  if (explicit) return explicit;
+  const composed = `${String(row.firstName || '').trim()} ${String(row.surname || '').trim()}`.trim();
+  if (composed) return composed;
+  const empNo = String(row.employeeNumber || '').trim();
+  if (empNo) return `Staff ${empNo}`;
+  return '';
+}
+
+function isBlankImportRow(row) {
+  return !Object.values(row).some((v) => String(v ?? '').trim());
+}
+
+function collectExistingPhones(db) {
+  const phones = new Set();
+  const phoneToUserId = new Map();
+  const rows = db
+    .prepare(`SELECT user_id, profile_extra_json FROM hr_staff_profiles WHERE profile_extra_json IS NOT NULL AND trim(profile_extra_json) != ''`)
+    .all();
+  for (const row of rows) {
+    try {
+      const extra = JSON.parse(row.profile_extra_json);
+      const phone = String(extra?.personal?.phone || '').trim();
+      if (phone) {
+        phones.add(phone);
+        phoneToUserId.set(phone, row.user_id);
+      }
+    } catch {
+      /* ignore malformed profile JSON */
+    }
+  }
+  return { phones, phoneToUserId };
+}
+
+function normalizeImportMode(mode) {
+  return String(mode || '').trim().toLowerCase() === 'replace' ? 'replace' : 'update';
+}
+
+export function countActiveHrStaffForImportClean(db) {
+  if (!hrTablesReady(db)) return 0;
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM app_users u
+         INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+         WHERE u.status = 'active' AND u.role_key NOT IN ('admin', 'md')`
+      )
+      .get()?.c || 0
+  );
+}
+
+function suspendActiveHrStaffBeforeReplace(db, actorUserId) {
+  const rows = db
+    .prepare(
+      `SELECT u.id FROM app_users u
+       INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+       WHERE u.status = 'active' AND u.role_key NOT IN ('admin', 'md')`
+    )
+    .all();
+  let suspended = 0;
+  for (const row of rows) {
+    const r = updateAppUserStatus(db, row.id, 'suspended', { actorUserId });
+    if (r.ok) suspended += 1;
+  }
+  return suspended;
+}
+
+function buildExistingStaffMaps(db) {
+  const employeeNoToUserId = new Map();
+  const userIdToUsername = new Map();
+  const rows = db
+    .prepare(
+      `SELECT trim(p.employee_no) AS employeeNo, p.user_id AS userId, lower(trim(u.username)) AS username
+       FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id
+       WHERE p.employee_no IS NOT NULL AND trim(p.employee_no) != ''`
+    )
+    .all();
+  for (const row of rows) {
+    if (row.employeeNo) employeeNoToUserId.set(String(row.employeeNo), row.userId);
+    if (row.userId && row.username) userIdToUsername.set(row.userId, row.username);
+  }
+  return { employeeNoToUserId, userIdToUsername };
+}
+
+function buildEmailToUserIdMap(db) {
+  const emailToUserId = new Map();
+  const rows = db
+    .prepare(`SELECT id, lower(trim(email)) AS email FROM app_users WHERE email IS NOT NULL AND trim(email) != ''`)
+    .all();
+  for (const row of rows) {
+    if (row.email) emailToUserId.set(row.email, row.id);
+  }
+  return emailToUserId;
+}
+
+function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } = {}) {
+  const displayName = deriveDisplayName(row);
+  const hasNextOfKin = String(row.nextOfKinName || row.nextOfKinPhone || '').trim();
+  const body = {
+    ...(userId ? { userId } : {}),
+    displayName,
+    firstName: row.firstName || undefined,
+    surname: row.surname || undefined,
+    personalEmail: row.email || undefined,
+    phone: row.phoneNumber || undefined,
+    employeeNo: row.employeeNumber || undefined,
+    branchId: row.branchId || resolveBranchId(db, row, scope),
+    jobTitle: row.mappedJobTitle || row.designation || undefined,
+    designationId: row.designationId || undefined,
+    department: row.departmentName || row.departmentCode || undefined,
+    employmentType: row.employmentType || undefined,
+    employmentStatus: row.employmentStatus || undefined,
+    workLocation: row.workLocation || undefined,
+    dateJoinedIso: row.dateJoined || undefined,
+    payrollGroup: row.payrollGroup || detectStaffPayrollGroup(row),
+    baseSalaryNgn: row.basicSalary ? Math.round(Number(String(row.basicSalary).replace(/[^\d.]/g, '')) || 0) : 0,
+    gender: row.gender || undefined,
+    dateOfBirthIso: row.dateOfBirth || undefined,
+    dateOfBirth: row.dateOfBirth || undefined,
+    residentialAddress: row.residentialAddress || undefined,
+    minimumQualification: row.highestQualification || undefined,
+    bankName: row.bankName || undefined,
+    bankAccountName: row.accountName || undefined,
+    bankAccountNoMasked: row.accountNumber ? `****${String(row.accountNumber).slice(-4)}` : undefined,
+    nextOfKin: hasNextOfKin ? { name: row.nextOfKinName || null, phone: row.nextOfKinPhone || null } : undefined,
+    selfServiceEligible: true,
+  };
+  if (includeCredentials) {
+    body.username = row.proposedUsername;
+    body.password = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || BULK_IMPORT_DEFAULT_PASSWORD).trim();
+    body.roleKey =
+      row.roleKey || mapRoleKeyFromJob(row.mappedJobTitle, row.departmentName || row.departmentCode, row.payrollGroup);
+  }
+  return body;
+}
+
+function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUsernames, importMode = 'update') {
   const errors = [];
   const warnings = [];
-  if (!row.firstName) errors.push({ field: 'firstName', message: 'First name required' });
-  if (!row.surname) errors.push({ field: 'surname', message: 'Surname required' });
-  if (!row.displayName) errors.push({ field: 'displayName', message: 'Display name required' });
-  if (!row.phoneNumber) errors.push({ field: 'phoneNumber', message: 'Phone required' });
-  if (!row.designation) errors.push({ field: 'designation', message: 'Designation required' });
-  if (!row.employmentType) errors.push({ field: 'employmentType', message: 'Employment type required' });
-  if (!row.employmentStatus) errors.push({ field: 'employmentStatus', message: 'Employment status required' });
-  if (!row.dateJoined) errors.push({ field: 'dateJoined', message: 'Valid date joined required' });
+  const mode = normalizeImportMode(importMode);
+  const displayName = deriveDisplayName(row);
+  if (!displayName) {
+    errors.push({
+      field: 'displayName',
+      message: 'At least one of Display Name, First Name, Surname, or Employee Number is required',
+    });
+  }
   const empNo = String(row.employeeNumber || '').trim();
-  if (empNo && existingKeys.employeeNos.has(empNo)) {
+  let importAction = 'create';
+  let existingUserId = null;
+  let existingUsername = null;
+
+  if (empNo && existingKeys.employeeNosInFile?.has(empNo)) {
+    errors.push({ field: 'employeeNumber', message: 'Duplicate employee number in this file' });
+  }
+  if (empNo && existingKeys.employeeNoToUserId?.has(empNo)) {
+    importAction = 'update';
+    existingUserId = existingKeys.employeeNoToUserId.get(empNo);
+    existingUsername = existingKeys.userIdToUsername?.get(existingUserId) || null;
+  } else if (empNo && mode === 'update' && existingKeys.employeeNos?.has(empNo)) {
     errors.push({ field: 'employeeNumber', message: 'Duplicate employee number' });
   }
+
   const email = String(row.email || '').trim().toLowerCase();
-  if (email && existingKeys.emails.has(email)) {
-    errors.push({ field: 'email', message: 'Duplicate email' });
+  if (email) {
+    const owner = existingKeys.emailToUserId?.get(email);
+    if (owner && owner !== existingUserId) errors.push({ field: 'email', message: 'Duplicate email' });
   }
   const phone = String(row.phoneNumber || '').trim();
-  if (phone && existingKeys.phones.has(phone)) {
-    errors.push({ field: 'phoneNumber', message: 'Duplicate phone' });
+  if (phone) {
+    const owner = existingKeys.phoneToUserId?.get(phone);
+    if (owner && owner !== existingUserId) errors.push({ field: 'phoneNumber', message: 'Duplicate phone' });
   }
   const branchId = resolveBranchId(db, row, {});
-  if (!branchId) warnings.push({ field: 'branchCode', message: 'Branch not mapped — will use default' });
-  if (row.departmentName && !row.departmentCode) {
-    warnings.push({ field: 'departmentName', message: 'Department free-text — flag for cleanup' });
+
+  const titleResolved = resolveUploadedJobTitle(row.designation, designationIndex);
+  const payrollGroup = detectStaffPayrollGroup({ ...row, designation: titleResolved.jobTitle || row.designation });
+  const roleKey = mapRoleKeyFromJob(
+    titleResolved.jobTitle || row.designation,
+    row.departmentName || row.departmentCode,
+    payrollGroup
+  );
+  const proposedUsername = existingUsername || buildSurnameIdUsername(row, rowNum, usedUsernames);
+  if (!existingUsername && mode !== 'replace' && existingKeys.usernames?.has(proposedUsername)) {
+    errors.push({ field: 'username', message: `Username "${proposedUsername}" already exists` });
   }
-  return { errors, warnings, branchId };
+  if (importAction === 'update') {
+    warnings.push({ field: 'employeeNumber', message: 'Existing employee — profile will be updated' });
+  }
+
+  return {
+    errors,
+    warnings,
+    branchId,
+    displayName,
+    proposedUsername,
+    mappedJobTitle: titleResolved.jobTitle,
+    designationId: titleResolved.designationId,
+    titleCorrected: titleResolved.titleCorrected,
+    originalJobTitle: titleResolved.originalTitle,
+    payrollGroup,
+    roleKey,
+    importAction,
+    existingUserId,
+  };
 }
 
 export function previewBulkStaffImport(db, buffer, scope = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const importMode = normalizeImportMode(scope.importMode);
   const wb = XLSX.read(buffer, { type: 'buffer', cellText: true, cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
@@ -217,32 +808,133 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   const existingEmails = new Set(
     db.prepare(`SELECT lower(trim(email)) AS e FROM app_users WHERE email IS NOT NULL`).all().map((r) => r.e).filter(Boolean)
   );
-  const existingPhones = new Set(
-    db.prepare(`SELECT trim(phone) AS p FROM hr_staff_profiles WHERE phone IS NOT NULL`).all().map((r) => r.p).filter(Boolean)
+  const { phones: existingPhones, phoneToUserId } = collectExistingPhones(db);
+  const emailToUserId = buildEmailToUserIdMap(db);
+  const existingUsernames = new Set(
+    db.prepare(`SELECT lower(trim(username)) AS u FROM app_users`).all().map((r) => r.u).filter(Boolean)
   );
+  const { employeeNoToUserId, userIdToUsername } = buildExistingStaffMaps(db);
+  const designationIndex = buildDesignationIndex(db);
+  const usedUsernames = new Set(importMode === 'replace' ? [] : existingUsernames);
+  const employeeNosInFile = new Set();
   const preview = [];
   let valid = 0;
   let failed = 0;
   let duplicates = 0;
   let needsCleanup = 0;
+  let skippedBlank = 0;
+  let titlesCorrected = 0;
+  let updateCount = 0;
+  let createCount = 0;
   for (let i = 0; i < rows.length; i += 1) {
-    const mapped = mapRow(rows[i], headerMap);
+    const mapped = sanitizeImportRow(mapRow(rows[i], headerMap));
+    if (isBlankImportRow(mapped)) {
+      skippedBlank += 1;
+      continue;
+    }
     const rowNum = i + 2;
-    const keys = { employeeNos: existingNos, emails: existingEmails, phones: existingPhones };
-    const { errors, warnings, branchId } = validateRow(db, mapped, rowNum, keys);
-    if (errors.some((e) => e.message.includes('Duplicate'))) duplicates += 1;
+    const keys = {
+      employeeNos: importMode === 'replace' ? new Set() : existingNos,
+      employeeNosInFile,
+      employeeNoToUserId,
+      userIdToUsername,
+      emails: importMode === 'replace' ? new Set() : existingEmails,
+      emailToUserId,
+      phones: importMode === 'replace' ? new Set() : existingPhones,
+      phoneToUserId,
+      usernames: importMode === 'replace' ? new Set() : existingUsernames,
+    };
+    const {
+      errors,
+      warnings,
+      branchId,
+      displayName,
+      proposedUsername,
+      mappedJobTitle,
+      designationId,
+      titleCorrected,
+      originalJobTitle,
+      payrollGroup,
+      roleKey,
+      importAction,
+      existingUserId,
+    } = validateRow(db, mapped, rowNum, keys, designationIndex, usedUsernames, importMode);
+    if (errors.some((e) => e.message.includes('Duplicate') || e.field === 'username')) duplicates += 1;
     if (warnings.length) needsCleanup += 1;
+    if (titleCorrected) titlesCorrected += 1;
     if (errors.length) failed += 1;
     else valid += 1;
-    preview.push({ rowNum, ...mapped, branchId, errors, warnings, valid: errors.length === 0 });
-    if (mapped.employeeNumber) existingNos.add(String(mapped.employeeNumber).trim());
+    if (!errors.length && importAction === 'update') updateCount += 1;
+    if (!errors.length && importAction === 'create') createCount += 1;
+    preview.push({
+      rowNum,
+      ...mapped,
+      displayName: displayName || mapped.displayName,
+      branchId,
+      branchCodeResolved: branchId,
+      proposedUsername,
+      mappedJobTitle: mappedJobTitle || mapped.designation || null,
+      designationId: designationId || null,
+      titleCorrected: Boolean(titleCorrected),
+      originalJobTitle: originalJobTitle || mapped.designation || null,
+      payrollGroup,
+      roleKey,
+      importAction,
+      existingUserId: existingUserId || null,
+      errors,
+      warnings,
+      valid: errors.length === 0,
+    });
+    const empNo = String(mapped.employeeNumber || '').trim();
+    if (empNo) employeeNosInFile.add(empNo);
+    if (importMode !== 'replace' && empNo) existingNos.add(empNo);
     if (mapped.email) existingEmails.add(String(mapped.email).trim().toLowerCase());
     if (mapped.phoneNumber) existingPhones.add(String(mapped.phoneNumber).trim());
+    if (proposedUsername) usedUsernames.add(proposedUsername);
   }
+  const totalRows = preview.length;
+  const flatErrors = preview.flatMap((r) =>
+    r.errors.map((e) => ({ row: r.rowNum, column: e.field, message: e.message }))
+  );
+  const needsCleanupRows = preview.filter((r) => r.warnings.length > 0).map((r) => ({ row: r.rowNum, warnings: r.warnings }));
+  const titleMappings = preview
+    .filter((r) => r.titleCorrected && r.originalJobTitle && r.mappedJobTitle)
+    .map((r) => ({
+      row: r.rowNum,
+      from: r.originalJobTitle,
+      to: r.mappedJobTitle,
+      username: r.proposedUsername,
+    }));
+  const staffToSuspend = importMode === 'replace' ? countActiveHrStaffForImportClean(db) : 0;
   return {
     ok: true,
+    importMode,
     preview,
-    summary: { total: rows.length, valid, failed, duplicates, needsCleanup, skipped: 0 },
+    summary: {
+      total: totalRows,
+      valid,
+      failed,
+      duplicates,
+      needsCleanup,
+      skipped: skippedBlank,
+      titlesCorrected,
+      updateCount,
+      createCount,
+      staffToSuspend,
+    },
+    totalRows,
+    validCount: valid,
+    failedCount: failed,
+    duplicateCount: duplicates,
+    updateCount,
+    createCount,
+    staffToSuspend,
+    titlesCorrected,
+    defaultPasswordNote: 'New accounts use Zarewa@123 and must change password on first login.',
+    errors: flatErrors,
+    needsCleanup: needsCleanupRows,
+    titleMappings,
+    branchGuide: BULK_IMPORT_BRANCH_GUIDE,
   };
 }
 
@@ -258,12 +950,17 @@ function slugUsername(displayName, employeeNo) {
 }
 
 export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
-  const prev = previewBulkStaffImport(db, buffer, scope);
+  const importMode = normalizeImportMode(scope.importMode);
+  const prev = previewBulkStaffImport(db, buffer, { ...scope, importMode });
   if (!prev.ok) return prev;
   const runId = newId('HRIMP');
   const now = nowIso();
-  const importPassword = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || 'Zarewa@Import2026!').trim();
+  let suspended = 0;
+  if (importMode === 'replace') {
+    suspended = suspendActiveHrStaffBeforeReplace(db, actor?.id);
+  }
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
   const results = [];
   for (const row of prev.preview) {
@@ -272,36 +969,42 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
       results.push({ rowNum: row.rowNum, status: 'skipped', errors: row.errors });
       continue;
     }
-    const displayName = row.displayName || `${row.firstName} ${row.surname}`.trim();
-    let username = slugUsername(displayName, row.employeeNumber);
-    let suffix = 0;
-    while (db.prepare(`SELECT 1 FROM app_users WHERE username = ?`).get(username)) {
-      suffix += 1;
-      username = `${slugUsername(displayName, row.employeeNumber)}${suffix}`;
+    const displayName = deriveDisplayName(row);
+
+    if (row.importAction === 'update' && row.existingUserId) {
+      const profilePatch = rowToProfileBody(db, row, scope, {
+        userId: row.existingUserId,
+        includeCredentials: false,
+      });
+      const up = upsertHrStaffProfile(db, actor?.id, profilePatch);
+      if (!up.ok) {
+        skipped += 1;
+        results.push({ rowNum: row.rowNum, status: 'failed', error: up.error });
+        continue;
+      }
+      db.prepare(`UPDATE app_users SET display_name = ?, status = 'active' WHERE id = ?`).run(displayName, row.existingUserId);
+      updated += 1;
+      results.push({
+        rowNum: row.rowNum,
+        status: 'updated',
+        userId: row.existingUserId,
+        username: row.proposedUsername,
+        mappedJobTitle: profilePatch.jobTitle || null,
+        roleKey: row.roleKey,
+      });
+      continue;
     }
-    const body = {
-      username,
-      displayName,
-      password: importPassword,
-      roleKey: 'sales_staff',
-      email: row.email || undefined,
-      phone: row.phoneNumber,
-      employeeNo: row.employeeNumber || undefined,
-      branchId: row.branchId || resolveBranchId(db, row, scope),
-      jobTitle: row.designation,
-      department: row.departmentName || row.departmentCode || 'General',
-      employmentType: row.employmentType,
-      employmentStatus: row.employmentStatus,
-      dateJoinedIso: row.dateJoined,
-      baseSalaryNgn: row.basicSalary ? Math.round(Number(String(row.basicSalary).replace(/[^\d.]/g, '')) || 0) : 0,
-      gender: row.gender || undefined,
-      dateOfBirthIso: row.dateOfBirth || undefined,
-      minimumQualification: row.highestQualification || undefined,
-      bankName: row.bankName || undefined,
-      bankAccountName: row.accountName || displayName,
-      bankAccountNoMasked: row.accountNumber ? `****${String(row.accountNumber).slice(-4)}` : undefined,
-      selfServiceEligible: true,
-    };
+
+    let username = row.proposedUsername || buildSurnameIdUsername(row, row.rowNum, new Set());
+    let suffix = 0;
+    const baseUsername = username;
+    while (db.prepare(`SELECT 1 FROM app_users WHERE lower(trim(username)) = ?`).get(username)) {
+      suffix += 1;
+      username = `${baseUsername}${suffix}`.slice(0, 48);
+    }
+    const body = rowToProfileBody(db, { ...row, proposedUsername: username }, scope, { includeCredentials: true });
+    body.username = username;
+    body.displayName = displayName;
     const r = registerNewStaffWithProfile(db, actor?.id, body);
     if (!r.ok) {
       skipped += 1;
@@ -309,7 +1012,14 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
       continue;
     }
     imported += 1;
-    results.push({ rowNum: row.rowNum, status: 'imported', userId: r.userId });
+    results.push({
+      rowNum: row.rowNum,
+      status: 'imported',
+      userId: r.userId,
+      username,
+      mappedJobTitle: body.jobTitle || null,
+      roleKey: body.roleKey,
+    });
     if (row.warnings?.length) {
       createHrNotification(db, {
         userId: actor?.id,
@@ -332,7 +1042,7 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
       imported,
       skipped,
       prev.summary.failed,
-      JSON.stringify({ results, summary: prev.summary }),
+      JSON.stringify({ results, summary: prev.summary, importMode, suspended }),
       now,
     );
   }
@@ -341,12 +1051,15 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
     action: 'hr.bulk_staff.import',
     entityKind: 'hr_staff_import_run',
     entityId: runId,
-    details: { imported, skipped, total: prev.summary.total },
+    details: { imported, updated, suspended, skipped, total: prev.summary.total, importMode },
   });
   return {
     ok: true,
     runId,
+    importMode,
     imported,
+    updated,
+    suspended,
     skipped,
     failed: prev.summary.failed,
     duplicates: prev.summary.duplicates,

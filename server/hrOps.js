@@ -22,7 +22,7 @@ import {
 import { encryptBankAccount, maskBankAccount, decryptBankAccount, storedBankToMasked } from './hrBankCrypto.js';
 import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
-import { computeProfileCompleteness } from './hrProfileCompleteness.js';
+import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 
 const REQUEST_KINDS = new Set([
@@ -175,6 +175,8 @@ function buildStaffDerived(row, complianceByUserId = new Map()) {
     needsBranchMapping: !normalizedBranchId || normalizedBranchId === 'DEPRECATED-JALINGO',
     needsUnitMapping: !orgNode && !String(row.department || '').trim(),
     invalidCategory: employmentTypeNorm === 'unknown' || employmentTypeNorm === 'other',
+    bankAccountNameMismatch:
+      Boolean(String(row.bankAccountName || '').trim()) && !bankAccountNameMatchesStaff(row),
   };
   const criticalMissing = [];
   if (!String(row.employeeNo || '').trim()) criticalMissing.push('employeeNo');
@@ -697,6 +699,9 @@ export function upsertHrStaffProfile(db, actorUserId, body) {
     if (personalPatch) extra.personal = { ...(extra.personal || {}), ...personalPatch };
     if (body?.employmentStatus !== undefined) {
       extra.employmentMeta = { ...(extra.employmentMeta || {}), employmentStatus: body.employmentStatus || null };
+    }
+    if (body?.workLocation !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), workLocation: String(body.workLocation || '').trim() || null };
     }
     if (body?.confirmationDateIso !== undefined) {
       extra.employmentMeta = { ...(extra.employmentMeta || {}), confirmationDateIso: body.confirmationDateIso || null };
@@ -4481,41 +4486,31 @@ export function deleteHrRequestDraft(db, requestId, userId) {
 
 export function registerNewStaffWithProfile(db, actorUserId, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const {
+    username,
+    displayName,
+    password,
+    roleKey,
+    workspaceDepartment,
+    applicantId: _applicantId,
+    ...profileFields
+  } = body || {};
   const created = createAppUserRecord(db, {
-    username: body.username,
-    displayName: body.displayName,
-    password: body.password,
-    roleKey: body.roleKey,
-    workspaceDepartment: body.workspaceDepartment,
+    username,
+    displayName,
+    password,
+    roleKey,
+    workspaceDepartment,
   });
   if (!created.ok) return created;
   const up = upsertHrStaffProfile(db, actorUserId, {
+    ...profileFields,
     userId: created.userId,
-    branchId: String(body?.branchId || '').trim() || DEFAULT_BRANCH_ID,
-    employeeNo: body?.employeeNo,
-    jobTitle: body?.jobTitle,
-    department: body?.department,
-    employmentType: body?.employmentType || 'permanent',
-    dateJoinedIso: body?.dateJoinedIso,
-    probationEndIso: body?.probationEndIso,
-    baseSalaryNgn: body?.baseSalaryNgn ?? 0,
-    housingAllowanceNgn: body?.housingAllowanceNgn ?? 0,
-    transportAllowanceNgn: body?.transportAllowanceNgn ?? 0,
-    minimumQualification: body?.minimumQualification,
-    academicQualification: body?.academicQualification,
-    payrollGroup: body?.payrollGroup,
-    salaryLevel: body?.salaryLevel,
-    salaryStep: body?.salaryStep,
-    lineManagerUserId: body?.lineManagerUserId,
-    selfServiceEligible: body?.selfServiceEligible,
-    payeTaxPercent: body?.payeTaxPercent,
-    pensionPercentOverride: body?.pensionPercentOverride,
-    taxId: body?.taxId,
-    pensionRsaPin: body?.pensionRsaPin,
-    bankName: body?.bankName,
-    bankAccountName: body?.bankAccountName,
-    bankAccountNoMasked: body?.bankAccountNoMasked,
-    leaveEntitlementBand: body?.leaveEntitlementBand,
+    branchId: String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID,
+    employmentType: profileFields?.employmentType || 'permanent',
+    baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,
+    housingAllowanceNgn: profileFields?.housingAllowanceNgn ?? 0,
+    transportAllowanceNgn: profileFields?.transportAllowanceNgn ?? 0,
   });
   if (!up.ok) return up;
   return { ok: true, userId: created.userId, profile: up.profile };

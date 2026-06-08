@@ -2582,6 +2582,36 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(Number(addEv.kgCoilDelta)).toBeCloseTo(50, 3);
   });
 
+  it('coil-lots finish-roll clears near-finished tail from stock', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const d = '2026-03-30';
+    const split = await agent.post(`/api/coil-lots/${encodeURIComponent(coilA)}/split`).send({
+      splitKg: 85,
+      note: 'Tail test child',
+      dateISO: d,
+    });
+    expect(split.status).toBe(200);
+    const child = split.body.newCoilNo;
+    expect(child).toBeTruthy();
+
+    const finish = await agent.post(`/api/coil-lots/${encodeURIComponent(child)}/finish-roll`).send({
+      note: 'Missed roll finished at CL-55 completion — tail cleared for stock verify',
+      cuttingListRef: 'CL-55',
+      dateISO: d,
+    });
+    expect(finish.status).toBe(200);
+    expect(finish.body.ok).toBe(true);
+    expect(finish.body.tailKgCleared).toBeCloseTo(85, 1);
+
+    const boot = await agent.get('/api/bootstrap');
+    const lot = boot.body.coilLots.find((c) => c.coilNo === child);
+    expect(lot.qtyRemaining).toBeCloseTo(0, 2);
+    expect(String(lot.currentStatus || '').toLowerCase()).toBe('consumed');
+    const ev = boot.body.coilControlEvents.find((e) => e.eventKind === 'finish_roll' && e.coilNo === child);
+    expect(ev).toBeTruthy();
+    expect(Number(ev.kgCoilDelta)).toBeCloseTo(-85, 1);
+  });
+
   it('coil-lots PATCH master-data updates metadata for branch manager; sales staff forbidden', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const mgr = request.agent(app);

@@ -11,6 +11,7 @@ import {
   validatePasswordStrength,
   resolveRegisteredPasswordDisplay,
   userRequiresInitialPasswordSetup,
+  requestShouldExtendSession,
 } from './auth.js';
 import { buildLoginSecuritySummary, listActiveSessions } from './sessionSecurityOps.js';
 
@@ -43,6 +44,22 @@ describe('Phase 12 login security (pure)', () => {
     expect(sessionTimeoutMinutes()).toBe(15);
     if (prev === undefined) delete process.env.SESSION_TIMEOUT_MINUTES;
     else process.env.SESSION_TIMEOUT_MINUTES = prev;
+  });
+
+  it('requestShouldExtendSession extends on mutations and activity, not bootstrap polls', () => {
+    expect(requestShouldExtendSession({ method: 'POST', url: '/api/quotes' })).toBe(true);
+    expect(requestShouldExtendSession({ method: 'GET', url: '/api/session/activity' })).toBe(true);
+    expect(requestShouldExtendSession({ method: 'GET', url: '/api/bootstrap', query: { poll: '1' } })).toBe(
+      false
+    );
+    expect(requestShouldExtendSession({ method: 'GET', url: '/api/bootstrap', query: {} })).toBe(false);
+    expect(
+      requestShouldExtendSession({
+        method: 'GET',
+        url: '/api/bootstrap',
+        headers: { 'x-zarewa-session-touch': '1' },
+      })
+    ).toBe(true);
   });
 
   it('userRequiresInitialPasswordSetup applies only to new accounts', () => {

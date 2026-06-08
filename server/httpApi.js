@@ -2251,6 +2251,18 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/session/activity', (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ ok: false, code: 'AUTH_REQUIRED', error: 'Sign in required.' });
+      }
+      return res.json({ ok: true, ...req.session });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not refresh session activity.' });
+    }
+  });
+
   app.post('/api/session/timeout', (req, res) => {
     try {
       if (req.user) {

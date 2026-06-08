@@ -27,9 +27,10 @@ Self-service “forgot password” is not available for existing users. Administ
 
 ### Session timeout
 
-- After **15 minutes without a click** anywhere in the app, your session ends (sliding timer resets on each click).
-- You will see a **warning 1 minute before** expiry; click anywhere or use **Continue working** to stay signed in.
-- **Open forms with unsaved changes** pause automatic sign-out until you save or discard your work.
+- After **15 minutes without a click or keyboard input** in the app, your session ends (sliding timer resets on activity).
+- You will see a **warning 1 minute before** expiry; click, type, or use **Continue working** to stay signed in.
+- **Open forms with unsaved changes** show **Session on hold** instead of the countdown and pause automatic sign-out until you save or discard your work.
+- Background data sync does **not** keep your session alive — only your activity and saving data do.
 - You are redirected to sign in when the session expires (unless unsaved work is blocking).
 
 ### Access denied

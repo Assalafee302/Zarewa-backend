@@ -60,6 +60,35 @@ export function sessionTimeoutMinutes() {
   return 15;
 }
 
+function normalizeApiPath(req) {
+  const raw = String(req.originalUrl || req.url || req.path || '').split('?')[0].trim();
+  if (!raw) return '';
+  return raw.startsWith('/') ? raw : `/${raw}`;
+}
+
+/**
+ * Whether this request should slide the server inactivity expiry forward.
+ * GET bootstrap polls and passive reads do not extend; user activity and mutations do.
+ */
+export function requestShouldExtendSession(req) {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') return true;
+
+  const path = normalizeApiPath(req);
+  if (path === '/api/session/activity') return true;
+
+  const touchHeader = String(req.headers?.['x-zarewa-session-touch'] || '').trim().toLowerCase();
+  if (touchHeader === '1') return true;
+  if (touchHeader === '0') return false;
+
+  if (path === '/api/bootstrap') {
+    const poll = String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim();
+    if (poll === '1') return false;
+  }
+
+  return false;
+}
+
 /** @type {((payload: { user: object; token: string }) => void) | null} */
 let sessionTimeoutAuditHook = null;
 
@@ -1174,7 +1203,10 @@ export function attachAuthContext(db) {
 
     req.workspaceBranchId = currentBranchId;
     req.workspaceViewAll = viewAllBranches;
-    const expiresAtISO = addMinutesToIso(now, sessionTimeoutMinutes());
+    const shouldExtend = requestShouldExtendSession(req);
+    const expiresAtISO = shouldExtend
+      ? addMinutesToIso(now, sessionTimeoutMinutes())
+      : String(row.expires_at_iso || '').trim() || addMinutesToIso(now, sessionTimeoutMinutes());
     req.session = {
       ...buildSessionPayload(user),
       currentBranchId,
@@ -1182,7 +1214,9 @@ export function attachAuthContext(db) {
       branches: listBranches(db),
       ...sessionSecurityMeta(expiresAtISO),
     };
-    refreshSessionTouch(db, token, expiresAtISO);
+    if (shouldExtend) {
+      refreshSessionTouch(db, token, expiresAtISO);
+    }
     return next();
   };
 }
@@ -1437,6 +1471,7 @@ export function requireActivePassword(req, res, next) {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
   const path = String(req.originalUrl || req.url || '').split('?')[0];
   const allowed = [
+    '/api/session/activity',
     '/api/session/change-password',
     '/api/session/logout',
     '/api/session/complete-training',

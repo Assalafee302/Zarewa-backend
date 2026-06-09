@@ -8145,7 +8145,7 @@ export function registerHttpApi(app, db) {
             branchId: wb,
             createdByUserId: req.user.id,
             quotationRef: quotationId,
-            customerId,
+            customerId: customerID,
             receiptAtISO: dateISO,
           });
           if (!glR.ok && !glR.skipped && !glR.duplicate) {

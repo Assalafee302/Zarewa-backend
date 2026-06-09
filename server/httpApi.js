@@ -66,6 +66,7 @@ import {
   logoutSession,
   setSessionTimeoutAuditHook,
   patchAppUserWorkspaceDepartment,
+  canIssuePasswordResetCodes,
   issuePasswordResetForAdmin,
   requestPasswordReset,
   requireActivePassword,
@@ -2808,9 +2809,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/users/:id/password-reset-code', requirePermission('settings.view'), (req, res) => {
     try {
-      const roleKey = String(req.user?.roleKey || '').toLowerCase();
-      if (roleKey !== 'admin' && roleKey !== 'md') {
-        return res.status(403).json({ ok: false, error: 'Only Admin or MD can generate reset codes.' });
+      if (!canIssuePasswordResetCodes(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Only Admin, MD, or HR Admin can generate reset codes.' });
       }
       const id = String(req.params.id || '').trim();
       if (!id) return res.status(400).json({ ok: false, error: 'User id is required.' });

@@ -38,12 +38,17 @@ function readTrainingCompleted(row) {
   return Boolean(String(row.training_completed_at_iso ?? '').trim());
 }
 
-/** New users must finish first-time password setup (modal or admin reset code). */
+/** Users still in onboarding may use a reset code (must change password or training not done). */
 export function userRequiresInitialPasswordSetup(row) {
   if (!row || String(row.status || 'active') !== 'active') return false;
   if (readMustChangePassword(row)) return true;
-  const lastLogin = String(row.last_login_at_iso ?? row.lastLoginAtISO ?? '').trim();
-  return !lastLogin;
+  if (!readTrainingCompleted(row)) return true;
+  return false;
+}
+
+/** Admin/HR may issue one-time reset codes for onboarding users. */
+export function canIssuePasswordResetCodes(user) {
+  return canRevealUserPasswords(user);
 }
 
 export const SESSION_COOKIE = 'zarewa_session';
@@ -1650,7 +1655,7 @@ export function issuePasswordResetForAdmin(db, userId) {
     return {
       ok: false,
       error:
-        'Reset codes are only for new users who have not completed first sign-in. Set a new password from Team & access instead.',
+        'Reset codes are only for users still in onboarding (must change password or training not completed). Use Set password in Team & access instead.',
     };
   }
   const issued = issuePasswordResetTokenForUserId(db, row.id);

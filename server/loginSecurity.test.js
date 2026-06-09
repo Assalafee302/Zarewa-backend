@@ -62,16 +62,20 @@ describe('Phase 12 login security (pure)', () => {
     ).toBe(true);
   });
 
-  it('userRequiresInitialPasswordSetup applies only to new accounts', () => {
+  it('userRequiresInitialPasswordSetup applies to onboarding users', () => {
     expect(userRequiresInitialPasswordSetup({ status: 'active', must_change_password: 1 })).toBe(true);
     expect(
-      userRequiresInitialPasswordSetup({ status: 'active', must_change_password: 0, last_login_at_iso: '' })
+      userRequiresInitialPasswordSetup({
+        status: 'active',
+        must_change_password: 0,
+        training_completed_at_iso: '',
+      })
     ).toBe(true);
     expect(
       userRequiresInitialPasswordSetup({
         status: 'active',
         must_change_password: 0,
-        last_login_at_iso: '2026-01-01T00:00:00.000Z',
+        training_completed_at_iso: '2026-01-01T00:00:00.000Z',
       })
     ).toBe(false);
   });

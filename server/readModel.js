@@ -8,6 +8,11 @@ import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingToleran
 import { isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
+import {
+  RECEIPT_PENDING_PO_STATUS_KEYS,
+  normalizePoStatusKey,
+} from '../shared/lib/inTransitVisibility.js';
+import { reconcilePoReceiptStatusIfComplete } from './inTransitOps.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
 import { listBranches } from './branches.js';
@@ -729,13 +734,18 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
   const lineStmt = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ? ORDER BY line_key`);
   return pos.map((row) => {
     const rawLines = lineStmt.all(row.po_id);
+    if (RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status))) {
+      reconcilePoReceiptStatusIfComplete(db, row.po_id);
+    }
+    const refreshedPo = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(row.po_id);
+    const effectiveStatus = refreshedPo?.status ?? row.status;
     return {
       poID: row.po_id,
       supplierID: row.supplier_id,
       supplierName: row.supplier_name,
       orderDateISO: row.order_date_iso,
       expectedDeliveryISO: row.expected_delivery_iso,
-      status: row.status,
+      status: effectiveStatus,
       invoiceNo: row.invoice_no ?? '',
       invoiceDateISO: row.invoice_date_iso ?? '',
       deliveryDateISO: row.delivery_date_iso ?? '',

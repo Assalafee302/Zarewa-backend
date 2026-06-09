@@ -299,10 +299,6 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
-      'procurement.view',
-      'procurement.manage',
-      'purchase_orders.manage',
-      'suppliers.manage',
       'operations.view',
       'operations.manage',
       'production.manage',
@@ -772,12 +768,6 @@ export function publicUserFromRow(row) {
   }
   ensureStoreFloorPermissions(permissions, { roleKey, department: storedDepartment });
   ensureSalesDeskPermissions(permissions, { roleKey, department: storedDepartment });
-  if (String(roleKey || '').trim().toLowerCase() === 'operations_officer') {
-    if (!permissions.includes('procurement.view')) permissions.push('procurement.view');
-    if (!permissions.includes('procurement.manage')) permissions.push('procurement.manage');
-    if (!permissions.includes('purchase_orders.manage')) permissions.push('purchase_orders.manage');
-    if (!permissions.includes('suppliers.manage')) permissions.push('suppliers.manage');
-  }
   return {
     id: row.id,
     username: row.username,

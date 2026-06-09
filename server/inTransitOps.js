@@ -1,3 +1,10 @@
+import {
+  isOpenInTransitLoadStatus,
+  mapPoLineFromDb,
+  poLinesFullyReceived,
+  RECEIPT_PENDING_PO_STATUS_KEYS,
+  normalizePoStatusKey,
+} from '../shared/lib/inTransitVisibility.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog } from './controlOps.js';
 import { nextInTransitLoadHumanId } from './humanId.js';
@@ -87,7 +94,49 @@ function listLoadRows(db, branchScope = 'ALL') {
 
 export function listInTransitLoads(db, branchScope = 'ALL') {
   if (!inTransitTablesReady(db)) return [];
-  return listLoadRows(db, branchScope);
+  return listLoadRows(db, branchScope).filter((load) => isOpenInTransitLoadStatus(load.status));
+}
+
+/**
+ * Close PO + in-transit load when all lines are fully received (self-heal stale transit status).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} poId
+ */
+export function reconcilePoReceiptStatusIfComplete(db, poId) {
+  if (!poId) return { ok: true, changed: false };
+  const po = db.prepare(`SELECT po_id, status FROM purchase_orders WHERE po_id = ?`).get(poId);
+  if (!po) return { ok: true, changed: false };
+  if (!RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(po.status))) {
+    return { ok: true, changed: false };
+  }
+  const lineRows = poLoadLines(db, poId);
+  if (!poLinesFullyReceived(lineRows, mapPoLineFromDb)) return { ok: true, changed: false };
+
+  const now = nowIso();
+  db.prepare(`UPDATE purchase_orders SET status = 'Received' WHERE po_id = ?`).run(poId);
+  const load = findLoadByPo(db, poId);
+  if (load) {
+    const lines = lineRows.map((line, idx) => ({
+      lineNo: idx + 1,
+      purchaseOrderLineKey: line.line_key,
+      materialRequestLineNo: null,
+      productId: line.product_id || '',
+      itemName: line.product_name || line.product_id || '',
+      unit: /^ACC-/i.test(String(line.product_id || '').trim())
+        ? 'unit'
+        : /^STONE-/i.test(String(line.product_id || '').trim())
+          ? 'm'
+          : 'kg',
+      qtyLoaded: Math.max(0, Number(line.qty_ordered) || 0),
+      qtyReceived: Math.max(0, Number(line.qty_received) || 0),
+      shortLandedQty: 0,
+    }));
+    upsertLoadLines(db, load.id, lines);
+    db.prepare(
+      `UPDATE in_transit_loads SET status = 'received', received_at_iso = COALESCE(received_at_iso, ?) WHERE id = ?`
+    ).run(now, load.id);
+  }
+  return { ok: true, changed: true, status: 'Received' };
 }
 
 function upsertLoadLines(db, loadId, lines) {
@@ -257,34 +306,35 @@ export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor =
   if (!inTransitTablesReady(db)) return { ok: true, load: null };
   const load = findLoadByPo(db, poId);
   if (!load) return { ok: true, load: null };
-  const currentLines = db
-    .prepare(`SELECT * FROM in_transit_load_lines WHERE load_id = ? ORDER BY line_no ASC`)
-    .all(load.id);
-  const byLineKey = new Map(currentLines.map((line) => [String(line.purchase_order_line_key || '').trim(), line]));
-  const byProductId = new Map(currentLines.map((line) => [String(line.product_id || '').trim(), line]));
-  for (const entry of receivedEntries) {
-    const line =
-      byLineKey.get(String(entry?.lineKey || '').trim()) || byProductId.get(String(entry?.productID || '').trim());
-    if (!line) continue;
-    const qtyReceived = Math.max(0, Number(entry?.qtyReceived) || 0);
-    const nextReceived = (Number(line.qty_received) || 0) + qtyReceived;
-    const qtyLoaded = Number(line.qty_loaded) || 0;
-    const shortLandedQty = Math.max(0, qtyLoaded - nextReceived);
-    db.prepare(
-      `UPDATE in_transit_load_lines SET qty_received = ?, short_landed_qty = ? WHERE load_id = ? AND line_no = ?`
-    ).run(nextReceived, shortLandedQty, load.id, line.line_no);
-  }
-  const updatedLines = db
-    .prepare(`SELECT * FROM in_transit_load_lines WHERE load_id = ? ORDER BY line_no ASC`)
-    .all(load.id);
-  const anyOutstanding = updatedLines.some((line) => (Number(line.qty_received) || 0) < (Number(line.qty_loaded) || 0));
-  const anyShort = updatedLines.some((line) => Number(line.short_landed_qty) > 0);
-  const status = anyOutstanding ? (anyShort ? 'partial_receipt' : 'in_transit') : anyShort ? 'short_landed' : 'received';
+
+  const lineRows = poLoadLines(db, poId);
+  const lines = lineRows.map((line, idx) => ({
+    lineNo: idx + 1,
+    purchaseOrderLineKey: line.line_key,
+    materialRequestLineNo: null,
+    productId: line.product_id || '',
+    itemName: line.product_name || line.product_id || '',
+    unit: /^ACC-/i.test(String(line.product_id || '').trim())
+      ? 'unit'
+      : /^STONE-/i.test(String(line.product_id || '').trim())
+        ? 'm'
+        : 'kg',
+    qtyLoaded: Math.max(0, Number(line.qty_ordered) || 0),
+    qtyReceived: Math.max(0, Number(line.qty_received) || 0),
+    shortLandedQty: Math.max(0, (Number(line.qty_ordered) || 0) - (Number(line.qty_received) || 0)),
+  }));
+  upsertLoadLines(db, load.id, lines);
+
+  const fullyReceived = poLinesFullyReceived(lineRows, mapPoLineFromDb);
+  const anyShort = lines.some((line) => line.shortLandedQty > 0);
+  const status = fullyReceived ? (anyShort ? 'short_landed' : 'received') : anyShort ? 'partial_receipt' : 'in_transit';
+  const now = nowIso();
   db.prepare(
     `UPDATE in_transit_loads
-     SET status = ?, received_at_iso = CASE WHEN ? = 'received' THEN ? ELSE received_at_iso END
+     SET status = ?, received_at_iso = CASE WHEN ? IN ('received', 'short_landed') THEN COALESCE(received_at_iso, ?) ELSE received_at_iso END
      WHERE id = ?`
-  ).run(status, status, status === 'received' ? nowIso() : null, load.id);
+  ).run(status, status, now, load.id);
+
   appendAuditLog(db, {
     actor,
     action: 'in_transit_load.receive',

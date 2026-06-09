@@ -57,6 +57,7 @@ import {
   canReadMasterData,
   canReadOperationsDomain,
   canReadProcurementDomain,
+  canReadPurchaseOrdersList,
   canReadProductionSnapshot,
   canReadProductsCatalog,
   canReadSalesDomain,
@@ -103,6 +104,7 @@ export function buildBootstrap(db, opts = {}) {
 
   const salesOk = canReadSalesDomain(user);
   const procOk = canReadProcurementDomain(user);
+  const poListOk = canReadPurchaseOrdersList(user);
   const opsOk = canReadOperationsDomain(user);
   const finOk = canReadFinanceDomain(user);
   const expensesSnapshotOk = finOk || userHasPermission(user, 'expenses.create');
@@ -186,7 +188,7 @@ export function buildBootstrap(db, opts = {}) {
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    purchaseOrders: procOk ? listPurchaseOrders(db, branchScope) : [],
+    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope) : [],
     coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],

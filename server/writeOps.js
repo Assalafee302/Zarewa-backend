@@ -26,6 +26,7 @@ import {
   inferLineTypeFromProduct,
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
+import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVisibility.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
@@ -2269,7 +2270,7 @@ export function confirmGrn(
       }
     }
     refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
-    const allIn = refreshed.every((l) => l.qty_received >= l.qty_ordered);
+    const allIn = poLinesFullyReceived(refreshed, mapPoLineFromDb);
     const nextStatus = allIn ? 'Received' : po.status;
     db.prepare(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`).run(nextStatus, poID);
 

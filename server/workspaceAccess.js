@@ -99,6 +99,14 @@ export function canReadProcurementDomain(user) {
   return canAnyPermission(user, PROCUREMENT_DOMAIN_PERMS);
 }
 
+/** PO list for GRN receiving in Operations — not full procurement module access. */
+export function canReadPurchaseOrdersList(user) {
+  return (
+    canReadProcurementDomain(user) ||
+    (canReadOperationsDomain(user) && userHasPermission(user, 'inventory.receive'))
+  );
+}
+
 export function canReadOperationsDomain(user) {
   return canAnyPermission(user, OPERATIONS_DOMAIN_PERMS);
 }

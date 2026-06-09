@@ -3,6 +3,7 @@ import {
   ensureSalesDeskPermissions,
   ensureStoreFloorPermissions,
   mergeRoleAndCustomPermissions,
+  permissionsForRole,
   publicUserFromRow,
 } from './auth.js';
 
@@ -12,6 +13,19 @@ describe('mergeRoleAndCustomPermissions', () => {
     expect(merged).toContain('production.manage');
     expect(merged).toContain('operations.view');
     expect(merged).toContain('dashboard.view');
+    expect(merged).not.toContain('procurement.view');
+    expect(merged).not.toContain('purchase_orders.manage');
+  });
+});
+
+describe('operations_officer procurement access', () => {
+  it('does not include purchase module permissions by default', () => {
+    const perms = permissionsForRole('operations_officer');
+    expect(perms).toContain('inventory.receive');
+    expect(perms).not.toContain('procurement.view');
+    expect(perms).not.toContain('procurement.manage');
+    expect(perms).not.toContain('purchase_orders.manage');
+    expect(perms).not.toContain('suppliers.manage');
   });
 });
 
@@ -44,6 +58,8 @@ describe('publicUserFromRow store floor', () => {
     });
     expect(user.permissions).toContain('production.manage');
     expect(user.permissions).toContain('operations.manage');
+    expect(user.permissions).not.toContain('procurement.view');
+    expect(user.permissions).not.toContain('purchase_orders.manage');
   });
 
   it('grants floor perms for inventory department on non-ops role', () => {

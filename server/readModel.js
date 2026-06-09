@@ -589,6 +589,9 @@ function mapCuttingListRow(db, row) {
     productionReleasePending: Boolean(Number(row.production_release_pending)),
     productionReleasedAtISO: row.production_released_at_iso ?? '',
     productionReleasedBy: row.production_released_by ?? '',
+    printCount: Number(row.print_count) || 0,
+    lastPrintedAtISO: row.last_printed_at_iso ?? '',
+    lastPrintedBy: row.last_printed_by ?? '',
   };
 }
 

@@ -5967,6 +5967,32 @@ export function updateCuttingList(db, cuttingListId, payload) {
   return { ok: true, id: cuttingListId };
 }
 
+export function recordCuttingListPrint(db, cuttingListId, actor = null) {
+  const id = String(cuttingListId ?? '').trim();
+  if (!id) return { ok: false, error: 'Cutting list id is required.' };
+  const row = db.prepare(`SELECT id FROM cutting_lists WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Cutting list not found.' };
+  const iso = new Date().toISOString();
+  const by =
+    String(actor?.displayName || actor?.username || '').trim() || 'Staff';
+  db.prepare(
+    `UPDATE cutting_lists
+     SET print_count = COALESCE(print_count, 0) + 1,
+         last_printed_at_iso = ?,
+         last_printed_by = ?
+     WHERE id = ?`
+  ).run(iso, by, id);
+  const updated = db.prepare(`SELECT print_count FROM cutting_lists WHERE id = ?`).get(id);
+  appendAuditLog(db, {
+    actor,
+    action: 'cutting_list.printed',
+    entityKind: 'cutting_list',
+    entityId: id,
+    note: `Print copy ${Number(updated?.print_count) || 0}`,
+  });
+  return { ok: true, printCount: Number(updated?.print_count) || 0, lastPrintedAtISO: iso, lastPrintedBy: by };
+}
+
 export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH_ID) {
   const cuttingListId = String(payload.cuttingListId ?? '').trim();
   const cuttingList = cuttingListId

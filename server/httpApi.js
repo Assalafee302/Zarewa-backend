@@ -4767,6 +4767,25 @@ export function registerHttpApi(app, db) {
   }
 
   app.post(
+    '/api/cutting-lists/:id/record-print',
+    requirePermission(['sales.manage', 'operations.manage', 'quotations.manage', 'production.manage']),
+    (req, res) => {
+      try {
+        const clId = req.params.id;
+        const hg = assertCuttingListIdInWorkspace(db, req, clId);
+        if (!hg.ok) return res.status(hg.status).json({ ok: false, error: hg.error });
+        const r = write.recordCuttingListPrint(db, clId, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        const cuttingList = getCuttingList(db, clId);
+        res.json({ ok: true, printCount: r.printCount, cuttingList });
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
     '/api/cutting-lists/:id/clear-production-hold',
     requirePermission('production.release'),
     (req, res) => {

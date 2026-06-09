@@ -4205,6 +4205,15 @@ function migrateWorkflowExtensions(db) {
   if (cl.size && !cl.has('production_released_by')) {
     db.exec(`ALTER TABLE cutting_lists ADD COLUMN production_released_by TEXT`);
   }
+  if (cl.size && !cl.has('print_count')) {
+    db.exec(`ALTER TABLE cutting_lists ADD COLUMN print_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (cl.size && !cl.has('last_printed_at_iso')) {
+    db.exec(`ALTER TABLE cutting_lists ADD COLUMN last_printed_at_iso TEXT`);
+  }
+  if (cl.size && !cl.has('last_printed_by')) {
+    db.exec(`ALTER TABLE cutting_lists ADD COLUMN last_printed_by TEXT`);
+  }
 
   const pl = tableCols('setup_price_lists');
   if (pl.size && !pl.has('book_label')) {

@@ -10,7 +10,9 @@ import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import {
   RECEIPT_PENDING_PO_STATUS_KEYS,
+  mapPoLineFromDb,
   normalizePoStatusKey,
+  poLinesFullyReceived,
 } from '../shared/lib/inTransitVisibility.js';
 import { reconcilePoReceiptStatusIfComplete } from './inTransitOps.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
@@ -734,7 +736,10 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
   const lineStmt = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ? ORDER BY line_key`);
   return pos.map((row) => {
     const rawLines = lineStmt.all(row.po_id);
-    if (RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status))) {
+    if (
+      RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status)) &&
+      poLinesFullyReceived(rawLines, mapPoLineFromDb)
+    ) {
       reconcilePoReceiptStatusIfComplete(db, row.po_id);
     }
     const refreshedPo = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(row.po_id);

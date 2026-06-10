@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildRefundCategorySuggestedMaxNgn,
   quotationActualCashInNgn,
   quotationIndependentRefundLinesSumNgn,
   quotationOverpaymentExcessNgn,
   quotationRefundHardCapNgn,
   quotationRemainingRefundableNgn,
   validateRefundCalculationLinesNgn,
+  validateRefundCategorySuggestedCapsNgn,
+  validateRefundSameRequestOverlapCategoriesNgn,
 } from './refundQuotationMoney.js';
 
 describe('refundQuotationMoney', () => {
@@ -66,6 +69,54 @@ describe('refundQuotationMoney', () => {
     });
     expect(r.ok).toBe(false);
     expect(String(r.error)).toMatch(/Overpayment/i);
+  });
+
+  it('builds per-category suggested max from preview lines', () => {
+    const caps = buildRefundCategorySuggestedMaxNgn([
+      { category: 'Overpayment', amountNgn: 50_000 },
+      { category: 'Unproduced meterage', amountNgn: 120_000 },
+    ]);
+    expect(caps.Overpayment).toBe(50_000);
+    expect(caps['Unproduced meterage']).toBe(120_000);
+  });
+
+  it('rejects manual line above system-calculated category max', () => {
+    const caps = buildRefundCategorySuggestedMaxNgn([
+      { category: 'Unproduced meterage', amountNgn: 335_820 },
+    ]);
+    const r = validateRefundCategorySuggestedCapsNgn({
+      calculationLines: [{ category: 'Unproduced meterage', amountNgn: 400_000 }],
+      categorySuggestedMaxNgn: caps,
+    });
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/Unproduced meterage/i);
+  });
+
+  it('rejects Overpayment and Order cancellation on the same request', () => {
+    const r = validateRefundSameRequestOverlapCategoriesNgn([
+      { category: 'Overpayment', amountNgn: 10_000 },
+      { category: 'Order cancellation', amountNgn: 500_000 },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/double-count/i);
+  });
+
+  it('allows Overpayment and Unproduced meterage on the same request when within caps', () => {
+    const caps = buildRefundCategorySuggestedMaxNgn([
+      { category: 'Overpayment', amountNgn: 1_215_800 },
+      { category: 'Unproduced meterage', amountNgn: 335_820 },
+    ]);
+    const r = validateRefundCalculationLinesNgn({
+      cashInNgn: 5_150_000,
+      quoteTotalNgn: 3_934_200,
+      totalRefundedNgn: 0,
+      calculationLines: [
+        { category: 'Overpayment', amountNgn: 1_215_800 },
+        { category: 'Unproduced meterage', amountNgn: 335_820 },
+      ],
+      categorySuggestedMaxNgn: caps,
+    });
+    expect(r.ok).toBe(true);
   });
 
   it('full receipt on quote counts all cash for refund cap (no split companion)', () => {

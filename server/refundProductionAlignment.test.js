@@ -64,7 +64,7 @@ describe('refundProductionAlignment', () => {
     expect(issues.some((i) => i.code === 'cancellation_with_production')).toBe(true);
   });
 
-  it('flags multi-category overlap', () => {
+  it('flags multi-category overlap across prior and current refunds', () => {
     const db = memDb();
     db.data.customer_refunds.push({
       quotation_ref: 'Q1',
@@ -77,6 +77,25 @@ describe('refundProductionAlignment', () => {
     expect(String(overlap.message)).toMatch(/Prior refund/i);
     expect(overlap.priorRefundCategories).toEqual(['Overpayment']);
     expect(overlap.currentRequestCategories).toEqual(['Order cancellation']);
+  });
+
+  it('blocks same-request Overpayment plus Order cancellation', () => {
+    const db = memDb();
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Overpayment', 'Order cancellation']);
+    const overlap = issues.find((i) => i.code === 'multi_category_overlap_same_request');
+    expect(overlap).toBeTruthy();
+    expect(overlap.submitAction).toBeUndefined();
+    const enriched = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Overpayment', 'Order cancellation'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(enriched.ok).toBe(false);
+    expect(enriched.blockedCode).toBe('multi_category_overlap_same_request');
+  });
+
+  it('does not flag Overpayment plus Unproduced meterage on the same request', () => {
+    const db = memDb();
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Overpayment', 'Unproduced meterage']);
+    expect(issues.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
   });
 
   it('blocks cancellation with production unless BM override note', () => {

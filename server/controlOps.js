@@ -39,12 +39,16 @@ import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pri
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 import {
+  buildRefundCategorySuggestedMaxNgn,
   quotationOverpaymentExcessNgn,
   quotationRefundHardCapNgn,
   quotationRefundHeadroomNgn,
   quotationRemainingRefundableNgn,
   validateRefundCalculationLinesNgn,
+  validateRefundCategorySuggestedCapsNgn,
+  validateRefundSameRequestOverlapCategoriesNgn,
 } from '../shared/lib/refundQuotationMoney.js';
+import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import {
@@ -1489,6 +1493,12 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       };
     }
 
+    const lineArithmetic = validateRefundCalculationLineArithmetic(
+      calcLinesRaw,
+      REFUND_AMOUNT_LINE_TOLERANCE_NGN
+    );
+    if (!lineArithmetic.ok) return lineArithmetic;
+
     if (quotationRef) {
       if (quotationHasUnclearedReceipts(db, quotationRef)) {
         return {
@@ -1564,11 +1574,20 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           error: elig.mdReviewError,
         };
       }
+      const previewForCaps = previewRefundRequest(db, {
+        quotationRef,
+        includeCustomerCommission: requestedCats.includes('Customer commission'),
+      });
+      const categorySuggestedMaxNgn = previewForCaps.ok
+        ? buildRefundCategorySuggestedMaxNgn(previewForCaps.preview?.suggestedLines)
+        : {};
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,
         quoteTotalNgn: elig.quoteTotalNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
         calculationLines: calcLinesRaw,
+        categorySuggestedMaxNgn,
+        toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
       });
       if (!lineValidation.ok) return lineValidation;
       if (amountNgn > lineValidation.hardCapNgn) {
@@ -1732,6 +1751,27 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           )}).`,
         };
       }
+      let storedSuggestedLines = [];
+      try {
+        const parsed = JSON.parse(String(row.suggested_lines_json || '[]'));
+        storedSuggestedLines = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        storedSuggestedLines = [];
+      }
+      const categorySuggestedMaxNgn = buildRefundCategorySuggestedMaxNgn(storedSuggestedLines);
+      const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(decideCalcLines);
+      if (!overlapCheck.ok) return overlapCheck;
+      const capCheck = validateRefundCategorySuggestedCapsNgn({
+        calculationLines: decideCalcLines,
+        categorySuggestedMaxNgn,
+        toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+      });
+      if (!capCheck.ok) return capCheck;
+      const lineArithmetic = validateRefundCalculationLineArithmetic(
+        decideCalcLines,
+        REFUND_AMOUNT_LINE_TOLERANCE_NGN
+      );
+      if (!lineArithmetic.ok) return lineArithmetic;
     }
   }
   const requestedAmountNgn = roundMoney(row.amount_ngn);
@@ -2548,6 +2588,7 @@ export function previewRefundRequest(db, payload) {
   }
 
   const cappedSuggestedLines = suggestedLines;
+  const categorySuggestedMaxNgn = buildRefundCategorySuggestedMaxNgn(cappedSuggestedLines);
 
   const suggestedAmountNgn = cappedSuggestedLines.reduce(
     (sum, line) => sum + roundMoney(line.amountNgn),
@@ -2742,6 +2783,7 @@ export function previewRefundRequest(db, payload) {
       substitutionPerMeterBreakdown,
       suggestedAmountNgn,
       suggestedLines: cappedSuggestedLines,
+      categorySuggestedMaxNgn,
       warnings,
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,

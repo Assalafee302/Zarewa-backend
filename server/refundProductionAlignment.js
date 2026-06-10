@@ -12,6 +12,7 @@ const SUBMIT_ACTION_BY_CODE = {
   cancellation_with_production: 'block',
   partial_production_cancellation: 'acknowledge',
   multi_category_overlap: 'acknowledge',
+  multi_category_overlap_same_request: 'block',
   suggest_unproduced_meterage: 'info',
 };
 
@@ -117,38 +118,56 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
-  const hasOverpay = [...refundCats].some((c) => c.includes('overpay'));
-  const hasCancelOrUnprod = [...refundCats].some(
-    (c) => c.includes('order cancellation') || c.includes('unproduced')
-  );
-  if (hasOverpay && hasCancelOrUnprod) {
-    const priorCategories = [];
-    for (const r of refunds) {
-      for (const c of parseReasonCategories(r.reason_category)) {
-        const label = String(c || '').trim();
-        if (label && !priorCategories.includes(label)) priorCategories.push(label);
-      }
+  const currentCategories = (Array.isArray(selectedCategories)
+    ? selectedCategories
+    : parseReasonCategories(selectedCategories)
+  )
+    .map((c) => String(c || '').trim())
+    .filter(Boolean);
+  const currentNorm = new Set(currentCategories.map(normCat));
+  const priorCategories = [];
+  for (const r of refunds) {
+    for (const c of parseReasonCategories(r.reason_category)) {
+      const label = String(c || '').trim();
+      if (label && !priorCategories.includes(label)) priorCategories.push(label);
     }
-    const currentCategories = (Array.isArray(selectedCategories)
-      ? selectedCategories
-      : parseReasonCategories(selectedCategories)
-    )
-      .map((c) => String(c || '').trim())
-      .filter(Boolean);
+  }
+  const priorNorm = new Set(priorCategories.map(normCat));
+
+  const currentHasOverpay = currentNorm.has('overpayment') || [...currentNorm].some((c) => c.includes('overpay'));
+  const currentHasCancel =
+    currentNorm.has('order cancellation') || [...currentNorm].some((c) => c.includes('order cancellation'));
+  const currentHasUnproduced =
+    currentNorm.has('unproduced meterage') || [...currentNorm].some((c) => c.includes('unproduced'));
+  const priorHasOverpay = [...priorNorm].some((c) => c.includes('overpay'));
+  const priorHasCancel = [...priorNorm].some((c) => c.includes('order cancellation'));
+  const priorHasUnproduced = [...priorNorm].some((c) => c.includes('unproduced'));
+
+  const sameRequestOverpayAndCancel = currentHasOverpay && currentHasCancel;
+  const crossRefundOverlap =
+    (priorHasOverpay && (currentHasCancel || currentHasUnproduced)) ||
+    ((priorHasCancel || priorHasUnproduced) && currentHasOverpay);
+
+  if (sameRequestOverpayAndCancel || crossRefundOverlap) {
     let message =
       'This quotation has Overpayment combined with cancellation/unproduced categories — verify amounts are not double-counted.';
-    if (priorCategories.length && currentCategories.length) {
+    if (sameRequestOverpayAndCancel) {
+      message =
+        'This refund request combines Overpayment with Order cancellation on the same breakdown — these double-count cash received. Remove one category or split into separate refund requests.';
+    } else if (priorCategories.length && currentCategories.length) {
       message = `Prior refund(s) on this quote (${priorCategories.join(', ')}) overlap with this request (${currentCategories.join(', ')}). Overpayment must not be double-counted with Order cancellation or Unproduced meterage on the same quotation.`;
     } else if (priorCategories.length > 1) {
       message = `Multiple refund categories already exist on this quote (${priorCategories.join(', ')}). Verify Overpayment is not combined with Order cancellation or Unproduced meterage in a way that double-counts the same economic loss.`;
     }
     issues.push({
-      code: 'multi_category_overlap',
-      severity: 'warning',
+      code: sameRequestOverpayAndCancel ? 'multi_category_overlap_same_request' : 'multi_category_overlap',
+      severity: sameRequestOverpayAndCancel ? 'error' : 'warning',
       title: 'Multi-category overlap',
       message,
       priorRefundCategories: priorCategories,
       currentRequestCategories: currentCategories,
+      sameRequestOverpayAndCancel,
+      crossRefundOverlap,
     });
   }
 

@@ -66,6 +66,93 @@ export function quotationIndependentRefundLinesSumNgn(suggestedLines) {
 }
 
 /**
+ * Sum included refund line amounts per canonical category (expands bundled appliesToCategories).
+ * @param {Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[] }>} calculationLines
+ * @returns {Record<string, number>}
+ */
+export function sumRefundCalculationLinesByCategoryNgn(calculationLines) {
+  /** @type {Record<string, number>} */
+  const sums = {};
+  for (const line of calculationLines || []) {
+    if (line?.include === false) continue;
+    const amt = roundRefundMoney(line.amountNgn);
+    if (amt <= 0) continue;
+    const multi = line.appliesToCategories;
+    const cats =
+      Array.isArray(multi) && multi.length
+        ? multi.map((c) => String(c || '').trim()).filter(Boolean)
+        : [String(line.category || '').trim()].filter(Boolean);
+    for (const cat of cats) {
+      sums[cat] = (sums[cat] || 0) + amt;
+    }
+  }
+  return sums;
+}
+
+/**
+ * Per-category ceilings from preview suggested lines (manual edits may reduce, not increase).
+ * @param {Array<{ category?: string, amountNgn?: number, appliesToCategories?: string[] }>} suggestedLines
+ * @returns {Record<string, number>}
+ */
+export function buildRefundCategorySuggestedMaxNgn(suggestedLines) {
+  return sumRefundCalculationLinesByCategoryNgn(
+    (suggestedLines || []).map((line) => ({ ...line, include: true }))
+  );
+}
+
+/**
+ * @param {{
+ *   calculationLines: Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[] }>,
+ *   categorySuggestedMaxNgn?: Record<string, number>,
+ *   toleranceNgn?: number,
+ * }} p
+ */
+export function validateRefundCategorySuggestedCapsNgn({
+  calculationLines,
+  categorySuggestedMaxNgn,
+  toleranceNgn = 1,
+}) {
+  const caps = categorySuggestedMaxNgn || {};
+  const sums = sumRefundCalculationLinesByCategoryNgn(calculationLines);
+  for (const [cat, sum] of Object.entries(sums)) {
+    const cap = roundRefundMoney(caps[cat]);
+    if (cap <= 0) continue;
+    if (sum > cap + toleranceNgn) {
+      return {
+        ok: false,
+        error: `${cat} refund (₦${sum.toLocaleString(
+          'en-NG'
+        )}) cannot exceed the system-calculated amount for this category (₦${cap.toLocaleString(
+          'en-NG'
+        )}). Lower line amounts — manual adjustment may reduce, not increase, the preview figure.`,
+        category: cat,
+        sumNgn: sum,
+        maxNgn: cap,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Overpayment + Order cancellation on one request double-count cash received.
+ * @param {Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[] }>} calculationLines
+ */
+export function validateRefundSameRequestOverlapCategoriesNgn(calculationLines) {
+  const sums = sumRefundCalculationLinesByCategoryNgn(calculationLines);
+  const hasOverpay = (sums.Overpayment || 0) > 0;
+  const hasCancel = (sums['Order cancellation'] || 0) > 0;
+  if (hasOverpay && hasCancel) {
+    return {
+      ok: false,
+      error:
+        'Overpayment and Order cancellation cannot appear on the same refund request — they double-count the same cash. Use one category or separate refund requests.',
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Remaining refundable for UI / preview: overpayment excess + independent category amounts, capped by cash hard cap.
  * @param {{
  *   cashInNgn: number,
@@ -100,6 +187,8 @@ export function validateRefundCalculationLinesNgn({
   quoteTotalNgn,
   totalRefundedNgn,
   calculationLines,
+  categorySuggestedMaxNgn,
+  toleranceNgn = 1,
 }) {
   const lines = Array.isArray(calculationLines) ? calculationLines : [];
   const cashIn = roundRefundMoney(cashInNgn);
@@ -108,17 +197,30 @@ export function validateRefundCalculationLinesNgn({
   const hardCap = quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: refunded });
   const overpayMax = quotationOverpaymentExcessNgn({ cashInNgn: cashIn, quoteTotalNgn: quoteTotal });
 
+  const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);
+  if (!overlapCheck.ok) return overlapCheck;
+
+  const categoryCapCheck = validateRefundCategorySuggestedCapsNgn({
+    calculationLines: lines,
+    categorySuggestedMaxNgn,
+    toleranceNgn,
+  });
+  if (!categoryCapCheck.ok) return categoryCapCheck;
+
   let sum = 0;
+  const sumsByCategory = sumRefundCalculationLinesByCategoryNgn(lines);
+  const overpayLineTotal = roundRefundMoney(sumsByCategory.Overpayment);
+  if (overpayLineTotal > 0 && overpayMax >= 0 && overpayLineTotal > overpayMax + toleranceNgn) {
+    return {
+      ok: false,
+      error: `Overpayment refund cannot exceed ₦${overpayMax.toLocaleString('en-NG')} (payment received minus quote total on this quotation).`,
+    };
+  }
+
   for (const line of lines) {
+    if (line?.include === false) continue;
     const amt = roundRefundMoney(line.amountNgn);
     if (amt <= 0) continue;
-    const cat = String(line.category || '').trim();
-    if (cat === 'Overpayment' && overpayMax >= 0 && amt > overpayMax) {
-      return {
-        ok: false,
-        error: `Overpayment refund cannot exceed ₦${overpayMax.toLocaleString('en-NG')} (payment received minus quote total on this quotation).`,
-      };
-    }
     sum += amt;
   }
 

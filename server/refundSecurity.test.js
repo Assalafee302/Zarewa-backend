@@ -120,6 +120,12 @@ function seedData(db) {
   ).run();
 
   db.prepare(
+    `UPDATE sales_receipts
+     SET finance_reconciliation_saved_at_iso = '2026-04-01T12:00:00Z'
+     WHERE quotation_ref LIKE 'QT-RFS-%'`
+  ).run();
+
+  db.prepare(
     `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
      VALUES ('JOB-RFS-SELF', 'QT-RFS-SELF-002', 0, 'Cancelled', '2026-04-01T10:00:00Z')`
   ).run();
@@ -831,6 +837,27 @@ describe('Refund Security & Substitution Logic', () => {
     const res = await agent.get('/api/refunds/eligibility-check');
     expect(res.status).toBe(400);
     expect(res.body.ok).toBe(false);
+  });
+
+  it('rejects POST /api/refunds when a line exceeds system-calculated category max', async () => {
+    const agent = request.agent(app);
+    await loginAs(agent, 'sales.staff', 'Sales@123');
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-OVR-001' });
+    expect(preview.status).toBe(200);
+    const overLine = (preview.body.preview?.suggestedLines || []).find((l) => l.category === 'Overpayment');
+    expect(overLine).toBeTruthy();
+    const inflated = Math.round(Number(overLine.amountNgn) || 0) + 5000;
+    const res = await agent.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-OVR-001',
+      reasonCategory: ['Overpayment'],
+      amountNgn: inflated,
+      calculationLines: [{ label: 'Overpayment', amountNgn: inflated, category: 'Overpayment' }],
+      ...REFUND_PAYEE,
+    });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error || '')).toMatch(/system-calculated|Overpayment/i);
   });
 
   it('rejects POST /api/refunds when amountNgn does not match sum of included calculation lines', async () => {

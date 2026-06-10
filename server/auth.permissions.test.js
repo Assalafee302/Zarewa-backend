@@ -47,18 +47,28 @@ describe('ensureSalesDeskPermissions', () => {
   });
 });
 
-describe('storekeeper role', () => {
-  it('matches operations_officer floor permissions including stone production register', () => {
+describe('operations_officer role aliases', () => {
+  it('normalizes legacy storekeeper keys to operations_officer permissions', () => {
     const ops = permissionsForRole('operations_officer');
-    const store = permissionsForRole('storekeeper');
-    expect(store).toContain('production.manage');
-    expect(store).toContain('production.release');
-    expect(store).toContain('operations.manage');
-    expect(store).toEqual(ops);
+    expect(ops).toContain('production.manage');
+    expect(ops).toContain('production.release');
+    expect(ops).toContain('operations.manage');
+    expect(permissionsForRole('storekeeper')).toEqual(ops);
+    expect(permissionsForRole('store_keeper')).toEqual(ops);
   });
+});
 
-  it('normalizes store_keeper alias', () => {
-    expect(permissionsForRole('store_keeper')).toEqual(permissionsForRole('storekeeper'));
+describe('publicUserFromRow role normalization', () => {
+  it('returns operations_officer for legacy storekeeper logins', () => {
+    const user = publicUserFromRow({
+      id: 'U-SK',
+      username: 'store1',
+      role_key: 'storekeeper',
+      department: 'storekeeper',
+      permissions_json: null,
+    });
+    expect(user.roleKey).toBe('operations_officer');
+    expect(user.roleLabel).toBe('Operations officer / Store keeper');
   });
 });
 

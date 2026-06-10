@@ -36,7 +36,6 @@ const APPROVER_ROLES = new Set([
   'sales_manager',
   'finance_manager',
   'operations_officer',
-  'storekeeper',
 ]);
 
 /**

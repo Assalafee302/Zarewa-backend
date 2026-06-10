@@ -13,7 +13,6 @@ export const WORKSPACE_ROLE_KEYS = [
   'sales_staff',
   'cashier',
   'operations_officer',
-  'storekeeper',
   'viewer',
 ];
 
@@ -24,8 +23,8 @@ const LEGACY_DEPARTMENT_TO_ROLE = {
   /** Store floor / stock — operations officer (production register, GRN, adjustments). */
   inventory: 'operations_officer',
   production: 'operations_officer',
-  storekeeper: 'storekeeper',
-  store_keeper: 'storekeeper',
+  storekeeper: 'operations_officer',
+  store_keeper: 'operations_officer',
   purchase: 'md',
   finance: 'finance_manager',
   reports: 'sales_staff',

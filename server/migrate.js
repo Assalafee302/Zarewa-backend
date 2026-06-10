@@ -4023,14 +4023,14 @@ function migrateOrganisationRoles2026(db) {
       `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL WHERE role_key = 'procurement_officer'`
     ).run();
     db.prepare(
-      `UPDATE app_users SET role_key = 'storekeeper', permissions_json = NULL, department = 'storekeeper'
-       WHERE lower(replace(trim(COALESCE(department, '')), ' ', '_')) IN ('storekeeper', 'store_keeper')
-         AND role_key NOT IN ('admin', 'md', 'sales_manager')`
+      `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL, department = 'operations_officer'
+       WHERE role_key IN ('storekeeper', 'store_keeper')
+          OR lower(replace(trim(COALESCE(department, '')), ' ', '_')) IN ('storekeeper', 'store_keeper')`
     ).run();
     db.prepare(
       `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL, department = 'operations_officer'
        WHERE lower(replace(trim(COALESCE(department, '')), ' ', '_')) IN ('inventory', 'production')
-         AND role_key NOT IN ('admin', 'md', 'operations_officer', 'sales_manager', 'storekeeper')`
+         AND role_key NOT IN ('admin', 'md', 'operations_officer', 'sales_manager')`
     ).run();
   } catch {
     /* ignore */

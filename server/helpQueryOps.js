@@ -789,6 +789,7 @@ function roleQuickPrompts(roleKey) {
         { label: 'Unlock period', query: 'Accounting period locked — who can open it?' },
       ];
     case 'storekeeper':
+    case 'operations_officer':
     case 'operations':
       return [
         { label: 'GRN steps', query: 'How do I complete GRN when material arrives?' },

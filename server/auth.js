@@ -159,14 +159,14 @@ export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
   'material_incidents.create',
 ];
 
-/** Store floor + production register (coil and stone-coated). Store keeper ≡ operations officer. */
-/** Normalize role key aliases (`store_keeper` → `storekeeper`). */
+/** Store floor + production register (coil and stone-coated). One role: operations officer / store keeper. */
+/** Normalize legacy role aliases (`storekeeper`, `store_keeper` → `operations_officer`). */
 export function normalizeRoleKey(roleKey) {
   const rk = String(roleKey || '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_');
-  if (rk === 'store_keeper') return 'storekeeper';
+  if (rk === 'storekeeper' || rk === 'store_keeper') return 'operations_officer';
   return rk;
 }
 
@@ -242,9 +242,6 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
-      'sales.view',
-      'customers.manage',
-      'quotations.manage',
       'receipts.post',
       'refunds.request',
       'expenses.create',
@@ -320,11 +317,7 @@ export const ROLE_DEFINITIONS = {
     ],
   },
   operations_officer: {
-    label: 'Operations officer',
-    permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS],
-  },
-  storekeeper: {
-    label: 'Store keeper',
+    label: 'Operations officer / Store keeper',
     permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS],
   },
   ceo: {
@@ -639,10 +632,9 @@ export function ensureStoreFloorPermissions(permissions, ctx = {}) {
     .toLowerCase()
     .replace(/\s+/g, '_');
   const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
+  const normalizedRk = normalizeRoleKey(rk);
   const needsFloor =
-    rk === 'operations_officer' ||
-    rk === 'storekeeper' ||
-    rk === 'store_keeper' ||
+    normalizedRk === 'operations_officer' ||
     STORE_FLOOR_DEPARTMENT_LABELS.has(rawDept) ||
     deptRole === 'operations_officer';
   if (!needsFloor) return;
@@ -663,13 +655,7 @@ export const SALES_DESK_PERMISSION_KEYS = [
   'refunds.request',
 ];
 
-const SALES_DESK_DEPARTMENT_LABELS = new Set([
-  'sales',
-  'customer',
-  'general',
-  'sales_staff',
-  'cashier',
-]);
+const SALES_DESK_DEPARTMENT_LABELS = new Set(['sales', 'customer', 'general', 'sales_staff']);
 
 /**
  * @param {string[]} permissions — mutated in place
@@ -685,10 +671,8 @@ export function ensureSalesDeskPermissions(permissions, ctx = {}) {
   const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
   const needsSales =
     rk === 'sales_staff' ||
-    rk === 'cashier' ||
     SALES_DESK_DEPARTMENT_LABELS.has(rawDept) ||
-    deptRole === 'sales_staff' ||
-    deptRole === 'cashier';
+    deptRole === 'sales_staff';
   if (!needsSales) return;
   for (const p of SALES_DESK_PERMISSION_KEYS) {
     if (!permissions.includes(p)) permissions.push(p);
@@ -736,7 +720,6 @@ const EDIT_APPROVER_ROLE_KEYS = new Set([
   'sales_manager',
   'finance_manager',
   'operations_officer',
-  'storekeeper',
 ]);
 
 /** @param {object|null|undefined} user */
@@ -749,7 +732,7 @@ export function editMutationRequiresSecondApproval(user) {
 /** @param {object|null|undefined} user */
 export function userCanApproveEditMutations(user) {
   if (!user) return false;
-  const rk = String(user.roleKey || '').trim().toLowerCase();
+  const rk = normalizeRoleKey(user.roleKey);
   if (EDIT_APPROVER_ROLE_KEYS.has(rk)) return true;
   return userHasPermission(user, 'quotations.manage');
 }
@@ -761,19 +744,18 @@ const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set([
   'sales_manager',
   'branch_manager',
   'operations_officer',
-  'storekeeper',
 ]);
 
 /** @param {object|null|undefined} user */
 export function userMayEditCoilLotMasterData(user) {
   if (!user) return false;
-  const rk = String(user.roleKey || '').trim().toLowerCase();
+  const rk = normalizeRoleKey(user.roleKey);
   return COIL_LOT_MASTER_EDIT_ROLE_KEYS.has(rk);
 }
 
 export function publicUserFromRow(row) {
   if (!row) return null;
-  const roleKey = row.role_key ?? row.roleKey;
+  const roleKey = normalizeRoleKey(row.role_key ?? row.roleKey);
   const emailRaw = row.email ?? null;
   const avatarRaw = row.avatar_url ?? row.avatarUrl ?? null;
   const storedDepartment = String(row.department ?? row.role_key ?? roleKey ?? '')

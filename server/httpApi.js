@@ -6505,7 +6505,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/refunds/production-alignment-check', requirePermission('refunds.request'), (req, res) => {
+  app.post('/api/refunds/production-alignment-check', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
       const body = req.body || {};
       const quotationRef = String(body.quotationRef ?? '').trim();

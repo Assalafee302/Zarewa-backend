@@ -122,12 +122,33 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     (c) => c.includes('order cancellation') || c.includes('unproduced')
   );
   if (hasOverpay && hasCancelOrUnprod) {
+    const priorCategories = [];
+    for (const r of refunds) {
+      for (const c of parseReasonCategories(r.reason_category)) {
+        const label = String(c || '').trim();
+        if (label && !priorCategories.includes(label)) priorCategories.push(label);
+      }
+    }
+    const currentCategories = (Array.isArray(selectedCategories)
+      ? selectedCategories
+      : parseReasonCategories(selectedCategories)
+    )
+      .map((c) => String(c || '').trim())
+      .filter(Boolean);
+    let message =
+      'This quotation has Overpayment combined with cancellation/unproduced categories — verify amounts are not double-counted.';
+    if (priorCategories.length && currentCategories.length) {
+      message = `Prior refund(s) on this quote (${priorCategories.join(', ')}) overlap with this request (${currentCategories.join(', ')}). Overpayment must not be double-counted with Order cancellation or Unproduced meterage on the same quotation.`;
+    } else if (priorCategories.length > 1) {
+      message = `Multiple refund categories already exist on this quote (${priorCategories.join(', ')}). Verify Overpayment is not combined with Order cancellation or Unproduced meterage in a way that double-counts the same economic loss.`;
+    }
     issues.push({
       code: 'multi_category_overlap',
       severity: 'warning',
       title: 'Multi-category overlap',
-      message:
-        'This quotation has Overpayment combined with cancellation/unproduced categories — verify amounts are not double-counted.',
+      message,
+      priorRefundCategories: priorCategories,
+      currentRequestCategories: currentCategories,
     });
   }
 

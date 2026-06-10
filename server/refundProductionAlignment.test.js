@@ -72,7 +72,11 @@ describe('refundProductionAlignment', () => {
       status: 'Paid',
     });
     const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
-    expect(issues.some((i) => i.code === 'multi_category_overlap')).toBe(true);
+    const overlap = issues.find((i) => i.code === 'multi_category_overlap');
+    expect(overlap).toBeTruthy();
+    expect(String(overlap.message)).toMatch(/Prior refund/i);
+    expect(overlap.priorRefundCategories).toEqual(['Overpayment']);
+    expect(overlap.currentRequestCategories).toEqual(['Order cancellation']);
   });
 
   it('blocks cancellation with production unless BM override note', () => {

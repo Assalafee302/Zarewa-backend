@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { coilDamagePreview, validateCoilDamagePayload } from './coilDamageRecordCore.js';
+import {
+  coilDamagePreview,
+  normalizeDamageLinesForPayload,
+  sumDamageLineMeters,
+  validateCoilDamagePayload,
+} from './coilDamageRecordCore.js';
 
 describe('coilDamageRecordCore', () => {
   it('computes preview conversion from before/after kg and metres', () => {
@@ -18,6 +23,27 @@ describe('coilDamageRecordCore', () => {
       note: 'Damage section cut',
     });
     expect(r.ok).toBe(false);
+  });
+
+  it('sums metres from damaged section lines', () => {
+    const lines = normalizeDamageLinesForPayload([
+      { lengthM: 4.5, quantity: 10 },
+      { lengthM: 2, quantity: 5 },
+    ]);
+    expect(lines).toHaveLength(2);
+    expect(sumDamageLineMeters(lines)).toBeCloseTo(55, 2);
+    const r = validateCoilDamagePayload(
+      {
+        coilNo: 'C-1',
+        beforeKg: 100,
+        afterKg: 80,
+        lines,
+        note: 'Two stained bands cut out',
+      },
+      { maxRemoveKg: 100 }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.meters).toBeCloseTo(55, 2);
   });
 
   it('rejects kg above unreserved max', () => {

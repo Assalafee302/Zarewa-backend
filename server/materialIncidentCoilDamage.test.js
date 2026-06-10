@@ -71,6 +71,32 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(row.production_job_id).toBe('JOB-99');
   });
 
+  it('creates incident from damaged section lines', () => {
+    const r = createCoilDamageMaterialIncident(
+      db,
+      {
+        coilNo: 'C-DMG-1',
+        beforeKg: 4800,
+        afterKg: 4400,
+        lines: [
+          { lengthM: 4.5, quantity: 10, conditionNote: 'Rust band A' },
+          { lengthM: 50, quantity: 2, conditionNote: 'Stain edge' },
+        ],
+        note: 'Two damaged bands cut from mid-roll',
+        submit: false,
+      },
+      { workspaceBranchId: 'BR-001', actor: { userId: 'u1', displayName: 'Store' } }
+    );
+    expect(r.ok).toBe(true);
+    const row = db.prepare(`SELECT total_meters, gauge_label, colour, product_id FROM material_incidents WHERE id = ?`).get(r.id);
+    expect(row.total_meters).toBeCloseTo(145, 2);
+    expect(row.gauge_label).toBe('0.45mm');
+    expect(row.colour).toBe('Traffic Black');
+    expect(row.product_id).toBe('COIL-ALU');
+    const lineCount = db.prepare(`SELECT COUNT(*) AS n FROM material_incident_lines WHERE incident_id = ?`).get(r.id);
+    expect(lineCount.n).toBe(2);
+  });
+
   it('rejects kg removal above unreserved balance', () => {
     const r = createCoilDamageMaterialIncident(
       db,

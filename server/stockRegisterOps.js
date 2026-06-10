@@ -37,6 +37,7 @@ import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionJobCoils } from './productionTraceability.js';
 import { isBranchManagerApprovalAuthority, isExecutiveRoleKey } from '../shared/workspaceGovernance.js';
 import { purchaseWeightedAvgUnitPriceLastDays, purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
+import { materialIncidentDamageSummaryForPeriod } from './materialIncidentOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -161,6 +162,9 @@ function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
   const register =
     viewMode === 'finance' ? pack : prepareRegisterForView(pack, viewMode === 'procurement' ? 'procurement' : viewMode);
 
+  const materialDamageSummary = materialIncidentDamageSummaryForPeriod(db, bid, start, end);
+  register.materialDamageSummary = materialDamageSummary;
+
   return {
     ok: true,
     register,
@@ -168,6 +172,7 @@ function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
     periodEnd: end,
     workflow: mapPeriodRow(periodRow) || { status: 'draft', periodKey, periodEndIso: end, branchId: bid },
     fullPack: pack,
+    materialDamageSummary,
   };
 }
 

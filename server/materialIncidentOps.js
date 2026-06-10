@@ -401,13 +401,27 @@ export function listPendingCoilDamageIncidents(db, branchScope) {
     });
 }
 
+function materialFamilyFromCoil(db, coil) {
+  const pid = String(coil?.product_id || '').trim();
+  if (pid === 'PRD-102') return 'aluzinc';
+  if (pid === 'COIL-ALU' || pid.startsWith('COIL-')) return 'aluminium';
+  try {
+    const row = db.prepare(`SELECT material_type, name FROM products WHERE product_id = ? LIMIT 1`).get(pid);
+    const comb = `${String(row?.material_type || '')} ${String(row?.name || '')}`.toLowerCase();
+    if (comb.includes('aluzinc') || comb.includes('ppgi') || comb.includes('galvan')) return 'aluzinc';
+    if (comb.includes('stone')) return 'stone_meter';
+  } catch {
+    /* ignore */
+  }
+  return 'aluminium';
+}
+
 export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   if (!materialIncidentsTableReady(db)) return { ok: false, error: 'Material incidents module is not migrated.' };
 
   const coilNo = String(payload.coilNo ?? payload.coil_no ?? '').trim();
   const beforeKg = Number(payload.beforeKg ?? payload.before_kg);
   const afterKg = Number(payload.afterKg ?? payload.after_kg);
-  const meters = Number(payload.meters ?? payload.metersDamaged ?? payload.meters_damaged);
   const productionJobId = String(payload.productionJobId ?? payload.production_job_id ?? '').trim();
   const note = String(payload.note ?? payload.storekeeperRemark ?? payload.storekeeper_remark ?? '').trim();
   const returnDisposition = String(payload.returnDisposition ?? payload.return_disposition ?? 'offcut_pool').trim();
@@ -425,7 +439,7 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   const qtyRes = Math.max(0, Number(coil.qty_reserved) || 0);
   const maxRemove = qtyRem - qtyRes;
   const validated = validateCoilDamagePayload(
-    { coilNo, beforeKg, afterKg, meters, note, returnDisposition },
+    { coilNo, beforeKg, afterKg, meters: payload.meters, lines: payload.lines, note, returnDisposition },
     {
       maxRemoveKg: maxRemove,
       supplierConversionKgPerM: coil.supplier_conversion_kg_per_m,
@@ -434,38 +448,45 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   if (!validated.ok) return validated;
 
   const kgDeducted = validated.kgDeducted;
+  const meters = validated.meters;
+  const incidentLines =
+    validated.lines?.length > 0
+      ? validated.lines.map((ln) => ({
+          lengthM: ln.lengthM,
+          quantity: ln.quantity,
+          conditionNote: ln.conditionNote || 'Damaged section',
+        }))
+      : [
+          {
+            lengthM: meters,
+            quantity: 1,
+            conditionNote: String(payload.conditionNote ?? payload.condition_note ?? 'Damaged section').trim() || 'Damaged section',
+          },
+        ];
+
   if (productionJobId) {
     const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(productionJobId);
     if (!job) return { ok: false, error: `Production job ${productionJobId} not found.` };
   }
 
   const incidentType = productionJobId ? 'production_error' : 'coil_stain';
+  const storekeeperDisplay =
+    String(payload.storekeeperDisplay ?? payload.storekeeper_display ?? actorName(opts.actor) ?? '').trim() || undefined;
   const draftPayload = {
     incidentType,
-    materialFamily: String(payload.materialFamily ?? payload.material_family ?? 'aluminium').trim() || 'aluminium',
-    productId: String(payload.productId ?? payload.product_id ?? coil.product_id ?? '').trim(),
-    gaugeLabel: String(payload.gaugeLabel ?? payload.gauge_label ?? coil.gauge_label ?? '').trim(),
-    colour: String(payload.colour ?? coil.colour ?? '').trim(),
+    materialFamily: String(payload.materialFamily ?? payload.material_family ?? materialFamilyFromCoil(db, coil)).trim() || 'aluminium',
+    productId: String(coil.product_id ?? '').trim(),
+    gaugeLabel: String(coil.gauge_label ?? '').trim(),
+    colour: String(coil.colour ?? '').trim(),
     coilNo,
     productionJobId: productionJobId || undefined,
-    quotationRef: String(payload.quotationRef ?? payload.quotation_ref ?? '').trim() || undefined,
-    cuttingListRef: String(payload.cuttingListRef ?? payload.cutting_list_ref ?? '').trim() || undefined,
-    bookRef: String(payload.bookRef ?? payload.book_ref ?? '').trim() || undefined,
     beforeKg,
     afterKg,
     returnDisposition,
-    storekeeperDisplay: String(payload.storekeeperDisplay ?? payload.storekeeper_display ?? '').trim() || undefined,
-    operatorDisplay: String(payload.operatorDisplay ?? payload.operator_display ?? '').trim() || undefined,
+    storekeeperDisplay,
     storekeeperRemark: note,
-    reasonText: String(payload.reasonText ?? payload.reason_text ?? '').trim() || undefined,
     dateISO: String(payload.dateISO ?? payload.date_iso ?? new Date().toISOString().slice(0, 10)).trim(),
-    lines: [
-      {
-        lengthM: meters,
-        quantity: 1,
-        conditionNote: String(payload.conditionNote ?? payload.condition_note ?? 'Damaged section').trim() || 'Damaged section',
-      },
-    ],
+    lines: incidentLines,
   };
 
   const created = createMaterialIncidentDraft(db, draftPayload, opts);
@@ -1126,6 +1147,73 @@ export function materialIncidentLossReport(db, branchScope) {
     totalMeters: Number(r.m) || 0,
     count: Number(r.c) || 0,
   }));
+}
+
+/**
+ * Posted material damage / offcut incidents in a stock-register period — for month-end categories.
+ */
+export function materialIncidentDamageSummaryForPeriod(db, branchScope, periodStartIso, periodEndIso) {
+  if (!materialIncidentsTableReady(db)) {
+    return { periodStartIso, periodEndIso, categories: [], poolBalance: [], incidentIds: [] };
+  }
+  const branchId = String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const start = String(periodStartIso || '').trim();
+  const end = String(periodEndIso || '').trim();
+  const categories = db
+    .prepare(
+      `SELECT incident_type, return_disposition, material_family,
+              SUM(COALESCE(kg_deducted,0)) AS kg, SUM(total_meters) AS m, COUNT(*) AS c
+       FROM material_incidents
+       WHERE branch_id = ? AND status = 'posted' AND date_iso >= ? AND date_iso <= ?
+       GROUP BY incident_type, return_disposition, material_family
+       ORDER BY incident_type, return_disposition`
+    )
+    .all(branchId, start, end)
+    .map((r) => ({
+      incidentType: r.incident_type,
+      returnDisposition: r.return_disposition || '',
+      materialFamily: r.material_family || '',
+      kgDeducted: Number(r.kg) || 0,
+      totalMeters: Number(r.m) || 0,
+      count: Number(r.c) || 0,
+    }));
+
+  const poolBalance = db
+    .prepare(
+      `SELECT id, incident_type, gauge_label, colour, material_family, meters_available, total_meters, date_iso
+       FROM material_incidents
+       WHERE branch_id = ? AND status = 'posted' AND meters_available > 0.001
+       ORDER BY date_iso DESC, id DESC`
+    )
+    .all(branchId)
+    .map((r) => ({
+      id: r.id,
+      incidentType: r.incident_type,
+      gaugeLabel: r.gauge_label || '',
+      colour: r.colour || '',
+      materialFamily: r.material_family || '',
+      metersAvailable: Number(r.meters_available) || 0,
+      totalMeters: Number(r.total_meters) || 0,
+      dateISO: r.date_iso || '',
+    }));
+
+  const incidentIds = db
+    .prepare(
+      `SELECT id, incident_type, date_iso, total_meters, return_disposition
+       FROM material_incidents
+       WHERE branch_id = ? AND status IN ('submitted','posted') AND date_iso >= ? AND date_iso <= ?
+       ORDER BY date_iso DESC, id DESC`
+    )
+    .all(branchId, start, end)
+    .map((r) => ({
+      id: r.id,
+      incidentType: r.incident_type,
+      dateISO: r.date_iso || '',
+      totalMeters: Number(r.total_meters) || 0,
+      returnDisposition: r.return_disposition || '',
+    }));
+
+  return { periodStartIso: start, periodEndIso: end, categories, poolBalance, incidentIds };
 }
 
 /** Incidents with pool balance and age in days (for aging / slow-moving offcut report). */

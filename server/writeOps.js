@@ -3423,83 +3423,86 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
   const productID = row.product_id;
   const newRem = qtyRem - kg;
 
-  try {
-    db.transaction(() => {
-      db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
-        newRem,
-        newRem,
-        coilNo
-      );
-      finalizeCoilLotStateTx(db, coilNo);
+  const runCore = () => {
+    db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
+      newRem,
+      newRem,
+      coilNo
+    );
+    finalizeCoilLotStateTx(db, coilNo);
 
-      db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(kg, productID);
-      const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-      if (!p || Number(p.stock_level) < -1e-6) {
-        throw new Error('Raw material product stock would go negative — check coil vs book stock.');
-      }
+    db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(kg, productID);
+    const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
+    if (!p || Number(p.stock_level) < -1e-6) {
+      throw new Error('Raw material product stock would go negative — check coil vs book stock.');
+    }
 
+    appendMovementTx(db, {
+      type: 'COIL_SCRAP',
+      productID,
+      qty: -kg,
+      ref: coilNo,
+      dateISO,
+      detail: `${reason}${note ? ` — ${note}` : ''}`,
+    });
+
+    if (creditScrapInventory && scrapProductID) {
+      const sp = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(scrapProductID);
+      if (!sp) throw new Error(`Scrap product ${scrapProductID} not found.`);
+      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(kg, scrapProductID);
       appendMovementTx(db, {
-        type: 'COIL_SCRAP',
-        productID,
-        qty: -kg,
+        type: 'SCRAP_INVENTORY',
+        productID: scrapProductID,
+        qty: kg,
         ref: coilNo,
         dateISO,
-        detail: `${reason}${note ? ` — ${note}` : ''}`,
+        detail: `From ${coilNo} · ${reason}`,
       });
+    }
 
-      if (creditScrapInventory && scrapProductID) {
-        const sp = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(scrapProductID);
-        if (!sp) throw new Error(`Scrap product ${scrapProductID} not found.`);
-        db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(kg, scrapProductID);
-        appendMovementTx(db, {
-          type: 'SCRAP_INVENTORY',
-          productID: scrapProductID,
-          qty: kg,
-          ref: coilNo,
-          dateISO,
-          detail: `From ${coilNo} · ${reason}`,
-        });
-      }
+    appendAuditLog(db, {
+      actor,
+      action: 'coil.scrap',
+      entityKind: 'coil_lot',
+      entityId: coilNo,
+      status: 'success',
+      note: `${kg} kg · ${reason}`,
+      details: { coilNo, kg, reason, scrapProductID: creditScrapInventory ? scrapProductID : null },
+    });
 
-      appendAuditLog(db, {
-        actor,
-        action: 'coil.scrap',
-        entityKind: 'coil_lot',
-        entityId: coilNo,
-        status: 'success',
-        note: `${kg} kg · ${reason}`,
-        details: { coilNo, kg, reason, scrapProductID: creditScrapInventory ? scrapProductID : null },
-      });
+    const metersLog = Number(payload.meters);
+    const dmf = Number(payload.defectMFrom);
+    const dmt = Number(payload.defectMTo);
+    insertCoilControlEventTx(db, {
+      branchId: String(row.branch_id || workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+      eventKind: String(payload.controlEventKind || 'scrap_offcut').trim() || 'scrap_offcut',
+      coilNo,
+      productId: productID,
+      gaugeLabel: row.gauge_label,
+      colour: row.colour,
+      meters: Number.isFinite(metersLog) ? metersLog : null,
+      kgCoilDelta: -kg,
+      bookRef: payload.bookRef,
+      cuttingListRef: payload.cuttingListRef,
+      quotationRef: payload.quotationRef,
+      supplierId: payload.supplierID,
+      defectMFrom: Number.isFinite(dmf) ? dmf : null,
+      defectMTo: Number.isFinite(dmt) ? dmt : null,
+      supplierResolution: payload.supplierResolution,
+      outboundDestination: payload.outboundDestination,
+      creditScrapInventory: Boolean(creditScrapInventory && scrapProductID),
+      scrapProductId: creditScrapInventory ? scrapProductID : null,
+      scrapReason: reason,
+      note: note || null,
+      dateISO,
+      actorUserId: actorId(actor),
+      actorDisplay: actorName(actor),
+    });
+  };
 
-      const metersLog = Number(payload.meters);
-      const dmf = Number(payload.defectMFrom);
-      const dmt = Number(payload.defectMTo);
-      insertCoilControlEventTx(db, {
-        branchId: String(row.branch_id || workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
-        eventKind: String(payload.controlEventKind || 'scrap_offcut').trim() || 'scrap_offcut',
-        coilNo,
-        productId: productID,
-        gaugeLabel: row.gauge_label,
-        colour: row.colour,
-        meters: Number.isFinite(metersLog) ? metersLog : null,
-        kgCoilDelta: -kg,
-        bookRef: payload.bookRef,
-        cuttingListRef: payload.cuttingListRef,
-        quotationRef: payload.quotationRef,
-        supplierId: payload.supplierID,
-        defectMFrom: Number.isFinite(dmf) ? dmf : null,
-        defectMTo: Number.isFinite(dmt) ? dmt : null,
-        supplierResolution: payload.supplierResolution,
-        outboundDestination: payload.outboundDestination,
-        creditScrapInventory: Boolean(creditScrapInventory && scrapProductID),
-        scrapProductId: creditScrapInventory ? scrapProductID : null,
-        scrapReason: reason,
-        note: note || null,
-        dateISO,
-        actorUserId: actorId(actor),
-        actorDisplay: actorName(actor),
-      });
-    })();
+  try {
+    if (opts.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -3749,38 +3752,41 @@ export function postOffcutPoolReturnInward(db, payload = {}, opts = {}) {
   }
 
   let eventId = '';
+  const runCore = () => {
+    eventId = insertCoilControlEventTx(db, {
+      branchId,
+      eventKind: 'return_inward_pool',
+      coilNo,
+      productId,
+      gaugeLabel,
+      colour,
+      meters,
+      kgCoilDelta: 0,
+      kgBook: Number.isFinite(kgBook) ? kgBook : null,
+      bookRef,
+      cuttingListRef: cuttingListRef || null,
+      quotationRef: quotationRef || null,
+      customerLabel: customerLabel || null,
+      note: note || null,
+      dateISO,
+      actorUserId: actorId(actor),
+      actorDisplay: actorName(actor),
+      materialIncidentId: String(payload.materialIncidentId ?? '').trim() || null,
+    });
+    appendAuditLog(db, {
+      actor,
+      action: 'coil.offcut_return_inward',
+      entityKind: 'coil_control_event',
+      entityId: eventId,
+      status: 'success',
+      note: `${meters} m · ${bookRef}`,
+      details: { meters, bookRef, productId, gaugeLabel, colour, coilNo },
+    });
+  };
+
   try {
-    db.transaction(() => {
-      eventId = insertCoilControlEventTx(db, {
-        branchId,
-        eventKind: 'return_inward_pool',
-        coilNo,
-        productId,
-        gaugeLabel,
-        colour,
-        meters,
-        kgCoilDelta: 0,
-        kgBook: Number.isFinite(kgBook) ? kgBook : null,
-        bookRef,
-        cuttingListRef: cuttingListRef || null,
-        quotationRef: quotationRef || null,
-        customerLabel: customerLabel || null,
-        note: note || null,
-        dateISO,
-        actorUserId: actorId(actor),
-        actorDisplay: actorName(actor),
-        materialIncidentId: String(payload.materialIncidentId ?? '').trim() || null,
-      });
-      appendAuditLog(db, {
-        actor,
-        action: 'coil.offcut_return_inward',
-        entityKind: 'coil_control_event',
-        entityId: eventId,
-        status: 'success',
-        note: `${meters} m · ${bookRef}`,
-        details: { meters, bookRef, productId, gaugeLabel, colour, coilNo },
-      });
-    })();
+    if (opts.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

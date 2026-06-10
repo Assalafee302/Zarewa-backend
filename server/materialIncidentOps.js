@@ -8,7 +8,7 @@ import {
   isCoilDamageIncident,
   validateCoilDamagePayload,
 } from '../shared/lib/coilDamageRecordCore.js';
-import { DEFAULT_BRANCH_ID } from './branches.js';
+import { branchDisplayName, DEFAULT_BRANCH_ID } from './branches.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { isBranchManagerApprovalAuthority } from '../shared/workspaceGovernance.js';
 import { appendAuditLog, assertPeriodOpen, insertRefundRequest } from './controlOps.js';
@@ -208,10 +208,14 @@ function loadIncidentDetail(db, id) {
 }
 
 function canApproveMaterialIncident(actor) {
+  const roleKey = String(actor?.roleKey ?? actor?.role_key ?? actor?.role ?? '')
+    .trim()
+    .toLowerCase();
   return (
     userHasPermission(actor, 'material_incidents.approve') ||
     userHasPermission(actor, '*') ||
-    isBranchManagerApprovalAuthority(actor?.roleKey ?? actor?.role_key ?? actor?.role)
+    isBranchManagerApprovalAuthority(roleKey) ||
+    roleKey === 'operations_manager'
   );
 }
 
@@ -762,6 +766,7 @@ function postIncidentStockEffects(db, row, opts) {
     }
   } else if (kg > 0 && coilNo && (type === 'coil_stain' || type === 'production_error')) {
     const creditScrap = disp === 'scrap';
+    const stockOpts = { ...opts, skipInnerTransaction: Boolean(opts.skipInnerTransaction) };
     const scr = postCoilScrap(
       db,
       {
@@ -778,7 +783,7 @@ function postIncidentStockEffects(db, row, opts) {
         scrapProductID: creditScrap ? 'SCRAP-COIL' : undefined,
         controlEventKind: 'scrap_offcut',
       },
-      opts
+      stockOpts
     );
     if (!scr.ok) throw new Error(scr.error || 'Coil scrap failed.');
     const ev = db
@@ -804,6 +809,7 @@ function postIncidentStockEffects(db, row, opts) {
           : 0;
 
   if (poolM > 0) {
+    const stockOpts = { ...opts, skipInnerTransaction: Boolean(opts.skipInnerTransaction) };
     const inward = postOffcutPoolReturnInward(
       db,
       {
@@ -821,7 +827,7 @@ function postIncidentStockEffects(db, row, opts) {
         dateISO,
         materialIncidentId: incidentId,
       },
-      opts
+      stockOpts
     );
     if (!inward.ok) throw new Error(inward.error || 'Offcut pool inward failed.');
     insertStockLinkTx(db, incidentId, 'pool_inward', inward.id, null);
@@ -843,13 +849,14 @@ export function approveMaterialIncident(db, incidentId, payload, opts = {}) {
   }
   const managerRemark = String(payload.managerRemark ?? payload.manager_remark ?? '').trim();
   const at = nowIso();
+  const txOpts = { ...opts, skipInnerTransaction: true };
   try {
     db.transaction(() => {
       db.prepare(
         `UPDATE material_incidents SET status = 'approved', manager_remark = ?, approved_by_user_id = ?, approved_at_iso = ?, updated_at_iso = ? WHERE id = ?`
       ).run(managerRemark, actorId(opts.actor), at, at, incidentId);
       const fresh = getIncidentRow(db, incidentId);
-      postIncidentStockEffects(db, fresh, opts);
+      postIncidentStockEffects(db, fresh, txOpts);
       db.prepare(
         `UPDATE material_incidents SET status = 'posted', posted_at_iso = ?, updated_at_iso = ? WHERE id = ?`
       ).run(at, at, incidentId);
@@ -861,7 +868,7 @@ export function approveMaterialIncident(db, incidentId, payload, opts = {}) {
           status: 'completed',
           updatedAtIso: at,
         },
-        { actor: opts.actor }
+        { actor: opts.actor, outerTransaction: true }
       );
     })();
   } catch (e) {
@@ -1053,11 +1060,10 @@ export function createRefundFromMaterialIncident(db, incidentId, payload, opts =
 export function getMaterialIncidentPrintPayload(db, incidentId) {
   const detail = loadIncidentDetail(db, incidentId);
   if (!detail) return null;
-  const branch = db.prepare(`SELECT name FROM branches WHERE branch_id = ?`).get(detail.branchId);
   return {
     ...detail,
-    branchName: branch?.name ?? detail.branchId,
-    watermark: detail.status === 'posted' ? 'OFFICIAL' : 'DRAFT',
+    branchName: branchDisplayName(db, detail.branchId) || detail.branchId,
+    watermark: detail.status === 'posted' ? 'OFFICIAL' : 'DRAFT — PENDING APPROVAL',
   };
 }
 

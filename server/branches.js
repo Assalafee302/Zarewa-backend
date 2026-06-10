@@ -38,6 +38,18 @@ export function listBranches(db) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} id
  */
+/** Branch display name for print payloads and labels. */
+export function branchDisplayName(db, branchId) {
+  const id = String(branchId || '').trim();
+  if (!id) return '';
+  try {
+    const row = db.prepare(`SELECT name FROM branches WHERE id = ?`).get(id);
+    return String(row?.name || '').trim() || id;
+  } catch {
+    return id;
+  }
+}
+
 export function getBranch(db, id) {
   if (!id) return null;
   const row = db.prepare(`SELECT * FROM branches WHERE id = ?`).get(id);

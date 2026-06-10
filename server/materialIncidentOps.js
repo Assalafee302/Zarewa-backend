@@ -3,6 +3,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
+import {
+  coilDamagePreview,
+  isCoilDamageIncident,
+  validateCoilDamagePayload,
+} from '../shared/lib/coilDamageRecordCore.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { isBranchManagerApprovalAuthority } from '../shared/workspaceGovernance.js';
@@ -372,6 +377,126 @@ export function computePoolSummary(db, branchScope) {
   };
 }
 
+/**
+ * Production-style coil damage record: before/after kg, damaged metres, conversion on approval.
+ * Creates a material incident (coil_stain or production_error) and optionally submits for manager approval.
+ */
+export function listPendingCoilDamageIncidents(db, branchScope) {
+  return listMaterialIncidents(db, branchScope, { status: 'submitted' })
+    .filter(isCoilDamageIncident)
+    .map((row) => {
+      let supplierConv = row.conversionKgPerM;
+      const coilNo = String(row.coilNo || '').trim();
+      if ((!supplierConv || supplierConv <= 0) && coilNo) {
+        const coil = db.prepare(`SELECT supplier_conversion_kg_per_m FROM coil_lots WHERE coil_no = ?`).get(coilNo);
+        supplierConv = coil?.supplier_conversion_kg_per_m;
+      }
+      const preview = coilDamagePreview({
+        beforeKg: row.beforeKg,
+        afterKg: row.afterKg,
+        meters: row.totalMeters,
+        supplierConversionKgPerM: supplierConv,
+      });
+      return { ...row, preview };
+    });
+}
+
+export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
+  if (!materialIncidentsTableReady(db)) return { ok: false, error: 'Material incidents module is not migrated.' };
+
+  const coilNo = String(payload.coilNo ?? payload.coil_no ?? '').trim();
+  const beforeKg = Number(payload.beforeKg ?? payload.before_kg);
+  const afterKg = Number(payload.afterKg ?? payload.after_kg);
+  const meters = Number(payload.meters ?? payload.metersDamaged ?? payload.meters_damaged);
+  const productionJobId = String(payload.productionJobId ?? payload.production_job_id ?? '').trim();
+  const note = String(payload.note ?? payload.storekeeperRemark ?? payload.storekeeper_remark ?? '').trim();
+  const returnDisposition = String(payload.returnDisposition ?? payload.return_disposition ?? 'offcut_pool').trim();
+  const submit = payload.submit !== false;
+
+  const coil = coilNo ? db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(coilNo) : null;
+  if (!coil) return { ok: false, error: 'Coil not found.' };
+  const branchId = String(opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const coilBranch = String(coil.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+  if (coilBranch !== branchId) {
+    return { ok: false, error: 'Coil is not in your current workspace branch.' };
+  }
+
+  const qtyRem = Math.max(0, Number(coil.qty_remaining) || Number(coil.current_weight_kg) || 0);
+  const qtyRes = Math.max(0, Number(coil.qty_reserved) || 0);
+  const maxRemove = qtyRem - qtyRes;
+  const validated = validateCoilDamagePayload(
+    { coilNo, beforeKg, afterKg, meters, note, returnDisposition },
+    {
+      maxRemoveKg: maxRemove,
+      supplierConversionKgPerM: coil.supplier_conversion_kg_per_m,
+    }
+  );
+  if (!validated.ok) return validated;
+
+  const kgDeducted = validated.kgDeducted;
+  if (productionJobId) {
+    const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(productionJobId);
+    if (!job) return { ok: false, error: `Production job ${productionJobId} not found.` };
+  }
+
+  const incidentType = productionJobId ? 'production_error' : 'coil_stain';
+  const draftPayload = {
+    incidentType,
+    materialFamily: String(payload.materialFamily ?? payload.material_family ?? 'aluminium').trim() || 'aluminium',
+    productId: String(payload.productId ?? payload.product_id ?? coil.product_id ?? '').trim(),
+    gaugeLabel: String(payload.gaugeLabel ?? payload.gauge_label ?? coil.gauge_label ?? '').trim(),
+    colour: String(payload.colour ?? coil.colour ?? '').trim(),
+    coilNo,
+    productionJobId: productionJobId || undefined,
+    quotationRef: String(payload.quotationRef ?? payload.quotation_ref ?? '').trim() || undefined,
+    cuttingListRef: String(payload.cuttingListRef ?? payload.cutting_list_ref ?? '').trim() || undefined,
+    bookRef: String(payload.bookRef ?? payload.book_ref ?? '').trim() || undefined,
+    beforeKg,
+    afterKg,
+    returnDisposition,
+    storekeeperDisplay: String(payload.storekeeperDisplay ?? payload.storekeeper_display ?? '').trim() || undefined,
+    operatorDisplay: String(payload.operatorDisplay ?? payload.operator_display ?? '').trim() || undefined,
+    storekeeperRemark: note,
+    reasonText: String(payload.reasonText ?? payload.reason_text ?? '').trim() || undefined,
+    dateISO: String(payload.dateISO ?? payload.date_iso ?? new Date().toISOString().slice(0, 10)).trim(),
+    lines: [
+      {
+        lengthM: meters,
+        quantity: 1,
+        conditionNote: String(payload.conditionNote ?? payload.condition_note ?? 'Damaged section').trim() || 'Damaged section',
+      },
+    ],
+  };
+
+  const created = createMaterialIncidentDraft(db, draftPayload, opts);
+  if (!created.ok) return created;
+
+  if (!submit) {
+    return { ok: true, id: created.id, status: 'draft', incident: created.incident };
+  }
+
+  const submitted = submitMaterialIncident(db, created.id, opts);
+  if (!submitted.ok) {
+    return {
+      ok: true,
+      id: created.id,
+      status: 'draft',
+      incident: created.incident,
+      submitted: false,
+      submitError: submitted.error,
+    };
+  }
+
+  return {
+    ok: true,
+    id: created.id,
+    status: 'submitted',
+    incident: loadIncidentDetail(db, created.id),
+    kgDeducted,
+    meters,
+  };
+}
+
 export function createMaterialIncidentDraft(db, payload, opts = {}) {
   if (!materialIncidentsTableReady(db)) return { ok: false, error: 'Material incidents module is not migrated.' };
   const branchId = String(opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
@@ -615,6 +740,7 @@ function postIncidentStockEffects(db, row, opts) {
       if (!scr.ok) throw new Error(scr.error || 'Supplier defect post failed.');
     }
   } else if (kg > 0 && coilNo && (type === 'coil_stain' || type === 'production_error')) {
+    const creditScrap = disp === 'scrap';
     const scr = postCoilScrap(
       db,
       {
@@ -627,7 +753,8 @@ function postIncidentStockEffects(db, row, opts) {
         bookRef: incidentId,
         quotationRef: row.quotation_ref,
         cuttingListRef: row.cutting_list_ref,
-        creditScrapInventory: false,
+        creditScrapInventory: creditScrap,
+        scrapProductID: creditScrap ? 'SCRAP-COIL' : undefined,
         controlEventKind: 'scrap_offcut',
       },
       opts
@@ -645,11 +772,15 @@ function postIncidentStockEffects(db, row, opts) {
   }
 
   const poolM =
-    disp === 'offcut_pool' || type === 'coil_stain' || type === 'production_error' || type === 'yard_offcut'
-      ? totalM
-      : type === 'customer_return' && disp === 'offcut_pool'
+    type === 'coil_stain' || type === 'production_error'
+      ? disp === 'offcut_pool'
         ? totalM
-        : 0;
+        : 0
+      : disp === 'offcut_pool' || type === 'yard_offcut'
+        ? totalM
+        : type === 'customer_return' && disp === 'offcut_pool'
+          ? totalM
+          : 0;
 
   if (poolM > 0) {
     const inward = postOffcutPoolReturnInward(

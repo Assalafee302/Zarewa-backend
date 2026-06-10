@@ -380,7 +380,9 @@ import * as write from './writeOps.js';
 import {
   approveMaterialIncident,
   computePoolSummary,
+  createCoilDamageMaterialIncident,
   createMaterialIncidentDraft,
+  listPendingCoilDamageIncidents,
   createRefundFromMaterialIncident,
   getMaterialIncident,
   getMaterialIncidentAttachment,
@@ -5594,6 +5596,29 @@ export function registerHttpApi(app, db) {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/coil-control/coil-damage/pending', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const rows = listPendingCoilDamageIncidents(db, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      res.json({ ok: true, rows });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/coil-control/coil-damage', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const r = createCoilDamageMaterialIncident(db, req.body || {}, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

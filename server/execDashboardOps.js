@@ -838,7 +838,7 @@ function buildInventoryPanels(biPack, period = {}) {
             label: skuActionLabel(row.action),
             action: row.action,
             reason: row.reason,
-            route: '/analytics',
+            route: '/exec?tab=intelligence',
           },
           matPerf,
           period
@@ -848,7 +848,7 @@ function buildInventoryPanels(biPack, period = {}) {
         family: fam,
         type: 'buy',
         message: `${row.gauge} ${row.colour} ${fam} — ${row.reason}`,
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
       });
     }
     for (const row of block.reduceStock || []) {
@@ -863,7 +863,7 @@ function buildInventoryPanels(biPack, period = {}) {
             label: 'Liquidate',
             action: 'liquidate',
             reason: row.reason,
-            route: '/analytics',
+            route: '/exec?tab=intelligence',
           },
           matPerf,
           period
@@ -876,7 +876,7 @@ function buildInventoryPanels(biPack, period = {}) {
           family: fam,
           type: 'watch',
           message: `${row.gauge} ${row.colour} — ${row.reason}`,
-          route: '/analytics',
+          route: '/exec?tab=intelligence',
         });
       }
     }
@@ -959,7 +959,7 @@ export function buildExecutiveDecisionAlerts(
       message: `${row.gauge} ${row.colour} ${famLabel} has strong demand but only ${cover} of cover remaining.`,
       source: 'sku_intelligence',
       sourceSection: 'Product & Stock',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
       metric: row.weeksCover != null ? `${row.weeksCover} wk` : '',
     });
   }
@@ -973,7 +973,7 @@ export function buildExecutiveDecisionAlerts(
       message: `${row.gauge} ${row.colour} ${familyDisplayName(row.family)} has ${row.weeksCover ?? 'high'} weeks cover (${val} estimated) — cash may be tied in slow movers.`,
       source: 'sku_intelligence',
       sourceSection: 'Product & Stock',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     });
   }
 
@@ -995,7 +995,7 @@ export function buildExecutiveDecisionAlerts(
         message: `${name} has strong produced sales (${formatNgnCompact(produced)}) but a ${rate}% produced collection rate — receivable pressure may be building.`,
         source: 'branch_scorecard',
         sourceSection: 'Branch Performance',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
       });
     }
     if ((b.coilValuationNgn || 0) > 2_000_000 && (b.liquidateSkuCount || 0) >= 2) {
@@ -1006,7 +1006,7 @@ export function buildExecutiveDecisionAlerts(
         message: `${name} holds high-value slow-moving stock (${formatNgnCompact(b.coilValuationNgn)} estimated, ${b.liquidateSkuCount} liquidate signals) that may be tying down cash.`,
         source: 'branch_scorecard',
         sourceSection: 'Branch Performance',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
       });
     }
   }
@@ -1026,7 +1026,7 @@ export function buildExecutiveDecisionAlerts(
           : `Operating expenses rose ${pct}% versus the prior period${topCat ? ` — ${catName} is the largest category` : ''}.`,
       source: 'expenses',
       sourceSection: 'Finance & Expenses',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
       metric: `${pct > 0 ? '+' : ''}${pct}%`,
     });
   }
@@ -1082,7 +1082,7 @@ export function buildExecutiveDecisionAlerts(
       message: `Projected cash balance in 90 days is ${formatNgnCompact(cash90.projectedBalanceNgn)} (estimated) — review payables and collections.`,
       source: 'cash_pressure',
       sourceSection: 'Cash & Working Capital',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
       estimated: true,
     });
   }
@@ -1282,22 +1282,22 @@ function buildReportsLinks(actor) {
     {
       title: 'Branch performance',
       description: 'Business intelligence branch breakdown and collections.',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     },
     {
       title: 'Stock intelligence',
       description: 'Coil SKU cover, buy/liquidate signals (estimated).',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     },
     {
       title: 'Expense analysis',
       description: 'Category and branch expense vs produced sales.',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     },
     {
       title: 'Working capital snapshot',
       description: 'Cash, receivables, inventory, and pending outflows.',
-      route: '/exec',
+      route: '/exec?tab=finance',
     },
     {
       title: 'Customer debt',
@@ -1564,7 +1564,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     inventory: {
       ...inventoryPanels,
       drillRoutes: {
-        analytics: '/analytics',
+        analytics: '/exec?tab=intelligence',
         reports: '/reports',
         operations: '/operations',
       },
@@ -1630,7 +1630,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     links: {
       drillRoutes: {
         manager: '/manager',
-        analytics: '/analytics',
+        analytics: '/exec?tab=intelligence',
         reports: '/reports',
         accounts: '/accounts',
         sales: '/sales',

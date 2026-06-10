@@ -4,15 +4,15 @@
  */
 import { userHasPermission } from './auth.js';
 
-export const LEGACY_ACCOUNT_TAB_IDS = ['treasury', 'receipts', 'movements', 'disbursements', 'audit'];
+export const LEGACY_ACCOUNT_TAB_IDS = ['desk', 'treasury', 'receipts', 'movements', 'disbursements', 'audit'];
 
 const ROLE_BRANCH_MANAGER = 'sales_manager';
 const ROLE_CASHIER = 'cashier';
 const ROLE_ACCOUNTANT = 'finance_manager';
 const OVERSIGHT_ROLES = new Set(['admin', 'md']);
 
-/** Cashier operational tabs — no audit / GL reconciliation shell. */
-const CASHIER_LEGACY_TABS = new Set(['treasury', 'receipts', 'movements', 'disbursements']);
+/** Cashier operational tabs — Desk work queues + treasury execution; no audit / GL. */
+const CASHIER_LEGACY_TABS = new Set(['desk', 'treasury', 'receipts', 'movements', 'disbursements']);
 
 /** Accountant / Head of Accounts — reconciliation and oversight tabs. */
 const ACCOUNTANT_LEGACY_TABS = new Set(['treasury', 'receipts', 'movements', 'disbursements', 'audit']);
@@ -72,6 +72,18 @@ export function getAllowedLegacyAccountTabs(user) {
 
 /**
  * @param {object | null | undefined} user
+ * @returns {string}
+ */
+export function getDefaultLegacyAccountTab(user) {
+  const allowed = getAllowedLegacyAccountTabs(user);
+  const rk = String(user?.roleKey || user?.role_key || '').trim().toLowerCase();
+  if (rk === ROLE_CASHIER && allowed.includes('desk')) return 'desk';
+  if (allowed.includes('treasury')) return 'treasury';
+  return allowed[0] || 'treasury';
+}
+
+/**
+ * @param {object | null | undefined} user
  * @param {string} [tabId]
  * @returns {{ to: string; reason: string } | null}
  */
@@ -80,7 +92,7 @@ export function resolveLegacyAccountsRedirect(user, tabId = '') {
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
   if (rk === ROLE_BRANCH_MANAGER) return { to: '/manager', reason: 'branch_manager' };
   if (!userMayAccessLegacyAccountsRoute(user)) {
-    if (rk === ROLE_CASHIER) return { to: '/cashier', reason: 'cashier_desk' };
+    if (rk === ROLE_CASHIER) return { to: '/accounts?tab=desk', reason: 'cashier_desk' };
     if (rk === ROLE_ACCOUNTANT) return { to: '/accounting', reason: 'accounting_desk' };
     return { to: '/', reason: 'denied' };
   }
@@ -88,9 +100,13 @@ export function resolveLegacyAccountsRedirect(user, tabId = '') {
   if (!tab) return null;
   const allowed = getAllowedLegacyAccountTabs(user);
   if (allowed.includes(tab)) return null;
-  if (rk === ROLE_CASHIER) return { to: '/cashier', reason: 'tab_denied' };
+  if (rk === ROLE_CASHIER) {
+    const fallback = getDefaultLegacyAccountTab(user);
+    return { to: `/accounts?tab=${fallback}`, reason: 'tab_denied' };
+  }
   if (rk === ROLE_ACCOUNTANT) return { to: '/accounting', reason: 'tab_denied' };
-  return { to: allowed[0] ? `/accounts?tab=${allowed[0]}` : '/', reason: 'tab_denied' };
+  const fallback = allowed[0] || 'treasury';
+  return { to: fallback === 'treasury' ? '/accounts' : `/accounts?tab=${fallback}`, reason: 'tab_denied' };
 }
 
 /**

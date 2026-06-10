@@ -58,11 +58,11 @@ export const FAILED_LOGIN_LOCK_THRESHOLD = 5;
 export const ACCOUNT_LOCK_MINUTES = 30;
 const RESET_TOKEN_TTL_MINUTES = 60;
 
-/** Inactivity timeout (sliding window). Override with SESSION_TIMEOUT_MINUTES (5–480). */
+/** Inactivity timeout (sliding window). Override with SESSION_TIMEOUT_MINUTES (5–480). Default 2 hours. */
 export function sessionTimeoutMinutes() {
-  const raw = Number(process.env.SESSION_TIMEOUT_MINUTES ?? 15);
+  const raw = Number(process.env.SESSION_TIMEOUT_MINUTES ?? 120);
   if (Number.isFinite(raw) && raw >= 5 && raw <= 480) return Math.floor(raw);
-  return 15;
+  return 120;
 }
 
 function normalizeApiPath(req) {
@@ -144,6 +144,31 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
   'accounting.reconciliation.view',
   'accounting.gl.view',
 ];
+
+/** Full Operations module: stock, production register (incl. stone-coated), deliveries, incidents. */
+export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
+  'dashboard.view',
+  'office.use',
+  'operations.view',
+  'operations.manage',
+  'production.manage',
+  'production.release',
+  'inventory.receive',
+  'inventory.adjust',
+  'deliveries.manage',
+  'material_incidents.create',
+];
+
+/** Store floor + production register (coil and stone-coated). Store keeper ≡ operations officer. */
+/** Normalize role key aliases (`store_keeper` → `storekeeper`). */
+export function normalizeRoleKey(roleKey) {
+  const rk = String(roleKey || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (rk === 'store_keeper') return 'storekeeper';
+  return rk;
+}
 
 export const ROLE_DEFINITIONS = {
   admin: {
@@ -296,18 +321,11 @@ export const ROLE_DEFINITIONS = {
   },
   operations_officer: {
     label: 'Operations officer',
-    permissions: [
-      'dashboard.view',
-      'office.use',
-      'operations.view',
-      'operations.manage',
-      'production.manage',
-      'production.release',
-      'inventory.receive',
-      'inventory.adjust',
-      'deliveries.manage',
-      'material_incidents.create',
-    ],
+    permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS],
+  },
+  storekeeper: {
+    label: 'Store keeper',
+    permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS],
   },
   ceo: {
     label: 'Chief Executive Officer',
@@ -564,11 +582,13 @@ function createCsrfToken() {
 }
 
 export function roleLabel(roleKey) {
-  return ROLE_DEFINITIONS[roleKey]?.label || roleKey || 'User';
+  const rk = normalizeRoleKey(roleKey);
+  return ROLE_DEFINITIONS[rk]?.label || roleKey || 'User';
 }
 
 export function permissionsForRole(roleKey) {
-  return [...(ROLE_DEFINITIONS[roleKey]?.permissions || [])];
+  const rk = normalizeRoleKey(roleKey);
+  return [...(ROLE_DEFINITIONS[rk]?.permissions || [])];
 }
 
 /** Store / production floor permissions — always granted for ops role and store departments. */
@@ -621,6 +641,8 @@ export function ensureStoreFloorPermissions(permissions, ctx = {}) {
   const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
   const needsFloor =
     rk === 'operations_officer' ||
+    rk === 'storekeeper' ||
+    rk === 'store_keeper' ||
     STORE_FLOOR_DEPARTMENT_LABELS.has(rawDept) ||
     deptRole === 'operations_officer';
   if (!needsFloor) return;
@@ -714,6 +736,7 @@ const EDIT_APPROVER_ROLE_KEYS = new Set([
   'sales_manager',
   'finance_manager',
   'operations_officer',
+  'storekeeper',
 ]);
 
 /** @param {object|null|undefined} user */
@@ -738,6 +761,7 @@ const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set([
   'sales_manager',
   'branch_manager',
   'operations_officer',
+  'storekeeper',
 ]);
 
 /** @param {object|null|undefined} user */
@@ -1211,6 +1235,9 @@ export function attachAuthContext(db) {
     };
     if (shouldExtend) {
       refreshSessionTouch(db, token, expiresAtISO);
+      // Re-issue cookies so browser Max-Age slides with the DB inactivity window (not fixed at login).
+      setSessionCookie(res, token);
+      setCsrfCookie(res, csrfToken || createCsrfToken());
     }
     return next();
   };

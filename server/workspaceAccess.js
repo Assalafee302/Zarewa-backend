@@ -36,9 +36,13 @@ export const FINANCE_DOMAIN_PERMS = [
   'treasury.manage',
 ];
 
+/** Branch cashier desk — payout execution without full finance domain (Phase B). */
+export const CASHIER_DESK_PERMS = ['cashier.desk.view', 'cashier.receipts.confirm'];
+
 /** Cash/bank account pickers on receipts, advances, refunds — not full treasury history */
 export const TREASURY_ACCOUNTS_VISIBLE_PERMS = [
   ...FINANCE_DOMAIN_PERMS,
+  ...CASHIER_DESK_PERMS,
   'receipts.post',
   'refunds.request',
 ];
@@ -55,11 +59,13 @@ export const REFUNDS_VISIBLE_PERMS = [
   'refunds.request',
   'refunds.approve',
   ...FINANCE_DOMAIN_PERMS,
+  ...CASHIER_DESK_PERMS,
   'manager.dashboard',
 ];
 
 export const PAYMENT_REQUESTS_VISIBLE_PERMS = [
   ...FINANCE_DOMAIN_PERMS,
+  ...CASHIER_DESK_PERMS,
   'manager.dashboard',
   'expenses.create',
 ];
@@ -113,6 +119,11 @@ export function canReadOperationsDomain(user) {
 
 export function canReadFinanceDomain(user) {
   return canAnyPermission(user, FINANCE_DOMAIN_PERMS);
+}
+
+/** Treasury movements on Finance → Movements — cashiers with desk access only. */
+export function canReadTreasuryMovements(user) {
+  return canReadFinanceDomain(user) || canAnyPermission(user, CASHIER_DESK_PERMS);
 }
 
 export function canListTreasuryAccounts(user) {

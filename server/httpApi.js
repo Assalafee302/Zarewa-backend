@@ -2206,6 +2206,10 @@ export function registerHttpApi(app, db) {
     return res.json({ ok: true, ...req.session });
   });
 
+  app.post('/api/session/firebase', (_req, res) => {
+    return res.status(404).json({ ok: false, error: 'Endpoint removed.', code: 'NOT_FOUND' });
+  });
+
   app.post('/api/session/login', async (req, res) => {
     try {
       const ip = clientIp(req);
@@ -4339,7 +4343,9 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/analytics/business-intelligence', requireManagementReportsView, (req, res) => {
     try {
-      const branchScope = resolveBootstrapBranchScope(req);
+      const branchScope = req.query?.branchId
+        ? resolveExecDashboardBranchScope(req.user, req, req.query.branchId)
+        : resolveBootstrapBranchScope(req);
       const periodKey = String(req.query?.period || req.query?.periodKey || 'month').trim();
       const asOfISO = String(req.query?.asOfISO || req.query?.asOf || '').slice(0, 10) || undefined;
       const pack = loadBusinessIntelligencePack(db, branchScope, { periodKey, asOfISO });
@@ -4359,7 +4365,9 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/analytics/business-intelligence/export', requireManagementReportsView, (req, res) => {
     try {
-      const branchScope = resolveBootstrapBranchScope(req);
+      const branchScope = req.query?.branchId
+        ? resolveExecDashboardBranchScope(req.user, req, req.query.branchId)
+        : resolveBootstrapBranchScope(req);
       const periodKey = String(req.query?.period || req.query?.periodKey || 'month').trim();
       const asOfISO = String(req.query?.asOfISO || req.query?.asOf || '').slice(0, 10) || undefined;
       const pack = loadBusinessIntelligencePack(db, branchScope, { periodKey, asOfISO });

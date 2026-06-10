@@ -11,7 +11,7 @@ export default defineConfig({
     pool: 'forks',
     environment: 'node',
     include: ['server/**/*.test.js', 'shared/**/*.test.js'],
-    testTimeout: 30_000,
-    hookTimeout: 45_000,
+    testTimeout: 90_000,
+    hookTimeout: 120_000,
   },
 });

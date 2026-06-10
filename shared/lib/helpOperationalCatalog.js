@@ -1243,6 +1243,24 @@ const OPERATIONAL_TOPICS = [
     extraKeywords: ['command center', 'inbox', 'work items'],
   },
   {
+    module: 'exec',
+    action: 'view command centre intelligence',
+    title: 'Command Centre — Intelligence tab',
+    answer:
+      'Forecasts, sales mix, material performance, coil inventory, and SKU buy/liquidate signals. Excel export available.',
+    steps: [
+      'Open **Command Centre** (`/exec`).',
+      'Select the **Intelligence** tab (or `/exec?tab=intelligence`).',
+      'Pick analysis period (month through year) and refresh.',
+      'Use **Excel** to export the full pack.',
+    ],
+    links: [
+      { label: 'Command Centre', to: '/exec' },
+      { label: 'Intelligence tab', to: '/exec?tab=intelligence' },
+    ],
+    extraKeywords: ['business intelligence', 'forecast', 'coil cover', 'analytics', 'stockout'],
+  },
+  {
     module: 'workspace',
     action: 'attach proof to a memo',
     title: 'Memo attachments',

@@ -47,6 +47,21 @@ describe('ensureSalesDeskPermissions', () => {
   });
 });
 
+describe('storekeeper role', () => {
+  it('matches operations_officer floor permissions including stone production register', () => {
+    const ops = permissionsForRole('operations_officer');
+    const store = permissionsForRole('storekeeper');
+    expect(store).toContain('production.manage');
+    expect(store).toContain('production.release');
+    expect(store).toContain('operations.manage');
+    expect(store).toEqual(ops);
+  });
+
+  it('normalizes store_keeper alias', () => {
+    expect(permissionsForRole('store_keeper')).toEqual(permissionsForRole('storekeeper'));
+  });
+});
+
 describe('publicUserFromRow store floor', () => {
   it('restores production.manage for ops officer with trimmed custom JSON', () => {
     const user = publicUserFromRow({

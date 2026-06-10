@@ -52,6 +52,13 @@ describe.skipIf(!mysqlOk).sequential('Business intelligence API', () => {
     }
   });
 
+  it('accepts branchId query aligned with exec dashboard scope', async () => {
+    const all = await agent.get('/api/analytics/business-intelligence?period=month&branchId=ALL');
+    expect(all.status).toBe(200);
+    expect(all.body.ok).toBe(true);
+    expect(all.body.branchScope).toBe('ALL');
+  });
+
   it('returns 401 when not signed in', async () => {
     const res = await request(app).get('/api/analytics/business-intelligence');
     expect(res.status).toBe(401);

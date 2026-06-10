@@ -46,7 +46,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
       title: 'Stock cover risk',
       message: `${row.gauge} ${row.colour} ${fam} has high demand but only ${cover} of cover remaining.`,
       source: 'sku_intelligence',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
       metric: row.weeksCover != null ? `${row.weeksCover} wk` : '',
     });
   }
@@ -61,7 +61,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
       title: 'Slow-moving stock',
       message: `${row.gauge} ${row.colour} ${fam} has ${row.weeksCover ?? 'high'} weeks cover${val} — cash may be tied in slow movers.`,
       source: 'sku_intelligence',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     });
   }
 
@@ -78,7 +78,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         title: 'Collections pressure',
         message: `${name} has strong produced sales (₦${produced.toLocaleString('en-NG')}) but weak collections (${rate}% of produced), creating receivable pressure.`,
         source: 'branch_scorecard',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
         metric: `${rate}%`,
       });
     }
@@ -91,7 +91,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         title: 'Stock cash tie-up',
         message: `${name} holds high-value slow-moving stock (₦${stockVal.toLocaleString('en-NG')} coil valuation, ${liq} liquidate signal${liq === 1 ? '' : 's'}) that may be tying down cash.`,
         source: 'branch_scorecard',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
       });
     }
   }
@@ -106,7 +106,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         title: 'Expense spike',
         message: `Operating expenses increased ${expenseAnalysis.periodChangePct}% versus the prior comparable period${topCat?.category ? ` — review ${topCat.category} and other categories` : ''}.`,
         source: 'expenses',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
         metric: `+${expenseAnalysis.periodChangePct}%`,
       });
       continue;
@@ -118,7 +118,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         title: 'Spend concentration',
         message: `${topCat.category} accounts for ${topCat.sharePct}% of period expenses (₦${Math.round(topCat.amountNgn).toLocaleString('en-NG')}) — confirm this matches plan.`,
         source: 'expenses',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
       });
       continue;
     }
@@ -129,7 +129,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         title: 'Expense signal',
         message: a.message,
         source: 'expenses',
-        route: '/analytics',
+        route: '/exec?tab=intelligence',
         metric: a.metric || '',
       });
     }
@@ -145,7 +145,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
       title: 'Transport spend',
       message: `${transport.category} is a major expense line (₦${Math.round(transport.amountNgn).toLocaleString('en-NG')}) while total spend is up ${expenseAnalysis.periodChangePct}% versus the prior period.`,
       source: 'expenses',
-      route: '/analytics',
+      route: '/exec?tab=intelligence',
     });
   }
 
@@ -186,7 +186,7 @@ export function buildExecutiveDecisionAlerts(biPack, execSummary, inventoryPanel
         .replace(/\b\w/g, (c) => c.toUpperCase()),
       message: a.message,
       source: 'business_intelligence',
-      route: a.category === 'inventory' ? '/analytics' : '/analytics',
+      route: '/exec?tab=intelligence',
       metric: a.metric || '',
     });
   }

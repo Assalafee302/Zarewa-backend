@@ -2,6 +2,7 @@
  * Format business intelligence packs for Zare conversational replies.
  */
 import { businessIntelligenceHeadlines } from './businessIntelligence.js';
+import { COMMAND_CENTRE_INTELLIGENCE } from './commandCentreRoutes.js';
 
 /**
  * @param {import('./businessIntelligence.js').buildBusinessIntelligencePack extends (...args: any[]) => infer R ? R : never} pack
@@ -9,7 +10,7 @@ import { businessIntelligenceHeadlines } from './businessIntelligence.js';
  */
 export function formatBusinessAnalysisReply(pack) {
   if (!pack?.ok) {
-    return 'I could not load business analytics for your branch scope. Open **Business intelligence** from the sidebar or ask an admin to confirm report permissions.';
+    return 'I could not load business analytics for your branch scope. Open **Command Centre → Intelligence** or ask an admin to confirm report permissions.';
   }
 
   const lines = businessIntelligenceHeadlines(pack);
@@ -138,7 +139,7 @@ export function formatBusinessAnalysisReply(pack) {
     sections.push(`- ${sug}`);
   }
 
-  sections.push('', '_Open **Business intelligence** for charts and drill-down._');
+  sections.push('', `_Open **Command Centre → Intelligence** (${COMMAND_CENTRE_INTELLIGENCE}) for charts, export, and drill-down._`);
 
   if (lines.length) {
     sections.push('', '**Quick summary**', ...lines.map((l, i) => `${i + 1}. ${l}`));

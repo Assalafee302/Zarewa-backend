@@ -396,14 +396,16 @@ function runMigrationsUnlocked(db) {
   }
 
   const deliveries = tableCols('deliveries');
-  if (!deliveries.has('customer_id')) {
-    db.exec(`ALTER TABLE deliveries ADD COLUMN customer_id TEXT`);
-  }
-  if (!deliveries.has('cutting_list_id')) {
-    db.exec(`ALTER TABLE deliveries ADD COLUMN cutting_list_id TEXT`);
-  }
-  if (!deliveries.has('fulfillment_posted')) {
-    db.exec(`ALTER TABLE deliveries ADD COLUMN fulfillment_posted INTEGER DEFAULT 0`);
+  if (deliveries.size) {
+    if (!deliveries.has('customer_id')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN customer_id TEXT`);
+    }
+    if (!deliveries.has('cutting_list_id')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN cutting_list_id TEXT`);
+    }
+    if (!deliveries.has('fulfillment_posted')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN fulfillment_posted INTEGER DEFAULT 0`);
+    }
   }
 
   const cutting = tableCols('cutting_lists');
@@ -3020,7 +3022,24 @@ function migrateHrPhase7DisciplineLetters2026(db) {
       return new Set();
     }
   };
-  const cases = cols('hr_discipline_cases');
+  let cases = cols('hr_discipline_cases');
+  if (!cases.size) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hr_discipline_cases (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        offence_category TEXT,
+        summary TEXT,
+        opened_at_iso TEXT NOT NULL,
+        opened_by_user_id TEXT,
+        FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_discipline_user ON hr_discipline_cases(user_id, opened_at_iso DESC);
+    `);
+    cases = cols('hr_discipline_cases');
+  }
   if (cases.size) {
     const addCol = (name, ddl) => {
       if (!cases.has(name)) db.exec(`ALTER TABLE hr_discipline_cases ADD COLUMN ${ddl}`);
@@ -4004,9 +4023,14 @@ function migrateOrganisationRoles2026(db) {
       `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL WHERE role_key = 'procurement_officer'`
     ).run();
     db.prepare(
+      `UPDATE app_users SET role_key = 'storekeeper', permissions_json = NULL, department = 'storekeeper'
+       WHERE lower(replace(trim(COALESCE(department, '')), ' ', '_')) IN ('storekeeper', 'store_keeper')
+         AND role_key NOT IN ('admin', 'md', 'sales_manager')`
+    ).run();
+    db.prepare(
       `UPDATE app_users SET role_key = 'operations_officer', permissions_json = NULL, department = 'operations_officer'
-       WHERE lower(trim(COALESCE(department, ''))) IN ('inventory', 'production', 'storekeeper', 'store_keeper')
-         AND role_key NOT IN ('admin', 'md', 'operations_officer', 'sales_manager')`
+       WHERE lower(replace(trim(COALESCE(department, '')), ' ', '_')) IN ('inventory', 'production')
+         AND role_key NOT IN ('admin', 'md', 'operations_officer', 'sales_manager', 'storekeeper')`
     ).run();
   } catch {
     /* ignore */

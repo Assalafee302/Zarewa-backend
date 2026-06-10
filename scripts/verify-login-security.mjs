@@ -137,7 +137,7 @@ async function checkOptionalLogin() {
   if (!json.sessionExpiresAtIso) {
     throw new Error('Login response missing sessionExpiresAtIso (Phase 12 session metadata)');
   }
-  if (Number(json.sessionTimeoutMinutes) !== 15 && !process.env.SESSION_TIMEOUT_MINUTES) {
+  if (Number(json.sessionTimeoutMinutes) !== 120 && !process.env.SESSION_TIMEOUT_MINUTES) {
     console.warn('[verify-login-security] WARN: sessionTimeoutMinutes =', json.sessionTimeoutMinutes);
   }
   console.log('[verify-login-security] OK: login returns session expiry metadata', {

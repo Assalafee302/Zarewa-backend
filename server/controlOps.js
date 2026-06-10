@@ -30,6 +30,7 @@ import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
 } from '../shared/workspaceGovernance.js';
+import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
@@ -1921,6 +1922,25 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           actedAtISO,
         });
       }
+      if (status === 'Approved' && qref) {
+        const qClearRow = db.prepare(`SELECT manager_cleared_at_iso FROM quotations WHERE id = ?`).get(qref);
+        if (qClearRow && !String(qClearRow.manager_cleared_at_iso || '').trim()) {
+          const clearedAt = new Date().toISOString();
+          db.prepare(
+            `UPDATE quotations
+             SET manager_cleared_at_iso = ?, manager_flagged_at_iso = NULL, manager_flag_reason = NULL
+             WHERE id = ?`
+          ).run(clearedAt, qref);
+          appendAuditLog(db, {
+            actor,
+            action: 'quotation.auto_clear_on_refund_approval',
+            entityKind: 'quotation',
+            entityId: qref,
+            note: `Quotation manager-cleared when refund ${refundID} was approved.`,
+            details: { refundID },
+          });
+        }
+      }
     })();
     return { ok: true, warnings: refundWarnings };
   } catch (e) {
@@ -3215,10 +3235,10 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   if (decision === 'clear') {
     const paid = Math.round(Number(row.paid_ngn) || 0);
     const total = Math.round(Number(row.total_ngn) || 0);
-    if (total > 0 && paid < total) {
+    if (total > 0 && !isEffectivelyFullyPaid(paid, total)) {
       return {
         ok: false,
-        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Post remaining payment before manager clearance.`,
+        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}; 99.5% or more counts as fully paid). Post remaining payment before manager clearance.`,
       };
     }
   }

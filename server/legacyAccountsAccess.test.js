@@ -20,10 +20,11 @@ describe('legacyAccountsAccess', () => {
     expect(resolveLegacyAccountsRedirect(bm)?.to).toBe('/manager');
   });
 
-  it('cashier can access route but not audit tab', () => {
+  it('cashier can access route with desk tab but not audit', () => {
     expect(userMayAccessLegacyAccountsRoute(cashier)).toBe(true);
+    expect(getAllowedLegacyAccountTabs(cashier)).toContain('desk');
     expect(getAllowedLegacyAccountTabs(cashier)).not.toContain('audit');
-    expect(resolveLegacyAccountsRedirect(cashier, 'audit')?.to).toBe('/cashier');
+    expect(resolveLegacyAccountsRedirect(cashier, 'audit')?.to).toBe('/accounts?tab=desk');
   });
 
   it('accountant can access audit tab', () => {

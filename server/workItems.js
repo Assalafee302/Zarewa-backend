@@ -81,6 +81,7 @@ export function officeKeyForUser(user) {
     case 'sales_staff':
       return 'sales';
     case 'operations_officer':
+    case 'storekeeper':
       return 'operations';
     case 'finance_manager':
       return 'finance';
@@ -94,7 +95,7 @@ export function officeKeyForUser(user) {
       const dep = String(user?.department || '').trim().toLowerCase();
       if (dep === 'finance_manager' || dep === 'finance') return 'finance';
       if (dep === 'sales_manager' || dep === 'sales_staff' || dep === 'sales' || dep === 'customer') return 'sales';
-      if (dep === 'operations_officer' || dep === 'inventory' || dep === 'production') return 'operations';
+      if (dep === 'operations_officer' || dep === 'storekeeper' || dep === 'store_keeper' || dep === 'inventory' || dep === 'production') return 'operations';
       if (dep === 'md' || dep === 'purchase') return 'procurement';
       if (dep === 'reports') return 'reports';
       return 'general';

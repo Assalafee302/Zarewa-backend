@@ -34,14 +34,14 @@ describe('Phase 12 login security (pure)', () => {
     expect(validatePasswordStrength('GoodPass1!').ok).toBe(true);
   });
 
-  it('sessionTimeoutMinutes defaults to 15 and respects env', () => {
+  it('sessionTimeoutMinutes defaults to 120 and respects env', () => {
     const prev = process.env.SESSION_TIMEOUT_MINUTES;
     delete process.env.SESSION_TIMEOUT_MINUTES;
-    expect(sessionTimeoutMinutes()).toBe(15);
+    expect(sessionTimeoutMinutes()).toBe(120);
     process.env.SESSION_TIMEOUT_MINUTES = '30';
     expect(sessionTimeoutMinutes()).toBe(30);
     process.env.SESSION_TIMEOUT_MINUTES = '3';
-    expect(sessionTimeoutMinutes()).toBe(15);
+    expect(sessionTimeoutMinutes()).toBe(120);
     if (prev === undefined) delete process.env.SESSION_TIMEOUT_MINUTES;
     else process.env.SESSION_TIMEOUT_MINUTES = prev;
   });
@@ -144,6 +144,18 @@ describe.skipIf(!mysqlOk)('Phase 12 login security (HTTP)', () => {
   it('POST /api/session/firebase is removed', async () => {
     const res = await request(app).post('/api/session/firebase').send({ idToken: 'x' });
     expect(res.status).toBe(404);
+  });
+
+  it('POST /api/session/activity re-issues session cookies on activity', async () => {
+    await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    const activity = await agent.post('/api/session/activity').send({});
+    expect(activity.status).toBe(200);
+    expect(activity.body.ok).toBe(true);
+    const setCookie = activity.headers['set-cookie'];
+    expect(setCookie).toBeTruthy();
+    const joined = Array.isArray(setCookie) ? setCookie.join('; ') : String(setCookie);
+    expect(joined).toMatch(/zarewa_session=/);
+    expect(joined).toMatch(/zarewa_csrf=/);
   });
 
   it('POST /api/session/timeout clears session', async () => {

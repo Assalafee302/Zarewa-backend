@@ -11,6 +11,7 @@ import { buildTransactionHelpReply } from '../shared/lib/helpTransactionHelp.js'
 import { formatHelpErrorReply } from '../shared/lib/helpErrorExplain.js';
 import { buildZareDailyBriefing, formatZareBriefingReply } from '../shared/lib/helpZareBriefing.js';
 import { formatBusinessAnalysisReply } from '../shared/lib/helpBusinessAnalysis.js';
+import { COMMAND_CENTRE_INTELLIGENCE } from '../shared/lib/commandCentreRoutes.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildHelpSearchText, isComplexHelpQuery, matchHelpArticles, mergeHelpLinks } from '../shared/lib/helpKnowledge.js';
 import {
@@ -233,7 +234,7 @@ export async function runHelpAgent(opts) {
         content,
         source: 'business_analysis',
         links: [
-          { label: 'Business intelligence', to: '/analytics' },
+          { label: 'Command Centre — Intelligence', to: COMMAND_CENTRE_INTELLIGENCE },
           { label: 'Reports', to: '/reports' },
         ],
         matchedArticleIds: [],
@@ -265,7 +266,7 @@ export async function runHelpAgent(opts) {
         source: 'briefing',
         links: [
           { label: 'Workspace', to: '/' },
-          { label: 'Business intelligence', to: '/analytics' },
+          { label: 'Command Centre — Intelligence', to: COMMAND_CENTRE_INTELLIGENCE },
         ],
         matchedArticleIds: [],
         topScore: 0,

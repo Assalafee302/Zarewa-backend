@@ -1320,7 +1320,7 @@ const CORE_HELP_ARTICLES = [
       '**Branch manager** → `/manager` (approvals inbox).',
       '**Cashier** → `/cashier` (confirm receipts, pay refunds).',
       '**Accountant** → `/accounting` (reconciliation, month-end).',
-      '**Managing Director** → `/exec` (company command centre).',
+      '**Managing Director** → `/exec` (Command Centre — Overview, Intelligence, Finance tabs).',
       '**HR admin / GM HR** → `/hr/dashboard`.',
       '**Sales officer** → Workspace `/` or `/sales`.',
       '**Operations officer** → `/operations`.',
@@ -1329,7 +1329,8 @@ const CORE_HELP_ARTICLES = [
       { label: 'Manager dashboard', to: '/manager' },
       { label: 'Cashier desk', to: '/cashier' },
       { label: 'Accounting desk', to: '/accounting' },
-      { label: 'Executive Command Centre', to: '/exec' },
+      { label: 'Command Centre', to: '/exec' },
+      { label: 'Intelligence & forecasts', to: '/exec?tab=intelligence' },
     ],
   },
 ];
@@ -1797,8 +1798,15 @@ export function quickQuestionsForPath(pathname) {
   }
   if (p.startsWith('/exec')) {
     return [
-      { label: 'Tour Command Centre', query: 'Walk me through the executive command centre — what should I review first?' },
+      { label: 'Tour Command Centre', query: 'Walk me through the command centre — what should I review first?' },
+      { label: 'Intelligence tab', query: 'Explain production forecast, coil cover, and SKU buy signals on the Intelligence tab' },
       { label: 'What next?', query: 'What should I do next based on my briefing?' },
+    ];
+  }
+  if (p.startsWith('/analytics')) {
+    return [
+      { label: 'Intelligence overview', query: 'What does the Intelligence tab show — forecasts, expenses, and coil actions?' },
+      { label: 'Export BI', query: 'How do I export business intelligence to Excel?' },
     ];
   }
   if (p.startsWith('/accounts')) {

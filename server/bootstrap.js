@@ -61,6 +61,7 @@ import {
   canReadProductionSnapshot,
   canReadProductsCatalog,
   canReadSalesDomain,
+  canReadTreasuryMovements,
   canSeeCoilRequests,
   canSeePaymentRequests,
   canSeeRefundsList,
@@ -107,6 +108,7 @@ export function buildBootstrap(db, opts = {}) {
   const poListOk = canReadPurchaseOrdersList(user);
   const opsOk = canReadOperationsDomain(user);
   const finOk = canReadFinanceDomain(user);
+  const treasuryMovementsOk = canReadTreasuryMovements(user);
   const expensesSnapshotOk = finOk || userHasPermission(user, 'expenses.create');
   const ledgerOk = canReadLedgerRelated(user);
   const treasuryOk = canListTreasuryAccounts(user);
@@ -215,7 +217,7 @@ export function buildBootstrap(db, opts = {}) {
     /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
-    treasuryMovements: finOk ? listTreasuryMovements(db, branchScope) : [],
+    treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope) : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],

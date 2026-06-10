@@ -5744,6 +5744,7 @@ export function registerHttpApi(app, db) {
   ];
   const materialIncidentReadPerms = [
     ...materialIncidentWritePerms,
+    'material_incidents.create',
     'quotations.manage',
     'sales.view',
     'operations.view',

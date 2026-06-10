@@ -227,6 +227,56 @@ export function listQuotations(db, branchScope = 'ALL') {
     .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(db, row)));
 }
 
+/**
+ * Quotations linked to cutting lists or production jobs — for store/ops users without full sales domain.
+ * Needed so production register can detect stone-coated jobs (stoneMeterQuote) in the workspace snapshot.
+ */
+export function listQuotationsForProductionContext(db, branchScope = 'ALL') {
+  const refs = new Set();
+  const bJob = branchWhere(db, 'production_jobs', branchScope);
+  const jobRows = db
+    .prepare(
+      `SELECT DISTINCT quotation_ref AS ref FROM production_jobs
+       WHERE quotation_ref IS NOT NULL AND trim(quotation_ref) != ''${bJob.sql}`
+    )
+    .all(...bJob.args);
+  const bCl = branchWhere(db, 'cutting_lists', branchScope);
+  const clRows = db
+    .prepare(
+      `SELECT DISTINCT quotation_ref AS ref FROM cutting_lists
+       WHERE quotation_ref IS NOT NULL AND trim(quotation_ref) != ''${bCl.sql}`
+    )
+    .all(...bCl.args);
+  for (const row of [...jobRows, ...clRows]) {
+    const ref = String(row.ref || '').trim();
+    if (ref) refs.add(ref);
+  }
+  if (refs.size === 0) return [];
+  const ids = [...refs];
+  const ph = ids.map(() => '?').join(',');
+  const bQuo = branchWhere(db, 'quotations', branchScope);
+  return db
+    .prepare(`SELECT * FROM quotations WHERE id IN (${ph})${bQuo.sql} ORDER BY date_iso DESC, id DESC`)
+    .all(...ids, ...bQuo.args)
+    .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(db, row)));
+}
+
+/** True when a quotation is referenced by a production job or cutting list in branch scope. */
+export function quotationLinkedToProductionContext(db, quotationId, branchScope = 'ALL') {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return false;
+  const bJob = branchWhere(db, 'production_jobs', branchScope);
+  const job = db
+    .prepare(`SELECT 1 AS ok FROM production_jobs WHERE quotation_ref = ?${bJob.sql} LIMIT 1`)
+    .get(qid, ...bJob.args);
+  if (job?.ok) return true;
+  const bCl = branchWhere(db, 'cutting_lists', branchScope);
+  const cl = db
+    .prepare(`SELECT 1 AS ok FROM cutting_lists WHERE quotation_ref = ?${bCl.sql} LIMIT 1`)
+    .get(qid, ...bCl.args);
+  return Boolean(cl?.ok);
+}
+
 /** Lightweight id list for admin bulk jobs (same branch scope as listQuotations). */
 export function listQuotationIds(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'quotations', branchScope);

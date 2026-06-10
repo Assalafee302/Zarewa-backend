@@ -44,6 +44,8 @@ import {
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import {
   CUSTOMER_AND_AR_READ_PERMS,
+  canReadOperationsDomain,
+  canReadSalesDomain,
   LEDGER_RELATED_PERMS,
   OPERATIONS_DOMAIN_PERMS,
   PROCUREMENT_DOMAIN_PERMS,
@@ -303,6 +305,7 @@ import {
   listQuotations,
   listQuotationIds,
   getQuotation,
+  quotationLinkedToProductionContext,
   getCuttingList,
   listLedgerEntries,
   listLedgerEntriesForCustomer,
@@ -5733,7 +5736,12 @@ export function registerHttpApi(app, db) {
   });
 
   const materialIncidentWritePerms = ['inventory.adjust', 'operations.manage', 'production.manage', 'material_incidents.create'];
-  const materialIncidentApprovePerms = ['material_incidents.approve', 'refunds.approve', 'finance.approve'];
+  const materialIncidentApprovePerms = [
+    'material_incidents.approve',
+    'refunds.approve',
+    'finance.approve',
+    'operations.manage',
+  ];
   const materialIncidentReadPerms = [
     ...materialIncidentWritePerms,
     'quotations.manage',
@@ -7513,11 +7521,20 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/quotations/:id', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+  app.get('/api/quotations/:id', requireAuth, (req, res) => {
     try {
-      const row = getQuotation(db, req.params.id);
-      if (!row) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const branchScope = resolveBootstrapBranchScope(req);
+      const qid = String(req.params.id || '').trim();
+      const salesReader = canReadSalesDomain(req.user);
+      const opsProductionReader =
+        canReadOperationsDomain(req.user) &&
+        userHasPermission(req.user, 'production.manage') &&
+        quotationLinkedToProductionContext(db, qid, branchScope);
+      if (!salesReader && !opsProductionReader) {
+        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      const row = getQuotation(db, qid);
+      if (!row) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const allEntries = listLedgerEntries(db, branchScope);
       const productionJobs = listProductionJobs(db, branchScope);
       const policyFlags = readFinanceFeatureFlags();

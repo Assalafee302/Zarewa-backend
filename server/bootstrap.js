@@ -1,6 +1,7 @@
 import {
   listCustomers,
   listQuotations,
+  listQuotationsForProductionContext,
   listLedgerEntries,
   listSuppliers,
   listTransportAgents,
@@ -184,7 +185,11 @@ export function buildBootstrap(db, opts = {}) {
     workspaceBranches: listBranches(db),
     branchScope,
     customers: salesOk ? listCustomers(db, branchScope) : [],
-    quotations: salesOk ? listQuotations(db, branchScope) : [],
+    quotations: salesOk
+      ? listQuotations(db, branchScope)
+      : prodRollupOk
+        ? listQuotationsForProductionContext(db, branchScope)
+        : [],
     ledgerEntries: ledgerRows,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     suppliers: procOk ? listSuppliers(db, branchScope) : [],

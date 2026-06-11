@@ -154,7 +154,7 @@ export function evaluateRefundPayoutGlPolicy(db, ctx = {}) {
       db
         .prepare(
           `SELECT 1 FROM gl_journal_entries j
-           INNER JOIN production_jobs pj ON pj.id = j.source_id AND pj.quotation_ref = ?
+           INNER JOIN production_jobs pj ON pj.job_id = j.source_id AND pj.quotation_ref = ?
            WHERE j.source_kind = 'PRODUCTION_RECOGNITION_GL' LIMIT 1`
         )
         .get(qref)

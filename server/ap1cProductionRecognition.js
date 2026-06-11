@@ -59,7 +59,7 @@ export function sumPriorProductionRevenueRecognizedNgn(db, quotationRef, exclude
          AND (
            j.memo LIKE ? OR EXISTS (
              SELECT 1 FROM production_jobs pj
-             WHERE pj.id = j.source_id AND pj.quotation_ref = ?
+             WHERE pj.job_id = j.source_id AND pj.quotation_ref = ?
            )
          )
          AND (? = '' OR j.source_id != ?)`

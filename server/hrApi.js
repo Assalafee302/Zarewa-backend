@@ -40,6 +40,7 @@ import {
   getHrInboxSummary,
   listHrProfileWorkQueue,
   getHrMeProfile,
+  updateMyHrStaffProfile,
   getHrMeSchoolProfile,
   getHrStaffOne,
   getHrOrgChart,
@@ -680,6 +681,24 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load your HR profile.' });
+    }
+  });
+
+  app.patch('/api/hr/me/profile', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      if (!hrReady(res, db)) return;
+      const r = updateMyHrStaffProfile(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      const ctx = hrRedactionContextFromReq(req, { subjectUserId: req.user?.id });
+      const staffFull = getHrStaffOne(db, req.user?.id);
+      const profile = staffFull ? redactStaffProfile(staffFull, ctx) : r.profile;
+      return res.json({ ok: true, profile });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update your profile.' });
     }
   });
 

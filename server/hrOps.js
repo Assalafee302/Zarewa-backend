@@ -4569,6 +4569,8 @@ export function getHrMeProfile(db, userId) {
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
     nextOfKin: safeJsonParse(p.next_of_kin_json, null),
     ninNumber: p.nin_number ?? null,
+    gender: p.gender ?? null,
+    dateOfBirthIso: p.date_of_birth ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
     selfServiceEligible: Number(p.self_service_eligible) === 1,
     lineManagerUserId: p.line_manager_user_id ?? null,
@@ -4600,6 +4602,71 @@ export function getHrMeProfile(db, userId) {
     .all(userId);
   hr.directReports = directReports;
   return { user, hr };
+}
+
+/** Employee self-service: update personal, bank, NOK, and qualification fields only. */
+export function updateMyHrStaffProfile(db, userId, body) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'Not authenticated.' };
+
+  const existing = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!existing) {
+    return { ok: false, error: 'HR profile not found. Contact HR to open your employment file.' };
+  }
+
+  const patch = { userId: uid };
+  const allowed = [
+    'ninNumber',
+    'firstName',
+    'middleName',
+    'surname',
+    'phone',
+    'personalEmail',
+    'maritalStatus',
+    'residentialAddress',
+    'stateOfOrigin',
+    'localGovernment',
+    'nationality',
+    'bloodGroup',
+    'gender',
+    'dateOfBirthIso',
+    'bankName',
+    'bankAccountName',
+    'bankAccountNo',
+    'bankCode',
+    'minimumQualification',
+    'academicQualification',
+    'professionalCertificates',
+    'institution',
+    'courseField',
+    'yearCompleted',
+    'nextOfKinName',
+    'nextOfKinPhone',
+    'nextOfKinRelationship',
+    'nextOfKinAddress',
+    'nextOfKinAltPhone',
+  ];
+  for (const key of allowed) {
+    if (body && Object.prototype.hasOwnProperty.call(body, key)) {
+      patch[key] = body[key];
+    }
+  }
+  if (Object.keys(patch).length <= 1) {
+    return { ok: false, error: 'No profile fields to update.' };
+  }
+
+  const r = upsertHrStaffProfile(db, uid, patch);
+  if (r.ok) {
+    appendHrAuditEvent(db, {
+      actorUserId: uid,
+      action: 'hr.profile.self_service_update',
+      entityKind: 'hr_staff_profile',
+      entityId: uid,
+      details: { fields: Object.keys(patch).filter((k) => k !== 'userId') },
+    });
+  }
+  return r;
 }
 
 /**

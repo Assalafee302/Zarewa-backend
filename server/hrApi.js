@@ -277,6 +277,7 @@ import {
   deleteChairmanExpenseMapped,
   deleteExecutiveSchoolFee,
   getExecutiveBenefitsDashboard,
+  getExecutiveBenefitsPayrollForStaff,
   getExecutivePayment,
   listChairmanExpensesMapped,
   listDomesticStaffProfiles,

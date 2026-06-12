@@ -69,6 +69,34 @@ export function isDomesticStaff(payrollGroup) {
   return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.DOMESTIC;
 }
 
+/** HQ monthly payroll runs — branch operations staff only (not scholarship, mining, domestic, etc.). */
+export function isPayrollRunEligible(payrollGroup) {
+  return isBranchEmployee(payrollGroup);
+}
+
+/** PAYE applies only to branch staff. */
+export function requiresPaye(payrollGroup) {
+  return isBranchEmployee(payrollGroup);
+}
+
+/** Employee pension deduction applies only to branch staff. */
+export function requiresEmployeePensionDeduction(payrollGroup) {
+  return isBranchEmployee(payrollGroup);
+}
+
+/** Employer pension contribution applies only to branch staff. */
+export function requiresEmployerPensionContribution(payrollGroup) {
+  return isBranchEmployee(payrollGroup);
+}
+
+/**
+ * Domestic staff and other non-branch cohorts are exempt from statutory payroll deductions
+ * (PAYE, pension, attendance penalties on payroll).
+ */
+export function isStatutoryPayrollExempt(payrollGroup) {
+  return !isBranchEmployee(payrollGroup);
+}
+
 /** @param {string | null | undefined} payrollGroup */
 export function payrollGroupLabel(payrollGroup) {
   return PAYROLL_GROUP_LABELS[normalizePayrollGroup(payrollGroup)] || String(payrollGroup || 'Staff');

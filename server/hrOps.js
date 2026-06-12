@@ -28,11 +28,15 @@ import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 import {
   isDomesticStaff,
   isNonBranchStaff,
+  isPayrollRunEligible,
   isScholarshipBeneficiary,
   normalizePayrollGroup,
   payrollGroupLabel,
   payrollGroupsForCohort,
   requiresAttendance,
+  requiresEmployeePensionDeduction,
+  requiresEmployerPensionContribution,
+  requiresPaye,
 } from '../shared/lib/hrStaffCohorts.js';
 
 const REQUEST_KINDS = new Set([
@@ -2545,7 +2549,8 @@ export function getPayrollMissingPayeStaff(db, runId) {
   if (!hrTablesReady(db)) return [];
   const rows = db
     .prepare(
-      `SELECT l.user_id AS userId, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent
+      `SELECT l.user_id AS userId, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent,
+              p.payroll_group AS payrollGroup
        FROM hr_payroll_lines l
        JOIN hr_staff_profiles p ON p.user_id = l.user_id
        JOIN app_users u ON u.id = l.user_id
@@ -2553,6 +2558,7 @@ export function getPayrollMissingPayeStaff(db, runId) {
     )
     .all(runId);
   return rows
+    .filter((r) => requiresPaye(r.payrollGroup))
     .filter((r) => {
       const p = r.payeTaxPercent;
       return p == null || !Number.isFinite(Number(p));
@@ -2676,9 +2682,10 @@ export function computePayrollRun(db, runId) {
   const staff = db
     .prepare(
       `SELECT p.user_id, p.branch_id, p.base_salary_ngn, p.housing_allowance_ngn, p.transport_allowance_ngn,
-              p.paye_tax_percent, p.pension_percent_override, p.profile_extra_json
+              p.paye_tax_percent, p.pension_percent_override, p.payroll_group, p.profile_extra_json
        FROM hr_staff_profiles p
-       JOIN app_users u ON u.id = p.user_id AND u.status = 'active'`
+       JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
+       WHERE COALESCE(p.payroll_group, 'branch_ops') = 'branch_ops'`
     )
     .all();
 
@@ -2697,24 +2704,37 @@ export function computePayrollRun(db, runId) {
   let totalGross = 0;
   let totalPensionEmployer = 0;
   for (const s of staff) {
+    const payrollGroup = normalizePayrollGroup(s.payroll_group);
+    if (!isPayrollRunEligible(payrollGroup)) continue;
     const base = Math.round(Number(s.base_salary_ngn) || 0);
     const housing = Math.round(Number(s.housing_allowance_ngn) || 0);
     const transport = Math.round(Number(s.transport_allowance_ngn) || 0);
-    const { deductionNgn } = attendanceDeductionForUser(db, s.user_id, s.branch_id, period);
-    const bonus = isYearEnd ? Math.round(base * bonusRate) : 0;
+    const attendance =
+      requiresAttendance(payrollGroup) ?
+        attendanceDeductionForUser(db, s.user_id, s.branch_id, period)
+      : { deductionNgn: 0 };
+    const deductionNgn = Math.round(Number(attendance.deductionNgn) || 0);
+    const bonus = isYearEnd && isPayrollRunEligible(payrollGroup) ? Math.round(base * bonusRate) : 0;
     const gross = base + housing + transport + bonus - deductionNgn;
+    const payeApplies = requiresPaye(payrollGroup);
     const hasPaye =
-      s.paye_tax_percent != null && Number.isFinite(Number(s.paye_tax_percent)) && Number(s.paye_tax_percent) >= 0;
+      payeApplies &&
+      s.paye_tax_percent != null &&
+      Number.isFinite(Number(s.paye_tax_percent)) &&
+      Number(s.paye_tax_percent) >= 0;
     const effTaxP = hasPaye ? Number(s.paye_tax_percent) : 0;
+    const pensionApplies = requiresEmployeePensionDeduction(payrollGroup);
     const effPenP =
+      pensionApplies &&
       s.pension_percent_override != null &&
       Number.isFinite(Number(s.pension_percent_override)) &&
       Number(s.pension_percent_override) >= 0
         ? Number(s.pension_percent_override)
         : penEmpP;
     const tax = hasPaye ? Math.round((gross * effTaxP) / 100) : 0;
-    const pension = Math.round((gross * effPenP) / 100);
-    const pensionEmployer = Math.round((gross * penErP) / 100);
+    const pension = pensionApplies ? Math.round((gross * effPenP) / 100) : 0;
+    const pensionEmployer =
+      requiresEmployerPensionContribution(payrollGroup) ? Math.round((gross * penErP) / 100) : 0;
     const extra = safeJsonParse(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
     const discFix = Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0));
@@ -3050,7 +3070,8 @@ export function listPayrollLines(db, runId) {
   }
   return db
     .prepare(
-      `SELECT l.*, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent
+      `SELECT l.*, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent,
+              p.payroll_group AS payrollGroup
        FROM hr_payroll_lines l
        JOIN app_users u ON u.id = l.user_id
        LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
@@ -3061,11 +3082,14 @@ export function listPayrollLines(db, runId) {
     .map((row) => {
       const g = Math.round(Number(row.gross_ngn) || 0);
       const tx = Math.round(Number(row.tax_ngn) || 0);
+      const payeRequired = requiresPaye(row.payrollGroup);
       const payeSet =
         row.payeTaxPercent != null && Number.isFinite(Number(row.payeTaxPercent)) && Number(row.payeTaxPercent) >= 0;
       return {
         userId: row.user_id,
         displayName: row.displayName,
+        payrollGroup: normalizePayrollGroup(row.payrollGroup),
+        payrollGroupLabel: payrollGroupLabel(row.payrollGroup),
         grossNgn: row.gross_ngn,
         bonusNgn: row.bonus_ngn,
         attendanceDeductionNgn: row.attendance_deduction_ngn,
@@ -3075,7 +3099,8 @@ export function listPayrollLines(db, runId) {
         pensionEmployerNgn: row.pension_employer_ngn != null ? Number(row.pension_employer_ngn) : 0,
         netNgn: row.net_ngn,
         payePercent: payeSet ? Number(row.payeTaxPercent) : null,
-        payeMissing: !payeSet,
+        payeMissing: payeRequired && !payeSet,
+        payeNotApplicable: !payeRequired,
         loanDeductions: loansByUser.get(row.user_id) || [],
         impliedTaxPercent: g > 0 ? Math.round((tx * 1000) / g) / 10 : null,
         impliedPensionPercent:

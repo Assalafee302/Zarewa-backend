@@ -89,12 +89,40 @@ export function requiresEmployerPensionContribution(payrollGroup) {
   return isBranchEmployee(payrollGroup);
 }
 
+/** @param {string | object | null | undefined} extra */
+function parseProfileExtra(extra) {
+  if (!extra) return {};
+  if (typeof extra === 'object') return extra;
+  try {
+    return JSON.parse(String(extra));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Contributory pension on branch payroll unless explicitly exempt on the staff profile.
+ * @param {{ payrollGroup?: string | null, profileExtraJson?: string | object | null, profileExtra?: object | null }} staff
+ */
+export function staffMeetsPensionPolicy(staff) {
+  if (!requiresEmployeePensionDeduction(staff?.payrollGroup)) return false;
+  const extra = parseProfileExtra(staff?.profileExtraJson ?? staff?.profileExtra);
+  if (extra?.statutory?.pensionExempt === true) return false;
+  return true;
+}
+
 /**
  * Domestic staff and other non-branch cohorts are exempt from statutory payroll deductions
  * (PAYE, pension, attendance penalties on payroll).
  */
 export function isStatutoryPayrollExempt(payrollGroup) {
   return !isBranchEmployee(payrollGroup);
+}
+
+/** Paid via Executive benefits (monthly stipend / domestic salary), not HQ payroll runs. */
+export function usesExecutiveBenefitsMonthlyPay(payrollGroup) {
+  const g = normalizePayrollGroup(payrollGroup);
+  return g === HR_PAYROLL_GROUPS.SCHOLARSHIP || g === HR_PAYROLL_GROUPS.DOMESTIC;
 }
 
 /** @param {string | null | undefined} payrollGroup */

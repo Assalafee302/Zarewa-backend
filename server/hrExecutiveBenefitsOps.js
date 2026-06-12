@@ -15,6 +15,12 @@ import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification } from './hrNotifications.js';
 import { hrUserHas } from './hrPermissions.js';
+import {
+  isDomesticStaff,
+  isScholarshipBeneficiary,
+  normalizePayrollGroup,
+  usesExecutiveBenefitsMonthlyPay,
+} from '../shared/lib/hrStaffCohorts.js';
 
 const PAYMENT_STATUSES = ['draft', 'submitted', 'finance_review', 'md_review', 'approved', 'exported', 'paid', 'rejected', 'cancelled'];
 
@@ -229,6 +235,99 @@ function mapPaymentRow(row) {
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
   };
+}
+
+/**
+ * Link HR employee file to executive-benefits monthly pay (stipend or domestic salary).
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ userId?: string; displayName?: string; payrollGroup?: string; profileExtra?: object }} staff
+ */
+export function getExecutiveBenefitsPayrollForStaff(db, staff) {
+  if (!staff?.userId && !staff?.displayName) return null;
+  const pg = normalizePayrollGroup(staff.payrollGroup);
+  if (!usesExecutiveBenefitsMonthlyPay(pg)) return null;
+
+  if (isScholarshipBeneficiary(pg)) {
+    const managePath = '/executive-hr/benefits?tab=stipends';
+    if (!hrTableExists(db, 'hr_executive_stipends')) {
+      return {
+        payChannel: 'executive_stipend',
+        linked: false,
+        managePath,
+        label: 'Monthly stipend (Executive benefits)',
+        note: 'Scholarship beneficiaries are paid through Executive benefits → Monthly Stipends, not HQ payroll.',
+      };
+    }
+    const extra = staff.profileExtra && typeof staff.profileExtra === 'object' ? staff.profileExtra : {};
+    const beneficiaryId = String(extra?.schoolProfile?.beneficiaryId || '').trim();
+    const name = String(staff.displayName || '').trim();
+    let row = null;
+    if (beneficiaryId) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_executive_stipends WHERE beneficiary_id = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(beneficiaryId);
+    }
+    if (!row && name) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_executive_stipends WHERE beneficiary_name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(name);
+    }
+    const stipend = row ? mapStipendRow(row) : null;
+    return {
+      payChannel: 'executive_stipend',
+      linked: Boolean(stipend && stipend.status === 'active'),
+      managePath,
+      label: 'Monthly stipend (Executive benefits)',
+      note: 'This register is the personnel file. Monthly pay is the stipend in Executive benefits.',
+      monthlyAmountNgn: stipend?.monthlyAmountNgn ?? null,
+      lastPaidPeriod: stipend?.lastPaidPeriod ?? null,
+      paymentFrequency: stipend?.paymentFrequency ?? 'monthly',
+      stipendId: stipend?.id ?? null,
+      status: stipend?.status ?? null,
+    };
+  }
+
+  if (isDomesticStaff(pg)) {
+    const managePath = '/executive-hr/benefits?tab=domestic';
+    if (!hrTableExists(db, 'hr_domestic_staff_profiles')) {
+      return {
+        payChannel: 'executive_domestic',
+        linked: false,
+        managePath,
+        label: 'Monthly salary (Executive benefits)',
+        note: 'Domestic staff are paid through Executive benefits → Domestic Staff, not HQ payroll.',
+      };
+    }
+    const uid = String(staff.userId || '').trim();
+    let row = uid
+      ? db.prepare(`SELECT * FROM hr_domestic_staff_profiles WHERE user_id = ? ORDER BY updated_at_iso DESC LIMIT 1`).get(uid)
+      : null;
+    if (!row && staff.displayName) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_domestic_staff_profiles WHERE staff_name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(String(staff.displayName).trim());
+    }
+    const domestic = row ? mapDomesticRow(row) : null;
+    return {
+      payChannel: 'executive_domestic',
+      linked: Boolean(domestic && domestic.status === 'active'),
+      managePath,
+      label: 'Monthly salary (Executive benefits)',
+      note: 'This register is the personnel file. Monthly pay is managed in Executive benefits domestic staff.',
+      monthlyAmountNgn: domestic?.salaryAmountNgn ?? null,
+      domesticProfileId: domestic?.id ?? null,
+      assignedExecutive: domestic?.assignedExecutive ?? null,
+      status: domestic?.status ?? null,
+    };
+  }
+
+  return null;
 }
 
 // ── Beneficiaries ─────────────────────────────────────────────

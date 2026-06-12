@@ -2765,6 +2765,23 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrPhase8Operational2026(db);
   migrateHrPhase9ExecutiveBenefits2026(db);
   migratePayrollPensionPolicy2026(db);
+  migratePayeTaxAmount2026(db);
+}
+
+/** PAYE as fixed monthly naira amount per staff (not percentage). */
+function migratePayeTaxAmount2026(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const hr = tableCols('hr_staff_profiles');
+  if (hr.size && !hr.has('paye_tax_ngn')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN paye_tax_ngn INTEGER`);
+  }
 }
 
 /** Pension employer totals on payroll runs/lines; policy pension defaults. */
@@ -4232,6 +4249,9 @@ function migrateLoginSecurityPhase12(db) {
   }
   if (!users.has('locked_until_iso')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN locked_until_iso TEXT`);
+  }
+  if (!users.has('username_change_count')) {
+    db.exec(`ALTER TABLE app_users ADD COLUMN username_change_count INTEGER NOT NULL DEFAULT 0`);
   }
   if (users.has('registered_password')) {
     db.prepare(`UPDATE app_users SET registered_password = NULL WHERE registered_password IS NOT NULL`).run();

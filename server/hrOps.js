@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, userHasPermission } from './auth.js';
+import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, updateUserProfile, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   annualLeaveEntitlementDaysForUser,
@@ -8,6 +8,8 @@ import {
   getHrPolicyPayload,
   isApprovedLeaveOnDay,
   updateHrPolicyPayload,
+  normalizeLeaveEntitlementBand,
+  validateLeaveRequest,
   validateStaffLoanApplication,
 } from './hrBusinessRules.js';
 import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
@@ -37,6 +39,7 @@ import {
   requiresEmployeePensionDeduction,
   requiresEmployerPensionContribution,
   requiresPaye,
+  staffMeetsPensionPolicy,
 } from '../shared/lib/hrStaffCohorts.js';
 
 const REQUEST_KINDS = new Set([
@@ -301,6 +304,7 @@ export function listHrStaff(db, scope, opts = {}) {
            p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
            p.bonus_accrual_note AS bonusAccrualNote,
            p.paye_tax_percent AS payeTaxPercent,
+           p.paye_tax_ngn AS payeTaxNgn,
            p.pension_percent_override AS pensionPercentOverride,
            p.self_service_eligible AS selfServiceEligible,
            p.next_of_kin_json AS nextOfKinJson,
@@ -641,7 +645,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       : prevRow?.line_manager_user_id ?? null;
   const leaveEntitlementBand =
     body?.leaveEntitlementBand !== undefined
-      ? String(body.leaveEntitlementBand || '').trim().toLowerCase() || null
+      ? normalizeLeaveEntitlementBand(String(body.leaveEntitlementBand || '').trim()) || null
       : prevRow?.leave_entitlement_band ?? null;
 
   let selfServiceEligible = 0;
@@ -832,6 +836,14 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     welfare_notes: String(body?.welfareNotes ?? '').trim() || null,
     training_summary: String(body?.trainingSummary ?? '').trim() || null,
     paye_tax_percent: nullableNonNegNumber(body?.payeTaxPercent),
+    paye_tax_ngn:
+      body?.payeTaxNgn !== undefined && body?.payeTaxNgn !== '' && body?.payeTaxNgn != null
+        ? Math.max(0, Math.round(Number(body.payeTaxNgn) || 0))
+        : body?.payeTaxNgn === '' || body?.payeTaxNgn === null
+          ? null
+          : prevRow?.paye_tax_ngn != null
+            ? Math.max(0, Math.round(Number(prevRow.paye_tax_ngn) || 0))
+            : null,
     pension_percent_override: nullableNonNegNumber(body?.pensionPercentOverride),
     profile_extra_json:
       profileExtraMerged != null
@@ -889,7 +901,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
           promotion_grade=@promotion_grade,
           welfare_notes=@welfare_notes, training_summary=@training_summary,
-          paye_tax_percent=@paye_tax_percent, pension_percent_override=@pension_percent_override,
+          paye_tax_percent=@paye_tax_percent, paye_tax_ngn=@paye_tax_ngn, pension_percent_override=@pension_percent_override,
           profile_extra_json=@profile_extra_json,
           self_service_eligible=@self_service_eligible,
           line_manager_user_id=@line_manager_user_id, leave_entitlement_band=@leave_entitlement_band,
@@ -960,7 +972,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
-          paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
+          paye_tax_percent, paye_tax_ngn, pension_percent_override, profile_extra_json, self_service_eligible,
           line_manager_user_id, leave_entitlement_band, payroll_group, salary_level, salary_step,
           gender, date_of_birth, contract_end_iso, nhis_deduction_ngn, nhis_provider,
           updated_at_iso, updated_by_user_id
@@ -970,7 +982,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
-          @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
+          @paye_tax_percent, @paye_tax_ngn, @pension_percent_override, @profile_extra_json, @self_service_eligible,
           @line_manager_user_id, @leave_entitlement_band, @payroll_group, @salary_level, @salary_step,
           @gender, @date_of_birth, @contract_end_iso, @nhis_deduction_ngn, @nhis_provider,
           @updated_at_iso, @updated_by_user_id
@@ -1433,6 +1445,8 @@ export function createHrRequest(db, userId, body) {
   );
   if (kind === 'leave') {
     const p = body?.payload || {};
+    const leaveVal = validateLeaveRequest(db, userId, p);
+    if (!leaveVal.ok) return leaveVal;
     db.prepare(
       `INSERT OR REPLACE INTO hr_request_leave (
         request_id, leave_type, start_date_iso, end_date_iso, days_requested, handover_to, contact_during_leave
@@ -1500,6 +1514,14 @@ export function submitHrRequest(db, requestId, userId) {
   const row = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
   if (!row || row.user_id !== userId) return { ok: false, error: 'Request not found.' };
   if (row.status !== 'draft') return { ok: false, error: 'Only draft requests can be submitted.' };
+  if (String(row.kind) === 'leave') {
+    const leaveRow = db.prepare(`SELECT * FROM hr_request_leave WHERE request_id = ?`).get(requestId);
+    const leaveVal = validateLeaveRequest(db, userId, {
+      leaveType: leaveRow?.leave_type,
+      daysRequested: leaveRow?.days_requested,
+    });
+    if (!leaveVal.ok) return leaveVal;
+  }
   const now = nowIso();
   db.prepare(
     `UPDATE hr_requests SET status = 'hr_review', submitted_at_iso = ? WHERE id = ?`
@@ -1512,6 +1534,58 @@ export function submitHrRequest(db, requestId, userId) {
     branchId: row.branch_id,
   });
   return { ok: true };
+}
+
+export function applyApprovedProfileChange(db, requestRow, actor) {
+  const payload = safeJsonParse(requestRow.payload_json, {});
+  const field = String(payload.field || '').trim();
+  const userId = String(requestRow.user_id || '').trim();
+  if (!userId || !field) return { ok: false, error: 'Invalid profile change payload.' };
+
+  if (field === 'username') {
+    const next = String(payload.requestedValue || '').trim().toLowerCase();
+    const r = updateUserProfile(db, userId, { username: next });
+    if (!r.ok) return r;
+    db.prepare(`UPDATE app_users SET username_change_count = 1 WHERE id = ?`).run(userId);
+    return { ok: true };
+  }
+
+  const now = nowIso();
+  const actorId = actor?.id || userId;
+
+  if (field === 'ninNumber') {
+    db.prepare(
+      `UPDATE hr_staff_profiles SET nin_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+    ).run(String(payload.requestedValue || '').trim() || null, now, actorId, userId);
+    return { ok: true };
+  }
+
+  if (field === 'nextOfKin') {
+    const nok = payload.requestedValue && typeof payload.requestedValue === 'object' ? payload.requestedValue : null;
+    db.prepare(
+      `UPDATE hr_staff_profiles SET next_of_kin_json = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+    ).run(nok ? JSON.stringify(nok) : null, now, actorId, userId);
+    return { ok: true };
+  }
+
+  if (field === 'bankDetails') {
+    const v = payload.requestedValue && typeof payload.requestedValue === 'object' ? payload.requestedValue : {};
+    const acct = String(v.bankAccountNo || '').trim();
+    const masked = acct.length >= 4 ? `****${acct.slice(-4)}` : acct || null;
+    db.prepare(
+      `UPDATE hr_staff_profiles SET bank_name = ?, bank_account_name = ?, bank_account_no_masked = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+    ).run(
+      String(v.bankName || '').trim() || null,
+      String(v.bankAccountName || '').trim() || null,
+      masked,
+      now,
+      actorId,
+      userId
+    );
+    return { ok: true };
+  }
+
+  return { ok: false, error: `Unsupported profile field: ${field}.` };
 }
 
 export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode) {
@@ -1550,6 +1624,26 @@ export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode)
     }
     return { ok: true };
   }
+
+  if (String(row.kind) === 'profile_change') {
+    const applied = applyApprovedProfileChange(db, row, actor);
+    if (!applied.ok) return applied;
+    db.prepare(
+      `UPDATE hr_requests SET status = 'approved', hr_reviewer_user_id = ?, hr_reviewer_note = ?, hr_reviewed_at_iso = ? WHERE id = ?`
+    ).run(actor.id, noteNorm || null, now, requestId);
+    appendHrAuditEvent(db, {
+      actorUserId: actor.id,
+      actorDisplayName: actor.displayName || actor.username || '',
+      action: 'hr.request.profile_change_applied',
+      entityKind: 'hr_request',
+      entityId: requestId,
+      branchId: row.branch_id,
+      reason: noteNorm || null,
+      details: { kind: row.kind, decision: 'approve', reasonCode: rc },
+    });
+    return { ok: true };
+  }
+
   db.prepare(
     `UPDATE hr_requests SET status = 'branch_manager_review', hr_reviewer_user_id = ?, hr_reviewer_note = ?, hr_reviewed_at_iso = ? WHERE id = ?`
   ).run(actor.id, noteNorm || null, now, requestId);
@@ -2544,12 +2638,12 @@ export function getPayrollRunTotals(db, runId) {
   };
 }
 
-/** Staff on a payroll run without PAYE % set on their profile. */
+/** Staff on a payroll run with zero PAYE on the line (informational only — not a lock gate). */
 export function getPayrollMissingPayeStaff(db, runId) {
   if (!hrTablesReady(db)) return [];
   const rows = db
     .prepare(
-      `SELECT l.user_id AS userId, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent,
+      `SELECT l.user_id AS userId, u.display_name AS displayName, l.tax_ngn AS taxNgn,
               p.payroll_group AS payrollGroup
        FROM hr_payroll_lines l
        JOIN hr_staff_profiles p ON p.user_id = l.user_id
@@ -2559,10 +2653,7 @@ export function getPayrollMissingPayeStaff(db, runId) {
     .all(runId);
   return rows
     .filter((r) => requiresPaye(r.payrollGroup))
-    .filter((r) => {
-      const p = r.payeTaxPercent;
-      return p == null || !Number.isFinite(Number(p));
-    })
+    .filter((r) => Math.round(Number(r.taxNgn) || 0) <= 0)
     .map((r) => ({ userId: r.userId, displayName: r.displayName || r.userId }));
 }
 
@@ -2682,7 +2773,7 @@ export function computePayrollRun(db, runId) {
   const staff = db
     .prepare(
       `SELECT p.user_id, p.branch_id, p.base_salary_ngn, p.housing_allowance_ngn, p.transport_allowance_ngn,
-              p.paye_tax_percent, p.pension_percent_override, p.payroll_group, p.profile_extra_json
+              p.paye_tax_ngn, p.pension_percent_override, p.payroll_group, p.profile_extra_json
        FROM hr_staff_profiles p
        JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
        WHERE COALESCE(p.payroll_group, 'branch_ops') = 'branch_ops'`
@@ -2717,24 +2808,13 @@ export function computePayrollRun(db, runId) {
     const bonus = isYearEnd && isPayrollRunEligible(payrollGroup) ? Math.round(base * bonusRate) : 0;
     const gross = base + housing + transport + bonus - deductionNgn;
     const payeApplies = requiresPaye(payrollGroup);
-    const hasPaye =
-      payeApplies &&
-      s.paye_tax_percent != null &&
-      Number.isFinite(Number(s.paye_tax_percent)) &&
-      Number(s.paye_tax_percent) >= 0;
-    const effTaxP = hasPaye ? Number(s.paye_tax_percent) : 0;
-    const pensionApplies = requiresEmployeePensionDeduction(payrollGroup);
-    const effPenP =
-      pensionApplies &&
-      s.pension_percent_override != null &&
-      Number.isFinite(Number(s.pension_percent_override)) &&
-      Number(s.pension_percent_override) >= 0
-        ? Number(s.pension_percent_override)
-        : penEmpP;
-    const tax = hasPaye ? Math.round((gross * effTaxP) / 100) : 0;
-    const pension = pensionApplies ? Math.round((gross * effPenP) / 100) : 0;
-    const pensionEmployer =
-      requiresEmployerPensionContribution(payrollGroup) ? Math.round((gross * penErP) / 100) : 0;
+    const tax = payeApplies ? Math.max(0, Math.round(Number(s.paye_tax_ngn) || 0)) : 0;
+    const meetsPension = staffMeetsPensionPolicy({
+      payrollGroup,
+      profileExtraJson: s.profile_extra_json,
+    });
+    const pension = meetsPension ? Math.round((gross * penEmpP) / 100) : 0;
+    const pensionEmployer = meetsPension ? Math.round((gross * penErP) / 100) : 0;
     const extra = safeJsonParse(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
     const discFix = Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0));
@@ -2955,19 +3035,10 @@ export function patchPayrollRun(db, runId, body, actor) {
     }
     if (ns === 'locked' && String(run.status || '').toLowerCase() === 'draft') {
       const gmOk = String(run.gm_approved_at_iso || '').trim();
-      const mdOk = String(run.md_approved_at_iso || '').trim();
-      if (!gmOk && !mdOk && !userHasPermission(actor, '*')) {
+      if (!gmOk && !userHasPermission(actor, '*')) {
         return {
           ok: false,
-          error: 'GM HR or Managing Director must approve this payroll run before it can be locked.',
-        };
-      }
-      const missingPaye = getPayrollMissingPayeStaff(db, runId);
-      if (missingPaye.length > 0 && !userHasPermission(actor, '*')) {
-        return {
-          ok: false,
-          error: `Cannot lock payroll: ${missingPaye.length} staff missing PAYE % on their profile. Set PAYE on each employee under HR → Employees → Statutory.`,
-          missingPayeStaff: missingPaye,
+          error: 'GM HR must approve this payroll run (signed hard copy) before it can be locked.',
         };
       }
     }
@@ -3070,8 +3141,9 @@ export function listPayrollLines(db, runId) {
   }
   return db
     .prepare(
-      `SELECT l.*, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent,
-              p.payroll_group AS payrollGroup
+      `SELECT l.*, u.display_name AS displayName, p.paye_tax_ngn AS payeTaxNgn,
+              p.payroll_group AS payrollGroup, p.pension_rsa_pin AS pensionRsaPin,
+              p.profile_extra_json AS profileExtraJson
        FROM hr_payroll_lines l
        JOIN app_users u ON u.id = l.user_id
        LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
@@ -3083,8 +3155,17 @@ export function listPayrollLines(db, runId) {
       const g = Math.round(Number(row.gross_ngn) || 0);
       const tx = Math.round(Number(row.tax_ngn) || 0);
       const payeRequired = requiresPaye(row.payrollGroup);
-      const payeSet =
-        row.payeTaxPercent != null && Number.isFinite(Number(row.payeTaxPercent)) && Number(row.payeTaxPercent) >= 0;
+      const taxNgn = Math.round(Number(row.tax_ngn) || 0);
+      const loanTotal = (loansByUser.get(row.user_id) || []).reduce(
+        (s, x) => s + Math.round(Number(x.amountNgn) || 0),
+        0
+      );
+      const otherDed = Math.round(Number(row.other_deduction_ngn) || 0);
+      const discOther = Math.max(0, otherDed - loanTotal);
+      const profileExtra = safeJsonParse(row.profileExtraJson, {});
+      const pensionAdministrator = profileExtra?.statutory?.pensionAdministrator || null;
+      const profilePaye =
+        row.payeTaxNgn != null && Number.isFinite(Number(row.payeTaxNgn)) ? Math.round(Number(row.payeTaxNgn)) : null;
       return {
         userId: row.user_id,
         displayName: row.displayName,
@@ -3094,13 +3175,18 @@ export function listPayrollLines(db, runId) {
         bonusNgn: row.bonus_ngn,
         attendanceDeductionNgn: row.attendance_deduction_ngn,
         otherDeductionNgn: row.other_deduction_ngn,
+        loanDeductionNgn: loanTotal,
+        disciplinaryOtherDeductionNgn: discOther,
         taxNgn: row.tax_ngn,
         pensionNgn: row.pension_ngn,
         pensionEmployerNgn: row.pension_employer_ngn != null ? Number(row.pension_employer_ngn) : 0,
         netNgn: row.net_ngn,
-        payePercent: payeSet ? Number(row.payeTaxPercent) : null,
-        payeMissing: payeRequired && !payeSet,
+        payeTaxNgn: profilePaye,
+        payeAmountNgn: taxNgn,
+        payeMissing: false,
         payeNotApplicable: !payeRequired,
+        pensionRsaPin: row.pensionRsaPin || null,
+        pfaName: pensionAdministrator,
         loanDeductions: loansByUser.get(row.user_id) || [],
         impliedTaxPercent: g > 0 ? Math.round((tx * 1000) / g) / 10 : null,
         impliedPensionPercent:
@@ -3370,9 +3456,17 @@ export function exportPayrollBankUploadCsv(db, runId) {
     };
   }
   const narration = `Zarewa Salary ${run.periodYyyymm}`;
-  const headers = ['Receiver Name', 'Receiver Account No', 'Amount', 'Sender Narration', 'Bank Code'];
+  const headers = [
+    'Beneficiary Group',
+    'Receiver Name',
+    'Receiver Account No',
+    'Amount',
+    'Sender Narration',
+    'Bank Code',
+  ];
   const rows = lines.map((l) =>
     [
+      'Branch staff payroll',
       l.bankAccountName || l.displayName,
       l.bankAccountNo,
       Math.round(Number(l.netNgn) || 0),
@@ -3384,11 +3478,129 @@ export function exportPayrollBankUploadCsv(db, runId) {
   return {
     ok: true,
     csv,
-    filename: `bank-upload-salary-${run.periodYyyymm}.csv`,
+    filename: `bank-payment-${run.periodYyyymm}.csv`,
   };
 }
 
-/** HR/GM/MD payroll approval report before bank payment. */
+function recalcPayrollLineNet(db, runId, userId) {
+  const line = db.prepare(`SELECT * FROM hr_payroll_lines WHERE run_id = ? AND user_id = ?`).get(runId, userId);
+  if (!line) return;
+  const gross = Math.round(Number(line.gross_ngn) || 0);
+  const tax = Math.round(Number(line.tax_ngn) || 0);
+  const pension = Math.round(Number(line.pension_ngn) || 0);
+  const other = Math.round(Number(line.other_deduction_ngn) || 0);
+  const net = Math.max(0, gross - tax - pension - other);
+  db.prepare(`UPDATE hr_payroll_lines SET net_ngn = ? WHERE run_id = ? AND user_id = ?`).run(net, runId, userId);
+}
+
+/** Adjust PAYE (or other deductions) on a draft payroll line. */
+export function patchPayrollLineAdjustments(db, runId, userId, body, actor) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const run = db.prepare(`SELECT status FROM hr_payroll_runs WHERE id = ?`).get(runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  if (String(run.status || '').toLowerCase() !== 'draft') {
+    return { ok: false, error: 'Only draft payroll runs can be adjusted.' };
+  }
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'userId is required.' };
+  const line = db.prepare(`SELECT * FROM hr_payroll_lines WHERE run_id = ? AND user_id = ?`).get(runId, uid);
+  if (!line) return { ok: false, error: 'Payroll line not found.' };
+
+  if (body?.taxNgn !== undefined) {
+    const taxNgn = Math.max(0, Math.round(Number(body.taxNgn) || 0));
+    db.prepare(`UPDATE hr_payroll_lines SET tax_ngn = ? WHERE run_id = ? AND user_id = ?`).run(taxNgn, runId, uid);
+    try {
+      db.prepare(`UPDATE hr_staff_profiles SET paye_tax_ngn = ? WHERE user_id = ?`).run(taxNgn, uid);
+    } catch {
+      /* paye_tax_ngn optional until migrate */
+    }
+  }
+  recalcPayrollLineNet(db, runId, uid);
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.payroll_line.adjust',
+    entityKind: 'hr_payroll_line',
+    entityId: `${runId}:${uid}`,
+    details: { taxNgn: body?.taxNgn },
+  });
+  const updated = listPayrollLines(db, runId).find((l) => l.userId === uid);
+  return { ok: true, line: updated || null };
+}
+
+/** Printable GM approval report (HR prints before GM signs hard copy). */
+export function exportPayrollApprovalReportPdf(db, runId) {
+  const run = getPayrollRunById(db, runId);
+  if (!run) return { ok: false, error: 'Payroll run not found.' };
+  const lines = listPayrollLines(db, runId);
+  const totals = getPayrollRunTotals(db, runId);
+  const pages = [];
+  const chunkSize = 38;
+  for (let i = 0; i < Math.max(1, lines.length); i += chunkSize) {
+    const chunk = lines.slice(i, i + chunkSize);
+    const pageLines = [
+      'ZAREWA ALUMINIUM AND PLASTICS LTD',
+      'MONTHLY PAYROLL — GM APPROVAL REPORT',
+      `Period ${run.periodYyyymm}  |  Run ${run.id}  |  Status ${run.status}`,
+      i === 0 ? `Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')}` : '(continued)',
+      '',
+      'Name                      Gross       Attend      PAYE    Pension     Loans       Net',
+      '--------------------------------------------------------------------------------',
+    ];
+    for (const l of chunk) {
+      const name = String(l.displayName || l.userId).slice(0, 22).padEnd(22);
+      const loan = Math.round(Number(l.loanDeductionNgn) || 0);
+      pageLines.push(
+        `${name} ${String(Math.round(Number(l.grossNgn) || 0)).padStart(10)} ${String(Math.round(Number(l.attendanceDeductionNgn) || 0)).padStart(10)} ${String(Math.round(Number(l.taxNgn) || 0)).padStart(8)} ${String(Math.round(Number(l.pensionNgn) || 0)).padStart(8)} ${String(loan).padStart(10)} ${String(Math.round(Number(l.netNgn) || 0)).padStart(10)}`
+      );
+    }
+    if (i + chunkSize >= lines.length && lines.length) {
+      pageLines.push(
+        '--------------------------------------------------------------------------------',
+        `TOTALS${' '.repeat(17)}${String(totals.grossTotalNgn).padStart(10)} ${String(totals.attendanceDeductionTotalNgn).padStart(10)} ${String(totals.taxTotalNgn).padStart(8)} ${String(totals.pensionTotalNgn).padStart(8)} ${' '.repeat(10)} ${String(totals.netTotalNgn).padStart(10)}`,
+        '',
+        `Bonus total: ${formatNgnPdf(totals.bonusTotalNgn)}`,
+        `Employer pension (${run.pensionEmployerPercent ?? 10}%): ${formatNgnPdf(totals.pensionEmployerTotalNgn)}`,
+        `ITF 1%: ${formatNgnPdf(Math.round((totals.grossTotalNgn || 0) * 0.01))}`,
+        `NSITF 1%: ${formatNgnPdf(Math.round((totals.grossTotalNgn || 0) * 0.01))}`,
+        '',
+        'Prepared by HR Officer: _________________________  Date: __________',
+        'Approved by GM HR (signature): __________________  Date: __________',
+      );
+    }
+    pages.push({ lines: pageLines });
+  }
+  if (!lines.length) {
+    pages.push({
+      lines: [
+        'ZAREWA ALUMINIUM AND PLASTICS LTD',
+        'MONTHLY PAYROLL — GM APPROVAL REPORT',
+        `Period ${run.periodYyyymm}`,
+        '',
+        'No payroll lines in this run.',
+      ],
+    });
+  }
+  const pdf = buildSimpleTextPdf(pages);
+  return {
+    ok: true,
+    pdf,
+    filename: `payroll-gm-approval-${run.periodYyyymm}.pdf`,
+    contentType: 'application/pdf',
+  };
+}
+
+/** Payroll runs ready for finance (GM-approved or locked/paid). */
+export function listPayrollRunsForFinance(db) {
+  return listPayrollRuns(db).filter((r) => {
+    const s = String(r.status || '').toLowerCase();
+    if (s === 'locked' || s === 'paid') return true;
+    if (s === 'draft' && r.gmApprovedAtIso) return true;
+    return false;
+  });
+}
+
+/** HR/GM payroll approval report before bank payment. */
 export function exportPayrollHrApprovalCsv(db, runId) {
   const run = getPayrollRunById(db, runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
@@ -3972,6 +4184,28 @@ export function acceptHrPolicy(db, actor, body) {
   return { ok: true, id, acceptedAtIso, recordHash };
 }
 
+/** Accept multiple policies in one session (same signature). */
+export function acceptHrPoliciesBatch(db, actor, body) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const policies = Array.isArray(body?.policies) ? body.policies : [];
+  const signatureName = String(body?.signatureName || actor?.displayName || '').trim();
+  if (!signatureName) return { ok: false, error: 'Signature (typed name) is required.' };
+  if (!policies.length) return { ok: false, error: 'No policies selected.' };
+  const accepted = [];
+  for (const p of policies) {
+    const r = acceptHrPolicy(db, actor, {
+      userId: body?.userId,
+      policyKey: p.policyKey || p.key,
+      policyVersion: p.policyVersion || p.version,
+      signatureName,
+      context: { batch: true, ...(body?.context || {}) },
+    });
+    if (!r.ok) return r;
+    accepted.push({ policyKey: p.policyKey || p.key, id: r.id });
+  }
+  return { ok: true, accepted, count: accepted.length };
+}
+
 export function hasHrPolicyAcceptance(db, userId, policyKey, policyVersion) {
   if (!hrTablesReady(db)) return false;
   const uid = String(userId || '').trim();
@@ -4331,6 +4565,7 @@ export function getHrMeProfile(db, userId) {
     trainingSummary: p.training_summary,
     bonusAccrualNote: p.bonus_accrual_note,
     payeTaxPercent: p.paye_tax_percent != null ? Number(p.paye_tax_percent) : null,
+    payeTaxNgn: p.paye_tax_ngn != null ? Math.round(Number(p.paye_tax_ngn) || 0) : null,
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
     nextOfKin: safeJsonParse(p.next_of_kin_json, null),
     ninNumber: p.nin_number ?? null,
@@ -4500,6 +4735,7 @@ export function getHrInboxSummary(db, scope) {
   }
   const obs = listHrObservability(db, scope);
   const draftPayroll = db.prepare(`SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE status = 'draft'`).get().c;
+  const profileWork = listHrProfileWorkQueue(db, scope);
   return {
     ok: true,
     counts: {
@@ -4508,7 +4744,80 @@ export function getHrInboxSummary(db, scope) {
       pendingGmHrReview: obs.summary?.pendingGmHrReview ?? 0,
       overdueRequests: obs.summary?.overdueRequests ?? 0,
       draftPayrollRuns: draftPayroll,
+      pendingDocumentVerifications: profileWork.counts.pendingDocumentVerifications,
+      pendingProfileChanges: profileWork.counts.pendingProfileChanges,
+      incompleteProfiles: profileWork.counts.incompleteProfiles,
     },
+  };
+}
+
+/** HR queue: document verifications, profile change requests, low completeness profiles. */
+export function listHrProfileWorkQueue(db, scope) {
+  if (!hrTablesReady(db)) {
+    return {
+      counts: { pendingDocumentVerifications: 0, pendingProfileChanges: 0, incompleteProfiles: 0 },
+      pendingDocuments: [],
+      profileChangeRequests: [],
+      incompleteProfiles: [],
+    };
+  }
+
+  let docSql = `
+    SELECT d.id, d.user_id AS userId, d.doc_kind AS docKind, d.file_name AS fileName,
+           d.uploaded_at_iso AS uploadedAtIso, u.display_name AS displayName, p.branch_id AS branchId
+    FROM hr_staff_documents d
+    JOIN app_users u ON u.id = d.user_id
+    LEFT JOIN hr_staff_profiles p ON p.user_id = d.user_id
+    WHERE COALESCE(d.verification_status, 'pending') = 'pending'`;
+  const docArgs = [];
+  if (!scope?.viewAll) {
+    docSql += ` AND (p.branch_id = ? OR p.branch_id IS NULL)`;
+    docArgs.push(scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  docSql += ` ORDER BY d.uploaded_at_iso DESC LIMIT 50`;
+  const pendingDocuments = db.prepare(docSql).all(...docArgs);
+
+  let reqSql = `
+    SELECT r.id, r.user_id AS userId, r.title, r.status, r.created_at_iso AS createdAtIso,
+           r.payload_json AS payloadJson, u.display_name AS displayName, p.branch_id AS branchId
+    FROM hr_requests r
+    JOIN app_users u ON u.id = r.user_id
+    LEFT JOIN hr_staff_profiles p ON p.user_id = r.user_id
+    WHERE r.kind = 'profile_change' AND r.status IN ('hr_review', 'draft')`;
+  const reqArgs = [];
+  if (!scope?.viewAll) {
+    reqSql += ` AND (p.branch_id = ? OR r.branch_id = ?)`;
+    reqArgs.push(scope?.branchId || DEFAULT_BRANCH_ID, scope?.branchId || DEFAULT_BRANCH_ID);
+  }
+  reqSql += ` ORDER BY r.created_at_iso DESC LIMIT 30`;
+  const profileChangeRequests = db.prepare(reqSql).all(...reqArgs).map((row) => ({
+    ...row,
+    payload: safeJsonParse(row.payloadJson, {}),
+    payloadJson: undefined,
+  }));
+
+  const staff = listHrStaff(db, scope, { includeInactive: false, requireProfile: true });
+  const incompleteProfiles = staff
+    .filter((s) => (s.profileCompleteness?.overallPct ?? 100) < 60)
+    .slice(0, 40)
+    .map((s) => ({
+      userId: s.userId,
+      displayName: s.displayName,
+      employeeNo: s.employeeNo,
+      branchId: s.branchId,
+      overallPct: s.profileCompleteness?.overallPct ?? 0,
+      missingCritical: s.profileCompleteness?.missingCritical || [],
+    }));
+
+  return {
+    counts: {
+      pendingDocumentVerifications: pendingDocuments.length,
+      pendingProfileChanges: profileChangeRequests.length,
+      incompleteProfiles: incompleteProfiles.length,
+    },
+    pendingDocuments,
+    profileChangeRequests,
+    incompleteProfiles,
   };
 }
 

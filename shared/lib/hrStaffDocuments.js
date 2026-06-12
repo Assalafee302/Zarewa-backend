@@ -11,11 +11,14 @@ export const HR_STAFF_DOC_KINDS = [
     label: 'Degree / ND / HND / professional qualification',
     accept: '.pdf,.png,.jpg,.jpeg,.webp',
   },
-  { value: 'guarantor_form', label: 'Guarantor form(s)', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
+  { value: 'guarantor_form', label: 'Guarantor form(s)', accept: '.pdf,.png,.jpg,.jpeg,.webp', downloadableTemplate: true },
+  { value: 'employment_letter', label: 'Employment / offer letter (signed copy)', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
   { value: 'nin_slip', label: 'NIN slip / NIN card', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
 ];
 
-export const HR_REQUIRED_DOC_KINDS = HR_STAFF_DOC_KINDS.map((d) => d.value);
+export const HR_REQUIRED_DOC_KINDS = HR_STAFF_DOC_KINDS.filter((d) => d.value !== 'employment_letter').map(
+  (d) => d.value
+);
 
 export const HR_STAFF_IDENTITY_FIELDS = ['ninNumber', 'nextOfKin'];
 

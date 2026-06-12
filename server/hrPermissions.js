@@ -114,6 +114,17 @@ export function userCanManageExecutiveBenefits(user) {
   );
 }
 
+/** Company-wide pension rates — HR Executive / settings admin only. */
+export function userCanEditPensionPolicyRates(user) {
+  if (hrUserHas(user, '*')) return true;
+  return (
+    hrUserHas(user, 'hr.executive.benefits.manage') ||
+    hrUserHas(user, 'hr.chairman.manage') ||
+    hrUserHas(user, 'hr.payroll.md_approve') ||
+    hrUserHas(user, 'hr.settings.manage')
+  );
+}
+
 /** API paths self-service staff may call without main HR workspace. */
 export const HR_SELF_SERVICE_API_PATTERNS = [
   /^\/api\/hr\/health$/,

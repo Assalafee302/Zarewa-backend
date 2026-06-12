@@ -295,6 +295,53 @@ export function validateLeaveEligibility(leaveType, probationEndIso) {
   return { ok: true };
 }
 
+/** Map UI band labels to backend junior/senior buckets. */
+export function normalizeLeaveEntitlementBand(band) {
+  const b = String(band || '').trim().toLowerCase();
+  if (!b) return '';
+  if (b === 'standard' || b === 'junior') return 'junior';
+  if (b === 'senior' || b === 'executive') return 'senior';
+  return b;
+}
+
+function currentPeriodYyyymm() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Validate leave create/submit (probation, balance for annual/casual).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ leaveType?: string; daysRequested?: number }} payload
+ */
+export function validateLeaveRequest(db, userId, payload) {
+  if (!db || !userId) return { ok: false, error: 'Invalid leave request.' };
+  const leaveType = String(payload?.leaveType || '').trim().toLowerCase();
+  const daysRequested = Math.round(Number(payload?.daysRequested) || 0);
+  const prof = db.prepare(`SELECT probation_end_iso FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const elig = validateLeaveEligibility(leaveType, prof?.probation_end_iso);
+  if (!elig.ok) return elig;
+  if (daysRequested <= 0) return { ok: false, error: 'Leave days must be greater than 0.' };
+
+  if (['annual', 'casual'].includes(leaveType)) {
+    const period = currentPeriodYyyymm();
+    const bal = db
+      .prepare(
+        `SELECT closing_days FROM hr_leave_balances WHERE user_id = ? AND leave_type = ? AND period_yyyymm = ?`
+      )
+      .get(userId, leaveType, period);
+    const available = Number(bal?.closing_days ?? 0);
+    if (daysRequested > available) {
+      return {
+        ok: false,
+        error: `Insufficient ${leaveType} leave balance (${available} day(s) available, ${daysRequested} requested).`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  */
@@ -303,7 +350,7 @@ export function annualLeaveEntitlementDaysForUser(db, userId) {
   const row = db
     .prepare(`SELECT leave_entitlement_band, job_title, base_salary_ngn FROM hr_staff_profiles WHERE user_id = ?`)
     .get(userId);
-  const band = String(row?.leave_entitlement_band || '').trim().toLowerCase();
+  const band = normalizeLeaveEntitlementBand(row?.leave_entitlement_band || '');
   if (band === 'junior') return policy.annualLeaveDaysJunior;
   if (band === 'senior') return policy.annualLeaveDaysSenior;
   const t = String(row?.job_title || '').toLowerCase();

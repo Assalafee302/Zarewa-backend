@@ -5,6 +5,8 @@ import {
   isStatutoryPayrollExempt,
   requiresEmployeePensionDeduction,
   requiresPaye,
+  staffMeetsPensionPolicy,
+  usesExecutiveBenefitsMonthlyPay,
 } from './hrStaffCohorts.js';
 
 describe('hrStaffCohorts payroll rules', () => {
@@ -27,5 +29,22 @@ describe('hrStaffCohorts payroll rules', () => {
       expect(requiresEmployeePensionDeduction(g)).toBe(false);
       expect(isStatutoryPayrollExempt(g)).toBe(true);
     }
+  });
+
+  it('scholarship and domestic use executive benefits monthly pay', () => {
+    expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(true);
+    expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(true);
+    expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
+  });
+
+  it('branch staff meet pension policy unless explicitly exempt', () => {
+    expect(staffMeetsPensionPolicy({ payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS })).toBe(true);
+    expect(
+      staffMeetsPensionPolicy({
+        payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS,
+        profileExtraJson: { statutory: { pensionExempt: true } },
+      })
+    ).toBe(false);
+    expect(staffMeetsPensionPolicy({ payrollGroup: HR_PAYROLL_GROUPS.DOMESTIC })).toBe(false);
   });
 });

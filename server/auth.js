@@ -788,6 +788,8 @@ export function publicUserFromRow(row) {
     createdAtISO: row.created_at_iso ?? row.createdAtISO ?? '',
     mustChangePassword: readMustChangePassword(row),
     trainingCompleted: readTrainingCompleted(row),
+    usernameChangeCount: Number(row.username_change_count) || 0,
+    canChangeUsernameFreely: (Number(row.username_change_count) || 0) < 1,
     permissions,
   };
 }
@@ -1491,11 +1493,37 @@ export function requireActivePassword(req, res, next) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
- * @param {{ displayName?: string; email?: string | null; avatarUrl?: string | null }} patch
+ * @param {{ displayName?: string; email?: string | null; avatarUrl?: string | null; username?: string | null }} patch
  */
 export function updateUserProfile(db, userId, patch) {
   const row = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);
   if (!row) return { ok: false, error: 'User not found.' };
+
+  let username = row.username;
+  if (patch.username !== undefined && patch.username !== null) {
+    const nextUsername = String(patch.username).trim().toLowerCase();
+    if (nextUsername !== String(row.username || '').trim().toLowerCase()) {
+      const changeCount = Number(row.username_change_count) || 0;
+      if (changeCount >= 1) {
+        return {
+          ok: false,
+          error: 'Username was already changed once. Submit a profile change request for HR approval.',
+          code: 'USERNAME_HR_REQUIRED',
+        };
+      }
+      if (!/^[a-z0-9._-]{3,40}$/.test(nextUsername)) {
+        return {
+          ok: false,
+          error: 'Username must be 3–40 characters (letters, numbers, dot, dash, underscore).',
+        };
+      }
+      const taken = db
+        .prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ? AND id != ?`)
+        .get(nextUsername, userId);
+      if (taken) return { ok: false, error: 'That username is already taken.' };
+      username = nextUsername;
+    }
+  }
 
   let displayName = row.display_name;
   if (patch.displayName != null) {
@@ -1543,10 +1571,14 @@ export function updateUserProfile(db, userId, patch) {
     }
   }
 
-  db.prepare(`UPDATE app_users SET display_name = ?, email = ?, avatar_url = ? WHERE id = ?`).run(
+  db.prepare(
+    `UPDATE app_users SET display_name = ?, email = ?, avatar_url = ?, username = ?, username_change_count = ? WHERE id = ?`
+  ).run(
     displayName,
     email,
     avatarUrl,
+    username,
+    username !== row.username ? 1 : Number(row.username_change_count) || 0,
     userId
   );
   const next = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(userId);

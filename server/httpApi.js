@@ -2475,6 +2475,7 @@ export function registerHttpApi(app, db) {
         displayName: req.body?.displayName,
         email: req.body?.email,
         avatarUrl: req.body?.avatarUrl,
+        username: req.body?.username,
       });
       if (!r.ok) return res.status(400).json(r);
       appendAuditLog(db, {

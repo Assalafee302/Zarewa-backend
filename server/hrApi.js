@@ -5,6 +5,7 @@
 
 import {
   acceptHrPolicy,
+  acceptHrPoliciesBatch,
   adjustHrLeaveBalance,
   applyHrSalaryIncrement,
   appendHrAuditEvent,
@@ -29,11 +30,15 @@ import {
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   exportPayrollBankUploadCsv,
+  exportPayrollApprovalReportPdf,
   exportPayrollHrApprovalCsv,
+  listPayrollRunsForFinance,
+  patchPayrollLineAdjustments,
   generateEmploymentLetter,
   generateStaffLoanAgreementLetter,
   getHrDailyRollCall,
   getHrInboxSummary,
+  listHrProfileWorkQueue,
   getHrMeProfile,
   getHrMeSchoolProfile,
   getHrStaffOne,
@@ -79,6 +84,7 @@ import {
   createHrTransferRecommendation,
   reviewHrTransferRecommendation,
   listMissingHrPolicyAcceptances,
+  hasHrPolicyAcceptance,
   listPayrollLines,
   listPayrollRuns,
   managerReviewRequest,
@@ -246,7 +252,9 @@ import {
   patchHrEngagementSurvey,
   submitHrEngagementResponse,
 } from './hrEngagement.js';
-import { HR_POLICY_REGISTRY, requiredHrPoliciesFor } from './hrPolicy.js';
+import { HR_POLICY_REGISTRY, requiredHrPoliciesFor, joiningHrPolicies } from './hrPolicy.js';
+import { HR_POLICY_CONTENT, HR_GUARANTOR_FORM_TEMPLATE } from '../shared/lib/hrPolicyContent.js';
+import { getHrPolicyPayload, annualLeaveEntitlementDaysForUser } from './hrBusinessRules.js';
 import { validateStaffLoanApplication } from './hrBusinessRules.js';
 import {
   applyStaffRenumbering,
@@ -326,6 +334,7 @@ import {
   userCanBulkImportStaff,
   userCanViewExecutiveBenefits,
   userCanManageExecutiveBenefits,
+  userCanEditPensionPolicyRates,
   userCanAccessMyProfileHr,
   hrApiPathAllowedWithoutMainWorkspace,
   userCanEndorseBranchHr,
@@ -476,16 +485,64 @@ export function registerHrApi(app, db) {
   app.get('/api/hr/policy-requirements', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const required = HR_POLICY_REGISTRY.map((p) => ({
-        key: p.key,
-        version: p.version,
-        label: p.label,
-      }));
-      const missing = listMissingHrPolicyAcceptances(db, req.user?.id, required);
-      return res.json({ ok: true, required, missing });
+      const uid = req.user?.id;
+      const joining = joiningHrPolicies();
+      const required = joining.map((p) => {
+        const reg = HR_POLICY_REGISTRY.find((r) => r.key === p.key) || {};
+        const content = HR_POLICY_CONTENT[p.key] || {};
+        const accepted = uid ? hasHrPolicyAcceptance(db, uid, p.key, p.version) : false;
+        let signedAtIso = null;
+        if (accepted && uid) {
+          const row = db
+            .prepare(
+              `SELECT accepted_at_iso FROM hr_policy_acknowledgements
+               WHERE user_id = ? AND policy_key = ? AND policy_version = ? ORDER BY accepted_at_iso DESC LIMIT 1`
+            )
+            .get(uid, p.key, p.version);
+          signedAtIso = row?.accepted_at_iso || null;
+        }
+        return {
+          key: p.key,
+          version: p.version,
+          label: p.label,
+          description: reg.description || content.summary || null,
+          summary: content.summary || null,
+          body: content.body || null,
+          accepted,
+          signedAtIso,
+        };
+      });
+      const missing = listMissingHrPolicyAcceptances(db, uid, required);
+      return res.json({ ok: true, required, missing, allAccepted: missing.length === 0 });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load HR policy requirements.' });
+    }
+  });
+
+  app.post('/api/hr/policy-acknowledgements/batch', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = acceptHrPoliciesBatch(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record policy acknowledgements.' });
+    }
+  });
+
+  app.get('/api/hr/templates/guarantor-form', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Not available for your role.' });
+      }
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="Zarewa-Guarantor-Form.txt"');
+      return res.send(HR_GUARANTOR_FORM_TEMPLATE);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load guarantor form template.' });
     }
   });
 
@@ -501,7 +558,17 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.get('/api/hr/policy-config', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.settings.manage'), (req, res) => {
+  app.get(
+    '/api/hr/policy-config',
+    requireHrAny(
+      'hr.payroll.prepare',
+      'hr.payroll.manage',
+      'hr.settings.manage',
+      'hr.executive.view',
+      'hr.executive.benefits.view',
+      'hr.executive.benefits.manage'
+    ),
+    (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json(getHrPolicyConfig(db));
@@ -509,19 +576,29 @@ export function registerHrApi(app, db) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load HR policy config.' });
     }
-  });
+  }
+  );
 
-  app.patch('/api/hr/policy-config', requireHrAny('hr.payroll.manage', 'hr.settings.manage'), (req, res) => {
+  app.patch(
+    '/api/hr/policy-config',
+    requireHrAny('hr.payroll.manage', 'hr.settings.manage', 'hr.executive.benefits.manage', 'hr.payroll.md_approve'),
+    (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const r = patchHrPolicyConfig(db, req.body || {}, req.user);
+      const body = req.body || {};
+      const pensionKeys = ['pensionEmployeePercent', 'pensionEmployerPercent'];
+      if (pensionKeys.some((k) => body[k] !== undefined) && !userCanEditPensionPolicyRates(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Only HR Executive can change pension rates.' });
+      }
+      const r = patchHrPolicyConfig(db, body, req.user);
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update HR policy config.' });
     }
-  });
+  }
+  );
 
   app.post('/api/hr/sensitive/verify', (req, res) => {
     try {
@@ -561,12 +638,42 @@ export function registerHrApi(app, db) {
       const redactedHr = hr ? redactStaffProfile({ ...hr, userId: req.user?.id }, ctx) : null;
       const staffFull = getHrStaffOne(db, req.user?.id);
       const unreadNotifications = countUnreadHrNotifications(db, req.user?.id);
+      const completeness = staffFull?.profileCompleteness || null;
+      const documents = staffFull?.documents || [];
+      const documentSummary = {
+        total: documents.length,
+        verified: documents.filter((d) => d.verificationStatus === 'verified').length,
+        pending: documents.filter((d) => (d.verificationStatus || 'pending') === 'pending').length,
+        rejected: documents.filter((d) => d.verificationStatus === 'rejected').length,
+      };
+      const pendingProfileRequests = db
+        .prepare(
+          `SELECT id, kind, status, title, created_at_iso AS createdAtIso
+           FROM hr_requests
+           WHERE user_id = ? AND kind = 'profile_change'
+             AND lower(status) NOT IN ('approved', 'rejected', 'cancelled')
+           ORDER BY created_at_iso DESC LIMIT 10`
+        )
+        .all(req.user?.id);
+      const urow = db.prepare(`SELECT username_change_count FROM app_users WHERE id = ?`).get(req.user?.id);
+      const loanPolicy = getHrPolicyPayload(db);
+      const leaveEntitlementDays = annualLeaveEntitlementDaysForUser(db, req.user?.id);
       return res.json({
         ok: true,
-        user,
+        user: {
+          ...user,
+          usernameChangeCount: Number(urow?.username_change_count) || 0,
+          canChangeUsernameFreely: (Number(urow?.username_change_count) || 0) < 1,
+        },
         hr: redactedHr,
         lifecycle: staffFull?.lifecycle || null,
         onboardingChecklist: staffFull?.onboardingChecklist || null,
+        completeness,
+        documents,
+        documentSummary,
+        pendingProfileRequests,
+        loanPolicy,
+        leaveEntitlementDays,
         unreadNotifications,
       });
     } catch (e) {
@@ -593,6 +700,7 @@ export function registerHrApi(app, db) {
       const recentRequests = listHrRequests(db, scope, {})
         .slice(0, 12)
         .map((r) => redactHrRequest(r, { canViewSensitive: ctx.canViewSensitive, isOwner: false }));
+      const profileWorkQueue = listHrProfileWorkQueue(db, scope);
       return res.json({
         ok: true,
         observability,
@@ -600,10 +708,40 @@ export function registerHrApi(app, db) {
         readiness,
         staffCounts,
         recentRequests,
+        profileWorkQueue,
       });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load HR dashboard.' });
+    }
+  });
+
+  app.get('/api/hr/profile-work-queue', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json({ ok: true, ...listHrProfileWorkQueue(db, hrListScope(req)) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load profile work queue.' });
+    }
+  });
+
+  app.get('/api/hr/policy-documents/:key', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!userCanAccessMyProfileHr(req.user) && !userCanAccessHrModule(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Not available for your role.' });
+      }
+      const key = String(req.params.key || '').trim();
+      const reg = HR_POLICY_REGISTRY.find((p) => p.key === key);
+      const content = HR_POLICY_CONTENT[key];
+      if (!reg || !content) return res.status(404).json({ ok: false, error: 'Policy not found.' });
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${key}-policy.txt"`);
+      return res.send(`${reg.label} (v${reg.version})\n\n${content.summary || ''}\n\n${content.body || ''}`);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load policy document.' });
     }
   });
 
@@ -696,9 +834,16 @@ export function registerHrApi(app, db) {
         }
       }
       const branchHistory = listHrStaffBranchHistory(db, userId);
+      const executiveBenefitsPayroll = getExecutiveBenefitsPayrollForStaff(db, {
+        userId: row.userId,
+        displayName: row.displayName,
+        payrollGroup: row.payrollGroup,
+        profileExtra: row.profileExtra,
+      });
       return res.json({
         ok: true,
-        staff,
+        staff: executiveBenefitsPayroll ? { ...staff, executiveBenefitsPayroll } : staff,
+        executiveBenefitsPayroll,
         branchHistory: userCanViewOrgSensitiveHr(req.user) || isSelf ? branchHistory : [],
       });
     } catch (e) {
@@ -1503,6 +1648,20 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/hr/payroll-runs/finance-queue',
+    requireHrAny('hr.payroll.pay', 'hr.payroll.export', 'finance.view'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        return res.json({ ok: true, runs: listPayrollRunsForFinance(db) });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load finance payroll queue.' });
+      }
+    }
+  );
+
   app.get('/api/hr/payroll-runs/:runId', requireHrAny('hr.payroll.prepare', 'hr.payroll.view_sensitive', 'hr.payroll.pay'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -1600,20 +1759,39 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.post('/api/hr/payroll-runs/:runId/md-approve', (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      if (!userCanMdApprovePayroll(req.user)) {
-        return res.status(403).json({ ok: false, error: 'MD payroll approval required.' });
+  app.patch(
+    '/api/hr/payroll-runs/:runId/lines/:userId',
+    requireHrAny('hr.payroll.prepare', 'hr.payroll.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = patchPayrollLineAdjustments(db, req.params.runId, req.params.userId, req.body || {}, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not adjust payroll line.' });
       }
-      const r = approvePayrollRunByMd(db, req.params.runId, req.user);
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve payroll.' });
     }
-  });
+  );
+
+  app.get(
+    '/api/hr/payroll-runs/:runId/export/approval-report',
+    requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.gm_approve', 'hr.payroll.export'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = exportPayrollApprovalReportPdf(db, req.params.runId);
+        if (!r.ok) return res.status(400).json(r);
+        res.setHeader('Content-Type', r.contentType || 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'payroll-approval.pdf'}"`);
+        return res.send(Buffer.from(r.pdf));
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Approval report export failed.' });
+      }
+    }
+  );
 
   const exportPayroll = (handler, filename, { binary = false } = {}) => (req, res) => {
     try {
@@ -1623,7 +1801,7 @@ export function registerHrApi(app, db) {
       }
       const r = handler(db, req.params.runId);
       if (!r.ok) return res.status(400).json(r);
-      if (String(filename || '').includes('bank-upload')) {
+      if (String(filename || '').includes('bank') || String(r.filename || '').includes('bank-payment')) {
         appendHrAuditEvent(db, {
           actorUserId: req.user?.id,
           action: 'hr.payroll.bank_export',

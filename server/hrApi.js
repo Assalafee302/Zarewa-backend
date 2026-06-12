@@ -35,6 +35,7 @@ import {
   getHrDailyRollCall,
   getHrInboxSummary,
   getHrMeProfile,
+  getHrMeSchoolProfile,
   getHrStaffOne,
   getHrOrgChart,
   getPayrollRunById,
@@ -511,6 +512,20 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get('/api/hr/me/school-profile', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      const r = getHrMeSchoolProfile(db, req.user?.id);
+      if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load school profile.' });
+    }
+  });
+
   app.get('/api/hr/me', (req, res) => {
     try {
       if (!userCanAccessMyProfileHr(req.user)) {
@@ -609,7 +624,14 @@ export function registerHrApi(app, db) {
       }
       const includeInactive = String(req.query?.includeInactive || '') === '1';
       const requireProfile = String(req.query?.allUsers || '') !== '1';
-      const staff = listHrStaff(db, scope, { includeInactive, requireProfile });
+      const cohort = String(req.query?.cohort || 'employees').trim();
+      const attendanceEligibleOnly = String(req.query?.attendanceEligible || '') === '1';
+      const staff = listHrStaff(db, scope, {
+        includeInactive,
+        requireProfile,
+        cohort: attendanceEligibleOnly ? 'employees' : cohort,
+        attendanceEligibleOnly,
+      });
       const ctx = hrRedactionContextFromReq(req);
       return res.json({ ok: true, staff: redactStaffList(staff, ctx) });
     } catch (e) {

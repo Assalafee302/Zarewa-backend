@@ -355,8 +355,8 @@ function lookupBranchId(db, codeOrId, name) {
 
 function resolveBranchId(db, row, scope) {
   const payrollGroup = detectStaffPayrollGroup(row);
-  if (payrollGroup === 'scholarship' || payrollGroup === 'chairman_staffs') {
-    return lookupBranchId(db, BULK_IMPORT_HQ_BRANCH.id, BULK_IMPORT_HQ_BRANCH.name) || BULK_IMPORT_HQ_BRANCH.id;
+  if (['scholarship', 'chairman_staffs', 'mining_div', 'hq_admin'].includes(payrollGroup)) {
+    return null;
   }
   const bag = normTitleToken(
     `${row.workLocation || ''} ${row.branchCode || ''} ${row.branchName || ''} ${row.departmentName || ''}`
@@ -570,6 +570,14 @@ export function detectStaffPayrollGroup(row) {
     return 'chairman_staffs';
   }
   if (bag.includes('mining')) return 'mining_div';
+  if (
+    bag.includes('head office') ||
+    bag.includes('hq ') ||
+    bag === 'hq' ||
+    (bag.includes('administrative') && bag.includes('hq'))
+  ) {
+    return 'hq_admin';
+  }
   return 'branch_ops';
 }
 

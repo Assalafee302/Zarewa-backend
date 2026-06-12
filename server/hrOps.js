@@ -24,6 +24,15 @@ import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
 import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
+import {
+  isDomesticStaff,
+  isNonBranchStaff,
+  isScholarshipBeneficiary,
+  normalizePayrollGroup,
+  payrollGroupLabel,
+  payrollGroupsForCohort,
+  requiresAttendance,
+} from '../shared/lib/hrStaffCohorts.js';
 
 const REQUEST_KINDS = new Set([
   'leave',
@@ -90,14 +99,15 @@ function normalizeToken(v) {
     .replace(/\s+/g, ' ');
 }
 
-const SPECIAL_ORG_NODES = new Set(['mining_div', 'scholarship', 'chairman_staffs']);
+const SPECIAL_ORG_NODES = new Set(['mining_div', 'scholarship', 'chairman_staffs', 'hq_admin']);
 
 function normalizeOrgNode(rawDepartment) {
   const token = normalizeToken(rawDepartment);
   if (!token) return null;
   if (token.includes('mining')) return 'mining_div';
   if (token.includes('scholar')) return 'scholarship';
-  if (token.includes('chairman')) return 'chairman_staffs';
+  if (token.includes('chairman') || token.includes('domestic')) return 'chairman_staffs';
+  if (token.includes('hq') || token.includes('head office') || token.includes('administrative')) return 'hq_admin';
   return null;
 }
 
@@ -305,6 +315,15 @@ export function listHrStaff(db, scope, opts = {}) {
   const args = [];
   if (!includeInactive) {
     sql += ` AND u.status = 'active'`;
+  }
+  const cohortGroups = payrollGroupsForCohort(opts.cohort);
+  if (cohortGroups) {
+    const ph = cohortGroups.map(() => '?').join(',');
+    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') IN (${ph})`;
+    args.push(...cohortGroups);
+  }
+  if (opts.attendanceEligibleOnly) {
+    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') = 'branch_ops'`;
   }
   if (!orgWide) {
     const actorUserId = scope.actorUserId;
@@ -603,7 +622,6 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     : db.prepare(`SELECT id FROM app_users WHERE id = ? AND status = 'active'`).get(userId);
   if (!u) return { ok: false, error: allowInactive ? 'User not found.' : 'User not found or inactive.' };
 
-  const branchId = String(body?.branchId || '').trim() || DEFAULT_BRANCH_ID;
   const now = nowIso();
   const existing = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   const prevRow = existing ? db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId) : null;
@@ -653,6 +671,18 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     body?.payrollGroup !== undefined
       ? String(body.payrollGroup || '').trim() || null
       : prevRow?.payroll_group ?? null;
+  const normalizedPayrollGroup = normalizePayrollGroup(payrollGroup);
+  let branchId;
+  if (body?.branchId !== undefined) {
+    branchId = String(body.branchId || '').trim() || null;
+  } else if (prevRow) {
+    branchId = prevRow.branch_id ?? null;
+  } else {
+    branchId = isNonBranchStaff(normalizedPayrollGroup) ? null : DEFAULT_BRANCH_ID;
+  }
+  if (!isNonBranchStaff(normalizedPayrollGroup) && !branchId) {
+    branchId = DEFAULT_BRANCH_ID;
+  }
   const salaryLevel =
     body?.salaryLevel !== undefined ? nullablePosInt(body.salaryLevel) : prevRow?.salary_level ?? null;
   const salaryStep =
@@ -703,6 +733,9 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     if (body?.profileExtra != null) return body.profileExtra;
     const extra = { ...prevExtra };
     if (personalPatch) extra.personal = { ...(extra.personal || {}), ...personalPatch };
+    if (body?.schoolProfile && typeof body.schoolProfile === 'object') {
+      extra.schoolProfile = { ...(extra.schoolProfile || {}), ...body.schoolProfile };
+    }
     if (body?.employmentStatus !== undefined) {
       extra.employmentMeta = { ...(extra.employmentMeta || {}), employmentStatus: body.employmentStatus || null };
     }
@@ -1852,13 +1885,24 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
   if (rowsNorm.length === 0) return { ok: false, error: 'rows must include at least one staff member.' };
   const branchUsers = new Set(
     db
-      .prepare(`SELECT user_id FROM hr_staff_profiles WHERE branch_id = ?`)
+      .prepare(
+        `SELECT user_id FROM hr_staff_profiles WHERE branch_id = ? AND COALESCE(payroll_group, 'branch_ops') = 'branch_ops'`
+      )
       .all(branchId)
       .map((x) => String(x.user_id))
   );
   const outsiders = rowsNorm.filter((r) => !branchUsers.has(r.userId));
   if (outsiders.length) {
-    return { ok: false, error: `Daily roll includes user(s) not assigned to branch ${branchId}.` };
+    return { ok: false, error: `Daily roll includes user(s) outside branch operations staff for ${branchId}.` };
+  }
+  const exemptIds = rowsNorm
+    .map((r) => r.userId)
+    .filter((uid) => {
+      const prof = db.prepare(`SELECT payroll_group FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+      return prof && !requiresAttendance(prof.payroll_group);
+    });
+  if (exemptIds.length) {
+    return { ok: false, error: 'Attendance roll is only for branch operations staff.' };
   }
   const existing = db
     .prepare(`SELECT id, created_at_iso FROM hr_daily_roll_calls WHERE branch_id = ? AND day_iso = ?`)
@@ -3927,7 +3971,7 @@ export function hrNextUatReadiness(db, scope) {
   const staff = listHrStaff(db, scope, { includeInactive: false });
   const queue = listHrDataCleanupQueue(db, scope);
   const obs = listHrObservability(db, scope);
-  const hasSpecialNodes = ['mining_div', 'scholarship', 'chairman_staffs'].every((n) =>
+  const hasSpecialNodes = ['mining_div', 'scholarship', 'chairman_staffs', 'hq_admin'].every((n) =>
     staff.some((s) => s.normalized?.orgNode === n || normalizeOrgNode(s.department) === n)
   );
   const qualityCoverage = staff.length
@@ -3957,6 +4001,115 @@ export function hrNextUatReadiness(db, scope) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
  */
+export function getHrMeSchoolProfile(db, userId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  const u = db
+    .prepare(`SELECT id, display_name FROM app_users WHERE id = ?`)
+    .get(uid);
+  if (!u) return { ok: false, error: 'User not found.' };
+  const p = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!p || !isScholarshipBeneficiary(p.payroll_group)) {
+    return { ok: false, error: 'School profile is only for scholarship beneficiaries.' };
+  }
+  const extra = safeJsonParse(p.profile_extra_json, {});
+  const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
+  const displayName = String(u.display_name || '').trim();
+  let stipend = null;
+  try {
+    if (hrTableExists(db, 'hr_executive_stipends')) {
+      stipend =
+        db
+          .prepare(
+            `SELECT * FROM hr_executive_stipends
+             WHERE status = 'active' AND (beneficiary_name = ? OR beneficiary_id = ?)
+             ORDER BY updated_at_iso DESC LIMIT 1`
+          )
+          .get(displayName, extra.schoolProfile?.beneficiaryId || '') || null;
+    }
+  } catch {
+    /* ignore */
+  }
+  let schoolFees = [];
+  try {
+    if (hrTableExists(db, 'hr_chairman_school_fees')) {
+      schoolFees = db
+        .prepare(
+          `SELECT * FROM hr_chairman_school_fees
+           WHERE child_name = ? OR beneficiary_name = ?
+           ORDER BY COALESCE(due_date_iso, created_at_iso) DESC LIMIT 6`
+        )
+        .all(displayName, displayName);
+    }
+  } catch {
+    /* ignore */
+  }
+  const feeCadence = String(school.feeCadence || school.feeType || 'termly').toLowerCase();
+  const nextFee = schoolFees.find((f) => {
+    const st = String(f.workflow_status || f.payment_status || '').toLowerCase();
+    return !['paid', 'cancelled'].includes(st);
+  });
+  return {
+    ok: true,
+    profile: {
+      userId: uid,
+      displayName,
+      schoolName: school.schoolName || p.department || null,
+      classLevel: school.classLevel || p.job_title || null,
+      academicSession: school.academicSession || null,
+      currentTerm: school.currentTerm || null,
+      feeCadence: feeCadence === 'yearly' || feeCadence === 'annual' ? 'yearly' : 'termly',
+      schoolFeesNgn: school.schoolFeesNgn != null ? Math.round(Number(school.schoolFeesNgn) || 0) : null,
+      termStartIso: school.termStartIso || null,
+      termEndIso: school.termEndIso || null,
+      salaryStep: p.salary_step != null ? Number(p.salary_step) : school.salaryStep != null ? Number(school.salaryStep) : null,
+      stipend:
+        stipend != null
+          ? {
+              monthlyAmountNgn: Math.round(Number(stipend.monthly_amount_ngn) || 0),
+              paymentFrequency: stipend.payment_frequency || 'monthly',
+              lastPaidPeriod: stipend.last_paid_period || null,
+              status: stipend.status || 'active',
+            }
+          : school.stipendAmountNgn != null
+            ? {
+                monthlyAmountNgn: Math.round(Number(school.stipendAmountNgn) || 0),
+                paymentFrequency: school.stipendFrequency || 'monthly',
+                lastPaidPeriod: school.lastPaidPeriod || null,
+                status: 'active',
+              }
+            : null,
+      nextPayment: nextFee
+        ? {
+            label: nextFee.term || nextFee.fee_type || 'School fees',
+            amountNgn: Math.round(
+              Number(nextFee.amount_requested_ngn ?? nextFee.fee_amount_ngn ?? nextFee.amount_approved_ngn) || 0
+            ),
+            dueDateIso: nextFee.due_date_iso || null,
+            status: nextFee.workflow_status || nextFee.payment_status || 'pending',
+          }
+        : school.nextPaymentDueIso
+          ? {
+              label: school.nextPaymentLabel || 'School fees',
+              amountNgn: school.schoolFeesNgn != null ? Math.round(Number(school.schoolFeesNgn) || 0) : null,
+              dueDateIso: school.nextPaymentDueIso,
+              status: 'scheduled',
+            }
+          : null,
+      recentFeePayments: schoolFees.slice(0, 4).map((f) => ({
+        id: f.id,
+        term: f.term,
+        academicSession: f.academic_year || f.academic_session,
+        amountNgn: Math.round(Number(f.fee_amount_ngn ?? f.amount_requested_ngn) || 0),
+        amountPaidNgn: Math.round(Number(f.amount_paid_ngn) || 0),
+        status: f.workflow_status || f.payment_status,
+        paymentDateIso: f.payment_date_iso || null,
+      })),
+      notes: school.notes || null,
+    },
+  };
+}
+
 export function getHrMeProfile(db, userId) {
   const u = db
     .prepare(
@@ -3977,8 +4130,15 @@ export function getHrMeProfile(db, userId) {
   if (!hrTablesReady(db)) return { user, hr: null };
   const p = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!p) return { user, hr: null };
+  const payrollGroup = normalizePayrollGroup(p.payroll_group);
   const hr = {
     branchId: p.branch_id,
+    payrollGroup,
+    payrollGroupLabel: payrollGroupLabel(payrollGroup),
+    attendanceRequired: requiresAttendance(payrollGroup),
+    isScholarshipBeneficiary: isScholarshipBeneficiary(payrollGroup),
+    isDomesticStaff: isDomesticStaff(p.payroll_group),
+    isNonBranchStaff: isNonBranchStaff(payroll_group),
     employeeNo: p.employee_no,
     jobTitle: p.job_title,
     department: p.department,

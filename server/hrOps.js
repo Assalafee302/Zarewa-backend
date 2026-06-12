@@ -7,6 +7,7 @@ import {
   countWorkingDaysInclusive,
   getHrPolicyPayload,
   isApprovedLeaveOnDay,
+  updateHrPolicyPayload,
   validateStaffLoanApplication,
 } from './hrBusinessRules.js';
 import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
@@ -1181,12 +1182,14 @@ export function patchHrStaffBonusAccrualNote(db, actorUserId, userId, note) {
  * @param {{ viewAll: boolean; branchId: string }} scope
  */
 export function salaryWelfareSnapshot(db, scope) {
+  const policy = getHrPolicyPayload(db);
   if (!hrTablesReady(db)) {
     return {
       ok: true,
       referenceRun: null,
-      taxPercent: 7.5,
-      pensionPercent: 8,
+      taxPercent: null,
+      pensionPercent: Number(policy.pensionEmployeePercent) || 8,
+      pensionEmployerPercent: Number(policy.pensionEmployerPercent) || 10,
       approvedLoans: [],
     };
   }
@@ -1206,18 +1209,23 @@ export function salaryWelfareSnapshot(db, scope) {
       )
       .get();
 
-  const taxPercent =
-    latestRun != null && Number(latestRun.tax_percent) >= 0 ? Number(latestRun.tax_percent) : 7.5;
   const pensionPercent =
-    latestRun != null && Number(latestRun.pension_percent) >= 0 ? Number(latestRun.pension_percent) : 8;
+    latestRun != null && Number(latestRun.pension_percent) >= 0
+      ? Number(latestRun.pension_percent)
+      : Number(policy.pensionEmployeePercent) || 8;
+  const pensionEmployerPercent =
+    latestRun?.pension_employer_percent != null
+      ? Number(latestRun.pension_employer_percent)
+      : Number(policy.pensionEmployerPercent) || 10;
 
   const referenceRun = latestRun
     ? {
         id: latestRun.id,
         periodYyyymm: latestRun.period_yyyymm,
         status: latestRun.status,
-        taxPercent: Number(latestRun.tax_percent),
-        pensionPercent: Number(latestRun.pension_percent),
+        taxPercent: null,
+        pensionPercent,
+        pensionEmployerPercent,
         notes: latestRun.notes,
         createdAtIso: latestRun.created_at_iso,
         isDraft: latestRun.status === 'draft',
@@ -1284,7 +1292,14 @@ export function salaryWelfareSnapshot(db, scope) {
     };
   });
 
-  return { ok: true, referenceRun, taxPercent, pensionPercent, approvedLoans };
+  return {
+    ok: true,
+    referenceRun,
+    taxPercent: null,
+    pensionPercent,
+    pensionEmployerPercent,
+    approvedLoans,
+  };
 }
 
 /**
@@ -2495,6 +2510,8 @@ export function getPayrollRunTotals(db, runId) {
   let net = 0;
   let tax = 0;
   let pension = 0;
+  let pensionEmployer = 0;
+  let bonus = 0;
   let attendanceDed = 0;
   let otherDed = 0;
   for (const l of lines) {
@@ -2502,18 +2519,63 @@ export function getPayrollRunTotals(db, runId) {
     net += Math.round(Number(l.netNgn) || 0);
     tax += Math.round(Number(l.taxNgn) || 0);
     pension += Math.round(Number(l.pensionNgn) || 0);
+    pensionEmployer += Math.round(Number(l.pensionEmployerNgn) || 0);
+    bonus += Math.round(Number(l.bonusNgn) || 0);
     attendanceDed += Math.round(Number(l.attendanceDeductionNgn) || 0);
     otherDed += Math.round(Number(l.otherDeductionNgn) || 0);
   }
+  const missingPaye = getPayrollMissingPayeStaff(db, runId);
   return {
     headcount: lines.length,
     grossTotalNgn: gross,
     netTotalNgn: net,
     taxTotalNgn: tax,
     pensionTotalNgn: pension,
+    pensionEmployerTotalNgn: pensionEmployer,
+    bonusTotalNgn: bonus,
     attendanceDeductionTotalNgn: attendanceDed,
     otherDeductionTotalNgn: otherDed,
+    missingPayeCount: missingPaye.length,
+    missingPayeStaff: missingPaye,
   };
+}
+
+/** Staff on a payroll run without PAYE % set on their profile. */
+export function getPayrollMissingPayeStaff(db, runId) {
+  if (!hrTablesReady(db)) return [];
+  const rows = db
+    .prepare(
+      `SELECT l.user_id AS userId, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent
+       FROM hr_payroll_lines l
+       JOIN hr_staff_profiles p ON p.user_id = l.user_id
+       JOIN app_users u ON u.id = l.user_id
+       WHERE l.run_id = ?`
+    )
+    .all(runId);
+  return rows
+    .filter((r) => {
+      const p = r.payeTaxPercent;
+      return p == null || !Number.isFinite(Number(p));
+    })
+    .map((r) => ({ userId: r.userId, displayName: r.displayName || r.userId }));
+}
+
+export function getHrPolicyConfig(db) {
+  return { ok: true, policy: getHrPolicyPayload(db) };
+}
+
+export function patchHrPolicyConfig(db, patch, actor) {
+  const r = updateHrPolicyPayload(db, patch);
+  if (!r.ok) return r;
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.policy_config.update',
+    entityKind: 'hr_policy_config',
+    entityId: 'latest',
+    details: { keys: Object.keys(patch || {}) },
+  });
+  return r;
 }
 
 /** Payslip lines for one user across locked/paid runs. */
@@ -2556,6 +2618,9 @@ export function createPayrollRun(db, actor, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const periodYyyymm = String(body?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
   if (!/^\d{6}$/.test(periodYyyymm)) return { ok: false, error: 'periodYyyymm must be YYYYMM.' };
+  const policy = getHrPolicyPayload(db);
+  const penEmp = Number(policy.pensionEmployeePercent) || 8;
+  const penEr = Number(policy.pensionEmployerPercent) || 10;
   const id = newId('HRP');
   const now = nowIso();
   db.prepare(
@@ -2565,13 +2630,32 @@ export function createPayrollRun(db, actor, body) {
     id,
     periodYyyymm,
     'draft',
-    Number(body?.taxPercent) >= 0 ? Number(body.taxPercent) : 7.5,
-    Number(body?.pensionPercent) >= 0 ? Number(body.pensionPercent) : 8,
+    0,
+    penEmp,
     String(body?.notes ?? '').trim() || null,
     now,
     actor.id
   );
-  return { ok: true, id };
+  try {
+    db.prepare(`UPDATE hr_payroll_runs SET pension_employer_percent = ? WHERE id = ?`).run(penEr, id);
+  } catch {
+    /* column optional until migrate */
+  }
+  const computed = computePayrollRun(db, id);
+  if (!computed.ok) {
+    db.prepare(`DELETE FROM hr_payroll_runs WHERE id = ?`).run(id);
+    return computed;
+  }
+  const missingPaye = getPayrollMissingPayeStaff(db, id);
+  const headcount = listPayrollLines(db, id).length;
+  return {
+    ok: true,
+    id,
+    headcount,
+    missingPayeCount: missingPaye.length,
+    autoRecomputed: true,
+    yearEndBonusApplied: periodYyyymm.endsWith('12'),
+  };
 }
 
 export function computePayrollRun(db, runId) {
@@ -2580,8 +2664,11 @@ export function computePayrollRun(db, runId) {
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   if (run.status !== 'draft') return { ok: false, error: 'Only draft runs can be recomputed.' };
   const period = run.period_yyyymm;
-  const taxP = Number(run.tax_percent) || 0;
-  const penP = Number(run.pension_percent) || 0;
+  const policy = getHrPolicyPayload(db);
+  const penEmpP = Number(policy.pensionEmployeePercent) || 8;
+  const penErP = Number(policy.pensionEmployerPercent) || 10;
+  const bonusRate = Number(policy.halfMonthBonusRate) || 0.5;
+  const isYearEnd = String(period || '').endsWith('12');
 
   db.prepare(`DELETE FROM hr_payroll_line_loans WHERE run_id = ?`).run(runId);
   db.prepare(`DELETE FROM hr_payroll_lines WHERE run_id = ?`).run(runId);
@@ -2608,25 +2695,26 @@ export function computePayrollRun(db, runId) {
   const computedAt = nowIso();
 
   let totalGross = 0;
+  let totalPensionEmployer = 0;
   for (const s of staff) {
     const base = Math.round(Number(s.base_salary_ngn) || 0);
     const housing = Math.round(Number(s.housing_allowance_ngn) || 0);
     const transport = Math.round(Number(s.transport_allowance_ngn) || 0);
-    const bonus = 0;
     const { deductionNgn } = attendanceDeductionForUser(db, s.user_id, s.branch_id, period);
+    const bonus = isYearEnd ? Math.round(base * bonusRate) : 0;
     const gross = base + housing + transport + bonus - deductionNgn;
-    const effTaxP =
-      s.paye_tax_percent != null && Number.isFinite(Number(s.paye_tax_percent)) && Number(s.paye_tax_percent) >= 0
-        ? Number(s.paye_tax_percent)
-        : taxP;
+    const hasPaye =
+      s.paye_tax_percent != null && Number.isFinite(Number(s.paye_tax_percent)) && Number(s.paye_tax_percent) >= 0;
+    const effTaxP = hasPaye ? Number(s.paye_tax_percent) : 0;
     const effPenP =
       s.pension_percent_override != null &&
       Number.isFinite(Number(s.pension_percent_override)) &&
       Number(s.pension_percent_override) >= 0
         ? Number(s.pension_percent_override)
-        : penP;
-    const tax = Math.round((gross * effTaxP) / 100);
+        : penEmpP;
+    const tax = hasPaye ? Math.round((gross * effTaxP) / 100) : 0;
     const pension = Math.round((gross * effPenP) / 100);
+    const pensionEmployer = Math.round((gross * penErP) / 100);
     const extra = safeJsonParse(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
     const discFix = Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0));
@@ -2634,6 +2722,15 @@ export function computePayrollRun(db, runId) {
     const other = loanTotal + discFix;
     const net = gross - tax - pension - other;
     ins.run(runId, s.user_id, gross, bonus, deductionNgn, other, tax, pension, net);
+    try {
+      db.prepare(`UPDATE hr_payroll_lines SET pension_employer_ngn = ? WHERE run_id = ? AND user_id = ?`).run(
+        pensionEmployer,
+        runId,
+        s.user_id
+      );
+    } catch {
+      /* pension_employer_ngn optional until migrate */
+    }
     const extraHold = safeJsonParse(s.profile_extra_json, {});
     const salaryHeld = ['held', 'suspended'].includes(
       String(extraHold?.employmentMeta?.salaryStatus || '').toLowerCase()
@@ -2651,18 +2748,36 @@ export function computePayrollRun(db, runId) {
       insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
     }
     totalGross += Math.max(0, gross);
+    totalPensionEmployer += pensionEmployer;
   }
 
-  // Compute ITF and NSITF employer levies (1% each of total gross payroll)
-  const itfNgn = Math.round(totalGross * 0.01);
-  const nsitfNgn = Math.round(totalGross * 0.01);
+  const itfNgn = Math.round(totalGross * (Number(policy.itfRateEmployer) || 0.01));
+  const nsitfNgn = Math.round(totalGross * (Number(policy.nsitfRateEmployer) || 0.01));
   try {
-    db.prepare(`UPDATE hr_payroll_runs SET itf_ngn = ?, nsitf_ngn = ? WHERE id = ?`).run(itfNgn, nsitfNgn, runId);
+    db.prepare(
+      `UPDATE hr_payroll_runs SET itf_ngn = ?, nsitf_ngn = ?, pension_percent = ?, tax_percent = 0,
+       pension_employer_percent = ?, pension_employer_total_ngn = ? WHERE id = ?`
+    ).run(itfNgn, nsitfNgn, penEmpP, penErP, totalPensionEmployer, runId);
   } catch {
-    /* itf_ngn/nsitf_ngn columns may not exist on very old DBs — migration adds them */
+    try {
+      db.prepare(`UPDATE hr_payroll_runs SET itf_ngn = ?, nsitf_ngn = ?, pension_percent = ?, tax_percent = 0 WHERE id = ?`).run(
+        itfNgn,
+        nsitfNgn,
+        penEmpP,
+        runId
+      );
+    } catch {
+      /* legacy columns */
+    }
   }
 
-  return { ok: true };
+  const missingPaye = getPayrollMissingPayeStaff(db, runId);
+  return {
+    ok: true,
+    headcount: staff.length,
+    missingPayeCount: missingPaye.length,
+    yearEndBonusApplied: isYearEnd,
+  };
 }
 
 const PAYROLL_RUN_STATUSES = new Set(['draft', 'locked', 'paid']);
@@ -2827,6 +2942,14 @@ export function patchPayrollRun(db, runId, body, actor) {
           error: 'GM HR or Managing Director must approve this payroll run before it can be locked.',
         };
       }
+      const missingPaye = getPayrollMissingPayeStaff(db, runId);
+      if (missingPaye.length > 0 && !userHasPermission(actor, '*')) {
+        return {
+          ok: false,
+          error: `Cannot lock payroll: ${missingPaye.length} staff missing PAYE % on their profile. Set PAYE on each employee under HR → Employees → Statutory.`,
+          missingPayeStaff: missingPaye,
+        };
+      }
     }
     const wasPaid = run.status === 'paid';
     if (ns === 'draft' && String(run.status || '').toLowerCase() === 'locked') {
@@ -2858,13 +2981,14 @@ export function patchPayrollRun(db, runId, body, actor) {
     return { ok: true };
   }
 
-  if (run.status !== 'draft') {
-    return { ok: false, error: 'Only draft runs can edit tax, pension, or notes.' };
-  }
   if (body?.taxPercent != null || body?.pensionPercent != null) {
-    const t = body?.taxPercent != null ? Number(body.taxPercent) : Number(run.tax_percent);
-    const p = body?.pensionPercent != null ? Number(body.pensionPercent) : Number(run.pension_percent);
-    db.prepare(`UPDATE hr_payroll_runs SET tax_percent = ?, pension_percent = ? WHERE id = ?`).run(t, p, runId);
+    return {
+      ok: false,
+      error: 'PAYE is set per staff profile. Pension rates are configured under HR → Payroll → Statutory.',
+    };
+  }
+  if (run.status !== 'draft') {
+    return { ok: false, error: 'Only draft runs can edit notes.' };
   }
   if (body?.notes !== undefined) {
     db.prepare(`UPDATE hr_payroll_runs SET notes = ? WHERE id = ?`).run(
@@ -2902,6 +3026,8 @@ export function listPayrollRuns(db) {
       filingAtIso: row.filing_at_iso ?? null,
       itfNgn: row.itf_ngn != null ? Number(row.itf_ngn) : 0,
       nsitfNgn: row.nsitf_ngn != null ? Number(row.nsitf_ngn) : 0,
+      pensionEmployerPercent: row.pension_employer_percent != null ? Number(row.pension_employer_percent) : null,
+      pensionEmployerTotalNgn: row.pension_employer_total_ngn != null ? Number(row.pension_employer_total_ngn) : 0,
     }));
 }
 
@@ -2924,9 +3050,10 @@ export function listPayrollLines(db, runId) {
   }
   return db
     .prepare(
-      `SELECT l.*, u.display_name AS displayName
+      `SELECT l.*, u.display_name AS displayName, p.paye_tax_percent AS payeTaxPercent
        FROM hr_payroll_lines l
        JOIN app_users u ON u.id = l.user_id
+       LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
        WHERE l.run_id = ?
        ORDER BY u.display_name ASC`
     )
@@ -2934,6 +3061,8 @@ export function listPayrollLines(db, runId) {
     .map((row) => {
       const g = Math.round(Number(row.gross_ngn) || 0);
       const tx = Math.round(Number(row.tax_ngn) || 0);
+      const payeSet =
+        row.payeTaxPercent != null && Number.isFinite(Number(row.payeTaxPercent)) && Number(row.payeTaxPercent) >= 0;
       return {
         userId: row.user_id,
         displayName: row.displayName,
@@ -2943,7 +3072,10 @@ export function listPayrollLines(db, runId) {
         otherDeductionNgn: row.other_deduction_ngn,
         taxNgn: row.tax_ngn,
         pensionNgn: row.pension_ngn,
+        pensionEmployerNgn: row.pension_employer_ngn != null ? Number(row.pension_employer_ngn) : 0,
         netNgn: row.net_ngn,
+        payePercent: payeSet ? Number(row.payeTaxPercent) : null,
+        payeMissing: !payeSet,
         loanDeductions: loansByUser.get(row.user_id) || [],
         impliedTaxPercent: g > 0 ? Math.round((tx * 1000) / g) / 10 : null,
         impliedPensionPercent:
@@ -2978,6 +3110,8 @@ export function getPayrollRunById(db, runId) {
     filingAtIso: row.filing_at_iso ?? null,
     itfNgn: row.itf_ngn != null ? Number(row.itf_ngn) : 0,
     nsitfNgn: row.nsitf_ngn != null ? Number(row.nsitf_ngn) : 0,
+    pensionEmployerPercent: row.pension_employer_percent != null ? Number(row.pension_employer_percent) : null,
+    pensionEmployerTotalNgn: row.pension_employer_total_ngn != null ? Number(row.pension_employer_total_ngn) : 0,
   };
 }
 
@@ -3424,17 +3558,27 @@ export function exportPayrollStatutoryPackCsv(db, runId) {
   const run = getPayrollRunById(db, runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   const lines = listPayrollLines(db, runId);
-  const headers = ['period_yyyymm', 'run_id', 'user_id', 'display_name', 'tax_ngn', 'pension_ngn', 'itf_ngn_employer', 'nsitf_ngn_employer'];
+  const headers = [
+    'period_yyyymm',
+    'run_id',
+    'user_id',
+    'display_name',
+    'tax_ngn',
+    'pension_employee_ngn',
+    'pension_employer_ngn',
+    'itf_ngn_employer',
+    'nsitf_ngn_employer',
+  ];
   const esc = (v) => String(v ?? '');
   const rows = lines.map((l) =>
-    [run.periodYyyymm, run.id, l.userId, l.displayName, l.taxNgn, l.pensionNgn, '', ''].map(esc)
+    [run.periodYyyymm, run.id, l.userId, l.displayName, l.taxNgn, l.pensionNgn, l.pensionEmployerNgn || 0, '', ''].map(esc)
   );
   const totalTax = lines.reduce((s, l) => s + (Number(l.taxNgn) || 0), 0);
   const totalPension = lines.reduce((s, l) => s + (Number(l.pensionNgn) || 0), 0);
-  // ITF and NSITF are run-level employer costs (not per-line)
+  const totalPensionEmployer = lines.reduce((s, l) => s + (Number(l.pensionEmployerNgn) || 0), 0);
   const runItf = Number(run.itfNgn) || 0;
   const runNsitf = Number(run.nsitfNgn) || 0;
-  rows.push([run.periodYyyymm, run.id, '', 'TOTAL', totalTax, totalPension, runItf, runNsitf].map(esc));
+  rows.push([run.periodYyyymm, run.id, '', 'TOTAL', totalTax, totalPension, totalPensionEmployer, runItf, runNsitf].map(esc));
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
   return { ok: true, csv, filename: `statutory-${run.periodYyyymm}-${run.id}.csv` };
 }
@@ -3448,11 +3592,13 @@ export function applyBonusToPayrollRun(db, runId, bonusType, actorUser) {
   const run = db.prepare('SELECT * FROM hr_payroll_runs WHERE id=?').get(runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   if (run.status === 'locked' || run.status === 'paid') return { ok: false, error: 'Cannot modify a locked or paid payroll run.' };
+  const policy = getHrPolicyPayload(db);
+  const bonusRate = Number(policy.halfMonthBonusRate) || 0.5;
   const lines = db.prepare('SELECT pl.user_id, sp.base_salary_ngn FROM hr_payroll_lines pl JOIN hr_staff_profiles sp ON sp.user_id = pl.user_id WHERE pl.run_id=?').all(runId);
   const stmt = db.prepare('UPDATE hr_payroll_lines SET bonus_ngn=?, net_ngn=net_ngn+(? - bonus_ngn) WHERE run_id=? AND user_id=?');
   let updated = 0;
   for (const line of lines) {
-    const bonus = Math.round((Number(line.base_salary_ngn) || 0) * 0.5);
+    const bonus = Math.round((Number(line.base_salary_ngn) || 0) * bonusRate);
     stmt.run(bonus, bonus, runId, line.user_id);
     updated++;
   }

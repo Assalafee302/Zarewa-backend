@@ -110,6 +110,9 @@ import {
   getChronicAbsentees,
   getLoanPortfolioAnalytics,
   getPayrollVarianceAlerts,
+  getPayrollMissingPayeStaff,
+  getHrPolicyConfig,
+  patchHrPolicyConfig,
   getStaffTurnoverTrend,
   getHeadcountSummary,
   applyBonusToPayrollRun,
@@ -495,6 +498,28 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not record policy acknowledgement.' });
+    }
+  });
+
+  app.get('/api/hr/policy-config', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      return res.json(getHrPolicyConfig(db));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load HR policy config.' });
+    }
+  });
+
+  app.patch('/api/hr/policy-config', requireHrAny('hr.payroll.manage', 'hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = patchHrPolicyConfig(db, req.body || {}, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update HR policy config.' });
     }
   });
 
@@ -1548,11 +1573,7 @@ export function registerHrApi(app, db) {
       if (body.status === 'paid' && !userCanPayPayroll(req.user)) {
         return res.status(403).json({ ok: false, error: 'Finance payroll payment permission required.' });
       }
-      if (
-        (body.status === 'locked' || body.taxPercent != null) &&
-        !userCanPreparePayroll(req.user) &&
-        !hrUserHas(req.user, '*')
-      ) {
+      if (body.status === 'locked' && !userCanPreparePayroll(req.user) && !hrUserHas(req.user, '*')) {
         return res.status(403).json({ ok: false, error: 'Payroll preparation permission required.' });
       }
       const r = patchPayrollRun(db, req.params.runId, body, req.user);
@@ -2872,6 +2893,17 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getPayrollVarianceAlerts(db, req.params.runId, req.query.threshold) });
     } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not run variance check.' }); }
+  });
+
+  app.get('/api/hr/payroll-runs/:runId/paye-alerts', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.view_sensitive'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const missing = getPayrollMissingPayeStaff(db, req.params.runId);
+      return res.json({ ok: true, missing, count: missing.length });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load PAYE alerts.' });
+    }
   });
 
   app.get('/api/hr/analytics/turnover-trend', requireHrAny('hr.*', 'hr.reports.view'), (req, res) => {

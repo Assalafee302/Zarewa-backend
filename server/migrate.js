@@ -2492,6 +2492,9 @@ function migrateHrExcellence2026(db) {
       annualLeaveDaysJunior: 14,
       casualLeaveDaysPerYear: 7,
       maternityLeaveDays: 60,
+      pensionEmployeePercent: 8,
+      pensionEmployerPercent: 10,
+      halfMonthBonusRate: 0.5,
     });
     db.prepare(
       `INSERT INTO hr_policy_config (id, effective_from_iso, payload_json, created_at_iso) VALUES (?,?,?,?)`
@@ -2761,6 +2764,57 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrPhase7DisciplineLetters2026(db);
   migrateHrPhase8Operational2026(db);
   migrateHrPhase9ExecutiveBenefits2026(db);
+  migratePayrollPensionPolicy2026(db);
+}
+
+/** Pension employer totals on payroll runs/lines; policy pension defaults. */
+function migratePayrollPensionPolicy2026(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const runs = tableCols('hr_payroll_runs');
+  if (runs.size && !runs.has('pension_employer_percent')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN pension_employer_percent REAL`);
+  }
+  if (runs.size && !runs.has('pension_employer_total_ngn')) {
+    db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN pension_employer_total_ngn REAL DEFAULT 0`);
+  }
+  const lines = tableCols('hr_payroll_lines');
+  if (lines.size && !lines.has('pension_employer_ngn')) {
+    db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN pension_employer_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
+  try {
+    const row = db
+      .prepare(`SELECT payload_json FROM hr_policy_config ORDER BY effective_from_iso DESC LIMIT 1`)
+      .get();
+    if (row?.payload_json) {
+      const parsed = JSON.parse(String(row.payload_json));
+      const merged = {
+        ...parsed,
+        pensionEmployeePercent: parsed.pensionEmployeePercent ?? 8,
+        pensionEmployerPercent: parsed.pensionEmployerPercent ?? 10,
+        halfMonthBonusRate: parsed.halfMonthBonusRate ?? 0.5,
+      };
+      if (
+        parsed.pensionEmployeePercent == null ||
+        parsed.pensionEmployerPercent == null ||
+        parsed.halfMonthBonusRate == null
+      ) {
+        const id = `HRPOL-${Date.now().toString(36)}`;
+        const now = new Date().toISOString();
+        db.prepare(
+          `INSERT INTO hr_policy_config (id, effective_from_iso, payload_json, created_at_iso) VALUES (?,?,?,?)`
+        ).run(id, now.slice(0, 10), JSON.stringify(merged), now);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Phase 9: executive benefits — scholarships, stipends, domestic staff, beneficiary payments. */

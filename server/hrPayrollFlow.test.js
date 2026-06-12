@@ -43,21 +43,16 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
     expect(res.body.ok).toBe(true);
   });
 
-  it('payroll run lifecycle: create, recompute, gm approve, lock', async () => {
+  it('payroll run lifecycle: create (auto-recompute), gm approve, lock', async () => {
     const period = '202606';
     const created = await agent.post('/api/hr/payroll-runs').send({
       periodYyyymm: period,
-      taxPercent: 7.5,
-      pensionPercent: 8,
     });
     expect(created.status).toBe(201);
     expect(created.body.ok).toBe(true);
+    expect(created.body.autoRecomputed).toBe(true);
     const runId = created.body.id;
     expect(runId).toBeTruthy();
-
-    const recompute = await agent.post(`/api/hr/payroll-runs/${runId}/recompute`);
-    expect(recompute.status).toBe(200);
-    expect(recompute.body.ok).toBe(true);
 
     const lines = await agent.get(`/api/hr/payroll-runs/${runId}/lines`);
     expect(lines.status).toBe(200);
@@ -85,6 +80,14 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
     const run = await agent.get(`/api/hr/payroll-runs/${runId}`);
     expect(run.status).toBe(200);
     expect(run.body.run.status).toBe('locked');
+  });
+
+  it('GET /api/hr/policy-config returns pension defaults', async () => {
+    const res = await agent.get('/api/hr/policy-config');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.policy?.pensionEmployeePercent).toBe(8);
+    expect(res.body.policy?.pensionEmployerPercent).toBe(10);
   });
 
   it('salary matrix and branch contributions endpoints', async () => {

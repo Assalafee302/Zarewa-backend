@@ -12,10 +12,28 @@ const DEFAULT_POLICY = {
   annualLeaveDaysJunior: 14,
   casualLeaveDaysPerYear: 7,
   maternityLeaveDays: 60,
-  itfRateEmployer: 0.01,      // 1% of gross payroll — employer pays to ITF
-  nsitfRateEmployer: 0.01,    // 1% of gross payroll — employer pays to NSITF
-  halfMonthBonusRate: 0.5,    // 50% of monthly base salary
+  itfRateEmployer: 0.01, // 1% of gross payroll — employer pays to ITF
+  nsitfRateEmployer: 0.01, // 1% of gross payroll — employer pays to NSITF
+  halfMonthBonusRate: 0.5, // 50% of monthly base salary (December year-end bonus)
+  pensionEmployeePercent: 8, // employee pension deduction (% of gross)
+  pensionEmployerPercent: 10, // employer pension contribution (% of gross, not deducted from net)
 };
+
+const POLICY_PATCH_KEYS = new Set([
+  'loanMinServiceYears',
+  'loanMaxSalaryMonths',
+  'loanMaxRepaymentMonths',
+  'maxConcurrentBranchLoans',
+  'annualLeaveDaysSenior',
+  'annualLeaveDaysJunior',
+  'casualLeaveDaysPerYear',
+  'maternityLeaveDays',
+  'itfRateEmployer',
+  'nsitfRateEmployer',
+  'halfMonthBonusRate',
+  'pensionEmployeePercent',
+  'pensionEmployerPercent',
+]);
 
 export function getHrPolicyPayload(db) {
   try {
@@ -27,6 +45,40 @@ export function getHrPolicyPayload(db) {
     return { ...DEFAULT_POLICY, ...parsed };
   } catch {
     return { ...DEFAULT_POLICY };
+  }
+}
+
+/**
+ * Persist HR policy updates (inserts a new effective-dated row).
+ * @param {import('better-sqlite3').Database} db
+ * @param {Record<string, unknown>} patch
+ */
+export function updateHrPolicyPayload(db, patch = {}) {
+  const current = getHrPolicyPayload(db);
+  const next = { ...current };
+  for (const [key, raw] of Object.entries(patch || {})) {
+    if (!POLICY_PATCH_KEYS.has(key)) continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return { ok: false, error: `Invalid value for ${key}.` };
+    }
+    if (key.includes('Percent') && n > 100) {
+      return { ok: false, error: `${key} cannot exceed 100%.` };
+    }
+    if (key.includes('Rate') && n > 2) {
+      return { ok: false, error: `${key} is out of range.` };
+    }
+    next[key] = n;
+  }
+  try {
+    const id = `HRPOL-${Date.now().toString(36)}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO hr_policy_config (id, effective_from_iso, payload_json, created_at_iso) VALUES (?,?,?,?)`
+    ).run(id, now.slice(0, 10), JSON.stringify(next), now);
+    return { ok: true, policy: next };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
   }
 }
 

@@ -1836,7 +1836,17 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
       const status = statusRaw === 'late' || statusRaw === 'absent' ? statusRaw : 'present';
       const inTime = normalizeRollTime(r?.inTime);
       const outTime = normalizeRollTime(r?.outTime);
-      return { userId, status, ...(inTime ? { inTime } : {}), ...(outTime ? { outTime } : {}) };
+      const remark = String(r?.remark ?? '').trim();
+      const minutesLate =
+        status === 'late' ? Math.max(0, Math.min(480, Math.round(Number(r?.minutesLate) || 0))) : 0;
+      return {
+        userId,
+        status,
+        ...(inTime ? { inTime } : {}),
+        ...(outTime ? { outTime } : {}),
+        ...(remark ? { remark } : {}),
+        ...(status === 'late' && minutesLate > 0 ? { minutesLate } : {}),
+      };
     })
     .filter(Boolean);
   if (rowsNorm.length === 0) return { ok: false, error: 'rows must include at least one staff member.' };

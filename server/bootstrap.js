@@ -44,6 +44,7 @@ import { listMasterData } from './masterData.js';
 import { listPriceListItems } from './pricingOps.js';
 import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
 import { listInTransitLoads } from './inTransitOps.js';
+import { shouldShowPoInTransit } from '../shared/lib/inTransitVisibility.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
 import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
@@ -344,6 +345,24 @@ export function repairDashboardProductionJoins(full, partial) {
 }
 
 /**
+ * Dashboard bootstrap trims purchaseOrders by recency. Re-merge any receivable PO that
+ * fell outside the trim window so Operations → Stock Management can always GRN in-transit loads.
+ *
+ * @param {Record<string, unknown>} full
+ * @param {{ purchaseOrders?: unknown[] }} partial
+ */
+export function repairDashboardReceivablePurchaseOrders(full, partial) {
+  const fullPos = Array.isArray(full.purchaseOrders) ? full.purchaseOrders : [];
+  const partialPos = Array.isArray(partial.purchaseOrders) ? partial.purchaseOrders : [];
+  const seen = new Set(partialPos.map((p) => p.poID).filter(Boolean));
+  const missing = fullPos.filter(
+    (p) => p?.poID && !seen.has(p.poID) && shouldShowPoInTransit(p)
+  );
+  if (!missing.length) return;
+  partial.purchaseOrders = [...partialPos, ...missing];
+}
+
+/**
  * Dashboard-focused snapshot: same shape as bootstrap, but trims heavy arrays.
  * Intended to make the initial dashboard render fast; the app can refresh full bootstrap later.
  */
@@ -381,5 +400,6 @@ export function buildDashboardBootstrap(db, opts = {}) {
     ledgerEntries: take(full.ledgerEntries, Math.min(limit, 300)),
   };
   repairDashboardProductionJoins(full, partial);
+  repairDashboardReceivablePurchaseOrders(full, partial);
   return partial;
 }

@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { repairDashboardProductionJoins } from './bootstrap.js';
+import { repairDashboardProductionJoins, repairDashboardReceivablePurchaseOrders } from './bootstrap.js';
+
+describe('repairDashboardReceivablePurchaseOrders', () => {
+  it('re-adds receivable POs dropped by dashboard purchaseOrders trim', () => {
+    const receivable = {
+      poID: 'PO-KD-26-0027',
+      status: 'In Transit',
+      supplierName: 'Supplier A',
+      lines: [{ lineKey: 'L1', productID: 'COIL-ALU', qtyOrdered: 5000, qtyReceived: 0 }],
+    };
+    const closed = {
+      poID: 'PO-KD-26-0001',
+      status: 'Received',
+      lines: [{ lineKey: 'L0', productID: 'COIL-ALU', qtyOrdered: 1000, qtyReceived: 1000 }],
+    };
+    const full = { purchaseOrders: [receivable, closed] };
+    const partial = { purchaseOrders: [] };
+    repairDashboardReceivablePurchaseOrders(full, partial);
+    expect(partial.purchaseOrders.map((p) => p.poID)).toEqual(['PO-KD-26-0027']);
+  });
+});
 
 describe('repairDashboardProductionJoins', () => {
   it('adds a cutting list from full when a trimmed job references a CL outside the trim window', () => {

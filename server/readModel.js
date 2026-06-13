@@ -934,42 +934,76 @@ function masterDataColoursFromDb(db) {
   };
 }
 
+function mapCoilLotRow(db, row, masterData) {
+  return {
+    coilNo: row.coil_no,
+    productID: row.product_id,
+    lineKey: row.line_key,
+    qtyReceived: row.qty_received,
+    weightKg: row.weight_kg,
+    colour: canonicalColourName(masterData, row.colour ?? '') || (row.colour ?? ''),
+    gaugeLabel: row.gauge_label ?? '',
+    materialTypeName: row.material_type_name ?? '',
+    supplierExpectedMeters: row.supplier_expected_meters,
+    supplierConversionKgPerM: roundConv2(row.supplier_conversion_kg_per_m),
+    qtyRemaining: Number(row.qty_remaining) || 0,
+    qtyReserved: Number(row.qty_reserved) || 0,
+    currentWeightKg: Number(row.current_weight_kg) || 0,
+    currentStatus: row.current_status ?? 'Available',
+    stockForm:
+      hasColumn(db, 'coil_lots', 'stock_form') && String(row.stock_form || '').toLowerCase() === 'roll'
+        ? 'roll'
+        : 'coil',
+    location: row.location,
+    poID: row.po_id,
+    supplierID: row.supplier_id,
+    supplierName: row.supplier_name,
+    receivedAtISO: row.received_at_iso,
+    branchId: row.branch_id ?? '',
+    parentCoilNo: row.parent_coil_no ?? '',
+    materialOriginNote: row.material_origin_note ?? '',
+    landedCostNgn: row.landed_cost_ngn != null ? Number(row.landed_cost_ngn) : null,
+    unitCostNgnPerKg: row.unit_cost_ngn_per_kg != null ? Number(row.unit_cost_ngn_per_kg) : null,
+  };
+}
+
 export function listCoilLots(db, branchScope = 'ALL') {
   const masterData = masterDataColoursFromDb(db);
   const b = branchWhere(db, 'coil_lots', branchScope);
   return db
     .prepare(`SELECT * FROM coil_lots WHERE 1=1${b.sql} ORDER BY received_at_iso DESC, coil_no DESC`)
     .all(...b.args)
-    .map((row) => ({
-      coilNo: row.coil_no,
-      productID: row.product_id,
-      lineKey: row.line_key,
-      qtyReceived: row.qty_received,
-      weightKg: row.weight_kg,
-      colour: canonicalColourName(masterData, row.colour ?? '') || (row.colour ?? ''),
-      gaugeLabel: row.gauge_label ?? '',
-      materialTypeName: row.material_type_name ?? '',
-      supplierExpectedMeters: row.supplier_expected_meters,
-      supplierConversionKgPerM: roundConv2(row.supplier_conversion_kg_per_m),
-      qtyRemaining: Number(row.qty_remaining) || 0,
-      qtyReserved: Number(row.qty_reserved) || 0,
-      currentWeightKg: Number(row.current_weight_kg) || 0,
-      currentStatus: row.current_status ?? 'Available',
-      stockForm:
-        hasColumn(db, 'coil_lots', 'stock_form') && String(row.stock_form || '').toLowerCase() === 'roll'
-          ? 'roll'
-          : 'coil',
-      location: row.location,
-      poID: row.po_id,
-      supplierID: row.supplier_id,
-      supplierName: row.supplier_name,
-      receivedAtISO: row.received_at_iso,
-      branchId: row.branch_id ?? '',
-      parentCoilNo: row.parent_coil_no ?? '',
-      materialOriginNote: row.material_origin_note ?? '',
-      landedCostNgn: row.landed_cost_ngn != null ? Number(row.landed_cost_ngn) : null,
-      unitCostNgnPerKg: row.unit_cost_ngn_per_kg != null ? Number(row.unit_cost_ngn_per_kg) : null,
-    }));
+    .map((row) => mapCoilLotRow(db, row, masterData));
+}
+
+/**
+ * Find coils by number fragment (e.g. "2043", "CL-26-2043") when not in trimmed bootstrap.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {string} [rawQuery]
+ * @param {number} [limit]
+ */
+export function searchCoilLots(db, branchScope = 'ALL', rawQuery = '', limit = 80) {
+  const q = String(rawQuery || '').trim();
+  if (q.length < 2) return [];
+  const masterData = masterDataColoursFromDb(db);
+  const b = branchWhere(db, 'coil_lots', branchScope);
+  const lim = Math.min(200, Math.max(1, Number(limit) || 80));
+  const safe = q.replace(/[%_\\]/g, '');
+  if (!safe) return [];
+  const like = `%${safe}%`;
+  const digits = safe.replace(/\D/g, '');
+  let sql = `SELECT * FROM coil_lots WHERE 1=1${b.sql} AND (`;
+  const args = [...b.args];
+  sql += ` coil_no LIKE ? OR po_id LIKE ?`;
+  args.push(like, like);
+  if (digits.length >= 2) {
+    sql += ` OR coil_no LIKE ?`;
+    args.push(`%-${digits}`);
+  }
+  sql += `) ORDER BY received_at_iso DESC, coil_no DESC LIMIT ?`;
+  args.push(lim);
+  return db.prepare(sql).all(...args).map((row) => mapCoilLotRow(db, row, masterData));
 }
 
 /** Month-end coil snapshot rows for `as_at_iso` (empty if table missing or no capture). */

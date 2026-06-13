@@ -320,6 +320,7 @@ import {
   listPeriodLocks,
   listCustomerCrmInteractions,
   listCoilLots,
+  searchCoilLots,
   listPurchaseOrders,
   listInventoryCoilSnapshots,
   listCoilControlEvents,
@@ -5361,6 +5362,19 @@ export function registerHttpApi(app, db) {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/coil-lots/search', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
+    try {
+      const q = String(req.query?.q ?? '').trim();
+      const lim = req.query?.limit != null ? Number(req.query.limit) : 80;
+      const branchScope = resolveBootstrapBranchScope(req);
+      const coilLots = searchCoilLots(db, branchScope, q, lim);
+      res.json({ ok: true, coilLots });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

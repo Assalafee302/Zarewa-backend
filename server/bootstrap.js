@@ -383,7 +383,8 @@ export function buildDashboardBootstrap(db, opts = {}) {
     paymentRequests: take(full.paymentRequests, limit),
     treasuryMovements: take(full.treasuryMovements, limit),
     movements: take(full.movements, limit),
-    coilLots: take(full.coilLots, limit),
+    /** Full coil register — trimming hides coils (e.g. CL-26-2043) from Stock Management. */
+    coilLots: full.coilLots ?? [],
     coilControlEvents: take(full.coilControlEvents ?? [], limit),
     productionJobs: take(full.productionJobs, limit),
     productionJobCoils: take(full.productionJobCoils, limit),

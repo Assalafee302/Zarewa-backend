@@ -2417,7 +2417,6 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   if (!lines.length) return { ok: false, error: 'Send corrected readings for each coil line.' };
 
   const existing = listJobCoilsForJob(db, jobId);
-  if (!existing.length) return { ok: false, error: 'No coil allocations for this job.' };
   const byAid = new Map(existing.map((r) => [String(r.id ?? '').trim(), r]));
 
   const parsed = [];
@@ -2486,17 +2485,29 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   }
 
   const existingParsed = parsed.filter((p) => !p.isNew);
-  if (existingParsed.length !== existing.length) {
-    return {
-      ok: false,
-      error: `Send all ${existing.length} saved coil line(s) (each with allocationId), plus optional extra lines with no allocationId for new rolls.`,
-    };
-  }
-  const aidsSeen = new Set(existingParsed.map((p) => p.aid));
-  if (aidsSeen.size !== existingParsed.length) return { ok: false, error: 'Duplicate allocationId in readings.' };
-  for (const r of existing) {
-    if (!aidsSeen.has(String(r.id ?? '').trim())) {
-      return { ok: false, error: `Missing reading for allocation ${r.id}.` };
+  if (!existing.length) {
+    if (!parsed.length || parsed.some((p) => !p.isNew)) {
+      return {
+        ok: false,
+        error:
+          'This job has no coil lines yet. Add new coil rows (leave allocationId blank) with opening, closing, and metres.',
+      };
+    }
+  } else {
+    if (existingParsed.length !== existing.length) {
+      return {
+        ok: false,
+        error: `Send all ${existing.length} saved coil line(s) (each with allocationId), plus optional extra lines with no allocationId for new rolls.`,
+      };
+    }
+    const aidsSeen = new Set(existingParsed.map((p) => p.aid));
+    if (aidsSeen.size !== existingParsed.length) {
+      return { ok: false, error: 'Duplicate allocationId in readings.' };
+    }
+    for (const r of existing) {
+      if (!aidsSeen.has(String(r.id ?? '').trim())) {
+        return { ok: false, error: `Missing reading for allocation ${r.id}.` };
+      }
     }
   }
 

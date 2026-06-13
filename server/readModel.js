@@ -998,8 +998,16 @@ export function searchCoilLots(db, branchScope = 'ALL', rawQuery = '', limit = 8
   sql += ` coil_no LIKE ? OR po_id LIKE ?`;
   args.push(like, like);
   if (digits.length >= 2) {
-    sql += ` OR coil_no LIKE ?`;
-    args.push(`%-${digits}`);
+    sql += ` OR coil_no LIKE ? OR coil_no LIKE ? OR coil_no LIKE ?`;
+    args.push(`%-${digits}`, `%${digits}`, digits);
+  }
+  if (hasColumn(db, 'coil_lots', 'parent_coil_no')) {
+    sql += ` OR parent_coil_no LIKE ?`;
+    args.push(like);
+  }
+  if (hasColumn(db, 'coil_lots', 'material_origin_note')) {
+    sql += ` OR material_origin_note LIKE ?`;
+    args.push(like);
   }
   sql += `) ORDER BY received_at_iso DESC, coil_no DESC LIMIT ?`;
   args.push(lim);

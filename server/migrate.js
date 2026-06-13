@@ -2827,6 +2827,17 @@ function migratePayrollPensionPolicy2026(db) {
         db.prepare(
           `INSERT INTO hr_policy_config (id, effective_from_iso, payload_json, created_at_iso) VALUES (?,?,?,?)`
         ).run(id, now.slice(0, 10), JSON.stringify(merged), now);
+      } else if (Number(parsed.loanMaxRepaymentMonths) === 4) {
+        const id = `HRPOL-${Date.now().toString(36)}`;
+        const now = new Date().toISOString();
+        db.prepare(
+          `INSERT INTO hr_policy_config (id, effective_from_iso, payload_json, created_at_iso) VALUES (?,?,?,?)`
+        ).run(
+          id,
+          now.slice(0, 10),
+          JSON.stringify({ ...parsed, loanMaxRepaymentMonths: 12 }),
+          now
+        );
       }
     }
   } catch {

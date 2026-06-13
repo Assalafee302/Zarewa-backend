@@ -6,7 +6,7 @@
 const DEFAULT_POLICY = {
   loanMinServiceYears: 3,
   loanMaxSalaryMonths: 4,
-  loanMaxRepaymentMonths: 4,
+  loanMaxRepaymentMonths: 12,
   maxConcurrentBranchLoans: 5,
   annualLeaveDaysSenior: 21,
   annualLeaveDaysJunior: 14,

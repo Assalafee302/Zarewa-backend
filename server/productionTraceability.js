@@ -26,6 +26,7 @@ import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
 } from '../shared/lib/coilSpecVersusProduct.js';
+import { quotationRequiresStoneMetreConsumption } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
 import {
   procurementCatalogMaterialAlignedWithCoil,
@@ -1432,20 +1433,35 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
 
 function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
-  const metres = safeNumber(
+  const metresRaw = safeNumber(
     payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? payload.totalMeters
   );
-  if (!Number.isFinite(metres) || Math.abs(metres) < 1e-9) {
+  const qref = String(job.quotation_ref ?? '').trim();
+  const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
+  let requiresStoneMetres = false;
+  if (qRow?.lines_json) {
+    try {
+      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json);
+    } catch {
+      requiresStoneMetres = false;
+    }
+  }
+  const metres = requiresStoneMetres ? metresRaw : 0;
+  if (!Number.isFinite(metresRaw)) {
+    return { ok: false, error: 'Stone metres consumed must be a number.' };
+  }
+  if (requiresStoneMetres && Math.abs(metres) < 1e-9) {
     return {
       ok: false,
       error:
         'Enter stone metres consumed as a non-zero number (positive draws stock; negative returns metres to stock).',
     };
   }
-  const qref = String(job.quotation_ref ?? '').trim();
-  const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
-  const stonePid = qRow ? resolveStoneRawProductIdForQuotation(db, qRow) : null;
-  if (!stonePid) {
+  const stonePid =
+    requiresStoneMetres && Math.abs(metres) >= 1e-9 && qRow
+      ? resolveStoneRawProductIdForQuotation(db, qRow)
+      : null;
+  if (requiresStoneMetres && Math.abs(metres) >= 1e-9 && !stonePid) {
     return {
       ok: false,
       error: 'Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).',
@@ -1463,18 +1479,20 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       ...(sfPlan.stoneFlatsheetStockWarnings ?? []),
     ];
     db.transaction(() => {
-      adjustProductStockTx(db, stonePid, -metres);
-      appendStockMovementTx(db, {
-        atISO: completedAtISO,
-        type: 'STONE_CONSUMPTION',
-        ref: jobID,
-        productID: stonePid,
-        qty: -metres,
-        detail:
-          metres < 0
-            ? `${jobID} stone-coated return ${Math.abs(metres).toFixed(2)} m`
-            : `${jobID} stone-coated ${metres.toFixed(2)} m`,
-      });
+      if (stonePid && Math.abs(metres) >= 1e-9) {
+        adjustProductStockTx(db, stonePid, -metres);
+        appendStockMovementTx(db, {
+          atISO: completedAtISO,
+          type: 'STONE_CONSUMPTION',
+          ref: jobID,
+          productID: stonePid,
+          qty: -metres,
+          detail:
+            metres < 0
+              ? `${jobID} stone-coated return ${Math.abs(metres).toFixed(2)} m`
+              : `${jobID} stone-coated ${metres.toFixed(2)} m`,
+        });
+      }
       if (job.product_id && metres > 0) {
         adjustProductStockTx(db, job.product_id, metres);
         appendStockMovementTx(db, {

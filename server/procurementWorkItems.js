@@ -46,10 +46,10 @@ export function notifyMdCoilShortReceipt(
     status: 'open',
     priority: withinTol ? 'normal' : 'high',
     title: `Coil received under PO — ${po}`,
-    summary: `${String(productName || 'Coil').trim()}: ${received.toLocaleString('en-NG')} kg received vs ${ordered.toLocaleString('en-NG')} kg ordered (${short.toLocaleString('en-NG')} kg short)${cn ? ` · ${cn}` : ''}.`,
+    summary: `${String(productName || 'Line').trim()}: ${received.toLocaleString('en-NG')} received vs ${ordered.toLocaleString('en-NG')} ordered (${short.toLocaleString('en-NG')} short)${cn ? ` · ${cn}` : ''}. PO line closed — no further store receipt on this line.`,
     body: withinTol
-      ? 'Within automatic close tolerance for receiving — MD should still review supplier / weighbridge variance.'
-      : 'Short-land exceeds automatic close tolerance — review supplier credit or follow-up delivery.',
+      ? 'Short receipt accepted and line closed. Review supplier / weighbridge variance if needed.'
+      : 'Short receipt exceeds typical weighbridge tolerance — line closed. Review supplier credit or delivery follow-up.',
     requiresResponse: true,
     requiresApproval: false,
     senderUserId: uid || null,

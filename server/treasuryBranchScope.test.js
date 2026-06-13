@@ -108,7 +108,7 @@ describe('treasury accounts per branch', () => {
     }
   });
 
-  it('migration backfills legacy treasury accounts to Kaduna HQ (BR-KD)', () => {
+  it('migration no longer re-tags treasury accounts on every boot', () => {
     const db = createDatabase(':memory:');
     try {
       db.prepare(
@@ -118,11 +118,51 @@ describe('treasury accounts per branch', () => {
                 ('Cash Office', '', 50, 'Cash', 'N/A', 'BR-YL')`
       ).run();
       runMigrations(db);
-      const kd = listTreasuryAccounts(db, 'BR-KD');
       const yl = listTreasuryAccounts(db, 'BR-YL');
-      expect(kd).toHaveLength(3);
-      expect(yl).toHaveLength(0);
-      expect(kd.map((a) => a.name).sort()).toEqual(['Cash Office', 'MoneyPoint', 'TAJ Bank']);
+      expect(yl).toHaveLength(3);
+      runMigrations(db);
+      expect(listTreasuryAccounts(db, 'BR-YL')).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('migration does not revert admin branch reassignment on second run', () => {
+    const db = createDatabase(':memory:');
+    try {
+      runMigrations(db);
+      const admin = { id: 'a1', username: 'admin', roleKey: 'admin' };
+      const created = upsertTreasuryAccount(
+        db,
+        {
+          name: 'Yola Cash Till',
+          bankName: '',
+          balance: 0,
+          type: 'Cash',
+          accNo: 'N/A',
+          workspaceBranchId: 'BR-KD',
+        },
+        admin
+      );
+      expect(created.ok).toBe(true);
+      const moved = upsertTreasuryAccount(
+        db,
+        {
+          id: created.id,
+          name: 'Yola Cash Till',
+          bankName: '',
+          balance: 0,
+          type: 'Cash',
+          accNo: 'N/A',
+          branchId: 'BR-YL',
+          workspaceBranchId: 'BR-KD',
+        },
+        admin
+      );
+      expect(moved.ok).toBe(true);
+      runMigrations(db);
+      const yola = listTreasuryAccounts(db, 'BR-YL');
+      expect(yola.some((a) => a.id === created.id)).toBe(true);
     } finally {
       db.close();
     }

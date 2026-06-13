@@ -105,6 +105,47 @@ async function freshPaidStoneAccessoriesOnlyQuotation(agent, unitPriceNgn = 50_0
   return qid;
 }
 
+/** Stone-coated quotation with stone flatsheet m² only (no roofing metre lines). */
+async function freshPaidStoneFlatsheetOnlyQuotation(agent, unitPriceNgn = 80_000) {
+  const q = await agent.post('/api/quotations').send({
+    customerID: 'CUS-001',
+    projectName: `Stone flatsheet only ${Date.now()}`,
+    dateISO: '2026-03-29',
+    materialTypeId: 'MAT-005',
+    materialDesign: 'Milano',
+    materialColor: 'Black',
+    materialGauge: '0.40mm',
+    lines: {
+      products: [
+        {
+          name: 'Stone flatsheet',
+          qty: '24',
+          unitPrice: String(unitPriceNgn),
+          stoneFlatsheetLengthM: 2,
+        },
+      ],
+      accessories: [],
+      services: [],
+    },
+  });
+  expect(q.status).toBe(201);
+  const qid = q.body.quotationId;
+  const total = q.body.quotation.totalNgn;
+  const boot = await agent.get('/api/bootstrap');
+  const treasuryAccountId = boot.body.treasuryAccounts[0].id;
+  const payNgn = Math.max(Math.ceil(total * 0.7), 1);
+  const rcpt = await agent.post('/api/ledger/receipt').send({
+    customerID: 'CUS-001',
+    quotationId: qid,
+    amountNgn: payNgn,
+    paymentMethod: 'Cash',
+    dateISO: '2026-03-29',
+    paymentLines: [{ treasuryAccountId, amountNgn: payNgn, reference: `ST-FS-${Date.now()}` }],
+  });
+  expect(rcpt.status).toBe(201);
+  return qid;
+}
+
 /** Quotation with ≥70% paid via posted sales receipt (syncs `paid_ngn`; satisfies cutting-list gate). */
 async function freshPaidQuotationForCutting(agent, unitPriceNgn = 400_000) {
   const q = await agent.post('/api/quotations').send({
@@ -237,6 +278,60 @@ describe('Inventory scenarios (simulated flows)', () => {
     const poRow = boot.body.purchaseOrders.find((p) => p.poID === po.body.poID);
     const line = poRow?.lines?.find((l) => l.lineKey === 'L-OVER');
     expect(Number(line?.qtyReceived)).toBe(1500);
+  });
+
+  it('S1c — GRN short receipt closes PO line (no remaining open qty)', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+    const sup = await agent.post('/api/suppliers').send({ name: 'Short-land Supplier', city: 'Kaduna' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Short-land Supplier',
+      orderDateISO: '2026-04-01',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L-SHORT',
+          productID: 'COIL-ALU',
+          productName: 'Aluminium coil (kg)',
+          color: 'TB',
+          gauge: '0.22',
+          qtyOrdered: 5000,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const grn = await agent.post(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/grn`).send({
+      entries: [
+        {
+          lineKey: 'L-SHORT',
+          productID: 'COIL-ALU',
+          qtyReceived: 4800,
+          weightKg: 4800,
+          coilNo: 'CL-INV-SHORT',
+          location: 'Bay',
+        },
+      ],
+      supplierID: sup.body.supplierID,
+      supplierName: 'Short-land Supplier',
+    });
+    expect(grn.status).toBe(200);
+    expect(grn.body.ok).toBe(true);
+    expect(Array.isArray(grn.body.mdShortReceiptAlerts)).toBe(true);
+    expect(grn.body.mdShortReceiptAlerts.length).toBeGreaterThan(0);
+
+    const boot = await agent.get('/api/bootstrap');
+    const poRow = boot.body.purchaseOrders.find((p) => p.poID === po.body.poID);
+    const line = poRow?.lines?.find((l) => l.lineKey === 'L-SHORT');
+    expect(Number(line?.qtyOrdered)).toBe(5000);
+    expect(Number(line?.qtyReceived)).toBe(5000);
+    const coil = boot.body.coilLots.find((c) => c.coilNo === 'CL-INV-SHORT');
+    expect(Number(coil?.qtyRemaining)).toBeCloseTo(4800, 2);
   });
 
   it('S1 — GRN: coil remaining and COIL-ALU stock increase together', async () => {
@@ -837,5 +932,71 @@ describe('Inventory scenarios (simulated flows)', () => {
     const boot = await agent.get('/api/bootstrap');
     const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
     expect(pj?.status).toBe('Completed');
+  });
+
+  it('S10c — Stone flatsheet-only production completes without stone-coated metres', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const sr = await agent.post('/api/inventory/stone-flatsheet-receipt').send({
+      colourLabel: 'Black',
+      lengthM: 2,
+      m2Received: 120,
+    });
+    expect(sr.status).toBe(200);
+    const fsPid = sr.body.productId;
+
+    const qref = await freshPaidStoneFlatsheetOnlyQuotation(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: qref,
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Stone flatsheet job',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 24 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Stone flatsheet job',
+      plannedMeters: 24,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({ allocations: [] });
+    const start = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({
+      startedAtISO: '2026-04-02',
+    });
+    expect(start.status).toBe(200);
+
+    const b0 = await agent.get('/api/bootstrap');
+    const fs0 = b0.body.products.find((p) => p.productID === fsPid)?.stockLevel ?? 0;
+
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-04-02T16:00:00.000Z',
+      stoneMetersConsumed: 0,
+      stoneFlatsheetSupplied: [{ quoteLineId: '', name: 'Stone flatsheet', suppliedM2: 24, deductionM2: 0 }],
+    });
+    expect(complete.status).toBe(200);
+    expect(complete.body.ok).toBe(true);
+
+    const b1 = await agent.get('/api/bootstrap');
+    const fs1 = b1.body.products.find((p) => p.productID === fsPid)?.stockLevel ?? 0;
+    expect(fs1).toBeCloseTo(fs0 - 24, 2);
+
+    const pj = b1.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.status).toBe('Completed');
+    expect(Number(pj?.actualMeters ?? 0)).toBe(0);
+
+    const movFs = await agent.get(`/api/inventory/product-movements/${encodeURIComponent(fsPid)}`);
+    expect(movFs.body.movements.some((m) => m.ref === jobId && m.qty < 0)).toBe(true);
+    expect(movFs.body.movements.some((m) => m.type === 'STONE_CONSUMPTION')).toBe(false);
   });
 });

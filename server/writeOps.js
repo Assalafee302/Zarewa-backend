@@ -22,7 +22,6 @@ import {
   isGlobalCoilCatalogProductId,
 } from './productBranchInventory.js';
 import {
-  coilReceiptShortToleranceKg,
   inferLineTypeFromProduct,
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
@@ -2055,6 +2054,22 @@ export function confirmGrn(
   const coilNumbers = [];
   const mdShortReceiptAlerts = [];
 
+  function pushShortReceiptAlertIfNeeded(line, qtyAdded, refLabel) {
+    const ordered = Number(line.qty_ordered) || 0;
+    const priorReceived = Number(line.qty_received) || 0;
+    const totalReceived = priorReceived + qtyAdded;
+    if (ordered > 0 && totalReceived < ordered) {
+      mdShortReceiptAlerts.push({
+        lineKey: line.line_key,
+        productName: line.product_name,
+        coilNo: refLabel,
+        orderedKg: ordered,
+        receivedKg: totalReceived,
+        shortKg: ordered - totalReceived,
+      });
+    }
+  }
+
   db.transaction(() => {
     let seq = existingLots;
     for (let i = 0; i < entries.length; i += 1) {
@@ -2085,6 +2100,7 @@ export function confirmGrn(
         const upSheet = Math.round(Number(line.unit_price_ngn) || 0);
         const landedFs = upSheet > 0 && qty > 0 ? Math.round(qty * upSheet) : null;
         updLine.run(qty, poID, line.line_key);
+        pushShortReceiptAlertIfNeeded(line, qty, fsRef);
         appendMovementTx(db, {
           type: 'STORE_GRN_STONE_FLATSHEET',
           ref: poID,
@@ -2116,6 +2132,7 @@ export function confirmGrn(
         const upM = Math.round(Number(line.unit_price_ngn) || 0);
         const landedStone = upM > 0 && qty > 0 ? Math.round(qty * upM) : null;
         updLine.run(qty, poID, line.line_key);
+        pushShortReceiptAlertIfNeeded(line, qty, stoneRef);
         appendMovementTx(db, {
           type: 'STORE_GRN_STONE',
           ref: poID,
@@ -2147,6 +2164,7 @@ export function confirmGrn(
         const upEach = Math.round(Number(line.unit_price_ngn) || 0);
         const landedAcc = upEach > 0 && qty > 0 ? Math.round(qty * upEach) : null;
         updLine.run(qty, poID, line.line_key);
+        pushShortReceiptAlertIfNeeded(line, qty, accRef);
         appendMovementTx(db, {
           type: 'STORE_GRN_ACCESSORY',
           ref: poID,
@@ -2223,14 +2241,7 @@ export function confirmGrn(
       const priorReceivedKg = Number(line.qty_received) || 0;
       const totalReceivedKg = priorReceivedKg + creditQty;
       if (orderedKg > 0 && totalReceivedKg < orderedKg) {
-        mdShortReceiptAlerts.push({
-          lineKey: line.line_key,
-          productName: line.product_name,
-          coilNo,
-          orderedKg,
-          receivedKg: totalReceivedKg,
-          shortKg: orderedKg - totalReceivedKg,
-        });
+        pushShortReceiptAlertIfNeeded(line, creditQty, coilNo);
       }
       updLine.run(creditQty, poID, line.line_key);
       appendMovementTx(db, {
@@ -2255,21 +2266,16 @@ export function confirmGrn(
       }
     }
 
-    const snapShortCoil = db.prepare(
-      `UPDATE purchase_order_lines SET qty_received = qty_ordered WHERE po_id = ? AND line_key = ?`
+    const snapClosedShortLine = db.prepare(
+      `UPDATE purchase_order_lines SET qty_received = qty_ordered
+       WHERE po_id = ? AND line_key = ?
+         AND COALESCE(qty_received, 0) > 0 AND COALESCE(qty_received, 0) < COALESCE(qty_ordered, 0)`
     );
-    let refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
-    for (const l of refreshed) {
-      const lt = String(l.line_type || '').trim() || inferLineTypeFromProduct(l.product_id, null, l);
-      if (lt !== 'coil_kg' && lt !== 'coil_meter') continue;
-      const ordered = Number(l.qty_ordered) || 0;
-      const received = Number(l.qty_received) || 0;
-      const gap = ordered - received;
-      if (gap > 0 && gap <= coilReceiptShortToleranceKg(ordered)) {
-        snapShortCoil.run(poID, l.line_key);
-      }
+    for (const e of entries) {
+      const line = findPoLine(lines, e);
+      if (line?.line_key) snapClosedShortLine.run(poID, line.line_key);
     }
-    refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
+    const refreshed = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
     const allIn = poLinesFullyReceived(refreshed, mapPoLineFromDb);
     const nextStatus = allIn ? 'Received' : po.status;
     db.prepare(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`).run(nextStatus, poID);

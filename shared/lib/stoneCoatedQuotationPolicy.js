@@ -115,6 +115,40 @@ export function quotationHasCoilLine(products) {
   return products.some((row) => productLineKey(row?.name) === COIL_KEY);
 }
 
+function parseQuoteLineQty(row) {
+  return Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
+}
+
+/**
+ * Product lines with qty > 0 that draw stone-coated metre stock (roofing / trim), not stone flatsheet m².
+ * @param {{ name?: string; qty?: unknown }[] | null | undefined} products
+ */
+export function quotationHasStoneMetreProductLines(products) {
+  if (!Array.isArray(products)) return false;
+  return products.some((row) => {
+    const name = String(row?.name ?? '').trim();
+    if (!name || parseQuoteLineQty(row) <= 0) return false;
+    return productLineKey(name) !== 'stone flatsheet';
+  });
+}
+
+/**
+ * Whether completing production should consume stone-coated metre stock (vs stone flatsheet m² only).
+ * @param {object | string | null | undefined} linesJson
+ */
+export function quotationRequiresStoneMetreConsumption(linesJson) {
+  let j = linesJson;
+  if (typeof j === 'string') {
+    try {
+      j = JSON.parse(j || '{}');
+    } catch {
+      return false;
+    }
+  }
+  if (!j || typeof j !== 'object') return false;
+  return quotationHasStoneMetreProductLines(j.products);
+}
+
 export const STONE_ACCESSORY_KEYS = new Set([normQuoteItemKey('Stone nail'), normQuoteItemKey('Repair Kit')]);
 
 /**

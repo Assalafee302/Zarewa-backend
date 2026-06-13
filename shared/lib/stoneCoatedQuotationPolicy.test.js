@@ -6,6 +6,8 @@ import {
   productLineAllowedForStone,
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
+  quotationHasStoneMetreProductLines,
+  quotationRequiresStoneMetreConsumption,
   resolveStoneFlatsheetLengthM,
   validateQuotationMaterialRules,
 } from './stoneCoatedQuotationPolicy.js';
@@ -114,6 +116,26 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
 
   it('detects coil line', () => {
     expect(quotationHasCoilLine([{ name: 'Coil' }])).toBe(true);
+  });
+
+  it('stone flatsheet-only quotes do not require stone metre consumption', () => {
+    const lines = {
+      products: [{ name: 'Stone flatsheet', qty: '24', stoneFlatsheetLengthM: 2 }],
+      accessories: [],
+    };
+    expect(quotationHasStoneMetreProductLines(lines.products)).toBe(false);
+    expect(quotationRequiresStoneMetreConsumption(lines)).toBe(false);
+  });
+
+  it('roofing + stone flatsheet quotes still require stone metre consumption', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: '100' },
+        { name: 'Stone flatsheet', qty: '24', stoneFlatsheetLengthM: 2 },
+      ],
+    };
+    expect(quotationHasStoneMetreProductLines(lines.products)).toBe(true);
+    expect(quotationRequiresStoneMetreConsumption(lines)).toBe(true);
   });
 
   it('allows stone accessories with pack suffix', () => {

@@ -4637,6 +4637,25 @@ function migrateCanonicalBranchIds(db) {
   }
 }
 
+/**
+ * One-time marker: legacy BR-YL → BR-KD name-based repair used to run on every boot
+ * and reverted admin branch reassignments. Repair is retired; branch assignment is via Finance UI.
+ */
+function migrateTreasuryBranchLegacyRepairOnce(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_patches (
+      patch_id TEXT PRIMARY KEY,
+      applied_at_iso TEXT NOT NULL
+    );
+  `);
+  const patchId = 'treasury_branch_legacy_repair_2026';
+  if (db.prepare(`SELECT 1 FROM schema_patches WHERE patch_id = ?`).get(patchId)) return;
+  db.prepare(`INSERT INTO schema_patches (patch_id, applied_at_iso) VALUES (?, ?)`).run(
+    patchId,
+    new Date().toISOString()
+  );
+}
+
 /** Branches + branch_id on operational tables + session workspace columns. */
 function migrateBranches(db) {
   const tableCols = (name) => {
@@ -4719,25 +4738,7 @@ function migrateBranches(db) {
     db.prepare(
       `UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
     ).run();
-    // Legacy installs wrongly tagged pre-existing Kaduna HQ bank/cash (MoneyPoint, TAJ, Cash) as Yola.
-    const nonYlTreasury = db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM treasury_accounts
-         WHERE TRIM(COALESCE(branch_id,'')) != '' AND branch_id != 'BR-YL'`
-      )
-      .get().c;
-    if (nonYlTreasury === 0) {
-      db.prepare(`UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id = 'BR-YL'`).run();
-    } else {
-      db.prepare(
-        `UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id = 'BR-YL' AND (
-          LOWER(name) LIKE '%moneypoint%' OR LOWER(name) LIKE '%money point%' OR
-          LOWER(COALESCE(bank_name,'')) LIKE '%moneypoint%' OR
-          LOWER(name) LIKE '%taj%' OR LOWER(COALESCE(bank_name,'')) LIKE '%taj%' OR
-          LOWER(name) LIKE '%cash%' OR LOWER(name) LIKE '%till%'
-        )`
-      ).run();
-    }
+    migrateTreasuryBranchLegacyRepairOnce(db);
   }
   if (tableCols('suppliers').has('branch_id')) {
     db.prepare(`UPDATE suppliers SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();

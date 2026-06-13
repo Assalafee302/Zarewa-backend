@@ -6,6 +6,7 @@ import {
   syncQuotationPaidFromReceipts,
 } from './writeOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import { previewRefundRequest, quotationMeetsRefundEligibility } from './controlOps.js';
 
 describe('receipt finance settlement aligns paid amount', () => {
   let db;
@@ -96,5 +97,65 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(again.changed).toBe(false);
     const second = db.prepare(`SELECT amount_ngn FROM sales_receipts WHERE id = ?`).get('LE-261');
     expect(second.amount_ngn).toBe(first.amount_ngn);
+  });
+});
+
+describe('finance-reconciled split-till overpay (refund cash dedupe)', () => {
+  let db;
+
+  beforeEach(() => {
+    db = createDatabase(':memory:');
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
+      VALUES ('QT-KD-26-0200', 'CUS-1', 'Test Customer', 2679600, 2679600, 'Paid', 'Pending', '{}', '2026-05-14');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, bank_received_amount_ngn,
+        finance_reconciliation_saved_at_iso, status, date_iso, ledger_entry_id
+      ) VALUES (
+        'LE-KD-26-0358', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 2679600, 4100000,
+        '2026-05-23T19:59:03.624Z', 'Cleared', '2026-05-14', 'LE-KD-26-0358'
+      );
+      INSERT INTO ledger_entries (
+        id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso,
+        payment_method, bank_reference, note
+      ) VALUES
+        (
+          'LE-KD-26-0358', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 2679600,
+          '2026-05-14T12:00:00.000Z', 'Bank — Zaps Aluminum Enterprises',
+          'Saleh Haladu ₦4,100,000 Bank:Zaps Aluminum Enterprises',
+          'Settlement to quotation balance (receipt)'
+        ),
+        (
+          'LE-KD-26-0359', 'OVERPAY_ADVANCE', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 1420400,
+          '2026-05-14T12:00:00.000Z', 'Bank — Zaps Aluminum Enterprises',
+          'Saleh Haladu ₦4,100,000 Bank:Zaps Aluminum Enterprises',
+          'Overpayment vs remaining balance on QT-KD-26-0200 → customer credit (refund via Sales refunds, not advance deposit)'
+        );
+      INSERT INTO production_jobs (job_id, quotation_ref, status)
+      VALUES ('PRO-KD-26-0172', 'QT-KD-26-0200', 'Completed');
+    `);
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  it('does not double-count companion OVERPAY_ADVANCE when bank_received is reconciled', () => {
+    const cash = quotationPaymentCashBreakdown(db, 'QT-KD-26-0200');
+    expect(cash.receiptCashNgn).toBe(4_100_000);
+    expect(cash.companionOverpayOnQuoteNgn).toBe(1_420_400);
+    expect(cash.netOverpayLedgerNgn).toBe(1_420_400);
+    expect(cash.cashInNgn).toBe(4_100_000);
+
+    const meets = quotationMeetsRefundEligibility(db, 'QT-KD-26-0200');
+    expect(meets.ok).toBe(true);
+    expect(meets.overpaymentExcessNgn).toBe(1_420_400);
+    expect(meets.remainingNgn).toBe(4_100_000);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0200' });
+    expect(prev.ok).toBe(true);
+    const over = prev.preview.suggestedLines.find((l) => l.category === 'Overpayment');
+    expect(over?.amountNgn).toBe(1_420_400);
+    expect(prev.preview.remainingRefundableNgn).toBe(1_420_400);
   });
 });

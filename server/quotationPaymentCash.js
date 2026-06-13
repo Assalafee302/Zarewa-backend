@@ -70,6 +70,10 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
     if (confirmed != null) {
       receiptAllocatedSumNgn += confirmed;
       receiptCashNgn += confirmed;
+      const rid = String(r.id || '');
+      const lid = r.ledger_entry_id != null ? String(r.ledger_entry_id) : '';
+      const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
+      companionOverpayOnQuoteNgn += extra;
       continue;
     }
     const alloc = roundMoney(r.amount_ngn);

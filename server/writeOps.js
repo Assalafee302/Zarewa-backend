@@ -94,6 +94,7 @@ import {
   deliveryGateShouldBlockMutation,
   evaluateDeliveryPaymentRelease,
 } from './deliveryReleaseGate.js';
+import { productionGateOverrideEffective, quotationHasRecordedPayment } from './productionGateAccess.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import {
   nextBankReconLineHumanId,
@@ -5641,7 +5642,8 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
     .prepare(
-      `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, branch_id, lines_json,
+      `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, manager_production_approval_level,
+              branch_id, lines_json,
               md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
               price_exception_md_review_required
        FROM quotations WHERE id = ?`
@@ -5671,8 +5673,21 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
       };
     }
   }
-  const managerOk = Boolean(qrow.manager_production_approved_at_iso);
+  const managerOk = productionGateOverrideEffective(qrow);
   const bookPaid = Number(qrow.paid_ngn) || 0;
+  if (
+    !forDraft &&
+    Boolean(qrow.manager_production_approved_at_iso) &&
+    !managerOk &&
+    !quotationHasRecordedPayment(bookPaid)
+  ) {
+    return {
+      ok: false,
+      code: 'ZERO_PAYMENT_MD_GATE_REQUIRED',
+      error:
+        'Zero payment requires Managing Director production approval. Branch Manager override is not sufficient.',
+    };
+  }
   const bid = String(qrow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   let minPaidFrac = 0.7;
   try {

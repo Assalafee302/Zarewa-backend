@@ -19,6 +19,8 @@ import {
 import { productLineKey } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
+  productionGateApprovalLevelForActor,
+  productionGateOverrideDeniedMessage,
   productionGateOverrideNoteValid,
   PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN,
   userMayApproveProductionGate,
@@ -3311,35 +3313,43 @@ export function reviewQuotation(db, quoteId, payload, actor) {
            WHERE id = ?`
         ).run(now, note, quoteId);
       } else if (decision === 'approve_production') {
-        if (!userMayApproveProductionGate(actor)) {
-          throw new Error(
-            'Production gate override requires Branch Manager or Managing Director approval.'
-          );
+        const total = Math.round(Number(row.total_ngn) || 0);
+        const paid = Math.round(Number(row.paid_ngn) || 0);
+        if (!userMayApproveProductionGate(actor, paid)) {
+          throw new Error(productionGateOverrideDeniedMessage(paid));
         }
         if (!productionGateOverrideNoteValid(note)) {
           throw new Error(
             `Production override reason required (at least ${PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN} characters).`
           );
         }
-        const total = Math.round(Number(row.total_ngn) || 0);
-        const paid = Math.round(Number(row.paid_ngn) || 0);
         const paidFraction = total > 0 ? paid / total : paid > 0 ? 1 : 0;
+        const approvalLevel = productionGateApprovalLevelForActor(actor);
         db.prepare(
           `UPDATE quotations 
            SET manager_production_approved_at_iso = ?,
                manager_production_approved_by_user_id = ?,
                manager_production_approved_by_name = ?,
                manager_production_approval_note = ?,
-               manager_production_paid_fraction_at_approval = ?
+               manager_production_paid_fraction_at_approval = ?,
+               manager_production_approval_level = ?
            WHERE id = ?`
-        ).run(now, actorId(actor), actorName(actor), note || null, paidFraction, quoteId);
+        ).run(
+          now,
+          actorId(actor),
+          actorName(actor),
+          note || null,
+          paidFraction,
+          approvalLevel,
+          quoteId
+        );
         recordApprovalAction(db, {
           actor,
           entityKind: 'quotation',
           entityId: quoteId,
           action: 'production_gate_override',
           status: 'approved',
-          note: note || 'BM production gate override',
+          note: note || (paid > 0 ? 'BM production gate override' : 'MD zero-payment production gate override'),
           actedAtISO: now.slice(0, 10),
         });
       } else {

@@ -116,6 +116,7 @@ export function getProductionJobIntel(db, jobId) {
       quotationRef: job.quotation_ref || null,
       quotePaidFraction: paidFraction,
       quotePaidPct: paidFraction != null ? Math.round(paidFraction * 1000) / 10 : null,
+      quotePaidNgn: bookPaidNgn,
       paymentGateMinFraction: minPaidFraction,
       paymentGateRequired: Boolean(paymentGateRequired),
       paymentGateBreached,

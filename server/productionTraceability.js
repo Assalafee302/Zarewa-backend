@@ -1,4 +1,5 @@
 import { actorName } from './auth.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
 import {
   applyAccessoryCompletionTx,

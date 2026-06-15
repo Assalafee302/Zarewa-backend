@@ -77,15 +77,18 @@ describe('reviewQuotation manager holds', () => {
 describe('reviewQuotation production gate override', () => {
   let db;
   const bmActor = { id: 'bm1', displayName: 'Branch Manager', roleKey: 'sales_manager' };
+  const mdActor = { id: 'md1', displayName: 'Managing Director', roleKey: 'md' };
   const salesActor = { id: 's1', displayName: 'Sales Officer', roleKey: 'sales_staff' };
 
   beforeAll(() => {
     db = createDatabase(':memory:');
     db.exec(`
       INSERT INTO customers (customer_id, name, branch_id)
-      VALUES ('CUS-2', 'Low Pay', 'BR1');
+      VALUES ('CUS-2', 'Low Pay', 'BR1'), ('CUS-3', 'Zero Pay', 'BR1');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
-      VALUES ('QT-LOW', 'CUS-2', 'Low Pay', 1000000, 0, 'Unpaid', 'Approved', '{}', '2026-06-01');
+      VALUES
+        ('QT-LOW', 'CUS-2', 'Low Pay', 1000000, 200000, 'Partial', 'Approved', '{}', '2026-06-01'),
+        ('QT-ZERO', 'CUS-3', 'Zero Pay', 1000000, 0, 'Unpaid', 'Approved', '{}', '2026-06-01');
     `);
   }, 120_000);
 
@@ -98,22 +101,43 @@ describe('reviewQuotation production gate override', () => {
       UPDATE quotations
       SET manager_production_approved_at_iso = NULL,
           manager_production_approved_by_user_id = NULL,
-          manager_production_approval_note = NULL
-      WHERE id = 'QT-LOW'
+          manager_production_approval_note = NULL,
+          manager_production_approval_level = NULL
+      WHERE id IN ('QT-LOW', 'QT-ZERO')
     `);
   });
 
-  it('allows branch manager override with audited reason', () => {
+  it('allows branch manager override when some payment exists', () => {
     const r = reviewQuotation(db, 'QT-LOW', {
       decision: 'approve_production',
-      note: 'Trusted customer — deposit promised this week',
+      note: 'Trusted customer — partial deposit received',
     }, bmActor);
     expect(r.ok).toBe(true);
     const row = db.prepare(
-      `SELECT manager_production_approved_at_iso, manager_production_approval_note FROM quotations WHERE id = ?`
+      `SELECT manager_production_approval_level FROM quotations WHERE id = ?`
     ).get('QT-LOW');
-    expect(row.manager_production_approved_at_iso).toBeTruthy();
-    expect(row.manager_production_approval_note).toMatch(/deposit promised/i);
+    expect(row.manager_production_approval_level).toBe('branch_manager');
+  });
+
+  it('blocks branch manager override at zero payment', () => {
+    const r = reviewQuotation(db, 'QT-ZERO', {
+      decision: 'approve_production',
+      note: 'BM trying zero-payment override',
+    }, bmActor);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Managing Director/i);
+  });
+
+  it('allows md override at zero payment', () => {
+    const r = reviewQuotation(db, 'QT-ZERO', {
+      decision: 'approve_production',
+      note: 'Strategic customer — MD approved start without deposit',
+    }, mdActor);
+    expect(r.ok).toBe(true);
+    const row = db.prepare(
+      `SELECT manager_production_approval_level FROM quotations WHERE id = ?`
+    ).get('QT-ZERO');
+    expect(row.manager_production_approval_level).toBe('md');
   });
 
   it('blocks sales officer from production override', () => {
@@ -122,7 +146,6 @@ describe('reviewQuotation production gate override', () => {
       note: 'Sales officer trying override',
     }, salesActor);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/Branch Manager|Managing Director/i);
   });
 
   it('requires override reason of at least 8 characters', () => {

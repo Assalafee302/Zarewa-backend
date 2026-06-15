@@ -28,6 +28,18 @@ Verify `GET /api/hr/health`:
 
 If any module shows `false`, re-run migrate and check server logs for migration errors.
 
+## Step 1b — Organization & compensation setup
+
+Complete once per environment (HR admin):
+
+| Step | Where | Action |
+|------|-------|--------|
+| Load catalog | **HR → Settings → Organization** | **Load standard catalog** (departments, 29 designations, all payroll group matrices) |
+| Import staff | **HR → Employees → Bulk Register Staff** | Upload Excel with optional designation code, level/step, pay addition columns |
+| Legacy pay | **HR → Settings → Organization** | **Preview backfill** then **Run backfill** for staff with old inflated base pay |
+| Multi-role | Staff profile | Set primary designation, secondary desks, pay addition + variance; apply suggested role + supplemental permissions |
+| Verify | **HR → Reports → Salary variance** | Matrix vs actual vs addition; acting roles on dashboard |
+
 ## Step 2 — Data gates (dashboard)
 
 Open **HR → Dashboard** as an HR admin. Resolve every item under **Production readiness** blockers:
@@ -51,6 +63,7 @@ Run after gates are green. See [HR-E2E-TESTING.md](./HR-E2E-TESTING.md) for auto
 - [ ] Submit leave → HR review → manager/GM path → balance updates
 - [ ] Submit loan → approvals → finance disbursement → payroll deduction on next run
 - [ ] Payroll: create run → recompute → lock → mark paid
+- [ ] **Org/comp** — salary variance report; payslip shows matrix + pay addition; work item routes to merged desk owner
 
 ### HR v2 features
 

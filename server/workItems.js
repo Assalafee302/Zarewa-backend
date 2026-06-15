@@ -16,6 +16,8 @@ import {
 import { filingCompletenessForWorkItem } from './filingCompleteness.js';
 import { listCoilRequests, listManagementItems, listPaymentRequests } from './readModel.js';
 import { listHrRequests } from './hrOps.js';
+import { resolveResponsibleUserForOffice } from './hrOrgStaffOps.js';
+import { listHrTransferRequests } from './hrTransferRequests.js';
 import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
 import {
   isConfidentialLevel,
@@ -459,6 +461,17 @@ export function createWorkItem(db, payload, opts = {}) {
     String(payload?.officeKey || '').trim() || documentTypeDefaultOfficeKey(documentType) || 'general';
   const responsibleOfficeKey =
     String(payload?.responsibleOfficeKey || '').trim() || officeKey || documentTypeDefaultOfficeKey(documentType);
+  let responsibleUserId = String(payload?.responsibleUserId || '').trim() || null;
+  if (!responsibleUserId && responsibleOfficeKey) {
+    try {
+      responsibleUserId = resolveResponsibleUserForOffice(db, {
+        officeKey: responsibleOfficeKey,
+        branchId,
+      });
+    } catch {
+      /* HR org module optional */
+    }
+  }
   const now = nowIso();
   const requiresResponse = Boolean(payload?.requiresResponse);
   const requiresApproval = Boolean(payload?.requiresApproval);
@@ -503,7 +516,7 @@ export function createWorkItem(db, payload, opts = {}) {
       String(payload?.senderOfficeKey || '').trim() || null,
       String(payload?.senderBranchId || branchId).trim() || branchId,
       responsibleOfficeKey,
-      String(payload?.responsibleUserId || '').trim() || null,
+      responsibleUserId,
       dueAtIso,
       now,
       now,
@@ -918,6 +931,7 @@ export function syncDerivedWorkItems(db, scope, user) {
     ...listLegacyEditApprovalWorkItems(db, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
+    ...listLegacyHrTransferWorkItems(db, scope, user),
     ...listLegacyHrDisciplineCaseWorkItems(db, scope, user),
     ...listLegacyHrPerformanceReviewWorkItems(db, scope, user),
   ];
@@ -1250,9 +1264,77 @@ function listLegacyHrRequestWorkItems(db, scope, user) {
         updatedAtIso: r.submittedAtIso || r.createdAtIso,
         sourceKind: 'hr_request',
         sourceId: r.id,
-        routePath: r.kind === 'loan' ? '/hr/loans' : '/hr/requests',
-        routeState: { scope: routeScope, focusRequestId: r.id },
+        routePath: `/hr/requests?scope=${encodeURIComponent(routeScope)}&requestId=${encodeURIComponent(r.id)}`,
+        routeState: { scope: routeScope, requestId: r.id },
         data: { kind: r.kind, requestId: r.id, userId: r.userId, hrStatus: r.status },
+      })
+    );
+  }
+  return out;
+}
+
+function userCanActOnHrTransferQueue(user, status) {
+  if (!user) return false;
+  if (userHasPermission(user, '*')) return true;
+  const s = String(status || '').trim();
+  if (s === 'branch_review') {
+    return userHasPermission(user, 'hr.team.view') || userHasPermission(user, 'hr.branch.endorse_staff');
+  }
+  if (s === 'hr_review') {
+    return userHasPermission(user, 'hr.transfers.manage') || userHasPermission(user, 'hr.staff.manage');
+  }
+  if (s === 'gm_approval') {
+    return (
+      userHasPermission(user, 'hr.requests.gm_approve') ||
+      userHasPermission(user, 'hr.requests.final_approve')
+    );
+  }
+  if (s === 'approved') {
+    return userHasPermission(user, 'hr.transfers.manage') || userHasPermission(user, 'hr.staff.manage');
+  }
+  return false;
+}
+
+function listLegacyHrTransferWorkItems(db, scope, user) {
+  if (!user) return [];
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_transfer_requests'`).get()) return [];
+  const scopeNorm = {
+    viewAll: Boolean(scope?.viewAll),
+    branchId: String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+  };
+  const pending = listHrTransferRequests(db, scopeNorm, { pendingOnly: true });
+  const out = [];
+  for (const t of pending) {
+    if (!userCanActOnHrTransferQueue(user, t.status)) continue;
+    const routeScope =
+      t.status === 'branch_review'
+        ? 'branch_queue'
+        : t.status === 'hr_review'
+          ? 'hr_queue'
+          : t.status === 'gm_approval'
+            ? 'gm_queue'
+            : 'complete_queue';
+    const officeKey = t.status === 'branch_review' ? 'branch_manager' : 'hr';
+    out.push(
+      legacyWorkItemBase({
+        id: legacyItemId('hr-transfer', t.id),
+        referenceNo: t.id,
+        branchId: t.fromBranchId || t.toBranchId || scopeNorm.branchId,
+        officeKey,
+        responsibleOfficeKey: officeKey,
+        documentClass: 'approval',
+        documentType: 'hr_transfer_request',
+        status: 'pending_review',
+        priority: 'normal',
+        title: `Transfer: ${t.staffDisplayName || t.userId}`,
+        summary: `${String(t.transferType || '').replace(/_/g, ' ')} · ${t.status.replace(/_/g, ' ')}`,
+        createdAtIso: t.createdAtIso || '',
+        updatedAtIso: t.updatedAtIso || t.createdAtIso || '',
+        sourceKind: 'hr_transfer_request',
+        sourceId: t.id,
+        routePath: `/hr/discipline-exit?tab=exit&view=transfers&scope=${encodeURIComponent(routeScope)}&transferId=${encodeURIComponent(t.id)}`,
+        routeState: { scope: routeScope, transferId: t.id },
+        data: { transferId: t.id, userId: t.userId, hrStatus: t.status },
       })
     );
   }
@@ -1352,8 +1434,46 @@ function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
           updatedAtIso: row.incident_date_iso,
           sourceKind: 'hr_incident_memo',
           sourceId: row.id,
-          routePath: `/hr/discipline-exit?tab=incidents&memoId=${encodeURIComponent(row.id)}`,
+          routePath: `/hr/discipline-exit?tab=accountability&memoId=${encodeURIComponent(row.id)}`,
           data: { userId: row.user_id, memoId: row.id },
+        })
+      );
+    }
+  }
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='incident_registry'`).get()) {
+    let sql = `
+      SELECT id, incident_kind, source_id, branch_id, severity, status, summary, updated_at_iso
+      FROM incident_registry
+      WHERE status NOT IN ('closed','cancelled','posted','voided','rejected')
+        AND incident_kind != 'hr_discipline'
+    `;
+    const args = [];
+    if (!scope?.viewAll) {
+      sql += ` AND branch_id = ?`;
+      args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
+    }
+    sql += ` ORDER BY updated_at_iso DESC LIMIT 60`;
+    for (const row of db.prepare(sql).all(...args)) {
+      const kindLabel = String(row.incident_kind || 'incident').replace(/_/g, ' ');
+      out.push(
+        legacyWorkItemBase({
+          id: legacyItemId('incident-registry', row.id),
+          referenceNo: row.id,
+          branchId: row.branch_id,
+          officeKey: 'hr',
+          responsibleOfficeKey: 'hr',
+          documentClass: 'case',
+          documentType: 'incident_registry',
+          status: row.status === 'open' ? 'open' : 'pending_review',
+          priority: ['critical', 'high'].includes(String(row.severity || '').toLowerCase()) ? 'high' : 'normal',
+          title: `Incident registry ${row.id}`,
+          summary: `${kindLabel} · ${String(row.summary || '').slice(0, 120)}`,
+          createdAtIso: row.updated_at_iso,
+          updatedAtIso: row.updated_at_iso,
+          sourceKind: 'incident_registry',
+          sourceId: row.id,
+          routePath: `/hr/discipline-exit?tab=accountability&view=registry&registryId=${encodeURIComponent(row.id)}`,
+          data: { registryId: row.id, incidentKind: row.incident_kind, sourceId: row.source_id },
         })
       );
     }
@@ -1483,6 +1603,7 @@ export function listUnifiedWorkItems(db, scope, user, filter = {}) {
     ...listLegacyEditApprovalWorkItems(db, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
+    ...listLegacyHrTransferWorkItems(db, scope, user),
     ...listLegacyHrDisciplineCaseWorkItems(db, scope, user),
     ...listLegacyHrPerformanceReviewWorkItems(db, scope, user),
   ].filter((item) => {

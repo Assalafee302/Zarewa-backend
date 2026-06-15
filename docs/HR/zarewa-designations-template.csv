@@ -1,0 +1,25 @@
+code,title,department_code,default_salary_level,default_salary_step,grade_category,seniority_band,site_scope,notes
+MD,Managing Director,EXEC,7,1,G6-G7,leadership,HQ,Executive + procurement owner
+GMHR,General Manager – Human Resources,HR,6,1,G5-G6,leadership,HQ,Final HR approvals
+HOA,Head Accountant,FIN,5,1,G4-G5,leadership,HQ,Finance + procurement paperwork support
+HRO,HR Officer,HR,3,1,G3-G4,mid,HQ,Day-to-day HR
+ADM,Admin / Office Assistant,ADM,2,1,G1-G2,entry,HQ,Filing and front desk
+BM,Branch Manager,BRANCH,5,1,G4-G5,leadership,Branch,Full branch authority
+ABM,Assistant Branch Manager,BRANCH,4,1,G3-G4,senior,Branch,BM backup
+ACTBM,Acting Branch Manager,BRANCH,4,1,G3-G5,senior,Branch,Temporary - requires end date
+SO,Sales Officer,SALES,3,1,G2-G3,mid,Branch,Quotations and customers
+SA,Sales Assistant,SALES,2,1,G1-G2,entry,Branch,Draft quotes - no price exception
+SSO,Senior Sales Officer,SALES,4,1,G3-G4,senior,Branch,Lead sales when no ABM
+ST,Sales Trainee,SALES,1,1,G1,entry,Branch,Shadowing only
+SK,Store Keeper / Operations Officer,OPS,3,1,G2-G3,mid,Branch,Stock and GRN
+ASK,Assistant Store Keeper,OPS,2,1,G1-G2,entry,Branch,No solo adjustments
+PS,Production Supervisor,OPS,3,1,G2-G3,mid,Branch,Cutting and machines
+OP,Machine Operator,OPS,2,1,G1-G2,entry,Branch,Production floor
+FA,Factory Assistant,OPS,1,1,G1,entry,Branch,Helpers
+SSK,Senior Store Keeper,OPS,4,1,G3-G4,senior,Branch,Store + light production coord
+CSH,Cashier,FIN,3,1,G2-G3,mid,Branch,Receipts and approved payouts
+ACSH,Assistant Cashier,FIN,2,1,G1-G2,entry,Branch,Till support only
+BAC,Branch Accountant,FIN,4,1,G3-G4,senior,Branch,Optional larger branch
+DRV,Driver,ADM,2,1,G1-G2,entry,All,Deliveries
+SEC,Security Guard,ADM,1,1,G1,entry,All,Gate and watch
+CLN,Cleaner,ADM,1,1,G1,entry,All,Premises cleaning

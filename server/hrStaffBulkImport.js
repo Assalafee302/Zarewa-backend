@@ -8,6 +8,7 @@ import XLSX from 'xlsx';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady, registerNewStaffWithProfile, upsertHrStaffProfile } from './hrOps.js';
+import { lookupHrSalaryMatrixRow } from './hrCompensationOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification } from './hrNotifications.js';
 import { listHrDesignations } from './hrMasterData.js';
@@ -181,6 +182,13 @@ export const BULK_IMPORT_COLUMNS = [
   { key: 'nextOfKinName', header: 'Next of Kin Name', required: false },
   { key: 'nextOfKinPhone', header: 'Next of Kin Phone', required: false },
   { key: 'highestQualification', header: 'Highest Qualification', required: false },
+  { key: 'designationCode', header: 'Designation Code', required: false },
+  { key: 'payrollGroup', header: 'Payroll Group', required: false },
+  { key: 'salaryLevel', header: 'Salary Level', required: false },
+  { key: 'salaryStep', header: 'Salary Step', required: false },
+  { key: 'payAdditionNgn', header: 'Pay Addition (NGN)', required: false },
+  { key: 'compensationVarianceType', header: 'Variance Type', required: false },
+  { key: 'compensationVarianceNotes', header: 'Variance Notes', required: false },
 ];
 
 function nowIso() {
@@ -248,6 +256,13 @@ function mapRow(raw, headerMap) {
     nextOfKinName: get('nextOfKinName'),
     nextOfKinPhone: get('nextOfKinPhone'),
     highestQualification: get('highestQualification'),
+    designationCode: get('designationCode'),
+    payrollGroup: get('payrollGroup'),
+    salaryLevel: get('salaryLevel'),
+    salaryStep: get('salaryStep'),
+    payAdditionNgn: get('payAdditionNgn'),
+    compensationVarianceType: get('compensationVarianceType'),
+    compensationVarianceNotes: get('compensationVarianceNotes'),
   };
 }
 
@@ -294,6 +309,13 @@ export function buildBulkImportTemplateXlsx() {
     'Ibrahim Bello',
     '08030000002',
     'B.Sc Business',
+    'SO',
+    'branch_ops',
+    '3',
+    '1',
+    '',
+    '',
+    '',
   ];
   const hqSample = [
     'Musa',
@@ -322,6 +344,13 @@ export function buildBulkImportTemplateXlsx() {
     '',
     '',
     'B.Sc Accounting',
+    'HOA',
+    'branch_ops',
+    '5',
+    '1',
+    '300000',
+    'multi_role_consolidation',
+    'Head Accountant + acting desks',
   ];
   const guideHeaders = ['Staff type', 'Work Location', 'Branch Code', 'Branch Name', 'Notes'];
   const guideRows = BULK_IMPORT_BRANCH_GUIDE.map((g) => [
@@ -429,6 +458,31 @@ function sanitizeAccountNumber(v) {
   return digits;
 }
 
+function sanitizePayrollGroup(v) {
+  const s = String(v || '').trim().toLowerCase();
+  const allowed = new Set(['branch_ops', 'hq_admin', 'mining_div', 'scholarship', 'chairman_staffs']);
+  return allowed.has(s) ? s : '';
+}
+
+function sanitizePosInt(v) {
+  const n = Math.round(Number(String(v ?? '').replace(/[^\d]/g, '')) || 0);
+  return n >= 1 && n <= 9 ? String(n) : '';
+}
+
+function sanitizeVarianceType(v) {
+  const s = String(v || '').trim().toLowerCase();
+  const allowed = new Set([
+    'merit_outstanding',
+    'scarce_skill_retention',
+    'multi_role_consolidation',
+    'director_emolument',
+    'acting_allowance',
+    'market_adjustment',
+    'special_occasion',
+  ]);
+  return allowed.has(s) ? s : String(v || '').trim() || '';
+}
+
 /** Drop or normalize values that do not match import spec — never block import for these. */
 export function sanitizeImportRow(row) {
   const out = { ...row };
@@ -438,6 +492,12 @@ export function sanitizeImportRow(row) {
   out.employmentStatus = sanitizeEmploymentStatus(out.employmentStatus);
   out.gender = sanitizeGender(out.gender);
   out.basicSalary = sanitizeSalary(out.basicSalary);
+  out.payrollGroup = sanitizePayrollGroup(out.payrollGroup);
+  out.salaryLevel = sanitizePosInt(out.salaryLevel);
+  out.salaryStep = sanitizePosInt(out.salaryStep) || (out.salaryLevel ? '1' : '');
+  out.payAdditionNgn = sanitizeSalary(out.payAdditionNgn);
+  out.compensationVarianceType = sanitizeVarianceType(out.compensationVarianceType);
+  out.designationCode = String(out.designationCode || '').trim().toUpperCase();
   const joined = parseDateIso(out.dateJoined);
   out.dateJoined = joined || '';
   const dob = parseDateIso(out.dateOfBirth);
@@ -477,10 +537,20 @@ function slugToken(s, max = 30) {
 function buildDesignationIndex(db) {
   const designations = listHrDesignations(db, { includeInactive: false });
   const byNormTitle = new Map();
+  const byCode = new Map();
   for (const d of designations) {
     byNormTitle.set(normTitleToken(d.title), d);
+    const note = String(d.salaryRangeNote || '');
+    const codeMatch = note.match(/Code:\s*([A-Za-z0-9_-]+)/i);
+    if (codeMatch) byCode.set(codeMatch[1].toUpperCase(), d);
   }
-  return { designations, byNormTitle };
+  return { designations, byNormTitle, byCode };
+}
+
+function resolveDesignationByCode(code, designationIndex) {
+  const token = String(code || '').trim().toUpperCase();
+  if (!token || !designationIndex?.byCode) return null;
+  return designationIndex.byCode.get(token) || null;
 }
 
 function canonicalDomesticTitle(raw) {
@@ -719,6 +789,25 @@ function buildEmailToUserIdMap(db) {
 function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } = {}) {
   const displayName = deriveDisplayName(row);
   const hasNextOfKin = String(row.nextOfKinName || row.nextOfKinPhone || '').trim();
+  const payrollGroup =
+    row.payrollGroup || row.resolvedPayrollGroup || detectStaffPayrollGroup(row);
+  const salaryLevel = row.salaryLevel ? Number(row.salaryLevel) : null;
+  const salaryStep = row.salaryStep ? Number(row.salaryStep) : salaryLevel ? 1 : null;
+  const payAdditionFromColumn = row.payAdditionNgn ? Math.round(Number(row.payAdditionNgn) || 0) : null;
+  let payAdditionNgn = payAdditionFromColumn;
+  const basicSalaryNgn = row.basicSalary ? Math.round(Number(String(row.basicSalary).replace(/[^\d.]/g, '')) || 0) : 0;
+
+  if (salaryLevel && salaryStep && payAdditionNgn == null && basicSalaryNgn > 0) {
+    const matrixRow = lookupHrSalaryMatrixRow(db, payrollGroup, salaryLevel, salaryStep);
+    if (matrixRow) {
+      const matrixTotal =
+        Math.round(Number(matrixRow.baseSalaryNgn) || 0) +
+        Math.round(Number(matrixRow.housingAllowanceNgn) || 0) +
+        Math.round(Number(matrixRow.transportAllowanceNgn) || 0);
+      if (basicSalaryNgn > matrixTotal) payAdditionNgn = basicSalaryNgn - matrixTotal;
+    }
+  }
+
   const body = {
     ...(userId ? { userId } : {}),
     displayName,
@@ -735,8 +824,7 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     employmentStatus: row.employmentStatus || undefined,
     workLocation: row.workLocation || undefined,
     dateJoinedIso: row.dateJoined || undefined,
-    payrollGroup: row.payrollGroup || detectStaffPayrollGroup(row),
-    baseSalaryNgn: row.basicSalary ? Math.round(Number(String(row.basicSalary).replace(/[^\d.]/g, '')) || 0) : 0,
+    payrollGroup,
     gender: row.gender || undefined,
     dateOfBirthIso: row.dateOfBirth || undefined,
     dateOfBirth: row.dateOfBirth || undefined,
@@ -748,11 +836,29 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     nextOfKin: hasNextOfKin ? { name: row.nextOfKinName || null, phone: row.nextOfKinPhone || null } : undefined,
     selfServiceEligible: true,
   };
+
+  if (salaryLevel && salaryStep) {
+    body.salaryLevel = salaryLevel;
+    body.salaryStep = salaryStep;
+    body.applyMatrixPay = true;
+    if (payAdditionNgn != null && payAdditionNgn > 0) {
+      body.payAdditionNgn = payAdditionNgn;
+      if (row.compensationVarianceType) body.compensationVarianceType = row.compensationVarianceType;
+      if (row.compensationVarianceNotes) body.compensationVarianceNotes = row.compensationVarianceNotes;
+      else if (payAdditionFromColumn == null) {
+        body.compensationVarianceType = body.compensationVarianceType || 'multi_role_consolidation';
+        body.compensationVarianceNotes = 'Imported from legacy basic salary above matrix — review.';
+      }
+    }
+  } else if (basicSalaryNgn > 0) {
+    body.baseSalaryNgn = basicSalaryNgn;
+  }
+
   if (includeCredentials) {
     body.username = row.proposedUsername;
     body.password = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || BULK_IMPORT_DEFAULT_PASSWORD).trim();
     body.roleKey =
-      row.roleKey || mapRoleKeyFromJob(row.mappedJobTitle, row.departmentName || row.departmentCode, row.payrollGroup);
+      row.roleKey || mapRoleKeyFromJob(row.mappedJobTitle, row.departmentName || row.departmentCode, payrollGroup);
   }
   return body;
 }
@@ -797,9 +903,21 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   const branchId = resolveBranchId(db, row, {});
 
   const titleResolved = resolveUploadedJobTitle(row.designation, designationIndex);
-  const payrollGroup = detectStaffPayrollGroup({ ...row, designation: titleResolved.jobTitle || row.designation });
+  const codeMatch = resolveDesignationByCode(row.designationCode, designationIndex);
+  const resolvedTitle =
+    codeMatch != null
+      ? {
+          jobTitle: codeMatch.title,
+          designationId: codeMatch.id,
+          titleCorrected: codeMatch.title !== row.designation,
+          originalTitle: row.designation || row.designationCode,
+          matchKind: 'master_code',
+        }
+      : titleResolved;
+  const payrollGroup =
+    row.payrollGroup || detectStaffPayrollGroup({ ...row, designation: resolvedTitle.jobTitle || row.designation });
   const roleKey = mapRoleKeyFromJob(
-    titleResolved.jobTitle || row.designation,
+    resolvedTitle.jobTitle || row.designation,
     row.departmentName || row.departmentCode,
     payrollGroup
   );
@@ -807,8 +925,11 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   if (!existingUsername && mode !== 'replace' && existingKeys.usernames?.has(proposedUsername)) {
     errors.push({ field: 'username', message: `Username "${proposedUsername}" already exists` });
   }
-  if (importAction === 'update') {
-    warnings.push({ field: 'employeeNumber', message: 'Existing employee — profile will be updated' });
+  if (row.designationCode && !codeMatch) {
+    warnings.push({ field: 'designationCode', message: `Unknown designation code "${row.designationCode}" — using job title match` });
+  }
+  if (row.payAdditionNgn && !row.salaryLevel) {
+    warnings.push({ field: 'payAdditionNgn', message: 'Pay addition ignored without salary level/step — set level or use legacy pay backfill' });
   }
 
   return {
@@ -817,11 +938,17 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
     branchId,
     displayName,
     proposedUsername,
-    mappedJobTitle: titleResolved.jobTitle,
-    designationId: titleResolved.designationId,
-    titleCorrected: titleResolved.titleCorrected,
-    originalJobTitle: titleResolved.originalTitle,
+    mappedJobTitle: resolvedTitle.jobTitle,
+    designationId: resolvedTitle.designationId,
+    titleCorrected: resolvedTitle.titleCorrected,
+    originalJobTitle: resolvedTitle.originalTitle,
     payrollGroup,
+    resolvedPayrollGroup: payrollGroup,
+    salaryLevel: row.salaryLevel || null,
+    salaryStep: row.salaryStep || null,
+    payAdditionNgn: row.payAdditionNgn || null,
+    compensationVarianceType: row.compensationVarianceType || null,
+    compensationVarianceNotes: row.compensationVarianceNotes || null,
     roleKey,
     importAction,
     existingUserId,

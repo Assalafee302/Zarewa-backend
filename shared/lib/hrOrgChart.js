@@ -17,6 +17,7 @@ export function buildHrOrgChart(staff = []) {
       branchId: s.branchId || null,
       department: s.department || null,
       lineManagerUserId: s.lineManagerUserId ? String(s.lineManagerUserId) : null,
+      mergedOffices: Array.isArray(s.mergedOffices) ? s.mergedOffices : null,
       children: [],
     });
   }

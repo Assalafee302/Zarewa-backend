@@ -11,7 +11,6 @@ import {
   hrPhase2TablesReady,
   listHrAbsenceReports,
   listHrExitClearance,
-  listHrOvertimeRequests,
 } from './hrPhase2Ops.js';
 import {
   hrTablesReady,
@@ -22,6 +21,7 @@ import {
 } from './hrOps.js';
 import { listPendingTransfersPastEffective, listHrTransferRequests, hrTransferRequestsTableReady } from './hrTransferRequests.js';
 import { listLoanScheduleIssues } from './hrLoanSchedule.js';
+import { listOrgCompensationDashboardAlerts } from './hrCompensationOps.js';
 
 function checkList(items, id, label, severity = 'medium', fixPath = null) {
   return {
@@ -150,13 +150,18 @@ export function getHrDashboardActionAlerts(db, scope) {
   const out = {
     absenceAwaitingReview: [],
     voluntaryTerminationRisk: [],
-    overtimeAwaitingApproval: [],
     exitClearancePending: [],
     pendingTransfers: [],
     temporaryEmployees: [],
     promotionDue: [],
     missingPolicyAck: [],
     expiredDocuments: [],
+    actingRoleAlerts: [],
+    actingRolesExpiring: [],
+    actingRolesOverdue: [],
+    actingRolesMissingEnd: [],
+    compensationReviewDue: [],
+    undocumentedCompensationVariance: [],
   };
   if (!hrTablesReady(db)) return out;
 
@@ -164,9 +169,6 @@ export function getHrDashboardActionAlerts(db, scope) {
     out.absenceAwaitingReview = listHrAbsenceReports(db, scope, { status: 'reported' }).slice(0, 20);
     const absenceAlerts = getHrAbsenceAlerts(db, scope);
     out.voluntaryTerminationRisk = absenceAlerts.voluntaryTerminationRisk || [];
-    out.overtimeAwaitingApproval = listHrOvertimeRequests(db, scope, { status: 'submitted' })
-      .concat(listHrOvertimeRequests(db, scope, { status: 'hr_review' }))
-      .slice(0, 20);
     out.exitClearancePending = listHrExitClearance(db, scope, {}).filter((c) =>
       ['in_progress', 'pending_finance', 'pending_admin', 'pending_hr_final'].includes(c.status)
     ).slice(0, 20);
@@ -189,6 +191,16 @@ export function getHrDashboardActionAlerts(db, scope) {
     const exp = readiness.checks.find((c) => c.id === 'expired_documents');
     out.expiredDocuments = exp?.items || [];
   }
+
+  if (hrTablesReady(db)) {
+    const orgComp = listOrgCompensationDashboardAlerts(db, scope);
+    out.actingRoleAlerts = orgComp.actingRoleAlerts || [];
+    out.actingRolesExpiring = orgComp.actingRolesExpiring || [];
+    out.actingRolesOverdue = orgComp.actingRolesOverdue || [];
+    out.actingRolesMissingEnd = orgComp.actingRolesMissingEnd || [];
+    out.compensationReviewDue = orgComp.compensationReviewDue || [];
+    out.undocumentedCompensationVariance = orgComp.undocumentedCompensationVariance || [];
+  }
   return out;
 }
 
@@ -208,9 +220,6 @@ export function getHrNotificationSummary(db, scope, user) {
 
   if (has('hr.absence.review') || has('hr.staff.manage')) {
     push({ key: 'absence-review', count: alerts.absenceAwaitingReview?.length || 0, path: '/hr/attendance?tab=exceptions', title: 'Absence awaiting HR review' });
-  }
-  if (has('hr.overtime.approve') || has('hr.staff.manage')) {
-    push({ key: 'overtime-approval', count: alerts.overtimeAwaitingApproval?.length || 0, path: '/hr/attendance?tab=overtime', title: 'Overtime awaiting approval' });
   }
   if (has('hr.transfers.manage') || has('hr.team.view') || has('hr.staff.manage')) {
     const pending = alerts.pendingTransfers || [];
@@ -283,6 +292,15 @@ export function getHrNotificationSummary(db, scope, user) {
     const temp = alerts.temporaryEmployees?.length || 0;
     if (temp) {
       push({ key: 'temp-contract', count: temp, path: '/hr/reports?tab=temp-monitoring', title: 'Temporary contracts ending soon' });
+    }
+    const actingN = alerts.actingRoleAlerts?.length || 0;
+    if (actingN) {
+      push({ key: 'acting-roles', count: actingN, path: '/hr/dashboard', title: 'Acting roles need review' });
+    }
+    const compDocN =
+      (alerts.compensationReviewDue?.length || 0) + (alerts.undocumentedCompensationVariance?.length || 0);
+    if (compDocN) {
+      push({ key: 'compensation-review', count: compDocN, path: '/hr/settings', title: 'Compensation documentation due' });
     }
   }
   if (has('hr.payroll.prepare') || has('hr.payroll.manage')) {

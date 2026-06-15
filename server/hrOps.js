@@ -20,16 +20,37 @@ import { buildHrOrgChart, hrStaffReportingContext } from '../shared/lib/hrOrgCha
 import {
   notifyAppraisalFormOpened,
   notifyHrRequestOutcome,
+  notifyHrRequestQueueHandoff,
+  notifyHrRequestSubmitted,
+  notifyIncidentMemoReported,
   notifyPayrollRunStatus,
+  notifyScholarshipPaymentApproved,
+  notifyScholarshipPaymentPaid,
+  notifyScholarshipRequestOutcome,
 } from './hrNotifications.js';
+import { submitExecutiveSchoolFee } from './hrExecutiveBenefitsOps.js';
 import { encryptBankAccount, maskBankAccount, decryptBankAccount } from './hrBankCrypto.js';
 import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
+import {
+  buildStaffCompensationSummary,
+  lookupHrSalaryMatrixRow,
+  resolveStaffCompensationForSave,
+} from './hrCompensationOps.js';
+import {
+  buildPayslipEarningsBreakdown,
+  recommendAppRoleKeys,
+  validateStaffOrgRoles,
+  ZAREWA_DEMO_MULTI_ROLE_PROFILE,
+  resolveDemoProfileUserId,
+} from './hrOrgStaffOps.js';
+import { buildStaffMergedOffices } from './hrOrgConstants.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
 import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } from './hrIncidentRecoveryOps.js';
 import { countOpenIncidents } from './hrAccountabilityOps.js';
+import { hrTransferRequestsTableReady } from './hrTransferRequests.js';
 import {
   isDomesticStaff,
   isNonBranchStaff,
@@ -55,6 +76,8 @@ const REQUEST_KINDS = new Set([
   'promotion',
   'welfare',
   'other',
+  'scholarship_profile_update',
+  'scholarship_fee_request',
 ]);
 
 export function nowIso() {
@@ -395,6 +418,10 @@ export function listHrStaff(db, scope, opts = {}) {
     base.profileCompleteness = computeProfileCompleteness(base, {
       handbookAcknowledged: compliance.handbookAcknowledged,
     });
+    if (base.salaryLevel != null && base.salaryStep != null) {
+      base.compensation = buildStaffCompensationSummary(db, base);
+    }
+    base.mergedOffices = buildStaffMergedOffices(base);
     return base;
   });
 }
@@ -738,7 +765,9 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       if (body?.salaryStep === undefined && des.defaultSalaryStep != null) {
         resolvedSalaryStep = des.defaultSalaryStep;
       }
-      if (body?.promotionGrade === undefined && des.seniorityBand) {
+      if (body?.promotionGrade === undefined && des.gradeCategory) {
+        resolvedPromotionGrade = des.gradeCategory;
+      } else if (body?.promotionGrade === undefined && des.seniorityBand) {
         resolvedPromotionGrade = des.seniorityBand;
       }
     }
@@ -823,6 +852,62 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     }
   }
 
+  const orgValidation = validateStaffOrgRoles({
+    designationId,
+    branchId,
+    jobTitle,
+    secondaryRoles:
+      body?.secondaryRoles !== undefined
+        ? body.secondaryRoles
+        : safeJsonParse(prevExtraRow?.profile_extra_json, {})?.employmentMeta?.secondaryRoles,
+  });
+  if (!orgValidation.ok) {
+    return { ok: false, error: orgValidation.errors[0], code: 'org_role_validation', errors: orgValidation.errors };
+  }
+
+  const compensationResolved = resolveStaffCompensationForSave(db, {
+    body,
+    prevRow,
+    existing: Boolean(existing),
+    resolvedSalaryLevel,
+    resolvedSalaryStep,
+    normalizedPayrollGroup,
+    actorUserId,
+    prevExtra: profileExtraMerged || safeJsonParse(prevExtraRow?.profile_extra_json, {}),
+    allowUndocumentedVariance: body?.allowUndocumentedVariance === true,
+    titleById: (() => {
+      try {
+        const rows = db.prepare(`SELECT id, title FROM hr_designations WHERE active = 1`).all();
+        return Object.fromEntries(rows.map((r) => [r.id, r.title]));
+      } catch {
+        return {};
+      }
+    })(),
+  });
+  if (!compensationResolved.ok) {
+    return compensationResolved;
+  }
+
+  const profileExtraFinal = (() => {
+    const merged = { ...(profileExtraMerged || safeJsonParse(prevExtraRow?.profile_extra_json, {})) };
+    const patch = compensationResolved.profileExtraPatch || {};
+    if (patch.employmentMeta) {
+      merged.employmentMeta = { ...(merged.employmentMeta || {}), ...patch.employmentMeta };
+    }
+    if (patch.compensation) {
+      merged.compensation = { ...(merged.compensation || {}), ...patch.compensation };
+    }
+    if (patch.compensationVariance) merged.compensationVariance = patch.compensationVariance;
+    else if (!compensationResolved.variance?.aboveMatrix && merged.compensationVariance) {
+      delete merged.compensationVariance;
+    }
+    return Object.keys(merged).length ? merged : null;
+  })();
+
+  const resolvedBaseSalaryNgn = compensationResolved.baseSalaryNgn;
+  const resolvedHousingAllowanceNgn = compensationResolved.housingAllowanceNgn;
+  const resolvedTransportAllowanceNgn = compensationResolved.transportAllowanceNgn;
+
   const row = {
     user_id: userId,
     branch_id: branchId,
@@ -849,9 +934,9 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       body?.ninNumber !== undefined
         ? String(body.ninNumber ?? '').trim() || null
         : prevRow?.nin_number ?? null,
-    base_salary_ngn: Math.max(0, Math.round(Number(body?.baseSalaryNgn) || 0)),
-    housing_allowance_ngn: Math.max(0, Math.round(Number(body?.housingAllowanceNgn) || 0)),
-    transport_allowance_ngn: Math.max(0, Math.round(Number(body?.transportAllowanceNgn) || 0)),
+    base_salary_ngn: resolvedBaseSalaryNgn,
+    housing_allowance_ngn: resolvedHousingAllowanceNgn,
+    transport_allowance_ngn: resolvedTransportAllowanceNgn,
     bonus_accrual_note: String(body?.bonusAccrualNote ?? '').trim() || null,
     minimum_qualification: String(body?.minimumQualification ?? '').trim() || null,
     academic_qualification: String(body?.academicQualification ?? '').trim() || null,
@@ -869,8 +954,8 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
             : null,
     pension_percent_override: nullableNonNegNumber(body?.pensionPercentOverride),
     profile_extra_json:
-      profileExtraMerged != null
-        ? JSON.stringify(profileExtraMerged)
+      profileExtraFinal != null
+        ? JSON.stringify(profileExtraFinal)
         : prevExtraRow
           ? prevExtraRow.profile_extra_json
           : null,
@@ -1037,9 +1122,15 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   if (existing && prevRow) {
     const before = compensationSnapshotFromProfileRow(prevRow);
     const after = compensationSnapshotFromProfileRow(row);
+    const prevExtraSnap = safeJsonParse(prevRow.profile_extra_json, {});
+    const prevAddition = Math.round(Number(prevExtraSnap?.compensation?.payAdditionNgn) || 0);
+    const newAddition = Math.round(Number(compensationResolved.payAdditionNgn) || 0);
     if (compensationChanged(before, after)) {
       const reason =
-        String(body?.salaryChangeReason || body?.reason || '').trim() || 'Compensation update';
+        prevAddition !== newAddition && newAddition !== before.baseSalaryNgn
+          ? String(body?.salaryChangeReason || '').trim() ||
+            `Pay addition ₦${newAddition.toLocaleString()} (matrix + addition model)`
+          : String(body?.salaryChangeReason || body?.reason || '').trim() || 'Compensation update';
       insertHrSalaryHistoryRow(db, actorUserId, userId, {
         effectiveFromIso: String(body?.effectiveFromIso || '').slice(0, 10) || now.slice(0, 10),
         salaryLevel: after.salaryLevel,
@@ -1087,10 +1178,71 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     branchId,
     details: { employeeNo: row.employee_no, jobTitle: row.job_title },
   });
+
+  const currentUser = db.prepare(`SELECT role_key AS roleKey FROM app_users WHERE id = ?`).get(userId);
+  const roleKeyHints = recommendAppRoleKeys({
+    designationId,
+    secondaryRoles: profileExtraFinal?.employmentMeta?.secondaryRoles || body?.secondaryRoles,
+    currentRoleKey: currentUser?.roleKey,
+  });
+  if (body?.applyRecommendedRoleKey === true && roleKeyHints.recommendedPrimary) {
+    const supplemental =
+      body?.applyMultiRolePermissions !== false ? roleKeyHints.supplementalPermissions || [] : [];
+    db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = ? WHERE id = ?`).run(
+      roleKeyHints.recommendedPrimary,
+      supplemental.length ? JSON.stringify(supplemental) : null,
+      userId
+    );
+  } else if (body?.applyMultiRolePermissions === true && roleKeyHints.supplementalPermissions?.length) {
+    db.prepare(`UPDATE app_users SET permissions_json = ? WHERE id = ?`).run(
+      JSON.stringify(roleKeyHints.supplementalPermissions),
+      userId
+    );
+  }
+
   return {
     ok: true,
     profile: opts.skipEnrichedReturn ? null : getHrStaffOne(db, userId),
+    warnings: [...(orgValidation.warnings || []), ...(compensationResolved.warnings || [])],
+    roleKeyHints,
+    compensation: {
+      matrixApplied: compensationResolved.matrixApplied,
+      variance: compensationResolved.variance,
+      matrixRow: compensationResolved.matrixRow
+        ? {
+            baseSalaryNgn: compensationResolved.matrixRow.baseSalaryNgn,
+            housingAllowanceNgn: compensationResolved.matrixRow.housingAllowanceNgn,
+            transportAllowanceNgn: compensationResolved.matrixRow.transportAllowanceNgn,
+          }
+        : null,
+    },
   };
+}
+
+/** Apply the reference multi-role demo profile (Head Accountant + secondary desks). */
+export function seedDemoMultiRoleProfile(db, actorUserId, opts = {}) {
+  const userId = resolveDemoProfileUserId(db, opts);
+  if (!userId) return { ok: false, error: 'No active user found for demo profile seed.' };
+  const demo = ZAREWA_DEMO_MULTI_ROLE_PROFILE;
+  return upsertHrStaffProfile(db, actorUserId, {
+    userId,
+    designationId: demo.designationId,
+    jobTitle: demo.jobTitle,
+    departmentId: demo.departmentId,
+    branchId: demo.branchId,
+    payrollGroup: demo.payrollGroup,
+    salaryLevel: demo.salaryLevel,
+    salaryStep: demo.salaryStep,
+    payAdditionNgn: demo.payAdditionNgn,
+    boardMember: demo.boardMember,
+    corporateTitle: demo.corporateTitle,
+    compensationVarianceType: demo.compensationVarianceType,
+    compensationVarianceNotes: demo.compensationVarianceNotes,
+    compensationVarianceReviewDueIso: demo.compensationVarianceReviewDueIso,
+    secondaryRoles: demo.secondaryRoles,
+    applyRecommendedRoleKey: opts.applyRecommendedRoleKey !== false,
+    applyMultiRolePermissions: opts.applyMultiRolePermissions !== false,
+  });
 }
 
 function compensationSnapshotFromProfileRow(row) {
@@ -1447,7 +1599,30 @@ export function createHrRequest(db, userId, body) {
   if (!REQUEST_KINDS.has(kind)) return { ok: false, error: 'Invalid request kind.' };
   const title = String(body?.title || '').trim();
   if (title.length < 2) return { ok: false, error: 'Title is required.' };
-  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const prof = db.prepare(`SELECT branch_id, payroll_group FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  if (kind === 'scholarship_profile_update' || kind === 'scholarship_fee_request') {
+    if (!isScholarshipBeneficiary(prof?.payroll_group)) {
+      return { ok: false, error: 'These requests are only for executive family beneficiaries.' };
+    }
+    const p = body?.payload && typeof body.payload === 'object' ? body.payload : {};
+    if (kind === 'scholarship_profile_update') {
+      const hasField = [
+        'classLevel',
+        'schoolName',
+        'academicSession',
+        'currentTerm',
+        'termStartIso',
+        'termEndIso',
+        'notes',
+      ].some((k) => String(p[k] ?? '').trim());
+      if (!hasField) return { ok: false, error: 'Provide at least one school detail to update.' };
+    } else {
+      if (!String(p.term || '').trim()) return { ok: false, error: 'Term is required for a fee request.' };
+      if (!String(p.academicSession || p.academicYear || '').trim()) {
+        return { ok: false, error: 'Academic session is required for a fee request.' };
+      }
+    }
+  }
   const branchId = prof?.branch_id || DEFAULT_BRANCH_ID;
   const id = newId('HRR');
   const now = nowIso();
@@ -1556,6 +1731,10 @@ export function submitHrRequest(db, requestId, userId) {
     entityId: requestId,
     branchId: row.branch_id,
   });
+  const submitted = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+  if (submitted && (submitted.kind === 'leave' || submitted.kind === 'loan')) {
+    notifyHrRequestSubmitted(db, submitted, userId);
+  }
   return { ok: true };
 }
 
@@ -1611,6 +1790,119 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
   return { ok: false, error: `Unsupported profile field: ${field}.` };
 }
 
+function applyApprovedScholarshipProfileUpdate(db, requestRow, actor) {
+  const payload = safeJsonParse(requestRow.payload_json, {});
+  const userId = String(requestRow.user_id || '').trim();
+  if (!userId) return { ok: false, error: 'Invalid scholarship profile update.' };
+  const row = db.prepare(`SELECT profile_extra_json, job_title, department FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  if (!row) return { ok: false, error: 'Staff profile not found.' };
+  const extra = safeJsonParse(row.profile_extra_json, {});
+  const schoolPatch = {};
+  for (const key of [
+    'classLevel',
+    'schoolName',
+    'academicSession',
+    'currentTerm',
+    'termStartIso',
+    'termEndIso',
+    'feeCadence',
+    'schoolFeesNgn',
+    'notes',
+  ]) {
+    if (payload[key] !== undefined && payload[key] !== null && String(payload[key]).trim() !== '') {
+      schoolPatch[key] = payload[key];
+    }
+  }
+  extra.schoolProfile = { ...(extra.schoolProfile || {}), ...schoolPatch };
+  const now = nowIso();
+  const actorId = actor?.id || userId;
+  const jobTitle = schoolPatch.classLevel ? String(schoolPatch.classLevel).trim() : row.job_title;
+  const department = schoolPatch.schoolName ? String(schoolPatch.schoolName).trim() : row.department;
+  db.prepare(
+    `UPDATE hr_staff_profiles SET profile_extra_json = ?, job_title = ?, department = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+  ).run(JSON.stringify(extra), jobTitle || null, department || null, now, actorId, userId);
+  return { ok: true };
+}
+
+function applyApprovedScholarshipFeeRequest(db, requestRow, actor) {
+  const payload = safeJsonParse(requestRow.payload_json, {});
+  const userId = String(requestRow.user_id || '').trim();
+  if (!userId) return { ok: false, error: 'Invalid scholarship fee request.' };
+  if (!hrTableExists(db, 'hr_chairman_school_fees')) {
+    return { ok: true, skipped: true, reason: 'School fees table not initialised.' };
+  }
+  const u = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(userId);
+  const prof = db
+    .prepare(`SELECT profile_extra_json, department, job_title FROM hr_staff_profiles WHERE user_id = ?`)
+    .get(userId);
+  const extra = safeJsonParse(prof?.profile_extra_json, {});
+  const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
+  const displayName = String(u?.display_name || '').trim();
+  const term = String(payload.term || '').trim();
+  const session = String(payload.academicSession || payload.academicYear || '').trim();
+  if (!term || !session) return { ok: false, error: 'Fee request is missing term or academic session.' };
+  const existing = db
+    .prepare(
+      `SELECT id FROM hr_chairman_school_fees
+       WHERE (child_name = ? OR beneficiary_name = ?)
+         AND term = ?
+         AND (academic_year = ? OR academic_session = ?)
+         AND lower(COALESCE(workflow_status, payment_status, '')) NOT IN ('cancelled', 'rejected')
+       LIMIT 1`
+    )
+    .get(displayName, displayName, term, session, session);
+  if (existing?.id) {
+    return { ok: true, feeId: existing.id, existing: true };
+  }
+  const amount = Math.round(
+    Number(payload.amountRequestedNgn ?? school.schoolFeesNgn ?? 0) || 0
+  );
+  const id = newId('EXSCH');
+  const now = nowIso();
+  const schoolName = String(school.schoolName || prof?.department || '').trim() || null;
+  const classLevel = String(school.classLevel || prof?.job_title || '').trim() || null;
+  db.prepare(
+    `INSERT INTO hr_chairman_school_fees (
+      id, child_name, school_name, term, academic_year, fee_amount_ngn, fee_type, payment_status,
+      amount_paid_ngn, notes, beneficiary_id, beneficiary_name, class_level, academic_session,
+      amount_requested_ngn, workflow_status, approval_status, created_at_iso, created_by_user_id, updated_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    displayName,
+    schoolName,
+    term,
+    session,
+    amount,
+    String(payload.feeType || 'tuition').trim() || 'tuition',
+    'draft',
+    0,
+    String(payload.notes || requestRow.body || '').trim() || null,
+    String(school.beneficiaryId || '').trim() || null,
+    displayName,
+    classLevel,
+    session,
+    amount,
+    'draft',
+    'draft',
+    now,
+    actor?.id || userId,
+    now
+  );
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id,
+    action: 'hr.scholarship_fee_request.fee_draft_created',
+    entityKind: 'hr_chairman_school_fee',
+    entityId: id,
+    details: { requestId: requestRow.id, userId },
+  });
+  const submitted = submitExecutiveSchoolFee(db, actor, id);
+  if (!submitted.ok) {
+    return { ok: true, feeId: id, submitted: false, submitError: submitted.error || 'Could not submit fee for payment.' };
+  }
+  return { ok: true, feeId: id, submitted: true, paymentId: submitted.fee?.paymentId || null };
+}
+
 export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const row = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
@@ -1645,6 +1937,38 @@ export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode)
     if (rejected && (rejected.kind === 'leave' || rejected.kind === 'loan')) {
       notifyHrRequestOutcome(db, rejected, 'rejected');
     }
+    if (
+      rejected &&
+      (rejected.kind === 'scholarship_profile_update' || rejected.kind === 'scholarship_fee_request')
+    ) {
+      notifyScholarshipRequestOutcome(db, rejected, 'rejected');
+    }
+    return { ok: true };
+  }
+
+  if (String(row.kind) === 'scholarship_profile_update' || String(row.kind) === 'scholarship_fee_request') {
+    if (String(row.kind) === 'scholarship_profile_update') {
+      const applied = applyApprovedScholarshipProfileUpdate(db, row, actor);
+      if (!applied.ok) return applied;
+    } else {
+      const applied = applyApprovedScholarshipFeeRequest(db, row, actor);
+      if (!applied.ok) return applied;
+    }
+    db.prepare(
+      `UPDATE hr_requests SET status = 'approved', hr_reviewer_user_id = ?, hr_reviewer_note = ?, hr_reviewed_at_iso = ? WHERE id = ?`
+    ).run(actor.id, noteNorm || null, now, requestId);
+    appendHrAuditEvent(db, {
+      actorUserId: actor.id,
+      actorDisplayName: actor.displayName || actor.username || '',
+      action: 'hr.request.scholarship_applied',
+      entityKind: 'hr_request',
+      entityId: requestId,
+      branchId: row.branch_id,
+      reason: noteNorm || null,
+      details: { kind: row.kind, decision: 'approve', reasonCode: rc },
+    });
+    const approved = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+    notifyScholarshipRequestOutcome(db, approved, 'approved');
     return { ok: true };
   }
 
@@ -1680,6 +2004,10 @@ export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode)
     reason: noteNorm || null,
     details: { kind: row.kind, decision: 'approve', reasonCode: rc },
   });
+  const forwarded = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+  if (forwarded && (forwarded.kind === 'leave' || forwarded.kind === 'loan')) {
+    notifyHrRequestQueueHandoff(db, forwarded, 'branch_manager_review', actor.id);
+  }
   return { ok: true };
 }
 
@@ -1752,6 +2080,10 @@ export function branchManagerEndorseRequest(db, requestId, actor, approve, note,
     reason: noteNorm || null,
     details: { kind: row.kind, decision: 'approve', reasonCode: rc },
   });
+  const endorsed = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+  if (endorsed && (endorsed.kind === 'leave' || endorsed.kind === 'loan')) {
+    notifyHrRequestQueueHandoff(db, endorsed, 'gm_hr_review', actor.id);
+  }
   return { ok: true };
 }
 
@@ -3235,7 +3567,10 @@ export function listPayrollLines(db, runId) {
     .prepare(
       `SELECT l.*, u.display_name AS displayName, p.paye_tax_ngn AS payeTaxNgn,
               p.payroll_group AS payrollGroup, p.pension_rsa_pin AS pensionRsaPin,
-              p.profile_extra_json AS profileExtraJson
+              p.profile_extra_json AS profileExtraJson,
+              p.salary_level AS salaryLevel, p.salary_step AS salaryStep,
+              p.base_salary_ngn AS profileBaseSalaryNgn, p.housing_allowance_ngn AS profileHousingNgn,
+              p.transport_allowance_ngn AS profileTransportNgn
        FROM hr_payroll_lines l
        JOIN app_users u ON u.id = l.user_id
        LEFT JOIN hr_staff_profiles p ON p.user_id = l.user_id
@@ -3260,6 +3595,15 @@ export function listPayrollLines(db, runId) {
       const discOther = Math.max(0, otherDed - loanTotal - recoveryTotal);
       const profileExtra = safeJsonParse(row.profileExtraJson, {});
       const pensionAdministrator = profileExtra?.statutory?.pensionAdministrator || null;
+      const earnings = buildPayslipEarningsBreakdown(db, {
+        payrollGroup: row.payrollGroup,
+        salaryLevel: row.salaryLevel,
+        salaryStep: row.salaryStep,
+        profileExtra,
+        baseSalaryNgn: row.profileBaseSalaryNgn,
+        housingAllowanceNgn: row.profileHousingNgn,
+        transportAllowanceNgn: row.profileTransportNgn,
+      });
       const profilePaye =
         row.payeTaxNgn != null && Number.isFinite(Number(row.payeTaxNgn)) ? Math.round(Number(row.payeTaxNgn)) : null;
       return {
@@ -3289,6 +3633,7 @@ export function listPayrollLines(db, runId) {
         impliedTaxPercent: g > 0 ? Math.round((tx * 1000) / g) / 10 : null,
         impliedPensionPercent:
           g > 0 ? Math.round((Math.round(Number(row.pension_ngn) || 0) * 1000) / g) / 10 : null,
+        ...earnings,
       };
     });
 }
@@ -3778,27 +4123,38 @@ function formatNgnPdf(n) {
 
 /** @param {{ periodYyyymm: string; id: string; status: string }} run */
 function buildPayslipPdfPage(run, l) {
-  return {
-    lines: [
-      'Zarewa Aluminium and Plastics Ltd',
-      'PAYSLIP (CONFIDENTIAL)',
-      `Period: ${run.periodYyyymm}`,
-      '',
-      `Employee: ${l.displayName || l.userId}`,
-      `Staff ID: ${l.userId}`,
-      '',
-      `Gross pay: ${formatNgnPdf(l.grossNgn)}`,
-      `Bonus: ${formatNgnPdf(l.bonusNgn)}`,
-      `Attendance deduction: ${formatNgnPdf(l.attendanceDeductionNgn)}`,
-      `Other deduction: ${formatNgnPdf(l.otherDeductionNgn)}`,
-      `PAYE tax: ${formatNgnPdf(l.taxNgn)}`,
-      `Pension: ${formatNgnPdf(l.pensionNgn)}`,
-      `Net pay: ${formatNgnPdf(l.netNgn)}`,
-      '',
-      `Payroll run: ${run.id}`,
-      `Status: ${run.status}`,
-    ],
-  };
+  const lines = [
+    'Zarewa Aluminium and Plastics Ltd',
+    'PAYSLIP (CONFIDENTIAL)',
+    `Period: ${run.periodYyyymm}`,
+    '',
+    `Employee: ${l.displayName || l.userId}`,
+    `Staff ID: ${l.userId}`,
+    '',
+  ];
+  if (l.matrixBaseNgn != null) {
+    lines.push(`Basic salary (matrix): ${formatNgnPdf(l.matrixBaseNgn)}`);
+    lines.push(`Housing allowance: ${formatNgnPdf(l.matrixHousingNgn)}`);
+    lines.push(`Transport allowance: ${formatNgnPdf(l.matrixTransportNgn)}`);
+    if (Number(l.payAdditionNgn) > 0) {
+      lines.push(`Pay addition (above matrix): ${formatNgnPdf(l.payAdditionNgn)}`);
+    }
+    lines.push(`Standard matrix total: ${formatNgnPdf(l.matrixTotalNgn)}`);
+    lines.push('');
+  }
+  lines.push(
+    `Gross pay: ${formatNgnPdf(l.grossNgn)}`,
+    `Bonus: ${formatNgnPdf(l.bonusNgn)}`,
+    `Attendance deduction: ${formatNgnPdf(l.attendanceDeductionNgn)}`,
+    `Other deduction: ${formatNgnPdf(l.otherDeductionNgn)}`,
+    `PAYE tax: ${formatNgnPdf(l.taxNgn)}`,
+    `Pension: ${formatNgnPdf(l.pensionNgn)}`,
+    `Net pay: ${formatNgnPdf(l.netNgn)}`,
+    '',
+    `Payroll run: ${run.id}`,
+    `Status: ${run.status}`
+  );
+  return { lines };
 }
 
 export function exportPayrollPayslipsPdf(db, runId) {
@@ -3857,6 +4213,10 @@ export function exportPayrollPayslipsCsv(db, runId) {
     'run_id',
     'user_id',
     'display_name',
+    'matrix_base_ngn',
+    'matrix_housing_ngn',
+    'matrix_transport_ngn',
+    'pay_addition_ngn',
     'gross_ngn',
     'bonus_ngn',
     'attendance_deduction_ngn',
@@ -3876,6 +4236,10 @@ export function exportPayrollPayslipsCsv(db, runId) {
       run.id,
       l.userId,
       l.displayName,
+      l.matrixBaseNgn ?? '',
+      l.matrixHousingNgn ?? '',
+      l.matrixTransportNgn ?? '',
+      l.payAdditionNgn ?? 0,
       l.grossNgn,
       l.bonusNgn,
       l.attendanceDeductionNgn,
@@ -4421,6 +4785,18 @@ export function listHrObservability(db, scope) {
       db.prepare(`SELECT COUNT(*) AS c FROM hr_requests WHERE status = 'gm_hr_review'`).get().c,
     overdueRequests: listHrRequests(db, scope || { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {})
       .filter((r) => r.slaState === 'overdue').length,
+    pendingTransferBranchReview: hrTransferRequestsTableReady(db)
+      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_transfer_requests WHERE status = 'branch_review'`).get().c
+      : 0,
+    pendingTransferHrReview: hrTransferRequestsTableReady(db)
+      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_transfer_requests WHERE status = 'hr_review'`).get().c
+      : 0,
+    pendingTransferGmApproval: hrTransferRequestsTableReady(db)
+      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_transfer_requests WHERE status = 'gm_approval'`).get().c
+      : 0,
+    pendingTransferComplete: hrTransferRequestsTableReady(db)
+      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_transfer_requests WHERE status = 'approved'`).get().c
+      : 0,
     eeo: eeoDecisionSummary(db, scope, { days: 120 }),
   };
   return { events, summary };
@@ -4504,6 +4880,75 @@ export function hrNextUatReadiness(db, scope) {
   };
 }
 
+function linkedExecutiveDisplayLabel(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  if (!v) return null;
+  if (v === 'chairman' || v.includes('chairman')) return 'Chairman';
+  if (v === 'ceo' || v.includes('chief executive')) return 'Chief Executive Officer';
+  if (v === 'md' || v.includes('managing director')) return 'Managing Director';
+  return String(raw).replace(/_/g, ' ');
+}
+
+function beneficiaryTypeDisplayLabel(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  const map = {
+    chairman_child: "Chairman's child",
+    ceo_child: "CEO's child",
+    director_child: "Director's child",
+  };
+  return map[v] || (v ? String(raw).replace(/_/g, ' ') : null);
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} displayName @param {object} [schoolProfile] */
+function resolveExecutiveFamilyBeneficiaryLink(db, displayName, schoolProfile = {}) {
+  const bid = String(schoolProfile?.beneficiaryId || '').trim();
+  let linkedExecutive = schoolProfile?.linkedExecutive || null;
+  let beneficiaryType = schoolProfile?.beneficiaryType || null;
+  let relationship = schoolProfile?.relationship || null;
+  let beneficiaryId = bid || null;
+
+  if (hrTableExists(db, 'hr_executive_beneficiaries')) {
+    let row = bid ? db.prepare(`SELECT * FROM hr_executive_beneficiaries WHERE id = ?`).get(bid) : null;
+    if (!row && displayName) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_executive_beneficiaries WHERE name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(displayName);
+    }
+    if (row) {
+      beneficiaryId = row.id;
+      linkedExecutive = row.linked_executive || linkedExecutive;
+      beneficiaryType = row.beneficiary_type || beneficiaryType;
+      relationship = row.relationship || relationship;
+    }
+  }
+
+  if (!linkedExecutive && hrTableExists(db, 'hr_executive_stipends') && displayName) {
+    const stip = db
+      .prepare(
+        `SELECT linked_executive, beneficiary_type, beneficiary_id FROM hr_executive_stipends
+         WHERE beneficiary_name = ? OR beneficiary_id = ?
+         ORDER BY updated_at_iso DESC LIMIT 1`
+      )
+      .get(displayName, bid);
+    if (stip) {
+      linkedExecutive = stip.linked_executive || linkedExecutive;
+      beneficiaryType = stip.beneficiary_type || beneficiaryType;
+      beneficiaryId = stip.beneficiary_id || beneficiaryId;
+    }
+  }
+
+  return {
+    beneficiaryId,
+    linkedExecutive,
+    linkedExecutiveLabel: linkedExecutiveDisplayLabel(linkedExecutive),
+    beneficiaryType,
+    beneficiaryTypeLabel: beneficiaryTypeDisplayLabel(beneficiaryType),
+    relationship,
+  };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
@@ -4517,11 +4962,12 @@ export function getHrMeSchoolProfile(db, userId) {
   if (!u) return { ok: false, error: 'User not found.' };
   const p = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
   if (!p || !isScholarshipBeneficiary(p.payroll_group)) {
-    return { ok: false, error: 'School profile is only for scholarship beneficiaries.' };
+    return { ok: false, error: 'This profile is only for executive family beneficiaries.' };
   }
   const extra = safeJsonParse(p.profile_extra_json, {});
   const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
   const displayName = String(u.display_name || '').trim();
+  const familyLink = resolveExecutiveFamilyBeneficiaryLink(db, displayName, school);
   let stipend = null;
   try {
     if (hrTableExists(db, 'hr_executive_stipends')) {
@@ -4613,8 +5059,791 @@ export function getHrMeSchoolProfile(db, userId) {
         paymentDateIso: f.payment_date_iso || null,
       })),
       notes: school.notes || null,
+      linkedExecutive: familyLink.linkedExecutive,
+      linkedExecutiveLabel: familyLink.linkedExecutiveLabel,
+      beneficiaryType: familyLink.beneficiaryType,
+      beneficiaryTypeLabel: familyLink.beneficiaryTypeLabel,
+      relationship: familyLink.relationship,
+      familyParentLine: familyLink.linkedExecutiveLabel
+        ? `Beneficiary of ${familyLink.linkedExecutiveLabel}`
+        : 'Executive family beneficiary',
     },
   };
+}
+
+/** User-facing payment status label for scholarship beneficiaries. */
+function scholarshipFriendlyStatus(status) {
+  const s = String(status || 'pending').toLowerCase();
+  const map = {
+    draft: 'Being prepared',
+    submitted: 'Submitted',
+    finance_review: 'With Finance',
+    md_review: 'Awaiting approval',
+    approved: 'Approved',
+    exported: 'Ready for payment',
+    paid: 'Paid',
+    rejected: 'Not approved',
+    cancelled: 'Cancelled',
+    pending: 'Pending',
+    scheduled: 'Scheduled',
+    active: 'Active',
+  };
+  return map[s] || s.replace(/_/g, ' ');
+}
+
+/** Progress steps for a school fee or stipend payment. */
+function scholarshipPaymentTracker(status) {
+  const s = String(status || 'draft').toLowerCase();
+  const steps = [
+    { key: 'submitted', label: 'Submitted' },
+    { key: 'review', label: 'Under review' },
+    { key: 'approved', label: 'Approved' },
+    { key: 'paid', label: 'Paid' },
+  ];
+  const index =
+    s === 'paid'
+      ? 3
+      : s === 'approved' || s === 'exported'
+        ? 2
+        : s === 'finance_review' || s === 'md_review' || s === 'submitted'
+          ? 1
+          : s === 'rejected' || s === 'cancelled'
+            ? -1
+            : 0;
+  return { steps, currentIndex: index, terminal: s === 'rejected' || s === 'cancelled' };
+}
+
+function daysUntilIso(iso) {
+  if (!iso) return null;
+  const end = new Date(String(iso).slice(0, 10));
+  if (Number.isNaN(end.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  return Math.round((end.getTime() - today.getTime()) / 86400000);
+}
+
+function currentPeriodYyyymm() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Scholarship hub: profile, payments ledger, checklist, and next-up items.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ documentSummary?: { total?: number; pending?: number; rejected?: number } }} [opts]
+ */
+export function getHrMeScholarshipSummary(db, userId, opts = {}) {
+  const base = getHrMeSchoolProfile(db, userId);
+  if (!base.ok) return base;
+
+  const uid = String(userId || '').trim();
+  const p = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  const extra = safeJsonParse(p?.profile_extra_json, {});
+  const beneficiaryId = String(extra?.schoolProfile?.beneficiaryId || '').trim();
+  const displayName = String(base.profile?.displayName || '').trim();
+  const docSummary = opts.documentSummary || {};
+
+  /** @type {object[]} */
+  let paymentRows = [];
+  try {
+    if (hrTableExists(db, 'hr_executive_payments') && displayName) {
+      paymentRows = db
+        .prepare(
+          `SELECT p.* FROM hr_executive_payments p
+           WHERE p.payee_name = ?
+              OR p.id IN (
+                SELECT payment_id FROM hr_chairman_school_fees
+                WHERE payment_id IS NOT NULL AND payment_id != ''
+                  AND (child_name = ? OR beneficiary_name = ? OR (? != '' AND beneficiary_id = ?))
+              )
+              OR (p.source_kind = 'stipend' AND p.source_id IN (
+                SELECT id FROM hr_executive_stipends
+                WHERE (? != '' AND beneficiary_id = ?) OR beneficiary_name = ?
+              ))
+           ORDER BY COALESCE(p.paid_at_iso, p.updated_at_iso, p.created_at_iso) DESC
+           LIMIT 36`
+        )
+        .all(displayName, displayName, displayName, beneficiaryId, beneficiaryId, beneficiaryId, beneficiaryId, displayName);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const payments = paymentRows.map((row) => {
+    const status = row.status || 'draft';
+    const type = String(row.payment_type || '').toLowerCase();
+    return {
+      id: row.id,
+      kind: type === 'stipend' ? 'stipend' : 'school_fee',
+      label:
+        type === 'stipend'
+          ? `Monthly allowance${row.period_yyyymm ? ` · ${row.period_yyyymm}` : ''}`
+          : row.term
+            ? `School fees · ${row.term}`
+            : row.narration || 'School fees',
+      amountNgn: Math.round(Number(row.amount_ngn) || 0),
+      status,
+      statusLabel: scholarshipFriendlyStatus(status),
+      periodYyyymm: row.period_yyyymm || null,
+      term: row.term || null,
+      academicSession: row.academic_session || null,
+      paidAtIso: row.paid_at_iso || null,
+      dueDateIso: null,
+      tracker: scholarshipPaymentTracker(status),
+    };
+  });
+
+  for (const fee of base.profile?.recentFeePayments || []) {
+    if (payments.some((pmt) => pmt.id === fee.id)) continue;
+    const status = fee.status || 'pending';
+    payments.push({
+      id: fee.id,
+      kind: 'school_fee',
+      label: fee.term ? `School fees · ${fee.term}` : 'School fees',
+      amountNgn: fee.amountNgn,
+      status,
+      statusLabel: scholarshipFriendlyStatus(status),
+      periodYyyymm: null,
+      term: fee.term,
+      academicSession: fee.academicSession,
+      paidAtIso: fee.paymentDateIso,
+      dueDateIso: null,
+      tracker: scholarshipPaymentTracker(status),
+    });
+  }
+
+  payments.sort((a, b) => {
+    const aT = a.paidAtIso || '';
+    const bT = b.paidAtIso || '';
+    return bT.localeCompare(aT);
+  });
+
+  const termDaysRemaining = daysUntilIso(base.profile?.termEndIso);
+  const currentPeriod = currentPeriodYyyymm();
+  const stipendPaidThisMonth =
+    base.profile?.stipend?.lastPaidPeriod && String(base.profile.stipend.lastPaidPeriod) === currentPeriod;
+
+  const nextUp = [];
+  if (base.profile?.nextPayment) {
+    nextUp.push({
+      kind: 'school_fee',
+      label: base.profile.nextPayment.label || 'School fees',
+      amountNgn: base.profile.nextPayment.amountNgn,
+      dueDateIso: base.profile.nextPayment.dueDateIso,
+      status: base.profile.nextPayment.status,
+      statusLabel: scholarshipFriendlyStatus(base.profile.nextPayment.status),
+      tracker: scholarshipPaymentTracker(base.profile.nextPayment.status),
+    });
+  }
+  if (base.profile?.stipend?.monthlyAmountNgn) {
+    const stipendStatus = stipendPaidThisMonth ? 'paid' : 'scheduled';
+    nextUp.push({
+      kind: 'stipend',
+      label: 'Monthly allowance',
+      amountNgn: base.profile.stipend.monthlyAmountNgn,
+      dueDateIso: null,
+      status: stipendStatus,
+      statusLabel: scholarshipFriendlyStatus(stipendStatus),
+      tracker: scholarshipPaymentTracker(stipendStatus),
+      periodYyyymm: currentPeriod,
+    });
+  }
+
+  const checklist = [
+    {
+      id: 'school_details',
+      label: 'School name and class',
+      done: Boolean(base.profile?.schoolName && base.profile?.classLevel),
+      path: '/my-profile/school',
+    },
+    {
+      id: 'term_dates',
+      label: 'Current term dates',
+      done: Boolean(base.profile?.termStartIso && base.profile?.termEndIso),
+      path: '/my-profile/school',
+    },
+    {
+      id: 'beneficiary_link',
+      label: 'Benefits account linked',
+      done: Boolean(beneficiaryId),
+      path: '/my-profile/school',
+      hint: beneficiaryId ? null : 'Ask the office to link your benefits record for accurate payments.',
+    },
+    {
+      id: 'documents',
+      label: 'Documents on file',
+      done: (docSummary.total || 0) > 0 && (docSummary.rejected || 0) === 0,
+      path: '/my-profile/documents',
+      hint:
+        (docSummary.rejected || 0) > 0
+          ? `${docSummary.rejected} document(s) need re-upload.`
+          : (docSummary.pending || 0) > 0
+            ? `${docSummary.pending} awaiting HR review.`
+            : null,
+    },
+  ];
+  const checklistDone = checklist.filter((c) => c.done).length;
+  const checklistPct = checklist.length ? Math.round((checklistDone / checklist.length) * 100) : 0;
+
+  let paymentHealth = 'on_track';
+  const hasOverdueFee = nextUp.some(
+    (n) => n.kind === 'school_fee' && n.dueDateIso && daysUntilIso(n.dueDateIso) < 0 && n.status !== 'paid'
+  );
+  const hasActionFee = nextUp.some((n) => n.kind === 'school_fee' && !['paid', 'approved', 'exported'].includes(String(n.status)));
+  if (hasOverdueFee) paymentHealth = 'overdue';
+  else if (hasActionFee || (docSummary.rejected || 0) > 0) paymentHealth = 'action_needed';
+  else if (!beneficiaryId) paymentHealth = 'setup_incomplete';
+
+  let pendingRequests = [];
+  try {
+    pendingRequests = db
+      .prepare(
+        `SELECT id, kind, status, title, created_at_iso AS createdAtIso
+         FROM hr_requests
+         WHERE user_id = ? AND kind IN ('scholarship_profile_update', 'scholarship_fee_request')
+           AND lower(status) NOT IN ('approved', 'rejected', 'cancelled')
+         ORDER BY created_at_iso DESC LIMIT 8`
+      )
+      .all(uid);
+  } catch {
+    /* ignore */
+  }
+
+  const reminders = buildScholarshipReminders({
+    profile: base.profile,
+    nextUp,
+    termDaysRemaining,
+    stipendPaidThisMonth,
+  });
+  const termCalendar = buildScholarshipTermCalendar({
+    profile: base.profile,
+    nextUp,
+    stipendPaidThisMonth,
+  });
+
+  return {
+    ok: true,
+    profile: base.profile,
+    beneficiaryLinked: Boolean(beneficiaryId),
+    beneficiaryId: beneficiaryId || null,
+    termDaysRemaining,
+    termEndingSoon: termDaysRemaining != null && termDaysRemaining >= 0 && termDaysRemaining <= 21,
+    nextUp,
+    payments: payments.slice(0, 24),
+    checklist,
+    checklistPct,
+    paymentHealth,
+    pendingRequests,
+    reminders,
+    termCalendar,
+  };
+}
+
+/** Upcoming term, fee, and stipend dates for the beneficiary calendar. */
+function buildScholarshipTermCalendar(input = {}) {
+  const { profile, nextUp = [], stipendPaidThisMonth } = input;
+  /** @type {object[]} */
+  const events = [];
+
+  if (profile?.termStartIso) {
+    events.push({
+      dateIso: String(profile.termStartIso).slice(0, 10),
+      kind: 'term_start',
+      label: 'Term starts',
+      detail: profile.currentTerm ? `${profile.currentTerm} · ${profile.academicSession || ''}`.trim() : null,
+    });
+  }
+  if (profile?.termEndIso) {
+    events.push({
+      dateIso: String(profile.termEndIso).slice(0, 10),
+      kind: 'term_end',
+      label: 'Term ends',
+      detail: profile.schoolName || null,
+    });
+  }
+
+  for (const item of nextUp) {
+    if (item.kind === 'school_fee' && item.dueDateIso) {
+      events.push({
+        dateIso: String(item.dueDateIso).slice(0, 10),
+        kind: 'fee_due',
+        label: 'School fees due',
+        amountNgn: item.amountNgn,
+        detail: item.label || null,
+      });
+    }
+  }
+
+  if (profile?.stipend?.monthlyAmountNgn) {
+    const now = new Date();
+    for (let i = 0; i < 4; i += 1) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+      const period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+      const paid = i === 0 && stipendPaidThisMonth;
+      events.push({
+        dateIso: d.toISOString().slice(0, 10),
+        kind: 'stipend',
+        label: paid ? 'Allowance paid' : 'Allowance expected',
+        amountNgn: profile.stipend.monthlyAmountNgn,
+        detail: period,
+        status: paid ? 'paid' : 'scheduled',
+      });
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  return events
+    .filter((e) => e.dateIso)
+    .sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+    .map((e) => ({
+      ...e,
+      isPast: e.dateIso < today,
+      isToday: e.dateIso === today,
+    }));
+}
+
+/** @param {{ profile?: object; nextUp?: object[]; termDaysRemaining?: number | null; stipendPaidThisMonth?: boolean }} input */
+function buildScholarshipReminders(input = {}) {
+  const { profile, nextUp = [], termDaysRemaining, stipendPaidThisMonth } = input;
+  /** @type {object[]} */
+  const reminders = [];
+
+  if (termDaysRemaining != null && termDaysRemaining >= 0 && termDaysRemaining <= 21) {
+    reminders.push({
+      id: `term-${profile?.termEndIso || 'end'}`,
+      kind: 'term_ending',
+      severity: termDaysRemaining <= 7 ? 'warning' : 'info',
+      title: termDaysRemaining === 0 ? 'Term ends today' : `Term ends in ${termDaysRemaining} day${termDaysRemaining === 1 ? '' : 's'}`,
+      body: 'Check your school details and submit a fee request if needed for the next term.',
+      actionPath: '/my-profile/requests',
+    });
+  }
+
+  for (const item of nextUp) {
+    if (item.kind === 'school_fee' && item.dueDateIso) {
+      const days = daysUntilIso(item.dueDateIso);
+      if (days == null || days > 21) continue;
+      reminders.push({
+        id: `fee-due-${String(item.dueDateIso).slice(0, 10)}`,
+        kind: 'fee_due',
+        severity: days < 0 ? 'urgent' : days <= 7 ? 'warning' : 'info',
+        title: days < 0 ? 'School fees overdue' : days === 0 ? 'School fees due today' : `School fees due in ${days} day${days === 1 ? '' : 's'}`,
+        body: item.amountNgn
+          ? `${item.label || 'School fees'} — ₦${Math.round(Number(item.amountNgn) || 0).toLocaleString('en-NG')}`
+          : item.label || 'School fees payment expected.',
+        actionPath: '/my-profile/payments',
+        dueDateIso: item.dueDateIso,
+      });
+    }
+  }
+
+  if (profile?.stipend?.monthlyAmountNgn && !stipendPaidThisMonth) {
+    reminders.push({
+      id: `stipend-${currentPeriodYyyymm()}`,
+      kind: 'stipend_expected',
+      severity: 'info',
+      title: 'Monthly allowance expected',
+      body: `Your allowance of ₦${Math.round(Number(profile.stipend.monthlyAmountNgn) || 0).toLocaleString('en-NG')} for this month is being processed.`,
+      actionPath: '/my-profile/payments',
+    });
+  }
+
+  return reminders;
+}
+
+/**
+ * PDF payment statement for scholarship beneficiaries.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ academicSession?: string }} [opts]
+ */
+export function exportScholarshipPaymentStatementPdf(db, userId, opts = {}) {
+  const summary = getHrMeScholarshipSummary(db, userId);
+  if (!summary.ok) return summary;
+  const profile = summary.profile || {};
+  const sessionFilter = String(opts.academicSession || '').trim();
+  let payments = summary.payments || [];
+  if (sessionFilter) {
+    payments = payments.filter((p) => String(p.academicSession || '') === sessionFilter);
+  }
+
+  const lines = [
+    'ZAREWA GROUP',
+    'Executive Family Benefits Statement',
+    '',
+    `Beneficiary: ${profile.displayName || '—'}`,
+    profile.schoolName ? `School: ${profile.schoolName}` : null,
+    profile.classLevel ? `Class: ${profile.classLevel}` : null,
+    profile.academicSession ? `Session: ${profile.academicSession}` : null,
+    sessionFilter ? `Statement filter: ${sessionFilter}` : null,
+    `Generated: ${nowIso().slice(0, 10)}`,
+    '',
+    '--- Payment history ---',
+  ].filter(Boolean);
+
+  if (!payments.length) {
+    lines.push('(No payments on record for this period.)');
+  } else {
+    let paidTotal = 0;
+    let pendingTotal = 0;
+    for (const pmt of payments) {
+      const amt = Math.round(Number(pmt.amountNgn) || 0);
+      const status = String(pmt.status || '').toLowerCase();
+      if (status === 'paid') paidTotal += amt;
+      else pendingTotal += amt;
+      const date = pmt.paidAtIso ? String(pmt.paidAtIso).slice(0, 10) : '—';
+      lines.push(
+        `${pmt.label || pmt.kind} | ${pmt.statusLabel || status} | NGN ${amt.toLocaleString('en-NG')} | ${date}`
+      );
+    }
+    lines.push('');
+    lines.push(`Total paid: NGN ${paidTotal.toLocaleString('en-NG')}`);
+    if (pendingTotal > 0) {
+      lines.push(`Pending / in progress: NGN ${pendingTotal.toLocaleString('en-NG')}`);
+    }
+  }
+
+  if (profile.stipend?.monthlyAmountNgn) {
+    lines.push('');
+    lines.push(`Current stipend: NGN ${Math.round(Number(profile.stipend.monthlyAmountNgn) || 0).toLocaleString('en-NG')} / ${profile.stipend.paymentFrequency || 'monthly'}`);
+    if (profile.stipend.lastPaidPeriod) {
+      lines.push(`Last stipend period: ${profile.stipend.lastPaidPeriod}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('This statement is for your records. Contact HR for official queries.');
+
+  const safeName = String(profile.displayName || 'beneficiary')
+    .replace(/[^\w-]+/g, '-')
+    .slice(0, 24);
+  const pdf = buildSimpleTextPdf([{ lines }]);
+  return {
+    ok: true,
+    pdf,
+    filename: `family-benefits-statement-${safeName}-${nowIso().slice(0, 10)}.pdf`,
+    contentType: 'application/pdf',
+  };
+}
+
+function assignedExecutiveDisplayLabel(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  if (!v) return null;
+  if (v === 'chairman' || v.includes('chairman')) return 'Chairman';
+  if (v === 'ceo' || v.includes('chief executive')) return 'Chief Executive Officer';
+  if (v === 'md' || v.includes('managing director')) return 'Managing Director';
+  return String(raw).replace(/_/g, ' ');
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function getHrMeDomesticProfile(db, userId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  const u = db.prepare(`SELECT id, display_name FROM app_users WHERE id = ?`).get(uid);
+  if (!u) return { ok: false, error: 'User not found.' };
+  const p = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!p || !isDomesticStaff(p.payroll_group)) {
+    return { ok: false, error: 'This profile is only for executive household staff.' };
+  }
+  const displayName = String(u.display_name || '').trim();
+  let domestic = null;
+  if (hrTableExists(db, 'hr_domestic_staff_profiles')) {
+    domestic =
+      db
+        .prepare(
+          `SELECT * FROM hr_domestic_staff_profiles WHERE user_id = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(uid) ||
+      (displayName
+        ? db
+            .prepare(
+              `SELECT * FROM hr_domestic_staff_profiles WHERE staff_name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+            )
+            .get(displayName)
+        : null);
+  }
+  const assignedExecutive = domestic?.assigned_executive || null;
+  const assignedExecutiveLabel = assignedExecutiveDisplayLabel(assignedExecutive);
+  let lastPaidPeriod = null;
+  if (domestic?.id && hrTableExists(db, 'hr_executive_payments')) {
+    const lastPaid = db
+      .prepare(
+        `SELECT period_yyyymm FROM hr_executive_payments
+         WHERE status = 'paid' AND (source_kind = 'domestic_staff' AND source_id = ? OR payee_name = ?)
+         ORDER BY paid_at_iso DESC LIMIT 1`
+      )
+      .get(domestic.id, displayName);
+    lastPaidPeriod = lastPaid?.period_yyyymm || null;
+  }
+  return {
+    ok: true,
+    profile: {
+      userId: uid,
+      displayName,
+      employeeNo: p.employee_no || domestic?.employee_no || null,
+      designation: domestic?.designation || p.job_title || null,
+      workLocation: domestic?.work_location || p.department || null,
+      employmentType: domestic?.employment_type || p.employment_type || null,
+      dateJoinedIso: domestic?.date_joined_iso || p.date_joined_iso || null,
+      assignedExecutive,
+      assignedExecutiveLabel,
+      executiveEmployerLine: assignedExecutiveLabel
+        ? `Employed by ${assignedExecutiveLabel}`
+        : 'Executive household staff',
+      monthlySalaryNgn:
+        domestic?.salary_amount_ngn != null
+          ? Math.round(Number(domestic.salary_amount_ngn) || 0)
+          : p.base_salary_ngn != null
+            ? Math.round(Number(p.base_salary_ngn) || 0)
+            : null,
+      lastPaidPeriod,
+      domesticProfileId: domestic?.id || null,
+      status: domestic?.status || 'active',
+      linked: Boolean(domestic && domestic.status === 'active'),
+      notes: domestic?.notes || null,
+    },
+  };
+}
+
+/**
+ * Household staff hub: profile, salary payments, checklist, and next-up.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ documentSummary?: { total?: number; pending?: number; rejected?: number } }} [opts]
+ */
+export function getHrMeDomesticSummary(db, userId, opts = {}) {
+  const base = getHrMeDomesticProfile(db, userId);
+  if (!base.ok) return base;
+
+  const uid = String(userId || '').trim();
+  const displayName = String(base.profile?.displayName || '').trim();
+  const domesticProfileId = String(base.profile?.domesticProfileId || '').trim();
+  const docSummary = opts.documentSummary || {};
+  const currentPeriod = currentPeriodYyyymm();
+
+  /** @type {object[]} */
+  let paymentRows = domesticPaymentRowsForProfile(db, displayName, domesticProfileId);
+
+  const payments = paymentRows.map(mapDomesticPaymentRow);
+
+  const salaryPaidThisMonth = payments.some(
+    (p) => String(p.status).toLowerCase() === 'paid' && String(p.periodYyyymm || '') === currentPeriod
+  );
+
+  const nextUp = [];
+  if (base.profile?.monthlySalaryNgn) {
+    const salaryStatus = salaryPaidThisMonth ? 'paid' : 'scheduled';
+    nextUp.push({
+      kind: 'salary',
+      label: 'Monthly salary',
+      amountNgn: base.profile.monthlySalaryNgn,
+      status: salaryStatus,
+      statusLabel: scholarshipFriendlyStatus(salaryStatus),
+      tracker: scholarshipPaymentTracker(salaryStatus),
+      periodYyyymm: currentPeriod,
+    });
+  }
+
+  const checklist = [
+    {
+      id: 'role_details',
+      label: 'Role and work location',
+      done: Boolean(base.profile?.designation && base.profile?.workLocation),
+      path: '/my-profile/home',
+    },
+    {
+      id: 'benefits_link',
+      label: 'Executive benefits record linked',
+      done: Boolean(domesticProfileId && base.profile?.linked),
+      path: '/my-profile/home',
+      hint: domesticProfileId ? null : 'The office maintains your pay record — contact them if anything looks wrong.',
+    },
+    {
+      id: 'documents',
+      label: 'Documents on file',
+      done: (docSummary.total || 0) > 0 && (docSummary.rejected || 0) === 0,
+      path: '/my-profile/documents',
+      hint:
+        (docSummary.rejected || 0) > 0
+          ? `${docSummary.rejected} document(s) need re-upload.`
+          : (docSummary.pending || 0) > 0
+            ? `${docSummary.pending} awaiting review.`
+            : null,
+    },
+  ];
+  const checklistDone = checklist.filter((c) => c.done).length;
+  const checklistPct = checklist.length ? Math.round((checklistDone / checklist.length) * 100) : 0;
+
+  let paymentHealth = 'on_track';
+  if (!domesticProfileId || !base.profile?.linked) paymentHealth = 'setup_incomplete';
+  else if (!salaryPaidThisMonth) paymentHealth = 'action_needed';
+
+  const reminders = [];
+  if (base.profile?.monthlySalaryNgn && !salaryPaidThisMonth) {
+    reminders.push({
+      id: `salary-${currentPeriod}`,
+      kind: 'salary_expected',
+      severity: 'info',
+      title: 'Monthly salary expected',
+      body: `Your salary of ₦${Math.round(Number(base.profile.monthlySalaryNgn) || 0).toLocaleString('en-NG')} for this month is being processed.`,
+      actionPath: '/my-profile/payments',
+    });
+  }
+
+  return {
+    ok: true,
+    profile: base.profile,
+    benefitsLinked: Boolean(domesticProfileId && base.profile?.linked),
+    domesticProfileId: domesticProfileId || null,
+    nextUp,
+    payments: payments.slice(0, 24),
+    checklist,
+    checklistPct,
+    paymentHealth,
+    reminders,
+    periodYyyymm: currentPeriod,
+  };
+}
+
+function domesticPaymentRowsForProfile(db, displayName, domesticProfileId) {
+  if (!hrTableExists(db, 'hr_executive_payments') || (!displayName && !domesticProfileId)) return [];
+  try {
+    return db
+      .prepare(
+        `SELECT p.* FROM hr_executive_payments p
+         WHERE p.payee_name = ?
+            OR (p.source_kind = 'domestic_staff' AND (? != '' AND p.source_id = ?))
+         ORDER BY COALESCE(p.paid_at_iso, p.updated_at_iso, p.created_at_iso) DESC
+         LIMIT 36`
+      )
+      .all(displayName, domesticProfileId, domesticProfileId);
+  } catch {
+    return [];
+  }
+}
+
+function mapDomesticPaymentRow(row) {
+  const status = row.status || 'draft';
+  const period = row.period_yyyymm || null;
+  return {
+    id: row.id,
+    kind: 'salary',
+    label: period ? `Monthly salary · ${period}` : row.narration || 'Monthly salary',
+    amountNgn: Math.round(Number(row.amount_ngn) || 0),
+    status,
+    statusLabel: scholarshipFriendlyStatus(status),
+    periodYyyymm: period,
+    paidAtIso: row.paid_at_iso || null,
+    tracker: scholarshipPaymentTracker(status),
+  };
+}
+
+function buildDomesticPaymentStatementPdf(profile, payments) {
+  const lines = [
+    'ZAREWA GROUP',
+    'Executive Household Staff — Payment Statement',
+    '',
+    `Staff: ${profile.displayName || '—'}`,
+    profile.designation ? `Role: ${profile.designation}` : null,
+    profile.workLocation ? `Location: ${profile.workLocation}` : null,
+    profile.assignedExecutiveLabel ? `Employer: ${profile.assignedExecutiveLabel}` : null,
+    `Generated: ${nowIso().slice(0, 10)}`,
+    '',
+    '--- Payment history ---',
+  ].filter(Boolean);
+
+  if (!payments.length) {
+    lines.push('(No payments on record.)');
+  } else {
+    let paidTotal = 0;
+    for (const pmt of payments) {
+      const amt = Math.round(Number(pmt.amountNgn) || 0);
+      const status = String(pmt.status || '').toLowerCase();
+      if (status === 'paid') paidTotal += amt;
+      const date = pmt.paidAtIso ? String(pmt.paidAtIso).slice(0, 10) : '—';
+      lines.push(
+        `${pmt.label || 'Salary'} | ${pmt.statusLabel || status} | NGN ${amt.toLocaleString('en-NG')} | ${date}`
+      );
+    }
+    lines.push('');
+    lines.push(`Total paid: NGN ${paidTotal.toLocaleString('en-NG')}`);
+  }
+
+  if (profile.monthlySalaryNgn) {
+    lines.push('');
+    lines.push(
+      `Current monthly salary: NGN ${Math.round(Number(profile.monthlySalaryNgn) || 0).toLocaleString('en-NG')}`
+    );
+    if (profile.lastPaidPeriod) lines.push(`Last paid period: ${profile.lastPaidPeriod}`);
+  }
+
+  lines.push('');
+  lines.push('This statement is for your records. Contact the office for official queries.');
+
+  const safeName = String(profile.displayName || 'staff').replace(/[^\w-]+/g, '-').slice(0, 24);
+  const pdf = buildSimpleTextPdf([{ lines }]);
+  return {
+    ok: true,
+    pdf,
+    filename: `household-staff-statement-${safeName}-${nowIso().slice(0, 10)}.pdf`,
+    contentType: 'application/pdf',
+  };
+}
+
+/**
+ * PDF payment statement for executive household staff (self-service).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function exportDomesticPaymentStatementPdf(db, userId) {
+  const summary = getHrMeDomesticSummary(db, userId);
+  if (!summary.ok) return summary;
+  return buildDomesticPaymentStatementPdf(summary.profile || {}, summary.payments || []);
+}
+
+/**
+ * PDF payment statement for admin — no ERP login required on the staff record.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} profileId
+ */
+export function exportDomesticPaymentStatementPdfByProfileId(db, profileId) {
+  if (!hrTableExists(db, 'hr_domestic_staff_profiles')) {
+    return { ok: false, error: 'Household staff module not initialised.' };
+  }
+  const id = String(profileId || '').trim();
+  const domestic = db.prepare(`SELECT * FROM hr_domestic_staff_profiles WHERE id = ?`).get(id);
+  if (!domestic) return { ok: false, error: 'Household staff record not found.' };
+
+  const displayName = String(domestic.staff_name || '').trim();
+  const assignedExecutiveLabel = assignedExecutiveDisplayLabel(domestic.assigned_executive);
+  let lastPaidPeriod = null;
+  if (hrTableExists(db, 'hr_executive_payments')) {
+    const lastPaid = db
+      .prepare(
+        `SELECT period_yyyymm FROM hr_executive_payments
+         WHERE status = 'paid' AND (source_kind = 'domestic_staff' AND source_id = ? OR payee_name = ?)
+         ORDER BY paid_at_iso DESC LIMIT 1`
+      )
+      .get(id, displayName);
+    lastPaidPeriod = lastPaid?.period_yyyymm || null;
+  }
+
+  const profile = {
+    displayName,
+    designation: domestic.designation || null,
+    workLocation: domestic.work_location || null,
+    assignedExecutiveLabel,
+    monthlySalaryNgn:
+      domestic.salary_amount_ngn != null ? Math.round(Number(domestic.salary_amount_ngn) || 0) : null,
+    lastPaidPeriod,
+  };
+  const payments = domesticPaymentRowsForProfile(db, displayName, id).map(mapDomesticPaymentRow);
+  return buildDomesticPaymentStatementPdf(profile, payments);
 }
 
 export function getHrMeProfile(db, userId) {
@@ -4678,6 +5907,30 @@ export function getHrMeProfile(db, userId) {
     lineManagerUserId: p.line_manager_user_id ?? null,
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
   };
+  if (isScholarshipBeneficiary(payrollGroup)) {
+    const school = hr.profileExtra?.schoolProfile && typeof hr.profileExtra.schoolProfile === 'object'
+      ? hr.profileExtra.schoolProfile
+      : {};
+    const familyLink = resolveExecutiveFamilyBeneficiaryLink(db, user.displayName, school);
+    hr.familyBenefits = {
+      schoolName: school.schoolName || p.department || null,
+      classLevel: school.classLevel || p.job_title || null,
+      academicSession: school.academicSession || null,
+      currentTerm: school.currentTerm || null,
+      termStartIso: school.termStartIso || null,
+      termEndIso: school.termEndIso || null,
+      ...familyLink,
+      familyParentLine: familyLink.linkedExecutiveLabel
+        ? `Beneficiary of ${familyLink.linkedExecutiveLabel}`
+        : 'Executive family beneficiary',
+    };
+  }
+  if (isDomesticStaff(payrollGroup)) {
+    const domesticBase = getHrMeDomesticProfile(db, userId);
+    if (domesticBase.ok && domesticBase.profile) {
+      hr.domesticBenefits = domesticBase.profile;
+    }
+  }
   const mgrId = p.line_manager_user_id ? String(p.line_manager_user_id) : '';
   if (mgrId) {
     const mgr = db
@@ -4896,10 +6149,15 @@ export function listHrStaffBranchHistory(db, userId) {
 
 export function getHrInboxSummary(db, scope) {
   if (!hrTablesReady(db)) {
-    return { ok: true, counts: { pendingHrReview: 0, pendingBranchEndorse: 0, pendingGmHrReview: 0, draftPayrollRuns: 0 } };
+    return { ok: true, counts: { pendingHrReview: 0, pendingBranchEndorse: 0, pendingGmHrReview: 0, draftPayrollRuns: 0, draftPayrollAwaitingGm: 0 } };
   }
   const obs = listHrObservability(db, scope);
   const draftPayroll = db.prepare(`SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE status = 'draft'`).get().c;
+  const draftPayrollAwaitingGm = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE status = 'draft' AND COALESCE(TRIM(gm_approved_at_iso), '') = ''`
+    )
+    .get().c;
   const profileWork = listHrProfileWorkQueue(db, scope);
   return {
     ok: true,
@@ -4909,6 +6167,7 @@ export function getHrInboxSummary(db, scope) {
       pendingGmHrReview: obs.summary?.pendingGmHrReview ?? 0,
       overdueRequests: obs.summary?.overdueRequests ?? 0,
       draftPayrollRuns: draftPayroll,
+      draftPayrollAwaitingGm,
       pendingDocumentVerifications: profileWork.counts.pendingDocumentVerifications,
       pendingProfileChanges: profileWork.counts.pendingProfileChanges,
       incompleteProfiles: profileWork.counts.incompleteProfiles,
@@ -5529,7 +6788,9 @@ export function createHrIncidentMemo(db, actorUserId, body) {
     `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
      VALUES (?,?,?,?,?,?,?,?,?)`
   ).run(id, branchId, userId, actorUserId, dateIso, summary, 'open', now, now);
-  return { ok: true, memo: listHrIncidentMemos(db, { viewAll: true, branchId }).find((m) => m.id === id) };
+  const memo = listHrIncidentMemos(db, { viewAll: true, branchId }).find((m) => m.id === id);
+  notifyIncidentMemoReported(db, memo || { id, branchId, userId, summary, incidentDateIso: dateIso }, actorUserId);
+  return { ok: true, memo };
 }
 
 export function escalateHrIncidentToDiscipline(db, memoId, actorUserId, body = {}) {
@@ -5692,6 +6953,30 @@ export function listDraftPayrollRunIds(db) {
     .prepare(`SELECT id, period_yyyymm, status FROM hr_payroll_runs WHERE status = 'draft' ORDER BY created_at_iso DESC`)
     .all()
     .map((r) => ({ id: r.id, periodYyyymm: r.period_yyyymm, status: r.status }));
+}
+
+export { seedZarewaOrgStandard } from './hrOrgSeed.js';
+
+/**
+ * Matrix pay preview for designation/level selection (no save).
+ * @param {import('better-sqlite3').Database} db
+ */
+export function previewHrMatrixCompensation(db, { payrollGroup, salaryLevel, salaryStep } = {}) {
+  const row = lookupHrSalaryMatrixRow(
+    db,
+    payrollGroup || 'branch_ops',
+    salaryLevel,
+    salaryStep || 1
+  );
+  if (!row) return { ok: false, error: 'No salary matrix row for this group/level/step.' };
+  return {
+    ok: true,
+    matrix: row,
+    totalNgn:
+      Math.round(Number(row.baseSalaryNgn) || 0) +
+      Math.round(Number(row.housingAllowanceNgn) || 0) +
+      Math.round(Number(row.transportAllowanceNgn) || 0),
+  };
 }
 
 /**

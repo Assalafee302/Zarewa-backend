@@ -39,6 +39,11 @@ import {
   getHrMeProfile,
   updateMyHrStaffProfile,
   getHrMeSchoolProfile,
+  getHrMeScholarshipSummary,
+  getHrMeDomesticSummary,
+  exportScholarshipPaymentStatementPdf,
+  exportDomesticPaymentStatementPdf,
+  exportDomesticPaymentStatementPdfByProfileId,
   getHrStaffOne,
   getHrOrgChart,
   getPayrollRunById,
@@ -97,6 +102,7 @@ import {
   upsertHrDailyRollCall,
   upsertHrSalaryMatrixRow,
   upsertHrStaffProfile,
+  seedDemoMultiRoleProfile,
   listChairmanSchoolFees,
   upsertChairmanSchoolFee,
   deleteChairmanSchoolFee,
@@ -121,7 +127,18 @@ import {
   applyBonusToPayrollRun,
   runLeaveYearEndCarryOver,
   getHrDashboardAlerts,
+  previewHrMatrixCompensation,
 } from './hrOps.js';
+import {
+  COMPENSATION_VARIANCE_TYPES,
+  listHrSalaryVarianceReport,
+} from './hrCompensationOps.js';
+import { getZarewaOrgCatalogMeta, seedZarewaOrgStandard } from './hrOrgSeed.js';
+import {
+  backfillLegacyPayAdditions,
+  findStaffCoveringOffice,
+  recommendAppRoleKeys,
+} from './hrOrgStaffOps.js';
 import {
   deleteHrStaffDocument,
   getHrStaffDocumentRow,
@@ -141,6 +158,7 @@ import {
   listHrNotifications,
   markAllHrNotificationsRead,
   markHrNotificationRead,
+  syncScholarshipDueReminders,
 } from './hrNotifications.js';
 import {
   createHrApplicant,
@@ -204,18 +222,16 @@ import {
 } from './hrTransferRequests.js';
 import { decryptBankAccount } from './hrBankCrypto.js';
 import { getTeamRosterSummary, resolveHrScopeMode } from './hrTeamScope.js';
+import { countOpenIncidents } from './hrAccountabilityOps.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
 import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
 import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
   addHrExitPropertyItem,
   adminClearHrExit,
-  approveHrOvertimeRequest,
-  branchReviewHrOvertimeRequest,
-  cancelHrOvertimeRequest,
   closeHrAbsenceReport,
   createHrAbsenceReport,
   createHrExitClearance,
-  createHrOvertimeRequest,
   exportHrExitClearancePdf,
   financeClearHrExit,
   generateLeaveDecisionLetter,
@@ -224,14 +240,10 @@ import {
   getPromotionDueReport,
   getTemporaryEmployeeAlerts,
   hrFinalClearHrExit,
-  hrReviewHrOvertimeRequest,
   listHrAbsenceReports,
   listHrExitClearance,
-  listHrOvertimeRequests,
   patchHrExitPropertyItem,
-  rejectHrOvertimeRequest,
   reviewHrAbsenceReport,
-  submitHrOvertimeRequest,
 } from './hrPhase2Ops.js';
 import {
   createHrTrainingRecord,
@@ -271,6 +283,8 @@ import {
   deleteExecutiveSchoolFee,
   getExecutiveBenefitsDashboard,
   getExecutiveBenefitsPayrollForStaff,
+  getExecutiveDomesticDashboard,
+  getExecutiveFamilyDashboard,
   getExecutivePayment,
   listChairmanExpensesMapped,
   listDomesticStaffProfiles,
@@ -324,8 +338,8 @@ import {
   deleteCaseResponsibilityParty,
   assertCaseClosureReady,
 } from './hrDisciplineCasesOps.js';
-import { createIncident, escalateIncidentMemo, getIncident, listIncidents } from './incidentOps.js';
-import { buildIncidentAuditPack } from './incidentAuditPackOps.js';
+import { createIncident, escalateIncidentMemo, getIncident, listIncidents, listPerformanceRecognitions } from './incidentOps.js';
+import { buildIncidentAuditPack, exportIncidentAuditPackPdf } from './incidentAuditPackOps.js';
 import {
   cancelRecoverySchedule,
   createRecoverySchedulesFromCase,
@@ -349,6 +363,10 @@ import {
   userCanAccessMyProfileHr,
   hrApiPathAllowedWithoutMainWorkspace,
   hrApiPathForRequest,
+  userCanAccessScholarshipDomesticExecutive,
+  userCanViewScholarshipDomesticRegisters,
+  userCanManageScholarshipDomesticRegisters,
+  staffUserIsScholarshipOrDomestic,
   userHasHrSelfServiceOnly,
   userCanEndorseBranchHr,
   userCanGmApproveHr,
@@ -462,14 +480,22 @@ export function registerHrApi(app, db) {
     if (userCanAccessMainHrWorkspace(req.user)) return next();
     const team = userCanAccessTeamHr(req.user);
     const self = userCanAccessMyProfileHr(req.user);
-    if (!team && !self) {
+    const execScholarship =
+      userCanAccessScholarshipDomesticExecutive(req.user) && !userCanAccessMainHrWorkspace(req.user);
+    if (!team && !self && !execScholarship) {
       return res.status(403).json({
         ok: false,
         code: 'HR_WORKSPACE_DENIED',
         error: 'Access restricted. Use My Profile for self-service HR.',
       });
     }
-    if (hrApiPathAllowedWithoutMainWorkspace(apiPath, { teamUser: team, selfUser: self && !team })) {
+    if (
+      hrApiPathAllowedWithoutMainWorkspace(apiPath, {
+        teamUser: team,
+        selfUser: self && !team,
+        executiveScholarshipDomesticUser: execScholarship,
+      })
+    ) {
       return next();
     }
     return res.status(403).json({
@@ -489,12 +515,43 @@ export function registerHrApi(app, db) {
       return false;
     }
     if (uid === String(req.user?.id || '').trim()) return true;
-    const gate = assertStaffUserIdInHrScope(db, hrListScope(req), uid);
+    const scope = hrListScope(req);
+    if (
+      userCanAccessScholarshipDomesticExecutive(req.user) &&
+      !userCanAccessMainHrWorkspace(req.user) &&
+      staffUserIsScholarshipOrDomestic(db, uid)
+    ) {
+      scope.viewAll = true;
+    }
+    const gate = assertStaffUserIdInHrScope(db, scope, uid);
     if (!gate.ok) {
       res.status(gate.status || 403).json(gate);
       return false;
     }
+    if (
+      userCanAccessScholarshipDomesticExecutive(req.user) &&
+      !userCanAccessMainHrWorkspace(req.user) &&
+      !staffUserIsScholarshipOrDomestic(db, uid)
+    ) {
+      res.status(403).json({
+        ok: false,
+        code: 'FORBIDDEN',
+        error: 'Access restricted to scholarship beneficiaries and domestic staff.',
+      });
+      return false;
+    }
     return true;
+  }
+
+  /** @returns {boolean} */
+  function canViewStaffRecord(req, userId) {
+    const uid = String(userId || '').trim();
+    if (!uid) return false;
+    if (uid === String(req.user?.id || '').trim()) return true;
+    if (hrUserHas(req.user, 'hr.directory.view') || hrUserHas(req.user, 'hr.team.view')) return true;
+    return (
+      userCanViewScholarshipDomesticRegisters(req.user) && staffUserIsScholarshipOrDomestic(db, uid)
+    );
   }
 
   app.get('/api/hr/health', (req, res) => {
@@ -679,6 +736,85 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get('/api/hr/me/scholarship-summary', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      const staffFull = getHrStaffOne(db, req.user?.id);
+      const documents = staffFull?.documents || [];
+      const documentSummary = {
+        total: documents.length,
+        verified: documents.filter((d) => d.verificationStatus === 'verified').length,
+        pending: documents.filter((d) => (d.verificationStatus || 'pending') === 'pending').length,
+        rejected: documents.filter((d) => d.verificationStatus === 'rejected').length,
+      };
+      const r = getHrMeScholarshipSummary(db, req.user?.id, { documentSummary });
+      if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
+      syncScholarshipDueReminders(db, req.user?.id, r.reminders || []);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load scholarship summary.' });
+    }
+  });
+
+  app.get('/api/hr/me/scholarship-statement.pdf', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      const r = exportScholarshipPaymentStatementPdf(db, req.user?.id, {
+        academicSession: req.query?.academicSession || req.query?.session,
+      });
+      if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'scholarship-statement.pdf'}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
+    }
+  });
+
+  app.get('/api/hr/me/domestic-summary', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      const staffFull = getHrStaffOne(db, req.user?.id);
+      const documents = staffFull?.documents || [];
+      const documentSummary = {
+        total: documents.length,
+        verified: documents.filter((d) => d.verificationStatus === 'verified').length,
+        pending: documents.filter((d) => (d.verificationStatus || 'pending') === 'pending').length,
+        rejected: documents.filter((d) => d.verificationStatus === 'rejected').length,
+      };
+      const r = getHrMeDomesticSummary(db, req.user?.id, { documentSummary });
+      if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load household staff summary.' });
+    }
+  });
+
+  app.get('/api/hr/me/domestic-statement.pdf', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      const r = exportDomesticPaymentStatementPdf(db, req.user?.id);
+      if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'household-staff-statement.pdf'}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
+    }
+  });
+
   app.get('/api/hr/me', (req, res) => {
     try {
       if (!userCanAccessMyProfileHr(req.user)) {
@@ -850,6 +986,8 @@ export function registerHrApi(app, db) {
         (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
       ) {
         scope.viewAll = true;
+      } else if (userCanAccessScholarshipDomesticExecutive(req.user)) {
+        scope.viewAll = true;
       }
       if (String(req.query?.includeSalary || '') === '1' && !userCanViewOrgSensitiveHr(req.user)) {
         return res.status(403).json({ ok: false, error: 'Sensitive compensation data is restricted.' });
@@ -881,7 +1019,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       const userId = String(req.params.userId || '').trim();
       const isSelf = userId === req.user?.id;
-      if (!isSelf && !hrUserHas(req.user, 'hr.directory.view') && !hrUserHas(req.user, 'hr.team.view')) {
+      if (!canViewStaffRecord(req, userId)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!staffScopeGate(req, res, userId)) return;
@@ -1315,6 +1453,32 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not build audit pack.' });
+    }
+  });
+
+  app.get('/api/incidents/:id/audit-full/pdf', requireHrAny('hr.discipline.manage', 'hr.executive.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = exportIncidentAuditPackPdf(db, req.params.id);
+      if (!r.ok) return res.status(404).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export investigation PDF.' });
+    }
+  });
+
+  app.get('/api/hr/performance-recognitions', requireHrAny('hr.discipline.manage', 'hr.staff.manage', 'hr.team.view', 'hr.incidents.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const r = listPerformanceRecognitions(db, scope, { userId: req.query?.userId });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list performance recognitions.' });
     }
   });
 
@@ -1823,7 +1987,7 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.get('/api/hr/attendance/daily-roll', requireHrAny('hr.attendance.mark', 'hr.daily_roll.mark', 'hr.attendance.manage'), (req, res) => {
+  app.get('/api/hr/attendance/daily-roll', requireHrAny('hr.attendance.mark', 'hr.daily_roll.mark', 'hr.attendance.manage', 'hr.discipline.manage', 'hr.team.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const branchId = String(req.query?.branchId || req.workspaceBranchId || '').trim();
@@ -2180,6 +2344,128 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not save salary matrix row.' });
+    }
+  });
+
+  app.get('/api/hr/compensation/variance-types', requireHrAny('hr.staff.manage', 'hr.payroll.prepare', 'hr.settings.manage'), (_req, res) => {
+    return res.json({ ok: true, types: COMPENSATION_VARIANCE_TYPES });
+  });
+
+  app.get('/api/hr/compensation/matrix-lookup', requireHrAny('hr.staff.manage', 'hr.payroll.prepare', 'hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = previewHrMatrixCompensation(db, {
+        payrollGroup: req.query?.payrollGroup,
+        salaryLevel: req.query?.salaryLevel,
+        salaryStep: req.query?.salaryStep,
+      });
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not look up salary matrix.' });
+    }
+  });
+
+  app.get('/api/hr/reports/salary-variance', requireHrAny('hr.staff.manage', 'hr.payroll.view_sensitive', 'hr.settings.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      return res.json({ ok: true, rows: listHrSalaryVarianceReport(db, scope) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load salary variance report.' });
+    }
+  });
+
+  app.post('/api/hr/org/seed-standard', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = seedZarewaOrgStandard(db);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ...r, catalog: getZarewaOrgCatalogMeta() });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not seed standard org catalog.' });
+    }
+  });
+
+  app.post('/api/hr/org/seed-demo-profile', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = seedDemoMultiRoleProfile(db, req.user?.id, {
+        userId: req.body?.userId,
+        fallbackUserId: req.user?.id,
+        applyRecommendedRoleKey: req.body?.applyRecommendedRoleKey !== false,
+        applyMultiRolePermissions: req.body?.applyMultiRolePermissions !== false,
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not seed demo multi-role profile.' });
+    }
+  });
+
+  app.get('/api/hr/org/catalog-meta', requireHrAny('hr.directory.view', 'hr.settings.manage', 'hr.staff.manage'), (_req, res) => {
+    return res.json({ ok: true, catalog: getZarewaOrgCatalogMeta() });
+  });
+
+  app.get('/api/hr/org/office-coverage', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const officeKey = String(req.query.officeKey || '').trim();
+      if (!officeKey) return res.status(400).json({ ok: false, error: 'officeKey is required.' });
+      const branchId = String(req.query.branchId || '').trim() || undefined;
+      return res.json({ ok: true, officeKey, branchId: branchId || null, matches: findStaffCoveringOffice(db, { officeKey, branchId }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not resolve office coverage.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/role-hints', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const profile = db
+        .prepare(
+          `SELECT p.designation_id AS designationId, p.profile_extra_json AS profileExtraJson, u.role_key AS roleKey
+           FROM hr_staff_profiles p JOIN app_users u ON u.id = p.user_id WHERE p.user_id = ?`
+        )
+        .get(userId);
+      if (!profile) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+      const profileExtra = (() => {
+        try {
+          return JSON.parse(String(profile.profileExtraJson || '{}'));
+        } catch {
+          return {};
+        }
+      })();
+      return res.json({
+        ok: true,
+        hints: recommendAppRoleKeys({
+          designationId: profile.designationId,
+          secondaryRoles: profileExtra?.employmentMeta?.secondaryRoles,
+          currentRoleKey: profile.roleKey,
+        }),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load role hints.' });
+    }
+  });
+
+  app.post('/api/hr/compensation/backfill-legacy-pay', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const dryRun = req.body?.execute !== true && req.query?.execute !== '1';
+      const autoDocument = req.body?.autoDocument === true || req.query?.autoDocument === '1';
+      const r = backfillLegacyPayAdditions(db, hrListScope(req), { dryRun, autoDocument });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Legacy pay backfill failed.' });
     }
   });
 
@@ -3019,11 +3305,46 @@ export function registerHrApi(app, db) {
       const staff = listHrStaff(db, { ...scope, scopeMode }, { includeInactive: false });
       const ctx = hrRedactionContextFromReq(req);
       const teamUserIds = new Set(staff.map((s) => s.userId));
-      let pendingLeave = 0;
-      try {
-        pendingLeave = listHrRequests(db, scope, { kind: 'leave', status: 'submitted' }).filter((r) =>
+      const branchId = scope?.viewAll ? null : scope?.branchId || DEFAULT_BRANCH_ID;
+      const countTeamPending = (kind) =>
+        listHrRequests(db, scope, { kind, status: 'branch_manager_review' }).filter((r) =>
           teamUserIds.has(r.userId)
         ).length;
+      let pendingLeave = 0;
+      let pendingLoan = 0;
+      let pendingTransfer = 0;
+      let openIncidents = 0;
+      let onProbation = 0;
+      let documentsExpiring = 0;
+      try {
+        pendingLeave = countTeamPending('leave');
+        pendingLoan = countTeamPending('loan');
+        pendingTransfer = listHrTransferRequests(db, scope, { pendingOnly: true }).filter((t) =>
+          teamUserIds.has(t.userId)
+        ).length;
+        openIncidents = countOpenIncidents(db, branchId);
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const in30 = new Date();
+        in30.setDate(in30.getDate() + 30);
+        const in30Iso = in30.toISOString().slice(0, 10);
+        const in60 = new Date();
+        in60.setDate(in60.getDate() + 60);
+        const in60Iso = in60.toISOString().slice(0, 10);
+        for (const uid of teamUserIds) {
+          const prob = db.prepare(`SELECT probation_end_iso FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+          const end = prob?.probation_end_iso;
+          if (end && end >= todayIso && end <= in30Iso) onProbation += 1;
+        }
+        if (teamUserIds.size > 0) {
+          const placeholders = [...teamUserIds].map(() => '?').join(',');
+          documentsExpiring =
+            db
+              .prepare(
+                `SELECT COUNT(*) AS c FROM hr_staff_documents
+                 WHERE user_id IN (${placeholders}) AND expiry_date_iso BETWEEN ? AND ?`
+              )
+              .get(...teamUserIds, todayIso, in60Iso)?.c || 0;
+        }
       } catch {
         pendingLeave = 0;
       }
@@ -3033,7 +3354,11 @@ export function registerHrApi(app, db) {
         count: staff.length,
         roster: redactStaffList(staff.slice(0, 200), ctx),
         pendingLeave,
-        pendingOvertime: 0,
+        pendingLoan,
+        pendingTransfer,
+        openIncidents,
+        onProbation,
+        documentsExpiring,
       });
     } catch (e) {
       console.error(e);
@@ -3465,11 +3790,16 @@ export function registerHrApi(app, db) {
         voluntaryTerminationRisk: absence.voluntaryTerminationRisk || [],
         actionAlerts,
         absenceAwaitingReview: actionAlerts.absenceAwaitingReview,
-        overtimeAwaitingApproval: actionAlerts.overtimeAwaitingApproval,
         exitClearancePending: actionAlerts.exitClearancePending,
         promotionDue: actionAlerts.promotionDue,
         missingPolicyAck: actionAlerts.missingPolicyAck,
         expiredDocuments: actionAlerts.expiredDocuments,
+        actingRoleAlerts: actionAlerts.actingRoleAlerts,
+        actingRolesExpiring: actionAlerts.actingRolesExpiring,
+        actingRolesOverdue: actionAlerts.actingRolesOverdue,
+        actingRolesMissingEnd: actionAlerts.actingRolesMissingEnd,
+        compensationReviewDue: actionAlerts.compensationReviewDue,
+        undocumentedCompensationVariance: actionAlerts.undocumentedCompensationVariance,
       });
     } catch (e) {
       console.error(e);
@@ -3543,102 +3873,6 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not close absence report.' });
-    }
-  });
-
-  // ── Phase 2: Overtime ────────────────────────────
-  app.get('/api/hr/overtime-requests', requireHrAny('hr.overtime.view', 'hr.overtime.request', 'hr.overtime.review', 'hr.team.view'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const filters = { userId: req.query.userId, status: req.query.status, fromIso: req.query.fromIso, toIso: req.query.toIso };
-      return res.json({ ok: true, requests: listHrOvertimeRequests(db, hrListScope(req), filters) });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load overtime requests.' });
-    }
-  });
-
-  app.post('/api/hr/overtime-requests', requireHrAny('hr.overtime.request', 'hr.staff.manage'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = createHrOvertimeRequest(db, req.user, req.body || {}, hrListScope(req));
-      if (!r.ok) return res.status(400).json(r);
-      return res.status(201).json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/submit', requireHrAny('hr.overtime.request'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = submitHrOvertimeRequest(db, req.user, req.params.id);
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/branch-review', requireHrAny('hr.overtime.review', 'hr.branch.endorse_staff'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = branchReviewHrOvertimeRequest(db, req.user, req.params.id, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not review overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/hr-review', requireHrAny('hr.overtime.review', 'hr.staff.manage'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = hrReviewHrOvertimeRequest(db, req.user, req.params.id, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not HR-review overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/approve', requireHrAny('hr.overtime.approve', 'hr.staff.manage'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = approveHrOvertimeRequest(db, req.user, req.params.id, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/reject', requireHrAny('hr.overtime.approve', 'hr.overtime.review'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = rejectHrOvertimeRequest(db, req.user, req.params.id, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not reject overtime request.' });
-    }
-  });
-
-  app.patch('/api/hr/overtime-requests/:id/cancel', requireHrAny('hr.overtime.request', 'hr.overtime.review'), (req, res) => {
-    try {
-      if (!hrReady(res, db)) return;
-      const r = cancelHrOvertimeRequest(db, req.user, req.params.id);
-      if (!r.ok) return res.status(400).json(r);
-      return res.json(r);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not cancel overtime request.' });
     }
   });
 
@@ -4172,7 +4406,7 @@ export function registerHrApi(app, db) {
         kind: 'discipline_response',
         title: 'Employee discipline response submitted',
         body: `${c.caseNumber || c.id}: response received.`,
-        routePath: `/hr/discipline-exit?tab=cases&caseId=${encodeURIComponent(c.id)}`,
+        routePath: `/hr/discipline-exit?tab=accountability&caseId=${encodeURIComponent(c.id)}`,
         entityKind: 'hr_discipline_case',
         entityId: c.id,
       });
@@ -4195,7 +4429,7 @@ export function registerHrApi(app, db) {
         kind: 'discipline_appeal',
         title: 'Discipline appeal submitted',
         body: `${c.caseNumber || c.id}: employee filed an appeal.`,
-        routePath: `/hr/discipline-exit?tab=cases&caseId=${encodeURIComponent(c.id)}`,
+        routePath: `/hr/discipline-exit?tab=accountability&caseId=${encodeURIComponent(c.id)}`,
         entityKind: 'hr_discipline_case',
         entityId: c.id,
       });
@@ -4214,6 +4448,28 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
+    }
+  });
+
+  app.get('/api/hr/executive/family-dashboard', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const linkedExecutive = String(req.query?.linkedExecutive || '').trim() || undefined;
+      return res.json({ ok: true, ...getExecutiveFamilyDashboard(db, { linkedExecutive }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load family dashboard.' });
+    }
+  });
+
+  app.get('/api/hr/executive/domestic-dashboard', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const assignedExecutive = String(req.query?.assignedExecutive || req.query?.linkedExecutive || '').trim() || undefined;
+      return res.json({ ok: true, ...getExecutiveDomesticDashboard(db, { assignedExecutive }) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load household staff dashboard.' });
     }
   });
 
@@ -4372,6 +4628,20 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update domestic staff.' });
+    }
+  });
+
+  app.get('/api/hr/executive/domestic-staff/:id/statement.pdf', requireExecutiveBenefitsView, (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = exportDomesticPaymentStatementPdfByProfileId(db, req.params.id);
+      if (!r.ok) return res.status(r.error?.includes('not found') ? 404 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'household-staff-statement.pdf'}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
     }
   });
 

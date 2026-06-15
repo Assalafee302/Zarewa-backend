@@ -41,24 +41,6 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
-function mapApplicantRow(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    jobId: row.job_id || row.jobId,
-    fullName: row.full_name || row.fullName,
-    email: row.email,
-    phone: row.phone,
-    status: row.status,
-    notes: row.notes,
-    appliedAtIso: row.applied_at_iso || row.appliedAtIso,
-    updatedAtIso: row.updated_at_iso || row.updatedAtIso,
-    hiredUserId: row.hired_user_id || row.hiredUserId,
-    interviewScores: safeJsonParse(row.interview_scores_json, null),
-    offerLetterText: row.offer_letter_text || row.offerLetterText || null,
-  };
-}
-
 export function listHrJobPostings(db, opts = {}) {
   if (!hrRecruitingTablesReady(db)) return [];
   const status = String(opts.status || '').trim();
@@ -246,16 +228,41 @@ export function listPublicOpenJobs(db) {
   }));
 }
 
+const PUBLIC_APPLY_MAX_NOTES_LEN = 2000;
+const PUBLIC_APPLY_MAX_EMAIL_LEN = 254;
+const PUBLIC_APPLY_MAX_PHONE_LEN = 32;
+
+function normalizePublicApplicantEmail(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (s.length > PUBLIC_APPLY_MAX_EMAIL_LEN) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return null;
+  return s.toLowerCase();
+}
+
 export function publicApplyToJob(db, jobId, body = {}) {
   if (!hrRecruitingTablesReady(db)) return { ok: false, error: 'Recruiting not available.' };
   const job = getHrJobPosting(db, jobId);
   if (!job || job.status !== 'open') return { ok: false, error: 'This position is not open for applications.' };
+  const emailRaw = body.email;
+  if (emailRaw != null && String(emailRaw).trim()) {
+    const email = normalizePublicApplicantEmail(emailRaw);
+    if (!email) return { ok: false, error: 'Enter a valid email address.' };
+  }
+  const phone = String(body.phone ?? '').trim();
+  if (phone.length > PUBLIC_APPLY_MAX_PHONE_LEN) {
+    return { ok: false, error: 'Phone number is too long.' };
+  }
+  const notes = String(body.coverNote ?? body.notes ?? '').trim();
+  if (notes.length > PUBLIC_APPLY_MAX_NOTES_LEN) {
+    return { ok: false, error: `Cover note must be ${PUBLIC_APPLY_MAX_NOTES_LEN} characters or fewer.` };
+  }
   return createHrApplicant(db, null, {
     jobId,
     fullName: body.fullName,
     email: body.email,
     phone: body.phone,
-    notes: body.coverNote || body.notes,
+    notes,
     status: 'applied',
   });
 }
@@ -300,6 +307,11 @@ export function generateOfferLetter(db, applicantId, actor = {}, body = {}) {
   return { ok: true, offerLetterText: content };
 }
 
+import { allowRateLimit, clientIp } from './rateLimit.js';
+
+const careersApplyBuckets = new Map();
+const careersListBuckets = new Map();
+
 /**
  * @param {import('express').Express} app
  * @param {import('better-sqlite3').Database} db
@@ -307,6 +319,10 @@ export function generateOfferLetter(db, applicantId, actor = {}, body = {}) {
 export function registerPublicCareersApi(app, db) {
   app.get('/api/public/careers/jobs', (req, res) => {
     try {
+      const ip = clientIp(req);
+      if (!allowRateLimit(careersListBuckets, ip, 120, 60 * 60 * 1000)) {
+        return res.status(429).json({ ok: false, error: 'Too many requests. Try again later.' });
+      }
       return res.json({ ok: true, jobs: listPublicOpenJobs(db) });
     } catch (e) {
       console.error(e);
@@ -316,6 +332,11 @@ export function registerPublicCareersApi(app, db) {
 
   app.post('/api/public/careers/jobs/:jobId/apply', (req, res) => {
     try {
+      const ip = clientIp(req);
+      const jobKey = String(req.params.jobId || '').trim();
+      if (!allowRateLimit(careersApplyBuckets, `${ip}:${jobKey}`, 10, 60 * 60 * 1000)) {
+        return res.status(429).json({ ok: false, error: 'Too many applications. Try again in an hour.' });
+      }
       const r = publicApplyToJob(db, req.params.jobId, req.body || {});
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);

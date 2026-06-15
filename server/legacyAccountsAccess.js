@@ -76,7 +76,6 @@ export function getAllowedLegacyAccountTabs(user) {
  */
 export function getDefaultLegacyAccountTab(user) {
   const allowed = getAllowedLegacyAccountTabs(user);
-  const rk = String(user?.roleKey || user?.role_key || '').trim().toLowerCase();
   if (allowed.includes('treasury')) return 'treasury';
   return allowed[0] || 'treasury';
 }

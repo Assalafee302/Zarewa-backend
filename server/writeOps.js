@@ -22,7 +22,6 @@ import {
   isGlobalCoilCatalogProductId,
 } from './productBranchInventory.js';
 import {
-  inferLineTypeFromProduct,
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
 import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVisibility.js';
@@ -59,7 +58,6 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
 import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
-import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
@@ -5551,7 +5549,7 @@ function parseQuotationLinesJsonForStone(db, quotationRef) {
 
 /**
  * Planned metres/sheets for the production job: for stone_meter quotations, only roofing (`Roof`) lines
- * count toward the coil run plan. Stone flatsheet (`Cladding`) and optional coil flat (`Flatsheet`) remain on the cutting list for print and allocation UX.
+ * count toward the stone-coated metre run plan. Cladding and optional flat (`Flatsheet`) remain on the cutting list for print and coil-style UX but do not replace stone flatsheet m² on the quotation.
  */
 function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
   const list = Array.isArray(lines) ? lines : [];

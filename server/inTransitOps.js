@@ -303,6 +303,7 @@ export function syncInTransitLoadFromTransportPost(db, poId, actor = null) {
 }
 
 export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor = null) {
+  void receivedEntries;
   if (!inTransitTablesReady(db)) return { ok: true, load: null };
   const load = findLoadByPo(db, poId);
   if (!load) return { ok: true, load: null };

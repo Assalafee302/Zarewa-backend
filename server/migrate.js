@@ -5,9 +5,9 @@ import { migrateGlReceiptPolicyMeta } from './receiptPolicyMetaOps.js';
 import { migrateCreditExceptions } from './creditExceptionOps.js';
 import { migrateTimestampStyleDocumentIds } from './migrateTimestampDocIds.js';
 import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../shared/lib/poLineTypes.js';
-import { deriveProcurementKindFromProductIds } from './procurementPoKind.js';
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
+import { migrateMergeDuplicateHrStaffOnBoot } from './hrStaffDuplicateCleanupMigrate.js';
 import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 import { withMigrationLock } from './migrationLock.js';
@@ -989,6 +989,7 @@ function runMigrationsUnlocked(db) {
   migrateProductsBranchCompositeInventory(db);
   migrateMaterialPricingWorkbook(db);
   migratePricingPolicy2026(db);
+  migrateLedgerPerformanceIndexes(db);
   migrateUserProfileAndPasswordReset(db);
   migrateLoginSecurityPhase12(db);
   migrateOrganisationRoles2026(db);
@@ -1004,6 +1005,7 @@ function runMigrationsUnlocked(db) {
   migrateCoilAluzincColours2026(db);
   migrateMergeDuplicateSetupColours(db);
   migrateMergeDuplicateSuppliersOnBoot(db);
+  migrateMergeDuplicateHrStaffOnBoot(db);
   migrateStoneCoatedAndPricingArch(db);
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
@@ -1035,6 +1037,7 @@ function runMigrationsUnlocked(db) {
     });
     throw e;
   }
+  migrateHrAccountability2026(db);
 }
 
 /** Read-only integration API keys (Bearer auth for automation). */
@@ -1960,10 +1963,13 @@ function migrateQuotationLineCatalog2026(db) {
     ['SQI-026', 'product', 'Fascia', 'm', 10, null],
     ['SQI-027', 'product', 'Cladding', 'm', 11, null],
     ['SQI-028', 'product', 'Flat sheet', 'm', 12, null],
-    ['SQI-029', 'product', 'Offcut', 'm', 13, null],
-    ['SQI-030', 'product', 'Wall eaves', 'm', 14, null],
-    ['SQI-031', 'product', 'Crimp', 'm', 15, null],
-    ['SQI-032', 'product', 'Coil', 'kg', 16, null],
+    ['SQI-037', 'product', 'Stone flatsheet 1.4', 'm²', 13, null],
+    ['SQI-038', 'product', 'Stone flatsheet 1.5', 'm²', 14, null],
+    ['SQI-039', 'product', 'Stone flatsheet 2', 'm²', 15, null],
+    ['SQI-029', 'product', 'Offcut', 'm', 16, null],
+    ['SQI-030', 'product', 'Wall eaves', 'm', 17, null],
+    ['SQI-031', 'product', 'Crimp', 'm', 18, null],
+    ['SQI-032', 'product', 'Coil', 'kg', 19, null],
     ['SQI-005', 'accessory', 'Tapping Screw', 'pcs', 101, 'ACC-TAPPING-SCREW-PCS'],
     ['SQI-006', 'accessory', 'Silicone tube', 'tube', 102, 'ACC-SILICON-TUBE'],
     ['SQI-007', 'accessory', 'Rivet pins', 'pack', 103, 'ACC-RIVET-PACK'],
@@ -5085,5 +5091,187 @@ function migratePricingPolicy2026(db) {
     }
   } catch {
     /* ignore */
+  }
+}
+
+/** HR accountability — incident registry, responsibility, recovery, asset linkage. */
+function migrateHrAccountability2026(db) {
+  const cols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS incident_registry (
+      id TEXT PRIMARY KEY,
+      incident_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      incident_type TEXT,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      status TEXT NOT NULL DEFAULT 'open',
+      branch_id TEXT NOT NULL,
+      reporter_user_id TEXT,
+      subject_user_id TEXT,
+      linked_entities_json TEXT,
+      summary TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      UNIQUE(incident_kind, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_incident_registry_branch ON incident_registry(branch_id, updated_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_incident_registry_status ON incident_registry(status, branch_id);
+
+    CREATE TABLE IF NOT EXISTS incident_responsibility_map (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'other',
+      responsibility_weight REAL NOT NULL DEFAULT 0,
+      contribution_type TEXT NOT NULL DEFAULT 'negligence',
+      note TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (case_id) REFERENCES hr_discipline_cases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_incident_resp_case ON incident_responsibility_map(case_id);
+    CREATE INDEX IF NOT EXISTS idx_incident_resp_user ON incident_responsibility_map(user_id);
+
+    CREATE TABLE IF NOT EXISTS hr_incident_recovery_schedules (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      registry_id TEXT,
+      total_amount_ngn INTEGER NOT NULL DEFAULT 0,
+      installment_amount_ngn INTEGER NOT NULL DEFAULT 0,
+      duration_months INTEGER NOT NULL DEFAULT 12,
+      principal_outstanding_ngn INTEGER NOT NULL DEFAULT 0,
+      months_deducted INTEGER NOT NULL DEFAULT 0,
+      deductions_active INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      activated_at_iso TEXT,
+      closed_at_iso TEXT,
+      cancel_reason TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      approved_by_user_id TEXT,
+      FOREIGN KEY (case_id) REFERENCES hr_discipline_cases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_recovery_case ON hr_incident_recovery_schedules(case_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hr_recovery_user ON hr_incident_recovery_schedules(user_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_payroll_line_recoveries (
+      run_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      schedule_id TEXT NOT NULL,
+      period_yyyymm TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      case_number TEXT,
+      computed_at_iso TEXT,
+      PRIMARY KEY (run_id, schedule_id),
+      FOREIGN KEY (run_id) REFERENCES hr_payroll_runs(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS operational_incidents (
+      id TEXT PRIMARY KEY,
+      registry_id TEXT,
+      branch_id TEXT NOT NULL,
+      incident_type TEXT NOT NULL,
+      asset_id TEXT,
+      machine_id TEXT,
+      loss_value_ngn INTEGER,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      severity TEXT NOT NULL DEFAULT 'medium',
+      subject_user_id TEXT,
+      reported_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_operational_incidents_branch ON operational_incidents(branch_id, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS asset_custody_events (
+      id TEXT PRIMARY KEY,
+      asset_id TEXT,
+      machine_id TEXT,
+      branch_id TEXT NOT NULL,
+      location_label TEXT,
+      custodian_user_id TEXT,
+      event_type TEXT NOT NULL,
+      shift_day_iso TEXT,
+      daily_roll_id TEXT,
+      note TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_asset_custody_asset ON asset_custody_events(asset_id, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS gate_pass_events (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      pass_date_iso TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      authorized_by_user_id TEXT,
+      vehicle_ref TEXT,
+      personnel_summary TEXT,
+      asset_ids_json TEXT,
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_gate_pass_branch_date ON gate_pass_events(branch_id, pass_date_iso DESC);
+  `);
+
+  const cases = cols('hr_discipline_cases');
+  if (cases.size) {
+    const addCol = (name, ddl) => {
+      if (!cases.has(name)) db.exec(`ALTER TABLE hr_discipline_cases ADD COLUMN ${ddl}`);
+    };
+    addCol('registry_id', 'registry_id TEXT');
+    addCol('asset_id', 'asset_id TEXT');
+    addCol('machine_id', 'machine_id TEXT');
+    addCol('loss_value_ngn', 'loss_value_ngn INTEGER');
+    addCol('decision_type', 'decision_type TEXT');
+  }
+
+  const memos = cols('hr_incident_memos');
+  if (memos.size) {
+    if (!memos.has('discipline_case_id')) {
+      db.exec(`ALTER TABLE hr_incident_memos ADD COLUMN discipline_case_id TEXT`);
+    }
+    if (!memos.has('registry_id')) {
+      db.exec(`ALTER TABLE hr_incident_memos ADD COLUMN registry_id TEXT`);
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_performance_recognitions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      metric_json TEXT,
+      summary TEXT NOT NULL,
+      bonus_eligible INTEGER NOT NULL DEFAULT 1,
+      registry_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_performance_user ON hr_performance_recognitions(user_id, created_at_iso DESC);
+  `);
+}
+
+/** Ledger / receipt duplicate-check hot paths (bootstrap, finance desk). */
+function migrateLedgerPerformanceIndexes(db) {
+  try {
+    if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_entries'`).get()) return;
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_ledger_branch_at ON ledger_entries(branch_id, at_iso DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_ledger_customer_quotation ON ledger_entries(customer_id, quotation_ref, type, at_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_quotations_branch_date ON quotations(branch_id, date_iso DESC, id DESC);
+    `);
+  } catch {
+    /* ignore — index may already exist under another name on some hosts */
   }
 }

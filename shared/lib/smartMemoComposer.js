@@ -380,9 +380,6 @@ function buildZareHints(memoType, meta, checklist) {
   return hints;
 }
 
-/** @deprecated Use buildZareHints */
-const buildRunaHints = buildZareHints;
-
 /**
  * Rule-based memo improvement when AI is unavailable.
  * @param {string} subject

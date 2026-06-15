@@ -90,7 +90,6 @@ export function getPromotionReadiness(db, userId) {
     )
     .get(uid);
   if (!profile) return { ok: false, error: 'Staff not found.' };
-  const extra = safeJsonParse(profile.profile_extra_json, {});
   const joined = Date.parse(String(profile.date_joined_iso || '').slice(0, 10));
   const years = Number.isFinite(joined) ? (Date.now() - joined) / (365.25 * 24 * 60 * 60 * 1000) : 0;
   const skills = hrGovernanceTablesReady(db) ? listStaffSkills(db, uid) : [];
@@ -167,6 +166,14 @@ function mapGrievance(row) {
   };
 }
 
+const GRIEVANCE_STATUSES = new Set(['new', 'investigating', 'resolved', 'closed']);
+const GRIEVANCE_TRANSITIONS = {
+  new: new Set(['investigating', 'closed']),
+  investigating: new Set(['resolved', 'closed']),
+  resolved: new Set(['closed']),
+  closed: new Set(),
+};
+
 export function createGrievance(db, actor, body) {
   if (!hrTableExists(db, 'hr_grievances')) return { ok: false, error: 'Grievance module not initialised.' };
   const summary = String(body?.summary || '').trim();
@@ -203,7 +210,17 @@ export function patchGrievance(db, grievanceId, body, actor) {
   if (!hrTableExists(db, 'hr_grievances')) return { ok: false, error: 'Grievance module not initialised.' };
   const row = db.prepare(`SELECT * FROM hr_grievances WHERE id = ?`).get(grievanceId);
   if (!row) return { ok: false, error: 'Grievance not found.' };
-  const status = String(body?.status || row.status).trim();
+  const current = String(row.status || 'new').trim();
+  const status = String(body?.status || current).trim();
+  if (!GRIEVANCE_STATUSES.has(status)) {
+    return { ok: false, error: `Invalid grievance status: ${status}.` };
+  }
+  if (status !== current) {
+    const allowed = GRIEVANCE_TRANSITIONS[current];
+    if (!allowed?.has(status)) {
+      return { ok: false, error: `Cannot transition grievance from "${current}" to "${status}".` };
+    }
+  }
   const now = nowIso();
   db.prepare(
     `UPDATE hr_grievances SET status = ?, assigned_to_user_id = COALESCE(?, assigned_to_user_id),

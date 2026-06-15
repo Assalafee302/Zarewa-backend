@@ -3,7 +3,6 @@
  */
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import {
-  branchWhere,
   listAccountsPayable,
   listPaymentRequests,
   listRefunds,
@@ -48,7 +47,7 @@ function poCommitmentGapNgn(purchaseOrders) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchScope
  */
-function sumPayrollLiabilityNgn(db, branchScope) {
+function sumPayrollLiabilityNgn(db) {
   try {
     if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_payroll_runs'`).get()) {
       return { amountNgn: null, available: false, note: 'HR payroll tables not available' };
@@ -184,9 +183,8 @@ export function buildWorkingCapitalSnapshot(db, branchScope, ctx = {}) {
     refundsAmountAvailable = false;
   }
 
-  const payrollLiab = sumPayrollLiabilityNgn(db, scope);
+  const payrollLiab = sumPayrollLiabilityNgn(db);
 
-  const poGap = poCommitmentGapNgn(ctx.purchaseOrders || []);
   const knownOutflows = Math.round(Number(ctx.pendingOutflowsNgn) || 0);
 
   /** @type {object[]} */

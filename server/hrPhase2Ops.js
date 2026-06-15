@@ -4,6 +4,7 @@
  */
 
 import crypto from 'crypto';
+import { userHasPermission } from './auth.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { WORKING_HOURS_CONFIG } from './hrBusinessRules.js';
 import { buildHrLetterContent } from './hrLetterTemplates.js';
@@ -15,6 +16,7 @@ import {
   nowIso,
 } from './hrOps.js';
 import { patchHrStaffSeparation } from './hrStaffLifecycle.js';
+import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
 
 function newId(prefix) {
   return `${prefix}-${crypto.randomBytes(10).toString('hex')}`;
@@ -412,9 +414,25 @@ export function listHrOvertimeRequests(db, scope, filters = {}) {
   return db.prepare(sql).all(...params).map((r) => mapOvertimeRow(r, db));
 }
 
-export function createHrOvertimeRequest(db, actor, body) {
+export function createHrOvertimeRequest(db, actor, body, scope = null) {
   if (!hrPhase2TablesReady(db)) return { ok: false, error: 'Overtime module not initialised.' };
-  const userId = String(body?.userId || actor?.id || '').trim();
+  const actorId = String(actor?.id || '').trim();
+  const requestedUserId = String(body?.userId || '').trim();
+  let userId = requestedUserId || actorId;
+  if (!userId) return { ok: false, error: 'userId is required.' };
+  if (requestedUserId && requestedUserId !== actorId) {
+    const canProxy =
+      userHasPermission(actor, '*') ||
+      userHasPermission(actor, 'hr.staff.manage') ||
+      userHasPermission(actor, 'hr.overtime.review');
+    if (!canProxy) {
+      return { ok: false, error: 'You can only create overtime requests for yourself.', code: 'FORBIDDEN' };
+    }
+    if (scope) {
+      const gate = assertStaffUserIdInHrScope(db, scope, userId);
+      if (!gate.ok) return gate;
+    }
+  }
   const workDateIso = String(body?.workDateIso || '').slice(0, 10);
   const startTime = String(body?.startTime || '').trim();
   const endTime = String(body?.endTime || '').trim();
@@ -466,9 +484,21 @@ export function createHrOvertimeRequest(db, actor, body) {
   };
 }
 
-function patchOvertimeStatus(db, actor, requestId, patch) {
+function patchOvertimeStatus(db, actor, requestId, patch, { requiredStatus = null, forbidSelfApproval = false } = {}) {
   const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
   if (!row) return { ok: false, error: 'Overtime request not found.' };
+  const current = String(row.status || '').trim();
+  if (requiredStatus && current !== requiredStatus) {
+    return {
+      ok: false,
+      error: `Overtime request must be in status "${requiredStatus}" (current: "${current || 'unknown'}").`,
+      code: 'INVALID_STATUS',
+    };
+  }
+  const actorId = String(actor?.id || '').trim();
+  if (forbidSelfApproval && actorId && actorId === String(row.user_id || '').trim()) {
+    return { ok: false, error: 'You cannot approve your own overtime request.', code: 'FORBIDDEN' };
+  }
   const now = nowIso();
   const sets = ['updated_at_iso = ?'];
   const params = [now];
@@ -482,33 +512,57 @@ function patchOvertimeStatus(db, actor, requestId, patch) {
 }
 
 export function submitHrOvertimeRequest(db, actor, requestId) {
-  return patchOvertimeStatus(db, actor, requestId, { status: 'submitted' });
+  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
+  if (!row) return { ok: false, error: 'Overtime request not found.' };
+  const actorId = String(actor?.id || '').trim();
+  if (actorId && actorId !== String(row.user_id || '').trim()) {
+    return { ok: false, error: 'You can only submit your own overtime request.', code: 'FORBIDDEN' };
+  }
+  return patchOvertimeStatus(db, actor, requestId, { status: 'submitted' }, { requiredStatus: 'draft' });
 }
 
 export function branchReviewHrOvertimeRequest(db, actor, requestId, body) {
   const approve = body?.approve !== false;
-  return patchOvertimeStatus(db, actor, requestId, {
-    status: approve ? 'hr_review' : 'rejected',
-    branch_reviewed_by_user_id: actor?.id,
-    rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at branch review.',
-  });
+  return patchOvertimeStatus(
+    db,
+    actor,
+    requestId,
+    {
+      status: approve ? 'hr_review' : 'rejected',
+      branch_reviewed_by_user_id: actor?.id,
+      rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at branch review.',
+    },
+    { requiredStatus: 'submitted', forbidSelfApproval: true }
+  );
 }
 
 export function hrReviewHrOvertimeRequest(db, actor, requestId, body) {
   const approve = body?.approve !== false;
-  return patchOvertimeStatus(db, actor, requestId, {
-    status: approve ? 'hr_review' : 'rejected',
-    hr_reviewed_by_user_id: actor?.id,
-    rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at HR review.',
-  });
+  return patchOvertimeStatus(
+    db,
+    actor,
+    requestId,
+    {
+      status: approve ? 'hr_review' : 'rejected',
+      hr_reviewed_by_user_id: actor?.id,
+      rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at HR review.',
+    },
+    { requiredStatus: 'hr_review', forbidSelfApproval: true }
+  );
 }
 
 export function approveHrOvertimeRequest(db, actor, requestId, body) {
-  const r = patchOvertimeStatus(db, actor, requestId, {
-    status: 'approved',
-    approved_by_user_id: actor?.id,
-    approval_note: String(body?.approvalNote || body?.note || '').trim() || null,
-  });
+  const r = patchOvertimeStatus(
+    db,
+    actor,
+    requestId,
+    {
+      status: 'approved',
+      approved_by_user_id: actor?.id,
+      approval_note: String(body?.approvalNote || body?.note || '').trim() || null,
+    },
+    { requiredStatus: 'hr_review', forbidSelfApproval: true }
+  );
   if (r.ok) {
     appendHrAuditEvent(db, {
       actorUserId: actor?.id,
@@ -521,6 +575,12 @@ export function approveHrOvertimeRequest(db, actor, requestId, body) {
 }
 
 export function rejectHrOvertimeRequest(db, actor, requestId, body) {
+  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
+  if (!row) return { ok: false, error: 'Overtime request not found.' };
+  const current = String(row.status || '').trim();
+  if (['approved', 'rejected', 'cancelled'].includes(current)) {
+    return { ok: false, error: `Cannot reject overtime in status "${current}".`, code: 'INVALID_STATUS' };
+  }
   return patchOvertimeStatus(db, actor, requestId, {
     status: 'rejected',
     rejection_reason: String(body?.rejectionReason || body?.note || '').trim() || 'Rejected.',
@@ -528,6 +588,16 @@ export function rejectHrOvertimeRequest(db, actor, requestId, body) {
 }
 
 export function cancelHrOvertimeRequest(db, actor, requestId) {
+  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
+  if (!row) return { ok: false, error: 'Overtime request not found.' };
+  const actorId = String(actor?.id || '').trim();
+  const owner = String(row.user_id || '').trim();
+  if (actorId && actorId !== owner && !['submitted', 'draft'].includes(String(row.status || ''))) {
+    return { ok: false, error: 'Only the request owner can cancel a draft or submitted request.', code: 'FORBIDDEN' };
+  }
+  if (!['draft', 'submitted'].includes(String(row.status || ''))) {
+    return { ok: false, error: 'Only draft or submitted requests can be cancelled.', code: 'INVALID_STATUS' };
+  }
   return patchOvertimeStatus(db, actor, requestId, { status: 'cancelled' });
 }
 
@@ -607,10 +677,14 @@ export function listHrExitClearance(db, scope, filters = {}) {
   return rows.filter((r) => staffIds.has(r.user_id)).map((r) => mapExitClearance(r, db));
 }
 
-export function getHrExitClearance(db, clearanceId) {
+export function getHrExitClearance(db, clearanceId, scope = null) {
   if (!hrPhase2TablesReady(db)) return { ok: false, error: 'Exit clearance not initialised.' };
   const row = db.prepare(`SELECT * FROM hr_exit_clearance WHERE id = ?`).get(String(clearanceId || '').trim());
   if (!row) return { ok: false, error: 'Clearance not found.' };
+  if (scope) {
+    const gate = assertStaffUserIdInHrScope(db, scope, row.user_id);
+    if (!gate.ok) return { ok: false, error: 'Clearance not found.' };
+  }
   return { ok: true, clearance: mapExitClearance(row, db) };
 }
 

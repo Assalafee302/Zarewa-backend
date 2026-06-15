@@ -164,6 +164,25 @@ function isSkippableBootstrapIndexError(e, stmt) {
   return isDuplicateIndexNameError(e) || isMissingIndexColumnError(e);
 }
 
+async function ensureDatabaseExists(cfg) {
+  const dbName = String(cfg?.database || '').replace(/`/g, '');
+  if (!dbName) throw new Error('MySQL database name is required');
+  const conn = await mysql.createConnection({
+    host: cfg.host,
+    port: cfg.port,
+    user: cfg.user,
+    password: cfg.password,
+    multipleStatements: true,
+  });
+  try {
+    await conn.query(
+      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+  } finally {
+    await conn.end();
+  }
+}
+
 async function ensurePool(cfg) {
   if (!pool) {
     pool = mysql.createPool({
@@ -289,6 +308,7 @@ runAsWorker(async (payload) => {
     txConn = null;
     txDepth = 0;
     savepointStack = [];
+    await ensureDatabaseExists(config);
     await ensurePool(config);
     return { ok: true };
   }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { createOfficeThread } from './officeOps.js';
-import { allocateFilingNumber, fileOfficeThread, filingPrefixForCategory } from './filingNumberOps.js';
+import { allocateFilingNumber, fileOfficeThread } from './filingNumberOps.js';
 
 describe.skipIf(!process.env.ZAREWA_MYSQL_HOST && !process.env.ZAREWA_MYSQL_USER)('filingNumberOps (mysql)', () => {
   let db;

@@ -42,6 +42,9 @@ import {
   saveStockRegisterStoreChecklist,
 } from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
+import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
+import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
+import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
 import {
   CUSTOMER_AND_AR_READ_PERMS,
   canReadOperationsDomain,
@@ -80,9 +83,8 @@ import {
   updateAppUserPermissions,
   updateAppUserRole,
   updateAppUserStatus,
-  deleteAppUser,
-  editMutationRequiresSecondApproval,
   updateUserProfile,
+  deleteAppUser,
   userCanApproveEditMutations,
   userMayEditCoilLotMasterData,
   userHasPermission,
@@ -182,7 +184,6 @@ import {
 } from './adminDataResetOps.js';
 import {
   approveEditApproval,
-  consumeEditApprovalInTransaction,
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
   getEditApproval,
@@ -331,7 +332,6 @@ import {
   listProductionJobs,
   listDeliveries,
   listProductionJobAccessoryUsage,
-  listProductionJobStoneFlatsheetUsage,
   listProducts,
   getJsonBlob,
   setJsonBlob,
@@ -461,11 +461,57 @@ import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 import { readRunaAiConfig } from './helpAiService.js';
 import { buildLoginSecuritySummary, listActiveSessions } from './sessionSecurityOps.js';
 import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
+import { allowRateLimit, clientIp, skipAuthedRateLimit } from './rateLimit.js';
 const loginAttemptBuckets = new Map();
+const forgotPasswordBuckets = new Map();
 const ledgerPostBuckets = new Map();
 const bankFinanceImportBuckets = new Map();
 const aiChatBuckets = new Map();
 const helpChatBuckets = new Map();
+const workItemSyncLastAt = new Map();
+const WORK_ITEM_SYNC_DEBOUNCE_MS = 30_000;
+/** @type {Map<string, { payload: object; etag: string; expires: number }>} */
+const bootstrapPollCache = new Map();
+const BOOTSTRAP_POLL_CACHE_MS = Math.max(
+  1000,
+  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 3000)
+);
+
+function bootstrapPayloadEtag(payload) {
+  const hash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('base64');
+  return `W/"${hash.slice(0, 48)}"`;
+}
+
+function bootstrapPollCacheKey(req, { branchScope, mode, includeControls, includeUsers }) {
+  return [
+    String(req.user?.id || ''),
+    String(branchScope || ''),
+    String(mode || ''),
+    includeControls ? '1' : '0',
+    includeUsers ? '1' : '0',
+  ].join(':');
+}
+
+function respondBootstrap(res, payload, ifNoneMatch) {
+  const etag = bootstrapPayloadEtag(payload);
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    return res.status(304).end();
+  }
+  res.setHeader('ETag', etag);
+  return res.json(payload);
+}
+
+function shouldSyncDerivedWorkItemsNow(userId, branchId) {
+  const uid = String(userId || '').trim();
+  const bid = String(branchId || '').trim();
+  if (!uid) return false;
+  const key = `${uid}:${bid}`;
+  const now = Date.now();
+  const last = workItemSyncLastAt.get(key) || 0;
+  if (now - last < WORK_ITEM_SYNC_DEBOUNCE_MS) return false;
+  workItemSyncLastAt.set(key, now);
+  return true;
+}
 
 const STRICT_BRANCH_AUDIT_TABLES = [
   { table: 'customers', idColumn: 'customer_id' },
@@ -492,32 +538,6 @@ function tableHasColumn(db, table, column) {
     return false;
   }
 }
-const forgotPasswordBuckets = new Map();
-
-function clientIp(req) {
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.trim()) return xff.split(',')[0].trim().slice(0, 64);
-  return String(req.socket?.remoteAddress || '0').slice(0, 64);
-}
-
-/**
- * Sliding window rate limit. @returns {boolean} true if allowed
- */
-function allowRateLimit(buckets, key, maxEvents, windowMs) {
-  const now = Date.now();
-  let b = buckets.get(key);
-  if (!b || now > b.resetAt) {
-    b = { count: 0, resetAt: now + windowMs };
-  }
-  b.count += 1;
-  buckets.set(key, b);
-  return b.count <= maxEvents;
-}
-
-const skipAuthedRateLimit =
-  process.env.VITEST === 'true' ||
-  process.env.NODE_ENV === 'test' ||
-  process.env.ZAREWA_TEST_SKIP_RATE_LIMIT === '1';
 
 /** @param {Map<string, { count: number; resetAt: number }>} buckets */
 function rateLimitAuthedUser(buckets, label, maxEvents, windowMs) {
@@ -663,39 +683,40 @@ export function registerHttpApi(app, db) {
     });
   });
 
-  const livenessPaths = [
-    '/api/health',
-    '/api/readyz',
-    '/api/livez',
-    '/api/status',
-    '/health',
-    '/healthz',
-    '/livez',
-    '/readyz',
-    '/status',
-  ];
-  const sendLiveness = (_req, res) => {
+  const livenessCapabilities = {
+    cuttingListRegisterProduction: true,
+    /** Confirms this process includes Office Desk routes (e.g. POST /api/office/ai/polish-memo). */
+    officeDesk: true,
+    materialIncidentBoot: 'po-line-type-migrate-v4',
+    /** Present when BI analytics engine includes productionKgInRange fix (42372a4+). */
+    businessIntelligence: BI_ENGINE_REV,
+    /** Phase B3a trial exception API (GET /api/finance/trial-exceptions). */
+    trialExceptionsB3a: 'v1',
+    fastProductionBoot: 'v1',
+    ...accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()),
+  };
+  const sendPublicLiveness = (_req, res) => {
     res.json({
       ok: true,
       service: 'zarewa-api',
       time: new Date().toISOString(),
-      /** Lets you confirm the running Node process loaded this build (e.g. after deploy / restart). */
-      capabilities: {
-        cuttingListRegisterProduction: true,
-        /** Confirms this process includes Office Desk routes (e.g. POST /api/office/ai/polish-memo). */
-        officeDesk: true,
-        materialIncidentBoot: 'po-line-type-migrate-v4',
-        /** Present when BI analytics engine includes productionKgInRange fix (42372a4+). */
-        businessIntelligence: BI_ENGINE_REV,
-        /** Phase B3a trial exception API (GET /api/finance/trial-exceptions). */
-        trialExceptionsB3a: 'v1',
-        fastProductionBoot: 'v1',
-        ...accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()),
-      },
     });
   };
-  for (const p of livenessPaths) {
-    app.get(p, sendLiveness);
+  const sendApiLiveness = (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'zarewa-api',
+      time: new Date().toISOString(),
+      capabilities: livenessCapabilities,
+    });
+  };
+  const publicLivenessPaths = ['/health', '/healthz', '/livez', '/readyz', '/status'];
+  const apiLivenessPaths = ['/api/health', '/api/readyz', '/api/livez', '/api/status'];
+  for (const p of publicLivenessPaths) {
+    app.get(p, sendPublicLiveness);
+  }
+  for (const p of apiLivenessPaths) {
+    app.get(p, sendApiLiveness);
   }
 
   /**
@@ -705,6 +726,10 @@ export function registerHttpApi(app, db) {
    */
   app.get('/api/admin/finance-live-profile', async (req, res) => {
     try {
+      const tokenConfigured = Boolean(String(process.env.ZAREWA_FINANCE_PROFILE_TOKEN || '').trim());
+      if (process.env.NODE_ENV === 'production' && !tokenConfigured && !req.user) {
+        return res.status(503).json({ ok: false, error: 'Finance profile endpoint is disabled.' });
+      }
       const tokenOk = financeProfileTokenMatches(req);
       const userOk =
         req.user &&
@@ -1366,7 +1391,9 @@ export function registerHttpApi(app, db) {
       if (userHasPermission(req.user, 'office.use')) {
         ensureWorkItemsForVisibleOfficeThreads(db, scope, req.user);
       }
-      syncDerivedWorkItems(db, scope, req.user);
+      if (shouldSyncDerivedWorkItemsNow(req.user?.id, scope.branchId)) {
+        syncDerivedWorkItems(db, scope, req.user);
+      }
       const items = listUnifiedWorkItems(db, scope, req.user, {
         q: req.query.q,
         status: req.query.status,
@@ -2325,7 +2352,7 @@ export function registerHttpApi(app, db) {
         message:
           'If a matching new-user account exists, a single-use reset code was created. It expires in one hour. ' +
           'Delivered only through your administrator. Use New user setup on the sign-in screen with the code.',
-        ...(process.env.NODE_ENV !== 'production' && result.devResetToken
+        ...(process.env.ZAREWA_EXPOSE_DEV_RESET_TOKEN === '1' && result.devResetToken
           ? { devResetToken: result.devResetToken }
           : {}),
       });
@@ -2629,6 +2656,43 @@ export function registerHttpApi(app, db) {
 
   registerHrApi(app, db);
 
+  app.get('/api/workspace/revision', (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const payload = buildWorkspaceRevision(db, branchScope);
+      const etag = workspaceRevisionEtag(db, branchScope);
+      if (ifNoneMatchHit(req, etag)) {
+        return res.status(304).end();
+      }
+      setWeakEtag(res, etag);
+      return res.json(payload);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not compute workspace revision.' });
+    }
+  });
+
+  for (const [domain, buildSnapshot] of Object.entries(DOMAIN_SNAPSHOT_BUILDERS)) {
+    app.get(`/api/workspace/${domain}-snapshot`, (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const payload = buildSnapshot(db, {
+          user: req.user,
+          branchScope,
+        });
+        const etag = jsonWeakEtag({ domain, branchScope, payload });
+        if (ifNoneMatchHit(req, etag)) {
+          return res.status(304).end();
+        }
+        setWeakEtag(res, etag);
+        return res.json(payload);
+      } catch (e) {
+        console.error(`[workspace/${domain}-snapshot]`, e);
+        return res.status(500).json({ ok: false, error: `Could not load ${domain} workspace data.` });
+      }
+    });
+  }
+
   app.get('/api/bootstrap', (req, res) => {
     try {
       const includeControls =
@@ -2642,6 +2706,7 @@ export function registerHttpApi(app, db) {
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
+      const skipWorkItemSync = skipSideEffects || mode === 'dashboard';
       const bootstrapOpts = {
         user: req.user,
         session: req.session,
@@ -2650,6 +2715,7 @@ export function registerHttpApi(app, db) {
         includeRegisteredPasswords,
         branchScope,
         skipSideEffects,
+        skipWorkItemSync,
       };
       const payload =
         mode === 'dashboard'
@@ -2658,7 +2724,35 @@ export function registerHttpApi(app, db) {
               limit,
             })
           : buildBootstrap(db, bootstrapOpts);
-      res.json(payload);
+      const ifNoneMatch = String(req.headers['if-none-match'] || '');
+      if (skipSideEffects) {
+        const cacheKey = bootstrapPollCacheKey(req, {
+          branchScope,
+          mode,
+          includeControls,
+          includeUsers,
+        });
+        const hit = bootstrapPollCache.get(cacheKey);
+        if (hit && Date.now() < hit.expires) {
+          if (ifNoneMatch && ifNoneMatch === hit.etag) {
+            return res.status(304).end();
+          }
+          res.setHeader('ETag', hit.etag);
+          return res.json(hit.payload);
+        }
+        const etag = bootstrapPayloadEtag(payload);
+        if (ifNoneMatch && ifNoneMatch === etag) {
+          return res.status(304).end();
+        }
+        res.setHeader('ETag', etag);
+        bootstrapPollCache.set(cacheKey, {
+          payload,
+          etag,
+          expires: Date.now() + BOOTSTRAP_POLL_CACHE_MS,
+        });
+        return res.json(payload);
+      }
+      return respondBootstrap(res, payload, ifNoneMatch);
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Bootstrap failed' });
@@ -8169,13 +8263,7 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
       }
 
-      const quoteTotal = Math.round(Number(qtSynced.totalNgn) || 0);
-      const paidBooked = Math.round(Number(qtSynced.paidNgn) || 0);
-      const dueOnQuote = Math.max(0, quoteTotal - paidBooked);
       const postAmountNgn = Math.round(Number(amountNgn) || 0);
-      const confirmSettledQuoteOverpayEffective =
-        Boolean(req.body?.confirmSettledQuoteOverpay ?? req.body?.confirm_settled_quote_overpay) ||
-        (dueOnQuote <= 0 && postAmountNgn > 0);
 
       const entries = listLedgerEntries(db, branchScope);
       const plan = planReceiptWithQuotation(entries, {

@@ -9,7 +9,6 @@ import {
   getReceiptPolicyMetaByLedgerEntryId,
   loadJournalLinesForReceiptMeta,
   RECEIPT_POLICY_BASIS,
-  receiptPolicyMetaTableExists,
   sumLegacyBridgeReceiptMetaNgn,
   sumPolicyV1DepositReceiptMetaNgn,
 } from './receiptPolicyMetaOps.js';

@@ -269,7 +269,6 @@ export function createDraftLetter(db, actor, body = {}) {
   const content = buildHrLetterContent(letterKind, staff, extra);
   const id = newId('HRL');
   const draftId = newId('DRF');
-  const now = nowIso();
   const sourceRecordKind = String(body?.sourceRecordKind || extra?.sourceRecordKind || '').trim() || null;
   const sourceRecordId = String(body?.sourceRecordId || extra?.sourceRecordId || '').trim() || null;
   try {

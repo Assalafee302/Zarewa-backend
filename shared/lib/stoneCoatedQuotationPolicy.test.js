@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { quotationExpectsCoilAllocation } from './coilSpecVersusProduct.js';
 import {
+  isStoneFlatsheetQuotationLine,
   accessoryLineAllowedForStone,
   applyStoneMeterMaterialChangeCleanup,
   productLineAllowedForStone,
@@ -79,6 +80,9 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
   it('allows stone flatsheet 1.4 / 1.5 product names', () => {
     expect(productLineAllowedForStone('Stone flatsheet 1.4', false)).toBe(true);
     expect(productLineAllowedForStone('Stone flatsheet 1.5', false)).toBe(true);
+    expect(isStoneFlatsheetQuotationLine('Stone flatsheet 1.5')).toBe(true);
+    expect(isStoneFlatsheetQuotationLine('stoneflatsheet')).toBe(true);
+    expect(isStoneFlatsheetQuotationLine('Cladding')).toBe(false);
     expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 1.5', stoneFlatsheetLengthM: '' })).toBe(1.5);
     expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet', stoneFlatsheetLengthM: 1.4 })).toBe(1.4);
   });

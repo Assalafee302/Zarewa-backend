@@ -8,12 +8,19 @@ function nowIso() {
  * @param {object} actor
  * @param {{ scope?: string; branchId?: string; title?: string; body?: string }} body
  */
+const COMPANY_FORUM_ROLE_KEYS = new Set(['md', 'admin', 'ceo', 'hr_admin', 'gmhr', 'chairman']);
+
+export function canCreateCompanyForumTopic(actor) {
+  if (!actor) return false;
+  const rk = String(actor.roleKey || '').toLowerCase();
+  if (COMPANY_FORUM_ROLE_KEYS.has(rk)) return true;
+  return userHasPermission(actor, 'notices.manage');
+}
+
 export function createForumTopic(db, actor, body = {}) {
   const scope = String(body.scope || 'branch').toLowerCase();
-  if (scope === 'company' && !['md', 'admin', 'ceo', 'hr_admin', 'gmhr'].includes(String(actor.roleKey || '').toLowerCase())) {
-    if (!userHasPermission(actor, 'settings.view')) {
-      return { ok: false, error: 'Only senior staff can open company-wide forum topics.' };
-    }
+  if (scope === 'company' && !canCreateCompanyForumTopic(actor)) {
+    return { ok: false, error: 'Only senior staff can open company-wide forum topics.' };
   }
   const title = String(body.title || '').trim();
   const content = String(body.body || '').trim();

@@ -1,6 +1,7 @@
 /** Canonical HR permission string literals (no runtime imports). */
 
 export const HR_PERMISSION_KEYS = [
+  'notices.manage',
   'hr.self',
   'hr.my_profile.view',
   'hr.my_leave.request',
@@ -13,6 +14,10 @@ export const HR_PERMISSION_KEYS = [
   'hr.leave.endorse',
   'hr.loan.endorse',
   'hr.incident.create',
+  'hr.incidents.manage',
+  'hr.incidents.view',
+  'hr.recovery.manage',
+  'assets.custody.manage',
   'hr.transfer.recommend',
   'hr.directory.view',
   'hr.staff.manage',

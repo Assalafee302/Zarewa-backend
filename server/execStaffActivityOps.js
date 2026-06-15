@@ -22,7 +22,7 @@ function displayNameForUser(db, userId) {
  * @param {Map<string, object>} byUser
  * @param {string} userId
  */
-function ensureUser(byUser, userId) {
+function ensureUser(db, byUser, userId) {
   const id = String(userId || '').trim();
   if (!id) return null;
   if (!byUser.has(id)) {
@@ -51,7 +51,6 @@ export function buildStaffActivitySummary(db, branchScope, period) {
   const scope = String(branchScope || 'ALL').trim() || 'ALL';
   const startISO = String(period?.startISO || '').slice(0, 10);
   const endISO = String(period?.endISO || '').slice(0, 10);
-  const endBound = `${endISO}T23:59:59`;
 
   /** @type {Map<string, object>} */
   const byUser = new Map();
@@ -67,7 +66,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
       )
       .all(startISO, endISO, ...bLedger.args);
     for (const r of ledgerRows) {
-      const u = ensureUser(byUser, r.created_by_user_id);
+      const u = ensureUser(db, byUser, r.created_by_user_id);
       if (!u) continue;
       const t = String(r.type || '').toUpperCase();
       if (t.includes('RECEIPT')) {
@@ -89,7 +88,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
       )
       .all(startISO, endISO, ...bExp.args);
     for (const r of expRows) {
-      const u = ensureUser(byUser, r.created_by_user_id);
+      const u = ensureUser(db, byUser, r.created_by_user_id);
       if (u) u.expensesRaisedCount += 1;
     }
   } catch {
@@ -108,7 +107,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
       .all(startISO, endISO, ...bExp.args);
     for (const r of prRows) {
       const uid = r.requested_by_user_id;
-      const u = ensureUser(byUser, uid);
+      const u = ensureUser(db, byUser, uid);
       if (u) u.paymentRequestsRaisedCount += 1;
     }
   } catch {
@@ -124,7 +123,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
       )
       .all(startISO, endISO);
     for (const r of appr) {
-      const u = ensureUser(byUser, r.acted_by_user_id);
+      const u = ensureUser(db, byUser, r.acted_by_user_id);
       if (u) u.approvalsActedCount += 1;
     }
   } catch {
@@ -142,7 +141,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
         )
         .all(startISO, endISO, ...bWi.args);
       for (const r of wiRows) {
-        const u = ensureUser(byUser, r.responsible_user_id);
+        const u = ensureUser(db, byUser, r.responsible_user_id);
         if (u) u.workItemsOwnedCount += 1;
       }
     }
@@ -161,7 +160,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
         )
         .all(startISO, endISO, ...bOff.args);
       for (const r of otRows) {
-        const u = ensureUser(byUser, r.created_by_user_id);
+        const u = ensureUser(db, byUser, r.created_by_user_id);
         if (u) u.officeMemosCreatedCount += 1;
       }
     }
@@ -179,7 +178,7 @@ export function buildStaffActivitySummary(db, branchScope, period) {
         )
         .all(startISO, endISO);
       for (const r of attRows) {
-        const u = ensureUser(byUser, r.user_id);
+        const u = ensureUser(db, byUser, r.user_id);
         if (u) u.attendanceEventsCount += 1;
       }
     }

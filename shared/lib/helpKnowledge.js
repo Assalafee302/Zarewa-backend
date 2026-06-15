@@ -447,6 +447,31 @@ const CORE_HELP_ARTICLES = [
     links: [{ label: 'Operations', to: '/operations' }],
   },
   {
+    id: 'hr-accountability-incidents',
+    title: 'HR accountability — incidents, responsibility, and recovery',
+    keywords: [
+      'hr accountability',
+      'discipline case',
+      'incident registry',
+      'responsibility map',
+      'salary recovery',
+      'missing asset',
+      'pump case',
+      'gate pass',
+      'custody',
+    ],
+    answer:
+      'HR accountability unifies incident memos, discipline cases, multi-party responsibility, payroll recovery schedules, and investigation audit packs.',
+    steps: [
+      'Raise an incident memo (team lead) or open a case directly under HR → Discipline & Exit → Accountability.',
+      'Assign responsibility weights totaling 100% across custodian, supervisor, security, and other roles.',
+      'Record management decision type (warning, deduction, suspension, termination, or no action) — deduction creates recovery schedules from loss value.',
+      'Link assets and log custody or gate pass events when property is involved.',
+      'Use the investigation pack export before closing the case — closure is blocked until responsibility, decision, and recovery rules pass.',
+    ],
+    links: [{ label: 'HR — Discipline & Exit', to: '/hr/discipline-exit' }],
+  },
+  {
     id: 'all-branches-view-blocked',
     title: 'Cannot create while viewing all branches',
     keywords: [
@@ -720,6 +745,7 @@ const CORE_HELP_ARTICLES = [
       'stone-coated',
       'flatsheet',
       'flat sheet',
+      'cladding',
       'stone meter',
       'stone m2',
       'm2 refund',
@@ -728,12 +754,13 @@ const CORE_HELP_ARTICLES = [
       '1.5m sku',
     ],
     answer:
-      'Stone-coated products use **metre or m²** logic distinct from coil roofing. Colours validate against the price list; refunds may include a **stone flatsheet** category separate from coil substitution.',
+      'Stone-coated jobs use two different materials: **stone flatsheet** (m² stock, STONE-FS-* SKUs) and **stone-coated trim/roofing** (metre stock). **Cladding** on coil quotes is aluminium/aluzinc roofing like Roof and Flatsheet — it is **not** stone flatsheet.',
     steps: [
-      'Create quotation lines with stone/flatsheet products — pick colours from the validated workbook list.',
-      'Production plans **roofing metres** separately from stone flatsheet usage where applicable.',
-      'For refunds, use stone flatsheet category when returning unused sheet area — do not apply coil-gauge substitution warnings to stone-only quotes.',
-      'Complete production using stone usage registers; accessories-only stone jobs skip coil requirements.',
+      'For stone flatsheet area, add **Stone flatsheet** (or Stone flatsheet 1.4 / 1.5 / 2) on the quotation — qty is **m²**, plus length 1.4 / 1.5 / 2 m.',
+      'Cladding, Roofing sheet, and Flat sheet are **coil roofing** lines (metres) — do not use them for stone flatsheet m² supply.',
+      'Production records stone flatsheet m² from the **quotation product line**, then draws STONE-FS-* stock on complete.',
+      'Stock tabs: **Stone (m)** = trim/roofing metres; **Flatsheet (m²)** = stone flatsheet balances only.',
+      'For refunds, use the stone flatsheet category for unused m² — separate from coil roofing metres.',
     ],
     links: [
       { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },

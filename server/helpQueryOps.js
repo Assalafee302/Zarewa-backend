@@ -711,7 +711,7 @@ export function buildHelpPersonalization(db, ctx = {}) {
  * @param {string} [pathname]
  * @param {{ workPatterns?: ReturnType<typeof computeUserWorkPatterns> }} [extra]
  */
-export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}, extra = {}) {
+export function buildHelpPersonalizationFromSnapshot(db, snapshot, ctx = {}) {
   const base = buildHelpPersonalization(db, ctx);
   const coachingHints = buildHelpCoachingHints(snapshot, ctx.pathname);
   const txnHints = (base.transactionCoachingHints || buildTransactionCoachingHints(base.transactionProfile)).map(

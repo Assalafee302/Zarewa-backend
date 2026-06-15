@@ -15,6 +15,16 @@ function setBootPhase(phase) {
   lastBootPhase = phase;
 }
 
+/** Parallel Vitest forks must not share one MySQL schema (concurrent wipe+seed causes flaky failures). */
+function resolveVitestTestDatabaseName(base) {
+  const poolId = process.env.VITEST_POOL_ID ?? process.env.VITEST_WORKER_ID;
+  if (poolId == null || String(poolId).trim() === '') return base;
+  const suffix = `_w${String(poolId).replace(/\W/g, '')}`;
+  const maxLen = 64;
+  if (base.length + suffix.length <= maxLen) return `${base}${suffix}`;
+  return `${base.slice(0, maxLen - suffix.length)}${suffix}`;
+}
+
 /**
  * @param {{ seed?: boolean; reset?: boolean } | string} [pathOrOpts]
  *   Pass `':memory:'` for Vitest — uses `ZAREWA_MYSQL_TEST_DATABASE` (default `zarewa_test`) and wipes first.
@@ -27,8 +37,9 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
 
   if (typeof pathOrOpts === 'string') {
     if (pathOrOpts === ':memory:') {
-      testDbOverride =
+      const base =
         String(process.env.ZAREWA_MYSQL_TEST_DATABASE || 'zarewa_test').trim() || 'zarewa_test';
+      testDbOverride = resolveVitestTestDatabaseName(base);
       opts.reset = true;
       if (typeof maybeOpts === 'object' && maybeOpts) Object.assign(opts, maybeOpts);
     }

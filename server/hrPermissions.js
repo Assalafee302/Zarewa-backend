@@ -128,45 +128,105 @@ export function userCanEditPensionPolicyRates(user) {
 /** API paths self-service staff may call without main HR workspace. */
 export const HR_SELF_SERVICE_API_PATTERNS = [
   /^\/api\/hr\/health$/,
+  /^\/health$/,
   /^\/api\/hr\/notification-summary$/,
+  /^\/notification-summary$/,
   /^\/api\/hr\/my(\/|$)/,
+  /^\/my(\/|$)/,
   /^\/api\/hr\/team(\/|$)/,
+  /^\/team(\/|$)/,
   /^\/api\/hr\/me$/,
+  /^\/me$/,
   /^\/api\/hr\/policy-requirements$/,
+  /^\/policy-requirements$/,
   /^\/api\/hr\/policy-acknowledgements$/,
+  /^\/policy-acknowledgements$/,
   /^\/api\/hr\/notifications(\/|$)/,
+  /^\/notifications(\/|$)/,
   /^\/api\/hr\/requests(\/|$)/,
+  /^\/requests(\/|$)/,
   /^\/api\/hr\/leave\/balances(\/|$)/,
+  /^\/leave\/balances(\/|$)/,
   /^\/api\/hr\/employment-letters(\/|$)/,
+  /^\/employment-letters(\/|$)/,
   /^\/api\/hr\/staff\/[^/]+$/,
+  /^\/staff\/[^/]+$/,
   /^\/api\/hr\/staff\/[^/]+\/documents(\/|$)/,
+  /^\/staff\/[^/]+\/documents(\/|$)/,
   /^\/api\/hr\/staff\/[^/]+\/passport-photo$/,
+  /^\/staff\/[^/]+\/passport-photo$/,
   /^\/api\/hr\/id-cards(\/|$)/,
+  /^\/id-cards(\/|$)/,
   /^\/api\/hr\/engagement\/open$/,
+  /^\/engagement\/open$/,
   /^\/api\/hr\/engagement\/responses$/,
+  /^\/engagement\/responses$/,
+  /^\/api\/hr\/sensitive(\/|$)/,
+  /^\/sensitive(\/|$)/,
   /^\/api\/hr\/sensitive-unlock(\/|$)/,
+  /^\/sensitive-unlock(\/|$)/,
   /^\/api\/hr\/payroll-runs\/[^/]+\/payslips\/[^/]+\/pdf$/,
+  /^\/payroll-runs\/[^/]+\/payslips\/[^/]+\/pdf$/,
   /^\/api\/hr\/executive(\/|$)/,
+  /^\/executive(\/|$)/,
   /^\/api\/hr\/beneficiaries$/,
+  /^\/beneficiaries$/,
 ];
 
 /** Additional paths branch managers / team HR may call without main HR workspace. */
 export const HR_TEAM_API_PATTERNS = [
   /^\/api\/hr\/staff$/,
+  /^\/staff$/,
   /^\/api\/hr\/org-chart$/,
+  /^\/org-chart$/,
   /^\/api\/hr\/incident-memos(\/|$)/,
+  /^\/incident-memos(\/|$)/,
   /^\/api\/hr\/transfer-recommendations(\/|$)/,
+  /^\/transfer-recommendations(\/|$)/,
   /^\/api\/hr\/leave\/calendar$/,
+  /^\/leave\/calendar$/,
   /^\/api\/hr\/absence-reports(\/|$)/,
+  /^\/absence-reports(\/|$)/,
   /^\/api\/hr\/overtime-requests(\/|$)/,
+  /^\/overtime-requests(\/|$)/,
   /^\/api\/hr\/attendance(\/|$)/,
+  /^\/attendance(\/|$)/,
   /^\/api\/hr\/feedback$/,
+  /^\/feedback$/,
   /^\/api\/hr\/transfer-requests(\/|$)/,
+  /^\/transfer-requests(\/|$)/,
   /^\/api\/hr\/daily-roll(\/|$)/,
+  /^\/daily-roll(\/|$)/,
   /^\/api\/hr\/departments$/,
+  /^\/departments$/,
   /^\/api\/hr\/designations$/,
+  /^\/designations$/,
   /^\/api\/hr\/discipline-cases(\/|$)/,
+  /^\/discipline-cases(\/|$)/,
 ];
+
+/**
+ * Normalized `/api/hr/*` path for workspace allowlist checks (Express mount-safe).
+ * @param {import('express').Request} req
+ */
+export function hrApiPathForRequest(req) {
+  const base = String(req.baseUrl || '').trim();
+  const path = String(req.path || '').trim();
+  if (base && path) {
+    return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+  return path || String(req.originalUrl || '').split('?')[0];
+}
+
+/**
+ * @param {object | null | undefined} user
+ */
+export function userHasHrSelfServiceOnly(user) {
+  if (!user) return false;
+  if (hrUserHas(user, '*')) return false;
+  if (userCanAccessHrModule(user) || userCanAccessTeamHr(user)) return false;
+  return hrUserHas(user, 'hr.self') || hrUserHas(user, 'hr.my_profile.view');
+}
 
 /**
  * @param {string} path

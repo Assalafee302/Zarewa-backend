@@ -16,7 +16,7 @@ import {
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
-import { productLineKey } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -53,7 +53,6 @@ import {
   buildRefundCategorySuggestedMaxNgn,
   quotationOverpaymentExcessNgn,
   quotationRefundHardCapNgn,
-  quotationRefundHeadroomNgn,
   quotationRemainingRefundableNgn,
   validateRefundCalculationLinesNgn,
   validateRefundCategorySuggestedCapsNgn,
@@ -147,7 +146,7 @@ function productLineIsTrimSheetNotRoofingMetres(line) {
 
 /** Stone flatsheet lines are m² / sheet pricing — never coil roofing metres for unproduced-metre preview. */
 function productLineIsStoneFlatsheetNotRoofingMetres(line) {
-  return productLineKey(line?.name) === 'stone flatsheet';
+  return isStoneFlatsheetQuotationLine(line?.name);
 }
 
 function quotedRoofingSheetMetresFromLines(linesJson) {
@@ -630,31 +629,6 @@ function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
   return Math.abs(a - b) > tolMm;
 }
 
-/** Finished-good gauge label from inventory product (for quote vs production audit). */
-function productGaugeLabelFromStock(db, productId) {
-  const pid = String(productId ?? '').trim();
-  if (!pid) return '';
-  let row;
-  try {
-    row = db
-      .prepare(`SELECT gauge, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`)
-      .get(pid);
-  } catch {
-    return '';
-  }
-  if (!row) return '';
-  let g = String(row.gauge || '').trim();
-  if (!g) {
-    try {
-      const extra = JSON.parse(row.dashboard_attrs_json || '{}');
-      g = String(extra.gauge || '').trim();
-    } catch {
-      g = '';
-    }
-  }
-  return g;
-}
-
 /**
  * Physical coil gauge from job allocations (authoritative when steel came from a roll
  * whose gauge differs from the FG master product card — e.g. quoted 0.28, coil 0.24).
@@ -800,35 +774,6 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId);
   if (minAcross != null && minAcross > 0) return minAcross;
   return null;
-}
-
-/** Resolve list ₦/m for the FG `products` row (gauge + colour / design). */
-function listPricePerMeterForProducedProduct(db, productId, branchId) {
-  const pid = String(productId ?? '').trim();
-  if (!pid) return null;
-  let row;
-  try {
-    row = db
-      .prepare(
-        `SELECT gauge, colour, material_type, dashboard_attrs_json FROM products WHERE product_id = ? LIMIT 1`
-      )
-      .get(pid);
-  } catch {
-    return null;
-  }
-  if (!row) return null;
-  let extra = {};
-  try {
-    extra = JSON.parse(row.dashboard_attrs_json || '{}');
-  } catch {
-    extra = {};
-  }
-  const gauge = String(row.gauge || extra.gauge || '').trim();
-  const design = String(
-    row.colour || extra.colour || row.material_type || extra.materialType || extra.profile || ''
-  ).trim();
-  if (!gauge || !design) return null;
-  return listPricePerMeterFromGaugeDesign(db, gauge, design, branchId);
 }
 
 /**
@@ -1810,9 +1755,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   let approvalAlignmentAckJson = null;
   let approvalAlignmentOverrideIsNew = false;
   if (status === 'Approved' && qref) {
-    const qRow = db.prepare(`SELECT paid_ngn, total_ngn FROM quotations WHERE id = ?`).get(qref);
     const cashInNgn = quotationCashInNgn(db, qref);
-    const quoteTotalNgn = roundMoney(qRow?.total_ngn ?? 0);
     const sumRow = db
       .prepare(
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds

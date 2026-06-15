@@ -3,9 +3,8 @@ import { classifyPoSettlement } from './ap2SettlementClassification.js';
 import {
   supplierAdvanceNgn,
   expectedOutstandingApNgn,
-  roundMoney,
 } from './ap2ReceivedBasisOps.js';
-import { describeSupplierAdvanceGlCapability, tryPostSupplierAdvancePaymentGl } from './ap2SupplierAdvanceGl.js';
+import { tryPostSupplierAdvancePaymentGl } from './ap2SupplierAdvanceGl.js';
 import * as featureFlags from './financeFeatureFlags.js';
 
 describe('ap2c settlement classification', () => {

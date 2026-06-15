@@ -71,7 +71,7 @@ export function getHrAttendanceTrendAnalytics(db, scope, months = 6) {
   return { months: labels, absenceCounts, overtimeHours };
 }
 
-export function getHrLeaveUsageAnalytics(db, scope) {
+export function getHrLeaveUsageAnalytics(db) {
   if (!hrTablesReady(db)) return { byDepartment: [] };
   const rows = db
     .prepare(

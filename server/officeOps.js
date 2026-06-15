@@ -1,7 +1,6 @@
 /**
  * Internal Office Desk: threads, messages, memo → payment request conversion.
  */
-import { canUseAllBranchesRollup, userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, insertPaymentRequest } from './controlOps.js';
 import { hrListScope } from './hrOps.js';

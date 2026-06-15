@@ -61,16 +61,16 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(res.body.capabilities?.accountingPolicyV1Labels).toBe('off');
   });
 
-  it('GET /readyz matches /api/health liveness payload', async () => {
+  it('GET /readyz returns minimal public liveness', async () => {
     const res = await request(app).get('/readyz');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(
       expect.objectContaining({
         ok: true,
         service: 'zarewa-api',
-        capabilities: expect.objectContaining({ officeDesk: true }),
       })
     );
+    expect(res.body.capabilities).toBeUndefined();
   });
 
   it('POST /api/ai/chat returns 503 when AI is not configured', async () => {

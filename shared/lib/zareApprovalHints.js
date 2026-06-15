@@ -54,7 +54,6 @@ export function explainApprovalBlock(ctx = {}) {
   const reasons = [];
   const status = String(ctx.approvalStatus || ctx.status || '').trim().toLowerCase();
   const documentType = String(ctx.documentType || ctx.entityKind || '').trim().toLowerCase();
-  const permissions = Array.isArray(ctx.permissions) ? ctx.permissions : [];
 
   const zareQuery =
     ctx.zareQuery ||

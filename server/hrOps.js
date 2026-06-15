@@ -22,11 +22,14 @@ import {
   notifyHrRequestOutcome,
   notifyPayrollRunStatus,
 } from './hrNotifications.js';
-import { encryptBankAccount, maskBankAccount, decryptBankAccount, storedBankToMasked } from './hrBankCrypto.js';
+import { encryptBankAccount, maskBankAccount, decryptBankAccount } from './hrBankCrypto.js';
 import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
+import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
 import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
+import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } from './hrIncidentRecoveryOps.js';
+import { countOpenIncidents } from './hrAccountabilityOps.js';
 import {
   isDomesticStaff,
   isNonBranchStaff,
@@ -36,8 +39,6 @@ import {
   payrollGroupLabel,
   payrollGroupsForCohort,
   requiresAttendance,
-  requiresEmployeePensionDeduction,
-  requiresEmployerPensionContribution,
   requiresPaye,
   staffMeetsPensionPolicy,
 } from '../shared/lib/hrStaffCohorts.js';
@@ -591,6 +592,13 @@ export function listRecentDisciplinaryEvents(db, scope, listOpts = {}) {
  * @param {string} actorUserId
  */
 export function appendHrDisciplinaryEvent(db, userId, body, actorUserId) {
+  if (process.env.ZAREWA_ALLOW_LEGACY_DISCIPLINE_EVENTS !== '1') {
+    return {
+      ok: false,
+      error: 'Legacy disciplinary events are deprecated. Create a discipline case via POST /api/incidents or /api/hr/discipline-cases.',
+      deprecated: true,
+    };
+  }
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return { ok: false, error: 'No HR employee file for this user.' };
@@ -800,10 +808,25 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     return Object.keys(extra).length ? extra : prevExtraRow ? prevExtra : null;
   })();
 
+  const resolvedEmployeeNo =
+    body?.employeeNo !== undefined
+      ? String(body.employeeNo ?? '').trim() || null
+      : prevRow?.employee_no ?? null;
+  if (resolvedEmployeeNo) {
+    const conflict = db
+      .prepare(
+        `SELECT user_id FROM hr_staff_profiles WHERE trim(employee_no) = trim(?) AND user_id != ?`
+      )
+      .get(resolvedEmployeeNo, userId);
+    if (conflict) {
+      return { ok: false, error: 'Employee number already assigned to another staff member.' };
+    }
+  }
+
   const row = {
     user_id: userId,
     branch_id: branchId,
-    employee_no: String(body?.employeeNo ?? '').trim() || null,
+    employee_no: resolvedEmployeeNo,
     job_title: jobTitle,
     department,
     department_id: departmentId,
@@ -2342,6 +2365,7 @@ function incrementLoanMonthsFromPayrollRun(db, runId) {
   for (const item of items) {
     settleLoanAfterPayrollDeduction(db, item.hr_request_id, item.user_id, item.amount_ngn);
   }
+  incrementRecoveriesFromPayrollRun(db, runId);
 }
 
 function approvedLeaveWorkingDaysInPayrollMonth(db, userId, periodYyyymm) {
@@ -2695,20 +2719,45 @@ export function listHrPayslipsForUser(db, userId, limit = 24) {
        ORDER BY r.period_yyyymm DESC LIMIT ?`
     )
     .all(uid, cap);
-  return rows.map((row) => ({
-    userId: uid,
-    runId: row.runId,
-    periodYyyymm: row.periodYyyymm,
-    runStatus: row.runStatus,
-    displayName: row.displayName,
-    grossNgn: row.grossNgn,
-    bonusNgn: row.bonusNgn,
-    netNgn: row.netNgn,
-    taxNgn: row.taxNgn,
-    pensionNgn: row.pensionNgn,
-    attendanceDeductionNgn: row.attendanceDeductionNgn,
-    otherDeductionNgn: row.otherDeductionNgn,
-  }));
+  let recoveryByRun = new Map();
+  try {
+    const recRows = db
+      .prepare(
+        `SELECT run_id, schedule_id, amount_ngn, case_number
+         FROM hr_payroll_line_recoveries WHERE user_id = ? AND amount_ngn > 0`
+      )
+      .all(uid);
+    for (const rr of recRows) {
+      if (!recoveryByRun.has(rr.run_id)) recoveryByRun.set(rr.run_id, []);
+      recoveryByRun.get(rr.run_id).push({
+        scheduleId: rr.schedule_id,
+        amountNgn: rr.amount_ngn,
+        caseNumber: rr.case_number || rr.schedule_id,
+      });
+    }
+  } catch {
+    recoveryByRun = new Map();
+  }
+  return rows.map((row) => {
+    const recoveries = recoveryByRun.get(row.runId) || [];
+    const incidentRecoveryNgn = recoveries.reduce((s, x) => s + Math.round(Number(x.amountNgn) || 0), 0);
+    return {
+      userId: uid,
+      runId: row.runId,
+      periodYyyymm: row.periodYyyymm,
+      runStatus: row.runStatus,
+      displayName: row.displayName,
+      grossNgn: row.grossNgn,
+      bonusNgn: row.bonusNgn,
+      netNgn: row.netNgn,
+      taxNgn: row.taxNgn,
+      pensionNgn: row.pensionNgn,
+      attendanceDeductionNgn: row.attendanceDeductionNgn,
+      otherDeductionNgn: row.otherDeductionNgn,
+      incidentRecoveryNgn,
+      incidentRecoveries: recoveries,
+    };
+  });
 }
 
 export function createPayrollRun(db, actor, body) {
@@ -2768,6 +2817,11 @@ export function computePayrollRun(db, runId) {
   const isYearEnd = String(period || '').endsWith('12');
 
   db.prepare(`DELETE FROM hr_payroll_line_loans WHERE run_id = ?`).run(runId);
+  try {
+    db.prepare(`DELETE FROM hr_payroll_line_recoveries WHERE run_id = ?`).run(runId);
+  } catch {
+    /* optional until migrate */
+  }
   db.prepare(`DELETE FROM hr_payroll_lines WHERE run_id = ?`).run(runId);
 
   const staff = db
@@ -2790,6 +2844,16 @@ export function computePayrollRun(db, runId) {
       run_id, user_id, hr_request_id, period_yyyymm, amount_ngn, loan_title, computed_at_iso
     ) VALUES (?,?,?,?,?,?,?)`
   );
+  let insRecovery = null;
+  try {
+    insRecovery = db.prepare(
+      `INSERT INTO hr_payroll_line_recoveries (
+        run_id, user_id, schedule_id, period_yyyymm, amount_ngn, case_number, computed_at_iso
+      ) VALUES (?,?,?,?,?,?,?)`
+    );
+  } catch {
+    insRecovery = null;
+  }
   const computedAt = nowIso();
 
   let totalGross = 0;
@@ -2817,9 +2881,12 @@ export function computePayrollRun(db, runId) {
     const pensionEmployer = meetsPension ? Math.round((gross * penErP) / 100) : 0;
     const extra = safeJsonParse(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
-    const discFix = Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0));
+    const useLegacyDisc = process.env.HR_LEGACY_DISC_DEDUCTION === '1';
+    const discFix =
+      useLegacyDisc ? Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0)) : 0;
     const { total: loanTotal, loans: loanParts } = activeStaffLoanBreakdown(db, s.user_id);
-    const other = loanTotal + discFix;
+    const { total: recoveryTotal, recoveries: recoveryParts } = activeIncidentRecoveryBreakdown(db, s.user_id);
+    const other = loanTotal + recoveryTotal + discFix;
     const net = gross - tax - pension - other;
     ins.run(runId, s.user_id, gross, bonus, deductionNgn, other, tax, pension, net);
     try {
@@ -2846,6 +2913,11 @@ export function computePayrollRun(db, runId) {
     }
     for (const ln of loanParts) {
       insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
+    }
+    if (insRecovery) {
+      for (const rc of recoveryParts) {
+        insRecovery.run(runId, s.user_id, rc.scheduleId, period, rc.amountNgn, rc.caseNumber, computedAt);
+      }
     }
     totalGross += Math.max(0, gross);
     totalPensionEmployer += pensionEmployer;
@@ -3139,6 +3211,26 @@ export function listPayrollLines(db, runId) {
       title: lr.loan_title || lr.hr_request_id,
     });
   }
+  let recoveryRows = [];
+  try {
+    recoveryRows = db
+      .prepare(
+        `SELECT user_id, schedule_id, amount_ngn, case_number FROM hr_payroll_line_recoveries WHERE run_id = ?`
+      )
+      .all(runId);
+  } catch {
+    recoveryRows = [];
+  }
+  const recoveriesByUser = new Map();
+  for (const rr of recoveryRows) {
+    const uid = rr.user_id;
+    if (!recoveriesByUser.has(uid)) recoveriesByUser.set(uid, []);
+    recoveriesByUser.get(uid).push({
+      scheduleId: rr.schedule_id,
+      amountNgn: rr.amount_ngn,
+      caseNumber: rr.case_number || rr.schedule_id,
+    });
+  }
   return db
     .prepare(
       `SELECT l.*, u.display_name AS displayName, p.paye_tax_ngn AS payeTaxNgn,
@@ -3160,8 +3252,12 @@ export function listPayrollLines(db, runId) {
         (s, x) => s + Math.round(Number(x.amountNgn) || 0),
         0
       );
+      const recoveryTotal = (recoveriesByUser.get(row.user_id) || []).reduce(
+        (s, x) => s + Math.round(Number(x.amountNgn) || 0),
+        0
+      );
       const otherDed = Math.round(Number(row.other_deduction_ngn) || 0);
-      const discOther = Math.max(0, otherDed - loanTotal);
+      const discOther = Math.max(0, otherDed - loanTotal - recoveryTotal);
       const profileExtra = safeJsonParse(row.profileExtraJson, {});
       const pensionAdministrator = profileExtra?.statutory?.pensionAdministrator || null;
       const profilePaye =
@@ -3176,6 +3272,8 @@ export function listPayrollLines(db, runId) {
         attendanceDeductionNgn: row.attendance_deduction_ngn,
         otherDeductionNgn: row.other_deduction_ngn,
         loanDeductionNgn: loanTotal,
+        incidentRecoveryNgn: recoveryTotal,
+        incidentRecoveries: recoveriesByUser.get(row.user_id) || [],
         disciplinaryOtherDeductionNgn: discOther,
         taxNgn: row.tax_ngn,
         pensionNgn: row.pension_ngn,
@@ -3927,7 +4025,9 @@ export function getHrDashboardAlerts(db) {
       const years = now.getFullYear() - joined.getFullYear();
       return thisDoy >= todayDoy && thisDoy <= todayDoy + 7 && years > 0;
     }).map(r => ({ ...r, years: now.getFullYear() - new Date(r.date_joined_iso).getFullYear() }));
-  } catch {}
+  } catch {
+    /* anniversary query optional */
+  }
 
   // Documents expiring within 60 days
   let docsExpiring = [];
@@ -3949,7 +4049,9 @@ export function getHrDashboardAlerts(db) {
       WHERE tr.expiry_at_iso BETWEEN ? AND ? AND tr.completion_status='completed'
       ORDER BY tr.expiry_at_iso ASC
     `).all(todayIso, in60Iso);
-  } catch {}
+  } catch {
+    /* training expiry query optional */
+  }
 
   return { probationEnding, contractsExpiring, birthdaysThisWeek, anniversariesThisWeek, docsExpiring, trainingExpiring };
 }
@@ -4543,7 +4645,7 @@ export function getHrMeProfile(db, userId) {
     attendanceRequired: requiresAttendance(payrollGroup),
     isScholarshipBeneficiary: isScholarshipBeneficiary(payrollGroup),
     isDomesticStaff: isDomesticStaff(p.payroll_group),
-    isNonBranchStaff: isNonBranchStaff(payroll_group),
+    isNonBranchStaff: isNonBranchStaff(payrollGroup),
     employeeNo: p.employee_no,
     jobTitle: p.job_title,
     department: p.department,
@@ -4604,7 +4706,7 @@ export function getHrMeProfile(db, userId) {
   return { user, hr };
 }
 
-/** Employee self-service: update personal, bank, NOK, and qualification fields only. */
+/** Employee self-service: update personal, NOK, and qualification fields only (bank via profile_change request). */
 export function updateMyHrStaffProfile(db, userId, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const uid = String(userId || '').trim();
@@ -4631,10 +4733,6 @@ export function updateMyHrStaffProfile(db, userId, body) {
     'bloodGroup',
     'gender',
     'dateOfBirthIso',
-    'bankName',
-    'bankAccountName',
-    'bankAccountNo',
-    'bankCode',
     'minimumQualification',
     'academicQualification',
     'professionalCertificates',
@@ -5144,10 +5242,14 @@ export function listHrFeedbackNotes(db, subjectUserId) {
   }
 }
 
-export function createHrFeedbackNote(db, actor, body = {}) {
+export function createHrFeedbackNote(db, actor, body = {}, scope = null) {
   const subjectUserId = String(body.subjectUserId || '').trim();
   const text = String(body.body || '').trim();
   if (!subjectUserId || text.length < 2) return { ok: false, error: 'subjectUserId and body are required.' };
+  if (scope) {
+    const gate = assertStaffUserIdInHrScope(db, scope, subjectUserId);
+    if (!gate.ok) return gate;
+  }
   const id = newId('HRFB');
   const now = nowIso();
   try {
@@ -5406,6 +5508,8 @@ export function listHrIncidentMemos(db, scope) {
     summary: row.summary,
     status: row.status,
     disciplinaryEventId: row.disciplinary_event_id,
+    disciplineCaseId: row.discipline_case_id || null,
+    registryId: row.registry_id || null,
     createdAtIso: row.created_at_iso,
   }));
 }
@@ -5429,21 +5533,7 @@ export function createHrIncidentMemo(db, actorUserId, body) {
 }
 
 export function escalateHrIncidentToDiscipline(db, memoId, actorUserId, body = {}) {
-  if (!hrPhase6TablesReady(db)) return { ok: false, error: 'HR incident tables not initialised.' };
-  const memo = db.prepare(`SELECT * FROM hr_incident_memos WHERE id = ?`).get(memoId);
-  if (!memo) return { ok: false, error: 'Incident memo not found.' };
-  const r = appendHrDisciplinaryEvent(db, memo.user_id, {
-    kind: String(body?.kind || 'incident').trim() || 'incident',
-    dateIso: memo.incident_date_iso,
-    summary: String(body?.summary || memo.summary).trim(),
-  }, actorUserId);
-  if (!r.ok) return r;
-  const eventId = r.events?.[0]?.id || null;
-  const now = nowIso();
-  db.prepare(
-    `UPDATE hr_incident_memos SET status = 'escalated', disciplinary_event_id = ?, updated_at_iso = ? WHERE id = ?`
-  ).run(eventId, now, memoId);
-  return { ok: true, eventId, events: r.events };
+  return { ok: false, error: 'Deprecated: use POST /api/hr/incident-memos/:id/escalate (routes through incidentOps).' };
 }
 
 export function listHrTransferRecommendations(db, scope) {
@@ -5508,7 +5598,7 @@ export function reviewHrTransferRecommendation(db, actorUserId, id, body) {
   return { ok: true };
 }
 
-export function listHrLeaveCalendar(db, scope, fromIso, toIso) {
+export function listHrLeaveCalendar(db, scope, fromIso, toIso, opts = {}) {
   if (!hrTablesReady(db)) return [];
   const from = String(fromIso || '').slice(0, 10);
   const to = String(toIso || '').slice(0, 10);
@@ -5524,12 +5614,23 @@ export function listHrLeaveCalendar(db, scope, fromIso, toIso) {
       AND l.end_date_iso >= ? AND l.start_date_iso <= ?
   `;
   const args = [from, to];
-  if (!scope?.viewAll) {
+  if (opts.selfUserId) {
+    sql += ` AND r.user_id = ?`;
+    args.push(String(opts.selfUserId).trim());
+  } else if (!scope?.viewAll) {
     sql += ` AND r.branch_id = ?`;
     args.push(scope?.branchId || DEFAULT_BRANCH_ID);
   }
   sql += ` ORDER BY l.start_date_iso ASC`;
-  return db.prepare(sql).all(...args);
+  const rows = db.prepare(sql).all(...args);
+  if (opts.redactPeerNames && opts.selfUserId) {
+    return rows.map((row) =>
+      String(row.userId) === String(opts.selfUserId)
+        ? row
+        : { ...row, displayName: 'On leave', userId: null, requestId: null }
+    );
+  }
+  return rows;
 }
 
 export function listExceptionalLoanQueue(db, scope) {
@@ -5568,7 +5669,7 @@ export function listRecentOrgSalaryChanges(db, scope, limit = 30) {
 
 export function getHrReportsSummary(db, scope) {
   const staff = listHrStaff(db, scope, { includeInactive: false });
-  const runs = listPayrollRuns(db).filter((r) => !scope?.viewAll || true);
+  const runs = listPayrollRuns(db).filter(() => !scope?.viewAll || true);
   const byStatus = {};
   for (const run of runs) {
     byStatus[run.status] = (byStatus[run.status] || 0) + 1;
@@ -5581,9 +5682,7 @@ export function getHrReportsSummary(db, scope) {
     inbox: obs.summary,
     recentSalaryChanges: listRecentOrgSalaryChanges(db, scope, 15),
     beneficiaries: hrPhase6TablesReady(db) ? listHrBeneficiaries(db, scope).length : 0,
-    openIncidents: hrPhase6TablesReady(db)
-      ? db.prepare(`SELECT COUNT(*) AS c FROM hr_incident_memos WHERE status = 'open'`).get().c
-      : 0,
+    openIncidents: countOpenIncidents(db, scope?.viewAll ? null : scope?.branchId || DEFAULT_BRANCH_ID),
   };
 }
 

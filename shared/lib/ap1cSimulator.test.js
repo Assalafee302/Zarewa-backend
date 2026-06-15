@@ -7,7 +7,6 @@ import {
   sumLegacyBridgeFromReceiptClasses,
 } from './ap1cSimulator.js';
 
-const jobsPre = [];
 const jobsPost = [
   {
     status: 'Completed',

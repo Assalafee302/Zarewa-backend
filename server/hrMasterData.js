@@ -3,8 +3,6 @@
  * @module server/hrMasterData
  */
 
-import { hrTablesReady } from './hrOps.js';
-
 function nowIso() {
   return new Date().toISOString();
 }

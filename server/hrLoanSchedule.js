@@ -33,7 +33,7 @@ export function getStaffLoanSchedule(db, userId) {
   });
 }
 
-export function listLoanScheduleIssues(db, scope) {
+export function listLoanScheduleIssues(db) {
   if (!hrTablesReady(db)) return [];
   const issues = [];
   const staffIds = new Set(

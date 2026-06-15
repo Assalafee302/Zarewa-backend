@@ -9,6 +9,17 @@ import { createHrNotification } from './hrNotifications.js';
 import { createDraftLetter } from './hrLetterWorkflowOps.js';
 import { appendHrAuditEvent, hrTablesReady, listHrAuditEventsGlobal } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
+import {
+  assertCaseClosureReady,
+  syncRegistryFromDisciplineCase,
+  upsertCaseResponsibility,
+  listCaseResponsibility,
+  deleteCaseResponsibilityParty,
+  validateHighRiskDisciplinePayload,
+  normalizeDecisionType,
+  DECISION_TYPES,
+} from './hrAccountabilityOps.js';
+import { createRecoverySchedulesFromCase } from './hrIncidentRecoveryOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -144,6 +155,11 @@ function mapCaseRow(row, db) {
     relatedLetterIds: safeJsonParse(row.related_letter_ids_json, []),
     payrollBlockFlags: safeJsonParse(row.payroll_block_flags_json, {}),
     meta: safeJsonParse(row.meta_json, {}),
+    registryId: row.registry_id ?? null,
+    assetId: row.asset_id ?? null,
+    machineId: row.machine_id ?? null,
+    lossValueNgn: row.loss_value_ngn != null ? Math.round(Number(row.loss_value_ngn) || 0) : null,
+    decisionType: row.decision_type ?? null,
   };
 }
 
@@ -306,6 +322,8 @@ export function createDisciplineCase(db, actor, body = {}) {
   if (!userId || description.length < 10) {
     return { ok: false, error: 'Employee and description (min 10 chars) are required.' };
   }
+  const riskCheck = validateHighRiskDisciplinePayload(body);
+  if (!riskCheck.ok) return riskCheck;
   const staff = loadStaffContext(db, userId);
   if (!staff) return { ok: false, error: 'Employee not found.' };
   const id = newId('HRDIS');
@@ -336,20 +354,27 @@ export function createDisciplineCase(db, actor, body = {}) {
     opened_by_user_id: actor?.id || null,
     payroll_block_flags_json: JSON.stringify(body.payrollBlockFlags || {}),
     meta_json: JSON.stringify(body.meta || {}),
+    loss_value_ngn:
+      body.lossValueNgn != null ? Math.max(0, Math.round(Number(body.lossValueNgn) || 0)) : null,
+    asset_id: String(body.assetId || '').trim() || null,
+    machine_id: String(body.machineId || '').trim() || null,
+    decision_type: String(body.decisionType || '').trim() || null,
   };
   try {
     db.prepare(
       `INSERT INTO hr_discipline_cases (
         id, user_id, branch_id, status, offence_category, summary, opened_at_iso, opened_by_user_id,
         case_number, case_type, severity, description, department, designation,
-        incident_date_iso, reported_date_iso, reported_by_user_id, payroll_block_flags_json, meta_json
+        incident_date_iso, reported_date_iso, reported_by_user_id, payroll_block_flags_json, meta_json,
+        loss_value_ngn, asset_id, machine_id, decision_type
       ) VALUES (
         @id, @user_id, @branch_id, @status, @offence_category, @summary, @opened_at_iso, @opened_by_user_id,
         @case_number, @case_type, @severity, @description, @department, @designation,
-        @incident_date_iso, @reported_date_iso, @reported_by_user_id, @payroll_block_flags_json, @meta_json
+        @incident_date_iso, @reported_date_iso, @reported_by_user_id, @payroll_block_flags_json, @meta_json,
+        @loss_value_ngn, @asset_id, @machine_id, @decision_type
       )`
     ).run(row);
-  } catch (e) {
+  } catch {
     try {
       db.prepare(
         `INSERT INTO hr_discipline_cases (id, user_id, branch_id, status, offence_category, summary, opened_at_iso, opened_by_user_id)
@@ -372,6 +397,7 @@ export function createDisciplineCase(db, actor, body = {}) {
     details: { userId, caseNumber, caseType },
   });
   notifyCaseStakeholders(db, row, `Discipline case ${caseNumber}`, description.slice(0, 200));
+  syncRegistryFromDisciplineCase(db, id);
   return { ok: true, id, caseNumber };
 }
 
@@ -435,6 +461,14 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
     updates.status = 'action_issued';
     notes.push('Management decision recorded.');
   }
+  if (body.decisionType != null) {
+    const dt = normalizeDecisionType(body.decisionType);
+    if (!DECISION_TYPES.has(dt)) return { ok: false, error: 'Invalid decision_type.' };
+    updates.decision_type = dt;
+  }
+  if (body.assetId != null) updates.asset_id = String(body.assetId).trim() || null;
+  if (body.machineId != null) updates.machine_id = String(body.machineId).trim() || null;
+  if (body.lossValueNgn != null) updates.loss_value_ngn = Math.max(0, Math.round(Number(body.lossValueNgn) || 0));
   if (body.sanction != null) updates.sanction = String(body.sanction).trim();
   if (body.finalOutcome != null) updates.final_outcome = String(body.finalOutcome).trim();
   if (body.payrollBlockFlags != null) {
@@ -447,7 +481,17 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
   } else if (action === 'start_investigation') {
     updates.status = 'under_investigation';
     notes.push('Investigation started.');
+  } else if (action === 'apply_decision') {
+    const dt = normalizeDecisionType(body.decisionType || existing.decision_type || '');
+    if (!DECISION_TYPES.has(dt)) return { ok: false, error: 'decisionType is required for apply_decision.' };
+    const ar = applyDecisionActions(db, actor, cid, dt, body);
+    if (!ar.ok) return ar;
+    updates.status = 'action_issued';
+    updates.decision_type = dt;
+    notes.push(`Decision applied: ${dt}.`);
   } else if (action === 'close') {
+    const gate = assertCaseClosureReady(db, cid);
+    if (!gate.ok) return { ok: false, error: 'Case cannot be closed.', blockers: gate.blockers };
     updates.status = 'closed';
     updates.closure_date_iso = now.slice(0, 10);
     updates.final_outcome = updates.final_outcome || body.finalOutcome || existing.final_outcome || 'closed';
@@ -487,6 +531,7 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
     `Discipline case updated`,
     notes.join(' ') || 'Case status changed.',
   );
+  syncRegistryFromDisciplineCase(db, cid);
   return { ok: true, case: getDisciplineCase(db, cid) };
 }
 
@@ -603,8 +648,88 @@ export function getDisciplineCaseAudit(db, caseId, limit = 100) {
   const audit = listHrAuditEventsGlobal(db, { viewAll: true }, { limit: 500 })
     .filter((e) => e.entityId === cid || e.details?.caseId === cid)
     .slice(0, limit);
-  return { events, audit };
+  const responsibility = listCaseResponsibility(db, cid);
+  return { events, audit, responsibility };
 }
+
+export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}) {
+  const dt = normalizeDecisionType(decisionType);
+  if (!DECISION_TYPES.has(dt)) return { ok: false, error: 'Invalid decision_type.' };
+  const c = getDisciplineCase(db, caseId);
+  if (!c) return { ok: false, error: 'Case not found.' };
+
+  const actions = [];
+  try {
+    db.transaction(() => {
+      db.prepare(`UPDATE hr_discipline_cases SET decision_type = ?, updated_at_iso = ? WHERE id = ?`).run(
+        dt,
+        nowIso(),
+        c.id
+      );
+
+      if (dt === 'warning') {
+        const lr = generateDisciplineCaseLetter(db, actor, c.id, 'warning', extra);
+        if (!lr.ok) throw new Error(lr.error || 'Letter generation failed.');
+        actions.push({ kind: 'letter', letterId: lr.id, letterType: 'warning' });
+      } else if (dt === 'deduction') {
+        const sr = createRecoverySchedulesFromCase(db, actor, c.id, { activate: true });
+        if (!sr.ok) throw new Error(sr.error || 'Recovery schedule creation failed.');
+        actions.push({ kind: 'recovery_schedules', schedules: sr.schedules });
+        const parties = listCaseResponsibility(db, c.id);
+        for (const p of parties) {
+          appendDisciplineCaseEvent(db, actor, c.id, {
+            eventKind: 'letter_issued',
+            note: `Salary recovery sanction letter issued for ${p.staffDisplayName || p.userId} (${p.role}, ${p.responsibilityWeight}%).`,
+          });
+          actions.push({ kind: 'letter_event', userId: p.userId, role: p.role });
+        }
+      } else if (dt === 'suspension') {
+        const lr = generateDisciplineCaseLetter(db, actor, c.id, 'suspension', extra);
+        if (!lr.ok) throw new Error(lr.error || 'Suspension letter failed.');
+        const prof = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(c.userId);
+        const extraProf = safeJsonParse(prof?.profile_extra_json, {});
+        extraProf.employmentMeta = {
+          ...(extraProf.employmentMeta || {}),
+          salaryStatus: 'suspended',
+          payrollHoldReason: `Discipline case ${c.caseNumber || c.id}`,
+        };
+        db.prepare(`UPDATE hr_staff_profiles SET profile_extra_json = ? WHERE user_id = ?`).run(
+          JSON.stringify(extraProf),
+          c.userId
+        );
+        actions.push({ kind: 'letter', letterId: lr.id, letterType: 'suspension' });
+        actions.push({ kind: 'salary_hold', userId: c.userId });
+      } else if (dt === 'termination') {
+        const lr = generateDisciplineCaseLetter(db, actor, c.id, 'dismissal', extra);
+        if (!lr.ok) throw new Error(lr.error || 'Dismissal letter failed.');
+        actions.push({ kind: 'letter', letterId: lr.id, letterType: 'dismissal' });
+      }
+
+      syncRegistryFromDisciplineCase(db, c.id);
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id,
+    action: 'hr.discipline.decision_applied',
+    entityKind: 'hr_discipline_case',
+    entityId: c.id,
+    details: { decisionType: dt, actions },
+  });
+  return { ok: true, decisionType: dt, actions };
+}
+
+export {
+  upsertCaseResponsibility,
+  listCaseResponsibility,
+  deleteCaseResponsibilityParty,
+  assertCaseClosureReady,
+  validateHighRiskDisciplinePayload,
+  normalizeDecisionType,
+  DECISION_TYPES,
+} from './hrAccountabilityOps.js';
 
 export function staffHasOpenDisciplineCase(db, userId) {
   const rows = listDisciplineCases(db, { viewAll: true }, { userId });

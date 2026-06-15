@@ -1,5 +1,4 @@
 import {
-  amountDueOnQuotationFromEntries,
   firstProductionDateISO,
   receivableDueOnQuotationFromEntries,
 } from './customerLedgerCore.js';

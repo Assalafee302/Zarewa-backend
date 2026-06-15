@@ -94,11 +94,13 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
  *   includeRegisteredPasswords?: boolean;
  *   branchScope?: 'ALL' | string;
  *   skipSideEffects?: boolean;
+ *   skipWorkItemSync?: boolean;
  * }} [opts]
  */
 export function buildBootstrap(db, opts = {}) {
   const branchScope = opts.branchScope ?? 'ALL';
   const skipSideEffects = Boolean(opts.skipSideEffects);
+  const skipWorkItemSync = Boolean(opts.skipWorkItemSync) || skipSideEffects;
   const user = opts.user ?? opts.session?.user ?? null;
   const includeRegisteredPasswords = Boolean(opts.includeRegisteredPasswords);
   const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
@@ -130,6 +132,10 @@ export function buildBootstrap(db, opts = {}) {
     5000,
     Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 2000)
   );
+  const MAX_LEDGER_ROWS = Math.min(
+    10_000,
+    Math.max(500, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 3000)
+  );
 
   const customerDashboard = salesOk
     ? getJsonBlob(db, 'customer_dashboard') ?? { orders: [], interactions: [], salesTrendByCustomer: {} }
@@ -145,14 +151,14 @@ export function buildBootstrap(db, opts = {}) {
     if (Number.isFinite(m) && m > 0) o.meterTargetPerMonth = m;
     return Object.keys(o).length ? o : null;
   })();
-  const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope) : [];
+  const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope, { limit: MAX_LEDGER_ROWS }) : [];
 
   if (!skipSideEffects) {
-    if (salesOk) {
+    const inlineQuoteMaintenance =
+      process.env.NODE_ENV === 'test' ||
+      String(process.env.ZAREWA_BOOTSTRAP_INLINE_MAINTENANCE || '').trim() === '1';
+    if (salesOk && inlineQuoteMaintenance) {
       try {
-        // Vitest and other in-memory API tests use fixed historical quote dates; real "today" would
-        // auto-expire them on every bootstrap and break PATCH/payment flows. Opt in with
-        // ZAREWA_TEST_QUOTE_LIFECYCLE=1 when a test needs expiry-on-bootstrap (rare).
         if (process.env.NODE_ENV !== 'test' || process.env.ZAREWA_TEST_QUOTE_LIFECYCLE === '1') {
           runQuotationLifecycleMaintenance(db, branchScope);
         }
@@ -160,10 +166,10 @@ export function buildBootstrap(db, opts = {}) {
         console.error('[zarewa] quotation lifecycle maintenance failed', e);
       }
     }
-    if (user && userHasPermission(user, 'office.use')) {
+    if (!skipWorkItemSync && user && userHasPermission(user, 'office.use')) {
       ensureWorkItemsForVisibleOfficeThreads(db, workScope, user);
     }
-    if (user) {
+    if (!skipWorkItemSync && user) {
       syncDerivedWorkItems(db, workScope, user);
     }
   }

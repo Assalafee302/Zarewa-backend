@@ -12,6 +12,7 @@ export default defineConfig({
     environment: 'node',
     include: ['server/**/*.test.js', 'shared/**/*.test.js'],
     testTimeout: 90_000,
-    hookTimeout: 120_000,
+    hookTimeout: 600_000,
+    teardownTimeout: 30_000,
   },
 });

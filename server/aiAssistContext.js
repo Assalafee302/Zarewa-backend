@@ -62,7 +62,7 @@ function topRows(rows, limit, mapFn) {
   return (rows || []).slice(0, limit).map(mapFn).filter(Boolean);
 }
 
-function allowedModesForPermissions(user, permissions) {
+function allowedModesForPermissions(user) {
   if (!user) return [];
   const modes = ['search'];
   if (canReadSalesDomain(user)) modes.push('sales');

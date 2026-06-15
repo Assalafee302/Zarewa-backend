@@ -28,4 +28,14 @@ describe.skipIf(!process.env.ZAREWA_MYSQL_HOST && !process.env.ZAREWA_MYSQL_USER
     const post = addForumPost(db, r.topic.id, user, { body: 'Anyone seen the mechanic?' });
     expect(post.ok).toBe(true);
   });
+
+  it('rejects company-wide topic from viewer with settings.view', () => {
+    const viewer = { id: 'v1', roleKey: 'viewer', permissions: ['settings.view'] };
+    const r = createForumTopic(db, viewer, {
+      scope: 'company',
+      title: 'All staff',
+      body: 'Should not post',
+    });
+    expect(r.ok).toBe(false);
+  });
 });

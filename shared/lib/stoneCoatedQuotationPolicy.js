@@ -51,7 +51,16 @@ export function productLineKey(name) {
   const k = normQuoteItemKey(name);
   if (k === 'flatsheet') return 'flat sheet';
   if (k === 'stone flatsheet' || k.startsWith('stone flatsheet ')) return 'stone flatsheet';
+  if (k === 'stoneflatsheet' || k === 'stone flat sheet') return 'stone flatsheet';
   return k;
+}
+
+/**
+ * Quotation product lines that issue stone flatsheet stock (m²), not stone-coated metre stock.
+ * @param {string | null | undefined} name
+ */
+export function isStoneFlatsheetQuotationLine(name) {
+  return productLineKey(name) === 'stone flatsheet';
 }
 
 /**
@@ -83,8 +92,13 @@ export function resolveStoneFlatsheetLengthM(row) {
   const hasSfl = rawSfl !== undefined && rawSfl !== null && rawSfl !== '';
   const fromSfl = hasSfl ? normalizeStoneFlatsheetLengthM(rawSfl) : null;
 
+  if (!isStoneFlatsheetQuotationLine(row?.name)) {
+    return null;
+  }
+
   if (k === 'stone flatsheet') {
     if (fromSfl != null) return fromSfl;
+    if (fromNameSuffix != null) return fromNameSuffix;
     return normalizeStoneFlatsheetLengthM(row?.lengthM);
   }
 
@@ -128,7 +142,7 @@ export function quotationHasStoneMetreProductLines(products) {
   return products.some((row) => {
     const name = String(row?.name ?? '').trim();
     if (!name || parseQuoteLineQty(row) <= 0) return false;
-    return productLineKey(name) !== 'stone flatsheet';
+    return !isStoneFlatsheetQuotationLine(name);
   });
 }
 
@@ -358,7 +372,7 @@ export function validateQuotationMaterialRules(db, linesJson) {
   const stoneFlatsheetLengthMissing = [];
   for (const row of products) {
     const n = String(row?.name ?? '').trim();
-    if (!n || productLineKey(n) !== 'stone flatsheet') continue;
+    if (!n || !isStoneFlatsheetQuotationLine(n)) continue;
     const qty = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
     if (qty <= 0) continue;
     const lm = resolveStoneFlatsheetLengthM(row);

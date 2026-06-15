@@ -217,17 +217,6 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
   return floor?.unitPricePerMeterNgn ?? null;
 }
 
-function effectiveQuotedPerMeter(line) {
-  const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
-  const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
-  let effectivePerMeter = unit;
-  if (effectivePerMeter <= 0 && meters > 0) {
-    const total = Number(line?.lineTotalNgn ?? line?.totalNgn ?? line?.amountNgn ?? 0) || 0;
-    if (total > 0) effectivePerMeter = total / meters;
-  }
-  return effectivePerMeter;
-}
-
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} line

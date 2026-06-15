@@ -10,6 +10,7 @@ export default defineConfig([
     'playwright/.cache',
     'playwright.config.js',
     'e2e/**',
+    '.build/**',
   ]),
   {
     files: ['server/**/*.js', 'shared/**/*.js', 'scripts/**/*.mjs'],
@@ -20,7 +21,10 @@ export default defineConfig([
       sourceType: 'module',
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]|^motion$' }],
+      'no-unused-vars': [
+        'error',
+        { varsIgnorePattern: '^[A-Z_]|^motion$', argsIgnorePattern: '^_' },
+      ],
     },
   },
 ]);

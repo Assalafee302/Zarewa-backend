@@ -702,7 +702,7 @@ function rowDateFields(iso) {
  * Within one coil, order lines so previous after ≈ next before (ledger chain).
  * Starts at the line with the largest before (first draw on the coil).
  */
-function orderCoilRowsAsBalanceChain(rows, tolerance = BALANCE_GAP_TOLERANCE_KG) {
+function orderCoilRowsAsBalanceChain(rows, _tolerance = BALANCE_GAP_TOLERANCE_KG) {
   if (rows.length <= 1) return rows;
 
   const list = [...rows];
@@ -1086,31 +1086,6 @@ function groupAccessoryRows(rows) {
       subtotals: summarizeAccessory(typeRows),
     }));
   return { groups, totals: summarizeAccessory(rows) };
-}
-
-function movementInPeriod(m, startDate, endDate) {
-  const iso = toIsoDate(m.dateISO || m.atISO);
-  if (!iso) return false;
-  return (!startDate || iso >= startDate) && (!endDate || iso <= endDate);
-}
-
-function buildOtherMovementRow(m, productById) {
-  const pid = String(m.productID || '').trim();
-  const product = pid ? productById.get(pid) : null;
-  const category = classifyProductCategory(product);
-  const qty = Number(m.qty) || 0;
-  const dates = rowDateFields(toIsoDate(m.dateISO || m.atISO));
-  return {
-    ...dates,
-    movementType: String(m.type || '').trim() || '—',
-    ref: String(m.ref || '').trim() || '—',
-    productName: String(product?.name || pid || '—'),
-    productID: pid || '—',
-    qtyDelta: round2(qty),
-    unit: String(product?.unit || '').trim() || '—',
-    detail: String(m.detail || '').trim() || '—',
-    category,
-  };
 }
 
 /**

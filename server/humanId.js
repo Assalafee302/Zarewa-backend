@@ -44,6 +44,7 @@ const SAFE_TABLES = new Set([
   'hr_performance_reviews',
   'coil_control_events',
   'material_incidents',
+  'incident_registry',
 ]);
 
 function assertSafeTable(table) {
@@ -217,6 +218,10 @@ export function nextCoilControlEventHumanId(db, branchId) {
 
 export function nextMaterialIncidentHumanId(db, branchId) {
   return allocateHumanId(db, 'MEX', branchId, { table: 'material_incidents', idColumn: 'id' });
+}
+
+export function nextIncidentRegistryHumanId(db, branchId) {
+  return allocateHumanId(db, 'INC', branchId, { table: 'incident_registry', idColumn: 'id' });
 }
 
 export function nextQuotationHumanId(db, branchId) {

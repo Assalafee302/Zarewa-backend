@@ -3,9 +3,11 @@ import net from 'node:net';
 import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
+import { scheduleWorkspaceMaintenance } from './workspaceMaintenance.js';
 
 /** Browser `Origin` has no path; env entries sometimes include a trailing `/`. */
 function normalizeCorsOrigin(raw) {
@@ -25,6 +27,15 @@ function normalizeCorsOrigin(raw) {
  */
 export function createApp(db) {
   const app = express();
+  app.use(
+    compression({
+      threshold: Number(process.env.ZAREWA_COMPRESSION_THRESHOLD_BYTES) || 1024,
+      filter: (req, res) => {
+        if (req.headers['x-no-compression']) return false;
+        return compression.filter(req, res);
+      },
+    })
+  );
   app.use(express.json({ limit: '2mb' }));
 
   // Dev default: common Vite dev (5173/5174) + preview (4173) on localhost + 127.0.0.1.
@@ -133,6 +144,7 @@ export function createApp(db) {
 
   registerHttpApi(app, db);
   scheduleHelpAnalytics(db);
+  scheduleWorkspaceMaintenance(db);
 
   const staticRoot = path.resolve(
     process.env.ZAREWA_STATIC_DIR || path.join(process.cwd(), 'dist')

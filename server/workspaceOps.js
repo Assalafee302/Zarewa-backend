@@ -22,15 +22,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function safeJsonParse(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  try {
-    return JSON.parse(String(raw)) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function workspaceOpsTablesReady(db) {
   try {
     return Boolean(

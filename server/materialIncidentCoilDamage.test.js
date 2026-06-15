@@ -51,6 +51,25 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(row.return_disposition).toBe('offcut_pool');
   });
 
+  it('honours explicit incident type from payload', () => {
+    const r = createCoilDamageMaterialIncident(
+      db,
+      {
+        coilNo: 'C-DMG-1',
+        beforeKg: 4800,
+        afterKg: 4700,
+        meters: 40,
+        incidentType: 'supplier_defect',
+        note: 'Supplier delivered coil with edge defect',
+        submit: false,
+      },
+      { workspaceBranchId: 'BR-001', actor: { userId: 'u1' } }
+    );
+    expect(r.ok).toBe(true);
+    const row = db.prepare(`SELECT incident_type FROM material_incidents WHERE id = ?`).get(r.id);
+    expect(row.incident_type).toBe('supplier_defect');
+  });
+
   it('uses production_error when production job is linked', () => {
     const r = createCoilDamageMaterialIncident(
       db,

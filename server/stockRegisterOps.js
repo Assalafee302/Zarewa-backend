@@ -20,10 +20,8 @@ import {
   FINISHED_CONFIRM,
   lineEligibleForClosing,
   LINE_STATUS,
-  lineKeyFinished,
   parseLineClearance,
   parseStoreChecklist,
-  setLineEntry,
   validateBmApprove,
   validateStoreChecklist,
 } from '../shared/lib/stockRegisterLineClearance.js';
@@ -36,7 +34,7 @@ import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionJobCoils } from './productionTraceability.js';
 import { isBranchManagerApprovalAuthority, isExecutiveRoleKey } from '../shared/workspaceGovernance.js';
-import { purchaseWeightedAvgUnitPriceLastDays, purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
+import { purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
 import { materialIncidentDamageSummaryForPeriod } from './materialIncidentOps.js';
 
 function nowIso() {
@@ -614,7 +612,7 @@ export function saveStockRegisterLineClearance(db, branchId, periodKey, lineClea
   return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, pk)), adjustments: adj };
 }
 
-export function saveStockRegisterStoreChecklist(db, branchId, periodKey, checklist, actor) {
+export function saveStockRegisterStoreChecklist(db, branchId, periodKey, checklist, _actor) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
   const row = getPeriodRow(db, bid, pk);

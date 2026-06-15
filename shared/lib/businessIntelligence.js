@@ -2,7 +2,6 @@
  * Business intelligence — sales mix, aluminium/aluzinc inventory, and predictive cash signals.
  * Pure functions over workspace / ERP snapshots (shared by API and Zare).
  */
-import { amountDueOnQuotationFromEntries } from './customerLedgerCore.js';
 import { materialFamilyKeyForConversion } from './coilMaterialFamily.js';
 import {
   allocatedQuotationRevenueForProductionJob,
@@ -556,7 +555,7 @@ export function computeMaterialPerformance(data, opts = {}) {
     aluzinc: { combo: new Map(), gauge: new Map(), colour: new Map() },
   };
 
-  const unitCostFor = (fam, gauge, colour, weightKg) => {
+  const unitCostFor = (fam, gauge, colour, _weightKg) => {
     const skuKey = `${fam}|${gauge}|${colour}`;
     const sku = costIndex.bySku.get(skuKey);
     if (sku > 0) return sku;
@@ -1191,8 +1190,6 @@ export function computePredictiveAnalytics(data, sales, inventory, opts = {}) {
   const aluMix = sales.mixRows?.find((r) => r.family === 'aluminium');
   const azMix = sales.mixRows?.find((r) => r.family === 'aluzinc');
   if (aluMix && azMix && inventory.families?.length >= 2) {
-    const aluInv = inventory.families[0];
-    const azInv = inventory.families[1];
     const totalMix = (aluMix.sharePct || 0) + (azMix.sharePct || 0);
     if (totalMix > 0) {
       const aluInvShare = inventory.aluminiumSharePct || 0;

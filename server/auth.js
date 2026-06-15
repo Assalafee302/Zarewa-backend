@@ -4,15 +4,6 @@ import { normalizeWorkspaceDepartment } from './departmentRoleTemplates.js';
 import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
 
-function appUsersHasEmailColumn(db) {
-  try {
-    const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
-    return cols.some((c) => c.name === 'email');
-  } catch {
-    return false;
-  }
-}
-
 function appUsersHasColumn(db, name) {
   try {
     const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
@@ -23,7 +14,7 @@ function appUsersHasColumn(db, name) {
 }
 
 /** Phase 12: plaintext password storage removed — no-op for backward compatibility. */
-export function storeRegisteredPassword(_db, _userId, _plainPassword) {
+export function storeRegisteredPassword() {
   /* intentionally empty */
 }
 
@@ -210,6 +201,7 @@ export const ROLE_DEFINITIONS = {
       'accounting.desk.view',
       'accounting.reconciliation.view',
       'accounting.gl.view',
+      'notices.manage',
     ],
   },
   /** Role key `finance_manager` retained for backward compatibility; label matches company structure. */
@@ -303,6 +295,7 @@ export const ROLE_DEFINITIONS = {
       'dashboard.view',
       'office.use',
       'reports.view',
+      'notices.manage',
       ...HR_ROLE_PERMISSION_BUNDLES.hrAdmin,
     ],
   },
@@ -313,6 +306,7 @@ export const ROLE_DEFINITIONS = {
       'office.use',
       'reports.view',
       'hq.view_all_branches',
+      'notices.manage',
       ...HR_ROLE_PERMISSION_BUNDLES.gmhr,
     ],
   },
@@ -322,7 +316,7 @@ export const ROLE_DEFINITIONS = {
   },
   ceo: {
     label: 'Chief Executive Officer',
-    permissions: ['exec.dashboard.view', 'dashboard.view', 'office.use', 'reports.view'],
+    permissions: ['exec.dashboard.view', 'dashboard.view', 'office.use', 'reports.view', 'notices.manage'],
   },
   viewer: {
     label: 'Read-only viewer',
@@ -421,7 +415,7 @@ export function canRevealUserPasswords(user) {
  * @param {{ username?: string, password_hash?: string, registered_password?: string }} row
  */
 /** Phase 12: passwords are never displayed in admin UIs. */
-export function resolveRegisteredPasswordDisplay(_db, _row) {
+export function resolveRegisteredPasswordDisplay() {
   return '';
 }
 
@@ -460,11 +454,6 @@ function clearAccountLock(db, userId) {
   db.prepare(
     `UPDATE app_users SET failed_login_count = 0, locked_until_iso = NULL WHERE id = ?`
   ).run(userId);
-}
-
-function clearFailedLoginAttempts(db, userId) {
-  if (!appUsersHasColumn(db, 'failed_login_count')) return;
-  db.prepare(`UPDATE app_users SET failed_login_count = 0 WHERE id = ?`).run(userId);
 }
 
 /**
@@ -1595,6 +1584,7 @@ export function updateUserProfile(db, userId, patch) {
  * @param {string} rawDepartment
  */
 export function patchAppUserWorkspaceDepartment(db, actorUser, targetUserId, rawDepartment) {
+  void rawDepartment;
   if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
     return { ok: false, error: 'You do not have permission to assign workspace departments.' };
   }

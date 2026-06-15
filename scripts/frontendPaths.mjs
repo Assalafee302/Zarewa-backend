@@ -18,9 +18,15 @@ export function resolveFrontendRoot() {
     }
     return abs;
   }
-  const sibling = path.join(backendRoot, '..', 'frontend');
-  if (fs.existsSync(path.join(sibling, 'package.json'))) {
-    return sibling;
+  const candidates = [
+    path.join(backendRoot, '..', 'frontend'),
+    path.join(backendRoot, '..', 'Zarewa-frontend-main'),
+    path.join(backendRoot, '..', 'zarewa-frontend-main'),
+  ];
+  for (const sibling of candidates) {
+    if (fs.existsSync(path.join(sibling, 'package.json'))) {
+      return sibling;
+    }
   }
   throw new Error(
     'Could not find the frontend package. Set ZAREWA_FRONTEND_ROOT to its directory, or place it at ../frontend relative to backend/.'

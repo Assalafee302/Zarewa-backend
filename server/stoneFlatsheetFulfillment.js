@@ -3,8 +3,8 @@
  */
 
 import {
+  isStoneFlatsheetQuotationLine,
   normQuoteItemKey,
-  productLineKey,
   resolveStoneFlatsheetLengthM,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { quotationLineUnitPriceNumber } from '../shared/lib/quotationLineNumericForRefund.js';
@@ -29,7 +29,7 @@ export function parseQuotationStoneFlatsheetLines(linesJson) {
   const out = [];
   for (const row of products) {
     const name = String(row?.name ?? '').trim();
-    if (productLineKey(name) !== 'stone flatsheet') continue;
+    if (!isStoneFlatsheetQuotationLine(name)) continue;
     const orderedM2 = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
     const lengthM = resolveStoneFlatsheetLengthM(row);
     const quoteLineId = String(row?.id ?? '').trim();
@@ -63,7 +63,7 @@ export function quotationHasStoneFlatsheetWithQtyButMissingLength(linesJson) {
   const products = Array.isArray(j.products) ? j.products : [];
   for (const row of products) {
     const name = String(row?.name ?? '').trim();
-    if (productLineKey(name) !== 'stone flatsheet') continue;
+    if (!isStoneFlatsheetQuotationLine(name)) continue;
     const orderedM2 = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
     if (orderedM2 <= 0) continue;
     const lengthM = resolveStoneFlatsheetLengthM(row);
@@ -403,7 +403,7 @@ export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, lines
     const raw =
       (lid && quoteProducts.find((p) => String(p?.id ?? '').trim() === lid)) ||
       quoteProducts.find((p) => {
-        if (productLineKey(p?.name) !== 'stone flatsheet') return false;
+        if (!isStoneFlatsheetQuotationLine(p?.name)) return false;
         return resolveStoneFlatsheetLengthM(p) === line.lengthM;
       });
     const unitR = Math.round(quotationLineUnitPriceNumber(raw));

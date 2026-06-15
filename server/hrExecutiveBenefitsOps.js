@@ -8,10 +8,9 @@ import crypto from 'node:crypto';
 import {
   decryptBankAccount,
   encryptBankAccount,
-  maskBankAccount,
   storedBankToMasked,
 } from './hrBankCrypto.js';
-import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
+import { appendHrAuditEvent } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification } from './hrNotifications.js';
 import { hrUserHas } from './hrPermissions.js';
@@ -30,15 +29,6 @@ function nowIso() {
 
 function newId(prefix) {
   return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === typeof fallback ? v : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function csvEsc(v) {

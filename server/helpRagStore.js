@@ -2,7 +2,6 @@ import {
   ensureHelpArticles,
   HELP_ARTICLE_COUNT,
   matchHelpArticles,
-  buildHelpSearchText,
 } from '../shared/lib/helpKnowledge.js';
 import {
   cosineSimilarity,

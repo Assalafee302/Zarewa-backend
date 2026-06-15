@@ -301,7 +301,10 @@ export function patchHrTransferRequest(db, id, body, actor) {
   } else if (action === 'approve') {
     if (row.status === 'hr_review' && transferRequiresGmApproval(row.transfer_type)) {
       status = 'gm_approval';
-    } else if (['submitted', 'branch_review', 'hr_review', 'gm_approval'].includes(row.status)) {
+    } else if (row.status === 'gm_approval') {
+      status = 'approved';
+      approvedByUserId = actorId;
+    } else if (row.status === 'hr_review') {
       status = 'approved';
       approvedByUserId = actorId;
     } else {

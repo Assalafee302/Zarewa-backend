@@ -167,7 +167,6 @@ describe('stockRegisterCore', () => {
         },
       ],
       stockMovements: [],
-      coilLots: [],
       accessoryDisplayNameByProduct: new Map([
         ['ACC-TAPPING-SCREW-PCS', 'Tapping Screw 50mm (per PO wording)'],
       ]),

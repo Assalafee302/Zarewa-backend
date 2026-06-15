@@ -7,7 +7,7 @@ import { normalizeHelpQueryText } from './helpTypoTolerance.js';
 const COACHING_START_RE =
   /\b(walk me through|step by step|guide me through|coaching mode|help me create|help me with)\b/i;
 const COACHING_NEXT_RE =
-  /^(next|continue|go on|what next|what now|proceed)\b|^(step\s+\d+)\b|^\d+\s*[\.)]/i;
+  /^(next|continue|go on|what next|what now|proceed)\b|^(step\s+\d+)\b|^\d+\s*[.)]/i;
 const COACHING_STUCK_RE =
   /\b(stuck|can't|cannot|confused|where is|where do i|which button|which tab|why can't)\b/i;
 const COACHING_EXIT_RE = /^(stop|exit|cancel coaching|done)\b/i;
@@ -29,7 +29,7 @@ export function isCoachingMessage(message, history = []) {
 
 export function parseCoachingStepRequest(message) {
   const q = String(message || '').trim();
-  const m = q.match(/step\s+(\d+)/i) || q.match(/^(\d+)\s*[\.)]/);
+  const m = q.match(/step\s+(\d+)/i) || q.match(/^(\d+)\s*[.)]/);
   if (m) return Math.max(0, Number(m[1]) - 1);
   if (COACHING_NEXT_RE.test(normalizeHelpQueryText(q))) return 'next';
   if (COACHING_STUCK_RE.test(q)) return 'stuck';

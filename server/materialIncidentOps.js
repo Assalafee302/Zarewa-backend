@@ -51,15 +51,6 @@ function issueId() {
   return `MEXI-${randomUUID().slice(0, 8)}`;
 }
 
-function auditId() {
-  return `MEXA-${randomUUID().slice(0, 8)}`;
-}
-
-function clampNonNegative(n) {
-  const x = Number(n);
-  return Number.isFinite(x) ? Math.max(0, x) : 0;
-}
-
 function sumLines(lines) {
   let t = 0;
   for (const ln of lines || []) {
@@ -442,8 +433,22 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   const qtyRem = Math.max(0, Number(coil.qty_remaining) || Number(coil.current_weight_kg) || 0);
   const qtyRes = Math.max(0, Number(coil.qty_reserved) || 0);
   const maxRemove = qtyRem - qtyRes;
+  let incidentType = String(payload.incidentType ?? payload.incident_type ?? '').trim();
+  if (!INCIDENT_TYPES.has(incidentType)) {
+    incidentType = productionJobId ? 'production_error' : 'coil_stain';
+  }
+
   const validated = validateCoilDamagePayload(
-    { coilNo, beforeKg, afterKg, meters: payload.meters, lines: payload.lines, note, returnDisposition },
+    {
+      coilNo,
+      beforeKg,
+      afterKg,
+      meters: payload.meters,
+      lines: payload.lines,
+      note,
+      returnDisposition,
+      incidentType,
+    },
     {
       maxRemoveKg: maxRemove,
       supplierConversionKgPerM: coil.supplier_conversion_kg_per_m,
@@ -472,10 +477,13 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
     const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(productionJobId);
     if (!job) return { ok: false, error: `Production job ${productionJobId} not found.` };
   }
+  if (incidentType === 'production_error' && !productionJobId) {
+    return { ok: false, error: 'Production job is required for production error incidents.' };
+  }
 
-  const incidentType = productionJobId ? 'production_error' : 'coil_stain';
   const storekeeperDisplay =
     String(payload.storekeeperDisplay ?? payload.storekeeper_display ?? actorName(opts.actor) ?? '').trim() || undefined;
+  const customerLabel = String(payload.customerLabel ?? payload.customer_label ?? '').trim() || undefined;
   const draftPayload = {
     incidentType,
     materialFamily: String(payload.materialFamily ?? payload.material_family ?? materialFamilyFromCoil(db, coil)).trim() || 'aluminium',
@@ -484,6 +492,7 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
     colour: String(coil.colour ?? '').trim(),
     coilNo,
     productionJobId: productionJobId || undefined,
+    customerLabel,
     beforeKg,
     afterKg,
     returnDisposition,
@@ -713,7 +722,6 @@ export function submitMaterialIncident(db, incidentId, opts = {}) {
 
 function postIncidentStockEffects(db, row, opts) {
   const incidentId = row.id;
-  const branchId = row.branch_id;
   const type = String(row.incident_type);
   const disp = String(row.return_disposition || 'offcut_pool');
   const totalM = Number(row.total_meters) || 0;
@@ -764,16 +772,26 @@ function postIncidentStockEffects(db, row, opts) {
       );
       if (!scr.ok) throw new Error(scr.error || 'Supplier defect post failed.');
     }
-  } else if (kg > 0 && coilNo && (type === 'coil_stain' || type === 'production_error')) {
+  } else if (
+    kg > 0 &&
+    coilNo &&
+    (type === 'coil_stain' || type === 'production_error' || type === 'yard_offcut')
+  ) {
     const creditScrap = disp === 'scrap';
     const stockOpts = { ...opts, skipInnerTransaction: Boolean(opts.skipInnerTransaction) };
+    const scrapReason =
+      type === 'production_error'
+        ? 'Production error / trim'
+        : type === 'yard_offcut'
+          ? 'Yard offcut / trim'
+          : 'Coil stain / damage';
     const scr = postCoilScrap(
       db,
       {
         coilNo,
         kg,
         meters: totalM,
-        reason: type === 'production_error' ? 'Production error / trim' : 'Coil stain / damage',
+        reason: scrapReason,
         note: row.storekeeper_remark,
         dateISO,
         bookRef: incidentId,
@@ -797,16 +815,7 @@ function postIncidentStockEffects(db, row, opts) {
     }
   }
 
-  const poolM =
-    type === 'coil_stain' || type === 'production_error'
-      ? disp === 'offcut_pool'
-        ? totalM
-        : 0
-      : disp === 'offcut_pool' || type === 'yard_offcut'
-        ? totalM
-        : type === 'customer_return' && disp === 'offcut_pool'
-          ? totalM
-          : 0;
+  const poolM = disp === 'offcut_pool' ? totalM : 0;
 
   if (poolM > 0) {
     const stockOpts = { ...opts, skipInnerTransaction: Boolean(opts.skipInnerTransaction) };

@@ -5,7 +5,6 @@ import { trialBalanceRows } from './glOps.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import {
-  listPurchaseOrdersForAp2Scope,
   parsePeriodKey,
   roundMoney,
   tableExists,

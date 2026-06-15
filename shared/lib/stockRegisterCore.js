@@ -797,7 +797,6 @@ export function prepareRegisterForView(register, viewMode = 'store') {
  */
 export function applyProcurementPricingToRegister(register, pricing = {}) {
   if (!register) return register;
-  const spoolKg = SPOOL_KG_DEFAULT;
   const gaugeSummary = buildNetKgSummaryByGauge(register);
   let aluValue = 0;
   let aluzValue = 0;

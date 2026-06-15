@@ -2,7 +2,6 @@ import { readAiAssistConfig } from './aiAssist.js';
 import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
 import {
   aggregateKnowledgeGaps,
-  buildSuggestedArticleDrafts,
   listLowHelpfulnessArticles,
   listSuggestedArticleDrafts,
 } from '../shared/lib/helpGapAnalysis.js';

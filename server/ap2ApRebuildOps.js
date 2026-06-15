@@ -10,7 +10,6 @@ import {
   isAutoManagedApId,
   listPurchaseOrdersForAp2Scope,
   parsePeriodKey,
-  proposedApAmountNgn,
   readLastApReceivedBasisRebuild,
   roundMoney,
   tableExists,

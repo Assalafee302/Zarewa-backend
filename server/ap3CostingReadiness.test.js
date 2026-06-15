@@ -4,7 +4,6 @@ import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { classifyExpenseForCosting } from './ap3CostingClassification.js';
 
 function seedCostingFixture(db) {
-  const period = '2026-06';
   db.exec(`
     INSERT INTO production_jobs (
       job_id, quotation_ref, product_id, product_name, status, actual_meters,

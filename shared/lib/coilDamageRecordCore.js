@@ -120,8 +120,19 @@ export function validateCoilDamagePayload(payload = {}, opts = {}) {
   if (note.length < 8) {
     return { ok: false, error: 'Enter a damage note (at least 8 characters) for the audit trail.' };
   }
-  if (returnDisposition !== 'offcut_pool' && returnDisposition !== 'scrap') {
-    return { ok: false, error: 'Disposition must be offcut pool (reusable) or scrap (reject).' };
+  const incidentType = String(payload.incidentType ?? payload.incident_type ?? '').trim();
+  const allowedDispositions =
+    incidentType === 'customer_return'
+      ? ['offcut_pool', 'sellable_fg', 'scrap', 'supplier_return']
+      : ['offcut_pool', 'scrap'];
+  if (!allowedDispositions.includes(returnDisposition)) {
+    return {
+      ok: false,
+      error:
+        incidentType === 'customer_return'
+          ? 'Choose a valid return disposition.'
+          : 'Disposition must be offcut pool (reusable) or scrap (reject).',
+    };
   }
 
   const kgDeducted = beforeKg - afterKg;
@@ -153,5 +164,9 @@ export function validateCoilDamagePayload(payload = {}, opts = {}) {
  * @returns {boolean}
  */
 export function isCoilDamageIncident(incident) {
-  return COIL_DAMAGE_INCIDENT_TYPES.has(String(incident?.incidentType ?? incident?.incident_type ?? '').trim());
+  const type = String(incident?.incidentType ?? incident?.incident_type ?? '').trim();
+  if (COIL_DAMAGE_INCIDENT_TYPES.has(type)) return true;
+  const before = Number(incident?.beforeKg ?? incident?.before_kg);
+  const after = Number(incident?.afterKg ?? incident?.after_kg);
+  return Number.isFinite(before) && Number.isFinite(after) && before > after;
 }

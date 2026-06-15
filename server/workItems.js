@@ -1295,7 +1295,7 @@ function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
   if (!userCanSeeHrDisciplineQueue(user)) return [];
   const out = [];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_discipline_cases'`).get()) {
-    let sql = `SELECT id, user_id, branch_id, status, offence_category, summary, opened_at_iso FROM hr_discipline_cases WHERE status = 'open'`;
+    let sql = `SELECT id, user_id, branch_id, status, offence_category, summary, opened_at_iso FROM hr_discipline_cases WHERE status NOT IN ('closed','cancelled')`;
     const args = [];
     if (!scope?.viewAll) {
       sql += ` AND branch_id = ?`;
@@ -1312,15 +1312,15 @@ function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
           responsibleOfficeKey: 'hr',
           documentClass: 'case',
           documentType: 'hr_discipline_case',
-          status: 'open',
-          priority: 'normal',
+          status: row.status === 'open' ? 'open' : 'pending_review',
+          priority: ['awaiting_management_decision', 'under_investigation'].includes(row.status) ? 'high' : 'normal',
           title: `Discipline case ${row.id}`,
           summary: `${row.offence_category || '—'} · ${String(row.summary || '').slice(0, 120)}`,
           createdAtIso: row.opened_at_iso,
           updatedAtIso: row.opened_at_iso,
           sourceKind: 'hr_discipline_case',
           sourceId: row.id,
-          routePath: '/hr/discipline',
+          routePath: `/hr/discipline-exit?tab=accountability&caseId=${encodeURIComponent(row.id)}`,
           data: { userId: row.user_id, caseId: row.id },
         })
       );
@@ -1352,7 +1352,7 @@ function listLegacyHrDisciplineCaseWorkItems(db, scope, user) {
           updatedAtIso: row.incident_date_iso,
           sourceKind: 'hr_incident_memo',
           sourceId: row.id,
-          routePath: '/hr/discipline',
+          routePath: `/hr/discipline-exit?tab=incidents&memoId=${encodeURIComponent(row.id)}`,
           data: { userId: row.user_id, memoId: row.id },
         })
       );

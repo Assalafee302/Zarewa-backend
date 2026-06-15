@@ -8,6 +8,50 @@ import { verifyUserPassword } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 
 const TOKEN_TTL_MS = 15 * 60 * 1000;
+export const HR_SENSITIVE_COOKIE = 'zarewa_hr_sensitive';
+
+function sessionCookieFlags() {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const sameSite = process.env.ZAREWA_SESSION_SAMESITE === 'none' ? '; SameSite=None' : '; SameSite=Lax';
+  return `${sameSite}${secure}`;
+}
+
+function pushSetCookie(res, value) {
+  const existing = res.getHeader('Set-Cookie');
+  if (!existing) {
+    res.setHeader('Set-Cookie', value);
+    return;
+  }
+  if (Array.isArray(existing)) {
+    res.setHeader('Set-Cookie', [...existing, value]);
+  } else {
+    res.setHeader('Set-Cookie', [String(existing), value]);
+  }
+}
+
+/** @param {import('express').Response} res @param {string} token */
+export function setHrSensitiveCookie(res, token) {
+  const maxAge = Math.floor(TOKEN_TTL_MS / 1000);
+  pushSetCookie(
+    res,
+    `${HR_SENSITIVE_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${maxAge}${sessionCookieFlags()}`
+  );
+}
+
+/** @param {import('express').Response} res */
+export function clearHrSensitiveCookie(res) {
+  pushSetCookie(res, `${HR_SENSITIVE_COOKIE}=; HttpOnly; Path=/; Max-Age=0${sessionCookieFlags()}`);
+}
+
+function readHrSensitiveCookieToken(req) {
+  const raw = String(req.headers?.cookie || '');
+  if (!raw) return '';
+  for (const part of raw.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === HR_SENSITIVE_COOKIE) return decodeURIComponent(rest.join('=') || '');
+  }
+  return '';
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -109,7 +153,8 @@ export function validateHrSensitiveToken(db, userId, token) {
 export function hrSensitiveTokenMiddleware(db) {
   return (req, _res, next) => {
     req.hrSensitiveUnlocked = false;
-    const token = String(req.headers['x-hr-sensitive-token'] || '').trim();
+    const token =
+      readHrSensitiveCookieToken(req) || String(req.headers['x-hr-sensitive-token'] || '').trim();
     if (token && req.user?.id && validateHrSensitiveToken(db, req.user.id, token)) {
       req.hrSensitiveUnlocked = true;
     }

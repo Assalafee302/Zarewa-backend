@@ -1,11 +1,9 @@
 import {
-  amountDueOnQuotationFromEntries,
   companionOverpayNgnByReceiptId,
   firstProductionDateISO,
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
-import { isGlobalCoilCatalogProductId } from './productBranchInventory.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import {
@@ -708,12 +706,15 @@ export function mapLedgerRow(row) {
   };
 }
 
-export function listLedgerEntries(db, branchScope = 'ALL') {
+export function listLedgerEntries(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'ledger_entries', branchScope);
-  return db
-    .prepare(`SELECT * FROM ledger_entries WHERE 1=1${b.sql} ORDER BY at_iso DESC, id DESC`)
-    .all(...b.args)
-    .map(mapLedgerRow);
+  const limitRaw = opts?.limit;
+  const limit = limitRaw != null ? Math.max(1, Math.min(50_000, Number(limitRaw) || 0)) : 0;
+  const sql = `SELECT * FROM ledger_entries WHERE 1=1${b.sql} ORDER BY at_iso DESC, id DESC${
+    limit > 0 ? ' LIMIT ?' : ''
+  }`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  return db.prepare(sql).all(...args).map(mapLedgerRow);
 }
 
 export function listLedgerEntriesForCustomer(db, customerId, branchScope = 'ALL') {
@@ -2705,7 +2706,6 @@ export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) 
   const toIso = String(opts?.to || '').trim();
   const pos = listPurchaseOrders(db, branchScope);
   const aps = listAccountsPayable(db, branchScope);
-  const suppliers = listSuppliers(db, branchScope);
   const loads = listInTransitLoads(db, branchScope);
   const products = listProducts(db, branchScope);
   const inWindow = pos.filter((po) => {

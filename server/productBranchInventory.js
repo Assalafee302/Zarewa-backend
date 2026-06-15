@@ -98,7 +98,6 @@ export function migrateProductsBranchCompositeInventory(db) {
   const expanded = [];
 
   for (const row of sourceRows) {
-    const pid = row.product_id;
     if (isGlobalCoilCatalogRow(row)) {
       expanded.push({ ...row, branch_id: '' });
       continue;

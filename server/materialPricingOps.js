@@ -612,12 +612,6 @@ function safeJson(raw) {
   }
 }
 
-function positiveOrNull(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n;
-}
-
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} body

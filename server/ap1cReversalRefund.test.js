@@ -62,7 +62,7 @@ describe.skipIf(!mysqlTestReady)('ap1cReversalRefund (integration)', () => {
   it('Policy v1 pre-production receipt reversal reverses 2500', () => {
     process.env.ACCOUNTING_POLICY_V1_RECEIPT_GL = '1';
     seedQuoteWithProd('QT-PRE-R');
-    const gl = tryPostCustomerReceiptGl(db, {
+    tryPostCustomerReceiptGl(db, {
       ledgerEntryId: 'LE-PRE-R',
       amountNgn: 3_000_000,
       entryDateISO: '2026-06-01',
@@ -91,7 +91,7 @@ describe.skipIf(!mysqlTestReady)('ap1cReversalRefund (integration)', () => {
   it('Policy v1 post-production receipt reversal reverses 1200', () => {
     process.env.ACCOUNTING_POLICY_V1_RECEIPT_GL = '1';
     seedQuoteWithProd('QT-POST-R');
-    const gl = tryPostCustomerReceiptGl(db, {
+    tryPostCustomerReceiptGl(db, {
       ledgerEntryId: 'LE-POST-R',
       amountNgn: 1_000_000,
       entryDateISO: '2026-06-20',

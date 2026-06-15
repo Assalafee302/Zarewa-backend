@@ -95,7 +95,7 @@ describe('migrateTimestampStyleDocumentIds', () => {
         [
           'FROM ledger_entries WHERE id LIKE',
           () => ({
-            get: vi.fn((_a, _b, _c) => ({ x: 1 })),
+            get: vi.fn(() => ({ x: 1 })),
             all: vi.fn(() => []),
             run: vi.fn(),
           }),

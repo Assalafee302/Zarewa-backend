@@ -2,7 +2,7 @@ import {
   collectSupplierIdentityKeys,
   firstSupplierIdentityOverlap,
 } from '../shared/supplierIdentityKey.js';
-import { mergeSupplierProfilePatch, parseSupplierProfileJson } from './supplierProfile.js';
+import { parseSupplierProfileJson } from './supplierProfile.js';
 
 const SUPPLIER_REF_TABLES = [
   ['purchase_orders', 'supplier_id', 'supplier_name'],

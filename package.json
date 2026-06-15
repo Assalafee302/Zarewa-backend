@@ -37,6 +37,9 @@
     "test:operations": "vitest run server/inventoryScenarios.test.js server/accessoryFulfillment.test.js server/transactionalScenarios.test.js",
     "test:financial": "vitest run server/refundSecurity.test.js server/refundE2E.test.js server/accountingPhase2.test.js server/accountingStatementsOps.test.js server/api.test.js",
     "test:critical-workflows": "vitest run server/ensureLegacyDemoPack.test.js server/legacyDemoPackPolicy.test.js server/refundSecurity.test.js server/refundE2E.test.js server/accountingPhase2.test.js server/api.test.js",
+    "test:security-audit": "vitest run server/securityHardening.test.js server/officialNoticesOps.pure.test.js server/rateLimit.test.js server/publicCareersSecurity.test.js server/officialNoticesSecurity.test.js server/csrfEnforcement.test.js --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism",
+    "test:audit-api-smoke": "vitest run server/auditApiSmoke.test.js --pool=forks --poolOptions.forks.singleFork=true",
+    "verify:audit": "node scripts/audit-verify.mjs",
     "test:ops-finance": "npm run test:operations && npm run test:financial",
     "test:e2e:operations": "playwright test e2e/complete-gate.spec.js --grep \"operations: Store\"",
     "test:e2e:production": "playwright test e2e/complete-gate.spec.js e2e/production-register.spec.js --grep \"Store & production|Production register\"",
@@ -61,6 +64,8 @@
     "stress:qa-mega-lite": "node scripts/qa-mega-lite.mjs",
     "stress:finance100": "node scripts/finance-stress-100.mjs",
     "stress:load-100": "node scripts/load-test-100vus-5min.mjs",
+    "start:local-xampp": "node scripts/start-local-xampp-api.mjs",
+    "test:local-xampp": "node scripts/vitest-local-xampp.mjs",
     "bench:dashboard": "node scripts/bench-dashboard-summary.mjs",
     "retention:prune": "node scripts/retention-prune.mjs",
     "build": "node -e \"console.log('[zarewa] build: no compile step (API-only package)');\"",
@@ -70,9 +75,9 @@
     "install:ci": "npm ci"
   },
   "dependencies": {
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "firebase-admin": "^13.0.0",
     "mysql2": "^3.22.1",
     "synckit": "^0.11.12",
     "xlsx": "^0.18.5"

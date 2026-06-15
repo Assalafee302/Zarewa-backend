@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatHelpArticleReply, matchHelpArticle, matchHelpArticles } from './helpKnowledge.js';
+import { formatHelpArticleReply, matchHelpArticle } from './helpKnowledge.js';
 
 describe('helpKnowledge', () => {
   it('matches receipt questions', () => {

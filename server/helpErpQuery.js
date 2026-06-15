@@ -247,7 +247,7 @@ export function tryNativeErpTool(db, message, ctx) {
   const user = ctx.user;
 
   if (/\b(inventory|stock)\b/i.test(q)) {
-    const productMatch = q.match(/\b(?:for|of)\s+([a-z0-9][a-z0-9\s\-]{2,40})/i);
+    const productMatch = q.match(/\b(?:for|of)\s+([a-z0-9][a-z0-9\s-]{2,40})/i);
     const term = productMatch ? productMatch[1].trim() : q.replace(/.*\b(stock|inventory)\b/i, '').trim();
     if (!userMayQueryTables(user, ['products'])) {
       return clearanceDenied(user, 'inventory', user?.roleKey);
@@ -397,7 +397,7 @@ export async function queryErpData(db, message, ctx) {
  * @param {{ summary?: string; rows?: unknown[]; error?: string }} erpResult
  * @param {string} userQuestion
  */
-export function synthesizeErpAnswer(erpResult, userQuestion) {
+export function synthesizeErpAnswer(erpResult) {
   if (!erpResult?.ok) {
     if (erpResult?.code === 'CLEARANCE_DENIED' && erpResult.error) {
       return erpResult.error;

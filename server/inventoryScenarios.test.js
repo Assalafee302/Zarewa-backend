@@ -48,7 +48,7 @@ async function freshPaidStoneQuotationForCutting(agent, unitPriceNgn = 400_000) 
     materialColor: 'Black',
     materialGauge: '0.40mm',
     lines: {
-      products: [{ name: 'Scenario stone line', qty: '1', unitPrice: String(unitPriceNgn) }],
+      products: [{ name: 'Roofing sheet', qty: '40', unitPrice: String(unitPriceNgn) }],
       accessories: [],
       services: [],
     },

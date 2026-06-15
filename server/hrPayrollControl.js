@@ -111,14 +111,12 @@ export function getPayrollReconciliation(db, runId) {
     )
     .all(runId);
   let payrollTotal = 0;
-  let heldTotal = 0;
   let heldCount = 0;
   const heldLines = [];
   for (const l of lines) {
     const net = Math.round(Number(l.netNgn) || 0);
     if (Number(l.payHold) === 1 || net === 0) {
       heldCount += 1;
-      heldTotal += net;
       heldLines.push(l);
     } else {
       payrollTotal += net;

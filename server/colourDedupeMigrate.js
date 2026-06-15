@@ -202,11 +202,6 @@ export function migrateMergeDuplicateSetupColours(db) {
     })),
   };
 
-  const rewriteTo = (value, merge) => {
-    if (!valueShouldRewrite(value, merge, masterData)) return null;
-    return merge.toName;
-  };
-
   db.transaction(() => {
     for (const merge of merges) {
       const variants = new Set(

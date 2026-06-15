@@ -21,7 +21,6 @@ import {
 import {
   annotateExecWorkTrayApprovalTiers,
   sortExecWorkTrayByApprovalTier,
-  summarizeExecWorkTrayApprovalTiers,
 } from '../shared/lib/execApprovalTier.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
@@ -1447,11 +1446,10 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     }
   }
 
-  const governanceLimits = getOrgGovernanceLimits(db);
+  const governanceLimits = getOrgGovernanceLimits(db  );
   workTrayItems = sortExecWorkTrayByApprovalTier(
     annotateExecWorkTrayApprovalTiers(workTrayItems, governanceLimits)
   );
-  const approvalTierSummary = summarizeExecWorkTrayApprovalTiers(workTrayItems);
 
   const debtPreloaded = {
     quotations: sourceSlices.quotations,

@@ -3,11 +3,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function canManageNotices(user) {
+const NOTICE_MANAGER_ROLE_KEYS = new Set(['md', 'admin', 'hr_admin', 'gmhr', 'ceo', 'chairman']);
+
+export function canManageNotices(user) {
   if (!user) return false;
   const rk = String(user.roleKey || '').toLowerCase();
-  if (rk === 'md' || rk === 'admin' || rk === 'hr_admin' || rk === 'gmhr') return true;
-  return userHasPermission(user, 'settings.view');
+  if (NOTICE_MANAGER_ROLE_KEYS.has(rk)) return true;
+  return userHasPermission(user, 'notices.manage');
 }
 
 /**

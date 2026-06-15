@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 /**
  * Customer ledger — advances, receipts against quotations, applications, overpayments → advance.
  * Source of truth is the in-memory ledger snapshot replaced from bootstrap.

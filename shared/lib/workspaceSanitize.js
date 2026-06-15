@@ -48,7 +48,7 @@ export function sanitizeWorkItemData(data, confidentiality) {
 export function sanitizeWorkItemForClient(item) {
   if (!item || typeof item !== 'object') return item;
   const confidentiality = item.confidentiality;
-  const { body, ...rest } = item;
+  const { body: _, ...rest } = item;
   return {
     ...rest,
     body: '',
@@ -144,7 +144,7 @@ export function sanitizeWorkspaceItemForZare(item, user = null) {
  * @param {Record<string, unknown>|null|undefined} transaction
  * @param {object} [user]
  */
-export function sanitizeTransactionContextForZare(transaction, user = null) {
+export function sanitizeTransactionContextForZare(transaction, _user = null) {
   if (!transaction || typeof transaction !== 'object') return {};
   const canView = transaction.canView !== false;
   if (!canView || transaction.restricted) {

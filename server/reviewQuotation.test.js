@@ -30,7 +30,7 @@ describe('reviewQuotation manager holds', () => {
     db?.close();
   });
 
-  const actor = { id: 'u1', displayName: 'Manager' };
+  const actor = { id: 'u1', displayName: 'Manager', roleKey: 'branch_manager' };
 
   it('blocks manager clear when balance is still due', () => {
     const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'clear' }, actor);
@@ -41,13 +41,14 @@ describe('reviewQuotation manager holds', () => {
   });
 
   it('release_payments clears manager cleared and flagged holds', () => {
-    reviewQuotation(db, 'QT-PARTIAL', { decision: 'flag', note: 'audit' }, actor);
+    const mdActor = { id: 'md1', displayName: 'MD', roleKey: 'md' };
+    reviewQuotation(db, 'QT-PARTIAL', { decision: 'flag', note: 'audit' }, mdActor);
     let row = db.prepare(
       `SELECT manager_cleared_at_iso, manager_flagged_at_iso, manager_flag_reason FROM quotations WHERE id = ?`
     ).get('QT-PARTIAL');
     expect(row.manager_flagged_at_iso).toBeTruthy();
 
-    const rel = reviewQuotation(db, 'QT-PARTIAL', { decision: 'release_payments' }, actor);
+    const rel = reviewQuotation(db, 'QT-PARTIAL', { decision: 'release_payments' }, mdActor);
     expect(rel.ok).toBe(true);
     row = db.prepare(
       `SELECT manager_cleared_at_iso, manager_flagged_at_iso, manager_flag_reason FROM quotations WHERE id = ?`
@@ -72,11 +73,25 @@ describe('reviewQuotation manager holds', () => {
     const row = db.prepare(`SELECT manager_cleared_at_iso FROM quotations WHERE id = ?`).get('QT-PARTIAL');
     expect(row.manager_cleared_at_iso).toBeTruthy();
   });
+
+  it('blocks sales officer from quotation clearance', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 21725 WHERE id = ?`).run('QT-PARTIAL');
+    const salesActor = { id: 's1', displayName: 'Sales', roleKey: 'sales_staff' };
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'clear' }, salesActor);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('FORBIDDEN');
+  });
+
+  it('blocks branch manager from release_payments', () => {
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'release_payments' }, actor);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('FORBIDDEN');
+  });
 });
 
 describe('reviewQuotation production gate override', () => {
   let db;
-  const bmActor = { id: 'bm1', displayName: 'Branch Manager', roleKey: 'sales_manager' };
+  const bmActor = { id: 'bm1', displayName: 'Branch Manager', roleKey: 'branch_manager' };
   const mdActor = { id: 'md1', displayName: 'Managing Director', roleKey: 'md' };
   const salesActor = { id: 's1', displayName: 'Sales Officer', roleKey: 'sales_staff' };
 

@@ -17,6 +17,7 @@ import {
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import { validateQuotationProductionPaymentGate } from './writeOps.js';
 import { getQuotation } from './readModel.js';
 import {
   isStoneCoatedMetreProductId,
@@ -943,6 +944,10 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
             'Quoted price is below the workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before production can start.',
           violations,
         };
+      }
+      const payGate = validateQuotationProductionPaymentGate(db, qref);
+      if (!payGate.ok) {
+        return { ok: false, error: payGate.error, code: payGate.code };
       }
     }
   }

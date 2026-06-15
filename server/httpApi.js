@@ -278,6 +278,7 @@ import {
   linkWorkItemToOfficeThread,
   listMaterialRequests,
   listUnifiedWorkItems,
+  userMayDecideWorkItem,
 } from './workItems.js';
 import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from './masterData.js';
 import { parseSupplierProfileJson } from './supplierProfile.js';
@@ -1466,6 +1467,14 @@ export function registerHttpApi(app, db) {
           error: 'Legacy queue items must still be acted on through their current module route until migrated.',
         });
       }
+      const outcomeStatus = String(req.body?.outcomeStatus || '').trim();
+      if (!userMayDecideWorkItem(req.user, item, { outcomeStatus, decisionKey: req.body?.decisionKey })) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You are not authorized to record this decision on this work item.',
+          code: 'FORBIDDEN',
+        });
+      }
       const r = appendWorkItemDecision(db, {
         workItemId: item.id,
         actor: req.user,
@@ -1889,7 +1898,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/org/governance-limits', requireAuth, requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/org/governance-limits', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
       const body = req.body || {};
       const r = setOrgGovernanceLimits(
@@ -1987,6 +1996,8 @@ export function registerHttpApi(app, db) {
       if (!userMayViewCreditExceptions(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
       }
+      const qg = assertQuotationIdInWorkspace(db, req, req.params.id);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
       const status = getQuotationCreditStatus(db, req.params.id);
       return res.json(status);
     } catch (e) {
@@ -2114,14 +2125,16 @@ export function registerHttpApi(app, db) {
   app.post('/api/management/review', requireAuth, requirePermission('quotations.manage'), (req, res) => {
     try {
       const { quotationId, decision, reason } = req.body || {};
+      const qid = String(quotationId ?? '').trim();
+      const qg = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
       const r = reviewQuotation(
         db,
-        String(quotationId ?? '').trim(),
+        qid,
         { decision, note: reason },
         req.user
       );
       if (r.ok) {
-        const qid = String(quotationId ?? '').trim();
         const closedStamp = new Date().toISOString();
         const base = upsertWorkItemBySource(db, {
           actor: req.user,
@@ -2559,7 +2572,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/setup/org-manager-targets', requireAuth, requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/setup/org-manager-targets', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       if (body.clear === true) {
@@ -2627,25 +2640,24 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const mode = String(req.query?.mode ?? '').trim().toLowerCase();
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
+      const skipSideEffects =
+        String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
+      const bootstrapOpts = {
+        user: req.user,
+        session: req.session,
+        includeControls,
+        includeUsers,
+        includeRegisteredPasswords,
+        branchScope,
+        skipSideEffects,
+      };
       const payload =
         mode === 'dashboard'
           ? buildDashboardBootstrap(db, {
-              user: req.user,
-              session: req.session,
-              includeControls,
-              includeUsers,
-              includeRegisteredPasswords,
-              branchScope,
+              ...bootstrapOpts,
               limit,
             })
-          : buildBootstrap(db, {
-              user: req.user,
-              session: req.session,
-              includeControls,
-              includeUsers,
-              includeRegisteredPasswords,
-              branchScope,
-            });
+          : buildBootstrap(db, bootstrapOpts);
       res.json(payload);
     } catch (e) {
       console.error(e);
@@ -2653,7 +2665,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/workspace/app-users/:userId/department', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/workspace/app-users/:userId/department', requirePermission('settings.manage'), (req, res) => {
     try {
       const uid = req.params.userId;
       const stripped = stripEditApprovalFromBody(req.body || {});
@@ -2673,7 +2685,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/workspace/app-users/:userId/workspace-branch', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/workspace/app-users/:userId/workspace-branch', requirePermission('settings.manage'), (req, res) => {
     try {
       const uid = req.params.userId;
       const stripped = stripEditApprovalFromBody(req.body || {});
@@ -2717,7 +2729,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/users', requirePermission('settings.view'), (req, res) => {
+  app.post('/api/users', requirePermission('settings.manage'), (req, res) => {
     try {
       const body = req.body || {};
       const r = createAppUserRecord(db, body);
@@ -2752,7 +2764,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/users/:id/role', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/users/:id/role', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = req.params.id;
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', id, (stripped) => {
@@ -2773,11 +2785,11 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/users/:id/permissions', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/users/:id/permissions', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = req.params.id;
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', id, (stripped) => {
-        const r = updateAppUserPermissions(db, id, stripped?.permissions);
+        const r = updateAppUserPermissions(db, id, stripped?.permissions, req.user);
         if (!r.ok) return r;
         appendAuditLog(db, {
           actor: req.user,
@@ -2794,7 +2806,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/users/:id/password', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/users/:id/password', requirePermission('settings.manage'), (req, res) => {
     try {
       if (!canRevealUserPasswords(req.user)) {
         return res.status(403).json({ ok: false, error: 'Only Admin, MD, or HR Admin can set user passwords.' });
@@ -2818,7 +2830,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/users/:id/password-reset-code', requirePermission('settings.view'), (req, res) => {
+  app.post('/api/users/:id/password-reset-code', requirePermission('settings.manage'), (req, res) => {
     try {
       if (!canIssuePasswordResetCodes(req.user)) {
         return res.status(403).json({ ok: false, error: 'Only Admin, MD, or HR Admin can generate reset codes.' });
@@ -2999,7 +3011,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/users/:id/status', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/users/:id/status', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = req.params.id;
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'user', id, (stripped) => {
@@ -3020,7 +3032,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.delete('/api/users/:id', requirePermission('settings.view'), (req, res) => {
+  app.delete('/api/users/:id', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = String(req.params.id || '').trim();
       const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -6341,7 +6353,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.put('/api/refunds', requirePermission('settings.view'), (req, res) => {
+  app.put('/api/refunds', requirePermission('settings.manage'), (req, res) => {
     try {
       if (req.workspaceViewAll) {
         return res.status(403).json({
@@ -6790,7 +6802,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/branches/:branchId/cutting-threshold', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/branches/:branchId/cutting-threshold', requirePermission('settings.manage'), (req, res) => {
     try {
       const raw = req.body?.cuttingListMinPaidFraction ?? req.body?.fraction;
       const r = setBranchCuttingListMinPaidFraction(db, req.params.branchId, raw);
@@ -6810,7 +6822,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/setup/:kind', requirePermission('settings.view'), (req, res) => {
+  app.post('/api/setup/:kind', requirePermission('settings.manage'), (req, res) => {
     try {
       const r = upsertMasterDataRecord(db, req.params.kind, req.body || {}, req.user);
       res.status(r.ok ? 201 : 400).json(r);
@@ -6820,7 +6832,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/setup/:kind/:id', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/setup/:kind/:id', requirePermission('settings.manage'), (req, res) => {
     try {
       const kind = req.params.kind;
       const id = req.params.id;
@@ -6834,7 +6846,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.delete('/api/setup/:kind/:id', requirePermission('settings.view'), (req, res) => {
+  app.delete('/api/setup/:kind/:id', requirePermission('settings.manage'), (req, res) => {
     try {
       const r = deleteMasterDataRecord(db, req.params.kind, req.params.id, req.user);
       res.status(r.ok ? 200 : 400).json(r);
@@ -7131,7 +7143,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.put('/api/finance/core', requirePermission('settings.view'), (req, res) => {
+  app.put('/api/finance/core', requirePermission('settings.manage'), (req, res) => {
     try {
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'finance_core', 'bulk', (stripped) => {
         const reason = String(stripped?.reason ?? '').trim();
@@ -7585,6 +7597,8 @@ export function registerHttpApi(app, db) {
       }
       const row = getQuotation(db, qid);
       if (!row) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      const qg = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
       const allEntries = listLedgerEntries(db, branchScope);
       const productionJobs = listProductionJobs(db, branchScope);
       const policyFlags = readFinanceFeatureFlags();
@@ -8541,7 +8555,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/settings/integration-api-keys', requirePermission('settings.view'), (req, res) => {
+  app.post('/api/settings/integration-api-keys', requirePermission('settings.manage'), (req, res) => {
     try {
       const name = String(req.body?.name || 'API key').trim().slice(0, 120);
       const id = `IKEY-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
@@ -8575,7 +8589,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/settings/integration-api-keys/:id/revoke', requirePermission('settings.view'), (req, res) => {
+  app.patch('/api/settings/integration-api-keys/:id/revoke', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = String(req.params.id || '').trim();
       if (!id) return res.status(400).json({ ok: false, error: 'id is required.' });

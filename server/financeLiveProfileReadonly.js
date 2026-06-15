@@ -604,6 +604,6 @@ export async function runFinanceLiveProfileFromEnv() {
 export function financeProfileTokenMatches(req) {
   const expected = String(process.env.ZAREWA_FINANCE_PROFILE_TOKEN || '').trim();
   if (!expected) return false;
-  const got = String(req.headers['x-finance-profile-token'] || req.query?.token || '').trim();
+  const got = String(req.headers['x-finance-profile-token'] || '').trim();
   return got.length > 0 && got === expected;
 }

@@ -469,8 +469,18 @@ export function registerHrApi(app, db) {
     });
   });
 
-  app.get('/api/hr/health', (_req, res) => {
+  app.get('/api/hr/health', (req, res) => {
+    if (!req.user?.id) {
+      return res.status(401).json({ ok: false, error: 'Authentication required.', code: 'AUTH_REQUIRED' });
+    }
     const modules = getHrModuleHealth(db);
+    const detailed =
+      String(req.user?.roleKey || '').toLowerCase() === 'admin' ||
+      (Array.isArray(req.user?.permissions) &&
+        (req.user.permissions.includes('*') || req.user.permissions.includes('settings.view')));
+    if (!detailed) {
+      return res.json({ ok: hrTablesReady(db), hrReady: hrTablesReady(db) });
+    }
     const cfg = mysqlConfigFromEnv();
     res.json({
       ok: hrTablesReady(db),

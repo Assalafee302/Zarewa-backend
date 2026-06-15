@@ -58,11 +58,11 @@ function safeSlice(label, fn, fallback) {
 }
 
 /**
+ * Load ERP table slices once — shared by BI pack builders and exec dashboard debt rollups.
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchScope
- * @param {{ periodKey?: string; asOfISO?: string }} [opts]
  */
-export function loadBusinessIntelligencePack(db, branchScope = 'ALL', opts = {}) {
+export function loadBusinessIntelligenceSourceSlices(db, branchScope = 'ALL') {
   const scope = branchScope || 'ALL';
 
   const paymentRequests = safeSlice(
@@ -77,7 +77,7 @@ export function loadBusinessIntelligencePack(db, branchScope = 'ALL', opts = {})
     []
   );
 
-  const data = {
+  return {
     quotations: safeSlice('quotations', () => listQuotations(db, scope), []),
     productionJobs: safeSlice('productionJobs', () => listProductionJobs(db, scope), []),
     cuttingLists: safeSlice('cuttingLists', () => listCuttingLists(db, scope), []),
@@ -93,6 +93,16 @@ export function loadBusinessIntelligencePack(db, branchScope = 'ALL', opts = {})
     paymentRequests,
     treasuryAccounts: safeSlice('treasuryAccounts', () => listTreasuryAccounts(db, scope), []),
   };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchScope
+ * @param {{ periodKey?: string; asOfISO?: string; sourceSlices?: ReturnType<typeof loadBusinessIntelligenceSourceSlices> }} [opts]
+ */
+export function loadBusinessIntelligencePack(db, branchScope = 'ALL', opts = {}) {
+  const scope = branchScope || 'ALL';
+  const data = opts.sourceSlices || loadBusinessIntelligenceSourceSlices(db, scope);
 
   return buildBusinessIntelligencePack(data, {
     periodKey: opts.periodKey || 'month',

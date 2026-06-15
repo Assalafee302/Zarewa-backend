@@ -173,7 +173,7 @@ export function normalizeRoleKey(roleKey) {
 export const ROLE_DEFINITIONS = {
   admin: {
     label: 'Administrator',
-    permissions: ['*'],
+    permissions: ['*', 'settings.view', 'settings.manage'],
   },
   md: {
     label: 'Managing Director',
@@ -611,11 +611,14 @@ const STORE_FLOOR_DEPARTMENT_LABELS = new Set([
 export function mergeRoleAndCustomPermissions(roleKey, customParsed) {
   const base = permissionsForRole(roleKey);
   if (!Array.isArray(customParsed) || customParsed.length === 0) return [...base];
-  if (customParsed.includes('*')) return ['*'];
+  if (customParsed.includes('*')) {
+    if (normalizeRoleKey(roleKey) === 'admin') return ['*'];
+    // Ignore wildcard in custom JSON — prevents privilege escalation via permissions_json.
+  }
   const set = new Set(base);
   for (const p of customParsed) {
     const s = String(p ?? '').trim();
-    if (s) set.add(s);
+    if (s && s !== '*') set.add(s);
   }
   return [...set];
 }
@@ -1592,7 +1595,7 @@ export function updateUserProfile(db, userId, patch) {
  * @param {string} rawDepartment
  */
 export function patchAppUserWorkspaceDepartment(db, actorUser, targetUserId, rawDepartment) {
-  if (!userHasPermission(actorUser, 'settings.view') && !userHasPermission(actorUser, '*')) {
+  if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
     return { ok: false, error: 'You do not have permission to assign workspace departments.' };
   }
   const tid = String(targetUserId || '').trim();
@@ -1887,20 +1890,63 @@ export function updateAppUserRole(db, targetUserId, roleKey) {
  * @param {string} targetUserId
  * @param {string[]} permissions
  */
-export function updateAppUserPermissions(db, targetUserId, permissions) {
+/**
+ * @param {object | null | undefined} actorUser
+ * @param {string[]} permissions
+ */
+export function validatePermissionGrant(actorUser, permissions) {
+  if (!actorUser) {
+    return { ok: false, error: 'Not authenticated.' };
+  }
+  if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
+    return { ok: false, error: 'You do not have permission to change user permissions.' };
+  }
   if (!Array.isArray(permissions)) {
     return { ok: false, error: 'Permissions must be an array.' };
   }
-  const permRe = /^(\*|[a-z][a-z0-9_.-]*)$/;
+  const permRe = /^[a-z][a-z0-9_.-]*$/;
   for (const p of permissions) {
     const s = String(p ?? '').trim();
     if (!s) return { ok: false, error: 'Empty permission entry.' };
+    if (s === '*') {
+      return { ok: false, error: 'Wildcard * permission cannot be granted via custom overrides.' };
+    }
     if (!permRe.test(s)) {
       return { ok: false, error: `Invalid permission format: ${s}` };
     }
+    if (!userHasPermission(actorUser, s)) {
+      return { ok: false, error: `You cannot grant permission you do not hold: ${s}` };
+    }
+  }
+  return { ok: true };
+}
+
+export function updateAppUserPermissions(db, targetUserId, permissions, actorUser = null) {
+  const grant = validatePermissionGrant(actorUser, permissions);
+  if (!grant.ok) return grant;
+  const tid = String(targetUserId || '').trim();
+  const actorId = String(actorUser?.id || '').trim();
+  if (tid && actorId && tid === actorId) {
+    const row = db.prepare(`SELECT role_key, permissions_json FROM app_users WHERE id = ?`).get(tid);
+    if (!row) return { ok: false, error: 'User not found.' };
+    let currentCustom = [];
+    const pJson = row.permissions_json;
+    if (pJson && String(pJson).trim()) {
+      try {
+        const parsed = JSON.parse(pJson);
+        if (Array.isArray(parsed)) currentCustom = parsed.map((p) => String(p).trim()).filter(Boolean);
+      } catch {
+        currentCustom = [];
+      }
+    }
+    const next = permissions.map((p) => String(p).trim()).filter(Boolean);
+    const added = next.filter((p) => !currentCustom.includes(p));
+    if (added.length > 0) {
+      return { ok: false, error: 'You cannot elevate your own permissions.' };
+    }
   }
   const json = JSON.stringify(permissions);
-  db.prepare(`UPDATE app_users SET permissions_json = ? WHERE id = ?`).run(json, targetUserId);
+  db.prepare(`UPDATE app_users SET permissions_json = ? WHERE id = ?`).run(json, tid);
   return { ok: true };
 }
 

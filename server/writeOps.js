@@ -2832,8 +2832,7 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
   const row = getProductRowForWorkspace(db, productID, bid);
   if (!row) return { ok: false, error: 'Product not found for this branch.' };
   const raw = Number(row.stock_level) + delta;
-  const accessorySku = /^ACC-/i.test(String(productID || '').trim());
-  const next = accessorySku ? raw : Math.max(0, raw);
+  const next = Math.max(0, raw);
   const pb = String(row.branch_id ?? '').trim();
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
     next,
@@ -5637,7 +5636,7 @@ export function countCoilLotsForProductInWorkspace(db, productID, workspaceBranc
   return Number(row?.c) || 0;
 }
 
-function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId, { forDraft = false } = {}) {
+function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId, { forDraft = false, skipDuplicateCheck = false } = {}) {
   const qref = String(quotationRef ?? '').trim();
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
@@ -5729,7 +5728,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
         .prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ? AND id != ?`)
         .get(qref, excludeCuttingListId)
     : db.prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
-  if (existing?.id) {
+  if (!skipDuplicateCheck && existing?.id) {
     if (forDraft && isCuttingListDraftStatus(existing.status)) {
       return { ok: true, existingDraftId: existing.id };
     }
@@ -5740,6 +5739,11 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
     };
   }
   return { ok: true };
+}
+
+/** Re-validate production payment gate when starting a job (cutting list may have been created earlier). */
+export function validateQuotationProductionPaymentGate(db, quotationRef) {
+  return validateQuotationForCuttingList(db, quotationRef, null, { forDraft: false, skipDuplicateCheck: true });
 }
 
 export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_ID) {

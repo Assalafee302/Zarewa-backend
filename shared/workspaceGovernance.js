@@ -39,6 +39,34 @@ export function isBranchManagerApprovalAuthority(roleKey) {
   return isBranchExpenseApproverRoleKey(roleKey);
 }
 
+/** Branch manager desk — quotation clearance (clear / flag), not general sales officers. */
+export function isManagerClearanceAuthorityRoleKey(roleKey) {
+  const rk = String(roleKey || '').trim().toLowerCase();
+  return rk === 'admin' || isExecutiveRoleKey(rk) || isBranchManagerApprovalAuthority(rk);
+}
+
+/**
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMayPerformManagerQuotationClearance(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  return isManagerClearanceAuthorityRoleKey(actor.roleKey);
+}
+
+/**
+ * Lifting payment holds on flagged quotations — MD / admin only.
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMayReleaseQuotationPaymentHold(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || '').trim().toLowerCase();
+  return rk === 'admin' || isExecutiveRoleKey(rk);
+}
+
 /** Finance desk roles that may approve payment requests when they hold finance.approve. */
 export function isFinanceDeskApproverRoleKey(roleKey) {
   const rk = String(roleKey || '').trim().toLowerCase();

@@ -113,6 +113,45 @@ export function canSeeManagementApprovalQueues(user) {
   return userHasPermission(user, 'sales.manage');
 }
 
+const APPROVAL_OUTCOME_STATUSES = new Set(['approved', 'closed', 'completed', 'paid']);
+
+/**
+ * Whether the actor may record a decision that changes approval state on a work item.
+ * @param {object | null | undefined} user
+ * @param {object} row persisted work_items row or enriched API item
+ * @param {{ outcomeStatus?: string; decisionKey?: string }} [opts]
+ */
+export function userMayDecideWorkItem(user, row, opts = {}) {
+  if (!user || !row) return false;
+  const requiresApproval = Boolean(row.requires_approval ?? row.requiresApproval);
+  const outcome = String(opts.outcomeStatus || '').trim().toLowerCase();
+  const isApprovalOutcome = APPROVAL_OUTCOME_STATUSES.has(outcome);
+  if (!requiresApproval || !isApprovalOutcome) return true;
+
+  const uid = String(user.id || '').trim();
+  const senderId = String(row.created_by_user_id || row.senderUserId || '').trim();
+  const rk = String(user.roleKey || '').trim().toLowerCase();
+  if (senderId && uid === senderId && rk !== 'admin' && !userHasPermission(user, '*')) {
+    return false;
+  }
+
+  const docType = String(row.document_type || row.documentType || '').trim().toLowerCase();
+  if (
+    docType === 'quotation_clearance' ||
+    docType === 'production_gate' ||
+    docType === 'flagged_transaction'
+  ) {
+    return canSeeManagementApprovalQueues(user);
+  }
+  if (docType === 'refund_request') {
+    return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
+  }
+  if (docType === 'payment_request' || docType === 'po_transport_payment' || docType === 'bank_recon_exceptions') {
+    return userHasPermission(user, 'finance.approve');
+  }
+  return userMatchesWorkItemOfficeAudience(user, row);
+}
+
 /**
  * Default audience for persisted rows: queue owners, not entire departments.
  * @param {object} user
@@ -688,8 +727,12 @@ export function appendWorkItemDecision(db, payload, opts = {}) {
   const outcomeStatus = String(payload?.outcomeStatus || '').trim();
   if (!outcomeStatus) return { ok: false, error: 'Decision outcome is required.' };
   const note = String(payload?.note || '').trim();
-  const actedAtIso = String(payload?.actedAtIso || '').trim() || nowIso();
   const actor = payload?.actor || null;
+  const allowClientTimestamp =
+    actor && (userHasPermission(actor, '*') || String(actor.roleKey || '').trim().toLowerCase() === 'admin');
+  const actedAtIso = allowClientTimestamp
+    ? String(payload?.actedAtIso || '').trim() || nowIso()
+    : nowIso();
   const actorOfficeKey = String(payload?.actorOfficeKey || officeKeyForUser(actor)).trim() || 'general';
   const nextStatus = String(payload?.nextStatus || outcomeStatus).trim() || outcomeStatus;
   const summary =

@@ -6,6 +6,8 @@ import { getCreditPolicyConfig, requiredApprovalLevelForCreditAmount } from './c
 import { evaluateQuotationPaymentForDeliveryRelease } from './deliveryReleaseGate.js';
 import { getBranchCodeUpper, bumpHumanSerial } from './humanId.js';
 import { listProductionJobs } from './readModel.js';
+import { userHasPermission } from './auth.js';
+import { entityBranchWriteAllowed } from './workspaceBranchGuards.js';
 
 export const CREDIT_EXCEPTION_STATUS = {
   PENDING: 'pending',
@@ -123,6 +125,13 @@ function rowToDto(row) {
 
 function roleKey(actor) {
   return String(actor?.roleKey || actor?.role || '').toLowerCase();
+}
+
+function creditExceptionQuotationInWorkspace(actor, quotationBranchId) {
+  if (!actor) return false;
+  if (userHasPermission(actor, '*') || userHasPermission(actor, 'hq.view_all_branches')) return true;
+  const wb = String(actor.workspaceBranchId || actor.homeBranchId || '').trim();
+  return entityBranchWriteAllowed(actor, quotationBranchId, wb);
 }
 
 export function userMayRequestCreditException(actor) {
@@ -305,6 +314,13 @@ export function createCreditExceptionRequest(db, payload, actor) {
 
   const q = db.prepare(`SELECT id, customer_id, branch_id, total_ngn, paid_ngn FROM quotations WHERE id = ?`).get(quotationRef);
   if (!q) return { ok: false, error: 'Quotation not found.' };
+  if (!creditExceptionQuotationInWorkspace(actor, q.branch_id)) {
+    return {
+      ok: false,
+      error: 'This quotation is not in your current workspace branch.',
+      code: 'FORBIDDEN',
+    };
+  }
 
   const jobs = listProductionJobs(db, 'ALL');
   const pay = evaluateQuotationPaymentForDeliveryRelease(db, quotationRef, jobs);
@@ -414,6 +430,17 @@ export function decideCreditException(db, id, decision, payload, actor) {
   if (!row) return { ok: false, error: 'Credit exception not found.' };
   if (row.status !== CREDIT_EXCEPTION_STATUS.PENDING) {
     return { ok: false, error: `Credit exception is not pending (status: ${row.status}).` };
+  }
+
+  const qBranch = db
+    .prepare(`SELECT branch_id FROM quotations WHERE id = ?`)
+    .get(String(row.quotation_ref || '').trim());
+  if (qBranch && !creditExceptionQuotationInWorkspace(actor, qBranch.branch_id)) {
+    return {
+      ok: false,
+      error: 'This credit exception is not in your current workspace branch.',
+      code: 'FORBIDDEN',
+    };
   }
 
   const dec = String(decision || '').toLowerCase();

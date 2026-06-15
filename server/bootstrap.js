@@ -93,10 +93,12 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
  *   includeUsers?: boolean;
  *   includeRegisteredPasswords?: boolean;
  *   branchScope?: 'ALL' | string;
+ *   skipSideEffects?: boolean;
  * }} [opts]
  */
 export function buildBootstrap(db, opts = {}) {
   const branchScope = opts.branchScope ?? 'ALL';
+  const skipSideEffects = Boolean(opts.skipSideEffects);
   const user = opts.user ?? opts.session?.user ?? null;
   const includeRegisteredPasswords = Boolean(opts.includeRegisteredPasswords);
   const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
@@ -145,23 +147,25 @@ export function buildBootstrap(db, opts = {}) {
   })();
   const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope) : [];
 
-  if (salesOk) {
-    try {
-      // Vitest and other in-memory API tests use fixed historical quote dates; real "today" would
-      // auto-expire them on every bootstrap and break PATCH/payment flows. Opt in with
-      // ZAREWA_TEST_QUOTE_LIFECYCLE=1 when a test needs expiry-on-bootstrap (rare).
-      if (process.env.NODE_ENV !== 'test' || process.env.ZAREWA_TEST_QUOTE_LIFECYCLE === '1') {
-        runQuotationLifecycleMaintenance(db, branchScope);
+  if (!skipSideEffects) {
+    if (salesOk) {
+      try {
+        // Vitest and other in-memory API tests use fixed historical quote dates; real "today" would
+        // auto-expire them on every bootstrap and break PATCH/payment flows. Opt in with
+        // ZAREWA_TEST_QUOTE_LIFECYCLE=1 when a test needs expiry-on-bootstrap (rare).
+        if (process.env.NODE_ENV !== 'test' || process.env.ZAREWA_TEST_QUOTE_LIFECYCLE === '1') {
+          runQuotationLifecycleMaintenance(db, branchScope);
+        }
+      } catch (e) {
+        console.error('[zarewa] quotation lifecycle maintenance failed', e);
       }
-    } catch (e) {
-      console.error('[zarewa] quotation lifecycle maintenance failed', e);
     }
-  }
-  if (user && userHasPermission(user, 'office.use')) {
-    ensureWorkItemsForVisibleOfficeThreads(db, workScope, user);
-  }
-  if (user) {
-    syncDerivedWorkItems(db, workScope, user);
+    if (user && userHasPermission(user, 'office.use')) {
+      ensureWorkItemsForVisibleOfficeThreads(db, workScope, user);
+    }
+    if (user) {
+      syncDerivedWorkItems(db, workScope, user);
+    }
   }
 
   const productionMetrics = productionOk

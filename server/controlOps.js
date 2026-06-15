@@ -26,6 +26,10 @@ import {
   userMayApproveProductionGate,
 } from './productionGateAccess.js';
 import {
+  userMayPerformManagerQuotationClearance,
+  userMayReleaseQuotationPaymentHold,
+} from '../shared/workspaceGovernance.js';
+import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
 } from '../shared/lib/quotedGaugeForSubstitution.js';
@@ -3280,6 +3284,25 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production', 'release_payments'
   const note = String(payload.note ?? '').trim();
   const now = new Date().toISOString();
+
+  if (decision === 'clear' || decision === 'flag') {
+    if (!userMayPerformManagerQuotationClearance(actor)) {
+      return {
+        ok: false,
+        error: 'Quotation clearance requires Branch Manager, Managing Director, or Administrator authority.',
+        code: 'FORBIDDEN',
+      };
+    }
+  }
+  if (decision === 'release_payments') {
+    if (!userMayReleaseQuotationPaymentHold(actor)) {
+      return {
+        ok: false,
+        error: 'Releasing payment holds requires Managing Director or Administrator authority.',
+        code: 'FORBIDDEN',
+      };
+    }
+  }
 
   if (decision === 'clear') {
     const paid = Math.round(Number(row.paid_ngn) || 0);

@@ -60,6 +60,7 @@
     "stress:qa-mega": "node scripts/qa-operations-mega.mjs",
     "stress:qa-mega-lite": "node scripts/qa-mega-lite.mjs",
     "stress:finance100": "node scripts/finance-stress-100.mjs",
+    "stress:load-100": "node scripts/load-test-100vus-5min.mjs",
     "bench:dashboard": "node scripts/bench-dashboard-summary.mjs",
     "retention:prune": "node scripts/retention-prune.mjs",
     "build": "node -e \"console.log('[zarewa] build: no compile step (API-only package)');\"",

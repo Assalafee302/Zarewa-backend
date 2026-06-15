@@ -220,12 +220,48 @@ function enrichQuotationWithLineTable(db, mapped) {
   return mapped;
 }
 
+/** Batch-load quotation_lines for branch scope (avoids N+1 per quotation). */
+function enrichQuotationsWithLineTableBatch(db, mapped, branchScope = 'ALL') {
+  const needsLines = mapped.filter((m) => !m.quotationLines);
+  if (!needsLines.length) return mapped;
+
+  const b = branchWhere(db, 'quotations', branchScope);
+  const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'q.branch_id') : '';
+  const lineRows = db
+    .prepare(
+      `SELECT ql.* FROM quotation_lines ql
+       INNER JOIN quotations q ON q.id = ql.quotation_id
+       WHERE 1=1${branchSql}
+       ORDER BY ql.quotation_id, ql.sort_order`
+    )
+    .all(...b.args);
+
+  /** @type {Map<string, object[]>} */
+  const linesByQuotationId = new Map();
+  for (const row of lineRows) {
+    const qid = String(row.quotation_id || '').trim();
+    if (!qid) continue;
+    if (!linesByQuotationId.has(qid)) linesByQuotationId.set(qid, []);
+    linesByQuotationId.get(qid).push(row);
+  }
+
+  return mapped.map((m) => {
+    if (m.quotationLines) return m;
+    const lr = linesByQuotationId.get(m.id);
+    if (lr?.length) {
+      return { ...m, quotationLines: groupedFromQuotationLinesTableRows(lr) };
+    }
+    return m;
+  });
+}
+
 export function listQuotations(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'quotations', branchScope);
-  return db
+  const mapped = db
     .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
     .all(...b.args)
-    .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(db, row)));
+    .map((row) => mapQuotationRow(db, row));
+  return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
 }
 
 /**

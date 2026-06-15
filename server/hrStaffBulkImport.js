@@ -931,6 +931,9 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   if (row.payAdditionNgn && !row.salaryLevel) {
     warnings.push({ field: 'payAdditionNgn', message: 'Pay addition ignored without salary level/step — set level or use legacy pay backfill' });
   }
+  if (importAction === 'update') {
+    warnings.push({ field: 'employeeNumber', message: 'Existing employee — profile will be updated' });
+  }
 
   return {
     errors,

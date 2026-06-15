@@ -300,7 +300,7 @@ export function getHrNotificationSummary(db, scope, user) {
     const compDocN =
       (alerts.compensationReviewDue?.length || 0) + (alerts.undocumentedCompensationVariance?.length || 0);
     if (compDocN) {
-      push({ key: 'compensation-review', count: compDocN, path: '/hr/settings', title: 'Compensation documentation due' });
+      push({ key: 'compensation-review', count: compDocN, path: '/hr/payroll?tab=salary-matrix', title: 'Compensation documentation due' });
     }
   }
   if (has('hr.payroll.prepare') || has('hr.payroll.manage')) {

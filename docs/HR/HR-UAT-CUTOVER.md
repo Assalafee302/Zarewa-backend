@@ -38,7 +38,7 @@ Complete once per environment (HR admin):
 | Import staff | **HR → Employees → Bulk Register Staff** | Upload Excel with optional designation code, level/step, pay addition columns |
 | Legacy pay | **HR → Settings → Organization** | **Preview backfill** then **Run backfill** for staff with old inflated base pay |
 | Multi-role | Staff profile | Set primary designation, secondary desks, pay addition + variance; apply suggested role + supplemental permissions |
-| Verify | **HR → Reports → Salary variance** | Matrix vs actual vs addition; acting roles on dashboard |
+| Verify | **HR → Payroll → Salary matrix** | Matrix vs actual vs addition; acting roles on dashboard (in-app alerts only) |
 
 ## Step 2 — Data gates (dashboard)
 

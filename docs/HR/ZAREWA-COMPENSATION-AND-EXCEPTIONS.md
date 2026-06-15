@@ -248,7 +248,8 @@ Implemented in app (2026-06-15):
 Optional later:
 
 - Bulk matrix revision apply to all profiles
-- Email/SMS reminders for acting expiry and variance review due
+
+In-app only: acting-role and compensation alerts appear on **HR Dashboard** and the notification bell — no external email or SMS.
 
 ---
 

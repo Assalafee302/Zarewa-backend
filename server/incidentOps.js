@@ -15,7 +15,7 @@ import {
 } from './hrAccountabilityOps.js';
 import {
   createMaterialIncidentDraft,
-  loadIncidentDetail,
+  getMaterialIncident,
   materialIncidentsTableReady,
   submitMaterialIncident,
 } from './materialIncidentOps.js';
@@ -227,7 +227,7 @@ export function createIncident(db, payload, actor, opts = {}) {
       incidentKind: 'material',
       sourceId: draft.id,
       status,
-      incident: loadIncidentDetail(db, draft.id),
+      incident: getMaterialIncident(db, draft.id),
     };
   }
 
@@ -245,7 +245,7 @@ export function getIncident(db, registryId) {
   if (reg.incidentKind === 'hr_discipline') {
     detail = getDisciplineCase(db, reg.sourceId);
   } else if (reg.incidentKind === 'material') {
-    detail = loadIncidentDetail(db, reg.sourceId);
+    detail = getMaterialIncident(db, reg.sourceId);
   } else if (reg.incidentKind === 'operational' && hrTableExists(db, 'operational_incidents')) {
     detail = db.prepare(`SELECT * FROM operational_incidents WHERE id = ?`).get(reg.sourceId);
   } else if (reg.incidentKind === 'performance' && hrTableExists(db, 'hr_performance_recognitions')) {

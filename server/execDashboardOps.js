@@ -14,9 +14,18 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { getBranch } from './branches.js';
 import { canUseAllBranchesRollup, userHasPermission } from './auth.js';
-import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
+import {
+  loadBusinessIntelligencePack,
+  loadBusinessIntelligenceSourceSlices,
+} from './businessIntelligenceOps.js';
+import {
+  annotateExecWorkTrayApprovalTiers,
+  sortExecWorkTrayByApprovalTier,
+  summarizeExecWorkTrayApprovalTiers,
+} from '../shared/lib/execApprovalTier.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
+import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
 import { listUnifiedWorkItems, workRegistryTablesReady } from './workItems.js';
@@ -36,7 +45,6 @@ import {
   execOrgSummary,
   listLedgerEntries,
   listProductionJobs,
-  listPurchaseOrders,
   listQuotations,
   listTreasuryAccounts,
 } from './readModel.js';
@@ -315,16 +323,35 @@ export function agingSeverityScore(aging) {
 }
 
 /**
+ * Branch-level outstanding receivables from preloaded slices (no extra DB reads).
+ * @param {object[]} quotations
+ * @param {object[]} ledger
+ * @param {object[]} jobs
+ */
+export function buildBranchDebtTotalsMap(quotations, ledger, jobs) {
+  /** @type {Map<string, number>} */
+  const branchDebtMap = new Map();
+  for (const q of quotations) {
+    const due = receivableDueOnQuotationFromEntries(ledger, q, jobs);
+    if (due <= 0) continue;
+    const bid = String(q.branchId || q.branch_id || 'UNASSIGNED').trim();
+    branchDebtMap.set(bid, (branchDebtMap.get(bid) || 0) + due);
+  }
+  return branchDebtMap;
+}
+
+/**
  * Outstanding customer debt as at a date (point-in-time; not period-filtered).
  * @param {import('better-sqlite3').Database} db
  * @param {string} branchScope
  * @param {string} [asOfISO]
+ * @param {{ quotations?: object[]; ledgerEntries?: object[]; productionJobs?: object[] }} [preloaded]
  */
-export function topCustomersByDebt(db, branchScope, asOfISO) {
+export function topCustomersByDebt(db, branchScope, asOfISO, preloaded = null) {
   const asOf = isoDateOnly(asOfISO || new Date());
-  const quotations = listQuotations(db, branchScope);
-  const ledger = listLedgerEntries(db, branchScope);
-  const jobs = listProductionJobs(db, branchScope);
+  const quotations = preloaded?.quotations ?? listQuotations(db, branchScope);
+  const ledger = preloaded?.ledgerEntries ?? listLedgerEntries(db, branchScope);
+  const jobs = preloaded?.productionJobs ?? listProductionJobs(db, branchScope);
   const asOfDate = new Date(`${asOf}T00:00:00`);
   /** @type {Map<string, object>} */
   const byCustomer = new Map();
@@ -1352,6 +1379,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
   const readOnlyExecutiveView = roleKey === 'ceo' && !canAct;
   const canViewAudit = userHasPermission(user, 'audit.view') || userHasPermission(user, '*');
 
+  const sourceSlices = loadBusinessIntelligenceSourceSlices(db, branchScope);
   let biPack;
   try {
     biPack = loadBusinessIntelligencePack(db, branchScope, {
@@ -1359,6 +1387,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
       asOfISO: period.asOfISO || period.endISO,
       periodStartISO: period.startISO,
       periodEndISO: period.endISO,
+      sourceSlices,
     });
   } catch (e) {
     biPack = { ok: false, error: String(e?.message || e) };
@@ -1418,25 +1447,25 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     }
   }
 
-  workTrayItems.sort((a, b) => {
-    const rank = { high: 0, medium: 1, low: 2 };
-    return (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9);
-  });
+  const governanceLimits = getOrgGovernanceLimits(db);
+  workTrayItems = sortExecWorkTrayByApprovalTier(
+    annotateExecWorkTrayApprovalTiers(workTrayItems, governanceLimits)
+  );
+  const approvalTierSummary = summarizeExecWorkTrayApprovalTiers(workTrayItems);
 
-  const topCustomersByDebtRows = topCustomersByDebt(db, branchScope, period.endISO);
+  const debtPreloaded = {
+    quotations: sourceSlices.quotations,
+    ledgerEntries: sourceSlices.ledgerEntries,
+    productionJobs: sourceSlices.productionJobs,
+  };
+  const topCustomersByDebtRows = topCustomersByDebt(db, branchScope, period.endISO, debtPreloaded);
   const topCustomersByPayments = sales.topCustomers || [];
 
-  const branchDebtMap = new Map();
-  for (const q of listQuotations(db, branchScope)) {
-    const due = receivableDueOnQuotationFromEntries(
-      listLedgerEntries(db, branchScope),
-      q,
-      listProductionJobs(db, branchScope)
-    );
-    if (due <= 0) continue;
-    const bid = String(q.branchId || q.branch_id || 'UNASSIGNED').trim();
-    branchDebtMap.set(bid, (branchDebtMap.get(bid) || 0) + due);
-  }
+  const branchDebtMap = buildBranchDebtTotalsMap(
+    debtPreloaded.quotations,
+    debtPreloaded.ledgerEntries,
+    debtPreloaded.productionJobs
+  );
 
   const pendingJobsByBranch = countPendingProductionByBranch(db, branchScope);
   const execItemsByBranch = countExecutiveItemsByBranch(workTrayItems);
@@ -1491,12 +1520,7 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
     canManageReservePolicy: actorCanManageReservePolicy(user),
   };
 
-  let purchaseOrders = [];
-  try {
-    purchaseOrders = listPurchaseOrders(db, branchScope);
-  } catch {
-    purchaseOrders = [];
-  }
+  const purchaseOrders = sourceSlices.purchaseOrders || [];
 
   const workingCapital = buildWorkingCapitalSnapshot(db, branchScope, {
     cashNgn: treasuryCashNgn,

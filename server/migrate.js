@@ -269,6 +269,9 @@ function runMigrationsUnlocked(db) {
   if (!q.has('manager_production_paid_fraction_at_approval')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_paid_fraction_at_approval REAL`);
   }
+  if (!q.has('manager_production_approval_level')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN manager_production_approval_level TEXT`);
+  }
   if (!q.has('md_price_exception_approved_at_iso')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN md_price_exception_approved_at_iso TEXT`);
   }

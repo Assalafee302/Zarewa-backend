@@ -193,6 +193,7 @@ function mapQuotationRow(db, row) {
     managerProductionApprovedByName: row.manager_production_approved_by_name ?? null,
     managerProductionApprovalNote: row.manager_production_approval_note ?? null,
     managerProductionPaidFractionAtApproval: row.manager_production_paid_fraction_at_approval ?? null,
+    managerProductionApprovalLevel: row.manager_production_approval_level ?? null,
     managerClearedAtISO: row.manager_cleared_at_iso ?? null,
     managerFlaggedAtISO: row.manager_flagged_at_iso ?? null,
     managerFlagReason: row.manager_flag_reason ?? '',

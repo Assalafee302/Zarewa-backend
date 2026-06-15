@@ -7,6 +7,10 @@ import {
   metreVariancePct,
   PRODUCTION_METRE_VARIANCE_WARN_PCT,
 } from '../shared/lib/productionMetreVariance.js';
+import {
+  productionGateOverrideEffective,
+  quotationHasRecordedPayment,
+} from './productionGateAccess.js';
 
 function tableExists(db, name) {
   return Boolean(
@@ -40,12 +44,15 @@ export function getProductionJobIntel(db, jobId) {
   const minPaidFraction = Number(branch?.cuttingListMinPaidFraction ?? 0.7) || 0.7;
 
   const paidFraction = quote ? quotePaidFraction(quote) : null;
+  const bookPaidNgn = Math.round(Number(quote?.paid_ngn) || 0);
   const paymentGateRequired = quote && paidFraction != null && paidFraction < minPaidFraction;
-  const bmOverrideAt = quote?.manager_production_approved_at_iso || null;
+  const overrideEffective = quote ? productionGateOverrideEffective(quote) : false;
+  const zeroPaymentGate = paymentGateRequired && !quotationHasRecordedPayment(bookPaidNgn);
+  const bmOverrideAt = overrideEffective ? quote?.manager_production_approved_at_iso || null : null;
   const paymentGateBreached =
     String(job.status || '').trim().toLowerCase() === 'completed' &&
     paymentGateRequired &&
-    !bmOverrideAt;
+    !overrideEffective;
 
   const planned = Number(job.planned_meters) || 0;
   const actual = Number(job.actual_meters) || 0;
@@ -112,7 +119,10 @@ export function getProductionJobIntel(db, jobId) {
       paymentGateMinFraction: minPaidFraction,
       paymentGateRequired: Boolean(paymentGateRequired),
       paymentGateBreached,
+      zeroPaymentMdGateRequired: Boolean(zeroPaymentGate && !overrideEffective),
+      branchManagerMayOverride: Boolean(paymentGateRequired && quotationHasRecordedPayment(bookPaidNgn)),
       managerProductionApprovedAtISO: bmOverrideAt,
+      managerProductionApprovalLevel: quote?.manager_production_approval_level || null,
       managerProductionApprovedByName: quote?.manager_production_approved_by_name || null,
       managerProductionApprovalNote: quote?.manager_production_approval_note || null,
       managerProductionPaidFractionAtApproval: quote?.manager_production_paid_fraction_at_approval ?? null,

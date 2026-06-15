@@ -19,6 +19,11 @@ import {
 import { productLineKey } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
+  productionGateOverrideNoteValid,
+  PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN,
+  userMayApproveProductionGate,
+} from './productionGateAccess.js';
+import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
 } from '../shared/lib/quotedGaugeForSubstitution.js';
@@ -2928,7 +2933,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
       ok: false,
       mdReviewPending: true,
       mdReviewError:
-        'This quotation had a below-floor price approved by the branch manager. The Managing Director must confirm that exception after production before any customer refund.',
+        'This quotation is below the material pricing workbook floor. The Managing Director or an administrator must approve the below-floor price exception before a cutting list, production, or customer refund can proceed.',
     };
   }
   return {
@@ -3306,6 +3311,16 @@ export function reviewQuotation(db, quoteId, payload, actor) {
            WHERE id = ?`
         ).run(now, note, quoteId);
       } else if (decision === 'approve_production') {
+        if (!userMayApproveProductionGate(actor)) {
+          throw new Error(
+            'Production gate override requires Branch Manager or Managing Director approval.'
+          );
+        }
+        if (!productionGateOverrideNoteValid(note)) {
+          throw new Error(
+            `Production override reason required (at least ${PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN} characters).`
+          );
+        }
         const total = Math.round(Number(row.total_ngn) || 0);
         const paid = Math.round(Number(row.paid_ngn) || 0);
         const paidFraction = total > 0 ? paid / total : paid > 0 ? 1 : 0;

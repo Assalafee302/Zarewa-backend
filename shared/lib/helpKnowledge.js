@@ -507,23 +507,22 @@ const CORE_HELP_ARTICLES = [
   },
   {
     id: 'price-exception-workflow',
-    title: 'Price below floor / manager & MD price exception',
+    title: 'Price below floor / MD price exception',
     keywords: [
       'price exception',
       'below floor',
-      'bm approval',
       'md approval',
       'minimum price',
       'commission',
       'pricing workbook',
     ],
     answer:
-      'Quotations below material floor or commission rules may require branch manager and sometimes MD confirmation before production or dispatch.',
+      'Quotations below the material workbook floor may be saved with a warning, but cutting lists and production require Managing Director or administrator approval.',
     steps: [
       'Open the quotation and read the price exception banner.',
-      'Branch manager approves in Sales or Manager dashboard when prompted.',
-      'If MD review is required, wait for MD confirmation before treating the quote as fully cleared.',
-      'Adjust lines or use approved exception — do not bypass by editing posted history.',
+      'Managing Director or administrator approves in Sales, Operations production register, or the executive inbox.',
+      'After MD approval, cutting list and production may proceed if payment and other gates are satisfied.',
+      'Adjust lines or use the approved exception — do not bypass by editing posted history.',
     ],
     links: [
       { label: 'Sales — Quotations', to: '/sales', state: { focusSalesTab: 'quotations' } },
@@ -700,11 +699,11 @@ const CORE_HELP_ARTICLES = [
       'auto price quotation',
     ],
     answer:
-      'Quotations for coil/roofing lines can pull **floor prices** from the material pricing workbook (gauge, design, branch). The floor is the minimum allowed before manager exception.',
+      'Quotations for coil/roofing lines can pull **floor prices** from the material pricing workbook (gauge, design, branch). The floor is the minimum allowed before an MD exception.',
     steps: [
       'Ensure material pricing workbook is synced for your branch (Settings / pricing ops — per your role).',
-      'When adding quotation lines, auto-price uses workbook rows; manual undercuts trigger **price exception** workflow.',
-      'Branch manager approves BM exception; MD may confirm for policy — see price exception guide.',
+      'When adding quotation lines, auto-price uses workbook rows; manual undercuts trigger the **MD price exception** workflow.',
+      'Managing Director or administrator must approve before cutting list or production — see price exception guide.',
       'Refunds and substitution warnings also reference workbook floors — keep workbook current.',
     ],
     links: [

@@ -329,10 +329,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 
 **Below-floor pricing exception**
 
-1. If quotation is below floor, production start is **blocked**.
-2. **Branch manager** records approval (`refunds.approve` + manager role) — flagged for MD review.
-3. Production may proceed after BM approval.
-4. **MD must confirm** (`md.price_exception.approve`) before customer refunds on that quotation.
+1. If quotation is below floor, save is **allowed** with a warning.
+2. **Managing Director or administrator** records approval (`md.price_exception.approve`).
+3. **Cutting list** and **production** may proceed after MD approval.
 
 **Substitution / accessory rules**
 
@@ -1078,7 +1077,7 @@ npm run verify:ci
 | Receive goods (GRN) | Operations |
 | Approve material incident | Branch manager |
 | Mark production / delivery complete | Operations |
-| Approve below-floor price for production | Branch manager; MD confirms after production |
+| Approve below-floor price for production | Managing Director or administrator |
 | Lock payroll | HR after MD payroll sign-off |
 | Approve leave / loan | HR queue → branch endorsement → GM HR |
 | Import bank statement lines | Finance |

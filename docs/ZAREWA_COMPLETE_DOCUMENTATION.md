@@ -689,10 +689,9 @@ Authenticated ledger money POSTs (receipt, advance, refund-advance) are rate-lim
 
 **Below-floor pricing exception**
 
-1. If quotation is below floor, production start is **blocked**.
-2. **Branch manager** records approval (`refunds.approve` + manager role) — flagged for MD review.
-3. Production may proceed after BM approval.
-4. **MD must confirm** (`md.price_exception.approve`) before customer refunds on that quotation.
+1. If quotation is below floor, save is **allowed** with a warning.
+2. **Managing Director or administrator** records approval (`md.price_exception.approve`).
+3. **Cutting list** and **production** may proceed after MD approval.
 
 **Substitution / accessory rules**
 
@@ -1438,7 +1437,7 @@ npm run verify:ci
 | Receive goods (GRN) | Operations |
 | Approve material incident | Branch manager |
 | Mark production / delivery complete | Operations |
-| Approve below-floor price for production | Branch manager; MD confirms after production |
+| Approve below-floor price for production | Managing Director or administrator |
 | Lock payroll | HR after MD payroll sign-off |
 | Approve leave / loan | HR queue → branch endorsement → GM HR |
 | Import bank statement lines | Finance |
@@ -1545,7 +1544,7 @@ The SPA loads a single snapshot. Row-level lists are **filtered by role** in `se
 - **Branch manager** (role key still `sales_manager`): label and permissions updated for branch duties; holds `refunds.approve` for refund decisions alongside MD and **admin** (`*`).
 - **Receipt bank confirmation**: `PATCH /api/sales-receipts/:receiptId/bank-confirmation` with `{ confirmed: boolean }` — requires `finance.pay` or `receipts.post`; audited as `receipt.bank_confirmation`.
 - **Payroll**: draft runs record `md_approved_at_iso` / `md_approved_by_user_id` via `POST /api/hr/payroll-runs/:runId/md-approve` (permission `hr.payroll.md_approve`). HR cannot **lock** a draft until MD approval is recorded.
-- **Price list & production**: canonical rows in `price_list_items` and material pricing workbook floors; starting production can be blocked when a quotation is below floor until a **branch manager** records approval (`PATCH /api/quotations/:id/bm-price-exception` with `refunds.approve` and branch-manager role). That approval is **flagged for MD review**; after production, **MD must confirm** (`PATCH /api/quotations/:id/md-price-exception-confirm` with `md.price_exception.approve`) before customer refunds on that quotation.
+- **Price list & production**: canonical rows in `price_list_items` and material pricing workbook floors; **cutting lists and production** are blocked when a quotation is below floor until **MD or administrator** records approval (`PATCH /api/quotations/:id/md-price-exception-approve` with `md.price_exception.approve`). Quotation saves below floor are allowed with warnings.
 - **HR self-service**: staff profiles include `selfServiceEligible`; leave/loan self-apply on **My profile** is gated on that flag (and the user matching their HR record).
 
 ## HR

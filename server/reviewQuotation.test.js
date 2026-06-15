@@ -73,3 +73,61 @@ describe('reviewQuotation manager holds', () => {
     expect(row.manager_cleared_at_iso).toBeTruthy();
   });
 });
+
+describe('reviewQuotation production gate override', () => {
+  let db;
+  const bmActor = { id: 'bm1', displayName: 'Branch Manager', roleKey: 'sales_manager' };
+  const salesActor = { id: 's1', displayName: 'Sales Officer', roleKey: 'sales_staff' };
+
+  beforeAll(() => {
+    db = createDatabase(':memory:');
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-2', 'Low Pay', 'BR1');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
+      VALUES ('QT-LOW', 'CUS-2', 'Low Pay', 1000000, 0, 'Unpaid', 'Approved', '{}', '2026-06-01');
+    `);
+  }, 120_000);
+
+  afterAll(() => {
+    db?.close();
+  });
+
+  beforeEach(() => {
+    db.exec(`
+      UPDATE quotations
+      SET manager_production_approved_at_iso = NULL,
+          manager_production_approved_by_user_id = NULL,
+          manager_production_approval_note = NULL
+      WHERE id = 'QT-LOW'
+    `);
+  });
+
+  it('allows branch manager override with audited reason', () => {
+    const r = reviewQuotation(db, 'QT-LOW', {
+      decision: 'approve_production',
+      note: 'Trusted customer — deposit promised this week',
+    }, bmActor);
+    expect(r.ok).toBe(true);
+    const row = db.prepare(
+      `SELECT manager_production_approved_at_iso, manager_production_approval_note FROM quotations WHERE id = ?`
+    ).get('QT-LOW');
+    expect(row.manager_production_approved_at_iso).toBeTruthy();
+    expect(row.manager_production_approval_note).toMatch(/deposit promised/i);
+  });
+
+  it('blocks sales officer from production override', () => {
+    const r = reviewQuotation(db, 'QT-LOW', {
+      decision: 'approve_production',
+      note: 'Sales officer trying override',
+    }, salesActor);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Branch Manager|Managing Director/i);
+  });
+
+  it('requires override reason of at least 8 characters', () => {
+    const r = reviewQuotation(db, 'QT-LOW', { decision: 'approve_production', note: 'short' }, bmActor);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/8 characters/i);
+  });
+});

@@ -227,9 +227,8 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     priceExceptionsPendingMd = countRow(
       `SELECT COUNT(*) AS c FROM quotations
        WHERE price_exception_md_review_required = 1
-         AND bm_price_exception_approved_at_iso IS NOT NULL
-         AND TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) != ''
-         AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')${bQuo.sql}`,
+         AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
+         AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')${bQuo.sql}`,
       bQuo.args,
       isAll ? 'company' : 'branch'
     );
@@ -451,6 +450,7 @@ function canActOnWorkItemKind(user, kind) {
   if (k === 'inter_branch_loan') return userHasPermission(user, 'inter_branch_loan.md_approve');
   if (k === 'stock_register') return userHasPermission(user, 'sales.manage') || userHasPermission(user, 'quotations.manage');
   if (k === 'price_exception') return userHasPermission(user, 'md.price_exception.approve');
+  if (k === 'conversions') return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'production.manage');
   if (k === 'office_memo' || k === 'work_item') return userHasPermission(user, 'office.use');
   return actorCanActOnApprovals(user);
 }
@@ -464,7 +464,8 @@ function workItemRoute(kind, row = {}) {
   if (k === 'payroll') return '/hr/executive';
   if (k === 'inter_branch_loan') return '/accounts';
   if (k === 'stock_register') return '/operations';
-  if (k === 'price_exception') return '/pricing-policy';
+  if (k === 'price_exception') return '/exec';
+  if (k === 'conversions') return '/exec';
   if (k === 'office_memo' || k === 'work_item') return '/office';
   if (k === 'clearance' || k === 'flagged' || k === 'production') {
     const ref = row.quotationRef || row.quotation_ref || row.title;
@@ -496,6 +497,19 @@ function mapAttentionToWorkTray(db, attention, user, readOnly) {
       ageLabel: daysSinceLabel(it.atIso),
       status: 'Approval Pending',
       route: workItemRoute(kind, it),
+      quotationRef: String(it.quotationRef || it.row?.id || it.row?.quotation_ref || '').trim() || undefined,
+      reviewContext: {
+        quotationRef: String(it.quotationRef || it.row?.id || it.row?.quotation_ref || '').trim(),
+        jobId: String(it.jobId || it.row?.job_id || '').trim(),
+        refundId: String(it.refundId || it.row?.refund_id || it.row?.refundId || '').trim(),
+        requestId: String(it.requestId || it.row?.request_id || '').trim(),
+        cuttingListId: String(it.cuttingListId || it.row?.id || '').trim(),
+        materialIncidentId: String(it.row?.id || '').trim(),
+        editApprovalId: String(it.row?.id || '').trim(),
+        reasons: Array.isArray(it.reasons) ? it.reasons : [],
+        subtitle: String(it.subtitle || '').trim(),
+        row: it.row || {},
+      },
       summaryOnly: false,
       canAct: !readOnly && canActOnWorkItemKind(user, kind),
     });
@@ -571,12 +585,11 @@ function listExecutiveExtras(db, branchScope) {
     const bQuo = branchWhere(db, 'quotations', branchScope);
     const priceRows = db
       .prepare(
-        `SELECT id, customer_name, total_ngn, date_iso, branch_id, bm_price_exception_approved_at_iso
+        `SELECT id, customer_name, total_ngn, date_iso, branch_id
          FROM quotations
          WHERE price_exception_md_review_required = 1
-           AND bm_price_exception_approved_at_iso IS NOT NULL
-           AND TRIM(IFNULL(bm_price_exception_approved_at_iso,'')) != ''
            AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
+           AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
            ${bQuo.sql}
          ORDER BY date_iso DESC LIMIT 20`
       )
@@ -586,15 +599,21 @@ function listExecutiveExtras(db, branchScope) {
         id: `price:${r.id}`,
         kind: 'price_exception',
         priority: 'high',
-        title: `Price exception ${r.id}`,
+        title: `Below-floor quote ${r.id}`,
         branchId: r.branch_id || '',
         branchName: branchName(db, r.branch_id),
         amountNgn: Math.round(Number(r.total_ngn) || 0),
-        requestedBy: 'Branch manager',
+        requestedBy: 'Sales / branch',
         ageLabel: daysSinceLabel(r.date_iso),
-        status: 'MD confirmation required',
-        route: '/pricing-policy',
+        status: 'MD approval required',
+        route: `/exec`,
         quotationRef: r.id,
+        reviewContext: {
+          quotationRef: r.id,
+          reasons: ['Below-floor pricing — MD approval required'],
+          subtitle: r.customer_name || '',
+          row: r,
+        },
       });
     }
   } catch {

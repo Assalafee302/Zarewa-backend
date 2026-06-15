@@ -29,13 +29,13 @@ function buildQuotationStageActors(db, auditPayload, activityTimeline) {
   const clearAudit = latestTimelineActor(activityTimeline, 'quotation.clear');
   const flagAudit = latestTimelineActor(activityTimeline, 'quotation.flag');
   const prodAudit = latestTimelineActor(activityTimeline, 'quotation.approve_production');
-  const bmAudit = latestTimelineActor(activityTimeline, 'quotation.bm_price_exception_approve');
-  const mdAudit = latestTimelineActor(activityTimeline, 'quotation.md_price_exception_confirm');
-  const bmBy = resolveUserDisplayName(db, q.bmPriceExceptionApprovedByUserId) || bmAudit.by;
+  const mdApproveAudit = latestTimelineActor(activityTimeline, 'quotation.md_price_exception_approve');
+  const mdConfirmAudit = latestTimelineActor(activityTimeline, 'quotation.md_price_exception_confirm');
   const mdBy =
-    resolveUserDisplayName(db, q.priceExceptionMdConfirmedByUserId) ||
     resolveUserDisplayName(db, q.mdPriceExceptionApprovedByUserId) ||
-    mdAudit.by;
+    resolveUserDisplayName(db, q.priceExceptionMdConfirmedByUserId) ||
+    mdApproveAudit.by ||
+    mdConfirmAudit.by;
 
   return {
     quotation: { by: q.handledBy || '', atIso: q.dateISO || '', label: 'Quoted / prepared' },
@@ -55,13 +55,13 @@ function buildQuotationStageActors(db, auditPayload, activityTimeline) {
       label: 'Production override',
     },
     bmPriceException: {
-      by: bmBy,
-      atIso: q.bmPriceExceptionApprovedAtISO || bmAudit.atIso,
-      label: 'Below-floor (branch)',
+      by: resolveUserDisplayName(db, q.bmPriceExceptionApprovedByUserId) || '',
+      atIso: q.bmPriceExceptionApprovedAtISO || '',
+      label: 'Below-floor (legacy BM)',
     },
     mdPriceException: {
       by: mdBy,
-      atIso: q.priceExceptionMdConfirmedAtISO || q.mdPriceExceptionApprovedAtISO || mdAudit.atIso,
+      atIso: q.mdPriceExceptionApprovedAtISO || q.priceExceptionMdConfirmedAtISO || mdApproveAudit.atIso || mdConfirmAudit.atIso,
       label: 'Below-floor (MD)',
     },
   };

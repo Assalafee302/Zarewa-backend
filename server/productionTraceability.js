@@ -15,7 +15,7 @@ import {
 } from './stoneFlatsheetFulfillment.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
-import { quotationBmPriceExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { getQuotation } from './readModel.js';
 import {
   isStoneCoatedMetreProductId,
@@ -921,17 +921,25 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   if (qref) {
     const quote = db
       .prepare(
-        `SELECT id, lines_json, branch_id, bm_price_exception_approved_at_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`
+        `SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
+         FROM quotations WHERE id = ?`
       )
       .get(qref);
     if (quote) {
       const { violations, hasFloorRows } = quotationPriceViolations(db, quote);
-      if (hasFloorRows && violations.length > 0 && !quotationBmPriceExceptionApproved(quote)) {
+      if (
+        hasFloorRows &&
+        violations.length > 0 &&
+        !quotationBelowFloorExceptionApproved({
+          mdPriceExceptionApprovedAtISO: quote.md_price_exception_approved_at_iso,
+          priceExceptionMdConfirmedAtISO: quote.price_exception_md_confirmed_at_iso,
+        })
+      ) {
         return {
           ok: false,
-          code: 'PRICE_LIST_BM_APPROVAL_REQUIRED',
+          code: 'PRICE_LIST_MD_APPROVAL_REQUIRED',
           error:
-            'Quoted price is below the workbook floor on one or more lines. A branch manager must approve a below-floor price exception before production can start (MD review is required after production before any refund).',
+            'Quoted price is below the workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before production can start.',
           violations,
         };
       }

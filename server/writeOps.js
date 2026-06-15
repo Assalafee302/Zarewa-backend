@@ -29,7 +29,7 @@ import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVi
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
-import { quotationBmPriceExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import {
@@ -5641,12 +5641,36 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   if (!qref) return { ok: false, error: 'Link a quotation.' };
   const qrow = db
     .prepare(
-      `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, branch_id FROM quotations WHERE id = ?`
+      `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, branch_id, lines_json,
+              md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
+              price_exception_md_review_required
+       FROM quotations WHERE id = ?`
     )
     .get(qref);
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
   const total = Number(qrow.total_ngn) || 0;
   if (total <= 0) return { ok: false, error: 'Quotation total must be greater than zero.' };
+  if (!forDraft) {
+    const priceRow = {
+      id: qref,
+      lines_json: qrow.lines_json,
+      branch_id: qrow.branch_id,
+    };
+    const { violations, hasFloorRows } = quotationPriceViolations(db, priceRow);
+    const priceMapped = {
+      mdPriceExceptionApprovedAtISO: qrow.md_price_exception_approved_at_iso,
+      priceExceptionMdConfirmedAtISO: qrow.price_exception_md_confirmed_at_iso,
+      priceExceptionMdReviewRequired: qrow.price_exception_md_review_required,
+    };
+    if (hasFloorRows && violations.length > 0 && !quotationBelowFloorExceptionApproved(priceMapped)) {
+      return {
+        ok: false,
+        code: 'BELOW_FLOOR_MD_APPROVAL_REQUIRED',
+        error: BELOW_FLOOR_MD_GATE_MESSAGE,
+        violations,
+      };
+    }
+  }
   const managerOk = Boolean(qrow.manager_production_approved_at_iso);
   const bookPaid = Number(qrow.paid_ngn) || 0;
   const bid = String(qrow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
@@ -7312,40 +7336,46 @@ function parseQuotationLinesJsonObject(raw) {
   }
 }
 
-const QUOTATION_BELOW_WORKBOOK_FLOOR_CODE = 'quotation_below_workbook_floor';
+const BELOW_FLOOR_MD_GATE_MESSAGE =
+  'Quoted price is below the material pricing workbook floor on one or more lines. The Managing Director or an administrator must approve a below-floor price exception before a cutting list can be created.';
 
 /**
- * Block save when roofing / flat sheet product unit prices are below workbook floor (unless MD exception on file).
  * @param {import('better-sqlite3').Database} db
  * @param {string | null | undefined} quotationId
  * @param {object} linesJson
  * @param {string} branchId
  */
-function assertQuotationProductWorkbookFloor(db, quotationId, linesJson, branchId) {
-  const qid = String(quotationId || '').trim();
-  if (qid) {
-    const row = db
-      .prepare(
-        `SELECT bm_price_exception_approved_at_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`
-      )
-      .get(qid);
-    if (quotationBmPriceExceptionApproved(row)) return;
-  }
+function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId) {
   const row = {
-    id: qid || 'draft-floor-check',
+    id: String(quotationId || '').trim() || 'draft-floor-check',
     lines_json: JSON.stringify(linesJson),
     branch_id: branchId,
   };
-  const { violations } = quotationPriceViolations(db, row);
-  const blocked = violations.filter((v) => v.code === 'below_floor' && v.lineCategory === 'products');
-  if (!blocked.length) return;
-  const err = new Error(
-    'One or more product lines (roofing sheet / flat sheet) are below the material pricing workbook floor. Increase the unit price or ask the branch manager to approve a below-floor price exception.'
-  );
-  err.statusCode = 422;
-  err.code = QUOTATION_BELOW_WORKBOOK_FLOOR_CODE;
-  err.details = { violations: blocked };
-  throw err;
+  const { violations, hasFloorRows } = quotationPriceViolations(db, row);
+  return {
+    violations,
+    hasFloorRows,
+    needsMdException: hasFloorRows && violations.length > 0,
+  };
+}
+
+/**
+ * Keep below-floor review flag in sync when quotation lines change (non-blocking on save).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} quotationId
+ * @param {object} linesJson
+ * @param {string} branchId
+ */
+function syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, branchId) {
+  const snap = quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId);
+  const qid = String(quotationId || '').trim();
+  if (qid) {
+    db.prepare(`UPDATE quotations SET price_exception_md_review_required = ? WHERE id = ?`).run(
+      snap.needsMdException ? 1 : 0,
+      qid
+    );
+  }
+  return snap;
 }
 
 function syncQuotationLineRows(db, quotationId, linesJson) {
@@ -7396,7 +7426,6 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   };
   applyPricingSnapshotsToServices(db, linesJson.products, bid, pricingHeaderCtx);
   applyPricingSnapshotsToServices(db, linesJson.services, bid, pricingHeaderCtx);
-  assertQuotationProductWorkbookFloor(db, null, linesJson, bid);
   const totalNgn = sumQuotationLinesJson(linesJson);
   const id = nextQuotationHumanId(db, bid);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -7445,6 +7474,8 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
     );
     syncQuotationLineRows(db, id, linesJson);
   })();
+
+  syncQuotationBelowFloorReviewFlag(db, id, linesJson, bid);
 
   return id;
 }
@@ -7590,7 +7621,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     };
     applyPricingSnapshotsToServices(db, linesJson.products, bidUpd, pricingHeaderCtx);
     applyPricingSnapshotsToServices(db, linesJson.services, bidUpd, pricingHeaderCtx);
-    assertQuotationProductWorkbookFloor(db, quotationId, linesJson, bidUpd);
+    syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, bidUpd);
   } else {
     enrichQuotationLinesWithMaterialHeader(linesJson);
   }

@@ -23,20 +23,28 @@ export function buildQuotationLifecycleTimeline(db, quotationId) {
     actor: quote.handled_by || null,
   });
 
-  if (quote.bm_price_exception_approved_at_iso) {
+  if (quote.md_price_exception_approved_at_iso) {
     events.push({
-      kind: 'price_exception_bm',
-      atISO: quote.bm_price_exception_approved_at_iso,
-      label: 'BM price exception approved',
+      kind: 'price_exception_md',
+      atISO: quote.md_price_exception_approved_at_iso,
+      label: 'MD below-floor price approved',
+      detail: null,
+      actor: null,
+    });
+  } else if (quote.price_exception_md_confirmed_at_iso) {
+    events.push({
+      kind: 'price_exception_md',
+      atISO: quote.price_exception_md_confirmed_at_iso,
+      label: 'MD below-floor price approved',
       detail: null,
       actor: null,
     });
   }
-  if (quote.price_exception_md_confirmed_at_iso || quote.md_price_exception_approved_at_iso) {
+  if (quote.bm_price_exception_approved_at_iso) {
     events.push({
-      kind: 'price_exception_md',
-      atISO: quote.price_exception_md_confirmed_at_iso || quote.md_price_exception_approved_at_iso,
-      label: 'MD price exception confirmed',
+      kind: 'price_exception_bm_legacy',
+      atISO: quote.bm_price_exception_approved_at_iso,
+      label: 'Legacy BM price exception (superseded)',
       detail: null,
       actor: null,
     });

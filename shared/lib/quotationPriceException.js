@@ -1,53 +1,60 @@
 /**
- * Below-floor quotation price exceptions: branch manager → production; MD confirm → refund.
+ * Below-floor quotation price exceptions: MD or administrator approves before cutting list / production.
  */
 
 /**
- * @param {{ bmPriceExceptionApprovedAtISO?: string | null; mdPriceExceptionApprovedAtISO?: string | null } | null | undefined} q
+ * True when MD (or legacy confirm) has approved the below-floor exception on this quotation.
+ * Branch-manager-only approvals no longer satisfy the gate.
+ * @param {{
+ *   mdPriceExceptionApprovedAtISO?: string | null;
+ *   priceExceptionMdConfirmedAtISO?: string | null;
+ * } | null | undefined} q
  */
-export function quotationBmPriceExceptionApproved(q) {
+export function quotationBelowFloorExceptionApproved(q) {
   if (!q) return false;
-  if (String(q.bmPriceExceptionApprovedAtISO || '').trim()) return true;
-  /** Legacy: MD-only approval before BM workflow existed. */
   if (String(q.mdPriceExceptionApprovedAtISO || '').trim()) return true;
+  /** Legacy post-production MD confirm before single-step workflow. */
+  if (String(q.priceExceptionMdConfirmedAtISO || '').trim()) return true;
   return false;
 }
 
+/** @deprecated Use {@link quotationBelowFloorExceptionApproved} */
+export function quotationBmPriceExceptionApproved(q) {
+  return quotationBelowFloorExceptionApproved(q);
+}
+
 /**
- * @param {{ priceExceptionMdReviewRequired?: boolean | number | null; bmPriceExceptionApprovedAtISO?: string | null } | null | undefined} q
+ * Quote is flagged below floor and still needs MD/admin approval.
+ * @param {{
+ *   priceExceptionMdReviewRequired?: boolean | number | null;
+ *   mdPriceExceptionApprovedAtISO?: string | null;
+ *   priceExceptionMdConfirmedAtISO?: string | null;
+ * } | null | undefined} q
  */
-export function quotationFlaggedForMdPriceReview(q) {
+export function quotationBelowFloorPendingMdApproval(q) {
   if (!q) return false;
   const flagged =
     q.priceExceptionMdReviewRequired === true ||
     q.priceExceptionMdReviewRequired === 1 ||
     String(q.priceExceptionMdReviewRequired || '') === '1';
-  return flagged && String(q.bmPriceExceptionApprovedAtISO || '').trim().length > 0;
+  if (!flagged) return false;
+  return !quotationBelowFloorExceptionApproved(q);
 }
 
-/**
- * @param {{
- *   priceExceptionMdConfirmedAtISO?: string | null;
- *   mdPriceExceptionApprovedAtISO?: string | null;
- *   priceExceptionMdReviewRequired?: boolean | number | null;
- * } | null | undefined} q
- */
+/** @deprecated Use {@link quotationBelowFloorPendingMdApproval} */
+export function quotationFlaggedForMdPriceReview(q) {
+  return quotationBelowFloorPendingMdApproval(q);
+}
+
+/** @deprecated Use {@link quotationBelowFloorExceptionApproved} */
 export function quotationMdPriceReviewConfirmed(q) {
-  if (!q) return true;
-  if (String(q.priceExceptionMdConfirmedAtISO || '').trim()) return true;
-  if (!quotationFlaggedForMdPriceReview(q)) {
-    /** Legacy MD approval without BM review flag — treat as fully cleared. */
-    if (String(q.mdPriceExceptionApprovedAtISO || '').trim()) return true;
-    return true;
-  }
-  return false;
+  return quotationBelowFloorExceptionApproved(q);
 }
 
 /**
- * Refund on this quotation blocked until MD confirms the below-floor exception (after production).
- * @param {Parameters<typeof quotationFlaggedForMdPriceReview>[0]} q
+ * Cutting list / refund blocked until MD approves a flagged below-floor quote.
+ * @param {Parameters<typeof quotationBelowFloorPendingMdApproval>[0]} q
  */
 export function quotationRefundBlockedPendingMdPriceConfirm(q) {
-  if (!quotationFlaggedForMdPriceReview(q)) return false;
-  return !quotationMdPriceReviewConfirmed(q);
+  return quotationBelowFloorPendingMdApproval(q);
 }

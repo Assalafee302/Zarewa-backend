@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyBulkMatrixRevisionToProfiles,
   buildOrgCompensationDashboardAlerts,
   computeCompensationVariance,
   daysUntilIsoDate,
@@ -134,6 +135,51 @@ describe('hrCompensationOps', () => {
   it('daysUntilIsoDate counts calendar days', () => {
     expect(daysUntilIsoDate('2026-06-20', '2026-06-15')).toBe(5);
     expect(daysUntilIsoDate('2026-06-10', '2026-06-15')).toBe(-5);
+  });
+
+  it('applyBulkMatrixRevisionToProfiles updates pay when matrix differs', () => {
+    const matrixRow = {
+      payrollGroup: 'branch_ops',
+      salaryLevel: 5,
+      salaryStep: 1,
+      baseSalaryNgn: 450_000,
+      housingAllowanceNgn: 60_000,
+      transportAllowanceNgn: 30_000,
+    };
+    const db = {
+      prepare: (sql) => {
+        if (String(sql).includes('sqlite_master')) {
+          return { get: () => ({ c: 1 }) };
+        }
+        if (String(sql).includes('FROM hr_staff_profiles p')) {
+          return {
+            all: () => [
+              {
+                userId: 'U-1',
+                displayName: 'Jane',
+                branchId: 'BR-KD',
+                payrollGroup: 'branch_ops',
+                salaryLevel: 5,
+                salaryStep: 1,
+                baseSalaryNgn: 400_000,
+                housingAllowanceNgn: 50_000,
+                transportAllowanceNgn: 20_000,
+                profileExtraJson: JSON.stringify({ compensation: { payAdditionNgn: 100_000 } }),
+              },
+            ],
+          };
+        }
+        if (String(sql).includes('FROM hr_salary_matrix')) {
+          return { get: () => matrixRow };
+        }
+        return { get: () => null, all: () => [], run: () => {} };
+      },
+    };
+    const r = applyBulkMatrixRevisionToProfiles(db, { viewAll: true }, { dryRun: true });
+    expect(r.ok).toBe(true);
+    expect(r.updatedCount).toBe(1);
+    expect(r.updated[0].payAdditionNgn).toBe(100_000);
+    expect(r.updated[0].newTotalNgn).toBe(550_000 + 60_000 + 30_000);
   });
 
   it('buildOrgCompensationDashboardAlerts flags acting roles and review dates', () => {

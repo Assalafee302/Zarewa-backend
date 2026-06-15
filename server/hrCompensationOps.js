@@ -3,6 +3,7 @@
  * @module server/hrCompensationOps
  */
 
+import crypto from 'node:crypto';
 import {
   isDirectorCorporateEligible,
   normalizeSecondaryRole,
@@ -439,6 +440,142 @@ export function listHrSalaryVarianceReport(db, scope = {}) {
     });
   }
   return out;
+}
+
+/**
+ * Re-apply current salary matrix to staff profiles (preserves payAdditionNgn).
+ * Use after reloading matrix seed or editing matrix rows in Payroll settings.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ viewAll?: boolean; branchId?: string }} scope
+ * @param {{ dryRun?: boolean; payrollGroup?: string; recordHistory?: boolean; actorUserId?: string; effectiveFromIso?: string; reason?: string }} [opts]
+ */
+export function applyBulkMatrixRevisionToProfiles(db, scope = {}, opts = {}) {
+  const dryRun = Boolean(opts.dryRun);
+  const payrollGroupFilter = String(opts.payrollGroup || '').trim() || null;
+  const recordHistory = opts.recordHistory !== false;
+  const actorUserId = String(opts.actorUserId || '').trim() || null;
+  const effectiveFromIso = String(opts.effectiveFromIso || '').slice(0, 10) || nowIso().slice(0, 10);
+  const reason =
+    String(opts.reason || '').trim() || `Matrix revision effective ${effectiveFromIso}`;
+
+  if (!staffProfilesReady(db)) return { ok: false, error: 'HR staff profiles not available.' };
+  if (!salaryMatrixReady(db)) return { ok: false, error: 'Salary matrix not available.' };
+
+  let sql = `
+    SELECT p.user_id AS userId, u.display_name AS displayName, p.branch_id AS branchId,
+           p.payroll_group AS payrollGroup, p.salary_level AS salaryLevel, p.salary_step AS salaryStep,
+           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
+           p.transport_allowance_ngn AS transportAllowanceNgn, p.profile_extra_json AS profileExtraJson
+    FROM hr_staff_profiles p
+    JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
+    WHERE p.salary_level IS NOT NULL AND p.salary_step IS NOT NULL
+  `;
+  const args = [];
+  if (!scope?.viewAll && scope?.branchId) {
+    sql += ` AND p.branch_id = ?`;
+    args.push(scope.branchId);
+  }
+  if (payrollGroupFilter) {
+    sql += ` AND p.payroll_group = ?`;
+    args.push(payrollGroupFilter);
+  }
+
+  const rows = db.prepare(sql).all(...args);
+  const updated = [];
+  const skipped = [];
+  const hasHistory = Boolean(
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_salary_history'`).get()
+  );
+
+  for (const row of rows) {
+    let profileExtra = {};
+    try {
+      profileExtra = JSON.parse(String(row.profileExtraJson || '{}'));
+    } catch {
+      profileExtra = {};
+    }
+    if (String(profileExtra?.employmentMeta?.salaryStatus || '').toLowerCase() === 'held') {
+      skipped.push({ userId: row.userId, displayName: row.displayName, reason: 'salary_on_hold' });
+      continue;
+    }
+    const matrixRow = lookupHrSalaryMatrixRow(db, row.payrollGroup, row.salaryLevel, row.salaryStep);
+    if (!matrixRow) {
+      skipped.push({ userId: row.userId, displayName: row.displayName, reason: 'no_matrix_row' });
+      continue;
+    }
+    const payAdditionNgn = Math.max(0, Math.round(Number(profileExtra?.compensation?.payAdditionNgn) || 0));
+    const newBase = Math.round(Number(matrixRow.baseSalaryNgn) || 0) + payAdditionNgn;
+    const newHousing = Math.round(Number(matrixRow.housingAllowanceNgn) || 0);
+    const newTransport = Math.round(Number(matrixRow.transportAllowanceNgn) || 0);
+    const prevBase = Math.round(Number(row.baseSalaryNgn) || 0);
+    const prevHousing = Math.round(Number(row.housingAllowanceNgn) || 0);
+    const prevTransport = Math.round(Number(row.transportAllowanceNgn) || 0);
+
+    if (newBase === prevBase && newHousing === prevHousing && newTransport === prevTransport) {
+      skipped.push({ userId: row.userId, displayName: row.displayName, reason: 'already_on_matrix' });
+      continue;
+    }
+
+    if (!dryRun) {
+      const nextExtra = {
+        ...profileExtra,
+        compensation: {
+          ...(profileExtra.compensation || {}),
+          payAdditionNgn,
+          matrixTotalNgn: totalCompensationNgn(matrixRow),
+          matrixRevisedAtIso: nowIso(),
+        },
+      };
+      db.prepare(
+        `UPDATE hr_staff_profiles SET base_salary_ngn = ?, housing_allowance_ngn = ?, transport_allowance_ngn = ?,
+         profile_extra_json = ?, updated_at_iso = ? WHERE user_id = ?`
+      ).run(newBase, newHousing, newTransport, JSON.stringify(nextExtra), nowIso(), row.userId);
+
+      if (recordHistory && hasHistory && actorUserId) {
+        db.prepare(
+          `INSERT INTO hr_salary_history (
+            id, user_id, effective_from_iso, salary_level, salary_step,
+            base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, reason, actor_user_id, created_at_iso
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(
+          `HRSH-${crypto.randomBytes(6).toString('hex')}`,
+          row.userId,
+          effectiveFromIso,
+          row.salaryLevel,
+          row.salaryStep,
+          newBase,
+          newHousing,
+          newTransport,
+          reason.slice(0, 240),
+          actorUserId,
+          nowIso()
+        );
+      }
+    }
+
+    updated.push({
+      userId: row.userId,
+      displayName: row.displayName,
+      payrollGroup: row.payrollGroup,
+      salaryLevel: row.salaryLevel,
+      salaryStep: row.salaryStep,
+      payAdditionNgn,
+      previousTotalNgn: prevBase + prevHousing + prevTransport,
+      newTotalNgn: newBase + newHousing + newTransport,
+      deltaNgn: newBase + newHousing + newTransport - (prevBase + prevHousing + prevTransport),
+    });
+  }
+
+  return {
+    ok: true,
+    dryRun,
+    payrollGroup: payrollGroupFilter,
+    scanned: rows.length,
+    updatedCount: updated.length,
+    skippedCount: skipped.length,
+    updated: updated.slice(0, 100),
+    skipped: skipped.slice(0, 50),
+  };
 }
 
 function staffProfilesReady(db) {

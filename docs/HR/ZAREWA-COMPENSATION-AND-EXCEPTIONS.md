@@ -244,12 +244,9 @@ Implemented in app (2026-06-15):
 - Bulk staff import optional org/comp columns (designation code, level/step, pay addition)
 - Payslip PDF/CSV shows matrix breakdown + pay addition line
 - Demo multi-role profile seed for reference Head Accountant pattern
+- Bulk matrix revision apply (`POST /api/hr/compensation/apply-matrix-revision`) with Settings UI
 
-Optional later:
-
-- Bulk matrix revision apply to all profiles
-
-In-app only: acting-role and compensation alerts appear on **HR Dashboard** and the notification bell — no external email or SMS.
+In-app only: acting-role and compensation alerts appear on **HR Dashboard** and the notification bell.
 
 ---
 

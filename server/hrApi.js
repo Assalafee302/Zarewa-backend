@@ -131,6 +131,7 @@ import {
 } from './hrOps.js';
 import {
   COMPENSATION_VARIANCE_TYPES,
+  applyBulkMatrixRevisionToProfiles,
   listHrSalaryVarianceReport,
 } from './hrCompensationOps.js';
 import { getZarewaOrgCatalogMeta, seedZarewaOrgStandard } from './hrOrgSeed.js';
@@ -2466,6 +2467,27 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Legacy pay backfill failed.' });
+    }
+  });
+
+  app.post('/api/hr/compensation/apply-matrix-revision', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const dryRun = req.body?.execute !== true && req.query?.execute !== '1';
+      const payrollGroup = String(req.body?.payrollGroup || req.query?.payrollGroup || '').trim() || undefined;
+      const r = applyBulkMatrixRevisionToProfiles(db, hrListScope(req), {
+        dryRun,
+        payrollGroup,
+        actorUserId: req.user?.id,
+        effectiveFromIso: req.body?.effectiveFromIso,
+        reason: req.body?.reason,
+        recordHistory: req.body?.recordHistory !== false,
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Matrix revision apply failed.' });
     }
   });
 

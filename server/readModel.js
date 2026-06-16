@@ -428,6 +428,36 @@ export function listManagementItems(db, branchScope = 'ALL') {
       .all(...bMex.args);
   }
 
+  let pendingPurchaseOrders = [];
+  try {
+    const poPendingStatus = (raw) => {
+      const s = String(raw || '').trim().toLowerCase();
+      return !s || ['draft', 'pending', 'pending approval', 'requested'].includes(s);
+    };
+    const poLineTotalNgn = (po) => {
+      const lines = Array.isArray(po?.lines) ? po.lines : [];
+      return lines.reduce((sum, line) => {
+        const qty = Number(line?.qtyOrdered) || 0;
+        const unit = Number(line?.unitPriceNgn) || Number(line?.unitPricePerKgNgn) || 0;
+        return sum + qty * unit;
+      }, 0);
+    };
+    pendingPurchaseOrders = listPurchaseOrders(db, branchScope)
+      .filter((po) => poPendingStatus(po.status))
+      .slice(0, 50)
+      .map((po) => ({
+        po_id: po.poID,
+        supplier_name: po.supplierName || '',
+        order_date_iso: po.orderDateISO || '',
+        status: po.status,
+        total_ngn: poLineTotalNgn(po),
+        branch_id: po.branchId || '',
+        line_count: Array.isArray(po.lines) ? po.lines.length : 0,
+      }));
+  } catch {
+    pendingPurchaseOrders = [];
+  }
+
   return {
     pendingClearance,
     flagged,
@@ -436,6 +466,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
     pendingExpenses,
     pendingConversionReviews,
     pendingMaterialIncidents,
+    pendingPurchaseOrders,
   };
 }
 

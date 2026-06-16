@@ -145,6 +145,42 @@ export function approveEditApproval(db, { approvalId, actor }) {
 /**
  * @param {import('better-sqlite3').Database} db
  */
+export function rejectEditApproval(db, { approvalId, actor, reason = '' }) {
+  ensureEditApprovalTable(db);
+  if (!userCanApproveEditMutations(actor)) {
+    return { ok: false, error: 'Only an administrator or designated manager can reject edit requests.' };
+  }
+  const aid = String(approvalId || '').trim();
+  const row = db.prepare(`SELECT * FROM edit_approval_tokens WHERE id = ?`).get(aid);
+  if (!row) return { ok: false, error: 'Approval request not found.' };
+  if (row.status !== 'pending') return { ok: false, error: 'This request is no longer pending.' };
+  const rid = String(row.requested_by_user_id || '').trim();
+  const approverId = String(actor?.id ?? '').trim();
+  if (rid && approverId && rid === approverId) {
+    return { ok: false, error: 'You cannot reject your own edit request (two-person control).' };
+  }
+  const now = new Date().toISOString();
+  const disp = String(actor?.displayName ?? actor?.username ?? '').trim();
+  const note = String(reason || '').trim() || 'Rejected by approver.';
+  db.prepare(
+    `UPDATE edit_approval_tokens
+     SET status = 'rejected', approved_by_user_id = ?, approved_by_display = ?, approved_at_iso = ?
+     WHERE id = ? AND status = 'pending'`
+  ).run(approverId, disp, now, aid);
+  appendAuditLog(db, {
+    actor,
+    action: 'edit_approval.rejected',
+    entityKind: row.entity_kind,
+    entityId: row.entity_id,
+    note,
+    details: { approvalId: aid },
+  });
+  return { ok: true, approvalId: aid, status: 'rejected' };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ */
 export function getEditApproval(db, approvalId) {
   ensureEditApprovalTable(db);
   const row = db.prepare(`SELECT * FROM edit_approval_tokens WHERE id = ?`).get(String(approvalId || '').trim());

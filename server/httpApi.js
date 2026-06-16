@@ -209,6 +209,7 @@ import {
 } from './adminDataResetOps.js';
 import {
   approveEditApproval,
+  rejectEditApproval,
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
   getEditApproval,
@@ -1752,6 +1753,28 @@ export function registerHttpApi(app, db) {
             keyDecisionSummary: 'Edit approval granted.',
           });
         }
+      }
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/edit-approvals/:id/reject', requireAuth, (req, res) => {
+    try {
+      const reason = String(req.body?.reason ?? req.body?.note ?? '').trim();
+      const r = rejectEditApproval(db, { approvalId: req.params.id, actor: req.user, reason });
+      if (r.ok) {
+        upsertWorkItemBySource(
+          db,
+          {
+            sourceKind: 'edit_approval',
+            sourceId: String(req.params.id || ''),
+            status: 'rejected',
+            updatedAtIso: new Date().toISOString(),
+          },
+          { actor: req.user }
+        );
       }
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {

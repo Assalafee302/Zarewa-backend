@@ -1685,6 +1685,53 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(patched.body?.ok).toBe(true);
   });
 
+  it('POST /api/edit-approvals/:id/reject marks request rejected', async () => {
+    const staffAgent = request.agent(app);
+    await loginAs(staffAgent, 'sales.staff', 'Sales@123');
+    const created = await staffAgent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-EDIT-REJECT-1',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      operatorName: 'Ibrahim',
+      lines: [{ sheets: 1, lengthM: 6, lineType: 'Roof' }],
+    });
+    expect(created.status).toBe(201);
+    const clId = created.body.id || created.body.cuttingList?.id;
+
+    const job = await staffAgent.post('/api/production-jobs').send({
+      cuttingListId: clId,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 6,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+
+    const reqTok = await staffAgent.post('/api/edit-approvals/request').send({
+      entityKind: 'cutting_list',
+      entityId: clId,
+    });
+    expect(reqTok.status).toBe(200);
+    const tokenId = reqTok.body.approvalId || reqTok.body.approval?.id;
+
+    const mgrAgent = request.agent(app);
+    await loginAs(mgrAgent, 'sales.manager', 'Sales@123');
+    const rejected = await mgrAgent.post(`/api/edit-approvals/${encodeURIComponent(tokenId)}/reject`).send({
+      reason: 'Not justified for production change',
+    });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body?.ok).toBe(true);
+    expect(rejected.body?.approval?.status).toBe('rejected');
+
+    const detail = await mgrAgent.get(`/api/edit-approvals/${encodeURIComponent(tokenId)}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body?.approval?.status).toBe('rejected');
+  });
+
   it('POST /api/payment-requests/:requestId/pay records split treasury payout after approval', async () => {
     const before = await agent.get('/api/bootstrap');
     const [cashAccount, bankAccount] = before.body.treasuryAccounts.slice(0, 2);

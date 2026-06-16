@@ -231,9 +231,6 @@ function validateDraftPayload(payload, incidentType) {
   if (!productId && type !== 'yard_offcut') {
     return { ok: false, error: 'Product / SKU is required.' };
   }
-  if (type === 'production_error' && !String(payload.productionJobId ?? payload.production_job_id ?? '').trim()) {
-    return { ok: false, error: 'Production job is required for production error incidents.' };
-  }
   if (type === 'customer_return') {
     const disp = String(payload.returnDisposition ?? payload.return_disposition ?? 'offcut_pool').trim();
     if (!DISPOSITIONS.has(disp)) return { ok: false, error: 'Invalid return disposition.' };
@@ -444,7 +441,7 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
   const maxRemove = qtyRem - qtyRes;
   let incidentType = String(payload.incidentType ?? payload.incident_type ?? '').trim();
   if (!INCIDENT_TYPES.has(incidentType)) {
-    incidentType = productionJobId ? 'production_error' : 'coil_stain';
+    incidentType = 'coil_stain';
   }
 
   const validated = validateCoilDamagePayload(
@@ -482,12 +479,11 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
           },
         ];
 
-  if (productionJobId) {
-    const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(productionJobId);
-    if (!job) return { ok: false, error: `Production job ${productionJobId} not found.` };
-  }
-  if (incidentType === 'production_error' && !productionJobId) {
-    return { ok: false, error: 'Production job is required for production error incidents.' };
+  const linkedProductionJobId =
+    incidentType === 'production_error' ? '' : productionJobId;
+  if (linkedProductionJobId) {
+    const job = db.prepare(`SELECT job_id FROM production_jobs WHERE job_id = ?`).get(linkedProductionJobId);
+    if (!job) return { ok: false, error: `Production job ${linkedProductionJobId} not found.` };
   }
 
   const storekeeperDisplay =
@@ -500,7 +496,7 @@ export function createCoilDamageMaterialIncident(db, payload = {}, opts = {}) {
     gaugeLabel: String(coil.gauge_label ?? '').trim(),
     colour: String(coil.colour ?? '').trim(),
     coilNo,
-    productionJobId: productionJobId || undefined,
+    productionJobId: linkedProductionJobId || undefined,
     customerLabel,
     beforeKg,
     afterKg,
@@ -583,7 +579,9 @@ export function createMaterialIncidentDraft(db, payload, opts = {}) {
       String(payload.coilNo ?? payload.coil_no ?? '').trim() || null,
       String(payload.quotationRef ?? payload.quotation_ref ?? '').trim() || null,
       String(payload.cuttingListRef ?? payload.cutting_list_ref ?? '').trim() || null,
-      String(payload.productionJobId ?? payload.production_job_id ?? '').trim() || null,
+      v.type === 'production_error'
+        ? null
+        : String(payload.productionJobId ?? payload.production_job_id ?? '').trim() || null,
       String(payload.deliveryId ?? payload.delivery_id ?? '').trim() || null,
       String(payload.customerId ?? payload.customer_id ?? '').trim() || null,
       String(payload.customerLabel ?? payload.customer_label ?? '').trim() || null,
@@ -667,7 +665,9 @@ export function updateMaterialIncidentDraft(db, incidentId, payload, opts = {}) 
       String(payload.coilNo ?? row.coil_no ?? '').trim() || null,
       String(payload.quotationRef ?? row.quotation_ref ?? '').trim() || null,
       String(payload.cuttingListRef ?? row.cutting_list_ref ?? '').trim() || null,
-      String(payload.productionJobId ?? row.production_job_id ?? '').trim() || null,
+      v.type === 'production_error'
+        ? null
+        : String(payload.productionJobId ?? row.production_job_id ?? '').trim() || null,
       String(payload.deliveryId ?? row.delivery_id ?? '').trim() || null,
       String(payload.customerId ?? row.customer_id ?? '').trim() || null,
       String(payload.customerLabel ?? row.customer_label ?? '').trim() || null,

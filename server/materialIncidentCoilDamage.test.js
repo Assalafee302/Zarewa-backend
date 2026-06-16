@@ -70,7 +70,7 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(row.incident_type).toBe('supplier_defect');
   });
 
-  it('uses production_error when production job is linked', () => {
+  it('creates production_error without linking a production job', () => {
     const r = createCoilDamageMaterialIncident(
       db,
       {
@@ -78,7 +78,7 @@ describe('createCoilDamageMaterialIncident', () => {
         beforeKg: 3000,
         afterKg: 2900,
         meters: 120,
-        productionJobId: 'JOB-99',
+        incidentType: 'production_error',
         note: 'Trim error during production run',
         submit: false,
       },
@@ -87,7 +87,7 @@ describe('createCoilDamageMaterialIncident', () => {
     expect(r.ok).toBe(true);
     const row = db.prepare(`SELECT incident_type, production_job_id FROM material_incidents WHERE id = ?`).get(r.id);
     expect(row.incident_type).toBe('production_error');
-    expect(row.production_job_id).toBe('JOB-99');
+    expect(row.production_job_id).toBeNull();
   });
 
   it('creates incident from damaged section lines', () => {

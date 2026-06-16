@@ -133,10 +133,10 @@ import {
 } from './accountingRegisterSettlementOps.js';
 import {
   createFixedAsset,
-  disposeFixedAsset,
   listFixedAssets,
   updateFixedAsset,
 } from './accountingPhase2Ops.js';
+import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
@@ -1257,7 +1257,15 @@ export function registerHttpApi(app, db) {
       const assetGate = assertFixedAssetWorkspaceWrite(req, req.params.assetId);
       if (!assetGate.ok) return res.status(assetGate.status).json({ ok: false, error: assetGate.error });
       const disposalDateIso = String(req.body?.disposalDateIso || '').slice(0, 10);
-      const result = disposeFixedAsset(db, req.params.assetId, disposalDateIso, req.user);
+      const result = disposeFixedAsset(db, req.params.assetId, {
+        disposalDateIso,
+        saleProceedsNgn: req.body?.saleProceedsNgn,
+        treasuryAccountId: req.body?.treasuryAccountId,
+        reference: req.body?.reference,
+        note: req.body?.note,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      }, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.json(result);
     } catch (e) {

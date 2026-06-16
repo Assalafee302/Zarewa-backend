@@ -51,7 +51,42 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
   'Generator',
 ]);
 
+/** Capex categories that auto-register in Accounting → Fixed assets when fully paid. */
+export const CAPEX_EXPENSE_CATEGORIES = Object.freeze([
+  'Land and buildings',
+  'Plant and machinery',
+  'Furniture & fittings',
+  'Generator',
+]);
+
+const CAPEX_SET = new Set(CAPEX_EXPENSE_CATEGORIES);
+
 const SET = new Set(EXPENSE_CATEGORY_OPTIONS);
+
+/** @param {string} category */
+export function isCapexExpenseCategory(category) {
+  return CAPEX_SET.has(String(category || '').trim());
+}
+
+/**
+ * Fixed-asset register + GL defaults for a capex expense category.
+ * @param {string} category
+ */
+export function capexExpenseAssetMeta(category) {
+  const c = String(category || '').trim();
+  switch (c) {
+    case 'Land and buildings':
+      return { assetCategory: 'building', glAccountCode: '1501', usefulLifeMonths: 240 };
+    case 'Plant and machinery':
+      return { assetCategory: 'plant', glAccountCode: '1500', usefulLifeMonths: 60 };
+    case 'Furniture & fittings':
+      return { assetCategory: 'it', glAccountCode: '1502', usefulLifeMonths: 84 };
+    case 'Generator':
+      return { assetCategory: 'plant', glAccountCode: '1504', usefulLifeMonths: 60 };
+    default:
+      return { assetCategory: 'other', glAccountCode: '1500', usefulLifeMonths: 60 };
+  }
+}
 
 const FALLBACK = 'Others';
 

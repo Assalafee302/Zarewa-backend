@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   EXPENSE_CATEGORY_OPTIONS,
   isAllowedExpenseCategory,
+  isCapexExpenseCategory,
+  capexExpenseAssetMeta,
   mapLegacyExpenseCategoryToCanonical,
 } from './expenseCategories.js';
 
@@ -32,5 +34,14 @@ describe('expenseCategories', () => {
   it('mapLegacy uses heuristics then fallback', () => {
     expect(mapLegacyExpenseCategoryToCanonical('Office rent March')).toBe('Rent & utilities');
     expect(mapLegacyExpenseCategoryToCanonical('xyz-unknown-label-999')).toBe('Others');
+  });
+
+  it('identifies capex categories for fixed-asset automation', () => {
+    expect(isCapexExpenseCategory('Plant and machinery')).toBe(true);
+    expect(isCapexExpenseCategory('Generator')).toBe(true);
+    expect(isCapexExpenseCategory('Rent & utilities')).toBe(false);
+    const meta = capexExpenseAssetMeta('Plant and machinery');
+    expect(meta.assetCategory).toBe('plant');
+    expect(meta.glAccountCode).toBe('1500');
   });
 });

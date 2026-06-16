@@ -1124,7 +1124,7 @@ function listLegacyManagementWorkItems(db, scope, user) {
             createdAtIso: row.date_iso || '',
             sourceKind: 'material_incident',
             sourceId: row.id,
-            routePath: '/operations/material-exceptions',
+            routePath: `/manager?inbox=material&materialIncidentId=${encodeURIComponent(String(row.id || ''))}`,
           })
         );
       }
@@ -1196,8 +1196,7 @@ function listLegacyEditApprovalWorkItems(db, user) {
       senderDisplayName: row.requestedByDisplay || '',
       sourceKind: 'edit_approval',
       sourceId: row.id,
-      routePath: '/manager',
-      routeState: { inbox: 'edit_approvals' },
+      routePath: `/manager?inbox=edits&editApprovalId=${encodeURIComponent(String(row.id || ''))}`,
     })
   );
 }

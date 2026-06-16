@@ -105,6 +105,11 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-supplier-adv', '1400', 'Supplier advances / prepayments', 'asset', 28);
   ins.run('acc-accum-dep', '1398', 'Accumulated depreciation', 'asset', 31);
   ins.run('acc-dep-exp', '6100', 'Depreciation expense', 'expense', 92);
+  ins.run('acc-fa-plant', '1500', 'Plant & machinery', 'asset', 32);
+  ins.run('acc-fa-building', '1501', 'Land & buildings', 'asset', 33);
+  ins.run('acc-fa-furniture', '1502', 'Furniture & fittings', 'asset', 34);
+  ins.run('acc-fa-generator', '1504', 'Generators', 'asset', 36);
+  ins.run('acc-fa-gain-loss', '6200', 'Gain/loss on asset disposal', 'expense', 93);
 }
 
 export function getGlAccountIdByCode(db, code) {

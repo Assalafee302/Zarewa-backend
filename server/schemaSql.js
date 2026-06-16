@@ -1842,7 +1842,9 @@ CREATE TABLE IF NOT EXISTS fixed_assets (
   depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
   status TEXT NOT NULL DEFAULT 'active',
   disposal_date_iso TEXT,
+  disposal_proceeds_ngn INTEGER NOT NULL DEFAULT 0,
   treasury_reference TEXT,
+  source_expense_id TEXT,
   notes TEXT,
   created_at_iso TEXT NOT NULL,
   updated_at_iso TEXT NOT NULL,
@@ -1850,6 +1852,8 @@ CREATE TABLE IF NOT EXISTS fixed_assets (
   updated_by_user_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch ON fixed_assets(branch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_source_expense ON fixed_assets(source_expense_id)
+  WHERE source_expense_id IS NOT NULL AND TRIM(source_expense_id) != '';
 
 CREATE TABLE IF NOT EXISTS product_standard_costs (
   product_id TEXT PRIMARY KEY,

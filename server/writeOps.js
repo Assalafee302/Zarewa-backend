@@ -8,6 +8,7 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
+import { syncFixedAssetFromCapexExpense } from './fixedAssetAutomationOps.js';
 import {
   ensureStoneFlatsheetProduct,
   ensureStoneProduct,
@@ -6402,6 +6403,13 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
           workspaceViewAll: payload.workspaceViewAll,
           actor: payload.actor,
         });
+        const assetSync = syncFixedAssetFromCapexExpense(db, expenseID, {
+          acquisitionDateIso: expenseDate,
+          actor: payload.actor,
+        });
+        if (!assetSync.ok) {
+          throw new Error(assetSync.error || 'Could not register fixed asset from capex expense.');
+        }
       }
       appendAuditLog(db, {
         actor: payload.actor,
@@ -7216,6 +7224,16 @@ export function payPaymentRequest(db, requestID, payload) {
           paidFromWorkspaceBranchId: workspaceBranchId || '',
         },
       });
+
+      if (nextPaid >= requestedFresh && linkedExpense?.expense_id) {
+        const assetSync = syncFixedAssetFromCapexExpense(db, linkedExpense.expense_id, {
+          acquisitionDateIso: paidAtISO,
+          actor,
+        });
+        if (!assetSync.ok) {
+          throw new Error(assetSync.error || 'Could not register fixed asset from capex expense.');
+        }
+      }
 
       return { movements: created, paidAmountNgn: nextPaid, requestedFresh };
     })();

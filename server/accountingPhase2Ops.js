@@ -44,7 +44,9 @@ export function ensureAccountingPhase2Schema(db) {
       depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
       status TEXT NOT NULL DEFAULT 'active',
       disposal_date_iso TEXT,
+      disposal_proceeds_ngn INTEGER NOT NULL DEFAULT 0,
       treasury_reference TEXT,
+      source_expense_id TEXT,
       notes TEXT,
       created_at_iso TEXT NOT NULL,
       updated_at_iso TEXT NOT NULL,
@@ -52,6 +54,8 @@ export function ensureAccountingPhase2Schema(db) {
       updated_by_user_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch ON fixed_assets(branch_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_source_expense ON fixed_assets(source_expense_id)
+      WHERE source_expense_id IS NOT NULL AND TRIM(source_expense_id) != '';
     CREATE TABLE IF NOT EXISTS product_standard_costs (
       product_id TEXT PRIMARY KEY,
       standard_material_cost_ngn_per_kg INTEGER,
@@ -62,6 +66,22 @@ export function ensureAccountingPhase2Schema(db) {
       updated_by_user_id TEXT
     );
   `);
+  try {
+    const cols = db.prepare(`PRAGMA table_info(fixed_assets)`).all();
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('source_expense_id')) {
+      db.exec(`ALTER TABLE fixed_assets ADD COLUMN source_expense_id TEXT`);
+    }
+    if (!names.has('disposal_proceeds_ngn')) {
+      db.exec(`ALTER TABLE fixed_assets ADD COLUMN disposal_proceeds_ngn INTEGER NOT NULL DEFAULT 0`);
+    }
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_source_expense ON fixed_assets(source_expense_id)
+       WHERE source_expense_id IS NOT NULL AND TRIM(source_expense_id) != ''`
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 function nextFixedAssetId() {
@@ -77,7 +97,7 @@ function monthsBetweenAcquisitionAnd(isoDate, endIso) {
   return Math.max(0, (y2 - y1) * 12 + (m2 - m1));
 }
 
-function mapFixedAssetRow(row) {
+export function mapFixedAssetRow(row) {
   if (!row) return null;
   const cost = Math.round(Number(row.cost_ngn) || 0);
   const salvage = Math.round(Number(row.salvage_ngn) || 0);
@@ -106,7 +126,9 @@ function mapFixedAssetRow(row) {
     depreciationMethod: row.depreciation_method,
     status: row.status,
     disposalDateIso: row.disposal_date_iso ?? '',
+    disposalProceedsNgn: Math.round(Number(row.disposal_proceeds_ngn) || 0),
     treasuryReference: row.treasury_reference ?? '',
+    sourceExpenseId: row.source_expense_id ?? '',
     notes: row.notes ?? '',
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
@@ -264,30 +286,6 @@ export function updateFixedAsset(db, assetId, body, user) {
     uid,
     id
   );
-  const row = db.prepare(`SELECT * FROM fixed_assets WHERE id = ?`).get(id);
-  return { ok: true, asset: mapFixedAssetRow(row) };
-}
-
-/** @param {import('better-sqlite3').Database} db */
-export function disposeFixedAsset(db, assetId, disposalDateIso, user) {
-  ensureAccountingPhase2Schema(db);
-  const id = String(assetId || '').trim();
-  const cur = db.prepare(`SELECT * FROM fixed_assets WHERE id = ?`).get(id);
-  if (!cur) return { ok: false, error: 'Asset not found.' };
-  const d = String(disposalDateIso || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-    return { ok: false, error: 'Valid disposal date (YYYY-MM-DD) is required.' };
-  }
-  try {
-    assertPeriodOpen(db, d, 'Fixed asset disposal date');
-  } catch (e) {
-    return { ok: false, error: String(e.message || e) };
-  }
-  const now = new Date().toISOString();
-  const uid = user?.id ? String(user.id) : null;
-  db.prepare(
-    `UPDATE fixed_assets SET status = 'disposed', disposal_date_iso = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE id = ?`
-  ).run(d, now, uid, id);
   const row = db.prepare(`SELECT * FROM fixed_assets WHERE id = ?`).get(id);
   return { ok: true, asset: mapFixedAssetRow(row) };
 }

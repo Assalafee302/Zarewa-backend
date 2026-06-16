@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import {
   createFixedAsset,
-  disposeFixedAsset,
   getCostingSnapshot,
   listFixedAssets,
   updateFixedAsset,
   upsertProductStandardCost,
 } from './accountingPhase2Ops.js';
+import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 
 describe('accountingPhase2Ops', () => {
   let db;

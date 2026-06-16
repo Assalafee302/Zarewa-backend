@@ -245,7 +245,6 @@ const STAFF_SUBJECT_USER_COLUMNS = [
   ['hr_exit_clearance', 'user_id'],
   ['hr_leave_accrual_ledger', 'user_id'],
   ['hr_attendance_events', 'user_id'],
-  ['hr_overtime_requests', 'user_id'],
   ['hr_appraisal_forms', 'subject_user_id'],
   ['hr_feedback_notes', 'subject_user_id'],
   ['office_memo_drafts', 'user_id'],

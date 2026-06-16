@@ -13,7 +13,6 @@ describe('hrReportsHub', () => {
     const priorityIds = reports.filter((r) => r.priority).map((r) => r.id);
     expect(priorityIds).toContain('employee-master');
     expect(priorityIds).toContain('absence-reports');
-    expect(priorityIds).toContain('overtime');
     expect(priorityIds).toContain('promotion-due');
     expect(priorityIds).toContain('policy-acknowledgement');
   });
@@ -45,6 +44,5 @@ describe('hrReportsHub', () => {
     expect(byCategory.employee?.length).toBeGreaterThan(0);
     expect(byCategory.attendance?.length).toBeGreaterThan(0);
     expect(byCategory.compliance?.length).toBeGreaterThan(0);
-    expect(HR_REPORT_CATALOG.some((r) => r.id === 'overtime')).toBe(true);
   });
 });

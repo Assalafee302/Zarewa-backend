@@ -11,7 +11,6 @@ import {
   getTemporaryEmployeeAlerts,
   listHrAbsenceReports,
   listHrExitClearance,
-  listHrOvertimeRequests,
 } from './hrPhase2Ops.js';
 
 function esc(v) {
@@ -128,13 +127,6 @@ export function exportHrAbsenceReportsCsv(db, scope) {
   const headers = ['id', 'userId', 'displayName', 'branchId', 'absenceStartIso', 'expectedReturnIso', 'absenceType', 'status', 'reason'];
   const data = rows.map((r) => [r.id, r.userId, r.displayName, r.branchId, r.absenceStartIso, r.expectedReturnIso, r.absenceType, r.status, r.reason]);
   return { ok: true, csv: toCsv(headers, data), filename: 'hr-absence-reports.csv' };
-}
-
-export function exportHrOvertimeCsv(db, scope) {
-  const rows = listHrOvertimeRequests(db, scope, {});
-  const headers = ['id', 'userId', 'displayName', 'branchId', 'workDateIso', 'calculatedHours', 'eligibleOvertimeHours', 'status', 'approvedByUserId'];
-  const data = rows.map((r) => [r.id, r.userId, r.displayName, r.branchId, r.workDateIso, r.calculatedHours, r.eligibleOvertimeHours, r.status, r.approvedByUserId || '']);
-  return { ok: true, csv: toCsv(headers, data), filename: 'hr-overtime-requests.csv' };
 }
 
 export function exportHrExitClearanceCsv(db, scope) {

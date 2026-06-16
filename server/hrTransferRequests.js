@@ -4,6 +4,12 @@
  */
 
 import { hrTablesReady, listHrStaff, upsertHrStaffProfile } from './hrOps.js';
+import { userCanGmApproveHr } from './hrPermissions.js';
+import {
+  notifyHrTransferOutcome,
+  notifyHrTransferQueueHandoff,
+  notifyHrTransferSubmitted,
+} from './hrNotifications.js';
 
 const TRANSFER_STATUSES = [
   'draft',
@@ -209,6 +215,10 @@ export function createHrTransferRequest(db, body, actor) {
     JSON.stringify(timeline),
     body?.resubmittedFromId || null
   );
+  const created = db.prepare(`SELECT * FROM hr_transfer_requests WHERE id = ?`).get(id);
+  if (created && status !== 'draft') {
+    notifyHrTransferSubmitted(db, created, actor?.id || null);
+  }
   return { ok: true, transfer: getHrTransferRequest(db, id) };
 }
 
@@ -302,6 +312,9 @@ export function patchHrTransferRequest(db, id, body, actor) {
     if (row.status === 'hr_review' && transferRequiresGmApproval(row.transfer_type)) {
       status = 'gm_approval';
     } else if (row.status === 'gm_approval') {
+      if (!userCanGmApproveHr(actor)) {
+        return { ok: false, error: 'GM HR approval is required for this transfer.' };
+      }
       status = 'approved';
       approvedByUserId = actorId;
     } else if (row.status === 'hr_review') {
@@ -328,6 +341,19 @@ export function patchHrTransferRequest(db, id, body, actor) {
     note: rejectionReason || body?.note || null,
   });
   persistTransferUpdate(db, id, { status, timeline, rejectionReason, approvedByUserId, ts });
+  const updated = db.prepare(`SELECT * FROM hr_transfer_requests WHERE id = ?`).get(id);
+  if (updated) {
+    if (action === 'reject') {
+      notifyHrTransferOutcome(db, updated, 'rejected');
+    } else if (status === 'hr_review' && row.status !== 'hr_review') {
+      notifyHrTransferQueueHandoff(db, updated, 'hr_review', actorId);
+    } else if (status === 'gm_approval') {
+      notifyHrTransferQueueHandoff(db, updated, 'gm_approval', actorId);
+    } else if (status === 'approved') {
+      notifyHrTransferQueueHandoff(db, updated, 'approved', actorId);
+      notifyHrTransferOutcome(db, updated, 'approved');
+    }
+  }
   return { ok: true, transfer: getHrTransferRequest(db, id) };
 }
 
@@ -363,6 +389,9 @@ export function completeHrTransferRequest(db, id, actor) {
       `UPDATE hr_transfer_requests SET status = 'completed', completed_at_iso = ?, updated_at_iso = ? WHERE id = ?`
     ).run(ts, ts, id);
   }
+
+  const completed = db.prepare(`SELECT * FROM hr_transfer_requests WHERE id = ?`).get(id);
+  if (completed) notifyHrTransferOutcome(db, completed, 'completed');
 
   return { ok: true, transfer: getHrTransferRequest(db, id) };
 }

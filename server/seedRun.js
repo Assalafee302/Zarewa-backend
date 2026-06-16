@@ -23,6 +23,7 @@ import { seedAuthUsers } from './auth.js';
 import { seedMasterData } from './masterData.js';
 import { seedProductionLineDemo } from './seedProductionLineDemo.js';
 import { seedHrIfEmpty } from './hrOps.js';
+import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { isEmptySeedMode, seedEmptyClientMinimal } from './emptySeed.js';
 import {
   legacyDemoPackActive,
@@ -43,6 +44,7 @@ export function seedEverything(db) {
   if (isEmptySeedMode()) {
     seedEmptyClientMinimal(db);
     seedHrIfEmpty(db);
+    seedZarewaOrgStandard(db);
     return;
   }
 
@@ -434,4 +436,5 @@ export function seedEverything(db) {
 
   seedProductionLineDemo(db);
   seedHrIfEmpty(db);
+  seedZarewaOrgStandard(db);
 }

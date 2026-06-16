@@ -6,12 +6,14 @@
 import crypto from 'node:crypto';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { createHrNotification } from './hrNotifications.js';
-import { createDraftLetter } from './hrLetterWorkflowOps.js';
+import { createDraftLetter, listEmploymentLettersByIds } from './hrLetterWorkflowOps.js';
+import { notifyDisciplineAppealResolved } from './hrNotifications.js';
 import { appendHrAuditEvent, hrTablesReady, listHrAuditEventsGlobal } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import {
   assertCaseClosureReady,
   syncRegistryFromDisciplineCase,
+  finalizeLinkedIncidentsOnCaseClose,
   upsertCaseResponsibility,
   listCaseResponsibility,
   deleteCaseResponsibilityParty,
@@ -163,18 +165,20 @@ function mapCaseRow(row, db) {
   };
 }
 
-function notifyCaseStakeholders(db, caseRow, title, body, routePath) {
+function notifyCaseStakeholders(db, caseRow, title, body, routePath, opts = {}) {
+  const exclude = new Set((opts.excludeUserIds || []).map((id) => String(id || '').trim()).filter(Boolean));
   const targets = new Set();
   if (caseRow.user_id) targets.add(caseRow.user_id);
   if (caseRow.opened_by_user_id) targets.add(caseRow.opened_by_user_id);
   if (caseRow.investigation_officer_user_id) targets.add(caseRow.investigation_officer_user_id);
   for (const uid of targets) {
+    if (exclude.has(uid)) continue;
     createHrNotification(db, {
       userId: uid,
       kind: 'discipline_case',
       title,
       body,
-      routePath: routePath || `/hr/discipline-exit?tab=cases&caseId=${caseRow.id}`,
+      routePath: routePath || `/hr/discipline-exit?tab=accountability&caseId=${caseRow.id}`,
       entityKind: 'hr_discipline_case',
       entityId: caseRow.id,
     });
@@ -255,6 +259,7 @@ export function getDisciplineCase(db, caseId) {
     evidence: listDisciplineCaseEvidence(db, caseId),
     witnesses: listDisciplineCaseWitnesses(db, caseId),
     appeals: listDisciplineCaseAppeals(db, caseId),
+    relatedLetters: listEmploymentLettersByIds(db, base.relatedLetterIds),
   };
 }
 
@@ -474,6 +479,10 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
   if (body.payrollBlockFlags != null) {
     updates.payroll_block_flags_json = JSON.stringify(body.payrollBlockFlags);
   }
+  if (body.meta != null && typeof body.meta === 'object') {
+    const prev = safeJsonParse(existing.meta_json, {});
+    updates.meta_json = JSON.stringify({ ...prev, ...body.meta });
+  }
 
   if (action === 'request_employee_response') {
     updates.status = 'awaiting_employee_response';
@@ -499,6 +508,25 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
   } else if (action === 'cancel') {
     updates.status = 'cancelled';
     notes.push('Case cancelled.');
+  } else if (action === 'resolve_appeal') {
+    const outcome = String(body.appealOutcome || '').trim();
+    if (!['upheld', 'rejected'].includes(outcome)) {
+      return { ok: false, error: 'appealOutcome must be upheld or rejected.' };
+    }
+    updates.appeal_status = outcome;
+    updates.status = outcome === 'upheld' ? 'closed' : 'action_issued';
+    updates.final_outcome =
+      String(body.finalOutcome || '').trim() ||
+      (outcome === 'upheld' ? 'Appeal upheld — case closed.' : 'Appeal rejected — original decision stands.');
+    if (outcome === 'upheld') {
+      updates.closure_date_iso = now.slice(0, 10);
+    }
+    if (hrTableExists(db, 'hr_discipline_appeals')) {
+      db.prepare(
+        `UPDATE hr_discipline_appeals SET status = ?, outcome = ?, decided_at_iso = ? WHERE case_id = ? AND status = 'pending'`
+      ).run(outcome, String(body.appealNote || body.appealOutcome || outcome).trim(), now, cid);
+    }
+    notes.push(`Appeal ${outcome}.`);
   }
 
   const setParts = [];
@@ -525,12 +553,27 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
     details: { action, status: updates.status },
   });
   const refreshed = db.prepare(`SELECT * FROM hr_discipline_cases WHERE id = ?`).get(cid);
-  notifyCaseStakeholders(
-    db,
-    refreshed,
-    `Discipline case updated`,
-    notes.join(' ') || 'Case status changed.',
-  );
+  if (action === 'resolve_appeal') {
+    notifyDisciplineAppealResolved(db, refreshed, updates.appeal_status, updates.final_outcome);
+    notifyCaseStakeholders(
+      db,
+      refreshed,
+      `Appeal ${updates.appeal_status}`,
+      notes.join(' ') || 'Appeal decision recorded.',
+      undefined,
+      { excludeUserIds: [refreshed.user_id] }
+    );
+  } else {
+    notifyCaseStakeholders(
+      db,
+      refreshed,
+      `Discipline case updated`,
+      notes.join(' ') || 'Case status changed.'
+    );
+  }
+  if (updates.status === 'closed' || updates.status === 'cancelled') {
+    finalizeLinkedIncidentsOnCaseClose(db, cid, updates.status);
+  }
   syncRegistryFromDisciplineCase(db, cid);
   return { ok: true, case: getDisciplineCase(db, cid) };
 }
@@ -661,11 +704,7 @@ export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}
   const actions = [];
   try {
     db.transaction(() => {
-      db.prepare(`UPDATE hr_discipline_cases SET decision_type = ?, updated_at_iso = ? WHERE id = ?`).run(
-        dt,
-        nowIso(),
-        c.id
-      );
+      db.prepare(`UPDATE hr_discipline_cases SET decision_type = ? WHERE id = ?`).run(dt, c.id);
 
       if (dt === 'warning') {
         const lr = generateDisciplineCaseLetter(db, actor, c.id, 'warning', extra);
@@ -676,12 +715,42 @@ export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}
         if (!sr.ok) throw new Error(sr.error || 'Recovery schedule creation failed.');
         actions.push({ kind: 'recovery_schedules', schedules: sr.schedules });
         const parties = listCaseResponsibility(db, c.id);
+        const scheduleByUser = new Map((sr.schedules || []).map((s) => [s.userId, s]));
+        const relatedLetterIds = Array.isArray(c.relatedLetterIds) ? [...c.relatedLetterIds] : [];
         for (const p of parties) {
-          appendDisciplineCaseEvent(db, actor, c.id, {
-            eventKind: 'letter_issued',
-            note: `Salary recovery sanction letter issued for ${p.staffDisplayName || p.userId} (${p.role}, ${p.responsibilityWeight}%).`,
+          const sched = scheduleByUser.get(p.userId);
+          const lr = createDraftLetter(db, actor, {
+            userId: p.userId,
+            letterKind: 'salary_recovery',
+            sourceRecordKind: 'hr_discipline_case',
+            sourceRecordId: c.id,
+            extra: {
+              caseNumber: c.caseNumber,
+              incidentDescription: c.description || c.summary,
+              incidentDate: c.incidentDateIso,
+              offenseDescription: extra.sanction || c.sanction || c.description,
+              sanction: extra.sanction || c.sanction,
+              responsibilityRole: p.role,
+              responsibilityWeight: p.responsibilityWeight,
+              recoveryTotalNgn: sched?.totalAmountNgn,
+              installmentAmountNgn: sched?.installmentAmountNgn,
+              durationMonths: sched?.durationMonths,
+              assetId: c.assetId,
+            },
           });
-          actions.push({ kind: 'letter_event', userId: p.userId, role: p.role });
+          if (!lr.ok) throw new Error(lr.error || `Recovery letter failed for ${p.userId}.`);
+          relatedLetterIds.push(lr.id);
+          appendDisciplineCaseEvent(db, actor, c.id, {
+            eventKind: 'letter_generated',
+            note: `Salary recovery letter generated for ${p.staffDisplayName || p.userId} (${p.role}, ${p.responsibilityWeight}%) — ${lr.id}.`,
+          });
+          actions.push({ kind: 'letter', letterId: lr.id, letterType: 'salary_recovery', userId: p.userId });
+        }
+        if (relatedLetterIds.length) {
+          db.prepare(`UPDATE hr_discipline_cases SET related_letter_ids_json = ? WHERE id = ?`).run(
+            JSON.stringify(relatedLetterIds),
+            c.id
+          );
         }
       } else if (dt === 'suspension') {
         const lr = generateDisciplineCaseLetter(db, actor, c.id, 'suspension', extra);
@@ -706,7 +775,7 @@ export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}
       }
 
       syncRegistryFromDisciplineCase(db, c.id);
-    });
+    })();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

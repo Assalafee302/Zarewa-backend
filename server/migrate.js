@@ -11,6 +11,7 @@ import { migrateMergeDuplicateHrStaffOnBoot } from './hrStaffDuplicateCleanupMig
 import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 import { withMigrationLock } from './migrationLock.js';
+import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -412,23 +413,25 @@ function runMigrationsUnlocked(db) {
   }
 
   const cutting = tableCols('cutting_lists');
-  if (!cutting.has('product_id')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN product_id TEXT`);
-  }
-  if (!cutting.has('product_name')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN product_name TEXT`);
-  }
-  if (!cutting.has('sheets_to_cut')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN sheets_to_cut REAL DEFAULT 0`);
-  }
-  if (!cutting.has('total_meters')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN total_meters REAL DEFAULT 0`);
-  }
-  if (!cutting.has('machine_name')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN machine_name TEXT`);
-  }
-  if (!cutting.has('operator_name')) {
-    db.exec(`ALTER TABLE cutting_lists ADD COLUMN operator_name TEXT`);
+  if (cutting.size) {
+    if (!cutting.has('product_id')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN product_id TEXT`);
+    }
+    if (!cutting.has('product_name')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN product_name TEXT`);
+    }
+    if (!cutting.has('sheets_to_cut')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN sheets_to_cut REAL DEFAULT 0`);
+    }
+    if (!cutting.has('total_meters')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN total_meters REAL DEFAULT 0`);
+    }
+    if (!cutting.has('machine_name')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN machine_name TEXT`);
+    }
+    if (!cutting.has('operator_name')) {
+      db.exec(`ALTER TABLE cutting_lists ADD COLUMN operator_name TEXT`);
+    }
   }
 
   const clLines = tableCols('cutting_list_lines');
@@ -1038,6 +1041,11 @@ function runMigrationsUnlocked(db) {
     throw e;
   }
   migrateHrAccountability2026(db);
+  try {
+    seedZarewaOrgStandard(db);
+  } catch (e) {
+    console.warn('[migrate] seedZarewaOrgStandard skipped:', e?.message || e);
+  }
 }
 
 /** Read-only integration API keys (Bearer auth for automation). */
@@ -3441,7 +3449,7 @@ function migrateHrPhase4Ops2026(db) {
   }
 }
 
-/** Phase 2 HR policy workflows: absence, overtime, exit clearance (2026). */
+/** Phase 2 HR policy workflows: absence and exit clearance (2026). */
 function migrateHrPhase2Policy2026(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS hr_absence_reports (
@@ -3466,30 +3474,6 @@ function migrateHrPhase2Policy2026(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_absence_reports_user ON hr_absence_reports(user_id, absence_start_iso DESC);
     CREATE INDEX IF NOT EXISTS idx_hr_absence_reports_branch ON hr_absence_reports(branch_id, status);
-
-    CREATE TABLE IF NOT EXISTS hr_overtime_requests (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      branch_id TEXT,
-      work_date_iso TEXT NOT NULL,
-      start_time TEXT NOT NULL,
-      end_time TEXT NOT NULL,
-      calculated_hours REAL NOT NULL DEFAULT 0,
-      eligible_overtime_hours REAL NOT NULL DEFAULT 0,
-      special_sunday_overtime INTEGER NOT NULL DEFAULT 0,
-      reason TEXT,
-      status TEXT NOT NULL DEFAULT 'draft',
-      requested_by_user_id TEXT NOT NULL,
-      branch_reviewed_by_user_id TEXT,
-      hr_reviewed_by_user_id TEXT,
-      approved_by_user_id TEXT,
-      approval_note TEXT,
-      rejection_reason TEXT,
-      created_at_iso TEXT NOT NULL,
-      updated_at_iso TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_hr_overtime_user_date ON hr_overtime_requests(user_id, work_date_iso DESC);
-    CREATE INDEX IF NOT EXISTS idx_hr_overtime_branch ON hr_overtime_requests(branch_id, status);
 
     CREATE TABLE IF NOT EXISTS hr_exit_clearance (
       id TEXT PRIMARY KEY,

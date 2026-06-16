@@ -1,12 +1,10 @@
 /**
- * HR Phase 2 policy workflows: absence, overtime, exit clearance, temp alerts, promotion due.
+ * HR Phase 2 policy workflows: absence, exit clearance, temp alerts, promotion due.
  * @module server/hrPhase2Ops
  */
 
 import crypto from 'crypto';
-import { userHasPermission } from './auth.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
-import { WORKING_HOURS_CONFIG } from './hrBusinessRules.js';
 import { buildHrLetterContent } from './hrLetterTemplates.js';
 import {
   appendHrAuditEvent,
@@ -40,7 +38,6 @@ function diffDays(fromIso, toIso) {
 
 const ABSENCE_TYPES = new Set(['illness', 'family_emergency', 'bereavement', 'official', 'unauthorized', 'other']);
 const ABSENCE_STATUSES = new Set(['reported', 'hr_review', 'approved', 'rejected', 'unauthorized', 'closed']);
-const OVERTIME_STATUSES = new Set(['draft', 'submitted', 'branch_review', 'hr_review', 'approved', 'rejected', 'cancelled']);
 const EXIT_SEPARATION_TYPES = new Set(['resignation', 'termination', 'layoff', 'retrenchment', 'dismissal']);
 const EXIT_STATUSES = new Set(['draft', 'in_progress', 'pending_finance', 'pending_admin', 'pending_hr_final', 'completed', 'cancelled']);
 const PROPERTY_CATEGORIES = new Set(['id_card', 'keys', 'laptop', 'phone', 'documents', 'cash', 'tools', 'uniform', 'other']);
@@ -105,60 +102,6 @@ function mapAbsenceRow(row, db) {
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
   };
-}
-
-function mapOvertimeRow(row, db) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    displayName: staffDisplayName(db, row.user_id),
-    branchId: row.branch_id,
-    workDateIso: row.work_date_iso,
-    startTime: row.start_time,
-    endTime: row.end_time,
-    calculatedHours: row.calculated_hours,
-    eligibleOvertimeHours: row.eligible_overtime_hours,
-    specialSundayOvertime: Boolean(row.special_sunday_overtime),
-    reason: row.reason,
-    status: row.status,
-    requestedByUserId: row.requested_by_user_id,
-    branchReviewedByUserId: row.branch_reviewed_by_user_id,
-    hrReviewedByUserId: row.hr_reviewed_by_user_id,
-    approvedByUserId: row.approved_by_user_id,
-    approvalNote: row.approval_note,
-    rejectionReason: row.rejection_reason,
-    createdAtIso: row.created_at_iso,
-    updatedAtIso: row.updated_at_iso,
-  };
-}
-
-/** @param {string} startTime HH:MM @param {string} endTime HH:MM */
-export function calculateWorkedHours(startTime, endTime) {
-  const parse = (t) => {
-    const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
-    if (!m) return null;
-    return Number(m[1]) * 60 + Number(m[2]);
-  };
-  const s = parse(startTime);
-  const e = parse(endTime);
-  if (s == null || e == null || e <= s) return 0;
-  return Math.round(((e - s) / 60) * 100) / 100;
-}
-
-/** @param {string} workDateIso YYYY-MM-DD */
-export function calculateEligibleOvertime(workDateIso, startTime, endTime) {
-  const worked = calculateWorkedHours(startTime, endTime);
-  const d = new Date(String(workDateIso).slice(0, 10) + 'T12:00:00');
-  const dow = d.getDay(); // 0=Sun
-  if (dow === 0) {
-    return { calculatedHours: worked, eligibleOvertimeHours: worked, specialSundayOvertime: true, warning: 'Sunday work requires HR/MD approval.' };
-  }
-  const threshold =
-    dow === 6 ? WORKING_HOURS_CONFIG.saturdayOvertimeAfterHours : WORKING_HOURS_CONFIG.weekdayOvertimeAfterHours;
-  const eligible = Math.max(0, Math.round((worked - threshold) * 100) / 100);
-  const warning = eligible <= 0 ? 'No eligible overtime hours under handbook thresholds.' : null;
-  return { calculatedHours: worked, eligibleOvertimeHours: eligible, specialSundayOvertime: false, warning };
 }
 
 // ── ABSENCE REPORTS ───────────────────────────────────────────
@@ -385,220 +328,6 @@ export function getHrAbsenceAlerts(db, scope) {
     }
   }
   return { voluntaryTerminationRisk, unauthorizedNoReport };
-}
-
-// ── OVERTIME ──────────────────────────────────────────────────
-
-export function listHrOvertimeRequests(db, scope, filters = {}) {
-  if (!hrPhase2TablesReady(db)) return [];
-  const { clause, params: scopeParams } = scopeBranchSql(scope, 'ot');
-  let sql = `SELECT ot.* FROM hr_overtime_requests ot WHERE 1=1${clause}`;
-  const params = [...scopeParams];
-  if (filters.userId) {
-    sql += ' AND ot.user_id = ?';
-    params.push(String(filters.userId));
-  }
-  if (filters.status) {
-    sql += ' AND ot.status = ?';
-    params.push(String(filters.status));
-  }
-  if (filters.fromIso) {
-    sql += ' AND ot.work_date_iso >= ?';
-    params.push(String(filters.fromIso).slice(0, 10));
-  }
-  if (filters.toIso) {
-    sql += ' AND ot.work_date_iso <= ?';
-    params.push(String(filters.toIso).slice(0, 10));
-  }
-  sql += ' ORDER BY ot.work_date_iso DESC, ot.created_at_iso DESC';
-  return db.prepare(sql).all(...params).map((r) => mapOvertimeRow(r, db));
-}
-
-export function createHrOvertimeRequest(db, actor, body, scope = null) {
-  if (!hrPhase2TablesReady(db)) return { ok: false, error: 'Overtime module not initialised.' };
-  const actorId = String(actor?.id || '').trim();
-  const requestedUserId = String(body?.userId || '').trim();
-  let userId = requestedUserId || actorId;
-  if (!userId) return { ok: false, error: 'userId is required.' };
-  if (requestedUserId && requestedUserId !== actorId) {
-    const canProxy =
-      userHasPermission(actor, '*') ||
-      userHasPermission(actor, 'hr.staff.manage') ||
-      userHasPermission(actor, 'hr.overtime.review');
-    if (!canProxy) {
-      return { ok: false, error: 'You can only create overtime requests for yourself.', code: 'FORBIDDEN' };
-    }
-    if (scope) {
-      const gate = assertStaffUserIdInHrScope(db, scope, userId);
-      if (!gate.ok) return gate;
-    }
-  }
-  const workDateIso = String(body?.workDateIso || '').slice(0, 10);
-  const startTime = String(body?.startTime || '').trim();
-  const endTime = String(body?.endTime || '').trim();
-  const reason = String(body?.reason || '').trim() || null;
-  if (!userId || !workDateIso || !startTime || !endTime) {
-    return { ok: false, error: 'userId, workDateIso, startTime, and endTime are required.' };
-  }
-  const staff = loadStaffBrief(db, userId);
-  if (!staff) return { ok: false, error: 'Staff not found.' };
-  const calc = calculateEligibleOvertime(workDateIso, startTime, endTime);
-  if (calc.calculatedHours <= 0) return { ok: false, error: 'Invalid start/end times.' };
-  const id = newId('HROT');
-  const now = nowIso();
-  const status = body?.submit === true ? 'submitted' : 'draft';
-  db.prepare(
-    `INSERT INTO hr_overtime_requests (
-      id, user_id, branch_id, work_date_iso, start_time, end_time,
-      calculated_hours, eligible_overtime_hours, special_sunday_overtime, reason, status,
-      requested_by_user_id, created_at_iso, updated_at_iso
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    id,
-    userId,
-    staff.branchId,
-    workDateIso,
-    startTime,
-    endTime,
-    calc.calculatedHours,
-    calc.eligibleOvertimeHours,
-    calc.specialSundayOvertime ? 1 : 0,
-    reason,
-    status,
-    actor?.id || userId,
-    now,
-    now
-  );
-  appendHrAuditEvent(db, {
-    actorUserId: actor?.id,
-    action: 'hr.overtime.created',
-    entityKind: 'hr_overtime_request',
-    entityId: id,
-    userId,
-    detail: calc,
-  });
-  return {
-    ok: true,
-    warning: calc.warning,
-    request: mapOvertimeRow(db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(id), db),
-  };
-}
-
-function patchOvertimeStatus(db, actor, requestId, patch, { requiredStatus = null, forbidSelfApproval = false } = {}) {
-  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
-  if (!row) return { ok: false, error: 'Overtime request not found.' };
-  const current = String(row.status || '').trim();
-  if (requiredStatus && current !== requiredStatus) {
-    return {
-      ok: false,
-      error: `Overtime request must be in status "${requiredStatus}" (current: "${current || 'unknown'}").`,
-      code: 'INVALID_STATUS',
-    };
-  }
-  const actorId = String(actor?.id || '').trim();
-  if (forbidSelfApproval && actorId && actorId === String(row.user_id || '').trim()) {
-    return { ok: false, error: 'You cannot approve your own overtime request.', code: 'FORBIDDEN' };
-  }
-  const now = nowIso();
-  const sets = ['updated_at_iso = ?'];
-  const params = [now];
-  for (const [col, val] of Object.entries(patch)) {
-    sets.push(`${col} = ?`);
-    params.push(val);
-  }
-  params.push(row.id);
-  db.prepare(`UPDATE hr_overtime_requests SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-  return { ok: true, request: mapOvertimeRow(db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(row.id), db) };
-}
-
-export function submitHrOvertimeRequest(db, actor, requestId) {
-  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
-  if (!row) return { ok: false, error: 'Overtime request not found.' };
-  const actorId = String(actor?.id || '').trim();
-  if (actorId && actorId !== String(row.user_id || '').trim()) {
-    return { ok: false, error: 'You can only submit your own overtime request.', code: 'FORBIDDEN' };
-  }
-  return patchOvertimeStatus(db, actor, requestId, { status: 'submitted' }, { requiredStatus: 'draft' });
-}
-
-export function branchReviewHrOvertimeRequest(db, actor, requestId, body) {
-  const approve = body?.approve !== false;
-  return patchOvertimeStatus(
-    db,
-    actor,
-    requestId,
-    {
-      status: approve ? 'hr_review' : 'rejected',
-      branch_reviewed_by_user_id: actor?.id,
-      rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at branch review.',
-    },
-    { requiredStatus: 'submitted', forbidSelfApproval: true }
-  );
-}
-
-export function hrReviewHrOvertimeRequest(db, actor, requestId, body) {
-  const approve = body?.approve !== false;
-  return patchOvertimeStatus(
-    db,
-    actor,
-    requestId,
-    {
-      status: approve ? 'hr_review' : 'rejected',
-      hr_reviewed_by_user_id: actor?.id,
-      rejection_reason: approve ? null : String(body?.rejectionReason || body?.note || '').trim() || 'Rejected at HR review.',
-    },
-    { requiredStatus: 'hr_review', forbidSelfApproval: true }
-  );
-}
-
-export function approveHrOvertimeRequest(db, actor, requestId, body) {
-  const r = patchOvertimeStatus(
-    db,
-    actor,
-    requestId,
-    {
-      status: 'approved',
-      approved_by_user_id: actor?.id,
-      approval_note: String(body?.approvalNote || body?.note || '').trim() || null,
-    },
-    { requiredStatus: 'hr_review', forbidSelfApproval: true }
-  );
-  if (r.ok) {
-    appendHrAuditEvent(db, {
-      actorUserId: actor?.id,
-      action: 'hr.overtime.approved',
-      entityKind: 'hr_overtime_request',
-      entityId: requestId,
-    });
-  }
-  return r;
-}
-
-export function rejectHrOvertimeRequest(db, actor, requestId, body) {
-  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
-  if (!row) return { ok: false, error: 'Overtime request not found.' };
-  const current = String(row.status || '').trim();
-  if (['approved', 'rejected', 'cancelled'].includes(current)) {
-    return { ok: false, error: `Cannot reject overtime in status "${current}".`, code: 'INVALID_STATUS' };
-  }
-  return patchOvertimeStatus(db, actor, requestId, {
-    status: 'rejected',
-    rejection_reason: String(body?.rejectionReason || body?.note || '').trim() || 'Rejected.',
-  });
-}
-
-export function cancelHrOvertimeRequest(db, actor, requestId) {
-  const row = db.prepare(`SELECT * FROM hr_overtime_requests WHERE id = ?`).get(String(requestId || '').trim());
-  if (!row) return { ok: false, error: 'Overtime request not found.' };
-  const actorId = String(actor?.id || '').trim();
-  const owner = String(row.user_id || '').trim();
-  if (actorId && actorId !== owner && !['submitted', 'draft'].includes(String(row.status || ''))) {
-    return { ok: false, error: 'Only the request owner can cancel a draft or submitted request.', code: 'FORBIDDEN' };
-  }
-  if (!['draft', 'submitted'].includes(String(row.status || ''))) {
-    return { ok: false, error: 'Only draft or submitted requests can be cancelled.', code: 'INVALID_STATUS' };
-  }
-  return patchOvertimeStatus(db, actor, requestId, { status: 'cancelled' });
 }
 
 // ── EXIT CLEARANCE ────────────────────────────────────────────

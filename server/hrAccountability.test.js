@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
-import { acquireIntegrationHarness } from './testIntegrationHarness.js';
+import { acquireIntegrationHarness, isMysqlAvailableForTests, resolveTestActor, isoNow } from './testIntegrationHarness.js';
+import { createHrIncidentMemo } from './hrOps.js';
 import { createDisciplineCase } from './hrDisciplineCasesOps.js';
 import { createIncident, escalateIncidentMemo } from './incidentOps.js';
 import {
@@ -9,18 +10,20 @@ import {
   validateResponsibilityParties,
 } from './hrAccountabilityOps.js';
 import { createRecoverySchedulesFromCase } from './hrIncidentRecoveryOps.js';
-import { applyDecisionActions } from './hrDisciplineCasesOps.js';
+import { applyDecisionActions, getDisciplineCase, patchDisciplineCase, fileDisciplineCaseAppeal } from './hrDisciplineCasesOps.js';
 
-describe('hrAccountability integration', () => {
+describe.skipIf(!isMysqlAvailableForTests())('hrAccountability integration', () => {
   let app;
   let db;
   let adminCookie;
   let staffUserId;
+  let actor;
 
   beforeAll(async () => {
     const harness = acquireIntegrationHarness();
     app = harness.app;
     db = harness.db;
+    actor = resolveTestActor(db);
     const login = await request(app).post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
     adminCookie = login.headers['set-cookie'];
     const staff = db.prepare(`SELECT id FROM app_users WHERE username = 'sales.staff' LIMIT 1`).get();
@@ -51,7 +54,7 @@ describe('hrAccountability integration', () => {
         caseType: 'negligence',
         severity: 'high',
       },
-      { id: 'admin', displayName: 'Admin' },
+      { id: actor.id, displayName: actor.displayName },
       {}
     );
     expect(r.ok).toBe(true);
@@ -60,15 +63,28 @@ describe('hrAccountability integration', () => {
     expect(reg?.incident_kind).toBe('hr_discipline');
   });
 
+  it('createHrIncidentMemo notifies HR reviewers', () => {
+    const now = isoNow();
+    const day = now.slice(0, 10);
+    const before = db.prepare(`SELECT COUNT(*) AS c FROM hr_notifications WHERE entity_kind = 'hr_incident_memo'`).get()?.c || 0;
+    const r = createHrIncidentMemo(db, actor.id, {
+      userId: staffUserId,
+      incidentDateIso: day,
+      summary: 'Notification test memo for HR queue.',
+    });
+    expect(r.ok).toBe(true);
+    const after = db.prepare(`SELECT COUNT(*) AS c FROM hr_notifications WHERE entity_kind = 'hr_incident_memo'`).get()?.c || 0;
+    expect(after).toBeGreaterThan(before);
+  });
+
   it('escalateIncidentMemo creates discipline case not legacy JSON', () => {
-    const memo = db
-      .prepare(
-        `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
-         VALUES ('HRINC-test1','KD',?,'admin',date('now'),'Test memo escalate', 'open', datetime('now'), datetime('now'))`
-      )
-      .run(staffUserId);
-    expect(memo.changes).toBe(1);
-    const esc = escalateIncidentMemo(db, 'HRINC-test1', { id: 'admin' }, {});
+    const now = isoNow();
+    const day = now.slice(0, 10);
+    db.prepare(
+      `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
+       VALUES ('HRINC-test1','KD',?,?,?,?, 'open', ?, ?)`
+    ).run(staffUserId, actor.id, day, 'Test memo escalate', now, now);
+    const esc = escalateIncidentMemo(db, 'HRINC-test1', actor, {});
     expect(esc.ok).toBe(true);
     expect(esc.caseId).toBeTruthy();
     const row = db.prepare(`SELECT discipline_case_id FROM hr_incident_memos WHERE id = 'HRINC-test1'`).get();
@@ -76,7 +92,7 @@ describe('hrAccountability integration', () => {
   });
 
   it('pump-case style: 4-party responsibility and recovery schedules', () => {
-    const c = createDisciplineCase(db, { id: 'admin' }, {
+    const c = createDisciplineCase(db, actor, {
       userId: staffUserId,
       description: 'Missing factory pump shared negligence test case.',
       caseType: 'property_damage',
@@ -101,11 +117,11 @@ describe('hrAccountability integration', () => {
         p.responsibilityWeight = 25;
       });
     }
-    const resp = upsertCaseResponsibility(db, { id: 'admin' }, c.id, parties);
+    const resp = upsertCaseResponsibility(db, actor, c.id, parties);
     expect(resp.ok).toBe(true);
     const caseRow = db.prepare(`SELECT loss_value_ngn FROM hr_discipline_cases WHERE id = ?`).get(c.id);
     expect(Number(caseRow?.loss_value_ngn)).toBe(700000);
-    const sched = createRecoverySchedulesFromCase(db, { id: 'admin' }, c.id, { activate: true, durationMonths: 12 });
+    const sched = createRecoverySchedulesFromCase(db, actor, c.id, { activate: true, durationMonths: 12 });
     expect(sched.ok).toBe(true);
     expect(sched.schedules.length).toBeGreaterThanOrEqual(1);
   });
@@ -123,7 +139,7 @@ describe('hrAccountability integration', () => {
   });
 
   it('assertCaseClosureReady blocks until decision and recovery rules met', () => {
-    const c = createDisciplineCase(db, { id: 'admin' }, {
+    const c = createDisciplineCase(db, actor, {
       userId: staffUserId,
       description: 'Closure gate validation for pump-style accountability case.',
       caseType: 'property_damage',
@@ -135,7 +151,7 @@ describe('hrAccountability integration', () => {
     expect(blocked.ok).toBe(false);
     expect(blocked.blockers.length).toBeGreaterThan(0);
 
-    upsertCaseResponsibility(db, { id: 'admin' }, c.id, [
+    upsertCaseResponsibility(db, actor, c.id, [
       {
         userId: staffUserId,
         role: 'custodian',
@@ -147,8 +163,51 @@ describe('hrAccountability integration', () => {
     const stillBlocked = assertCaseClosureReady(db, c.id);
     expect(stillBlocked.ok).toBe(false);
 
-    createRecoverySchedulesFromCase(db, { id: 'admin' }, c.id, { activate: true, durationMonths: 6 });
+    createRecoverySchedulesFromCase(db, actor, c.id, { activate: true, durationMonths: 6 });
+    const needsLetters = assertCaseClosureReady(db, c.id);
+    expect(needsLetters.ok).toBe(false);
+    expect(needsLetters.blockers.some((b) => /letter/i.test(b))).toBe(true);
+
+    const decision = applyDecisionActions(db, actor, c.id, 'deduction');
+    expect(decision.ok).toBe(true);
+    const needsIssued = assertCaseClosureReady(db, c.id);
+    expect(needsIssued.ok).toBe(false);
+    expect(needsIssued.blockers.some((b) => /issued/i.test(b))).toBe(true);
+
+    const detail = getDisciplineCase(db, c.id);
+    for (const letterId of detail?.relatedLetterIds || []) {
+      db.prepare(`UPDATE hr_employment_letters SET status = 'issued', reference_number = ? WHERE id = ?`).run(
+        `REF-${letterId}`,
+        letterId
+      );
+    }
     const ready = assertCaseClosureReady(db, c.id);
     expect(ready.ok).toBe(true);
+  });
+
+  it('resolve_appeal notifies employee of outcome', () => {
+    const c = createDisciplineCase(db, actor, {
+      userId: staffUserId,
+      description: 'Appeal notification test case for employee inbox.',
+      caseType: 'query',
+      severity: 'medium',
+    });
+    expect(c.ok).toBe(true);
+    fileDisciplineCaseAppeal(db, { id: staffUserId }, c.id, {
+      grounds: 'I disagree with the findings and request a review of the evidence presented.',
+    });
+    const before = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM hr_notifications WHERE user_id = ? AND kind = 'discipline_appeal_rejected'`
+      )
+      .get(staffUserId)?.c || 0;
+    const resolved = patchDisciplineCase(db, actor, c.id, { action: 'resolve_appeal', appealOutcome: 'rejected' });
+    expect(resolved.ok).toBe(true);
+    const after = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM hr_notifications WHERE user_id = ? AND kind = 'discipline_appeal_rejected'`
+      )
+      .get(staffUserId)?.c || 0;
+    expect(after).toBeGreaterThan(before);
   });
 });

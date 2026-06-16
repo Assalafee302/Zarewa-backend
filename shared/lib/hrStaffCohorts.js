@@ -34,7 +34,7 @@ export const PAYROLL_GROUP_LABELS = {
   [HR_PAYROLL_GROUPS.BRANCH_OPS]: 'Branch staff',
   [HR_PAYROLL_GROUPS.MINING]: 'Mining division',
   [HR_PAYROLL_GROUPS.HQ_ADMIN]: 'HQ administrative',
-  [HR_PAYROLL_GROUPS.SCHOLARSHIP]: 'Scholarship beneficiary',
+  [HR_PAYROLL_GROUPS.SCHOLARSHIP]: 'Executive family',
   [HR_PAYROLL_GROUPS.DOMESTIC]: 'Domestic staff',
 };
 
@@ -69,24 +69,31 @@ export function isDomesticStaff(payrollGroup) {
   return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.DOMESTIC;
 }
 
-/** HQ monthly payroll runs — branch operations staff only (not scholarship, mining, domestic, etc.). */
+/** Included in HQ monthly payroll runs (not scholarship or domestic — those use Executive benefits). */
+export const PAYROLL_RUN_ELIGIBLE_GROUPS = [
+  HR_PAYROLL_GROUPS.BRANCH_OPS,
+  HR_PAYROLL_GROUPS.HQ_ADMIN,
+  HR_PAYROLL_GROUPS.MINING,
+];
+
+/** HQ monthly payroll runs — branch, HQ admin, and mining staff. */
 export function isPayrollRunEligible(payrollGroup) {
-  return isBranchEmployee(payrollGroup);
+  return PAYROLL_RUN_ELIGIBLE_GROUPS.includes(normalizePayrollGroup(payrollGroup));
 }
 
-/** PAYE applies only to branch staff. */
+/** PAYE applies to HQ payroll-run staff (manual fixed amount per profile). */
 export function requiresPaye(payrollGroup) {
-  return isBranchEmployee(payrollGroup);
+  return isPayrollRunEligible(payrollGroup);
 }
 
-/** Employee pension deduction applies only to branch staff. */
+/** Employee pension deduction applies to HQ payroll-run staff. */
 export function requiresEmployeePensionDeduction(payrollGroup) {
-  return isBranchEmployee(payrollGroup);
+  return isPayrollRunEligible(payrollGroup);
 }
 
-/** Employer pension contribution applies only to branch staff. */
+/** Employer pension contribution applies to HQ payroll-run staff. */
 export function requiresEmployerPensionContribution(payrollGroup) {
-  return isBranchEmployee(payrollGroup);
+  return isPayrollRunEligible(payrollGroup);
 }
 
 /** @param {string | object | null | undefined} extra */
@@ -116,7 +123,7 @@ export function staffMeetsPensionPolicy(staff) {
  * (PAYE, pension, attendance penalties on payroll).
  */
 export function isStatutoryPayrollExempt(payrollGroup) {
-  return !isBranchEmployee(payrollGroup);
+  return !isPayrollRunEligible(payrollGroup);
 }
 
 /** Paid via Executive benefits (monthly stipend / domestic salary), not HQ payroll runs. */

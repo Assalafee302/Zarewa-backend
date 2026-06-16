@@ -19,6 +19,7 @@ import {
 } from './hrOps.js';
 import { redactStaffForAi } from './hrRedaction.js';
 import { canAccessModuleWithPermissions } from '../shared/lib/moduleAccess.js';
+import { userCanAccessMainHrWorkspace } from './hrPermissions.js';
 import { buildWorkspaceNotifications } from '../shared/lib/workspaceNotifications.js';
 import { quotationNeedsFollowUpAlert } from '../shared/lib/quotationLifecycleUi.js';
 import { computeCuttingListMaterialReadiness } from '../shared/lib/salesCuttingListMaterialReadiness.js';
@@ -69,6 +70,7 @@ function allowedModesForPermissions(user) {
   if (canReadProcurementDomain(user)) modes.push('procurement');
   if (canReadOperationsDomain(user)) modes.push('operations');
   if (canReadFinanceDomain(user)) modes.push('finance');
+  if (userCanAccessMainHrWorkspace(user)) modes.push('hr');
   return modes;
 }
 

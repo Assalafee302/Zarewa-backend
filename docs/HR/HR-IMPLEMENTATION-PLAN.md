@@ -4,6 +4,10 @@ This plan restores and completes HR as a first-class Zarewa ERP module aligned w
 
 **Extended v2 features** (recruiting, L&D, engagement, exports, etc.) are documented in [HR-V2-FEATURES.md](./HR-V2-FEATURES.md).
 
+**Organisation & titles (canonical):** [ZAREWA-ORG-STRUCTURE-AND-TITLES.md](./ZAREWA-ORG-STRUCTURE-AND-TITLES.md) — sites, desks, 25 standard designations, organograms, multi-role staff.  
+**Compensation exceptions:** [ZAREWA-COMPENSATION-AND-EXCEPTIONS.md](./ZAREWA-COMPENSATION-AND-EXCEPTIONS.md) — matrix automation, pay above level, directors, acting roles.  
+**Designation import template:** [zarewa-designations-template.csv](./zarewa-designations-template.csv)
+
 ## Current baseline
 
 | Area | State |

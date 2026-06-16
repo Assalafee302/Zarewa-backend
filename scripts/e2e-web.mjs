@@ -15,6 +15,16 @@ const env = {
   PORT: apiPort,
   E2E_API_PORT: apiPort,
 };
+// Local Playwright stack: default to XAMPP-style MySQL (empty root password) unless CI or explicitly disabled.
+if (!process.env.CI && process.env.ZAREWA_MYSQL_LOCAL !== '0') {
+  env.ZAREWA_MYSQL_HOST = env.ZAREWA_MYSQL_HOST || '127.0.0.1';
+  env.ZAREWA_MYSQL_PORT = env.ZAREWA_MYSQL_PORT || '3306';
+  env.ZAREWA_MYSQL_USER = env.ZAREWA_MYSQL_USER || 'root';
+  env.ZAREWA_MYSQL_PASSWORD = '';
+}
+// Playwright UI is http://127.0.0.1 — Secure cookies from .env would never persist in the browser.
+env.COOKIE_SECURE = '0';
+env.ZAREWA_COOKIE_DOMAIN = '';
 
 function waitHealth(url, maxMs) {
   const deadline = Date.now() + maxMs;
@@ -39,7 +49,12 @@ function waitHealth(url, maxMs) {
 const apiPortStr = String(env.PORT || '8788');
 const api = spawn(process.execPath, ['server/playwrightServer.js'], {
   cwd: root,
-  env,
+  env: {
+    ...env,
+    // Playwright stack must seed default demo users (admin, sales.staff, …) for login helpers.
+    ZAREWA_ALLOW_SEEDED_USERS: '1',
+    NODE_ENV: 'test',
+  },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
 

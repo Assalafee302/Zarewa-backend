@@ -12,7 +12,7 @@ import {
   validateLeaveRequest,
   validateStaffLoanApplication,
 } from './hrBusinessRules.js';
-import { provisionStaffLoanForFinanceQueue } from './writeOps.js';
+import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
@@ -57,6 +57,7 @@ import {
   isPayrollRunEligible,
   isScholarshipBeneficiary,
   normalizePayrollGroup,
+  PAYROLL_RUN_ELIGIBLE_GROUPS,
   payrollGroupLabel,
   payrollGroupsForCohort,
   requiresAttendance,
@@ -1330,13 +1331,64 @@ export function listHrSalaryHistory(db, userId, limit = 40) {
  * @param {string} userId
  * @param {object} body
  */
-export function applyHrSalaryIncrement(db, actorUserId, userId, body) {
+export function applyHrSalaryIncrement(db, actorUserId, userId, body, actor = null) {
   const reason = String(body?.reason || '').trim();
   if (reason.length < 3) return { ok: false, error: 'Reason is required (minimum 3 characters).' };
+
+  const prevRow = db
+    .prepare(
+      `SELECT base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn FROM hr_staff_profiles WHERE user_id = ?`
+    )
+    .get(String(userId || '').trim());
+  if (!prevRow) return { ok: false, error: 'No HR employee file for this user.' };
+
+  const prevTotal =
+    Math.round(Number(prevRow.base_salary_ngn) || 0) +
+    Math.round(Number(prevRow.housing_allowance_ngn) || 0) +
+    Math.round(Number(prevRow.transport_allowance_ngn) || 0);
+  const newBase =
+    body?.baseSalaryNgn !== undefined && body?.baseSalaryNgn !== ''
+      ? Math.max(0, Math.round(Number(body.baseSalaryNgn) || 0))
+      : Math.round(Number(prevRow.base_salary_ngn) || 0);
+  const newHousing =
+    body?.housingAllowanceNgn !== undefined && body?.housingAllowanceNgn !== ''
+      ? Math.max(0, Math.round(Number(body.housingAllowanceNgn) || 0))
+      : Math.round(Number(prevRow.housing_allowance_ngn) || 0);
+  const newTransport =
+    body?.transportAllowanceNgn !== undefined && body?.transportAllowanceNgn !== ''
+      ? Math.max(0, Math.round(Number(body.transportAllowanceNgn) || 0))
+      : Math.round(Number(prevRow.transport_allowance_ngn) || 0);
+  const newTotal = newBase + newHousing + newTransport;
+
+  if (newTotal < prevTotal) {
+    const approver = actor || { id: actorUserId, permissions: [] };
+    const canReduce =
+      userHasPermission(approver, 'hr.special_increment.approve') ||
+      userHasPermission(approver, 'hr.payroll.md_approve') ||
+      userHasPermission(approver, '*');
+    if (!canReduce) {
+      return {
+        ok: false,
+        error: 'Salary reductions require Managing Director or special increment approval permission.',
+        code: 'salary_reduction_approval_required',
+      };
+    }
+    if (reason.length < 10) {
+      return {
+        ok: false,
+        error: 'Salary reductions require a detailed reason (minimum 10 characters).',
+        code: 'salary_reduction_reason_required',
+      };
+    }
+  }
+
+  const salaryChangeReason =
+    newTotal < prevTotal && !/^reduction:/i.test(reason) ? `Reduction: ${reason}` : reason;
+
   return upsertHrStaffProfile(db, actorUserId, {
     userId,
     effectiveFromIso: String(body?.effectiveFromIso || '').slice(0, 10),
-    salaryChangeReason: reason,
+    salaryChangeReason,
     payrollGroup: body?.payrollGroup,
     salaryLevel: body?.salaryLevel,
     salaryStep: body?.salaryStep,
@@ -3162,9 +3214,9 @@ export function computePayrollRun(db, runId) {
               p.paye_tax_ngn, p.pension_percent_override, p.payroll_group, p.profile_extra_json
        FROM hr_staff_profiles p
        JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
-       WHERE COALESCE(p.payroll_group, 'branch_ops') = 'branch_ops'`
+       WHERE COALESCE(p.payroll_group, 'branch_ops') IN (${PAYROLL_RUN_ELIGIBLE_GROUPS.map(() => '?').join(',')})`
     )
-    .all();
+    .all(...PAYROLL_RUN_ELIGIBLE_GROUPS);
 
   const ins = db.prepare(
     `INSERT INTO hr_payroll_lines (
@@ -3353,10 +3405,134 @@ export function approvePayrollRunByGmHr(db, runId, actor) {
   return { ok: true, run: getPayrollRunById(db, runId) };
 }
 
+function resolvePayrollTreasuryAccountId(db, explicitId) {
+  const id = Math.round(Number(explicitId) || 0);
+  if (id > 0) {
+    const row = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(id);
+    if (row?.id) return row.id;
+  }
+  try {
+    const policy = getHrPolicyPayload(db);
+    const policyId = Math.round(Number(policy.payrollTreasuryAccountId) || 0);
+    if (policyId > 0) {
+      const row = db.prepare(`SELECT id FROM treasury_accounts WHERE id = ?`).get(policyId);
+      if (row?.id) return row.id;
+    }
+  } catch {
+    /* policy optional */
+  }
+  const hq = db
+    .prepare(
+      `SELECT id FROM treasury_accounts
+       WHERE lower(COALESCE(type, '')) IN ('bank', 'current', 'savings')
+       ORDER BY CASE WHEN branch_id = ? OR branch_id IS NULL THEN 0 ELSE 1 END, id ASC
+       LIMIT 1`
+    )
+    .get(DEFAULT_BRANCH_ID);
+  if (hq?.id) return hq.id;
+  const any = db.prepare(`SELECT id FROM treasury_accounts ORDER BY id ASC LIMIT 1`).get();
+  return any?.id || null;
+}
+
+function payrollNetPayableTotal(db, runId) {
+  const lines = db
+    .prepare(`SELECT net_ngn, pay_hold FROM hr_payroll_lines WHERE run_id = ?`)
+    .all(runId);
+  let total = 0;
+  for (const l of lines) {
+    if (Number(l.pay_hold) === 1) continue;
+    const net = Math.round(Number(l.net_ngn) || 0);
+    if (net > 0) total += net;
+  }
+  return total;
+}
+
+/** Staff on a run missing valid bank details for bulk payment export. */
+export function listPayrollMissingBankStaff(db, runId) {
+  if (!hrTablesReady(db)) return [];
+  const lines = payrollLinesWithProfile(db, runId).filter((l) => !l.held && l.netNgn > 0);
+  return lines
+    .filter((l) => !l.bankAccountNo || l.bankAccountNo.length < 10)
+    .map((l) => ({
+      userId: l.userId,
+      displayName: l.displayName,
+      employeeNo: l.employeeNo,
+      netNgn: l.netNgn,
+      branchId: l.branchId,
+    }));
+}
+
+/**
+ * Record treasury outflow when payroll is marked paid (idempotent per run).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} runId
+ * @param {object} [actor]
+ * @param {{ treasuryAccountId?: number | string; skipIfMissingAccount?: boolean }} [opts]
+ */
+export function postPayrollRunTreasuryPayout(db, runId, actor, opts = {}) {
+  const existing = db
+    .prepare(
+      `SELECT id FROM treasury_movements
+       WHERE source_kind = 'HR_PAYROLL_RUN' AND source_id = ? AND reverses_movement_id IS NULL
+       LIMIT 1`
+    )
+    .get(runId);
+  if (existing?.id) {
+    return { ok: true, alreadyPosted: true, movementId: existing.id };
+  }
+
+  const total = payrollNetPayableTotal(db, runId);
+  if (total <= 0) {
+    return { ok: true, skipped: true, reason: 'No net payable amount on this run.' };
+  }
+
+  const treasuryAccountId = resolvePayrollTreasuryAccountId(db, opts.treasuryAccountId);
+  if (!treasuryAccountId) {
+    if (opts.skipIfMissingAccount) {
+      return { ok: true, skipped: true, reason: 'No treasury account configured for payroll payout.' };
+    }
+    return {
+      ok: false,
+      error: 'Select a treasury bank account for payroll payout, or set payrollTreasuryAccountId in HR policy.',
+    };
+  }
+
+  const run = getPayrollRunById(db, runId);
+  const actorLabel = actor?.displayName || actor?.username || actor?.id || null;
+  const movement = insertTreasuryMovementTx(db, {
+    type: 'PAYROLL_OUT',
+    treasuryAccountId,
+    amountNgn: -total,
+    postedAtISO: new Date().toISOString(),
+    reference: `PAYROLL-${run?.periodYyyymm || runId}`,
+    counterpartyKind: 'PAYROLL',
+    counterpartyId: runId,
+    counterpartyName: `Staff payroll ${run?.periodYyyymm || ''}`.trim(),
+    sourceKind: 'HR_PAYROLL_RUN',
+    sourceId: runId,
+    note: `Net staff salaries — payroll run ${runId}`,
+    createdBy: actorLabel,
+    workspaceBranchId: DEFAULT_BRANCH_ID,
+    workspaceViewAll: true,
+    actor,
+  });
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actorLabel,
+    action: 'hr.payroll.treasury_posted',
+    entityKind: 'hr_payroll_run',
+    entityId: runId,
+    details: { movementId: movement.id, amountNgn: total, treasuryAccountId },
+  });
+
+  return { ok: true, movementId: movement.id, amountNgn: total, treasuryAccountId };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} runId
- * @param {{ status?: string; taxPercent?: number; pensionPercent?: number; notes?: string | null }} body
+ * @param {{ status?: string; taxPercent?: number; pensionPercent?: number; notes?: string | null; treasuryAccountId?: number | string; skipTreasuryPosting?: boolean }} body
  * @param {object} [actor]
  */
 export function patchPayrollRun(db, runId, body, actor) {
@@ -3439,24 +3615,40 @@ export function patchPayrollRun(db, runId, body, actor) {
     }
     if (ns === 'locked' && String(run.status || '').toLowerCase() === 'draft') {
       const gmOk = String(run.gm_approved_at_iso || '').trim();
-      if (!gmOk && !userHasPermission(actor, '*')) {
+      const mdOk = String(run.md_approved_at_iso || '').trim();
+      if (!gmOk && !mdOk && !userHasPermission(actor, '*')) {
         return {
           ok: false,
-          error: 'GM HR must approve this payroll run (signed hard copy) before it can be locked.',
+          error: 'GM HR or MD must approve this payroll run before it can be locked.',
         };
       }
     }
     const wasPaid = run.status === 'paid';
-    if (ns === 'draft' && String(run.status || '').toLowerCase() === 'locked') {
-      db.prepare(
-        `UPDATE hr_payroll_runs SET status = ?, md_approved_at_iso = NULL, md_approved_by_user_id = NULL,
-         gm_approved_at_iso = NULL, gm_approved_by_user_id = NULL WHERE id = ?`
-      ).run(ns, runId);
-    } else {
-      db.prepare(`UPDATE hr_payroll_runs SET status = ? WHERE id = ?`).run(ns, runId);
-    }
-    if (ns === 'paid' && !wasPaid) {
-      incrementLoanMonthsFromPayrollRun(db, runId);
+    let treasuryResult = null;
+    try {
+      db.transaction(() => {
+        if (ns === 'draft' && String(run.status || '').toLowerCase() === 'locked') {
+          db.prepare(
+            `UPDATE hr_payroll_runs SET status = ?, md_approved_at_iso = NULL, md_approved_by_user_id = NULL,
+             gm_approved_at_iso = NULL, gm_approved_by_user_id = NULL WHERE id = ?`
+          ).run(ns, runId);
+        } else {
+          db.prepare(`UPDATE hr_payroll_runs SET status = ? WHERE id = ?`).run(ns, runId);
+        }
+        if (ns === 'paid' && !wasPaid) {
+          incrementLoanMonthsFromPayrollRun(db, runId);
+          if (!body?.skipTreasuryPosting) {
+            treasuryResult = postPayrollRunTreasuryPayout(db, runId, actor, {
+              treasuryAccountId: body?.treasuryAccountId,
+            });
+            if (!treasuryResult.ok) {
+              throw new Error(treasuryResult.error || 'Treasury posting failed.');
+            }
+          }
+        }
+      })();
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
     }
     appendHrAuditEvent(db, {
       actorUserId: actor?.id || null,
@@ -3473,7 +3665,7 @@ export function patchPayrollRun(db, runId, body, actor) {
         notifyPayrollRunStatus(db, updatedRun, ns, userIds);
       }
     }
-    return { ok: true };
+    return { ok: true, treasury: treasuryResult };
   }
 
   if (body?.taxPercent != null || body?.pensionPercent != null) {
@@ -3886,7 +4078,9 @@ function csvEsc(v) {
 export function exportPayrollBankUploadCsv(db, runId) {
   const run = getPayrollRunById(db, runId);
   if (!run) return { ok: false, error: 'Payroll run not found.' };
-  if (!['locked', 'paid', 'gm_approved', 'md_approved'].includes(String(run.status || ''))) {
+  const st = String(run.status || '').toLowerCase();
+  const approved = Boolean(run.gmApprovedAtIso || run.mdApprovedAtIso);
+  if (st !== 'locked' && st !== 'paid' && !(st === 'draft' && approved)) {
     return { ok: false, error: 'Approve and lock payroll before bank export.' };
   }
   const lines = payrollLinesWithProfile(db, runId).filter((l) => !l.held && l.netNgn > 0);
@@ -4033,12 +4227,12 @@ export function exportPayrollApprovalReportPdf(db, runId) {
   };
 }
 
-/** Payroll runs ready for finance (GM-approved or locked/paid). */
+/** Payroll runs ready for finance (GM/MD-approved or locked/paid). */
 export function listPayrollRunsForFinance(db) {
   return listPayrollRuns(db).filter((r) => {
     const s = String(r.status || '').toLowerCase();
     if (s === 'locked' || s === 'paid') return true;
-    if (s === 'draft' && r.gmApprovedAtIso) return true;
+    if (s === 'draft' && (r.gmApprovedAtIso || r.mdApprovedAtIso)) return true;
     return false;
   });
 }
@@ -4350,7 +4544,7 @@ export function getHrDashboardAlerts(db) {
   // Probation ending within 30 days
   const probationEnding = db.prepare(`
     SELECT sp.user_id, u.display_name, sp.probation_end_iso, sp.job_title, sp.branch_id
-    FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
+    FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
     WHERE sp.probation_end_iso BETWEEN ? AND ? AND sp.status='active'
   `).all(todayIso, in30Iso);
 
@@ -4359,7 +4553,7 @@ export function getHrDashboardAlerts(db) {
   try {
     contractsExpiring = db.prepare(`
       SELECT sp.user_id, u.display_name, sp.contract_end_iso, sp.job_title, sp.branch_id
-      FROM hr_staff_profiles sp JOIN users u ON u.id=sp.user_id
+      FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
       WHERE sp.contract_end_iso BETWEEN ? AND ? AND sp.employment_type='contract' AND sp.status='active'
     `).all(todayIso, in60Iso);
   } catch { /* contract_end_iso may not exist yet */ }
@@ -7183,15 +7377,32 @@ export function getStaffSeverancePreview(db, userId) {
 }
 
 export function getStaffDisciplinaryQueryCount(db, userId) {
-  const events = db.prepare(
-    `SELECT discipline_kind, created_at_iso FROM hr_discipline_events WHERE user_id=? ORDER BY created_at_iso ASC`
-  ).all(userId);
-  // Also check hr_disciplinary_events table (older pattern)
-  let allEvents = [...events];
+  let allEvents = [];
   try {
-    const alt = db.prepare(`SELECT discipline_kind, created_at_iso FROM hr_disciplinary_events WHERE user_id=? ORDER BY created_at_iso ASC`).all(userId);
+    const events = db
+      .prepare(
+        `SELECT e.event_kind AS discipline_kind, e.created_at_iso
+         FROM hr_discipline_events e
+         INNER JOIN hr_discipline_cases c ON c.id = e.case_id
+         WHERE c.user_id = ?
+         ORDER BY e.created_at_iso ASC`
+      )
+      .all(userId);
+    allEvents = [...events];
+  } catch {
+    /* hr_discipline tables may be absent on partial schemas */
+  }
+  // Also check hr_disciplinary_events table (older pattern)
+  try {
+    const alt = db
+      .prepare(
+        `SELECT discipline_kind, created_at_iso FROM hr_disciplinary_events WHERE user_id=? ORDER BY created_at_iso ASC`
+      )
+      .all(userId);
     allEvents = [...allEvents, ...alt];
-  } catch { /* table may not exist */ }
+  } catch {
+    /* table may not exist */
+  }
   const queries = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('query'));
   const warnings = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('warning'));
   const suspensions = allEvents.filter(e => String(e.discipline_kind||'').toLowerCase().includes('suspension'));
@@ -7252,7 +7463,7 @@ export function getChronicAbsentees(db, branchId, thresholdDays) {
   let query = `
     SELECT ae.user_id, u.display_name, sp.branch_id, sp.job_title, COUNT(*) as absent_days
     FROM hr_attendance_events ae
-    JOIN users u ON u.id = ae.user_id
+    JOIN app_users u ON u.id = ae.user_id
     JOIN hr_staff_profiles sp ON sp.user_id = ae.user_id
     WHERE ae.status = 'absent' AND ae.event_date_iso >= ?
   `;
@@ -7271,7 +7482,7 @@ export function getLoanPortfolioAnalytics(db) {
            r.created_at_iso, r.status
     FROM hr_requests r
     JOIN hr_request_loan rl ON rl.request_id = r.id
-    JOIN users u ON u.id = r.user_id
+    JOIN app_users u ON u.id = r.user_id
     JOIN hr_staff_profiles sp ON sp.user_id = r.user_id
     WHERE r.kind = 'loan' AND r.status = 'approved'
     ORDER BY rl.amount_ngn DESC

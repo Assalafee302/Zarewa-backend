@@ -10,6 +10,7 @@ import {
   applyHrSalaryIncrement,
   appendHrAuditEvent,
   approvePayrollRunByGmHr,
+  approvePayrollRunByMd,
   branchManagerEndorseRequest,
   computePayrollRun,
   createHrRequest,
@@ -31,6 +32,7 @@ import {
   exportPayrollApprovalReportPdf,
   exportPayrollHrApprovalCsv,
   listPayrollRunsForFinance,
+  listPayrollMissingBankStaff,
   patchPayrollLineAdjustments,
   generateStaffLoanAgreementLetter,
   getHrDailyRollCall,
@@ -373,6 +375,7 @@ import {
   userCanGmApproveHr,
   userCanGmApprovePayroll,
   userCanMarkBranchContribution,
+  userCanMdApprovePayroll,
   userCanPayPayroll,
   userCanPreparePayroll,
   userCanReviewHrRequests,
@@ -1574,7 +1577,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       const userId = String(req.params.userId || '').trim();
       if (!staffScopeGate(req, res, userId)) return;
-      const r = applyHrSalaryIncrement(db, req.user?.id, userId, req.body || {});
+      const r = applyHrSalaryIncrement(db, req.user?.id, userId, req.body || {}, req.user);
       if (!r.ok) return res.status(400).json(r);
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: userId });
       return res.json({ ok: true, profile: redactStaffProfile(r.profile, ctx) });
@@ -2226,6 +2229,36 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not approve payroll.' });
     }
   });
+
+  app.post('/api/hr/payroll-runs/:runId/md-approve', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!userCanMdApprovePayroll(req.user) && !hrUserHas(req.user, '*')) {
+        return res.status(403).json({ ok: false, error: 'Managing Director payroll approval required.' });
+      }
+      const r = approvePayrollRunByMd(db, req.params.runId, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not approve payroll.' });
+    }
+  });
+
+  app.get(
+    '/api/hr/payroll-runs/:runId/missing-bank',
+    requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.export', 'hr.payroll.pay'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const staff = listPayrollMissingBankStaff(db, req.params.runId);
+        return res.json({ ok: true, staff, count: staff.length });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load missing bank accounts.' });
+      }
+    }
+  );
 
   app.patch(
     '/api/hr/payroll-runs/:runId/lines/:userId',

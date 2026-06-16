@@ -44,6 +44,7 @@ export const SENSITIVE_LETTER_KINDS = new Set([
   'promotion',
   'query',
   'investigation_notice',
+  'salary_recovery',
 ]);
 
 const LETTER_TYPE_CODES = {
@@ -68,6 +69,7 @@ const LETTER_TYPE_CODES = {
   termination: 'DIS',
   investigation_notice: 'DIS',
   hearing_invitation: 'DIS',
+  salary_recovery: 'DIS',
   leave_approval: 'LVE',
   leave_rejection: 'LVE',
   resignation_acceptance: 'EXT',
@@ -256,6 +258,25 @@ export function listEmploymentLettersDetailed(db, userId) {
   }
   sql += ` ORDER BY COALESCE(issued_at_iso, submitted_at_iso, id) DESC LIMIT 200`;
   return db.prepare(sql).all(...args).map(mapLetterRow);
+}
+
+export function listEmploymentLettersByIds(db, letterIds) {
+  if (!hrTablesReady(db)) return [];
+  const ids = [...new Set((letterIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT l.*, u.display_name AS staffDisplayName
+       FROM hr_employment_letters l
+       LEFT JOIN app_users u ON u.id = l.user_id
+       WHERE l.id IN (${placeholders})`
+    )
+    .all(...ids);
+  return rows.map((row) => ({
+    ...mapLetterRow(row),
+    staffDisplayName: row.staffDisplayName || row.user_id,
+  }));
 }
 
 export function createDraftLetter(db, actor, body = {}) {

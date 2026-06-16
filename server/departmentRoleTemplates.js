@@ -8,6 +8,7 @@ export const WORKSPACE_ROLE_KEYS = [
   'admin',
   'md',
   'ceo',
+  'chairman',
   'finance_manager',
   'sales_manager',
   'sales_staff',

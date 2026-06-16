@@ -3,7 +3,7 @@
  * @module server/hrAnalyticsOps
  */
 
-import { hrPhase2TablesReady, listHrAbsenceReports, listHrOvertimeRequests } from './hrPhase2Ops.js';
+import { hrPhase2TablesReady, listHrAbsenceReports } from './hrPhase2Ops.js';
 import { hrTransferRequestsTableReady, listHrTransferRequests } from './hrTransferRequests.js';
 import { hrTablesReady, listHrStaff, listPayrollRuns } from './hrOps.js';
 
@@ -50,10 +50,9 @@ export function getHrMovementAnalytics(db, scope) {
 }
 
 export function getHrAttendanceTrendAnalytics(db, scope, months = 6) {
-  if (!hrPhase2TablesReady(db)) return { months: [], absenceCounts: [], overtimeHours: [] };
+  if (!hrPhase2TablesReady(db)) return { months: [], absenceCounts: [] };
   const labels = [];
   const absenceCounts = [];
-  const overtimeHours = [];
   const now = new Date();
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -63,12 +62,8 @@ export function getHrAttendanceTrendAnalytics(db, scope, months = 6) {
     const to = `${ym}-31`;
     const abs = listHrAbsenceReports(db, scope, { fromIso: from, toIso: to });
     absenceCounts.push(abs.length);
-    const ot = listHrOvertimeRequests(db, scope, {}).filter((r) => (r.workDateIso || '').startsWith(ym));
-    overtimeHours.push(
-      Math.round(ot.reduce((s, r) => s + (Number(r.eligibleOvertimeHours ?? r.calculatedHours) || 0), 0) * 10) / 10
-    );
   }
-  return { months: labels, absenceCounts, overtimeHours };
+  return { months: labels, absenceCounts };
 }
 
 export function getHrLeaveUsageAnalytics(db) {

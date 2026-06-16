@@ -21,6 +21,7 @@ import {
   postOffcutPoolReturnInward,
   postSupplierCoilDefect,
 } from './writeOps.js';
+import { syncRegistryFromMaterialIncident } from './hrAccountabilityOps.js';
 
 const INCIDENT_TYPES = new Set([
   'coil_stain',
@@ -37,6 +38,14 @@ const MAX_ATTACHMENT_B64 = 4_500_000;
 
 function nowIso() {
   return new Date().toISOString().slice(0, 19);
+}
+
+function syncMaterialIncidentRegistry(db, incidentId) {
+  try {
+    syncRegistryFromMaterialIncident(db, incidentId);
+  } catch {
+    /* accountability registry optional on older DBs */
+  }
 }
 
 function lineId() {
@@ -605,6 +614,7 @@ export function createMaterialIncidentDraft(db, payload, opts = {}) {
     replaceAttachmentsTx(db, id, normalizeAttachments(payload.attachments), opts.actor);
   })();
 
+  syncMaterialIncidentRegistry(db, id);
   return { ok: true, id, incident: loadIncidentDetail(db, id) };
 }
 
@@ -717,6 +727,7 @@ export function submitMaterialIncident(db, incidentId, opts = {}) {
     },
     { actor: opts.actor }
   );
+  syncMaterialIncidentRegistry(db, incidentId);
   return { ok: true, id: incidentId, status: 'submitted' };
 }
 
@@ -891,6 +902,7 @@ export function approveMaterialIncident(db, incidentId, payload, opts = {}) {
     status: 'success',
     note: managerRemark,
   });
+  syncMaterialIncidentRegistry(db, incidentId);
   return { ok: true, id: incidentId, incident: loadIncidentDetail(db, incidentId) };
 }
 
@@ -908,6 +920,7 @@ export function rejectMaterialIncident(db, incidentId, payload, opts = {}) {
     `UPDATE material_incidents SET status = 'rejected', manager_remark = ?, updated_at_iso = ? WHERE id = ?`
   ).run(remark, at, incidentId);
   upsertWorkItemBySource(db, { sourceKind: 'material_incident', sourceId: incidentId, status: 'rejected', updatedAtIso: at }, { actor: opts.actor });
+  syncMaterialIncidentRegistry(db, incidentId);
   return { ok: true, id: incidentId, status: 'rejected' };
 }
 
@@ -935,6 +948,7 @@ export function voidMaterialIncident(db, incidentId, payload, opts = {}) {
   db.prepare(
     `UPDATE material_incidents SET status = 'voided', void_reason = ?, voided_by_user_id = ?, voided_at_iso = ?, updated_at_iso = ? WHERE id = ?`
   ).run(reason, actorId(opts.actor), at, at, incidentId);
+  syncMaterialIncidentRegistry(db, incidentId);
   return { ok: true, id: incidentId };
 }
 

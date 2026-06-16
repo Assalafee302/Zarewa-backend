@@ -17,6 +17,7 @@ const DEFAULT_POLICY = {
   halfMonthBonusRate: 0.5, // 50% of monthly base salary (December year-end bonus)
   pensionEmployeePercent: 8, // employee pension deduction (% of gross)
   pensionEmployerPercent: 10, // employer pension contribution (% of gross, not deducted from net)
+  payrollTreasuryAccountId: null, // optional default bank account for payroll payout
 };
 
 const POLICY_PATCH_KEYS = new Set([
@@ -34,6 +35,9 @@ const POLICY_PATCH_KEYS = new Set([
   'pensionEmployeePercent',
   'pensionEmployerPercent',
 ]);
+
+/** Nullable integer IDs stored in policy JSON (not numeric rate fields). */
+const POLICY_OPTIONAL_ID_KEYS = new Set(['payrollTreasuryAccountId']);
 
 export function getHrPolicyPayload(db) {
   try {
@@ -57,6 +61,18 @@ export function updateHrPolicyPayload(db, patch = {}) {
   const current = getHrPolicyPayload(db);
   const next = { ...current };
   for (const [key, raw] of Object.entries(patch || {})) {
+    if (POLICY_OPTIONAL_ID_KEYS.has(key)) {
+      if (raw === null || raw === '' || raw === undefined) {
+        next[key] = null;
+        continue;
+      }
+      const id = Math.round(Number(raw));
+      if (!Number.isFinite(id) || id <= 0) {
+        return { ok: false, error: `Invalid value for ${key}.` };
+      }
+      next[key] = id;
+      continue;
+    }
     if (!POLICY_PATCH_KEYS.has(key)) continue;
     const n = Number(raw);
     if (!Number.isFinite(n) || n < 0) {
@@ -254,10 +270,8 @@ export function isApprovedLeaveOnDay(db, userId, dayIso) {
 export const WORKING_HOURS_CONFIG = {
   weekdayStartHour: 8,      // 8:00 AM
   weekdayEndHour: 17,       // 5:00 PM
-  weekdayOvertimeAfterHours: 9,  // overtime after 9 hrs Mon-Fri
   saturdayStartHour: 9,     // 9:00 AM
   saturdayEndHour: 16,      // 4:00 PM
-  saturdayOvertimeAfterHours: 7, // overtime after 7 hrs Saturday
   workDays: [1, 2, 3, 4, 5, 6], // Mon=1 through Sat=6 (0=Sun)
   lunchBreakMinutes: 60,
   salaryPaymentDay: 25,     // 25th of each month

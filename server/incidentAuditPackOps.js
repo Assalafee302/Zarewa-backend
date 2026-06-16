@@ -9,6 +9,8 @@ import { listCaseResponsibility } from './hrAccountabilityOps.js';
 import { listRecoverySchedulesForCase } from './hrIncidentRecoveryOps.js';
 import { listHrAuditEventsGlobal } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
+import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
+import { COMPANY } from './hrLetterTemplates.js';
 
 function safeJsonParse(raw, fallback) {
   try {
@@ -120,6 +122,144 @@ export function buildIncidentAuditPack(db, registryId, opts = {}) {
   }
 
   return { ok: true, pack };
+}
+
+function wrapTextLine(text, maxLen = 90) {
+  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ');
+  if (!words.length) return [''];
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (next.length > maxLen) {
+      if (line) lines.push(line);
+      line = w.length > maxLen ? w.slice(0, maxLen) : w;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function pushSection(lines, title, bodyLines = []) {
+  lines.push('');
+  lines.push(`--- ${title} ---`);
+  for (const row of bodyLines) {
+    lines.push(...wrapTextLine(row));
+  }
+}
+
+/**
+ * @param {ReturnType<typeof buildIncidentAuditPack> extends { ok: true; pack: infer P } ? P : never} pack
+ */
+export function formatIncidentAuditPackLines(pack) {
+  const lines = [];
+  const reg = pack?.registry || {};
+  const generated = new Date().toLocaleDateString('en-NG', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+  lines.push('================================================');
+  lines.push(String(COMPANY).toUpperCase());
+  lines.push('HUMAN RESOURCES — INVESTIGATION RECORD');
+  lines.push('================================================');
+  lines.push(`Date prepared: ${generated}`);
+  lines.push(`Registry reference: ${reg.id || '—'}`);
+  lines.push('CONFIDENTIAL — Internal accountability file');
+  lines.push('');
+  lines.push('INCIDENT INVESTIGATION PACK');
+  pushSection(lines, 'Registry summary', [
+    `ID: ${reg.id || '—'}`,
+    `Kind: ${reg.incidentKind || '—'}`,
+    `Status: ${reg.status || '—'}`,
+    `Severity: ${reg.severity || '—'}`,
+    `Branch: ${reg.branchId || '—'}`,
+    `Summary: ${reg.summary || '—'}`,
+  ]);
+
+  const c = pack?.case;
+  if (c) {
+    pushSection(lines, 'Discipline case', [
+      `Case: ${c.caseNumber || c.id}`,
+      `Employee: ${c.staffDisplayName || c.userId || '—'}`,
+      `Status: ${c.status || '—'}`,
+      `Decision: ${c.decisionType || '—'}`,
+      `Incident date: ${c.incidentDateIso || '—'}`,
+      `Loss (NGN): ${c.lossValueNgn != null ? Number(c.lossValueNgn).toLocaleString('en-NG') : '—'}`,
+      `Description: ${c.description || c.summary || '—'}`,
+    ]);
+  }
+
+  if (Array.isArray(pack.responsibility) && pack.responsibility.length) {
+    pushSection(
+      lines,
+      'Responsibility map',
+      pack.responsibility.map(
+        (p) =>
+          `${p.staffDisplayName || p.userId} — ${p.role} — ${p.responsibilityWeight}% (${p.contributionType || '—'})`
+      )
+    );
+  }
+
+  if (Array.isArray(pack.recoverySchedules) && pack.recoverySchedules.length) {
+    pushSection(
+      lines,
+      'Recovery schedules',
+      pack.recoverySchedules.map(
+        (s) =>
+          `${s.userId}: total NGN ${Number(s.totalAmountNgn || 0).toLocaleString('en-NG')} / ${s.durationMonths || 0} mo — ${s.status}`
+      )
+    );
+  }
+
+  if (Array.isArray(pack.disciplineEvents) && pack.disciplineEvents.length) {
+    pushSection(
+      lines,
+      'Case timeline',
+      pack.disciplineEvents.slice(0, 25).map((e) => `${e.createdAtIso?.slice(0, 16) || '—'} · ${e.eventKind}: ${e.note || ''}`)
+    );
+  }
+
+  if (Array.isArray(pack.hrAudit) && pack.hrAudit.length) {
+    pushSection(
+      lines,
+      'HR audit trail (sample)',
+      pack.hrAudit.slice(0, 15).map((e) => `${e.createdAtIso?.slice(0, 16) || '—'} · ${e.action}`)
+    );
+  }
+
+  lines.push('');
+  lines.push('--- End of investigation pack ---');
+  lines.push('Prepared from Zarewa ERP accountability records.');
+  lines.push('Official sanction letters are issued separately via HR Letters.');
+  lines.push('');
+  lines.push('Human Resources (HQ)');
+  lines.push(COMPANY);
+  return lines;
+}
+
+function paginateLines(lines, perPage = 48) {
+  const pages = [];
+  for (let i = 0; i < lines.length; i += perPage) {
+    pages.push({ lines: lines.slice(i, i + perPage) });
+  }
+  return pages.length ? pages : [{ lines: ['(empty pack)'] }];
+}
+
+export function exportIncidentAuditPackPdf(db, registryId, opts = {}) {
+  const built = buildIncidentAuditPack(db, registryId, opts);
+  if (!built.ok) return built;
+  const lines = formatIncidentAuditPackLines(built.pack);
+  const pdf = buildSimpleTextPdf(paginateLines(lines));
+  const id = String(registryId || 'pack').trim();
+  return {
+    ok: true,
+    pdf,
+    filename: `investigation-${id}.pdf`,
+    contentType: 'application/pdf',
+  };
 }
 
 export function buildIncidentAuditPackByCaseId(db, caseId, opts = {}) {

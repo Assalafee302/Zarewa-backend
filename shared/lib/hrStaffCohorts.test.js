@@ -17,13 +17,17 @@ describe('hrStaffCohorts payroll rules', () => {
     expect(isStatutoryPayrollExempt(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
   });
 
-  it('scholarship, mining, HQ, and domestic are exempt from branch payroll', () => {
-    for (const g of [
-      HR_PAYROLL_GROUPS.SCHOLARSHIP,
-      HR_PAYROLL_GROUPS.MINING,
-      HR_PAYROLL_GROUPS.HQ_ADMIN,
-      HR_PAYROLL_GROUPS.DOMESTIC,
-    ]) {
+  it('HQ admin and mining are included in HQ payroll runs with PAYE and pension', () => {
+    for (const g of [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN]) {
+      expect(isPayrollRunEligible(g)).toBe(true);
+      expect(requiresPaye(g)).toBe(true);
+      expect(requiresEmployeePensionDeduction(g)).toBe(true);
+      expect(isStatutoryPayrollExempt(g)).toBe(false);
+    }
+  });
+
+  it('scholarship and domestic are exempt from HQ payroll runs', () => {
+    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
       expect(isPayrollRunEligible(g)).toBe(false);
       expect(requiresPaye(g)).toBe(false);
       expect(requiresEmployeePensionDeduction(g)).toBe(false);

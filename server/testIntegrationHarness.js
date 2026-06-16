@@ -1,6 +1,22 @@
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 
+/** @type {boolean | null} */
+let mysqlAvailableCache = null;
+
+/** Whether local MySQL (Vitest `:memory:` harness) is reachable. */
+export function isMysqlAvailableForTests() {
+  if (mysqlAvailableCache != null) return mysqlAvailableCache;
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    mysqlAvailableCache = true;
+  } catch {
+    mysqlAvailableCache = false;
+  }
+  return mysqlAvailableCache;
+}
+
 /** @type {{ db: import('./db.js').Database; app: import('express').Express } | null} */
 let cached = null;
 let refCount = 0;
@@ -31,4 +47,18 @@ export function closeIntegrationHarness() {
     cached = null;
     refCount = 0;
   }
+}
+
+/** Resolve seeded admin actor for direct DB ops in integration tests. */
+export function resolveTestActor(db) {
+  const admin = db.prepare(`SELECT id, username, display_name FROM app_users WHERE username = 'admin' LIMIT 1`).get();
+  return {
+    id: admin?.id || 'admin',
+    username: admin?.username || 'admin',
+    displayName: admin?.display_name || 'Admin',
+  };
+}
+
+export function isoNow() {
+  return new Date().toISOString();
 }

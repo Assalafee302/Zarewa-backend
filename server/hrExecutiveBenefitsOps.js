@@ -12,7 +12,7 @@ import {
 } from './hrBankCrypto.js';
 import { appendHrAuditEvent } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-import { createHrNotification } from './hrNotifications.js';
+import { createHrNotification, notifyScholarshipPaymentApproved, notifyScholarshipPaymentPaid } from './hrNotifications.js';
 import { hrUserHas } from './hrPermissions.js';
 import {
   isDomesticStaff,
@@ -244,8 +244,8 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
         payChannel: 'executive_stipend',
         linked: false,
         managePath,
-        label: 'Monthly stipend (Executive benefits)',
-        note: 'Scholarship beneficiaries are paid through Executive benefits → Monthly Stipends, not HQ payroll.',
+        label: 'Monthly allowance (Executive benefits)',
+        note: 'Executive family beneficiaries are paid through Executive benefits → Monthly allowances, not branch payroll.',
       };
     }
     const extra = staff.profileExtra && typeof staff.profileExtra === 'object' ? staff.profileExtra : {};
@@ -271,8 +271,8 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
       payChannel: 'executive_stipend',
       linked: Boolean(stipend && stipend.status === 'active'),
       managePath,
-      label: 'Monthly stipend (Executive benefits)',
-      note: 'This register is the personnel file. Monthly pay is the stipend in Executive benefits.',
+      label: 'Monthly allowance (Executive benefits)',
+      note: 'This register is the personnel file. Monthly pay is the allowance in Executive benefits.',
       monthlyAmountNgn: stipend?.monthlyAmountNgn ?? null,
       lastPaidPeriod: stipend?.lastPaidPeriod ?? null,
       paymentFrequency: stipend?.paymentFrequency ?? 'monthly',
@@ -289,7 +289,7 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
         linked: false,
         managePath,
         label: 'Monthly salary (Executive benefits)',
-        note: 'Domestic staff are paid through Executive benefits → Domestic Staff, not HQ payroll.',
+        note: 'Household staff are paid through Executive benefits → Household staff, not branch payroll.',
       };
     }
     const uid = String(staff.userId || '').trim();
@@ -309,7 +309,7 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
       linked: Boolean(domestic && domestic.status === 'active'),
       managePath,
       label: 'Monthly salary (Executive benefits)',
-      note: 'This register is the personnel file. Monthly pay is managed in Executive benefits domestic staff.',
+      note: 'This register is the personnel file. Monthly pay is managed in Executive benefits household staff.',
       monthlyAmountNgn: domestic?.salaryAmountNgn ?? null,
       domesticProfileId: domestic?.id ?? null,
       assignedExecutive: domestic?.assignedExecutive ?? null,
@@ -713,6 +713,7 @@ export function approveExecutivePayment(db, actor, paymentId, { note } = {}) {
     entityId: paymentId,
     details: { note },
   });
+  notifyScholarshipPaymentApproved(db, row);
   return { ok: true, payment: getExecutivePayment(db, paymentId) };
 }
 
@@ -754,6 +755,7 @@ export function markExecutivePaymentPaid(db, actor, paymentId, { proofRef } = {}
     entityKind: 'hr_executive_payment',
     entityId: paymentId,
   });
+  notifyScholarshipPaymentPaid(db, row);
   return { ok: true, payment: getExecutivePayment(db, paymentId) };
 }
 
@@ -854,6 +856,497 @@ export function buildExecutiveBeneficiaryBankExport(db, actor, { paymentIds = []
 }
 
 // ── Dashboard summary ─────────────────────────────────────────
+
+function safeJsonParse(raw, fallback = {}) {
+  try {
+    const v = JSON.parse(String(raw || ''));
+    return v && typeof v === 'object' ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function currentPeriodYyyymm() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function daysUntilIso(iso) {
+  const d = String(iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const end = new Date(`${d}T12:00:00`);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
+function executiveDisplayLabel(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  if (!v) return null;
+  if (v === 'chairman' || v.includes('chairman')) return 'Chairman';
+  if (v === 'ceo' || v.includes('chief executive')) return 'Chief Executive Officer';
+  if (v === 'md' || v.includes('managing director')) return 'Managing Director';
+  return String(raw).replace(/_/g, ' ');
+}
+
+function familyBeneficiaryTypeLabel(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  const map = {
+    chairman_child: "Chairman's child",
+    ceo_child: "CEO's child",
+    director_child: "Director's child",
+    sponsored_student: 'Executive family',
+  };
+  return map[v] || (v ? String(raw).replace(/_/g, ' ') : null);
+}
+
+function linkedExecutiveMatchesFilter(linkedExecutive, filter) {
+  if (!filter) return true;
+  const le = String(linkedExecutive || '').trim().toLowerCase();
+  const lf = String(filter).trim().toLowerCase();
+  if (!le) return false;
+  return le === lf || le.includes(lf) || lf.includes(le);
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} displayName @param {object} [schoolProfile] */
+function resolveFamilyBeneficiaryLink(db, displayName, schoolProfile = {}) {
+  const bid = String(schoolProfile?.beneficiaryId || '').trim();
+  let linkedExecutive = schoolProfile?.linkedExecutive || null;
+  let beneficiaryType = schoolProfile?.beneficiaryType || null;
+  let beneficiaryId = bid || null;
+
+  if (hrTableExists(db, 'hr_executive_beneficiaries')) {
+    let row = bid ? db.prepare(`SELECT * FROM hr_executive_beneficiaries WHERE id = ?`).get(bid) : null;
+    if (!row && displayName) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_executive_beneficiaries WHERE name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(displayName);
+    }
+    if (row) {
+      beneficiaryId = row.id;
+      linkedExecutive = row.linked_executive || linkedExecutive;
+      beneficiaryType = row.beneficiary_type || beneficiaryType;
+    }
+  }
+
+  if (!linkedExecutive && hrTableExists(db, 'hr_executive_stipends') && displayName) {
+    const stip = db
+      .prepare(
+        `SELECT linked_executive, beneficiary_type, beneficiary_id FROM hr_executive_stipends
+         WHERE beneficiary_name = ? OR beneficiary_id = ?
+         ORDER BY updated_at_iso DESC LIMIT 1`
+      )
+      .get(displayName, bid);
+    if (stip) {
+      linkedExecutive = stip.linked_executive || linkedExecutive;
+      beneficiaryType = stip.beneficiary_type || beneficiaryType;
+      beneficiaryId = stip.beneficiary_id || beneficiaryId;
+    }
+  }
+
+  return {
+    beneficiaryId,
+    linkedExecutive,
+    linkedExecutiveLabel: executiveDisplayLabel(linkedExecutive),
+    beneficiaryType,
+    beneficiaryTypeLabel: familyBeneficiaryTypeLabel(beneficiaryType),
+  };
+}
+
+function familyFeeStatusLabel(status) {
+  const s = String(status || 'draft').toLowerCase();
+  const map = {
+    draft: 'Being prepared',
+    submitted: 'Submitted',
+    approved: 'Approved',
+    paid: 'Paid',
+    rejected: 'Not approved',
+    cancelled: 'Cancelled',
+  };
+  return map[s] || s.replace(/_/g, ' ');
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} input
+ */
+function buildExecutiveFamilyChildRow(db, input) {
+  const {
+    userId,
+    displayName,
+    employeeNo,
+    school = {},
+    familyLink,
+    currentPeriod,
+    beneficiaryOnly = false,
+  } = input;
+  const name = String(displayName || '').trim();
+  const beneficiaryId = familyLink?.beneficiaryId || school?.beneficiaryId || null;
+
+  let stipend = null;
+  if (hrTableExists(db, 'hr_executive_stipends')) {
+    let row = beneficiaryId
+      ? db
+          .prepare(
+            `SELECT * FROM hr_executive_stipends WHERE beneficiary_id = ? ORDER BY updated_at_iso DESC LIMIT 1`
+          )
+          .get(beneficiaryId)
+      : null;
+    if (!row && name) {
+      row = db
+        .prepare(
+          `SELECT * FROM hr_executive_stipends WHERE beneficiary_name = ? ORDER BY updated_at_iso DESC LIMIT 1`
+        )
+        .get(name);
+    }
+    stipend = row ? mapStipendRow(row) : null;
+  }
+
+  /** @type {object[]} */
+  let feeRows = [];
+  if (hrTableExists(db, 'hr_chairman_school_fees')) {
+    if (beneficiaryId) {
+      feeRows = db
+        .prepare(
+          `SELECT * FROM hr_chairman_school_fees WHERE beneficiary_id = ? ORDER BY COALESCE(due_date_iso, created_at_iso) DESC LIMIT 12`
+        )
+        .all(beneficiaryId);
+    }
+    if (!feeRows.length && name) {
+      feeRows = db
+        .prepare(
+          `SELECT * FROM hr_chairman_school_fees WHERE child_name = ? ORDER BY COALESCE(due_date_iso, created_at_iso) DESC LIMIT 12`
+        )
+        .all(name);
+    }
+  }
+  const fees = feeRows.map(mapSchoolFeeRow);
+  const pendingFee = fees.find((f) => !['paid', 'cancelled', 'rejected'].includes(String(f.paymentStatus || '').toLowerCase())) || null;
+  const lastPaidFee = fees.find((f) => String(f.paymentStatus || '').toLowerCase() === 'paid') || null;
+
+  let pendingRequestsCount = 0;
+  if (userId && hrTableExists(db, 'hr_requests')) {
+    pendingRequestsCount =
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM hr_requests
+           WHERE user_id = ? AND kind IN ('scholarship_profile_update', 'scholarship_fee_request')
+             AND lower(status) NOT IN ('approved', 'rejected', 'cancelled')`
+        )
+        .get(userId)?.c || 0;
+  }
+
+  const paidThisMonth = Boolean(
+    stipend?.lastPaidPeriod && String(stipend.lastPaidPeriod) === currentPeriod
+  );
+  const allowanceActive = stipend?.status === 'active';
+
+  let paymentHealth = 'on_track';
+  if (!beneficiaryId || !allowanceActive) paymentHealth = 'setup_incomplete';
+  else if (pendingFee?.dueDateIso && daysUntilIso(pendingFee.dueDateIso) < 0) paymentHealth = 'overdue';
+  else if (pendingFee || pendingRequestsCount > 0 || !paidThisMonth) paymentHealth = 'action_needed';
+
+  return {
+    userId: userId || null,
+    displayName: name,
+    employeeNo: employeeNo || null,
+    beneficiaryId,
+    beneficiaryOnly,
+    hasLogin: Boolean(userId),
+    schoolName: school.schoolName || pendingFee?.schoolName || lastPaidFee?.schoolName || null,
+    classLevel: school.classLevel || pendingFee?.classLevel || null,
+    academicSession: school.academicSession || pendingFee?.academicSession || lastPaidFee?.academicSession || null,
+    currentTerm: school.currentTerm || pendingFee?.term || null,
+    termEndIso: school.termEndIso || pendingFee?.dueDateIso || null,
+    linkedExecutive: familyLink?.linkedExecutive || null,
+    linkedExecutiveLabel: familyLink?.linkedExecutiveLabel || null,
+    beneficiaryTypeLabel: familyLink?.beneficiaryTypeLabel || null,
+    allowance: stipend
+      ? {
+          monthlyAmountNgn: stipend.monthlyAmountNgn,
+          lastPaidPeriod: stipend.lastPaidPeriod,
+          status: stipend.status,
+          paidThisMonth,
+          statusLabel: paidThisMonth ? 'Paid this month' : allowanceActive ? 'Due this month' : String(stipend.status || 'inactive'),
+        }
+      : null,
+    schoolFees: {
+      pending: pendingFee
+        ? {
+            id: pendingFee.id,
+            term: pendingFee.term,
+            academicSession: pendingFee.academicSession,
+            amountNgn: pendingFee.amountRequestedNgn ?? pendingFee.amountApprovedNgn,
+            dueDateIso: pendingFee.dueDateIso,
+            status: pendingFee.paymentStatus,
+            statusLabel: familyFeeStatusLabel(pendingFee.paymentStatus),
+          }
+        : null,
+      lastPaid: lastPaidFee
+        ? {
+            term: lastPaidFee.term,
+            academicSession: lastPaidFee.academicSession,
+            amountNgn: lastPaidFee.amountPaidNgn ?? lastPaidFee.amountRequestedNgn,
+            paidAtIso: lastPaidFee.paymentDateIso,
+          }
+        : null,
+    },
+    pendingRequestsCount,
+    paymentHealth,
+    staffProfilePath: userId ? `/hr/employees/${encodeURIComponent(userId)}` : null,
+  };
+}
+
+/**
+ * CEO / Chairman overview — all executive-family children with allowance and school fee status.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ linkedExecutive?: string }} [filters]
+ */
+export function getExecutiveFamilyDashboard(db, filters = {}) {
+  const linkedFilter = String(filters.linkedExecutive || '').trim();
+  const currentPeriod = currentPeriodYyyymm();
+  /** @type {Map<string, object>} */
+  const byKey = new Map();
+
+  if (hrTableExists(db, 'hr_staff_profiles') && hrTableExists(db, 'users')) {
+    const staffRows = db
+      .prepare(
+        `SELECT p.user_id AS userId, u.display_name AS displayName, p.employee_no AS employeeNo,
+                p.profile_extra_json AS profileExtraJson
+         FROM hr_staff_profiles p
+         JOIN app_users u ON u.id = p.user_id
+         WHERE p.payroll_group = 'scholarship'
+         ORDER BY u.display_name ASC`
+      )
+      .all();
+    for (const row of staffRows) {
+      const extra = safeJsonParse(row.profileExtraJson, {});
+      const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
+      const familyLink = resolveFamilyBeneficiaryLink(db, row.displayName, school);
+      if (!linkedExecutiveMatchesFilter(familyLink.linkedExecutive, linkedFilter)) continue;
+      byKey.set(String(row.userId), buildExecutiveFamilyChildRow(db, {
+        userId: row.userId,
+        displayName: row.displayName,
+        employeeNo: row.employeeNo,
+        school,
+        familyLink,
+        currentPeriod,
+      }));
+    }
+  }
+
+  if (hrTableExists(db, 'hr_executive_beneficiaries')) {
+    const benRows = db
+      .prepare(
+        `SELECT * FROM hr_executive_beneficiaries
+         WHERE beneficiary_type IN ('ceo_child', 'chairman_child', 'director_child', 'sponsored_student')
+           AND COALESCE(status, 'active') = 'active'
+         ORDER BY name ASC`
+      )
+      .all();
+    for (const ben of benRows) {
+      if (!linkedExecutiveMatchesFilter(ben.linked_executive, linkedFilter)) continue;
+      const already = [...byKey.values()].some((c) => c.beneficiaryId === ben.id);
+      if (already) continue;
+      const familyLink = resolveFamilyBeneficiaryLink(db, ben.name, {
+        beneficiaryId: ben.id,
+        linkedExecutive: ben.linked_executive,
+        beneficiaryType: ben.beneficiary_type,
+      });
+      byKey.set(`ben:${ben.id}`, buildExecutiveFamilyChildRow(db, {
+        displayName: ben.name,
+        school: { schoolName: ben.school_name, beneficiaryId: ben.id },
+        familyLink,
+        currentPeriod,
+        beneficiaryOnly: true,
+      }));
+    }
+  }
+
+  const children = [...byKey.values()].sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+  const executives = [
+    ...new Set(children.map((c) => c.linkedExecutiveLabel).filter(Boolean)),
+  ].sort();
+
+  return {
+    periodYyyymm: currentPeriod,
+    executives,
+    summary: {
+      childCount: children.length,
+      totalMonthlyAllowanceNgn: children.reduce((sum, c) => sum + (c.allowance?.monthlyAmountNgn || 0), 0),
+      allowancePaidThisMonth: children.filter((c) => c.allowance?.paidThisMonth).length,
+      pendingFeeCount: children.filter((c) => c.schoolFees?.pending).length,
+      actionNeededCount: children.filter((c) => c.paymentHealth !== 'on_track').length,
+      pendingRequestsCount: children.reduce((sum, c) => sum + (c.pendingRequestsCount || 0), 0),
+    },
+    children,
+  };
+}
+
+/**
+ * CEO / Chairman overview — all household staff with salary payment status.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ assignedExecutive?: string; linkedExecutive?: string }} [filters]
+ */
+export function getExecutiveDomesticDashboard(db, filters = {}) {
+  const execFilter = String(filters.assignedExecutive || filters.linkedExecutive || '').trim();
+  const currentPeriod = currentPeriodYyyymm();
+  /** @type {Map<string, object>} */
+  const byKey = new Map();
+
+  if (hrTableExists(db, 'hr_staff_profiles') && hrTableExists(db, 'users')) {
+    const staffRows = db
+      .prepare(
+        `SELECT p.user_id AS userId, u.display_name AS displayName, p.employee_no AS employeeNo,
+                p.job_title AS jobTitle, p.department AS department
+         FROM hr_staff_profiles p
+         JOIN app_users u ON u.id = p.user_id
+         WHERE p.payroll_group = 'chairman_staffs'
+         ORDER BY u.display_name ASC`
+      )
+      .all();
+    for (const row of staffRows) {
+      let domestic = null;
+      if (hrTableExists(db, 'hr_domestic_staff_profiles')) {
+        domestic =
+          db.prepare(`SELECT * FROM hr_domestic_staff_profiles WHERE user_id = ? ORDER BY updated_at_iso DESC LIMIT 1`).get(row.userId) ||
+          db.prepare(`SELECT * FROM hr_domestic_staff_profiles WHERE staff_name = ? ORDER BY updated_at_iso DESC LIMIT 1`).get(row.displayName);
+      }
+      const assignedExecutive = domestic?.assigned_executive || null;
+      if (!linkedExecutiveMatchesFilter(assignedExecutive, execFilter)) continue;
+      byKey.set(String(row.userId), buildExecutiveDomesticStaffRow(db, {
+        userId: row.userId,
+        displayName: row.displayName,
+        employeeNo: row.employeeNo,
+        domesticProfile: domestic,
+        fallbackDesignation: row.jobTitle,
+        fallbackLocation: row.department,
+        currentPeriod,
+      }));
+    }
+  }
+
+  if (hrTableExists(db, 'hr_domestic_staff_profiles')) {
+    const profiles = db
+      .prepare(`SELECT * FROM hr_domestic_staff_profiles WHERE COALESCE(status, 'active') = 'active' ORDER BY staff_name ASC`)
+      .all();
+    for (const domestic of profiles) {
+      if (!linkedExecutiveMatchesFilter(domestic.assigned_executive, execFilter)) continue;
+      const linkedUserId = String(domestic.user_id || '').trim();
+      if (linkedUserId && byKey.has(linkedUserId)) continue;
+      const key = linkedUserId || `dom:${domestic.id}`;
+      if (byKey.has(key)) continue;
+      byKey.set(key, buildExecutiveDomesticStaffRow(db, {
+        userId: linkedUserId || null,
+        displayName: domestic.staff_name,
+        employeeNo: domestic.employee_no,
+        domesticProfile: domestic,
+        currentPeriod,
+        profileOnly: !linkedUserId,
+      }));
+    }
+  }
+
+  const staff = [...byKey.values()].sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+  const executives = [...new Set(staff.map((s) => s.assignedExecutiveLabel).filter(Boolean))].sort();
+
+  return {
+    periodYyyymm: currentPeriod,
+    executives,
+    summary: {
+      staffCount: staff.length,
+      adminManagedCount: staff.filter((s) => !s.hasLogin).length,
+      withLoginCount: staff.filter((s) => s.hasLogin).length,
+      totalMonthlySalaryNgn: staff.reduce((sum, s) => sum + (s.salary?.monthlyAmountNgn || 0), 0),
+      salaryPaidThisMonth: staff.filter((s) => s.salary?.paidThisMonth).length,
+      actionNeededCount: staff.filter((s) => s.paymentHealth !== 'on_track').length,
+    },
+    staff,
+  };
+}
+
+function buildExecutiveDomesticStaffRow(db, input) {
+  const {
+    userId,
+    displayName,
+    employeeNo,
+    domesticProfile,
+    fallbackDesignation,
+    fallbackLocation,
+    currentPeriod,
+    profileOnly = false,
+  } = input;
+  const domestic = domesticProfile || null;
+  const domesticProfileId = domestic?.id || null;
+  const assignedExecutive = domestic?.assigned_executive || null;
+  const assignedExecutiveLabel = executiveDisplayLabel(assignedExecutive);
+  const monthlyAmountNgn = domestic?.salary_amount_ngn != null
+    ? Math.round(Number(domestic.salary_amount_ngn) || 0)
+    : null;
+
+  let lastPaidPeriod = null;
+  let paidThisMonth = false;
+  let pendingPayment = null;
+  if (hrTableExists(db, 'hr_executive_payments') && (domesticProfileId || displayName)) {
+    const payments = domesticProfileId
+      ? db
+          .prepare(
+            `SELECT * FROM hr_executive_payments
+             WHERE payee_name = ? OR (source_kind = 'domestic_staff' AND source_id = ?)
+             ORDER BY COALESCE(paid_at_iso, updated_at_iso, created_at_iso) DESC LIMIT 8`
+          )
+          .all(displayName, domesticProfileId)
+      : db
+          .prepare(
+            `SELECT * FROM hr_executive_payments WHERE payee_name = ? ORDER BY COALESCE(paid_at_iso, updated_at_iso, created_at_iso) DESC LIMIT 8`
+          )
+          .all(displayName);
+    const paidRows = payments.filter((p) => String(p.status).toLowerCase() === 'paid');
+    if (paidRows[0]?.period_yyyymm) lastPaidPeriod = paidRows[0].period_yyyymm;
+    paidThisMonth = paidRows.some((p) => String(p.period_yyyymm || '') === currentPeriod);
+    const pending = payments.find((p) => !['paid', 'cancelled', 'rejected'].includes(String(p.status || '').toLowerCase()));
+    if (pending) {
+      pendingPayment = {
+        amountNgn: Math.round(Number(pending.amount_ngn) || 0),
+        status: pending.status,
+        statusLabel: familyFeeStatusLabel(pending.status),
+        periodYyyymm: pending.period_yyyymm,
+      };
+    }
+  }
+
+  let paymentHealth = 'on_track';
+  if (!domesticProfileId || domestic?.status !== 'active') paymentHealth = 'setup_incomplete';
+  else if (!paidThisMonth || pendingPayment) paymentHealth = 'action_needed';
+
+  return {
+    userId: userId || null,
+    displayName: String(displayName || '').trim(),
+    employeeNo: employeeNo || domestic?.employee_no || null,
+    domesticProfileId,
+    profileOnly,
+    hasLogin: Boolean(userId),
+    designation: domestic?.designation || fallbackDesignation || null,
+    workLocation: domestic?.work_location || fallbackLocation || null,
+    assignedExecutive,
+    assignedExecutiveLabel,
+    executiveEmployerLine: assignedExecutiveLabel ? `Employed by ${assignedExecutiveLabel}` : 'Executive household staff',
+    salary: monthlyAmountNgn != null
+      ? {
+          monthlyAmountNgn,
+          lastPaidPeriod,
+          paidThisMonth,
+          statusLabel: paidThisMonth ? 'Paid this month' : domestic?.status === 'active' ? 'Due this month' : String(domestic?.status || 'inactive'),
+        }
+      : null,
+    pendingPayment,
+    paymentHealth,
+    staffProfilePath: userId ? `/hr/employees/${encodeURIComponent(userId)}` : null,
+  };
+}
 
 export function getExecutiveBenefitsDashboard(db) {
   const pendingSchoolFees = hrTableExists(db, 'hr_chairman_school_fees')

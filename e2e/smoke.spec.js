@@ -68,8 +68,8 @@ test.describe('Authenticated app flows', () => {
 
   test('invalid credentials stay on sign-in screen', async ({ page }) => {
     await page.goto('/');
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('wrong-password');
+    await page.locator('#login-username').fill('admin');
+    await page.locator('#login-password').fill('wrong-password');
     await page.getByRole('button', { name: /enter workspace/i }).click();
     await expect(page.getByText(/invalid username or password/i)).toBeVisible();
   });

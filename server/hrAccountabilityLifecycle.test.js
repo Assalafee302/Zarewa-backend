@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import crypto from 'node:crypto';
-import { acquireIntegrationHarness } from './testIntegrationHarness.js';
+import { acquireIntegrationHarness, isMysqlAvailableForTests, resolveTestActor, isoNow } from './testIntegrationHarness.js';
 import { createIncident, escalateIncidentMemo } from './incidentOps.js';
 import {
   upsertCaseResponsibility,
@@ -22,7 +22,7 @@ import {
   listRecoverySchedulesForCase,
   listRecoverySchedulesForUser,
 } from './hrIncidentRecoveryOps.js';
-import { buildIncidentAuditPack } from './incidentAuditPackOps.js';
+import { buildIncidentAuditPack, exportIncidentAuditPackPdf } from './incidentAuditPackOps.js';
 import {
   computePayrollRun,
   createPayrollRun,
@@ -31,7 +31,6 @@ import {
 } from './hrOps.js';
 import { recordAssetCustodyEvent, recordGatePassEvent } from './assetCustodyOps.js';
 
-const ACTOR = { id: 'admin', displayName: 'Admin', username: 'admin' };
 const LOSS_NGN = 700_000;
 const ASSET_ID = 'PUMP-FACT-002';
 
@@ -84,6 +83,16 @@ function fourPartyMap(staffIds) {
   }));
 }
 
+function issueCaseLettersForClosure(db, caseId) {
+  const detail = getDisciplineCase(db, caseId);
+  for (const letterId of detail?.relatedLetterIds || []) {
+    db.prepare(`UPDATE hr_employment_letters SET status = 'issued', reference_number = ? WHERE id = ?`).run(
+      `REF-${letterId}`,
+      letterId
+    );
+  }
+}
+
 function uniquePeriod() {
   const d = new Date();
   const y = d.getFullYear();
@@ -91,15 +100,17 @@ function uniquePeriod() {
   return `${y}${String(m).padStart(2, '0')}`;
 }
 
-describe('HR accountability full lifecycle simulation', () => {
+describe.skipIf(!isMysqlAvailableForTests())('HR accountability full lifecycle simulation', () => {
   let app;
   let db;
   let staffIds;
+  let ACTOR;
 
   beforeAll(async () => {
     const harness = acquireIntegrationHarness();
     app = harness.app;
     db = harness.db;
+    ACTOR = resolveTestActor(db);
     staffIds = ensureStaffPool(db, 4);
     await request(app).post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
   });
@@ -213,10 +224,17 @@ describe('HR accountability full lifecycle simulation', () => {
 
       const letterEvents = db
         .prepare(
-          `SELECT COUNT(*) AS c FROM hr_discipline_case_events WHERE case_id = ? AND event_kind = 'letter_issued'`
+          `SELECT COUNT(*) AS c FROM hr_discipline_events WHERE case_id = ? AND event_kind = 'letter_generated'`
         )
         .get(c);
       expect(letterEvents.c).toBeGreaterThanOrEqual(4);
+
+      const recoveryLetters = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM hr_employment_letters WHERE source_record_id = ? AND letter_kind = 'salary_recovery'`
+        )
+        .get(c);
+      expect(recoveryLetters.c).toBe(4);
     });
   });
 
@@ -289,6 +307,7 @@ describe('HR accountability full lifecycle simulation', () => {
         { userId: staffIds[0], role: 'custodian', responsibilityWeight: 100, contributionType: 'negligence' },
       ]);
       applyDecisionActions(db, ACTOR, c, 'salary_deduction');
+      issueCaseLettersForClosure(db, c);
 
       expect(assertCaseClosureReady(db, c).ok).toBe(true);
 
@@ -336,22 +355,30 @@ describe('HR accountability full lifecycle simulation', () => {
       expect(result.pack.registry).toBeTruthy();
       expect(result.pack.responsibility?.length).toBe(4);
       expect(result.pack.recoverySchedules?.length).toBe(4);
+
+      const pdf = exportIncidentAuditPackPdf(db, created.caseRegistryId || created.registryId);
+      expect(pdf.ok).toBe(true);
+      expect(pdf.pdf?.length).toBeGreaterThan(100);
+      expect(String(pdf.filename || '')).toMatch(/investigation-.*\.pdf$/);
     });
   });
 
   describe('7 — Incident memo escalation', () => {
     it('creates discipline case + registry without legacy profile JSON', () => {
       const memoId = `HRINC-lifecycle-${crypto.randomBytes(4).toString('hex')}`;
+      const now = isoNow();
       db.prepare(
         `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
-         VALUES (?,?,?,?,?,?, 'open', datetime('now'), datetime('now'))`
+         VALUES (?,?,?,?,?,?, 'open', ?, ?)`
       ).run(
         memoId,
         'KD',
         staffIds[0],
         ACTOR.id,
-        new Date().toISOString().slice(0, 10),
-        'Storekeeper failed to report missing pump during shift handover'
+        now.slice(0, 10),
+        'Storekeeper failed to report missing pump during shift handover',
+        now,
+        now
       );
 
       const esc = escalateIncidentMemo(db, memoId, ACTOR, {});
@@ -480,8 +507,17 @@ describe('HR accountability full lifecycle simulation', () => {
       expect(audit.ok).toBe(true);
       expect(audit.pack.responsibility.length).toBe(4);
 
+      issueCaseLettersForClosure(db, caseId);
       expect(assertCaseClosureReady(db, caseId).ok).toBe(true);
       expect(patchDisciplineCase(db, ACTOR, caseId, { action: 'close' }).ok).toBe(true);
+
+      const op = db.prepare(`SELECT status FROM operational_incidents WHERE id = ?`).get(step1.id);
+      expect(op?.status).toBe('closed');
+
+      const opReg = db
+        .prepare(`SELECT status FROM incident_registry WHERE source_id = ? AND incident_kind = 'operational'`)
+        .get(step1.id);
+      expect(opReg?.status).toBe('closed');
 
       const orphanOps = db
         .prepare(`SELECT COUNT(*) AS c FROM operational_incidents WHERE id = ? AND registry_id IS NOT NULL`)

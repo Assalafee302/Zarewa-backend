@@ -12,7 +12,6 @@ import {
   hrPhase2TablesReady,
   listHrAbsenceReports,
   listHrExitClearance,
-  listHrOvertimeRequests,
 } from './hrPhase2Ops.js';
 import { listHrTransferRequests } from './hrTransferRequests.js';
 import {
@@ -50,7 +49,6 @@ export const HR_REPORT_CATALOG = [
   { id: 'attendance-report', category: 'attendance', label: 'Attendance report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'userId', 'fromIso', 'toIso', 'status'] },
   { id: 'late-coming', category: 'attendance', label: 'Late coming report', csv: true, xlsx: true, pdf: true, filters: ['branch', 'fromIso', 'toIso'] },
   { id: 'absence-reports', category: 'attendance', label: 'Absence report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'userId', 'fromIso', 'toIso', 'status'] },
-  { id: 'overtime', category: 'attendance', label: 'Overtime report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'userId', 'fromIso', 'toIso', 'status'] },
   { id: 'leave-balance', category: 'leave', label: 'Leave balance report', csv: true, xlsx: true, pdf: true, priority: true, filters: ['branch', 'userId', 'periodYyyymm'] },
   { id: 'leave-history', category: 'leave', label: 'Leave history report', csv: true, xlsx: true, pdf: true, filters: ['branch', 'fromIso', 'toIso', 'status'] },
   { id: 'payroll-summary', category: 'payroll', label: 'Payroll summary', csv: true, xlsx: true, pdf: true, priority: true, filters: ['periodYyyymm'], sensitive: true },
@@ -91,7 +89,6 @@ export const LEGACY_EXPORT_KIND_MAP = {
   'training-expiry': 'training-expiry',
   'engagement-trends': 'engagement-trends',
   'absence-reports': 'absence-reports',
-  overtime: 'overtime',
   'exit-clearance': 'exit-clearance',
   'property-return': 'property-return',
   'promotion-due': 'promotion-due',
@@ -307,27 +304,6 @@ function runAbsenceReports(db, scope, filters, opts) {
     { key: 'reason', label: 'Reason' },
   ];
   return wrapResult('absence-reports', 'Absence Report', cols, rows, filters, opts.actor);
-}
-
-function runOvertime(db, scope, filters, opts) {
-  if (!hrPhase2TablesReady(db)) return { ok: false, error: 'Overtime module not available.' };
-  const rows = listHrOvertimeRequests(db, scope, filters).map((r) => ({
-    displayName: r.displayName,
-    branchId: r.branchId || '',
-    workDateIso: r.workDateIso,
-    calculatedHours: r.calculatedHours,
-    eligibleOvertimeHours: r.eligibleOvertimeHours,
-    status: r.status,
-  }));
-  const cols = [
-    { key: 'displayName', label: 'Staff' },
-    { key: 'branchId', label: 'Branch' },
-    { key: 'workDateIso', label: 'Date' },
-    { key: 'calculatedHours', label: 'Hours Worked' },
-    { key: 'eligibleOvertimeHours', label: 'OT Hours' },
-    { key: 'status', label: 'Status' },
-  ];
-  return wrapResult('overtime', 'Overtime Report', cols, rows, filters, opts.actor);
 }
 
 function runLeaveBalance(db, scope, filters, opts) {
@@ -953,7 +929,6 @@ const RUNNERS = {
   'attendance-report': runAttendanceReport,
   'late-coming': runLateComing,
   'absence-reports': runAbsenceReports,
-  overtime: runOvertime,
   'leave-balance': runLeaveBalance,
   'leave-history': runLeaveHistory,
   'payroll-summary': runPayrollSummary,

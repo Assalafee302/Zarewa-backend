@@ -316,7 +316,27 @@ export const ROLE_DEFINITIONS = {
   },
   ceo: {
     label: 'Chief Executive Officer',
-    permissions: ['exec.dashboard.view', 'dashboard.view', 'office.use', 'reports.view', 'notices.manage'],
+    permissions: [
+      'exec.dashboard.view',
+      'dashboard.view',
+      'office.use',
+      'reports.view',
+      'notices.manage',
+      'hq.view_all_branches',
+      ...HR_ROLE_PERMISSION_BUNDLES.executiveScholarshipDomestic,
+    ],
+  },
+  chairman: {
+    label: 'Chairman',
+    permissions: [
+      'exec.dashboard.view',
+      'dashboard.view',
+      'office.use',
+      'reports.view',
+      'notices.manage',
+      'hq.view_all_branches',
+      ...HR_ROLE_PERMISSION_BUNDLES.executiveScholarshipDomestic,
+    ],
   },
   viewer: {
     label: 'Read-only viewer',
@@ -682,6 +702,7 @@ export const MANAGEMENT_REPORTS_VIEWER_ROLE_KEYS = new Set([
   'admin',
   'md',
   'ceo',
+  'chairman',
   'sales_manager',
   'finance_manager',
 ]);
@@ -699,7 +720,7 @@ export function userMayViewManagementReports(user) {
 
 export function canUseAllBranchesRollup(user) {
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
-  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo';
+  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo' || roleKey === 'chairman';
 }
 
 /** Only these roles may PATCH without a prior second-party approval token. */

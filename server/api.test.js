@@ -1527,6 +1527,39 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const after = await agent.get('/api/bootstrap');
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'EXPENSE')).toBe(true);
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'TREASURY_TRANSFER')).toBe(true);
+
+    const batchId = transfer.body.batchId;
+    expect(batchId).toBeTruthy();
+
+    const updated = await agent.patch(`/api/treasury/transfer/${encodeURIComponent(batchId)}`).send({
+      fromId: from.id,
+      toId: to.id,
+      amountNgn: 12_000,
+      reference: 'Float sweep corrected',
+      dateISO: '2026-03-29',
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.ok).toBe(true);
+
+    const afterUpdate = await agent.get('/api/bootstrap');
+    const updatedMoves = afterUpdate.body.treasuryMovements.filter(
+      (m) => m.sourceKind === 'TREASURY_TRANSFER' && m.sourceId === batchId
+    );
+    expect(updatedMoves).toHaveLength(2);
+    expect(updatedMoves.some((m) => m.type === 'INTERNAL_TRANSFER_OUT' && m.amountNgn === -12_000)).toBe(
+      true
+    );
+
+    const removed = await agent.delete(`/api/treasury/transfer/${encodeURIComponent(batchId)}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body.ok).toBe(true);
+
+    const afterDelete = await agent.get('/api/bootstrap');
+    expect(
+      afterDelete.body.treasuryMovements.some(
+        (m) => m.sourceKind === 'TREASURY_TRANSFER' && m.sourceId === batchId
+      )
+    ).toBe(false);
   });
 
   it('POST /api/payment-requests and /decision review the approval flow', async () => {

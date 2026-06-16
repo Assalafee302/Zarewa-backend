@@ -26,6 +26,8 @@ describe('hrExecutiveBenefitsOps permissions', () => {
 
   it('executive API paths allowed without main HR workspace', () => {
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/executive/dashboard', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/executive/family-dashboard', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/executive/domestic-dashboard', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/executive/beneficiaries', { teamUser: true })).toBe(true);
     expect(permViewExecutive(md)).toBe(true);
     expect(permViewExecutive(branchManager)).toBe(false);

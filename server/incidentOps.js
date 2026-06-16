@@ -11,6 +11,7 @@ import {
   syncRegistryFromDisciplineCase,
   syncRegistryFromMaterialIncident,
   syncRegistryFromOperationalIncident,
+  upsertCaseResponsibility,
   upsertIncidentRegistry,
 } from './hrAccountabilityOps.js';
 import {
@@ -35,6 +36,29 @@ const OPERATIONAL_TYPE_ALIASES = {
 function normalizeOperationalType(raw) {
   const t = String(raw || 'missing_asset').trim();
   return OPERATIONAL_TYPE_ALIASES[t] || t;
+}
+
+function normalizeInvolvedParties(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p) => ({
+      userId: String(p?.userId || '').trim(),
+      role: String(p?.role || 'other').trim(),
+      responsibilityWeight: Number(p?.responsibilityWeight ?? p?.responsibility_weight),
+      contributionType: String(p?.contributionType || p?.contribution_type || 'negligence').trim(),
+      note: String(p?.note || '').trim() || null,
+    }))
+    .filter((p) => p.userId);
+}
+
+function seedCaseResponsibilityFromParties(db, actor, caseId, payload) {
+  const parties = normalizeInvolvedParties(payload?.involvedParties);
+  if (!parties.length) return null;
+  return upsertCaseResponsibility(db, actor, caseId, parties);
+}
+
+function involvedStaffIdsFromParties(parties) {
+  return parties.map((p) => p.userId).filter(Boolean);
 }
 
 export function createPositivePerformanceRecord(db, payload, actor, opts = {}) {
@@ -138,6 +162,8 @@ export function createOperationalIncident(db, payload, actor, opts = {}) {
 
   let caseId = null;
   let caseRegistryId = null;
+  let responsibilitySeeded = false;
+  const involvedParties = normalizeInvolvedParties(payload.involvedParties);
   const openCase = payload.createDisciplineCase !== false && lossNgn > 0 && userId;
   if (openCase) {
     const dc = createDisciplineCase(db, actor, {
@@ -155,11 +181,17 @@ export function createOperationalIncident(db, payload, actor, opts = {}) {
         location: payload.location || null,
         shift: payload.shift || null,
         title: payload.title || null,
-        involvedStaffIds: Array.isArray(payload.involvedStaffIds) ? payload.involvedStaffIds : [],
+        involvedStaffIds: involvedParties.length
+          ? involvedStaffIdsFromParties(involvedParties)
+          : Array.isArray(payload.involvedStaffIds)
+            ? payload.involvedStaffIds
+            : [],
       },
     });
     if (dc.ok) {
       caseId = dc.id;
+      const seed = seedCaseResponsibilityFromParties(db, actor, caseId, { involvedParties });
+      responsibilitySeeded = Boolean(seed?.ok);
       const sr = syncRegistryFromDisciplineCase(db, caseId);
       caseRegistryId = sr.ok ? sr.id : null;
       if (reg.ok && reg.id && caseRegistryId) {
@@ -181,6 +213,7 @@ export function createOperationalIncident(db, payload, actor, opts = {}) {
     registryId: reg.ok ? reg.id : null,
     caseId,
     caseRegistryId,
+    responsibilitySeeded,
     incidentKind: 'operational',
     status: 'open',
     incident: db.prepare(`SELECT * FROM operational_incidents WHERE id = ?`).get(id),
@@ -195,8 +228,18 @@ export function createIncident(db, payload, actor, opts = {}) {
   }
 
   if (category === 'hr' || category === 'discipline') {
-    const r = createDisciplineCase(db, actor, payload);
+    const involvedParties = normalizeInvolvedParties(payload.involvedParties);
+    const casePayload = { ...payload };
+    if (involvedParties.length) {
+      const prevMeta = payload.meta && typeof payload.meta === 'object' ? payload.meta : {};
+      casePayload.meta = {
+        ...prevMeta,
+        involvedStaffIds: involvedStaffIdsFromParties(involvedParties),
+      };
+    }
+    const r = createDisciplineCase(db, actor, casePayload);
     if (!r.ok) return r;
+    const seed = seedCaseResponsibilityFromParties(db, actor, r.id, { involvedParties });
     const reg = syncRegistryFromDisciplineCase(db, r.id);
     const c = getDisciplineCase(db, r.id);
     return {
@@ -206,6 +249,7 @@ export function createIncident(db, payload, actor, opts = {}) {
       sourceId: r.id,
       caseId: r.id,
       caseNumber: r.caseNumber,
+      responsibilitySeeded: Boolean(seed?.ok),
       status: c?.status || 'open',
       incident: c,
     };
@@ -257,6 +301,63 @@ export function getIncident(db, registryId) {
 export function listIncidents(db, scope, filters = {}) {
   const rows = listIncidentRegistry(db, scope, filters);
   return { ok: true, incidents: rows };
+}
+
+export function listPerformanceRecognitions(db, scope, filters = {}) {
+  if (!hrTableExists(db, 'hr_performance_recognitions')) {
+    return { ok: true, recognitions: [] };
+  }
+  const params = [];
+  let sql = `
+    SELECT
+      p.id,
+      p.user_id AS userId,
+      p.branch_id AS branchId,
+      p.metric_json AS metricJson,
+      p.summary,
+      p.bonus_eligible AS bonusEligible,
+      p.registry_id AS registryId,
+      p.created_at_iso AS createdAtIso,
+      p.created_by_user_id AS createdByUserId,
+      u.display_name AS staffDisplayName
+    FROM hr_performance_recognitions p
+    LEFT JOIN app_users u ON u.id = p.user_id
+    WHERE 1=1
+  `;
+  if (!scope.viewAll && scope.branchId) {
+    sql += ` AND p.branch_id = ?`;
+    params.push(String(scope.branchId).trim());
+  }
+  const userId = String(filters.userId || '').trim();
+  if (userId) {
+    sql += ` AND p.user_id = ?`;
+    params.push(userId);
+  }
+  sql += ` ORDER BY p.created_at_iso DESC LIMIT 200`;
+  const rows = db.prepare(sql).all(...params);
+  return {
+    ok: true,
+    recognitions: rows.map((row) => {
+      let metric = {};
+      try {
+        metric = JSON.parse(row.metricJson || '{}');
+      } catch {
+        metric = {};
+      }
+      return {
+        id: row.id,
+        userId: row.userId,
+        branchId: row.branchId,
+        summary: row.summary,
+        bonusEligible: Boolean(row.bonusEligible),
+        registryId: row.registryId,
+        createdAtIso: row.createdAtIso,
+        createdByUserId: row.createdByUserId,
+        staffDisplayName: row.staffDisplayName,
+        metric,
+      };
+    }),
+  };
 }
 
 export { listIncidentRegistry, getIncidentRegistryRow };

@@ -6853,6 +6853,221 @@ export function transferTreasuryFunds(db, payload) {
   }
 }
 
+function treasuryTransferBatchRows(db, batchId) {
+  const bid = String(batchId || '').trim();
+  if (!bid) return [];
+  return db
+    .prepare(
+      `SELECT * FROM treasury_movements
+       WHERE source_kind = 'TREASURY_TRANSFER' AND source_id = ?
+       ORDER BY posted_at_iso, id`
+    )
+    .all(bid);
+}
+
+function assertTreasuryTransferBatchMutable(db, rows) {
+  if (rows.length === 0) return { ok: false, error: 'Transfer not found.' };
+  if (rows.length !== 2) {
+    return { ok: false, error: 'Transfer record is incomplete. Contact support.' };
+  }
+  const types = new Set(rows.map((r) => r.type));
+  if (!types.has('INTERNAL_TRANSFER_OUT') || !types.has('INTERNAL_TRANSFER_IN')) {
+    return { ok: false, error: 'Not a standard internal transfer.' };
+  }
+  for (const row of rows) {
+    if (row.reverses_movement_id) {
+      return { ok: false, error: 'Cannot modify a reversal entry.' };
+    }
+    const reversed = db
+      .prepare(`SELECT id FROM treasury_movements WHERE reverses_movement_id = ?`)
+      .get(row.id);
+    if (reversed) {
+      return { ok: false, error: 'This transfer has already been reversed.' };
+    }
+  }
+  return { ok: true };
+}
+
+function voidTreasuryTransferBatchTx(db, rows) {
+  for (const row of rows) {
+    adjustTreasuryBalanceTx(db, row.treasury_account_id, -roundMoney(row.amount_ngn));
+    db.prepare(`DELETE FROM treasury_movements WHERE id = ?`).run(row.id);
+  }
+}
+
+function insertTreasuryTransferPairTx(db, payload) {
+  const fromId = Number(payload.fromId);
+  const toId = Number(payload.toId);
+  const amountNgn = roundMoney(payload.amountNgn);
+  const batchId = String(payload.batchId || '').trim() || nextTreasuryTransferBatchHumanId(db);
+  const out = insertTreasuryMovementTx(db, {
+    type: 'INTERNAL_TRANSFER_OUT',
+    treasuryAccountId: fromId,
+    amountNgn: -amountNgn,
+    postedAtISO: payload.dateISO,
+    reference: payload.reference || batchId,
+    counterpartyKind: 'INTERNAL',
+    counterpartyId: String(toId),
+    sourceKind: 'TREASURY_TRANSFER',
+    sourceId: batchId,
+    note: payload.reference || 'Internal transfer out',
+    createdBy: payload.createdBy ?? 'Finance',
+    batchId,
+    workspaceBranchId: payload.workspaceBranchId,
+    workspaceViewAll: payload.workspaceViewAll,
+    actor: payload.actor,
+  });
+  const inn = insertTreasuryMovementTx(db, {
+    type: 'INTERNAL_TRANSFER_IN',
+    treasuryAccountId: toId,
+    amountNgn,
+    postedAtISO: payload.dateISO,
+    reference: payload.reference || batchId,
+    counterpartyKind: 'INTERNAL',
+    counterpartyId: String(fromId),
+    sourceKind: 'TREASURY_TRANSFER',
+    sourceId: batchId,
+    note: payload.reference || 'Internal transfer in',
+    createdBy: payload.createdBy ?? 'Finance',
+    batchId,
+    workspaceBranchId: payload.workspaceBranchId,
+    workspaceViewAll: payload.workspaceViewAll,
+    actor: payload.actor,
+  });
+  return { batchId, movements: [out, inn] };
+}
+
+/**
+ * Remove a paired internal treasury transfer and undo its balance impact.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} batchId
+ * @param {object|null} actor
+ * @param {{ workspaceBranchId?: string, workspaceViewAll?: boolean, note?: string }} payload
+ */
+export function deleteTreasuryTransfer(db, batchId, actor, payload = {}) {
+  const bid = String(batchId || '').trim();
+  if (!bid) return { ok: false, error: 'Transfer id is required.' };
+
+  const rk = String(actor?.roleKey || '').toLowerCase();
+  if (!['admin', 'md', 'ceo'].includes(rk)) {
+    return { ok: false, error: 'Only Admin, Managing Director, or CEO may delete treasury transfers.' };
+  }
+
+  const rows = treasuryTransferBatchRows(db, bid);
+  const check = assertTreasuryTransferBatchMutable(db, rows);
+  if (!check.ok) return check;
+
+  const outRow = rows.find((r) => r.type === 'INTERNAL_TRANSFER_OUT');
+  const inRow = rows.find((r) => r.type === 'INTERNAL_TRANSFER_IN');
+  if (payload.workspaceBranchId && actor && outRow) {
+    const gate = assertTreasuryAccountForWorkspace(db, outRow.treasury_account_id, {
+      workspaceBranchId: payload.workspaceBranchId,
+      workspaceViewAll: Boolean(payload.workspaceViewAll),
+      user: actor,
+    });
+    if (!gate.ok) return gate;
+  }
+
+  try {
+    const transferDate = String(rows[0]?.posted_at_iso || '').slice(0, 10);
+    assertPeriodOpen(db, transferDate, 'Transfer date');
+    db.transaction(() => {
+      voidTreasuryTransferBatchTx(db, rows);
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury.transfer.delete',
+        entityKind: 'treasury_transfer',
+        entityId: bid,
+        note: payload.note || 'Internal transfer removed',
+        details: {
+          fromId: outRow?.treasury_account_id ?? null,
+          toId: inRow?.treasury_account_id ?? null,
+          amountNgn: Math.abs(roundMoney(outRow?.amount_ngn)),
+        },
+      });
+    })();
+    return { ok: true, batchId: bid };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Replace an existing internal treasury transfer with corrected details (same batch id).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} batchId
+ * @param {object} payload
+ * @param {object|null} actor
+ */
+export function updateTreasuryTransfer(db, batchId, payload, actor) {
+  const bid = String(batchId || '').trim();
+  if (!bid) return { ok: false, error: 'Transfer id is required.' };
+
+  const rows = treasuryTransferBatchRows(db, bid);
+  const check = assertTreasuryTransferBatchMutable(db, rows);
+  if (!check.ok) return check;
+
+  const fromId = Number(payload.fromId);
+  const toId = Number(payload.toId);
+  const amountNgn = roundMoney(payload.amountNgn);
+  if (!fromId || !toId || fromId === toId) {
+    return { ok: false, error: 'Choose two different accounts.' };
+  }
+  if (amountNgn <= 0) return { ok: false, error: 'Transfer amount must be positive.' };
+
+  const fromRow = db.prepare(`SELECT branch_id FROM treasury_accounts WHERE id = ?`).get(fromId);
+  const toRow = db.prepare(`SELECT branch_id FROM treasury_accounts WHERE id = ?`).get(toId);
+  if (!fromRow || !toRow) return { ok: false, error: 'Treasury account not found.' };
+  const fromBranch = String(fromRow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+  const toBranch = String(toRow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+  if (fromBranch !== toBranch) {
+    return {
+      ok: false,
+      error:
+        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use inter-branch lending on Finance → Movements.',
+    };
+  }
+  if (payload.workspaceBranchId && payload.actor) {
+    const gate = assertTreasuryAccountForWorkspace(db, fromId, {
+      workspaceBranchId: payload.workspaceBranchId,
+      workspaceViewAll: Boolean(payload.workspaceViewAll),
+      user: payload.actor,
+    });
+    if (!gate.ok) return gate;
+  }
+
+  try {
+    const oldDate = String(rows[0]?.posted_at_iso || '').slice(0, 10);
+    const newDate = String(payload.dateISO || oldDate).trim() || oldDate;
+    assertPeriodOpen(db, oldDate, 'Transfer date');
+    assertPeriodOpen(db, newDate, 'Transfer date');
+    db.transaction(() => {
+      voidTreasuryTransferBatchTx(db, rows);
+      insertTreasuryTransferPairTx(db, {
+        ...payload,
+        fromId,
+        toId,
+        amountNgn,
+        dateISO: newDate,
+        batchId: bid,
+        actor,
+        createdBy: payload.createdBy ?? actorName(actor),
+      });
+      appendAuditLog(db, {
+        actor,
+        action: 'treasury.transfer.update',
+        entityKind: 'treasury_transfer',
+        entityId: bid,
+        note: payload.reference || 'Internal transfer corrected',
+        details: { fromId, toId, amountNgn, branchId: fromBranch },
+      });
+    })();
+    return { ok: true, batchId: bid };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 export function payPaymentRequest(db, requestID, payload) {
   const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(requestID);
   if (!row) return { ok: false, error: 'Payment request not found.' };

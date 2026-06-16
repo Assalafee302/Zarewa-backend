@@ -25,7 +25,7 @@ function userHasPermission(user, permission) {
 
 function canUseAllBranchesRollup(user) {
   const roleKey = String(user?.roleKey || '').trim().toLowerCase();
-  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo';
+  return roleKey === 'admin' || roleKey === 'md' || roleKey === 'ceo' || roleKey === 'chairman';
 }
 
 /**

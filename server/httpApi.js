@@ -6297,6 +6297,36 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.patch('/api/treasury/transfer/:batchId', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
+    try {
+      const r = write.updateTreasuryTransfer(db, String(req.params.batchId || '').trim(), {
+        ...(req.body || {}),
+        createdBy: req.user.displayName,
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.delete('/api/treasury/transfer/:batchId', requireAuth, (req, res) => {
+    try {
+      const r = write.deleteTreasuryTransfer(db, String(req.params.batchId || '').trim(), req.user, {
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+        note: req.body?.note,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.get('/api/inter-branch-loans', requirePermission('finance.view'), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);

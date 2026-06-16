@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { permissionsForRole } from './auth.js';
 import {
   hrApiPathAllowedWithoutMainWorkspace,
   userCanAccessExecutiveHrModule,
   userCanAccessHrModule,
   userCanAccessMainHrWorkspace,
+  userCanAccessScholarshipDomesticExecutive,
+  userCanManageExecutiveBenefits,
+  userCanManageScholarshipDomesticRegisters,
+  userCanViewExecutiveBenefits,
   userCanViewOrgSensitiveHr,
+  userCanViewScholarshipDomesticRegisters,
   userCanViewStaffCompensation,
 } from './hrPermissions.js';
 
@@ -57,5 +63,37 @@ describe('hrPermissions', () => {
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/team/summary', { teamUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/payroll-runs', { teamUser: true })).toBe(false);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/dashboard', { selfUser: true })).toBe(false);
+  });
+
+  it('CEO and Chairman get scholarship, domestic staff, and executive benefits access', () => {
+    for (const roleKey of ['ceo', 'chairman']) {
+      const user = { id: `USR-${roleKey}`, roleKey, permissions: permissionsForRole(roleKey) };
+      expect(userCanAccessHrModule(user)).toBe(true);
+      expect(userCanAccessMainHrWorkspace(user)).toBe(true);
+      expect(userCanViewExecutiveBenefits(user)).toBe(true);
+      expect(userCanManageExecutiveBenefits(user)).toBe(true);
+      expect(userCanAccessScholarshipDomesticExecutive(user)).toBe(true);
+      expect(userCanViewScholarshipDomesticRegisters(user)).toBe(true);
+      expect(userCanManageScholarshipDomesticRegisters(user)).toBe(true);
+      expect(userCanViewOrgSensitiveHr(user)).toBe(true);
+    }
+  });
+
+  it('executive scholarship API paths allowed without main HR workspace', () => {
+    expect(
+      hrApiPathAllowedWithoutMainWorkspace('/api/hr/staff', {
+        executiveScholarshipDomesticUser: true,
+      })
+    ).toBe(true);
+    expect(
+      hrApiPathAllowedWithoutMainWorkspace('/api/hr/executive/beneficiaries', {
+        executiveScholarshipDomesticUser: true,
+      })
+    ).toBe(true);
+    expect(
+      hrApiPathAllowedWithoutMainWorkspace('/api/hr/payroll-runs', {
+        executiveScholarshipDomesticUser: true,
+      })
+    ).toBe(false);
   });
 });

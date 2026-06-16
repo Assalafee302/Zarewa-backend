@@ -5,22 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { isMysqlAvailableForTests } from './testIntegrationHarness.js';
 import { buildBootstrap } from './bootstrap.js';
 import { buildAiContextForRequest } from './aiAssistContext.js';
 import { redactStaffForAi } from './hrRedaction.js';
 import { workspaceQuickSearch } from './workspaceSearchOps.js';
 
-function mysqlAvailable() {
-  try {
-    const db = createDatabase(':memory:', { seed: false });
-    db.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const mysqlOk = mysqlAvailable();
+const mysqlOk = isMysqlAvailableForTests();
 
 describe.skipIf(!mysqlOk)('HR security', () => {
   let db;
@@ -79,11 +70,19 @@ describe.skipIf(!mysqlOk)('HR security', () => {
   it('workspace search hr_staff hits omit compensation', async () => {
     const sess = await adminAgent.get('/api/session');
     const user = sess.body.session?.user;
+    const staffRow = db
+      .prepare(
+        `SELECT u.display_name FROM app_users u
+         INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+         WHERE u.status = 'active' LIMIT 1`
+      )
+      .get();
+    const q = String(staffRow?.display_name || 'Sales').split(/\s+/)[0];
     const req = {
       user,
       workspaceBranchId: 'BR-KD',
       workspaceViewAll: true,
-      query: { q: 'admin' },
+      query: { q },
     };
     const hits = workspaceQuickSearch(db, req, 20);
     const hrHits = hits.filter((h) => h.kind === 'hr_staff');
@@ -106,13 +105,18 @@ describe.skipIf(!mysqlOk)('HR security', () => {
     if (!prof?.user_id) return;
     const sess = await adminAgent.get('/api/session');
     const user = sess.body.session?.user;
-    const ctx = buildAiContextForRequest(db, {
-      user,
-      workspaceBranchId: 'BR-KD',
-      workspaceViewAll: true,
-      body: { pageContext: { staffUserId: prof.user_id } },
-      messages: [],
-    });
+    const ctx = buildAiContextForRequest(
+      db,
+      {
+        user,
+        workspaceBranchId: 'BR-KD',
+        workspaceViewAll: true,
+      },
+      {
+        mode: 'hr',
+        pageContext: { staffUserId: prof.user_id, pathname: '/hr/employees' },
+      }
+    );
     const text = JSON.stringify(ctx);
     expect(text).not.toMatch(/"baseSalaryNgn":\s*[1-9]/);
   });

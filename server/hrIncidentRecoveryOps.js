@@ -152,9 +152,13 @@ export function createRecoverySchedulesFromCase(db, actor, caseId, opts = {}) {
       );
       schedules.push(mapRecoveryScheduleRow(db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(id)));
     }
-  });
+  })();
 
-  if (!schedules.length) return { ok: false, error: 'No recovery schedules created (check weights and loss amount).' };
+  if (!schedules.length) {
+    const existing = listRecoverySchedulesForCase(db, row.id);
+    if (existing.length) return { ok: true, schedules: existing };
+    return { ok: false, error: 'No recovery schedules created (check weights and loss amount).' };
+  }
 
   return { ok: true, schedules };
 }

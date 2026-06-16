@@ -221,6 +221,27 @@ export function syncRegistryFromOperationalIncident(db, incidentId) {
   return r;
 }
 
+/**
+ * When a discipline case closes, propagate terminal status to linked operational/material sources.
+ */
+export function finalizeLinkedIncidentsOnCaseClose(db, caseId, caseStatus = 'closed') {
+  const row = db.prepare(`SELECT * FROM hr_discipline_cases WHERE id = ?`).get(String(caseId || '').trim());
+  if (!row) return { ok: false, error: 'Case not found.' };
+  const meta = safeJsonParse(row.meta_json, {});
+  const terminalStatus = String(caseStatus || 'closed').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'closed';
+  const now = nowIso();
+  const synced = [];
+
+  const opId = String(meta.operationalIncidentId || '').trim();
+  if (opId && hrTableExists(db, 'operational_incidents')) {
+    db.prepare(`UPDATE operational_incidents SET status = ?, updated_at_iso = ? WHERE id = ?`).run(terminalStatus, now, opId);
+    const sr = syncRegistryFromOperationalIncident(db, opId);
+    if (sr.ok) synced.push({ kind: 'operational', id: opId, registryId: sr.id });
+  }
+
+  return { ok: true, synced };
+}
+
 export function listIncidentRegistry(db, scope, filters = {}) {
   if (!incidentRegistryTableReady(db)) return [];
   let sql = `SELECT * FROM incident_registry WHERE 1=1`;
@@ -351,7 +372,7 @@ export function upsertCaseResponsibility(db, actor, caseId, parties = []) {
         actor?.id || null
       );
     }
-  });
+  })();
   return { ok: true, parties: listCaseResponsibility(db, cid) };
 }
 
@@ -394,6 +415,14 @@ export function assertCaseClosureReady(db, caseId) {
         .all(row.id);
       if (!schedules.length) blockers.push('Active recovery schedules required for deduction decisions with financial impact.');
     }
+    if (parties.length) {
+      const letters = safeJsonParse(row.related_letter_ids_json, []);
+      if (!Array.isArray(letters) || letters.length < parties.length) {
+        blockers.push('Salary recovery letters required for each responsible party before closure.');
+      } else {
+        blockers.push(...letterIssuanceBlockers(db, letters, { parties, letterKind: 'salary_recovery' }));
+      }
+    }
   }
 
   if (decisionType === 'suspension') {
@@ -409,10 +438,62 @@ export function assertCaseClosureReady(db, caseId) {
     const letters = safeJsonParse(row.related_letter_ids_json, []);
     if (!Array.isArray(letters) || !letters.length) {
       blockers.push('At least one linked letter is required for this decision type.');
+    } else {
+      blockers.push(...letterIssuanceBlockers(db, letters, { requireAnyIssued: true }));
     }
   }
 
   return blockers.length ? { ok: false, blockers } : { ok: true, blockers: [] };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} letterIds
+ * @param {{ parties?: object[]; letterKind?: string; requireAnyIssued?: boolean }} opts
+ */
+export function letterIssuanceBlockers(db, letterIds, opts = {}) {
+  const blockers = [];
+  const ids = [...new Set((letterIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return blockers;
+  if (!hrTableExists(db, 'hr_employment_letters')) {
+    blockers.push('Employment letters module not migrated.');
+    return blockers;
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT l.id, l.user_id, l.letter_kind, l.status, l.reference_number, u.display_name AS staffDisplayName
+       FROM hr_employment_letters l
+       LEFT JOIN app_users u ON u.id = l.user_id
+       WHERE l.id IN (${placeholders})`
+    )
+    .all(...ids);
+
+  const letterKind = String(opts.letterKind || '').trim();
+  const parties = Array.isArray(opts.parties) ? opts.parties : [];
+
+  if (letterKind === 'salary_recovery' && parties.length) {
+    for (const p of parties) {
+      const uid = String(p.userId || '').trim();
+      const label = p.staffDisplayName || uid || 'party';
+      const letter = rows.find((r) => r.user_id === uid && r.letter_kind === 'salary_recovery');
+      if (!letter) {
+        blockers.push(`Salary recovery letter missing for ${label}.`);
+      } else if (String(letter.status) !== 'issued') {
+        blockers.push(`Salary recovery letter for ${label} must be issued (currently ${letter.status}).`);
+      }
+    }
+    return blockers;
+  }
+
+  if (opts.requireAnyIssued) {
+    const anyIssued = rows.some((r) => String(r.status) === 'issued');
+    if (!anyIssued) {
+      blockers.push('At least one linked sanction letter must be issued before closure.');
+    }
+  }
+
+  return blockers;
 }
 
 export function isTerminalIncidentStatus(status) {

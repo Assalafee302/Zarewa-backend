@@ -317,6 +317,26 @@ export function buildHrLetterContent(letterKind, staff, extra = {}) {
       extra.payPeriod ? `Pay period: ${extra.payPeriod}.` : '',
       '', 'Yours faithfully,', 'Human Resources (HQ)',
     ].filter(Boolean),
+    salary_recovery: () => {
+      const total = Number(extra.recoveryTotalNgn || extra.recoveryAmountNgn || 0);
+      const installment = Number(extra.installmentAmountNgn || 0);
+      const months = Number(extra.durationMonths || 12);
+      const fmtTotal = total > 0 ? `NGN ${total.toLocaleString('en-NG')}` : 'as determined by HR';
+      const fmtInstall = installment > 0 ? `NGN ${installment.toLocaleString('en-NG')}` : 'monthly installments';
+      return [
+        COMPANY, '', `Date: ${date}`, '', staffBlock(staff), '',
+        `RE: SALARY RECOVERY — ${extra.caseNumber ? `Case ${extra.caseNumber}` : 'Accountability Matter'}`, '',
+        'Dear ' + name.split(' ')[0] + ',', '',
+        `Following investigation of the matter dated ${extra.incidentDate || extra.effectiveDate || 'recent'}, management has determined your shared responsibility as ${extra.responsibilityRole || 'involved party'} (${extra.responsibilityWeight || '—'}% weight).`,
+        extra.incidentDescription || extra.offenseDescription || 'Details are recorded in the accountability case file.',
+        '',
+        `You are required to repay ${fmtTotal} through payroll deduction of ${fmtInstall} over approximately ${months} month(s), in accordance with company policy and your employment terms.`,
+        extra.assetId ? `Related asset: ${extra.assetId}.` : '',
+        extra.sanction ? `Sanction note: ${extra.sanction}.` : '',
+        '', 'Recovery will commence on the next applicable payroll run unless otherwise agreed in writing.', '',
+        'Yours faithfully,', 'Human Resources (HQ)',
+      ].filter(Boolean);
+    },
   };
 
   const fn = templates[kind];

@@ -1,5 +1,11 @@
 import { expect } from '@playwright/test';
 
+/** HR shell loaded (lazy chunk + subnav). */
+export async function expectHrShell(page, timeout = 45_000) {
+  await expect(page.getByText(/preparing live workspace/i)).toBeHidden({ timeout: 60_000 });
+  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible({ timeout });
+}
+
 export async function signInViaUi(page, username, password) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await page.goto('/');
@@ -13,51 +19,69 @@ export async function signInViaUi(page, username, password) {
       await page.waitForTimeout(400);
     }
   }
-  await page.getByLabel('Username').fill(username);
-  await page.getByLabel('Password').fill(password);
+  await page.locator('#login-username').fill(username);
+  await page.locator('#login-password').fill(password);
   await page.getByRole('button', { name: /enter workspace/i }).click();
   await expect(page.getByRole('navigation', { name: 'Modules' })).toBeVisible({ timeout: 30_000 });
   await acceptRequiredHrPoliciesViaApi(page);
+  await syncCsrfHeader(page);
 }
 
+/** Cookie-authenticated API tests — UI login so session cookies attach to the browser context. */
 export async function signInViaApi(page, username, password) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await page.goto('/');
-    try {
-      await expect(page.getByRole('heading', { name: /open your workspace/i })).toBeVisible({
-        timeout: 15_000,
-      });
-      break;
-    } catch {
-      if (attempt === 2) throw new Error('Login screen did not load (check Vite / module errors).');
-      await page.waitForTimeout(400);
-    }
-  }
+  await signInViaUi(page, username, password);
+}
 
-  const loginRes = await page.request.post('/api/session/login', { data: { username, password } });
-  const loginBody = await loginRes.text();
-  expect(loginRes.status(), loginBody).toBe(200);
-
-  await page.goto('/');
-  await expect(page.getByRole('navigation', { name: 'Modules' })).toBeVisible({ timeout: 30_000 });
-
+export async function syncCsrfHeader(page) {
   const cookies = await page.context().cookies();
   const csrf = cookies.find((c) => c.name === 'zarewa_csrf')?.value;
-  expect(csrf, 'CSRF cookie after API login').toBeTruthy();
-  await page.context().setExtraHTTPHeaders({ 'x-csrf-token': csrf });
+  if (csrf) await page.context().setExtraHTTPHeaders({ 'x-csrf-token': csrf });
+}
 
-  for (let i = 0; i < 25; i += 1) {
-    const sess = await page.request.get('/api/session');
-    if (sess.status() === 200) break;
-    if (i === 24) expect(sess.status(), await sess.text()).toBe(200);
-    await page.waitForTimeout(150);
+/**
+ * Same-origin fetch from the browser context (session cookies always included).
+ * Use for HR API tests instead of page.request when cookie auth must match the UI session.
+ */
+export async function pageFetch(page, path, init = {}) {
+  const method = String(init.method || 'GET').toUpperCase();
+  const cookies = await page.context().cookies();
+  const csrf = cookies.find((c) => c.name === 'zarewa_csrf')?.value || '';
+  const extraHeaders = { ...(init.headers || {}) };
+  if (csrf && method !== 'GET' && method !== 'HEAD') {
+    extraHeaders['X-CSRF-Token'] = csrf;
   }
+  return page.evaluate(
+    async ({ url, method, extraHeaders, body }) => {
+      const r = await fetch(url, {
+        method,
+        credentials: 'include',
+        headers: {
+          ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+          ...extraHeaders,
+        },
+        body: body != null ? JSON.stringify(body) : undefined,
+      });
+      const buf = new Uint8Array(await r.arrayBuffer());
+      return {
+        status: r.status,
+        headers: Object.fromEntries(r.headers.entries()),
+        body: Array.from(buf),
+        text: new TextDecoder().decode(buf),
+      };
+    },
+    { url: path, method, extraHeaders, body: init.body ?? null }
+  );
+}
 
-  await acceptRequiredHrPoliciesViaApi(page);
-
-  const cookiesAfter = await page.context().cookies();
-  const csrfAfter = cookiesAfter.find((c) => c.name === 'zarewa_csrf')?.value;
-  if (csrfAfter) await page.context().setExtraHTTPHeaders({ 'x-csrf-token': csrfAfter });
+export async function pageFetchJson(page, path, init = {}) {
+  const res = await pageFetch(page, path, init);
+  let json = null;
+  try {
+    json = res.text ? JSON.parse(res.text) : null;
+  } catch {
+    json = null;
+  }
+  return { ...res, json };
 }
 
 /** Clear session via API + cookie jar (for multi-user flows in one browser context). */
@@ -104,7 +128,7 @@ export async function acceptRequiredHrPoliciesViaApi(page, signatureName = 'Play
   }
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Modules' })).toBeVisible({ timeout: 30_000 });
+  await syncCsrfHeader(page);
   const boot = await page.request.get('/api/bootstrap');
   expect(boot.status(), await boot.text()).toBe(200);
 }
-

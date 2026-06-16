@@ -5,19 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { isMysqlAvailableForTests } from './testIntegrationHarness.js';
 import { hrReviewRequest } from './hrOps.js';
 
-function mysqlAvailable() {
-  try {
-    const db = createDatabase(':memory:', { seed: false });
-    db.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const mysqlOk = mysqlAvailable();
+const mysqlOk = isMysqlAvailableForTests();
 
 describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
   let db;
@@ -75,7 +66,8 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
     const pdf = await agent.get(`/api/hr/payroll-runs/${runId}/export/payslips-pdf`);
     expect(pdf.status).toBe(200);
     expect(String(pdf.headers['content-type'] || '')).toContain('application/pdf');
-    expect(pdf.text.slice(0, 5)).toBe('%PDF-');
+    const pdfBuf = Buffer.isBuffer(pdf.body) ? pdf.body : Buffer.from(pdf.text || '');
+    expect(pdfBuf.slice(0, 5).toString('ascii')).toBe('%PDF-');
 
     const run = await agent.get(`/api/hr/payroll-runs/${runId}`);
     expect(run.status).toBe(200);
@@ -113,12 +105,15 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
   });
 
   it('hrReviewRequest requires reasonCode and note', () => {
+    const staff = db.prepare(`SELECT id FROM app_users WHERE username = 'sales.staff' LIMIT 1`).get();
+    const userId = staff?.id || db.prepare(`SELECT id FROM app_users LIMIT 1`).get()?.id;
+    expect(userId).toBeTruthy();
     const actor = { id: 'USR-TEST', displayName: 'Test', permissions: ['*'] };
     const now = new Date().toISOString();
     db.prepare(
       `INSERT INTO hr_requests (id, user_id, branch_id, kind, status, title, created_at_iso)
-       VALUES ('HRR-TEST', 'USR-1', 'BR-KD', 'leave', 'hr_review', 'Test leave', ?)`
-    ).run(now);
+       VALUES ('HRR-TEST', ?, 'BR-KD', 'leave', 'hr_review', 'Test leave', ?)`
+    ).run(userId, now);
     const bad = hrReviewRequest(db, 'HRR-TEST', actor, true, 'ok', '');
     expect(bad.ok).toBe(false);
     const good = hrReviewRequest(db, 'HRR-TEST', actor, true, 'Approved for annual leave', 'policy');

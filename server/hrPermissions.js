@@ -4,6 +4,10 @@
  */
 
 import { userHasPermission } from './auth.js';
+import {
+  isDomesticStaff,
+  isScholarshipBeneficiary,
+} from '../shared/lib/hrStaffCohorts.js';
 
 export { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 
@@ -169,6 +173,38 @@ export const HR_SELF_SERVICE_API_PATTERNS = [
   /^\/payroll-runs\/[^/]+\/payslips\/[^/]+\/pdf$/,
   /^\/api\/hr\/executive(\/|$)/,
   /^\/executive(\/|$)/,
+  /^\/api\/hr\/chairman(\/|$)/,
+  /^\/chairman(\/|$)/,
+  /^\/api\/hr\/beneficiaries$/,
+  /^\/beneficiaries$/,
+];
+
+/** Executive benefits leaders — scholarship registers, domestic staff, payments (without full branch HR). */
+export const HR_EXECUTIVE_SCHOLARSHIP_DOMESTIC_API_PATTERNS = [
+  /^\/api\/hr\/staff$/,
+  /^\/staff$/,
+  /^\/api\/hr\/staff\/register$/,
+  /^\/staff\/register$/,
+  /^\/api\/hr\/staff\/[^/]+$/,
+  /^\/staff\/[^/]+$/,
+  /^\/api\/hr\/staff\/[^/]+\/documents(\/|$)/,
+  /^\/staff\/[^/]+\/documents(\/|$)/,
+  /^\/api\/hr\/staff\/[^/]+\/passport-photo$/,
+  /^\/staff\/[^/]+\/passport-photo$/,
+  /^\/api\/hr\/staff\/[^/]+\/audit-events$/,
+  /^\/staff\/[^/]+\/audit-events$/,
+  /^\/api\/hr\/departments$/,
+  /^\/departments$/,
+  /^\/api\/hr\/designations$/,
+  /^\/designations$/,
+  /^\/api\/hr\/requests(\/|$)/,
+  /^\/requests(\/|$)/,
+  /^\/api\/hr\/reports(\/|$)/,
+  /^\/reports(\/|$)/,
+  /^\/api\/hr\/executive(\/|$)/,
+  /^\/executive(\/|$)/,
+  /^\/api\/hr\/chairman(\/|$)/,
+  /^\/chairman(\/|$)/,
   /^\/api\/hr\/beneficiaries$/,
   /^\/beneficiaries$/,
 ];
@@ -187,8 +223,6 @@ export const HR_TEAM_API_PATTERNS = [
   /^\/leave\/calendar$/,
   /^\/api\/hr\/absence-reports(\/|$)/,
   /^\/absence-reports(\/|$)/,
-  /^\/api\/hr\/overtime-requests(\/|$)/,
-  /^\/overtime-requests(\/|$)/,
   /^\/api\/hr\/attendance(\/|$)/,
   /^\/attendance(\/|$)/,
   /^\/api\/hr\/feedback$/,
@@ -230,12 +264,61 @@ export function userHasHrSelfServiceOnly(user) {
 
 /**
  * @param {string} path
- * @param {{ teamUser?: boolean; selfUser?: boolean }} opts
+ * @param {{ teamUser?: boolean; selfUser?: boolean; executiveScholarshipDomesticUser?: boolean }} opts
  */
 export function hrApiPathAllowedWithoutMainWorkspace(path, opts = {}) {
   const patterns = [...HR_SELF_SERVICE_API_PATTERNS];
   if (opts.teamUser) patterns.push(...HR_TEAM_API_PATTERNS);
+  if (opts.executiveScholarshipDomesticUser) {
+    patterns.push(...HR_EXECUTIVE_SCHOLARSHIP_DOMESTIC_API_PATTERNS);
+  }
   return patterns.some((p) => p.test(path));
+}
+
+/** @param {string | null | undefined} payrollGroup */
+export function isScholarshipOrDomesticPayrollGroup(payrollGroup) {
+  return isScholarshipBeneficiary(payrollGroup) || isDomesticStaff(payrollGroup);
+}
+
+/** View scholarship / domestic registers and executive benefits. */
+export function userCanViewScholarshipDomesticRegisters(user) {
+  if (hrUserHas(user, '*')) return true;
+  if (userCanViewExecutiveBenefits(user)) return true;
+  return hrUserHas(user, 'hr.directory.view') || hrUserHas(user, 'hr.staff.manage');
+}
+
+/** Manage scholarship / domestic staff files and executive benefits payments. */
+export function userCanManageScholarshipDomesticRegisters(user) {
+  if (hrUserHas(user, '*')) return true;
+  if (userCanManageExecutiveBenefits(user)) return true;
+  return hrUserHas(user, 'hr.staff.manage');
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function staffUserIsScholarshipOrDomestic(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return false;
+  try {
+    const row = db.prepare(`SELECT payroll_group FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+    return isScholarshipOrDomesticPayrollGroup(row?.payroll_group);
+  } catch {
+    return false;
+  }
+}
+
+/** CEO / Chairman — scholarship registers, domestic staff, executive benefits (may omit full branch HR). */
+export function userCanAccessScholarshipDomesticExecutive(user) {
+  if (hrUserHas(user, '*')) return true;
+  if (!userCanViewExecutiveBenefits(user)) return false;
+  return (
+    hrUserHas(user, 'hr.chairman.manage') ||
+    hrUserHas(user, 'hr.executive.benefits.manage') ||
+    hrUserHas(user, 'hr.directory.view') ||
+    hrUserHas(user, 'hr.staff.manage')
+  );
 }
 
 /** @param {object | null | undefined} user */

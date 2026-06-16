@@ -120,6 +120,7 @@ import {
   buildDebtorsRegister,
   clearAccountingRegisterLine,
   createAccountingRegisterLine,
+  updateAccountingRegisterLine,
 } from './accountingSubledgerOps.js';
 import {
   createFixedAsset,
@@ -967,6 +968,20 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[accounting-register-clear]', e);
       return res.status(500).json({ ok: false, error: 'Could not clear register line.' });
+    }
+  });
+
+  app.patch('/api/accounting/register-lines/:lineId', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = updateAccountingRegisterLine(db, req.params.lineId, req.body, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-register-update]', e);
+      return res.status(500).json({ ok: false, error: 'Could not update register line.' });
     }
   });
 

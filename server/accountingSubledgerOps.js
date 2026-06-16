@@ -201,6 +201,55 @@ export function createAccountingRegisterLine(db, body, user) {
 }
 
 /** @param {import('better-sqlite3').Database} db */
+export function updateAccountingRegisterLine(db, lineId, body, user) {
+  ensureAccountingRegisterSchema(db);
+  const id = String(lineId || '').trim();
+  const cur = db.prepare(`SELECT * FROM accounting_register_lines WHERE id = ?`).get(id);
+  if (!cur) return { ok: false, error: 'Register line not found.' };
+  if (cur.status !== 'open') {
+    return { ok: false, error: 'Only open register lines can be edited.' };
+  }
+
+  const partyName = String(body?.partyName ?? cur.party_name ?? '').trim();
+  if (!partyName) return { ok: false, error: 'Party name is required.' };
+  const amountNgn = Math.round(Number(body?.amountNgn ?? cur.amount_ngn) || 0);
+  if (amountNgn <= 0) return { ok: false, error: 'Amount must be greater than zero.' };
+  const asAtDateIso = String(body?.asAtDateIso ?? cur.as_at_date_iso ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asAtDateIso)) {
+    return { ok: false, error: 'Valid as-at date (YYYY-MM-DD) is required.' };
+  }
+
+  db.prepare(
+    `UPDATE accounting_register_lines SET
+      category = ?,
+      party_name = ?,
+      party_ref = ?,
+      branch_id = ?,
+      amount_ngn = ?,
+      as_at_date_iso = ?,
+      description = ?,
+      reference = ?,
+      notes = ?
+    WHERE id = ?`
+  ).run(
+    String(body?.category ?? cur.category ?? 'legacy').trim() || 'legacy',
+    partyName,
+    String(body?.partyRef ?? cur.party_ref ?? '').trim() || null,
+    String(body?.branchId ?? cur.branch_id ?? '').trim() || null,
+    amountNgn,
+    asAtDateIso,
+    String(body?.description ?? cur.description ?? '').trim() || null,
+    String(body?.reference ?? cur.reference ?? '').trim() || null,
+    String(body?.notes ?? cur.notes ?? '').trim() || null,
+    id
+  );
+
+  void user;
+  const row = db.prepare(`SELECT * FROM accounting_register_lines WHERE id = ?`).get(id);
+  return { ok: true, line: mapRegisterRow(row) };
+}
+
+/** @param {import('better-sqlite3').Database} db */
 export function clearAccountingRegisterLine(db, lineId, user) {
   ensureAccountingRegisterSchema(db);
   const id = String(lineId || '').trim();
@@ -424,6 +473,8 @@ function registerToItems(lines) {
         reference: l.reference,
         asAtDateIso: l.asAtDateIso,
         detail: l.description || `Inherited balance (${l.category})`,
+        description: l.description ?? '',
+        notes: l.notes ?? '',
         source: l.source,
         category: l.category,
         isLegacy: true,

@@ -3195,6 +3195,8 @@ export function setCoilLotLocation(db, coilNo, location, opts = {}) {
  * Correct coil master data (colour, gauge label, material description, GRN received kg).
  * Optional `currentWeightKg` / `currentKg` sets absolute on-hand mass and applies the same raw SKU
  * stock delta and coil-control events as ledger adjustments (when the value actually changes).
+ * When received kg is corrected and on-hand still matches the old received figure (typical bulk-import
+ * typo), the same delta is applied to qty_remaining / current_weight_kg so free kg stays in sync.
  */
 export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   const cn = String(coilNo || '').trim();
@@ -3206,11 +3208,13 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
 
   const b = body || {};
   const prevRem0 = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
+  const prevReceived =
+    Number(row.qty_received) || (row.weight_kg != null ? Number(row.weight_kg) : 0) || 0;
   const prev = {
     colour: row.colour ?? '',
     gaugeLabel: row.gauge_label ?? '',
     materialTypeName: row.material_type_name ?? '',
-    qtyReceived: Number(row.qty_received) || 0,
+    qtyReceived: prevReceived,
     weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
     qtyRemaining: prevRem0,
     currentWeightKg: prevRem0,
@@ -3219,6 +3223,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   const sets = [];
   const args = [];
   const next = { ...prev };
+  let receivedDelta = 0;
 
   if (Object.prototype.hasOwnProperty.call(b, 'colour')) {
     const v = b.colour == null ? '' : String(b.colour).trim();
@@ -3256,6 +3261,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     if (!Number.isFinite(rk) || rk < 0) {
       return { ok: false, error: 'Received kg must be a non-negative number.' };
     }
+    receivedDelta = rk - prevReceived;
     sets.push('qty_received = ?', 'weight_kg = ?');
     args.push(rk, rk);
     next.qtyReceived = rk;
@@ -3273,6 +3279,23 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     if (!Number.isFinite(targetCurrent) || targetCurrent < 0) {
       return { ok: false, error: 'Current on-hand kg must be a non-negative number.' };
     }
+    massDelta = targetCurrent - prevRem0;
+    next.qtyRemaining = targetCurrent;
+    next.currentWeightKg = targetCurrent;
+  }
+
+  const receivedMatchesOnHand = Math.abs(prevReceived - prevRem0) < 1e-6;
+  const shouldSyncOnHandFromReceived =
+    Math.abs(receivedDelta) > 1e-9 && receivedMatchesOnHand && Math.abs(massDelta) < 1e-9;
+  if (shouldSyncOnHandFromReceived) {
+    targetCurrent = prevRem0 + receivedDelta;
+    massDelta = receivedDelta;
+    next.qtyRemaining = targetCurrent;
+    next.currentWeightKg = targetCurrent;
+  }
+
+  const didMass = Math.abs(massDelta) > 1e-9;
+  if (didMass) {
     const qtyRes = Math.max(0, Number(row.qty_reserved) || 0);
     if (targetCurrent + 1e-9 < qtyRes) {
       return {
@@ -3280,21 +3303,13 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
         error: `Current on-hand kg cannot be below reserved kg (${qtyRes.toFixed(2)} kg).`,
       };
     }
-    massDelta = targetCurrent - prevRem0;
-    next.qtyRemaining = targetCurrent;
-    next.currentWeightKg = targetCurrent;
   }
 
-  const didMass = wantsCurrent && Math.abs(massDelta) > 1e-9;
-
-  if (!sets.length && !wantsCurrent) {
+  if (!sets.length && !didMass) {
     return {
       ok: false,
       error: 'No fields to update. Send colour, gaugeLabel, materialTypeName, receivedKg, and/or currentWeightKg.',
     };
-  }
-  if (!sets.length && wantsCurrent && !didMass) {
-    return { ok: true, coilNo: cn, ...next };
   }
 
   const dateISO = String(b.dateISO || '').trim() || new Date().toISOString().slice(0, 10);

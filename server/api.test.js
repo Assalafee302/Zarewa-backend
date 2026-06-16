@@ -2696,6 +2696,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const mgr = request.agent(app);
     await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const boot0 = await mgr.get('/api/bootstrap');
+    const lot0 = boot0.body.coilLots.find((c) => c.coilNo === coilA);
+    const prod0 = boot0.body.products.find((p) => p.productID === 'COIL-ALU');
+    const rem0 = Number(lot0.currentWeightKg || lot0.qtyRemaining);
+    const stock0 = Number(prod0.stockLevel);
     const patch = await mgr.patch(`/api/coil-lots/${encodeURIComponent(coilA)}/master-data`).send({
       colour: 'RAL 9005',
       gaugeLabel: '0.50 mm',
@@ -2707,10 +2712,13 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
 
     const boot = await mgr.get('/api/bootstrap');
     const lot = boot.body.coilLots.find((c) => c.coilNo === coilA);
+    const prod = boot.body.products.find((p) => p.productID === 'COIL-ALU');
     expect(lot.colour).toBe('RAL 9005');
     expect(lot.gaugeLabel).toBe('0.50 mm');
     expect(lot.materialTypeName).toBe('Alu zinc');
     expect(Number(lot.qtyReceived)).toBeCloseTo(3100, 2);
+    expect(Number(lot.currentWeightKg || lot.qtyRemaining)).toBeCloseTo(rem0 + 100, 2);
+    expect(Number(prod.stockLevel)).toBeCloseTo(stock0 + 100, 2);
 
     const staff = request.agent(app);
     await loginAs(staff, 'sales.staff', 'Sales@123');

@@ -236,6 +236,38 @@ function resolveRegisterLineParty(db, category, partyRef, partyName, ownBranchId
   return { ok: true, partyName: branchRow.name || branchRow.id, partyRef: branchRow.id };
 }
 
+function partyLinkWarningForKind(kind) {
+  if (kind === 'staff') return 'Not linked to an employee — edit and pick from the staff list.';
+  if (kind === 'customer') return 'Not linked to a customer — edit and pick from the customer list.';
+  if (kind === 'supplier') return 'Not linked to a supplier — edit and pick from the supplier list.';
+  return 'Not linked to a branch — edit and pick the counterparty branch.';
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ category?: string; partyRef?: string; partyName?: string; branchId?: string }} line
+ */
+export function assessRegisterLinePartyLink(db, line) {
+  const category = String(line?.category || '').trim();
+  const kind = registerPartyKindForCategory(category);
+  if (!kind) {
+    return { partyLinkStatus: 'not_required', partyLinkWarning: '' };
+  }
+  const ref = String(line?.partyRef || '').trim();
+  const branchId = String(line?.branchId || '').trim();
+  if (!ref) {
+    return { partyLinkStatus: 'unlinked', partyLinkWarning: partyLinkWarningForKind(kind) };
+  }
+  const resolved = resolveRegisterLineParty(db, category, ref, line?.partyName, branchId);
+  if (!resolved.ok) {
+    return {
+      partyLinkStatus: 'unlinked',
+      partyLinkWarning: resolved.error || partyLinkWarningForKind(kind),
+    };
+  }
+  return { partyLinkStatus: 'linked', partyLinkWarning: '' };
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function createAccountingRegisterLine(db, body, user) {
   ensureAccountingRegisterSchema(db);
@@ -561,22 +593,18 @@ function buildInterBranchReceivableItems(db, branchScope, branchLabel) {
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
-function registerToItems(lines) {
+function registerToItems(db, lines) {
   return lines.map((l) => {
-    let entityType = '';
     const cat = String(l.category || '').trim();
     const ref = String(l.partyRef || '').trim();
-    if (cat === 'staff_loan' || ref.startsWith('USR-')) entityType = 'staff';
-    else if (
-      cat === 'customer_deposit' ||
-      cat === 'customer_ar' ||
-      cat === 'project_overpayment' ||
-      ref.startsWith('CUS-')
-    ) {
-      entityType = 'customer';
-    } else if (cat === 'supplier_ap' || cat === 'supplier_prepay' || ref.startsWith('SUP-')) {
-      entityType = 'supplier';
-    } else if (cat === 'inter_branch') entityType = 'inter_branch';
+    const kind = registerPartyKindForCategory(cat);
+    let entityType = '';
+    if (kind === 'staff' || cat === 'staff_loan' || ref.startsWith('USR-')) entityType = 'staff';
+    else if (kind === 'customer' || ref.startsWith('CUS-')) entityType = 'customer';
+    else if (kind === 'supplier' || ref.startsWith('SUP-')) entityType = 'supplier';
+    else if (kind === 'branch' || cat === 'inter_branch') entityType = 'inter_branch';
+
+    const linkMeta = assessRegisterLinePartyLink(db, l);
 
     return withEntity(
       {
@@ -593,11 +621,22 @@ function registerToItems(lines) {
         source: l.source,
         category: l.category,
         isLegacy: true,
+        partyLinkStatus: linkMeta.partyLinkStatus,
+        partyLinkWarning: linkMeta.partyLinkWarning,
       },
       entityType,
       ref
     );
   });
+}
+
+function buildLegacyInheritedSection(db, lines, title, description) {
+  const items = registerToItems(db, lines);
+  const sec = section('legacy_inherited', title, description, items);
+  return {
+    ...sec,
+    unlinkedLegacyCount: items.filter((i) => i.partyLinkStatus === 'unlinked').length,
+  };
 }
 
 function branchLabelMap(db) {
@@ -662,14 +701,15 @@ export function buildCreditorsRegister(db, opts = {}) {
         buildInterBranchReceivableItems(db, branchScope, branchLabel)
       )
     ),
-    section(
-      'legacy_inherited',
+    buildLegacyInheritedSection(
+      db,
+      legacy,
       'Inherited & manual receivables',
-      'Opening balances and credits carried forward from before this system.',
-      registerToItems(legacy)
+      'Opening balances and credits carried forward from before this system.'
     ),
   ];
 
+  const legacySection = sections.find((s) => s.id === 'legacy_inherited');
   const totalNgn = sections.reduce((s, sec) => s + sec.subtotalNgn, 0);
   return {
     ok: true,
@@ -685,6 +725,7 @@ export function buildCreditorsRegister(db, opts = {}) {
       supplierPrepaymentsNgn: sections[2].subtotalNgn,
       interBranchReceivableNgn: sections[3].subtotalNgn,
       legacyInheritedNgn: sections[4].subtotalNgn,
+      unlinkedLegacyCount: legacySection?.unlinkedLegacyCount ?? 0,
     },
     sections,
     notes: [
@@ -916,14 +957,15 @@ export function buildDebtorsRegister(db, opts = {}) {
         buildInterBranchPayableItems(db, branchScope, branchLabel)
       )
     ),
-    section(
-      'legacy_inherited',
+    buildLegacyInheritedSection(
+      db,
+      legacy,
       'Inherited & manual payables',
-      'Opening balances and overpayments carried forward (e.g. April project overpayment).',
-      registerToItems(legacy)
+      'Opening balances and overpayments carried forward (e.g. April project overpayment).'
     ),
   ];
 
+  const legacySection = sections.find((s) => s.id === 'legacy_inherited');
   const totalNgn = sections.reduce((s, sec) => s + sec.subtotalNgn, 0);
   return {
     ok: true,
@@ -943,6 +985,7 @@ export function buildDebtorsRegister(db, opts = {}) {
       unlinkedPaymentsNgn: sections[3].subtotalNgn,
       interBranchPayableNgn: sections[4].subtotalNgn,
       legacyInheritedNgn: sections[5].subtotalNgn,
+      unlinkedLegacyCount: legacySection?.unlinkedLegacyCount ?? 0,
     },
     sections,
     notes: [

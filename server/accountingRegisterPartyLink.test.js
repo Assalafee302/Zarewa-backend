@@ -6,6 +6,7 @@ import {
   buildDebtorsRegister,
   createAccountingRegisterLine,
   ensureAccountingRegisterSchema,
+  listAccountingRegisterLines,
 } from './accountingSubledgerOps.js';
 
 function mysqlAvailable() {
@@ -151,5 +152,60 @@ describe.skipIf(!mysqlOk)('accounting register party linking', () => {
     });
     expect(link.partyLinkStatus).toBe('linked');
     expect(link.partyLinkWarning).toBe('');
+  });
+
+  it('lists register lines for a single branch only', () => {
+    insertUnlinkedLegacyLine(db, { id: 'REG-KD-1', branchId: DEFAULT_BRANCH_ID });
+    const otherBranch = db
+      .prepare(`SELECT id FROM branches WHERE id <> ? ORDER BY id LIMIT 1`)
+      .get(DEFAULT_BRANCH_ID)?.id;
+    if (!otherBranch) return;
+    insertUnlinkedLegacyLine(db, {
+      id: 'REG-OTHER-1',
+      branchId: otherBranch,
+      partyName: 'Other branch payable',
+    });
+
+    const scoped = listAccountingRegisterLines(db, {
+      registerSide: 'debtor',
+      branchId: DEFAULT_BRANCH_ID,
+      status: 'open',
+    });
+    expect(scoped.lines.some((l) => l.id === 'REG-KD-1')).toBe(true);
+    expect(scoped.lines.some((l) => l.id === 'REG-OTHER-1')).toBe(false);
+  });
+
+  it('rejects register lines without a branch', () => {
+    const bad = createAccountingRegisterLine(
+      db,
+      {
+        registerSide: 'debtor',
+        category: 'legacy',
+        partyName: 'Unscoped payable',
+        amountNgn: 100_000,
+        asAtDateIso: '2024-01-01',
+      },
+      { id: 'USR-ADMIN' }
+    );
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/branch/i);
+  });
+
+  it('buildDebtorsRegister scopes legacy inherited lines by branch', () => {
+    insertUnlinkedLegacyLine(db, { id: 'REG-KD-LEG', branchId: DEFAULT_BRANCH_ID });
+    const otherBranch = db
+      .prepare(`SELECT id FROM branches WHERE id <> ? ORDER BY id LIMIT 1`)
+      .get(DEFAULT_BRANCH_ID)?.id;
+    if (!otherBranch) return;
+    insertUnlinkedLegacyLine(db, {
+      id: 'REG-OTHER-LEG',
+      branchId: otherBranch,
+      partyName: 'Other branch legacy',
+    });
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const legacy = reg.sections.find((s) => s.id === 'legacy_inherited');
+    expect(legacy?.items.some((i) => i.id === 'REG-KD-LEG')).toBe(true);
+    expect(legacy?.items.some((i) => i.id === 'REG-OTHER-LEG')).toBe(false);
   });
 });

@@ -120,6 +120,7 @@ import {
   buildDebtorsRegister,
   clearAccountingRegisterLine,
   createAccountingRegisterLine,
+  getAccountingRegisterLine,
   updateAccountingRegisterLine,
 } from './accountingSubledgerOps.js';
 import {
@@ -150,6 +151,7 @@ import { conversionReasonOptionsForBand } from '../shared/productionConversionRe
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 import {
   assertCustomerLedgerPostingBranch,
+  assertEntityBranchForWorkspaceWrite,
   assertSingleBranchWorkspaceForCreate,
   resolveBootstrapBranchScope,
 } from './branchScope.js';
@@ -909,13 +911,43 @@ export function registerHttpApi(app, db) {
   });
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
+  function accountingListBranchId(req) {
+    const branchScope = resolveBootstrapBranchScope(req);
+    return branchScope === 'ALL' ? null : branchScope;
+  }
+
+  function assertRegisterLineWorkspaceWrite(req, lineId) {
+    const found = getAccountingRegisterLine(db, lineId);
+    if (!found.ok) return { ok: false, status: 404, error: found.error };
+    const gate = assertEntityBranchForWorkspaceWrite(
+      req.user,
+      found.line.branchId,
+      req.workspaceBranchId,
+      req.workspaceViewAll
+    );
+    if (!gate.ok) return { ok: false, status: 403, error: gate.error };
+    return { ok: true, line: found.line };
+  }
+
+  function assertFixedAssetWorkspaceWrite(req, assetId) {
+    const row = db.prepare(`SELECT branch_id FROM fixed_assets WHERE id = ?`).get(String(assetId || '').trim());
+    if (!row) return { ok: false, status: 404, error: 'Asset not found.' };
+    const gate = assertEntityBranchForWorkspaceWrite(
+      req.user,
+      row.branch_id,
+      req.workspaceBranchId,
+      req.workspaceViewAll
+    );
+    if (!gate.ok) return { ok: false, status: 403, error: gate.error };
+    return { ok: true };
+  }
+
   app.get('/api/accounting/creditors', requireAuth, (req, res) => {
     try {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const branchId = accountingListBranchId(req);
       return res.json(buildCreditorsRegister(db, { branchId }));
     } catch (e) {
       console.error('[accounting-creditors]', e);
@@ -928,8 +960,7 @@ export function registerHttpApi(app, db) {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const branchId = accountingListBranchId(req);
       return res.json(buildDebtorsRegister(db, { branchId }));
     } catch (e) {
       console.error('[accounting-debtors]', e);
@@ -942,8 +973,7 @@ export function registerHttpApi(app, db) {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchScope = branchRaw && branchRaw !== 'ALL' ? branchRaw : 'ALL';
+      const branchScope = resolveBootstrapBranchScope(req);
       return res.json(listFixedAssets(db, branchScope));
     } catch (e) {
       console.error('[accounting-assets]', e);
@@ -956,7 +986,20 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const result = createAccountingRegisterLine(db, req.body, req.user);
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      const body = {
+        ...(req.body || {}),
+        branchId: String(req.body?.branchId || req.workspaceBranchId || '').trim(),
+      };
+      const branchGate = assertEntityBranchForWorkspaceWrite(
+        req.user,
+        body.branchId,
+        req.workspaceBranchId,
+        req.workspaceViewAll
+      );
+      if (!branchGate.ok) return res.status(403).json({ ok: false, error: branchGate.error });
+      const result = createAccountingRegisterLine(db, body, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.status(201).json(result);
     } catch (e) {
@@ -970,6 +1013,8 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
+      const lineGate = assertRegisterLineWorkspaceWrite(req, req.params.lineId);
+      if (!lineGate.ok) return res.status(lineGate.status).json({ ok: false, error: lineGate.error });
       const result = clearAccountingRegisterLine(db, req.params.lineId, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.json(result);
@@ -984,7 +1029,20 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const result = updateAccountingRegisterLine(db, req.params.lineId, req.body, req.user);
+      const lineGate = assertRegisterLineWorkspaceWrite(req, req.params.lineId);
+      if (!lineGate.ok) return res.status(lineGate.status).json({ ok: false, error: lineGate.error });
+      const body = {
+        ...(req.body || {}),
+        branchId: String(req.body?.branchId ?? lineGate.line.branchId ?? req.workspaceBranchId ?? '').trim(),
+      };
+      const branchGate = assertEntityBranchForWorkspaceWrite(
+        req.user,
+        body.branchId,
+        req.workspaceBranchId,
+        req.workspaceViewAll
+      );
+      if (!branchGate.ok) return res.status(403).json({ ok: false, error: branchGate.error });
+      const result = updateAccountingRegisterLine(db, req.params.lineId, body, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.json(result);
     } catch (e) {
@@ -998,8 +1056,7 @@ export function registerHttpApi(app, db) {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const branchId = accountingListBranchId(req);
       const result = listRegisterSettlements(db, {
         registerLineId: req.query?.registerLineId || req.query?.lineId,
         status: req.query?.status,
@@ -1031,6 +1088,11 @@ export function registerHttpApi(app, db) {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
+      const lineGate = assertRegisterLineWorkspaceWrite(req, req.params.lineId);
+      if (!lineGate.ok && lineGate.status === 403) {
+        return res.status(403).json({ ok: false, error: lineGate.error });
+      }
+      if (!lineGate.ok) return res.status(404).json({ ok: false, error: lineGate.error });
       const availableNgn = registerLineAvailableSettlementNgn(db, req.params.lineId);
       return res.json({ ok: true, availableNgn });
     } catch (e) {
@@ -1044,9 +1106,15 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
+      const lineGate = assertRegisterLineWorkspaceWrite(req, req.params.lineId);
+      if (!lineGate.ok) return res.status(lineGate.status).json({ ok: false, error: lineGate.error });
       const result = createRegisterSettlement(
         db,
-        { ...req.body, registerLineId: req.params.lineId },
+        {
+          ...(req.body || {}),
+          registerLineId: req.params.lineId,
+          branchId: lineGate.line.branchId || req.workspaceBranchId,
+        },
         req.user
       );
       if (!result.ok) return res.status(400).json(result);
@@ -1130,7 +1198,20 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const result = createFixedAsset(db, req.body, req.user);
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      const body = {
+        ...(req.body || {}),
+        branchId: String(req.body?.branchId || req.workspaceBranchId || '').trim(),
+      };
+      const branchGate = assertEntityBranchForWorkspaceWrite(
+        req.user,
+        body.branchId,
+        req.workspaceBranchId,
+        req.workspaceViewAll
+      );
+      if (!branchGate.ok) return res.status(403).json({ ok: false, error: branchGate.error });
+      const result = createFixedAsset(db, body, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.status(201).json(result);
     } catch (e) {
@@ -1144,7 +1225,22 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const result = updateFixedAsset(db, req.params.assetId, req.body, req.user);
+      const assetGate = assertFixedAssetWorkspaceWrite(req, req.params.assetId);
+      if (!assetGate.ok) return res.status(assetGate.status).json({ ok: false, error: assetGate.error });
+      const body = {
+        ...(req.body || {}),
+        branchId: String(req.body?.branchId ?? req.workspaceBranchId ?? '').trim() || undefined,
+      };
+      if (body.branchId) {
+        const branchGate = assertEntityBranchForWorkspaceWrite(
+          req.user,
+          body.branchId,
+          req.workspaceBranchId,
+          req.workspaceViewAll
+        );
+        if (!branchGate.ok) return res.status(403).json({ ok: false, error: branchGate.error });
+      }
+      const result = updateFixedAsset(db, req.params.assetId, body, req.user);
       if (!result.ok) return res.status(400).json(result);
       return res.json(result);
     } catch (e) {
@@ -1158,6 +1254,8 @@ export function registerHttpApi(app, db) {
       if (!userMayManageAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
+      const assetGate = assertFixedAssetWorkspaceWrite(req, req.params.assetId);
+      if (!assetGate.ok) return res.status(assetGate.status).json({ ok: false, error: assetGate.error });
       const disposalDateIso = String(req.body?.disposalDateIso || '').slice(0, 10);
       const result = disposeFixedAsset(db, req.params.assetId, disposalDateIso, req.user);
       if (!result.ok) return res.status(400).json(result);

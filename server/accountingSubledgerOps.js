@@ -15,6 +15,7 @@ import { tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
 import { hrTablesReady } from './hrOps.js';
 import { interBranchLoanBalances, listInterBranchLoans } from './interBranchLoanOps.js';
+import { branchPredicate } from './branchSql.js';
 import {
   listAccountsPayable,
   listCustomers,
@@ -154,13 +155,21 @@ export function listAccountingRegisterLines(db, opts = {}) {
     sql += ` AND status = ?`;
     args.push(status);
   }
-  if (branchId !== 'ALL') {
-    sql += ` AND (branch_id = ? OR branch_id IS NULL OR TRIM(branch_id) = '')`;
-    args.push(branchId);
-  }
+  const branchFilter = branchPredicate(db, 'accounting_register_lines', branchId);
+  sql += branchFilter.sql;
+  args.push(...branchFilter.args);
   sql += ` ORDER BY as_at_date_iso DESC, party_name COLLATE NOCASE`;
   const rows = db.prepare(sql).all(...args).map(mapRegisterRow);
   return { ok: true, lines: rows };
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} lineId */
+export function getAccountingRegisterLine(db, lineId) {
+  ensureAccountingRegisterSchema(db);
+  const id = String(lineId || '').trim();
+  const row = db.prepare(`SELECT * FROM accounting_register_lines WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Register line not found.' };
+  return { ok: true, line: mapRegisterRow(row) };
 }
 
 function nextRegisterId() {
@@ -276,7 +285,8 @@ export function createAccountingRegisterLine(db, body, user) {
     return { ok: false, error: 'registerSide must be creditor or debtor.' };
   }
   const category = String(body?.category || 'legacy').trim() || 'legacy';
-  const branchId = String(body?.branchId || '').trim() || null;
+  const branchId = String(body?.branchId || '').trim();
+  if (!branchId) return { ok: false, error: 'Branch is required.' };
   const partyResolved = resolveRegisterLineParty(
     db,
     category,
@@ -333,7 +343,8 @@ export function updateAccountingRegisterLine(db, lineId, body, user) {
   }
 
   const category = String(body?.category ?? cur.category ?? 'legacy').trim() || 'legacy';
-  const branchId = String(body?.branchId ?? cur.branch_id ?? '').trim() || null;
+  const branchId = String(body?.branchId ?? cur.branch_id ?? '').trim();
+  if (!branchId) return { ok: false, error: 'Branch is required.' };
   const partyResolved = resolveRegisterLineParty(
     db,
     category,

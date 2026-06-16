@@ -85,6 +85,30 @@ export function userMayViewAp2ApRebuildPreview(user) {
 }
 
 /**
+ * Accounting sub-ledgers (Creditors, Debtors, Assets) — Head of Accounts / finance oversight; not cashier-only.
+ * @param {import('./auth.js').SessionUser | null | undefined} user
+ */
+export function userMayViewAccountingSubledger(user) {
+  return userMayViewAp1cDryRun(user);
+}
+
+/** Manual register lines & fixed asset mutations — same as sub-ledger view. */
+export function userMayManageAccountingSubledger(user) {
+  if (!user) return false;
+  if (userHasPermission(user, '*')) return true;
+  const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
+  if (rk === 'cashier') return false;
+  if (OVERSIGHT_ROLES.has(rk) || rk === 'finance_manager') return true;
+  if (
+    userHasPermission(user, 'accounting.desk.view') ||
+    userHasPermission(user, 'accounting.reconciliation.view')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * AP2b apply rebuild — Head of Accounts / finance_manager / admin; not cashier-only.
  * @param {import('./auth.js').SessionUser | null | undefined} user
  */

@@ -103,6 +103,8 @@ import {
   userMayViewAp2ApRebuildPreview,
   userMayApplyAp2ApRebuild,
   userMayViewAp3CostingReadiness,
+  userMayViewAccountingSubledger,
+  userMayManageAccountingSubledger,
 } from './financeDeskAccess.js';
 import { userMayAccessAccountingGlApis } from './legacyAccountsAccess.js';
 import { buildCustomPermissionOverrideAudit } from './customPermissionAudit.js';
@@ -113,6 +115,18 @@ import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
+import {
+  buildCreditorsRegister,
+  buildDebtorsRegister,
+  clearAccountingRegisterLine,
+  createAccountingRegisterLine,
+} from './accountingSubledgerOps.js';
+import {
+  createFixedAsset,
+  disposeFixedAsset,
+  listFixedAssets,
+  updateFixedAsset,
+} from './accountingPhase2Ops.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
@@ -882,6 +896,120 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[supplier-advance-report]', e);
       return res.status(500).json({ ok: false, error: 'Supplier advance report failed.' });
+    }
+  });
+
+  /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
+  app.get('/api/accounting/creditors', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      return res.json(buildCreditorsRegister(db, { branchId }));
+    } catch (e) {
+      console.error('[accounting-creditors]', e);
+      return res.status(500).json({ ok: false, error: 'Creditors register failed.' });
+    }
+  });
+
+  app.get('/api/accounting/debtors', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      return res.json(buildDebtorsRegister(db, { branchId }));
+    } catch (e) {
+      console.error('[accounting-debtors]', e);
+      return res.status(500).json({ ok: false, error: 'Debtors register failed.' });
+    }
+  });
+
+  app.get('/api/accounting/assets', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchScope = branchRaw && branchRaw !== 'ALL' ? branchRaw : 'ALL';
+      return res.json(listFixedAssets(db, branchScope));
+    } catch (e) {
+      console.error('[accounting-assets]', e);
+      return res.status(500).json({ ok: false, error: 'Fixed assets register failed.' });
+    }
+  });
+
+  app.post('/api/accounting/register-lines', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = createAccountingRegisterLine(db, req.body, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(201).json(result);
+    } catch (e) {
+      console.error('[accounting-register-create]', e);
+      return res.status(500).json({ ok: false, error: 'Could not create register line.' });
+    }
+  });
+
+  app.post('/api/accounting/register-lines/:lineId/clear', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = clearAccountingRegisterLine(db, req.params.lineId, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-register-clear]', e);
+      return res.status(500).json({ ok: false, error: 'Could not clear register line.' });
+    }
+  });
+
+  app.post('/api/accounting/assets', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = createFixedAsset(db, req.body, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(201).json(result);
+    } catch (e) {
+      console.error('[accounting-asset-create]', e);
+      return res.status(500).json({ ok: false, error: 'Could not create fixed asset.' });
+    }
+  });
+
+  app.patch('/api/accounting/assets/:assetId', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = updateFixedAsset(db, req.params.assetId, req.body, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-asset-update]', e);
+      return res.status(500).json({ ok: false, error: 'Could not update fixed asset.' });
+    }
+  });
+
+  app.post('/api/accounting/assets/:assetId/dispose', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const disposalDateIso = String(req.body?.disposalDateIso || '').slice(0, 10);
+      const result = disposeFixedAsset(db, req.params.assetId, disposalDateIso, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-asset-dispose]', e);
+      return res.status(500).json({ ok: false, error: 'Could not dispose fixed asset.' });
     }
   });
 

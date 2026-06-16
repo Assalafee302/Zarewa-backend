@@ -3416,6 +3416,43 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
 }
 
 /**
+ * Re-normalize coil on-hand fields, status, and roll up raw product stock_level from all lots.
+ */
+export function recalculateCoilLotBook(db, coilNo, opts = {}) {
+  const cn = String(coilNo || '').trim();
+  if (!cn) return { ok: false, error: 'Coil number is required.' };
+  const row = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(cn);
+  if (!row) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(row, opts.workspaceBranchId);
+  if (!br.ok) return br;
+
+  const bid = String(row.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const productID = String(row.product_id || '').trim();
+
+  try {
+    db.transaction(() => {
+      finalizeCoilLotStateTx(db, cn);
+      if (productID) reconcileCoilProductStockFromLots(db, productID, bid);
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  const after = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(cn);
+  const qtyRemaining = Math.max(0, Number(after.qty_remaining) || Number(after.current_weight_kg) || 0);
+  const qtyReserved = Math.max(0, Number(after.qty_reserved) || 0);
+  return {
+    ok: true,
+    coilNo: cn,
+    qtyRemaining,
+    qtyReserved,
+    freeKg: Math.max(0, qtyRemaining - qtyReserved),
+    currentStatus: after.current_status ?? 'Available',
+    productID,
+  };
+}
+
+/**
  * Remove kg from a coil (physical scrap, damage, trim). Reduces raw product stock; optionally credits SCRAP-COIL (or other) SKU.
  */
 export function postCoilScrap(db, payload = {}, opts = {}) {

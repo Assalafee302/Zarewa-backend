@@ -6525,11 +6525,51 @@ export function registerHttpApi(app, db) {
     return next();
   }, (req, res) => {
     try {
-      const r = write.patchCoilLotMasterData(db, req.params.coilNo, req.body || {}, {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = write.patchCoilLotMasterData(db, coilNo, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) {
+        res.status(400).json(r);
+        return;
+      }
+
+      let recalc = null;
+      let reservationReconcile = null;
+      if (req.body?.recalculate !== false) {
+        recalc = write.recalculateCoilLotBook(db, coilNo, {
+          workspaceBranchId: req.workspaceBranchId,
+        });
+        if (!recalc.ok) {
+          res.status(400).json(recalc);
+          return;
+        }
+        reservationReconcile = reconcileCoilReservationFromProductionJobs(db, coilNo, {
+          workspaceBranchId: req.workspaceBranchId,
+          actor: req.user,
+        });
+        if (!reservationReconcile.ok) {
+          res.status(400).json(reservationReconcile);
+          return;
+        }
+        if (!reservationReconcile.unchanged) {
+          const post = db.prepare(`SELECT qty_remaining, qty_reserved FROM coil_lots WHERE coil_no = ?`).get(coilNo);
+          if (post) {
+            const rem = Math.max(0, Number(post.qty_remaining) || 0);
+            const resv = Math.max(0, Number(post.qty_reserved) || 0);
+            recalc = { ...recalc, qtyRemaining: rem, qtyReserved: resv, freeKg: Math.max(0, rem - resv) };
+          }
+        }
+      }
+
+      res.status(200).json({
+        ...r,
+        recalc,
+        reservationReconcile,
+        freeKg: recalc?.freeKg,
+        qtyReserved: recalc?.qtyReserved,
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

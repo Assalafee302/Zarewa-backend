@@ -1017,7 +1017,10 @@ function mapCoilLotRow(db, row, masterData) {
     supplierConversionKgPerM: roundConv2(row.supplier_conversion_kg_per_m),
     qtyRemaining: Number(row.qty_remaining) || 0,
     qtyReserved: Number(row.qty_reserved) || 0,
-    currentWeightKg: Number(row.current_weight_kg) || 0,
+    currentWeightKg:
+      row.current_weight_kg != null && row.current_weight_kg !== '' && Number.isFinite(Number(row.current_weight_kg))
+        ? Number(row.current_weight_kg)
+        : Number(row.qty_remaining) || 0,
     currentStatus: row.current_status ?? 'Available',
     stockForm:
       hasColumn(db, 'coil_lots', 'stock_form') && String(row.stock_form || '').toLowerCase() === 'roll'

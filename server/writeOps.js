@@ -3191,6 +3191,20 @@ export function setCoilLotLocation(db, coilNo, location, opts = {}) {
   return { ok: true, coilNo: cn, location: loc };
 }
 
+/** GRN / received kg as shown in coil profile (`weightKg` before `qtyReceived`). */
+function coilGrnReceivedKg(row) {
+  const w = row.weight_kg;
+  if (w != null && w !== '' && Number.isFinite(Number(w))) return Number(w);
+  return Number(row.qty_received) || 0;
+}
+
+/** True when on-hand kg still matches the GRN figure (bulk-import typo — safe to shift on-hand with received). */
+function coilOnHandAlignedWithGrn(prevRem, row) {
+  const grn = coilGrnReceivedKg(row);
+  const booked = Number(row.qty_received) || 0;
+  return Math.abs(prevRem - grn) < 1e-6 || (booked > 0 && Math.abs(prevRem - booked) < 1e-6);
+}
+
 /**
  * Correct coil master data (colour, gauge label, material description, GRN received kg).
  * Optional `currentWeightKg` / `currentKg` sets absolute on-hand mass and applies the same raw SKU
@@ -3208,13 +3222,12 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
 
   const b = body || {};
   const prevRem0 = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
-  const prevReceived =
-    Number(row.qty_received) || (row.weight_kg != null ? Number(row.weight_kg) : 0) || 0;
+  const prevReceived = coilGrnReceivedKg(row);
   const prev = {
     colour: row.colour ?? '',
     gaugeLabel: row.gauge_label ?? '',
     materialTypeName: row.material_type_name ?? '',
-    qtyReceived: prevReceived,
+    qtyReceived: Number(row.qty_received) || prevReceived,
     weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
     qtyRemaining: prevRem0,
     currentWeightKg: prevRem0,
@@ -3284,7 +3297,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     next.currentWeightKg = targetCurrent;
   }
 
-  const receivedMatchesOnHand = Math.abs(prevReceived - prevRem0) < 1e-6;
+  const receivedMatchesOnHand = coilOnHandAlignedWithGrn(prevRem0, row);
   const shouldSyncOnHandFromReceived =
     Math.abs(receivedDelta) > 1e-9 && receivedMatchesOnHand && Math.abs(massDelta) < 1e-9;
   if (shouldSyncOnHandFromReceived) {

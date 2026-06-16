@@ -11,6 +11,7 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
+import { tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
 import { hrTablesReady } from './hrOps.js';
 import { interBranchLoanBalances, listInterBranchLoans } from './interBranchLoanOps.js';
@@ -76,6 +77,16 @@ function section(id, title, description, items) {
     subtotalNgn,
     items: items.slice(0, 200),
   };
+}
+
+/** Run a section builder without failing the whole register. */
+function safeRegisterItems(sectionKey, buildFn) {
+  try {
+    return buildFn();
+  } catch (err) {
+    console.error(`[accounting-register] ${sectionKey} section failed:`, err);
+    return [];
+  }
 }
 
 /** @param {import('better-sqlite3').Database} db */
@@ -267,13 +278,20 @@ export function clearAccountingRegisterLine(db, lineId, user) {
 
 function buildStaffLoanItems(db, branchScope) {
   if (!hrTablesReady(db)) return [];
-  const staffRows = db
-    .prepare(
-      `SELECT sp.user_id, sp.branch_id, u.display_name
-       FROM hr_staff_profiles sp
-       JOIN app_users u ON u.id = sp.user_id`
-    )
-    .all();
+  if (!tableExists(db, 'hr_staff_profiles') || !tableExists(db, 'app_users')) return [];
+  let staffRows = [];
+  try {
+    staffRows = db
+      .prepare(
+        `SELECT sp.user_id, sp.branch_id, u.display_name
+         FROM hr_staff_profiles sp
+         JOIN app_users u ON u.id = sp.user_id`
+      )
+      .all();
+  } catch (err) {
+    console.error('[accounting-register] staff loan staff query failed:', err);
+    return [];
+  }
   const items = [];
   for (const staff of staffRows) {
     if (!matchesBranch(staff.branch_id, branchScope)) continue;
@@ -350,9 +368,16 @@ function buildCustomerReceivableItems(db, branchScope) {
 }
 
 function buildSupplierPrepaymentItems(db, branchScope) {
-  const report = buildSupplierAdvanceReport(db, {
-    branchId: branchScope === 'ALL' ? null : branchScope,
-  });
+  let report;
+  try {
+    report = buildSupplierAdvanceReport(db, {
+      branchId: branchScope === 'ALL' ? null : branchScope,
+      includeGlCapability: false,
+    });
+  } catch (err) {
+    console.error('[accounting-register] supplier prepayment report failed:', err);
+    return [];
+  }
   const items = [];
   for (const row of report.paidNotReceived || []) {
     if ((row.supplierPaidNgn || 0) <= 0) continue;
@@ -399,6 +424,7 @@ function buildSupplierPrepaymentItems(db, branchScope) {
 }
 
 function buildInterBranchReceivableItems(db, branchScope, branchLabel) {
+  if (!tableExists(db, 'inter_branch_loans')) return [];
   const balances = interBranchLoanBalances(db, branchScope);
   const loans = listInterBranchLoans(db, branchScope).filter((l) => l.status === 'active');
   const items = [];
@@ -502,38 +528,50 @@ function branchLabelMap(db) {
  * Staff loans, customer receivables, supplier prepayments, inter-branch receivables, legacy inherited.
  */
 export function buildCreditorsRegister(db, opts = {}) {
+  ensureAccountingRegisterSchema(db);
   const branchScope = branchScopeFromOpts(opts);
   const branchLabel = branchLabelMap(db);
-  const legacy = listAccountingRegisterLines(db, {
-    registerSide: 'creditor',
-    branchId: branchScope,
-    status: 'open',
-  }).lines;
+  let legacy = [];
+  try {
+    legacy = listAccountingRegisterLines(db, {
+      registerSide: 'creditor',
+      branchId: branchScope,
+      status: 'open',
+    }).lines;
+  } catch (err) {
+    console.error('[accounting-register] creditor legacy lines failed:', err);
+  }
 
   const sections = [
     section(
       'staff_loans',
       'Staff loan receivables',
       'Outstanding staff loans — payroll deductions and manual recovery.',
-      buildStaffLoanItems(db, branchScope)
+      safeRegisterItems('creditors.staff_loans', () => buildStaffLoanItems(db, branchScope))
     ),
     section(
       'customer_receivables',
       'Customer trade receivables',
       'Outstanding balances on completed production (not yet fully paid).',
-      buildCustomerReceivableItems(db, branchScope)
+      safeRegisterItems('creditors.customer_receivables', () =>
+        buildCustomerReceivableItems(db, branchScope)
+      )
     ),
     section(
       'supplier_prepayments',
       'Supplier prepayments & paid-not-received',
       'Payments to suppliers before goods/services are received (GRN pending).',
-      buildSupplierPrepaymentItems(db, branchScope)
+      safeRegisterItems('creditors.supplier_prepayments', () =>
+        buildSupplierPrepaymentItems(db, branchScope)
+      )
     ),
     section(
       'inter_branch_receivable',
       'Inter-branch receivables',
       'Amounts other branches owe this branch (or company-wide net positions).',
-      buildInterBranchReceivableItems(db, branchScope, branchLabel)
+      safeRegisterItems('creditors.inter_branch_receivable', () =>
+        buildInterBranchReceivableItems(db, branchScope, branchLabel)
+      )
     ),
     section(
       'legacy_inherited',
@@ -685,6 +723,7 @@ function buildUnlinkedPaymentItems(db, branchScope) {
 }
 
 function buildInterBranchPayableItems(db, branchScope, branchLabel) {
+  if (!tableExists(db, 'inter_branch_loans')) return [];
   const loans = listInterBranchLoans(db, branchScope).filter((l) => l.status === 'active');
   const items = [];
   if (branchScope === 'ALL') {
@@ -736,15 +775,23 @@ function buildInterBranchPayableItems(db, branchScope, branchLabel) {
  * Debtors — amounts Zarewa OWES (payables, deposits held, refundable credits).
  */
 export function buildDebtorsRegister(db, opts = {}) {
+  ensureAccountingRegisterSchema(db);
   const branchScope = branchScopeFromOpts(opts);
   const branchLabel = branchLabelMap(db);
-  const legacy = listAccountingRegisterLines(db, {
-    registerSide: 'debtor',
-    branchId: branchScope,
-    status: 'open',
-  }).lines;
+  let legacy = [];
+  try {
+    legacy = listAccountingRegisterLines(db, {
+      registerSide: 'debtor',
+      branchId: branchScope,
+      status: 'open',
+    }).lines;
+  } catch (err) {
+    console.error('[accounting-register] debtor legacy lines failed:', err);
+  }
 
-  const overpayItems = buildOverpaymentCreditItems(db, branchScope);
+  const overpayItems = safeRegisterItems('debtors.overpayment_credits', () =>
+    buildOverpaymentCreditItems(db, branchScope)
+  );
   const significantOverpay = overpayItems.filter((i) => i.isSignificant);
 
   const sections = [
@@ -752,13 +799,13 @@ export function buildDebtorsRegister(db, opts = {}) {
       'supplier_payables',
       'Supplier trade payables',
       'Approved supplier invoices not yet fully paid.',
-      buildSupplierPayableItems(db, branchScope)
+      safeRegisterItems('debtors.supplier_payables', () => buildSupplierPayableItems(db, branchScope))
     ),
     section(
       'customer_deposits',
       'Customer deposits & advances',
       'Voluntary deposits held on customer ledger (ADVANCE_IN).',
-      buildCustomerDepositItems(db, branchScope)
+      safeRegisterItems('debtors.customer_deposits', () => buildCustomerDepositItems(db, branchScope))
     ),
     section(
       'overpayment_credits',
@@ -770,13 +817,15 @@ export function buildDebtorsRegister(db, opts = {}) {
       'unlinked_payments',
       'Unlinked & uncleared receipts',
       'Bank receipts not tied to a quotation or not cleared in finance reconciliation.',
-      buildUnlinkedPaymentItems(db, branchScope)
+      safeRegisterItems('debtors.unlinked_payments', () => buildUnlinkedPaymentItems(db, branchScope))
     ),
     section(
       'inter_branch_payable',
       'Inter-branch payables',
       'Amounts this branch (or company) owes to other branches.',
-      buildInterBranchPayableItems(db, branchScope, branchLabel)
+      safeRegisterItems('debtors.inter_branch_payable', () =>
+        buildInterBranchPayableItems(db, branchScope, branchLabel)
+      )
     ),
     section(
       'legacy_inherited',

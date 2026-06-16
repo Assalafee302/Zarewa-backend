@@ -43,8 +43,47 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
       : 'ALL';
   const period = opts.period ? parsePeriodKey(opts.period) : null;
   const flags = readFinanceFeatureFlags();
+  const includeGlCapability = opts.includeGlCapability !== false;
 
-  const lineStmt = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`);
+  const emptyReport = {
+    ok: true,
+    status: 'diagnostics_only',
+    label: 'Supplier advance & prepayment report',
+    disclaimer: 'Management diagnostic. No GL posted unless SUPPLIER_ADVANCE_ACCOUNTING_ENABLED=1.',
+    branchScope: branchScope === 'ALL' ? null : branchScope,
+    period: period || null,
+    generatedAtISO: new Date().toISOString(),
+    flags: {
+      supplierAdvanceAccountingEnabled: flags.supplierAdvanceAccountingEnabled,
+      inventoryValuationReportsEnabled: flags.inventoryValuationReportsEnabled,
+      apGlAlignmentDiagnosticsEnabled: flags.apGlAlignmentDiagnosticsEnabled,
+    },
+    supplierAdvanceGl: includeGlCapability
+      ? describeSupplierAdvanceGlCapability(db)
+      : { postingEnabled: flags.supplierAdvanceAccountingEnabled, accountConfigured: false },
+    summary: {
+      totalSupplierAdvanceNgn: 0,
+      totalPayableOutstandingNgn: 0,
+      totalReceivedNotPaidNgn: 0,
+      totalOrderedNotReceivedNgn: 0,
+      paidNotReceivedCount: 0,
+      advanceAppliedCount: 0,
+      supplierWithAdvanceCount: 0,
+    },
+    supplierAdvanceSummary: [],
+    paidNotReceived: [],
+    advanceApplied: [],
+    supplierExposure: [],
+    notes: [],
+  };
+
+  if (!tableExists(db, 'purchase_orders')) {
+    return emptyReport;
+  }
+
+  const lineStmt = tableExists(db, 'purchase_order_lines')
+    ? db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`)
+    : null;
   const apStmt = tableExists(db, 'accounts_payable')
     ? db.prepare(`SELECT ap_id, amount_ngn, paid_ngn FROM accounts_payable WHERE po_ref = ? ORDER BY ap_id LIMIT 1`)
     : null;
@@ -66,7 +105,7 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
 
   for (const po of listPurchaseOrdersForAp2Scope(db, opts)) {
     const poId = po.po_id;
-    const lines = lineStmt.all(poId);
+    const lines = lineStmt ? lineStmt.all(poId) : [];
     const apRow = apStmt?.get(poId) ?? null;
     const econ = computePoReceivedBasisEconomics(db, po, lines, { apRow });
     const cls = classifyPoSettlement(econ);
@@ -150,7 +189,9 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
       inventoryValuationReportsEnabled: flags.inventoryValuationReportsEnabled,
       apGlAlignmentDiagnosticsEnabled: flags.apGlAlignmentDiagnosticsEnabled,
     },
-    supplierAdvanceGl: describeSupplierAdvanceGlCapability(db),
+    supplierAdvanceGl: includeGlCapability
+      ? describeSupplierAdvanceGlCapability(db)
+      : { postingEnabled: flags.supplierAdvanceAccountingEnabled, accountConfigured: false },
     summary,
     supplierAdvanceSummary: advanceSummary.slice(0, 200),
     paidNotReceived: paidNotReceived.slice(0, 100),

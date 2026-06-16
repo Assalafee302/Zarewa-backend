@@ -488,7 +488,7 @@ function workItemRoute(kind, row = {}) {
   if (k === 'material') return '/operations/material-exceptions';
   if (k === 'edit_approvals') return '/manager';
   if (k === 'payroll') return '/hr/executive';
-  if (k === 'inter_branch_loan') return '/accounts';
+  if (k === 'inter_branch_loan') return '/accounting';
   if (k === 'stock_register') return '/operations';
   if (k === 'price_exception') return '/exec';
   if (k === 'conversions') return '/exec';
@@ -600,7 +600,7 @@ function listExecutiveExtras(db, branchScope) {
         requestedBy: 'Treasury',
         ageLabel: daysSinceLabel(r.created_at_iso),
         status: String(r.status || 'Pending'),
-        route: '/accounts',
+        route: '/accounting',
       });
     }
   } catch {

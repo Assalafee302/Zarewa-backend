@@ -6788,7 +6788,7 @@ export function transferTreasuryFunds(db, payload) {
     return {
       ok: false,
       error:
-        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use inter-branch lending on Finance → Movements.',
+        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use Accounting Desk → Inter-branch.',
     };
   }
   if (payload.workspaceBranchId && payload.actor) {
@@ -7024,7 +7024,7 @@ export function updateTreasuryTransfer(db, batchId, payload, actor) {
     return {
       ok: false,
       error:
-        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use inter-branch lending on Finance → Movements.',
+        'Internal transfers must use two accounts in the same branch. For cross-branch funding, use Accounting Desk → Inter-branch.',
     };
   }
   if (payload.workspaceBranchId && payload.actor) {

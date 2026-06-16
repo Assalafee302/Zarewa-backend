@@ -167,6 +167,75 @@ function nextRegisterId() {
   return `REG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function registerPartyKindForCategory(category) {
+  const cat = String(category || '').trim();
+  if (cat === 'staff_loan') return 'staff';
+  if (['customer_ar', 'customer_deposit', 'project_overpayment'].includes(cat)) return 'customer';
+  if (['supplier_ap', 'supplier_prepay'].includes(cat)) return 'supplier';
+  if (cat === 'inter_branch') return 'branch';
+  return null;
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} category
+ * @param {string} partyRef
+ * @param {string} partyName
+ * @param {string} [ownBranchId]
+ */
+function resolveRegisterLineParty(db, category, partyRef, partyName, ownBranchId = '') {
+  const kind = registerPartyKindForCategory(category);
+  const ref = String(partyRef || '').trim();
+  const ownBranch = String(ownBranchId || '').trim();
+
+  if (!kind) {
+    const name = String(partyName || '').trim();
+    if (!name) return { ok: false, error: 'Party name is required.' };
+    return { ok: true, partyName: name, partyRef: ref || null };
+  }
+
+  if (!ref) {
+    if (kind === 'staff') return { ok: false, error: 'Select an employee from the staff list.' };
+    if (kind === 'customer') return { ok: false, error: 'Select a customer from the customer list.' };
+    if (kind === 'supplier') return { ok: false, error: 'Select a supplier from the supplier list.' };
+    return { ok: false, error: 'Select a branch from the branch list.' };
+  }
+
+  if (kind === 'branch' && ownBranch && ref === ownBranch) {
+    return { ok: false, error: 'Counterparty branch must differ from this branch.' };
+  }
+
+  if (kind === 'staff') {
+    if (!hrTablesReady(db)) return { ok: false, error: 'HR module is not available.' };
+    const row = db
+      .prepare(
+        `SELECT u.id, u.display_name
+         FROM hr_staff_profiles sp
+         JOIN app_users u ON u.id = sp.user_id
+         WHERE u.id = ?`
+      )
+      .get(ref);
+    if (!row) return { ok: false, error: 'Employee not found — pick from the staff list.' };
+    return { ok: true, partyName: row.display_name || row.id, partyRef: row.id };
+  }
+
+  if (kind === 'customer') {
+    const row = db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(ref);
+    if (!row) return { ok: false, error: 'Customer not found — pick from the customer list.' };
+    return { ok: true, partyName: row.name, partyRef: row.customer_id };
+  }
+
+  if (kind === 'supplier') {
+    const row = db.prepare(`SELECT supplier_id, name FROM suppliers WHERE supplier_id = ?`).get(ref);
+    if (!row) return { ok: false, error: 'Supplier not found — pick from the supplier list.' };
+    return { ok: true, partyName: row.name, partyRef: row.supplier_id };
+  }
+
+  const branchRow = db.prepare(`SELECT id, name FROM branches WHERE id = ?`).get(ref);
+  if (!branchRow) return { ok: false, error: 'Branch not found — pick from the branch list.' };
+  return { ok: true, partyName: branchRow.name || branchRow.id, partyRef: branchRow.id };
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function createAccountingRegisterLine(db, body, user) {
   ensureAccountingRegisterSchema(db);
@@ -174,8 +243,18 @@ export function createAccountingRegisterLine(db, body, user) {
   if (!['creditor', 'debtor'].includes(registerSide)) {
     return { ok: false, error: 'registerSide must be creditor or debtor.' };
   }
-  const partyName = String(body?.partyName || '').trim();
-  if (!partyName) return { ok: false, error: 'Party name is required.' };
+  const category = String(body?.category || 'legacy').trim() || 'legacy';
+  const branchId = String(body?.branchId || '').trim() || null;
+  const partyResolved = resolveRegisterLineParty(
+    db,
+    category,
+    body?.partyRef,
+    body?.partyName,
+    branchId || ''
+  );
+  if (!partyResolved.ok) return partyResolved;
+  const partyName = partyResolved.partyName;
+  const partyRef = partyResolved.partyRef;
   const amountNgn = Math.round(Number(body?.amountNgn) || 0);
   if (amountNgn <= 0) return { ok: false, error: 'Amount must be greater than zero.' };
   const asAtDateIso = String(body?.asAtDateIso || '').slice(0, 10);
@@ -193,10 +272,10 @@ export function createAccountingRegisterLine(db, body, user) {
   ).run(
     id,
     registerSide,
-    String(body?.category || 'legacy').trim() || 'legacy',
+    category,
     partyName,
-    String(body?.partyRef || '').trim() || null,
-    String(body?.branchId || '').trim() || null,
+    partyRef,
+    branchId,
     amountNgn,
     asAtDateIso,
     String(body?.source || 'manual').trim() || 'manual',
@@ -221,8 +300,18 @@ export function updateAccountingRegisterLine(db, lineId, body, user) {
     return { ok: false, error: 'Only open register lines can be edited.' };
   }
 
-  const partyName = String(body?.partyName ?? cur.party_name ?? '').trim();
-  if (!partyName) return { ok: false, error: 'Party name is required.' };
+  const category = String(body?.category ?? cur.category ?? 'legacy').trim() || 'legacy';
+  const branchId = String(body?.branchId ?? cur.branch_id ?? '').trim() || null;
+  const partyResolved = resolveRegisterLineParty(
+    db,
+    category,
+    body?.partyRef ?? cur.party_ref,
+    body?.partyName ?? cur.party_name,
+    branchId || ''
+  );
+  if (!partyResolved.ok) return partyResolved;
+  const partyName = partyResolved.partyName;
+  const partyRef = partyResolved.partyRef;
   const amountNgn = Math.round(Number(body?.amountNgn ?? cur.amount_ngn) || 0);
   if (amountNgn <= 0) return { ok: false, error: 'Amount must be greater than zero.' };
   const asAtDateIso = String(body?.asAtDateIso ?? cur.as_at_date_iso ?? '').slice(0, 10);
@@ -243,10 +332,10 @@ export function updateAccountingRegisterLine(db, lineId, body, user) {
       notes = ?
     WHERE id = ?`
   ).run(
-    String(body?.category ?? cur.category ?? 'legacy').trim() || 'legacy',
+    category,
     partyName,
-    String(body?.partyRef ?? cur.party_ref ?? '').trim() || null,
-    String(body?.branchId ?? cur.branch_id ?? '').trim() || null,
+    partyRef,
+    branchId,
     amountNgn,
     asAtDateIso,
     String(body?.description ?? cur.description ?? '').trim() || null,

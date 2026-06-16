@@ -123,6 +123,14 @@ import {
   updateAccountingRegisterLine,
 } from './accountingSubledgerOps.js';
 import {
+  createRegisterSettlement,
+  decideRegisterSettlement,
+  getRegisterSettlement,
+  listRegisterSettlements,
+  payRegisterSettlement,
+  registerLineAvailableSettlementNgn,
+} from './accountingRegisterSettlementOps.js';
+import {
   createFixedAsset,
   disposeFixedAsset,
   listFixedAssets,
@@ -982,6 +990,138 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[accounting-register-update]', e);
       return res.status(500).json({ ok: false, error: 'Could not update register line.' });
+    }
+  });
+
+  app.get('/api/accounting/settlements', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const result = listRegisterSettlements(db, {
+        registerLineId: req.query?.registerLineId || req.query?.lineId,
+        status: req.query?.status,
+        branchId,
+      });
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-settlements-list]', e);
+      return res.status(500).json({ ok: false, error: 'Could not list settlements.' });
+    }
+  });
+
+  app.get('/api/accounting/settlements/:settlementId', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = getRegisterSettlement(db, req.params.settlementId);
+      if (!result.ok) return res.status(404).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-settlement-get]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load settlement.' });
+    }
+  });
+
+  app.get('/api/accounting/register-lines/:lineId/settlement-capacity', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const availableNgn = registerLineAvailableSettlementNgn(db, req.params.lineId);
+      return res.json({ ok: true, availableNgn });
+    } catch (e) {
+      console.error('[accounting-settlement-capacity]', e);
+      return res.status(500).json({ ok: false, error: 'Could not read settlement capacity.' });
+    }
+  });
+
+  app.post('/api/accounting/register-lines/:lineId/settlements', requireAuth, (req, res) => {
+    try {
+      if (!userMayManageAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = createRegisterSettlement(
+        db,
+        { ...req.body, registerLineId: req.params.lineId },
+        req.user
+      );
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(201).json(result);
+    } catch (e) {
+      console.error('[accounting-settlement-create]', e);
+      return res.status(500).json({ ok: false, error: 'Could not create settlement request.' });
+    }
+  });
+
+  app.post('/api/accounting/settlements/:settlementId/decision', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'refunds.approve') ||
+        userHasPermission(req.user, '*');
+      if (!can) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const result = decideRegisterSettlement(db, req.params.settlementId, req.body || {}, req.user);
+      if (result.ok) {
+        const outcome = String(req.body?.status || '').trim() || 'reviewed';
+        const settlement = result.settlement;
+        const target = upsertWorkItemBySource(db, {
+          actor: req.user,
+          sourceKind: 'register_settlement',
+          sourceId: String(req.params.settlementId || ''),
+          branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          officeKey: 'branch_manager',
+          responsibleOfficeKey: 'branch_manager',
+          documentClass: 'approval',
+          documentType: 'register_settlement',
+          status: outcome.toLowerCase(),
+          title: `Register settlement ${String(req.params.settlementId || '').trim()}`,
+          summary:
+            String(req.body?.note || '').trim() ||
+            `${settlement?.partyName || 'Party'} · ₦${(settlement?.approvedAmountNgn || settlement?.amountNgn || 0).toLocaleString('en-NG')}`,
+          requiresApproval: true,
+          data: {
+            routePath: '/accounting',
+            routeState: { focusTab: 'debtors', settlementId: req.params.settlementId },
+          },
+        });
+        if (target.ok) {
+          appendWorkItemDecision(db, {
+            workItemId: target.item.id,
+            actor: req.user,
+            actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+            decisionKey: 'register_settlement_review',
+            outcomeStatus: outcome.toLowerCase(),
+            nextStatus: outcome.toLowerCase(),
+            note: String(req.body?.note || '').trim() || `Settlement ${outcome.toLowerCase()}`,
+          });
+        }
+      }
+      return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      console.error('[accounting-settlement-decision]', e);
+      return res.status(500).json({ ok: false, error: 'Could not decide settlement.' });
+    }
+  });
+
+  app.post('/api/accounting/settlements/:settlementId/pay', requirePermission('finance.pay'), (req, res) => {
+    try {
+      const result = payRegisterSettlement(db, req.params.settlementId, {
+        ...(req.body || {}),
+        paidBy: req.user?.displayName,
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+      });
+      return res.status(result.ok ? 201 : 400).json(result);
+    } catch (e) {
+      console.error('[accounting-settlement-pay]', e);
+      return res.status(500).json({ ok: false, error: 'Could not pay settlement.' });
     }
   });
 

@@ -27,6 +27,7 @@ const SAFE_TABLES = new Set([
   'customer_crm_interactions',
   'customer_refunds',
   'payment_requests',
+  'accounting_register_settlements',
   'gl_journal_entries',
   'gl_journal_lines',
   'audit_log',
@@ -270,6 +271,13 @@ export function nextPaymentRequestHumanId(db, branchId) {
 
 export function nextRefundHumanId(db, branchId) {
   return allocateHumanId(db, 'RF', branchId, { table: 'customer_refunds', idColumn: 'refund_id' });
+}
+
+export function nextRegisterSettlementHumanId(db, branchId) {
+  return allocateHumanId(db, 'SET', branchId, {
+    table: 'accounting_register_settlements',
+    idColumn: 'settlement_id',
+  });
 }
 
 export function nextAuditLogHumanId(db) {

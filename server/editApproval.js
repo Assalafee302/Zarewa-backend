@@ -2,7 +2,7 @@
  * Second-party approval for sensitive PATCH (edit) operations.
  * Exempt roles: admin, md. Everyone else must obtain an approved token (single-use) per edit.
  */
-import { editMutationRequiresSecondApproval, userCanApproveEditMutations, userHasPermission } from './auth.js';
+import { editMutationRequiresSecondApproval, userCanApproveEditMutations } from './auth.js';
 import { appendAuditLog } from './controlOps.js';
 
 export function ensureEditApprovalTable(db) {
@@ -288,27 +288,20 @@ export function cuttingListEditRequiresEditApproval(db, user, cuttingListId) {
   return cuttingListIsPushedToProduction(db, cuttingListId);
 }
 
-/** Admin, MD, or finance.approve may revise reconciled receipts without a second-party token. */
-export function userMayBypassReceiptSettlementEditApproval(user) {
-  if (!editMutationRequiresSecondApproval(user)) return true;
-  return Boolean(user && (userHasPermission(user, '*') || userHasPermission(user, 'finance.approve')));
-}
-
 /**
- * Receipt finance settlement: first reconcile is open to Finance/Cashier; second edit needs manager token.
+ * Receipt finance settlement (first reconcile or revision) is open to Finance/Cashier — no second-party token.
  * @param {import('better-sqlite3').Database} db
  */
 export function receiptFinanceSettlementRequiresEditApproval(db, user, receiptId) {
-  if (userMayBypassReceiptSettlementEditApproval(user)) return false;
-  return salesReceiptReconciliationIsFinalized(db, receiptId);
+  return false;
 }
 
 /**
- * Standalone ledger receipt treasury correction follows the same first-free / second-gated rule.
+ * Ledger receipt treasury corrections tied to sales receipts follow open settlement edit policy.
+ * Other treasury movement corrections still use the default second-party gate.
  * @param {import('better-sqlite3').Database} db
  */
 export function ledgerReceiptMovementRevisionRequiresEditApproval(db, user, movementId) {
-  if (userMayBypassReceiptSettlementEditApproval(user)) return false;
   const mid = String(movementId || '').trim();
   if (!mid) return false;
   const row = db
@@ -317,18 +310,7 @@ export function ledgerReceiptMovementRevisionRequiresEditApproval(db, user, move
   if (!row || String(row.type) !== 'RECEIPT_IN' || String(row.source_kind) !== 'LEDGER_RECEIPT') {
     return editMutationRequiresSecondApproval(user);
   }
-  const sid = String(row.source_id || '').trim();
-  if (!sid) return false;
-  const lockRow = db
-    .prepare(
-      `SELECT finance_reconciliation_saved_at_iso FROM sales_receipts
-       WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
-    )
-    .get(sid, sid);
-  return (
-    lockRow?.finance_reconciliation_saved_at_iso != null &&
-    String(lockRow.finance_reconciliation_saved_at_iso).trim() !== ''
-  );
+  return false;
 }
 
 /**

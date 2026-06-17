@@ -221,7 +221,7 @@ describe('editApproval (no MySQL)', () => {
     ).toThrow(/Invalid|expired|already used|mismatched/i);
   });
 
-  it('receipt finance settlement: first reconcile skips token; second requires it', () => {
+  it('receipt finance settlement: first and revised reconcile skip token', () => {
     const db = {
       prepare(sql) {
         const s = String(sql);
@@ -239,7 +239,7 @@ describe('editApproval (no MySQL)', () => {
     expect(salesReceiptReconciliationIsFinalized(db, 'RC-FINAL')).toBe(true);
     expect(salesReceiptReconciliationIsFinalized(db, 'RC-NEW')).toBe(false);
     expect(receiptFinanceSettlementRequiresEditApproval(db, finance, 'RC-NEW')).toBe(false);
-    expect(receiptFinanceSettlementRequiresEditApproval(db, finance, 'RC-FINAL')).toBe(true);
+    expect(receiptFinanceSettlementRequiresEditApproval(db, finance, 'RC-FINAL')).toBe(false);
     expect(receiptFinanceSettlementRequiresEditApproval(db, { roleKey: 'admin' }, 'RC-FINAL')).toBe(false);
   });
 
@@ -277,7 +277,7 @@ describe('editApproval (no MySQL)', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('handlePatchWithEditApproval: finance second receipt reconcile requires token', () => {
+  it('handlePatchWithEditApproval: finance revised receipt reconcile skips token', () => {
     const res = mockRes();
     const db = {
       exec: vi.fn(),
@@ -293,6 +293,7 @@ describe('editApproval (no MySQL)', () => {
       },
     };
     const finance = { roleKey: 'finance_officer' };
+    const executeWrite = vi.fn(() => ({ ok: true }));
     handlePatchWithEditApproval(
       res,
       db,
@@ -300,15 +301,14 @@ describe('editApproval (no MySQL)', () => {
       { bankReceivedAmountNgn: 1000 },
       'sales_receipt',
       'RC-FINAL',
-      () => ({ ok: true }),
+      executeWrite,
       {
         requiresEditApproval: (database, user, receiptId) =>
           receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
       }
     );
-    expect(res.statusCode).toBe(403);
-    expect(res.payload?.code).toBe('EDIT_APPROVAL_REQUIRED');
-    expect(String(res.payload?.error || '')).toMatch(/already reconciled once/i);
+    expect(executeWrite).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
   });
 
   it('createEditApprovalRequest returns EDIT_APPROVAL_ALREADY_PENDING when a pending row exists', () => {

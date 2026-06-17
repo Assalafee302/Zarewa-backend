@@ -4,7 +4,8 @@
  */
 
 import { hrTablesReady, listHrStaff, upsertHrStaffProfile } from './hrOps.js';
-import { userCanGmApproveHr } from './hrPermissions.js';
+import { serviceYearsFromJoinedIso } from './hrBusinessRules.js';
+import { evaluateTransferTenurePolicy } from './hrPolicyConstants.js';
 import {
   notifyHrTransferOutcome,
   notifyHrTransferQueueHandoff,
@@ -177,6 +178,20 @@ export function createHrTransferRequest(db, body, actor) {
   if (!reason) return { ok: false, error: 'Reason is required.' };
 
   const profile = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+
+  const yearsOfService = serviceYearsFromJoinedIso(profile?.date_joined_iso);
+  const tenurePolicy = evaluateTransferTenurePolicy({
+    transferType,
+    yearsOfService,
+    designationId: profile?.designation_id,
+    jobTitle: profile?.job_title,
+  });
+  const policyWarnings = tenurePolicy.warnings || [];
+  const notesWithWarnings =
+    policyWarnings.length > 0
+      ? [String(body?.notes || '').trim(), `Policy note: ${policyWarnings.join(' ')}`].filter(Boolean).join('\n')
+      : String(body?.notes || '').trim() || null;
+
   const id = newId();
   const ts = nowIso();
   const status = body?.submit ? initialStatusOnSubmit(transferType) : 'draft';
@@ -209,7 +224,7 @@ export function createHrTransferRequest(db, body, actor) {
     status,
     actor?.id || null,
     body?.recommendedByUserId || null,
-    body?.notes || null,
+    notesWithWarnings,
     ts,
     ts,
     JSON.stringify(timeline),
@@ -219,7 +234,7 @@ export function createHrTransferRequest(db, body, actor) {
   if (created && status !== 'draft') {
     notifyHrTransferSubmitted(db, created, actor?.id || null);
   }
-  return { ok: true, transfer: getHrTransferRequest(db, id) };
+  return { ok: true, transfer: getHrTransferRequest(db, id), policyWarnings };
 }
 
 function persistTransferUpdate(db, id, { status, timeline, rejectionReason, approvedByUserId, ts }) {

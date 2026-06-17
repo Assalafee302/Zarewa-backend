@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { permissionsForRole } from './auth.js';
+import { mergeRoleAndCustomPermissions, permissionsForRole } from './auth.js';
 import {
   hrApiPathAllowedWithoutMainWorkspace,
+  hrUserHas,
   userCanAccessExecutiveHrModule,
   userCanAccessHrModule,
   userCanAccessMainHrWorkspace,
@@ -102,5 +103,25 @@ describe('hrPermissions', () => {
         executiveScholarshipDomesticUser: true,
       })
     ).toBe(false);
+  });
+});
+
+describe('hrPermissions wildcard', () => {
+  it('hrUserHas treats hr.* as any hr permission prefix', () => {
+    const hrAdmin = {
+      roleKey: 'hr_admin',
+      permissions: mergeRoleAndCustomPermissions('hr_admin', []),
+    };
+    expect(hrUserHas(hrAdmin, 'hr.*')).toBe(true);
+    expect(hrUserHas(hrAdmin, 'hr.staff.manage')).toBe(true);
+    expect(hrUserHas(hrAdmin, 'finance.post')).toBe(false);
+  });
+
+  it('hrUserHas hr.* is false for users without hr permissions', () => {
+    const cashier = {
+      roleKey: 'cashier',
+      permissions: mergeRoleAndCustomPermissions('cashier', []),
+    };
+    expect(hrUserHas(cashier, 'hr.*')).toBe(false);
   });
 });

@@ -69,6 +69,60 @@ function parseTimeline(row) {
   return safeJsonParse(row?.timeline_json, []);
 }
 
+function notesContainPolicyException(notes) {
+  return /MD exception/i.test(String(notes || ''));
+}
+
+function resolveTransferPolicyException(body, existingNotes) {
+  const bodyException = Boolean(body?.mdPolicyException || body?.policyException);
+  const reason = String(body?.policyExceptionReason || body?.mdExceptionReason || '').trim();
+  if (bodyException) {
+    return { allowException: Boolean(reason), reason, fromBody: true };
+  }
+  if (notesContainPolicyException(existingNotes)) {
+    return { allowException: true, reason: null, fromBody: false };
+  }
+  return { allowException: false, reason: null, fromBody: false };
+}
+
+function checkTransferTenureOnApproval(db, row, body) {
+  const profile = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(row.user_id);
+  const yearsOfService = serviceYearsFromJoinedIso(profile?.date_joined_iso);
+  const exc = resolveTransferPolicyException(body, row.notes);
+  if (exc.fromBody && (body?.mdPolicyException || body?.policyException) && !exc.reason) {
+    return { ok: false, error: 'MD/GMHR policy exception reason is required when bypassing tenure minimums.' };
+  }
+  const tenurePolicy = evaluateTransferTenurePolicy(
+    {
+      transferType: row.transfer_type,
+      yearsOfService,
+      designationId: profile?.designation_id,
+      jobTitle: profile?.job_title,
+    },
+    { allowException: exc.allowException }
+  );
+  if (!tenurePolicy.ok) {
+    return {
+      ok: false,
+      error: tenurePolicy.error,
+      policyBlocked: true,
+      policyWarnings: tenurePolicy.warnings || [],
+    };
+  }
+  const notesAppend =
+    exc.fromBody && exc.reason ? `MD exception (approval): ${exc.reason}` : null;
+  return { ok: true, notesAppend };
+}
+
+function transferActionNeedsTenureCheck(row, action) {
+  if (row.status === 'hr_review' && transferRequiresGmApproval(row.transfer_type)) {
+    if (action === 'approve' || action === 'gm_approval') return true;
+  }
+  if (action !== 'approve') return false;
+  if (row.status === 'gm_approval') return true;
+  return row.status === 'hr_review' && !transferRequiresGmApproval(row.transfer_type);
+}
+
 function appendTimeline(existing, entry) {
   const list = Array.isArray(existing) ? [...existing] : [];
   list.push(entry);
@@ -181,17 +235,33 @@ export function createHrTransferRequest(db, body, actor) {
   const profile = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
 
   const yearsOfService = serviceYearsFromJoinedIso(profile?.date_joined_iso);
-  const tenurePolicy = evaluateTransferTenurePolicy({
-    transferType,
-    yearsOfService,
-    designationId: profile?.designation_id,
-    jobTitle: profile?.job_title,
-  });
+  const allowException = Boolean(body?.mdPolicyException || body?.policyException);
+  const exceptionReason = String(body?.policyExceptionReason || body?.mdExceptionReason || '').trim();
+  if (allowException && !exceptionReason) {
+    return { ok: false, error: 'MD/GMHR policy exception reason is required when bypassing tenure minimums.' };
+  }
+  const tenurePolicy = evaluateTransferTenurePolicy(
+    {
+      transferType,
+      yearsOfService,
+      designationId: profile?.designation_id,
+      jobTitle: profile?.job_title,
+    },
+    { allowException }
+  );
+  if (!tenurePolicy.ok) {
+    return {
+      ok: false,
+      error: tenurePolicy.error,
+      policyBlocked: true,
+      policyWarnings: tenurePolicy.warnings || [],
+    };
+  }
   const policyWarnings = tenurePolicy.warnings || [];
   const notesWithWarnings =
-    policyWarnings.length > 0
-      ? [String(body?.notes || '').trim(), `Policy note: ${policyWarnings.join(' ')}`].filter(Boolean).join('\n')
-      : String(body?.notes || '').trim() || null;
+    [String(body?.notes || '').trim(), allowException ? `MD exception: ${exceptionReason}` : '', policyWarnings.length ? `Policy note: ${policyWarnings.join(' ')}` : '']
+      .filter(Boolean)
+      .join('\n') || null;
 
   const id = newId();
   const ts = nowIso();
@@ -258,7 +328,7 @@ function persistTransferUpdate(db, id, { status, timeline, rejectionReason, appr
 
 export function patchHrTransferRequest(db, id, body, actor) {
   if (!hrTransferRequestsTableReady(db)) return { ok: false, error: 'Transfer module not initialised.' };
-  const row = db.prepare(`SELECT * FROM hr_transfer_requests WHERE id = ?`).get(id);
+  let row = db.prepare(`SELECT * FROM hr_transfer_requests WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Transfer not found.' };
 
   const action = String(body?.action || '').trim();
@@ -310,6 +380,16 @@ export function patchHrTransferRequest(db, id, body, actor) {
 
   if (action === 'complete' && row.status === 'approved') {
     return completeHrTransferRequest(db, id, actor);
+  }
+
+  if (transferActionNeedsTenureCheck(row, action)) {
+    const tenure = checkTransferTenureOnApproval(db, row, body);
+    if (!tenure.ok) return tenure;
+    if (tenure.notesAppend) {
+      const mergedNotes = [String(row.notes || '').trim(), tenure.notesAppend].filter(Boolean).join('\n');
+      db.prepare(`UPDATE hr_transfer_requests SET notes = ? WHERE id = ?`).run(mergedNotes, id);
+      row = { ...row, notes: mergedNotes };
+    }
   }
 
   let status = row.status;

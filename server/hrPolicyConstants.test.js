@@ -17,9 +17,19 @@ describe('hrPolicyConstants', () => {
     expect(defaultProbationEndIso('2026-01-15')).toBe('2026-07-15');
   });
 
-  it('warns on early branch transfer', () => {
-    const r = evaluateTransferTenurePolicy({ transferType: 'inter_branch', yearsOfService: 1.5 });
+  it('warns on early branch transfer when exception allowed', () => {
+    const r = evaluateTransferTenurePolicy(
+      { transferType: 'inter_branch', yearsOfService: 1.5 },
+      { allowException: true }
+    );
+    expect(r.ok).toBe(true);
     expect(r.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('blocks early branch transfer without exception', () => {
+    const r = evaluateTransferTenurePolicy({ transferType: 'inter_branch', yearsOfService: 1.5 });
+    expect(r.ok).toBe(false);
+    expect(r.blocked).toBe(true);
   });
 
   it('exempts branch manager from internal rotation warning', () => {

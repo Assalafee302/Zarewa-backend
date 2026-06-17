@@ -55,31 +55,79 @@ function isBranchManagerRole({ designationId, jobTitle }) {
 }
 
 /**
- * Soft tenure warnings for transfers (does not block).
+ * Evaluate transfer tenure policy. Blocks unless MD/GMHR exception is recorded.
  * @param {{ transferType?: string; yearsOfService?: number; designationId?: string; jobTitle?: string }} input
+ * @param {{ allowException?: boolean }} [opts]
  */
-export function evaluateTransferTenurePolicy(input = {}) {
+export function evaluateTransferTenurePolicy(input = {}, { allowException = false } = {}) {
   const transferType = String(input.transferType || '').trim();
   const years = Number(input.yearsOfService);
   const warnings = [];
   if (!Number.isFinite(years) || years < 0) {
-    return { ok: true, warnings: ['Years of service unknown — confirm tenure before approving transfer.'] };
+    return {
+      ok: allowException,
+      blocked: !allowException,
+      error: allowException ? undefined : 'Years of service unknown — cannot submit transfer without MD policy exception.',
+      warnings: ['Years of service unknown — confirm tenure before approving transfer.'],
+    };
   }
   const isBranch = BRANCH_TRANSFER_TYPES.has(transferType);
   const isBm = isBranchManagerRole(input);
-  if (isBranch) {
-    if (years < TRANSFER_MIN_YEARS_BRANCH) {
-      warnings.push(
-        `Branch transfer before ${TRANSFER_MIN_YEARS_BRANCH}-year minimum (${years.toFixed(1)} yrs served). MD exception memo required.`
-      );
-    }
-  } else if (!isBm && years < TRANSFER_MIN_YEARS_INTERNAL) {
+  if (isBranch && years < TRANSFER_MIN_YEARS_BRANCH) {
+    warnings.push(
+      `Branch transfer before ${TRANSFER_MIN_YEARS_BRANCH}-year minimum (${years.toFixed(1)} yrs served). MD exception memo required.`
+    );
+  } else if (!isBm && !isBranch && years < TRANSFER_MIN_YEARS_INTERNAL) {
     warnings.push(
       `Internal rotation before ${TRANSFER_MIN_YEARS_INTERNAL}-year minimum (${years.toFixed(1)} yrs served). GMHR/MD exception required.`
     );
   }
-  return { ok: true, warnings };
+  if (warnings.length && !allowException) {
+    return {
+      ok: false,
+      blocked: true,
+      error: warnings[0],
+      warnings,
+    };
+  }
+  return { ok: true, blocked: false, warnings };
 }
+
+/** Official 4-stage discipline ladder (board resolution). */
+export const DISCIPLINE_PLAYBOOK_STAGES = [
+  {
+    stage: 1,
+    title: 'Verbal warning',
+    owner: 'Immediate supervisor',
+    actions: 'Document the conversation; supervisor keeps a note for HR file if repeated.',
+  },
+  {
+    stage: 2,
+    title: 'Written warning / query',
+    owner: 'Supervisor + HR',
+    actions: 'Issue query letter; employee must respond in writing. Log as discipline case.',
+  },
+  {
+    stage: 3,
+    title: 'Final warning or suspension',
+    owner: 'GMHR',
+    actions: 'Final warning or suspension with dates. Payroll block may apply (MD-approved).',
+  },
+  {
+    stage: 4,
+    title: 'Demotion, transfer, or separation',
+    owner: 'MD + GMHR',
+    actions: 'Demotion, transfer, or termination. Separation requires reason, effective date, and MD/GMHR approval.',
+  },
+];
+
+export const DISCIPLINE_PLAYBOOK_NOTES = [
+  'Staff may appeal through GMHR.',
+  'File tampering (removing/altering pages, backdating) is gross misconduct — immediate query.',
+  'Appraisal outcomes may trigger commendation, bonus, warning, demotion, transfer, or retirement.',
+  'Unsigned appraisal forms are not valid for bonus or promotion.',
+  'Staff files (including discipline) retained minimum 7 years.',
+];
 
 /**
  * Staff master-file checklist for HR (confirmation, loan, ID).
@@ -112,4 +160,17 @@ export function assessStaffFileCompleteness(staff = {}) {
 
 export function leaveTypeRequiresGmHrApproval(leaveType) {
   return String(leaveType || '').trim().toLowerCase() === 'unpaid';
+}
+
+/** Policy reference for HR UI (read-only). */
+export function getHrPolicyReference() {
+  return {
+    probationMonthsDefault: PROBATION_MONTHS_DEFAULT,
+    transferMinYearsBranch: TRANSFER_MIN_YEARS_BRANCH,
+    transferMinYearsInternal: TRANSFER_MIN_YEARS_INTERNAL,
+    leaveTypes: HR_LEAVE_TYPE_CATALOG,
+    leaveBands: { junior: 'Levels 1–3 (14 days annual)', senior: 'Levels 4–7 (21 days annual)' },
+    disciplinePlaybook: DISCIPLINE_PLAYBOOK_STAGES,
+    disciplineNotes: DISCIPLINE_PLAYBOOK_NOTES,
+  };
 }

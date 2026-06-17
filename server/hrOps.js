@@ -2703,35 +2703,78 @@ export function recomputeHrLeaveBalances(db, actor, body = {}) {
     ) VALUES (?,?,?,?,?,?,?,?,?,?)`
   );
   const usedByUser = new Map();
-  const approvedLeave = db
+  const approvedLeaveRows = db
     .prepare(
-      `SELECT user_id, payload_json FROM hr_requests WHERE kind = 'leave' AND status = 'approved'`
+      `SELECT r.user_id, l.leave_type, l.days_requested, l.start_date_iso
+       FROM hr_requests r
+       JOIN hr_request_leave l ON l.request_id = r.id
+       WHERE r.kind = 'leave' AND r.status = 'approved'`
     )
     .all();
-  for (const row of approvedLeave) {
-    const p = safeJsonParse(row.payload_json, {});
-    const reqPeriod = String(p.startDateIso || p.startDate || '').slice(0, 7).replace('-', '');
-    if (reqPeriod !== periodYyyymm) continue;
-    const days = Math.max(0, Number(p.daysRequested) || 0);
+  const periodYear = periodYyyymm.slice(0, 4);
+  for (const row of approvedLeaveRows) {
+    const lt = String(row.leave_type || '').trim().toLowerCase();
+    if (lt !== leaveType) continue;
+    if (leaveType === 'maternity') {
+      const year = String(row.start_date_iso || '').slice(0, 4);
+      if (year !== periodYear) continue;
+    } else {
+      const reqPeriod = String(row.start_date_iso || '').slice(0, 7).replace('-', '');
+      if (reqPeriod !== periodYyyymm) continue;
+    }
+    const days = Math.max(0, Number(row.days_requested) || 0);
     usedByUser.set(row.user_id, (usedByUser.get(row.user_id) || 0) + days);
   }
   const now = nowIso();
   const negative = [];
+  const policy = getHrPolicyPayload(db);
   for (const user of users) {
+    const used = Number(usedByUser.get(user.user_id) || 0);
+    const adjusted = Number(adjustedByUser.get(String(user.user_id)) || 0);
+
+    if (leaveType === 'maternity') {
+      const entitlement = Math.max(1, Math.round(Number(policy.maternityLeaveDays) || 60));
+      const rawClosing = entitlement - used + adjusted;
+      if (rawClosing < 0) {
+        negative.push({
+          userId: String(user.user_id),
+          openingDays: 0,
+          accruedDays: entitlement,
+          usedDays: used,
+          adjustedDays: adjusted,
+          closingDays: rawClosing,
+        });
+        continue;
+      }
+      const closing = Math.max(0, rawClosing);
+      upsert.run(user.user_id, leaveType, periodYyyymm, 0, entitlement, used, adjusted, closing, now);
+      ledgerIns.run(
+        newId('HRLVL'),
+        user.user_id,
+        leaveType,
+        periodYyyymm,
+        'accrual_recompute',
+        entitlement - used,
+        null,
+        `Maternity entitlement ${entitlement}d for ${periodYear}`,
+        now,
+        actor?.id || null
+      );
+      continue;
+    }
+
     let accrualPerMonth = 2;
     if (explicitAccrual) {
       accrualPerMonth = Math.max(0, Number(body.accrualPerMonthDays) || 0);
     } else if (leaveType === 'annual') {
       accrualPerMonth = annualLeaveEntitlementDaysForUser(db, user.user_id) / 12;
     }
-    const used = Number(usedByUser.get(user.user_id) || 0);
     const previous = db
       .prepare(
         `SELECT closing_days FROM hr_leave_balances WHERE user_id = ? AND leave_type = ? AND period_yyyymm < ? ORDER BY period_yyyymm DESC LIMIT 1`
       )
       .get(user.user_id, leaveType, periodYyyymm);
     const opening = Number(previous?.closing_days || 0);
-    const adjusted = Number(adjustedByUser.get(String(user.user_id)) || 0);
     const rawClosing = opening + accrualPerMonth - used + adjusted;
     if (rawClosing < 0) {
       negative.push({

@@ -155,6 +155,7 @@ import {
   uploadHrStaffDocument,
   verifyHrStaffDocument,
 } from './hrStaffDocuments.js';
+import { exportStaffRegistrationFormPdf, exportBlankStaffRegistrationFormPdf } from './hrStaffFormPdf.js';
 import {
   getHrStaffLifecycle,
   patchHrLifecycleTask,
@@ -272,6 +273,7 @@ import {
 import { HR_POLICY_REGISTRY, requiredHrPoliciesFor, joiningHrPolicies } from './hrPolicy.js';
 import { HR_POLICY_CONTENT, HR_GUARANTOR_FORM_TEMPLATE } from '../shared/lib/hrPolicyContent.js';
 import { getHrPolicyPayload, annualLeaveEntitlementDaysForUser } from './hrBusinessRules.js';
+import { getHrPolicyReference } from './hrPolicyConstants.js';
 import { validateStaffLoanApplication } from './hrBusinessRules.js';
 import {
   applyStaffRenumbering,
@@ -655,6 +657,22 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/hr/templates/staff-registration-form.pdf',
+    requireHrAny('hr.staff.manage', 'hr.settings.manage', 'hr.directory.view'),
+    (req, res) => {
+      try {
+        const r = exportBlankStaffRegistrationFormPdf();
+        res.setHeader('Content-Type', r.contentType || 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
+        return res.send(Buffer.from(r.pdf));
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load staff registration template.' });
+      }
+    }
+  );
+
   app.post('/api/hr/policy-acknowledgements', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -686,6 +704,27 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not load HR policy config.' });
     }
   }
+  );
+
+  app.get(
+    '/api/hr/policy-reference',
+    requireHrAny(
+      'hr.staff.manage',
+      'hr.discipline.manage',
+      'hr.leave.manage',
+      'hr.transfers.manage',
+      'hr.settings.manage',
+      'hr.executive.view'
+    ),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        return res.json({ ok: true, reference: getHrPolicyReference() });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load HR policy reference.' });
+      }
+    }
   );
 
   app.patch(
@@ -1108,6 +1147,22 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load staff profile.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/registration-form.pdf', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = exportStaffRegistrationFormPdf(db, userId);
+      if (!r.ok) return res.status(r.error === 'Staff not found.' ? 404 : 400).json(r);
+      res.setHeader('Content-Type', r.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'staff-registration.pdf'}"`);
+      return res.send(Buffer.from(r.pdf));
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not export staff registration form.' });
     }
   });
 

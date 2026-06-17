@@ -14,6 +14,12 @@ import {
   serviceYearsFromJoinedIso,
 } from './hrBusinessRules.js';
 import {
+  assessStaffFileCompleteness,
+  defaultProbationEndIso,
+  leaveBandFromSalaryLevel,
+  leaveTypeRequiresGmHrApproval,
+} from './hrPolicyConstants.js';
+import {
   getDesignationTenureEligibility,
   getStaffTenureSummary,
   roundTenureYears,
@@ -621,6 +627,7 @@ export function getHrStaffOne(db, userId) {
       salaryLevel: staff.salaryLevel,
       salaryStep: staff.salaryStep,
     }),
+    fileCompleteness: assessStaffFileCompleteness(staff),
     lineManager: reporting.lineManager,
     lineManagerDisplayName: reporting.lineManager?.displayName || null,
     directReports: reporting.directReports,
@@ -728,10 +735,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     body?.lineManagerUserId !== undefined
       ? String(body.lineManagerUserId || '').trim() || null
       : prevRow?.line_manager_user_id ?? null;
-  const leaveEntitlementBand =
-    body?.leaveEntitlementBand !== undefined
-      ? normalizeLeaveEntitlementBand(String(body.leaveEntitlementBand || '').trim()) || null
-      : prevRow?.leave_entitlement_band ?? null;
+  let resolvedLeaveBand = prevRow?.leave_entitlement_band ?? null;
 
   let selfServiceEligible = 0;
   if (body?.selfServiceEligible !== undefined && body?.selfServiceEligible !== null) {
@@ -834,6 +838,20 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     }
   }
 
+  if (body?.leaveEntitlementBand !== undefined) {
+    const rawBand = String(body.leaveEntitlementBand || '').trim();
+    if (rawBand) {
+      resolvedLeaveBand = normalizeLeaveEntitlementBand(rawBand) || null;
+    } else if (resolvedSalaryLevel) {
+      resolvedLeaveBand = leaveBandFromSalaryLevel(resolvedSalaryLevel) || null;
+    }
+  } else if (
+    resolvedSalaryLevel &&
+    (body?.salaryLevel !== undefined || body?.designationId !== undefined || !prevRow?.leave_entitlement_band)
+  ) {
+    resolvedLeaveBand = leaveBandFromSalaryLevel(resolvedSalaryLevel) || resolvedLeaveBand;
+  }
+
   const prevExtra = safeJsonParse(prevExtraRow?.profile_extra_json, {});
   const personalPatch = body?.personal && typeof body.personal === 'object' ? body.personal : null;
   const profileExtraMerged = (() => {
@@ -924,6 +942,17 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       ? String(body?.dateJoinedIso ?? '').trim() || null
       : prevRow?.date_joined_iso ?? null;
 
+  let resolvedProbationEndIso =
+    body?.probationEndIso !== undefined
+      ? String(body.probationEndIso ?? '').trim() || null
+      : prevRow?.probation_end_iso ?? null;
+  if (!resolvedProbationEndIso && !existing) {
+    const empType = String(body?.employmentType ?? 'permanent').trim().toLowerCase();
+    if (empType === 'permanent' && resolvedDateJoinedIso) {
+      resolvedProbationEndIso = defaultProbationEndIso(resolvedDateJoinedIso) || null;
+    }
+  }
+
   const orgValidation = validateStaffOrgRoles({
     designationId,
     branchId,
@@ -1011,7 +1040,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     designation_id: designationId,
     employment_type: String(body?.employmentType ?? '').trim() || null,
     date_joined_iso: resolvedDateJoinedIso,
-    probation_end_iso: String(body?.probationEndIso ?? '').trim() || null,
+    probation_end_iso: resolvedProbationEndIso,
     bank_account_name: String(body?.bankAccountName ?? '').trim() || null,
     bank_name: String(body?.bankName ?? '').trim() || null,
     bank_account_no_masked: String(body?.bankAccountNoMasked ?? '').trim() || null,
@@ -1060,7 +1089,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     updated_by_user_id: actorUserId,
     self_service_eligible: selfServiceEligible,
     line_manager_user_id: lineManagerUserId,
-    leave_entitlement_band: leaveEntitlementBand,
+    leave_entitlement_band: resolvedLeaveBand,
     payroll_group: payrollGroup,
     salary_level: resolvedSalaryLevel,
     salary_step: resolvedSalaryStep,
@@ -2168,6 +2197,28 @@ export function hrReviewRequest(db, requestId, actor, approve, note, reasonCode)
       details: { kind: row.kind, decision: 'approve', reasonCode: rc },
     });
     return { ok: true };
+  }
+
+  if (String(row.kind) === 'leave') {
+    const leaveRow = db.prepare(`SELECT leave_type FROM hr_request_leave WHERE request_id = ?`).get(requestId);
+    if (leaveTypeRequiresGmHrApproval(leaveRow?.leave_type)) {
+      db.prepare(
+        `UPDATE hr_requests SET status = 'gm_hr_review', hr_reviewer_user_id = ?, hr_reviewer_note = ?, hr_reviewed_at_iso = ? WHERE id = ?`
+      ).run(actor.id, noteNorm || null, now, requestId);
+      appendHrAuditEvent(db, {
+        actorUserId: actor.id,
+        actorDisplayName: actor.displayName || actor.username || '',
+        action: 'hr.request.hr_forward_gm',
+        entityKind: 'hr_request',
+        entityId: requestId,
+        branchId: row.branch_id,
+        reason: noteNorm || null,
+        details: { kind: row.kind, decision: 'forward', reasonCode: rc, leaveWithoutPay: true },
+      });
+      const forwarded = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
+      notifyHrRequestQueueHandoff(db, forwarded, 'gm_hr_review', actor.id);
+      return { ok: true };
+    }
   }
 
   db.prepare(

@@ -40,7 +40,7 @@ describe.skipIf(!mysqlOk)('HR security', () => {
 
   it('bootstrap snapshot does not embed HR salary fields', async () => {
     const sess = await adminAgent.get('/api/session');
-    const user = sess.body.session?.user;
+    const user = sess.body.user;
     const snap = buildBootstrap(db, user, { workspaceBranchId: 'BR-KD', workspaceViewAll: true });
     const json = JSON.stringify(snap);
     expect(json.includes('baseSalaryNgn')).toBe(false);
@@ -68,8 +68,6 @@ describe.skipIf(!mysqlOk)('HR security', () => {
   });
 
   it('workspace search hr_staff hits omit compensation', async () => {
-    const sess = await adminAgent.get('/api/session');
-    const user = sess.body.session?.user;
     const staffRow = db
       .prepare(
         `SELECT u.display_name FROM app_users u
@@ -79,12 +77,11 @@ describe.skipIf(!mysqlOk)('HR security', () => {
       .get();
     const q = String(staffRow?.display_name || 'Sales').split(/\s+/)[0];
     const req = {
-      user,
+      user: { id: 'USR-HR-SEARCH', roleKey: 'custom', permissions: ['hr.directory.view'] },
       workspaceBranchId: 'BR-KD',
       workspaceViewAll: true,
-      query: { q },
     };
-    const hits = workspaceQuickSearch(db, req, 20);
+    const hits = workspaceQuickSearch(db, req, q, 20);
     const hrHits = hits.filter((h) => h.kind === 'hr_staff');
     expect(hrHits.length).toBeGreaterThan(0);
     const blob = JSON.stringify(hrHits);
@@ -104,7 +101,7 @@ describe.skipIf(!mysqlOk)('HR security', () => {
       .get();
     if (!prof?.user_id) return;
     const sess = await adminAgent.get('/api/session');
-    const user = sess.body.session?.user;
+    const user = sess.body.user;
     const ctx = buildAiContextForRequest(
       db,
       {

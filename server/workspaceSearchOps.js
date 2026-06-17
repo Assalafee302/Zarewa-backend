@@ -44,8 +44,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const rows = db
         .prepare(
           `SELECT customer_id, name, phone_number, email, company_name FROM customers WHERE 1=1${bp.sql}
-           AND (customer_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR IFNULL(phone_number,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(email,'') LIKE ? ESCAPE '\\' OR IFNULL(company_name,'') LIKE ? ESCAPE '\\')
+           AND (customer_id LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\' OR IFNULL(phone_number,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(email,'') LIKE ? ESCAPE '\\\\' OR IFNULL(company_name,'') LIKE ? ESCAPE '\\\\')
            ORDER BY name COLLATE NOCASE LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, likeArg, n);
@@ -68,8 +68,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const rows = db
         .prepare(
           `SELECT id, customer_name, customer_id, IFNULL(project_name,'') AS project_name FROM quotations WHERE 1=1${bp.sql}
-           AND (id LIKE ? ESCAPE '\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(project_name,'') LIKE ? ESCAPE '\\')
+           AND (id LIKE ? ESCAPE '\\\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(project_name,'') LIKE ? ESCAPE '\\\\')
            ORDER BY date_iso DESC, id DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, n);
@@ -93,8 +93,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const rows = db
         .prepare(
           `SELECT id, customer_name, customer_id, IFNULL(quotation_ref,'') AS quotation_ref FROM sales_receipts WHERE 1=1${bp.sql}
-           AND (id LIKE ? ESCAPE '\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\')
+           AND (id LIKE ? ESCAPE '\\\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\\\')
            ORDER BY date_iso DESC, id DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, n);
@@ -118,7 +118,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const rows = db
         .prepare(
           `SELECT po_id, supplier_name, supplier_id FROM purchase_orders WHERE 1=1${bp.sql}
-           AND (po_id LIKE ? ESCAPE '\\' OR IFNULL(supplier_name,'') LIKE ? ESCAPE '\\' OR IFNULL(supplier_id,'') LIKE ? ESCAPE '\\')
+           AND (po_id LIKE ? ESCAPE '\\\\' OR IFNULL(supplier_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(supplier_id,'') LIKE ? ESCAPE '\\\\')
            ORDER BY order_date_iso DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, n);
@@ -141,7 +141,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const rows = db
         .prepare(
           `SELECT supplier_id, name, IFNULL(city,'') AS city FROM suppliers
-           WHERE (supplier_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR IFNULL(city,'') LIKE ? ESCAPE '\\')
+           WHERE (supplier_id LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\' OR IFNULL(city,'') LIKE ? ESCAPE '\\\\')
            ORDER BY name COLLATE NOCASE LIMIT ?`
         )
         .all(likeArg, likeArg, likeArg, n);
@@ -165,8 +165,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
         .prepare(
           `SELECT id, IFNULL(customer_name,'') AS customer_name, IFNULL(customer_id,'') AS customer_id, IFNULL(quotation_ref,'') AS quotation_ref
            FROM cutting_lists WHERE 1=1${bp.sql}
-           AND (id LIKE ? ESCAPE '\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\')
+           AND (id LIKE ? ESCAPE '\\\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\\\')
            ORDER BY date_iso DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, n);
@@ -192,8 +192,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
           `SELECT coil_no, product_id, IFNULL(po_id,'') AS po_id, IFNULL(supplier_name,'') AS supplier_name,
                   IFNULL(colour,'') AS colour, IFNULL(gauge_label,'') AS gauge_label
            FROM coil_lots WHERE 1=1${bp.sql}
-           AND (coil_no LIKE ? ESCAPE '\\' OR product_id LIKE ? ESCAPE '\\' OR IFNULL(po_id,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(supplier_name,'') LIKE ? ESCAPE '\\' OR IFNULL(colour,'') LIKE ? ESCAPE '\\' OR IFNULL(gauge_label,'') LIKE ? ESCAPE '\\')
+           AND (coil_no LIKE ? ESCAPE '\\\\' OR product_id LIKE ? ESCAPE '\\\\' OR IFNULL(po_id,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(supplier_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(colour,'') LIKE ? ESCAPE '\\\\' OR IFNULL(gauge_label,'') LIKE ? ESCAPE '\\\\')
            ORDER BY received_at_iso DESC, coil_no DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, likeArg, likeArg, n);
@@ -218,8 +218,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
           `SELECT refund_id, IFNULL(customer_name,'') AS customer_name, IFNULL(customer_id,'') AS customer_id,
                   IFNULL(quotation_ref,'') AS quotation_ref, IFNULL(product,'') AS product, IFNULL(reason_category,'') AS reason_category
            FROM customer_refunds WHERE 1=1${bp.sql}
-           AND (refund_id LIKE ? ESCAPE '\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\'
-                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\' OR IFNULL(product,'') LIKE ? ESCAPE '\\' OR IFNULL(reason_category,'') LIKE ? ESCAPE '\\')
+           AND (refund_id LIKE ? ESCAPE '\\\\' OR IFNULL(customer_name,'') LIKE ? ESCAPE '\\\\' OR IFNULL(customer_id,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(quotation_ref,'') LIKE ? ESCAPE '\\\\' OR IFNULL(product,'') LIKE ? ESCAPE '\\\\' OR IFNULL(reason_category,'') LIKE ? ESCAPE '\\\\')
            ORDER BY requested_at_iso DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, likeArg, likeArg, likeArg, n);
@@ -247,7 +247,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
         rows = db
           .prepare(
             `SELECT product_id, name FROM products WHERE 1=1${bp.sql}
-             AND (product_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')
+             AND (product_id LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\')
              ORDER BY name COLLATE NOCASE LIMIT ?`
           )
           .all(...bp.args, likeArg, likeArg, n);
@@ -256,7 +256,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
           .prepare(
             `SELECT product_id, name FROM products
              WHERE (branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')
-             AND (product_id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')
+             AND (product_id LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\')
              ORDER BY name COLLATE NOCASE LIMIT ?`
           )
           .all(branchScope, likeArg, likeArg, n);
@@ -290,8 +290,8 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
         LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
         WHERE u.status = 'active'
         AND (
-          u.display_name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\' OR IFNULL(p.employee_no,'') LIKE ? ESCAPE '\\'
-          OR IFNULL(p.department,'') LIKE ? ESCAPE '\\' OR IFNULL(p.job_title,'') LIKE ? ESCAPE '\\'
+          u.display_name LIKE ? ESCAPE '\\\\' OR u.username LIKE ? ESCAPE '\\\\' OR IFNULL(p.employee_no,'') LIKE ? ESCAPE '\\\\'
+          OR IFNULL(p.department,'') LIKE ? ESCAPE '\\\\' OR IFNULL(p.job_title,'') LIKE ? ESCAPE '\\\\'
         )
       `;
       const args = [likeArg, likeArg, likeArg, likeArg, likeArg];
@@ -322,7 +322,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
         .prepare(
           `SELECT j.id, j.entry_date_iso, IFNULL(j.memo,'') AS memo, IFNULL(j.source_id,'') AS source_id
            FROM gl_journal_entries j WHERE 1=1${bp.sql}
-           AND (j.id LIKE ? ESCAPE '\\' OR IFNULL(j.memo,'') LIKE ? ESCAPE '\\' OR IFNULL(j.source_id,'') LIKE ? ESCAPE '\\')
+           AND (j.id LIKE ? ESCAPE '\\\\' OR IFNULL(j.memo,'') LIKE ? ESCAPE '\\\\' OR IFNULL(j.source_id,'') LIKE ? ESCAPE '\\\\')
            ORDER BY j.entry_date_iso DESC, j.id DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, n);
@@ -348,7 +348,7 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
           `SELECT w.id, w.reference_no, w.title, w.document_type, w.status, w.branch_id, w.confidentiality,
                   w.sender_user_id, w.responsible_user_id, w.responsible_office_key, w.office_key
            FROM work_items w WHERE 1=1${bp.sql}
-           AND (w.reference_no LIKE ? ESCAPE '\\' OR w.title LIKE ? ESCAPE '\\' OR w.document_type LIKE ? ESCAPE '\\')
+           AND (w.reference_no LIKE ? ESCAPE '\\\\' OR w.title LIKE ? ESCAPE '\\\\' OR w.document_type LIKE ? ESCAPE '\\\\')
            ORDER BY w.updated_at_iso DESC LIMIT ?`
         )
         .all(...bp.args, likeArg, likeArg, likeArg, Math.min(n * 3, 60));

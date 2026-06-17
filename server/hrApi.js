@@ -107,6 +107,7 @@ import {
   upsertHrBranchPayrollContribution,
   upsertHrDailyRollCall,
   upsertHrSalaryMatrixRow,
+  deleteHrSalaryMatrixRow,
   upsertHrStaffProfile,
   seedDemoMultiRoleProfile,
   listChairmanSchoolFees,
@@ -220,7 +221,10 @@ import {
   listHrDesignations,
   upsertHrDepartment,
   upsertHrDesignation,
+  deleteHrDesignation,
+  deleteHrDepartment,
 } from './hrMasterData.js';
+import { getDesignationTenureEligibility, getStaffTenureSummary } from './hrTenureOps.js';
 import {
   createHrTransferRequest,
   listHrTransferRequests,
@@ -2452,6 +2456,23 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.delete('/api/hr/salary-matrix/:id', requireHrAny('hr.staff.manage', 'hr.settings.manage', 'hr.payroll.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = deleteHrSalaryMatrixRow(db, req.user, {
+        id: req.params.id,
+        payrollGroup: req.query?.payrollGroup,
+        salaryLevel: req.query?.salaryLevel,
+        salaryStep: req.query?.salaryStep,
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not delete salary matrix row.' });
+    }
+  });
+
   app.get('/api/hr/compensation/variance-types', requireHrAny('hr.staff.manage', 'hr.payroll.prepare', 'hr.settings.manage'), (_req, res) => {
     return res.json({ ok: true, types: COMPENSATION_VARIANCE_TYPES });
   });
@@ -3555,6 +3576,19 @@ export function registerHrApi(app, db) {
   app.put('/api/hr/departments', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDepartment);
   app.put('/api/hr/departments/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDepartment);
 
+  app.delete('/api/hr/departments/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const hard = req.query?.hard === '1' || req.query?.hard === 'true';
+      const r = deleteHrDepartment(db, req.params.id, req.user, { hard });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not remove department.' });
+    }
+  });
+
   app.get('/api/hr/designations', requireHrAny('hr.settings.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -3582,6 +3616,54 @@ export function registerHrApi(app, db) {
   };
   app.put('/api/hr/designations', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDesignation);
   app.put('/api/hr/designations/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDesignation);
+
+  app.delete('/api/hr/designations/:id', requireHrAny('hr.settings.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const hard = req.query?.hard === '1' || req.query?.hard === 'true';
+      const r = deleteHrDesignation(db, req.params.id, req.user, { hard });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not remove designation.' });
+    }
+  });
+
+  app.get('/api/hr/designations/:id/tenure-eligibility', requireHrAny('hr.settings.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const designationId = String(req.params.id || '').trim();
+      const userId = String(req.query.userId || '').trim() || null;
+      const r = getDesignationTenureEligibility(db, designationId, userId, {
+        dateJoinedIso: req.query.dateJoinedIso,
+      });
+      if (!r.ok) return res.status(404).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not evaluate designation tenure eligibility.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/tenure', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view', 'hr.self', 'hr.my_profile.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const row = db.prepare(`SELECT date_joined_iso, salary_level, salary_step FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+      if (!row) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+      const tenure = getStaffTenureSummary(db, userId, {
+        dateJoinedIso: row.date_joined_iso,
+        salaryLevel: row.salary_level,
+        salaryStep: row.salary_step,
+      });
+      return res.json({ ok: true, tenure });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load tenure summary.' });
+    }
+  });
 
   app.get('/api/hr/transfer-requests', requireHrAny('hr.transfers.manage', 'hr.team.view', 'hr.staff.manage'), (req, res) => {
     try {

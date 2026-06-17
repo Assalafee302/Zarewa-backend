@@ -318,6 +318,8 @@ export function normalizeLeaveEntitlementBand(band) {
   return b;
 }
 
+export { leaveBandFromSalaryLevel } from './hrPolicyConstants.js';
+
 function currentPeriodYyyymm() {
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -338,18 +340,36 @@ export function validateLeaveRequest(db, userId, payload) {
   if (!elig.ok) return elig;
   if (daysRequested <= 0) return { ok: false, error: 'Leave days must be greater than 0.' };
 
-  if (['annual', 'casual'].includes(leaveType)) {
+  const policy = getHrPolicyPayload(db);
+
+  if (leaveType === 'maternity') {
+    const maxDays = Math.max(1, Math.round(Number(policy.maternityLeaveDays) || 60));
+    if (daysRequested > maxDays) {
+      return { ok: false, error: `Maternity leave cannot exceed ${maxDays} day(s) per company policy.` };
+    }
+  }
+
+  if (['annual', 'casual', 'maternity'].includes(leaveType)) {
     const period = currentPeriodYyyymm();
     const bal = db
       .prepare(
         `SELECT closing_days FROM hr_leave_balances WHERE user_id = ? AND leave_type = ? AND period_yyyymm = ?`
       )
       .get(userId, leaveType, period);
-    const available = Number(bal?.closing_days ?? 0);
-    if (daysRequested > available) {
+    let available = Number(bal?.closing_days ?? 0);
+    if (leaveType === 'maternity' && available <= 0) {
+      available = Math.max(1, Math.round(Number(policy.maternityLeaveDays) || 60));
+    }
+    if (leaveType !== 'maternity' && daysRequested > available) {
       return {
         ok: false,
         error: `Insufficient ${leaveType} leave balance (${available} day(s) available, ${daysRequested} requested).`,
+      };
+    }
+    if (leaveType === 'maternity' && daysRequested > available) {
+      return {
+        ok: false,
+        error: `Insufficient maternity leave balance (${available} day(s) available, ${daysRequested} requested). Contact GMHR.`,
       };
     }
   }

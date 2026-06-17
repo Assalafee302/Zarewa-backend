@@ -82,7 +82,9 @@ export function upsertHrDepartment(db, body, actor) {
 
 export function listHrDesignations(db, { departmentId, includeInactive = false } = {}) {
   if (!hrMasterDataTablesReady(db)) return [];
-  let sql = `SELECT d.*, dep.name AS departmentName FROM hr_designations d
+  let sql = `SELECT d.*, dep.name AS departmentName,
+             (SELECT COUNT(*) FROM hr_staff_profiles sp WHERE sp.designation_id = d.id) AS staffCount
+             FROM hr_designations d
              LEFT JOIN hr_departments dep ON dep.id = d.department_id WHERE 1=1`;
   const params = [];
   if (!includeInactive) sql += ` AND d.active = 1`;
@@ -119,6 +121,15 @@ export function upsertHrDesignation(db, body, actor) {
     seniority_band: String(body?.seniorityBand || body?.seniority_band || '').trim() || null,
     default_salary_level: body?.defaultSalaryLevel ?? body?.default_salary_level ?? null,
     default_salary_step: body?.defaultSalaryStep ?? body?.default_salary_step ?? null,
+    min_service_years:
+      body?.minServiceYears !== undefined
+        ? body.minServiceYears === '' || body.minServiceYears == null
+          ? null
+          : Number(body.minServiceYears)
+        : body?.min_service_years ?? null,
+    title_tier: String(body?.titleTier || body?.title_tier || '').trim() || null,
+    functional_office_key: String(body?.functionalOfficeKey || body?.functional_office_key || '').trim() || null,
+    is_acting: body?.isActing === true || body?.is_acting === 1 || body?.is_acting === true ? 1 : 0,
     job_description: String(body?.jobDescription || body?.job_description || '').trim() || null,
     duties_responsibilities: String(body?.dutiesResponsibilities || body?.duties_responsibilities || '').trim() || null,
     reporting_line: String(body?.reportingLine || body?.reporting_line || '').trim() || null,
@@ -135,6 +146,7 @@ export function upsertHrDesignation(db, body, actor) {
     db.prepare(
       `UPDATE hr_designations SET title=@title, department_id=@department_id, grade_category=@grade_category,
        seniority_band=@seniority_band, default_salary_level=@default_salary_level, default_salary_step=@default_salary_step,
+       min_service_years=@min_service_years, title_tier=@title_tier, functional_office_key=@functional_office_key, is_acting=@is_acting,
        job_description=@job_description, duties_responsibilities=@duties_responsibilities, reporting_line=@reporting_line,
        required_qualification=@required_qualification, skills_required=@skills_required, working_conditions=@working_conditions,
        salary_range_note=@salary_range_note, active=@active, updated_at_iso=@updated_at_iso, updated_by_user_id=@updated_by_user_id
@@ -143,14 +155,90 @@ export function upsertHrDesignation(db, body, actor) {
   } else {
     db.prepare(
       `INSERT INTO hr_designations (id, title, department_id, grade_category, seniority_band, default_salary_level, default_salary_step,
+       min_service_years, title_tier, functional_office_key, is_acting,
        job_description, duties_responsibilities, reporting_line, required_qualification, skills_required, working_conditions,
        salary_range_note, active, created_at_iso, updated_at_iso, created_by_user_id, updated_by_user_id)
        VALUES (@id, @title, @department_id, @grade_category, @seniority_band, @default_salary_level, @default_salary_step,
+       @min_service_years, @title_tier, @functional_office_key, @is_acting,
        @job_description, @duties_responsibilities, @reporting_line, @required_qualification, @skills_required, @working_conditions,
        @salary_range_note, @active, @created_at_iso, @updated_at_iso, @created_by_user_id, @updated_by_user_id)`
     ).run({ ...payload, created_at_iso: ts, created_by_user_id: actor?.id || null });
   }
   return { ok: true, designation: getHrDesignation(db, id) };
+}
+
+export function countStaffOnDesignation(db, designationId) {
+  try {
+    return (
+      db
+        .prepare(`SELECT COUNT(*) AS c FROM hr_staff_profiles WHERE designation_id = ?`)
+        .get(String(designationId || '').trim())?.c || 0
+    );
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Soft-delete (deactivate) or hard-delete a designation when unused.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function deleteHrDesignation(db, id, actor, { hard = false } = {}) {
+  if (!hrMasterDataTablesReady(db)) return { ok: false, error: 'HR master data not initialised.' };
+  const desId = String(id || '').trim();
+  if (!desId) return { ok: false, error: 'Designation id is required.' };
+  const exists = db.prepare(`SELECT id, title FROM hr_designations WHERE id = ?`).get(desId);
+  if (!exists) return { ok: false, error: 'Designation not found.' };
+  const staffCount = countStaffOnDesignation(db, desId);
+  const ts = nowIso();
+  if (hard) {
+    if (staffCount > 0) {
+      return {
+        ok: false,
+        error: `Cannot delete — ${staffCount} staff member(s) still use this title. Deactivate instead or reassign them first.`,
+        staffCount,
+      };
+    }
+    db.prepare(`DELETE FROM hr_designations WHERE id = ?`).run(desId);
+    return { ok: true, deleted: true, id: desId, staffCount: 0 };
+  }
+  db.prepare(
+    `UPDATE hr_designations SET active=0, updated_at_iso=?, updated_by_user_id=? WHERE id=?`
+  ).run(ts, actor?.id || null, desId);
+  return { ok: true, deactivated: true, id: desId, staffCount };
+}
+
+export function deleteHrDepartment(db, id, actor, { hard = false } = {}) {
+  if (!hrMasterDataTablesReady(db)) return { ok: false, error: 'HR master data not initialised.' };
+  const deptId = String(id || '').trim();
+  if (!deptId) return { ok: false, error: 'Department id is required.' };
+  const exists = db.prepare(`SELECT id FROM hr_departments WHERE id = ?`).get(deptId);
+  if (!exists) return { ok: false, error: 'Department not found.' };
+  let desCount = 0;
+  let staffCount = 0;
+  try {
+    desCount = db.prepare(`SELECT COUNT(*) AS c FROM hr_designations WHERE department_id = ?`).get(deptId)?.c || 0;
+    staffCount = db.prepare(`SELECT COUNT(*) AS c FROM hr_staff_profiles WHERE department_id = ?`).get(deptId)?.c || 0;
+  } catch {
+    /* ignore */
+  }
+  const ts = nowIso();
+  if (hard) {
+    if (desCount > 0 || staffCount > 0) {
+      return {
+        ok: false,
+        error: 'Cannot delete department while designations or staff are linked. Deactivate instead.',
+        desCount,
+        staffCount,
+      };
+    }
+    db.prepare(`DELETE FROM hr_departments WHERE id = ?`).run(deptId);
+    return { ok: true, deleted: true, id: deptId };
+  }
+  db.prepare(
+    `UPDATE hr_departments SET active=0, updated_at_iso=?, updated_by_user_id=? WHERE id=?`
+  ).run(ts, actor?.id || null, deptId);
+  return { ok: true, deactivated: true, id: deptId, desCount, staffCount };
 }
 
 function mapDepartmentRow(row) {
@@ -177,6 +265,10 @@ function mapDesignationRow(row) {
     seniorityBand: row.seniority_band,
     defaultSalaryLevel: row.default_salary_level,
     defaultSalaryStep: row.default_salary_step,
+    minServiceYears: row.min_service_years,
+    titleTier: row.title_tier,
+    functionalOfficeKey: row.functional_office_key,
+    isActing: Boolean(row.is_acting),
     jobDescription: row.job_description,
     dutiesResponsibilities: row.duties_responsibilities,
     reportingLine: row.reporting_line,
@@ -184,6 +276,7 @@ function mapDesignationRow(row) {
     skillsRequired: row.skills_required,
     workingConditions: row.working_conditions,
     salaryRangeNote: row.salary_range_note,
+    staffCount: Number(row.staffCount) || 0,
     active: Boolean(row.active),
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,

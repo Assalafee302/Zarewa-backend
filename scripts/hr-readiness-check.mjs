@@ -17,7 +17,7 @@ import { getHrOperationalReadiness } from '../server/hrOperationalReadiness.js';
 import { listHrObservability, listHrStaff } from '../server/hrOps.js';
 import { canUseAllBranchesRollup } from '../server/auth.js';
 
-const { db, label } = openConfiguredMysql({ migrate: true });
+const { db, label } = openConfiguredMysql({ migrate: false });
 
 const adminUser = {
   id: 'readiness-check',

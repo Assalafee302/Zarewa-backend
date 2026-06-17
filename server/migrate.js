@@ -2790,8 +2790,34 @@ function migrateHrStaffProfileColumns(db) {
   migrateHrPhase7DisciplineLetters2026(db);
   migrateHrPhase8Operational2026(db);
   migrateHrPhase9ExecutiveBenefits2026(db);
+  migrateHrOrgTenure2026(db);
   migratePayrollPensionPolicy2026(db);
   migratePayeTaxAmount2026(db);
+}
+
+/** Designation tenure gates + functional office metadata on catalog. */
+function migrateHrOrgTenure2026(db) {
+  const tableCols = (name) => {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all();
+      return new Set(rows.map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+  const des = tableCols('hr_designations');
+  if (des.size && !des.has('min_service_years')) {
+    db.exec(`ALTER TABLE hr_designations ADD COLUMN min_service_years REAL`);
+  }
+  if (des.size && !des.has('title_tier')) {
+    db.exec(`ALTER TABLE hr_designations ADD COLUMN title_tier TEXT`);
+  }
+  if (des.size && !des.has('functional_office_key')) {
+    db.exec(`ALTER TABLE hr_designations ADD COLUMN functional_office_key TEXT`);
+  }
+  if (des.size && !des.has('is_acting')) {
+    db.exec(`ALTER TABLE hr_designations ADD COLUMN is_acting INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** PAYE as fixed monthly naira amount per staff (not percentage). */

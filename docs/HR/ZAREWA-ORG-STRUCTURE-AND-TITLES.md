@@ -62,17 +62,18 @@ These are **routing queues** for memos, work items, and approvals — not separa
 ## 4. Design principles
 
 1. **One structure, three sites** — same titles everywhere; scope changes (HQ vs branch).
-2. **Three separate concepts** (do not merge them):
+2. **Four pillars of rank** (keep separate):
 
-   | Concept | Field(s) | Meaning |
+   | Pillar | Field(s) | Meaning |
    |---------|----------|---------|
    | **Pay rank** | `payroll_group`, `salary_level`, `salary_step` | Position on the salary ladder |
    | **Grade band** | `promotion_grade` (G1–G7) | Classification / promotion track |
-   | **Authority title** | `job_title`, `designation_id` | What the person is called and what they may decide |
+   | **Authority title** | `job_title`, `designation_id` | What the person may decide |
+   | **Tenure** | `date_joined_iso`, `hr_salary_history` | Years of service — gates titles and pay steps |
 
-3. **Title ≠ app login** — `role_key` (e.g. `finance_manager`, `sales_manager`) controls software permissions; HR title controls org chart and reporting.
+3. **Title ≠ app login** — `role_key` controls software permissions; HR title controls org chart and reporting.
 4. **Assistant** = same desk, **lower grade or not yet qualified** for the full Officer title.
-5. **Acting** = **temporary** authority with a written end date — not a permanent substitute for qualification.
+5. **Acting** = **temporary** authority with a written end date (max 6 months) — not a permanent substitute for qualification.
 6. **Sole occupant OK** — one Sales Officer at Yola is normal; they are still an **Officer**, not a "Manager" because they are alone.
 
 ---

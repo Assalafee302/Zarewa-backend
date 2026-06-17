@@ -11,7 +11,14 @@ import {
   normalizeLeaveEntitlementBand,
   validateLeaveRequest,
   validateStaffLoanApplication,
+  serviceYearsFromJoinedIso,
 } from './hrBusinessRules.js';
+import {
+  getDesignationTenureEligibility,
+  getStaffTenureSummary,
+  roundTenureYears,
+  validateStaffTenureForSave,
+} from './hrTenureOps.js';
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
@@ -153,6 +160,22 @@ function normalizeOrgNode(rawDepartment) {
   return null;
 }
 
+function orgNodeFromPayrollGroup(payrollGroup) {
+  const g = String(payrollGroup || '').trim();
+  if (g === 'mining_div') return 'mining_div';
+  if (g === 'scholarship') return 'scholarship';
+  if (g === 'chairman_staffs') return 'chairman_staffs';
+  if (g === 'hq_admin') return 'hq_admin';
+  return null;
+}
+
+function resolveStaffOrgNode(row) {
+  const extra = safeJsonParse(row.profileExtraJson, {});
+  const manual = String(extra.manualOrgNode || '').trim();
+  if (manual && (SPECIAL_ORG_NODES.has(manual) || manual === 'branch_ops')) return manual;
+  return normalizeOrgNode(row.department) || orgNodeFromPayrollGroup(row.payrollGroup);
+}
+
 function normalizeEmploymentType(rawEmploymentType) {
   const t = normalizeToken(rawEmploymentType);
   if (!t) return 'unknown';
@@ -218,7 +241,7 @@ function branchAliasCanonical(rawBranchId) {
 
 function buildStaffDerived(row, complianceByUserId = new Map()) {
   const normalizedBranchId = branchAliasCanonical(row.branchId);
-  const orgNode = normalizeOrgNode(row.department);
+  const orgNode = resolveStaffOrgNode(row);
   const employmentTypeNorm = normalizeEmploymentType(row.employmentType);
   const roleFamily = roleFamilyFromJob(row.jobTitle, row.department);
   const gradeBand = deriveGradeBand(row.promotionGrade, row.baseSalaryNgn);
@@ -443,6 +466,7 @@ export function listHrStaff(db, scope, opts = {}) {
       base.compensation = buildStaffCompensationSummary(db, base);
     }
     base.mergedOffices = buildStaffMergedOffices(base);
+    base.yearsOfService = roundTenureYears(serviceYearsFromJoinedIso(base.dateJoinedIso));
     return base;
   });
 }
@@ -592,6 +616,11 @@ export function getHrStaffOne(db, userId) {
   const enriched = enrichStaffWithLifecycle(enrichStaffWithOnboarding(db, staff, staff.avatarUrl));
   return {
     ...enriched,
+    tenure: getStaffTenureSummary(db, userId, {
+      dateJoinedIso: staff.dateJoinedIso,
+      salaryLevel: staff.salaryLevel,
+      salaryStep: staff.salaryStep,
+    }),
     lineManager: reporting.lineManager,
     lineManagerDisplayName: reporting.lineManager?.displayName || null,
     directReports: reporting.directReports,
@@ -823,6 +852,12 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     if (body?.confirmationDateIso !== undefined) {
       extra.employmentMeta = { ...(extra.employmentMeta || {}), confirmationDateIso: body.confirmationDateIso || null };
     }
+    if (body?.actingEndDateIso !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), actingEndDateIso: body.actingEndDateIso || null };
+    }
+    if (body?.secondaryRoles !== undefined) {
+      extra.employmentMeta = { ...(extra.employmentMeta || {}), secondaryRoles: body.secondaryRoles };
+    }
     if (body?.hrInternalNotes !== undefined) {
       extra.hrNotes = { ...(extra.hrNotes || {}), internalRemarks: body.hrInternalNotes || null };
     }
@@ -884,6 +919,11 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     }
   }
 
+  const resolvedDateJoinedIso =
+    body?.dateJoinedIso !== undefined
+      ? String(body?.dateJoinedIso ?? '').trim() || null
+      : prevRow?.date_joined_iso ?? null;
+
   const orgValidation = validateStaffOrgRoles({
     designationId,
     branchId,
@@ -891,10 +931,31 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     secondaryRoles:
       body?.secondaryRoles !== undefined
         ? body.secondaryRoles
-        : safeJsonParse(prevExtraRow?.profile_extra_json, {})?.employmentMeta?.secondaryRoles,
+        : profileExtraMerged?.employmentMeta?.secondaryRoles ??
+          safeJsonParse(prevExtraRow?.profile_extra_json, {})?.employmentMeta?.secondaryRoles,
   });
   if (!orgValidation.ok) {
     return { ok: false, error: orgValidation.errors[0], code: 'org_role_validation', errors: orgValidation.errors };
+  }
+
+  const tenureValidation = validateStaffTenureForSave(db, {
+    userId,
+    designationId,
+    dateJoinedIso: resolvedDateJoinedIso,
+    salaryLevel: resolvedSalaryLevel,
+    salaryStep: resolvedSalaryStep,
+    actingEndDateIso: body?.actingEndDateIso,
+    profileExtra: profileExtraMerged,
+    secondaryRoles:
+      body?.secondaryRoles !== undefined
+        ? body.secondaryRoles
+        : profileExtraMerged?.employmentMeta?.secondaryRoles,
+    tenureOverride: body?.tenureOverride,
+    tenureOverrideReason: body?.tenureOverrideReason,
+    actorUserId,
+  });
+  if (!tenureValidation.ok) {
+    return { ok: false, error: tenureValidation.errors[0], code: 'tenure_validation', errors: tenureValidation.errors };
   }
 
   const compensationResolved = resolveStaffCompensationForSave(db, {
@@ -949,7 +1010,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     department_id: departmentId,
     designation_id: designationId,
     employment_type: String(body?.employmentType ?? '').trim() || null,
-    date_joined_iso: String(body?.dateJoinedIso ?? '').trim() || null,
+    date_joined_iso: resolvedDateJoinedIso,
     probation_end_iso: String(body?.probationEndIso ?? '').trim() || null,
     bank_account_name: String(body?.bankAccountName ?? '').trim() || null,
     bank_name: String(body?.bankName ?? '').trim() || null,
@@ -1244,7 +1305,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   return {
     ok: true,
     profile: opts.skipEnrichedReturn ? null : getHrStaffOne(db, userId),
-    warnings: [...(orgValidation.warnings || []), ...(compensationResolved.warnings || [])],
+    warnings: [...(orgValidation.warnings || []), ...(tenureValidation.warnings || []), ...(compensationResolved.warnings || [])],
     roleKeyHints,
     compensation: {
       matrixApplied: compensationResolved.matrixApplied,
@@ -1623,8 +1684,8 @@ export function listHrRequests(db, scope, filter = {}) {
     const esc = clipped.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const term = `%${esc}%`;
     sql += ` AND (
-      r.title LIKE ? ESCAPE '\\' OR IFNULL(r.body, '') LIKE ? ESCAPE '\\'
-      OR u.display_name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\'
+      r.title LIKE ? ESCAPE '\\\\' OR IFNULL(r.body, '') LIKE ? ESCAPE '\\\\'
+      OR u.display_name LIKE ? ESCAPE '\\\\' OR u.username LIKE ? ESCAPE '\\\\'
     )`;
     args.push(term, term, term, term);
   }
@@ -3060,6 +3121,24 @@ export function upsertHrSalaryMatrixRow(db, actor, body = {}) {
     actor?.id || null
   );
   return { ok: true, id };
+}
+
+export function deleteHrSalaryMatrixRow(db, actor, { id, payrollGroup, salaryLevel, salaryStep } = {}) {
+  if (!salaryMatrixReady(db)) return { ok: false, error: 'Salary matrix not initialised.' };
+  let rowId = String(id || '').trim();
+  if (!rowId && payrollGroup && salaryLevel && salaryStep) {
+    const row = db
+      .prepare(
+        `SELECT id FROM hr_salary_matrix WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`
+      )
+      .get(String(payrollGroup).trim(), Math.round(Number(salaryLevel)), Math.round(Number(salaryStep)));
+    rowId = row?.id || '';
+  }
+  if (!rowId) return { ok: false, error: 'Matrix row id or group/level/step is required.' };
+  const exists = db.prepare(`SELECT id FROM hr_salary_matrix WHERE id = ?`).get(rowId);
+  if (!exists) return { ok: false, error: 'Matrix row not found.' };
+  db.prepare(`DELETE FROM hr_salary_matrix WHERE id = ?`).run(rowId);
+  return { ok: true, id: rowId };
 }
 
 export function listHrBranchPayrollContributions(db, periodYyyymm) {

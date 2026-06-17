@@ -57,6 +57,7 @@ const OFFICE_APP_ROLE_HINTS = {
   branch_manager: 'sales_manager',
   sales: 'sales_staff',
   operations: 'operations_officer',
+  production: 'operations_officer',
   procurement: 'md',
   maintenance: 'operations_officer',
   office_admin: 'hr_admin',

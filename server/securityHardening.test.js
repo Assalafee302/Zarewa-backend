@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeRoleAndCustomPermissions,
   validatePermissionGrant,
+  assertActorMayAssignRoleKey,
 } from './auth.js';
 
 describe('security hardening — permissions', () => {
@@ -25,5 +26,27 @@ describe('security hardening — permissions', () => {
     expect(validatePermissionGrant(admin, ['quotations.manage']).ok).toBe(true);
     expect(validatePermissionGrant(admin, ['*']).ok).toBe(false);
     expect(validatePermissionGrant(admin, ['INVALID PERM']).ok).toBe(false);
+  });
+
+  it('validatePermissionGrant hr mode allows hr.staff.manage without settings.manage', () => {
+    const hrAdmin = {
+      id: 'hr1',
+      roleKey: 'hr_admin',
+      permissions: mergeRoleAndCustomPermissions('hr_admin', []),
+    };
+    expect(validatePermissionGrant(hrAdmin, ['hr.directory.view'], { mode: 'hr' }).ok).toBe(true);
+    expect(
+      validatePermissionGrant(hrAdmin, ['settings.manage'], { mode: 'hr' }).ok
+    ).toBe(false);
+  });
+
+  it('assertActorMayAssignRoleKey blocks admin assignment without settings.manage', () => {
+    const hrAdmin = {
+      id: 'hr1',
+      roleKey: 'hr_admin',
+      permissions: mergeRoleAndCustomPermissions('hr_admin', []),
+    };
+    expect(assertActorMayAssignRoleKey(hrAdmin, 'admin').ok).toBe(false);
+    expect(assertActorMayAssignRoleKey(hrAdmin, 'sales_staff').ok).toBe(true);
   });
 });

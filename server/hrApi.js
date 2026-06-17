@@ -2501,8 +2501,8 @@ export function registerHrApi(app, db) {
       const r = seedDemoMultiRoleProfile(db, req.user?.id, {
         userId: req.body?.userId,
         fallbackUserId: req.user?.id,
-        applyRecommendedRoleKey: req.body?.applyRecommendedRoleKey !== false,
-        applyMultiRolePermissions: req.body?.applyMultiRolePermissions !== false,
+        applyRecommendedRoleKey: req.body?.applyRecommendedRoleKey === true,
+        applyMultiRolePermissions: req.body?.applyMultiRolePermissions === true,
       });
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);

@@ -3065,6 +3065,8 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  registerIntegrationReadApi(app, db);
+
   app.use('/api', requireAuth, requireActivePassword);
 
   registerHrApi(app, db);
@@ -9096,8 +9098,6 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Failed to reverse advance' });
     }
   });
-
-  registerIntegrationReadApi(app, db);
 
   app.post('/api/finance/collections-follow-up', requirePermission('finance.post'), (req, res) => {
     try {

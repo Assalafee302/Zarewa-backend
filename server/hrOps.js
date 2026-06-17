@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, updateUserProfile, userHasPermission } from './auth.js';
+import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, updateUserProfile, userHasPermission, applyHrStaffAuthUpdates, assertActorMayAssignRoleKey, publicUserFromId } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   annualLeaveEntitlementDaysForUser,
@@ -363,7 +363,11 @@ export function listHrStaff(db, scope, opts = {}) {
   if (!includeInactive) {
     sql += ` AND u.status = 'active'`;
   }
-  const cohortGroups = payrollGroupsForCohort(opts.cohort);
+  const cohortKey = opts.cohort;
+  const cohortGroups =
+    cohortKey !== undefined && cohortKey !== null && String(cohortKey).trim() !== ''
+      ? payrollGroupsForCohort(cohortKey)
+      : null;
   if (cohortGroups) {
     const ph = cohortGroups.map(() => '?').join(',');
     sql += ` AND COALESCE(p.payroll_group, 'branch_ops') IN (${ph})`;
@@ -1221,18 +1225,11 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   if (body?.applyRecommendedRoleKey === true && roleKeyHints.recommendedPrimary) {
     const roleCheck = validateStaffRoleForPayrollGroup(roleKeyHints.recommendedPrimary, normalizedPayrollGroup);
     if (!roleCheck.ok) return { ok: false, error: roleCheck.error };
-    const supplemental =
-      body?.applyMultiRolePermissions !== false ? roleKeyHints.supplementalPermissions || [] : [];
-    db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = ? WHERE id = ?`).run(
-      roleKeyHints.recommendedPrimary,
-      supplemental.length ? JSON.stringify(supplemental) : null,
-      userId
-    );
+    const authUpdate = applyHrStaffAuthUpdates(db, actorUserId, userId, body, roleKeyHints);
+    if (!authUpdate.ok) return authUpdate;
   } else if (body?.applyMultiRolePermissions === true && roleKeyHints.supplementalPermissions?.length) {
-    db.prepare(`UPDATE app_users SET permissions_json = ? WHERE id = ?`).run(
-      JSON.stringify(roleKeyHints.supplementalPermissions),
-      userId
-    );
+    const authUpdate = applyHrStaffAuthUpdates(db, actorUserId, userId, body, roleKeyHints);
+    if (!authUpdate.ok) return authUpdate;
   }
 
   if (
@@ -1284,8 +1281,8 @@ export function seedDemoMultiRoleProfile(db, actorUserId, opts = {}) {
     compensationVarianceNotes: demo.compensationVarianceNotes,
     compensationVarianceReviewDueIso: demo.compensationVarianceReviewDueIso,
     secondaryRoles: demo.secondaryRoles,
-    applyRecommendedRoleKey: opts.applyRecommendedRoleKey !== false,
-    applyMultiRolePermissions: opts.applyMultiRolePermissions !== false,
+    applyRecommendedRoleKey: opts.applyRecommendedRoleKey === true,
+    applyMultiRolePermissions: opts.applyMultiRolePermissions === true,
   });
 }
 
@@ -7087,6 +7084,9 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
       return roleCheck;
     }
   }
+  const actorUser = publicUserFromId(db, actorUserId);
+  const assignCheck = assertActorMayAssignRoleKey(actorUser, effectiveRoleKey);
+  if (!assignCheck.ok) return assignCheck;
   const created = createAppUserRecord(db, {
     username,
     displayName,

@@ -17,7 +17,7 @@ Each user has a `role_key` mapped to a label and a list of permission strings. `
 
 Non-technical staff summary: **[STAFF_APPROVALS.md](./STAFF_APPROVALS.md)**.
 
-Demo accounts ship with the dev database; change passwords before any production use. The read-only demo user is **`viewer`** / **`Viewer@123456!`** (role `viewer`: `dashboard.view`, `reports.view` only).
+Demo accounts ship with the dev database; change passwords before any production use. The read-only demo user is **`viewer`** / **`Viewer@123456!`** (role `viewer`: `dashboard.view` only).
 
 ## Bootstrap (`GET /api/bootstrap`)
 

@@ -1499,7 +1499,6 @@ export function requireActivePassword(req, res, next) {
     '/api/session/activity',
     '/api/session/change-password',
     '/api/session/logout',
-    '/api/session/complete-training',
   ];
   if (allowed.some((p) => path === p || path.endsWith(p))) return next();
   return res.status(403).json({
@@ -1862,6 +1861,80 @@ export function listAllAppUsers(db) {
 
 const PRIVILEGED_ROLE_KEYS = new Set(['admin', 'md']);
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} userId
+ */
+export function publicUserFromId(db, userId) {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  const row = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(id);
+  return row ? publicUserFromRow(row) : null;
+}
+
+/**
+ * Admin and MD roles may only be assigned by Settings administrators.
+ * @param {object | null | undefined} actorUser
+ * @param {string} roleKey
+ */
+export function assertActorMayAssignRoleKey(actorUser, roleKey) {
+  const rk = normalizeRoleKey(roleKey);
+  if (!ROLE_DEFINITIONS[rk]) {
+    return { ok: false, error: 'Invalid role selection.' };
+  }
+  if (PRIVILEGED_ROLE_KEYS.has(rk)) {
+    if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
+      return {
+        ok: false,
+        error: 'Only Settings administrators can assign admin or managing director roles.',
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Apply HR profile-driven role / supplemental permission updates with the same guards as Settings.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} actorUserId
+ * @param {string} targetUserId
+ * @param {object} body
+ * @param {{ recommendedPrimary?: string, supplementalPermissions?: string[] }} roleKeyHints
+ */
+export function applyHrStaffAuthUpdates(db, actorUserId, targetUserId, body, roleKeyHints = {}) {
+  const applyRole = body?.applyRecommendedRoleKey === true;
+  const applyPerms = body?.applyMultiRolePermissions === true;
+  if (!applyRole && !applyPerms) return { ok: true };
+
+  const actorUser = publicUserFromId(db, actorUserId);
+  if (!actorUser) return { ok: false, error: 'Not authenticated.' };
+  if (
+    !userHasPermission(actorUser, 'hr.staff.manage') &&
+    !userHasPermission(actorUser, 'settings.manage') &&
+    !userHasPermission(actorUser, '*')
+  ) {
+    return { ok: false, error: 'You do not have permission to change user roles or permissions.' };
+  }
+
+  if (applyRole && roleKeyHints.recommendedPrimary) {
+    const assignCheck = assertActorMayAssignRoleKey(actorUser, roleKeyHints.recommendedPrimary);
+    if (!assignCheck.ok) return assignCheck;
+    const roleResult = updateAppUserRole(db, targetUserId, roleKeyHints.recommendedPrimary);
+    if (!roleResult.ok) return roleResult;
+  }
+
+  const supplemental =
+    applyPerms && Array.isArray(roleKeyHints.supplementalPermissions)
+      ? roleKeyHints.supplementalPermissions
+      : [];
+  if (supplemental.length) {
+    const permResult = updateAppUserPermissions(db, targetUserId, supplemental, actorUser, { mode: 'hr' });
+    if (!permResult.ok) return permResult;
+  }
+
+  return { ok: true };
+}
+
 function countOtherPrivilegedActiveAdmins(db, excludeUserId) {
   const row = db
     .prepare(
@@ -1930,11 +2003,25 @@ export function updateAppUserRole(db, targetUserId, roleKey) {
  * @param {object | null | undefined} actorUser
  * @param {string[]} permissions
  */
-export function validatePermissionGrant(actorUser, permissions) {
+/**
+ * @param {object | null | undefined} actorUser
+ * @param {string[]} permissions
+ * @param {{ mode?: 'settings' | 'hr' }} [opts]
+ */
+export function validatePermissionGrant(actorUser, permissions, opts = {}) {
   if (!actorUser) {
     return { ok: false, error: 'Not authenticated.' };
   }
-  if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
+  const mode = opts.mode === 'hr' ? 'hr' : 'settings';
+  if (mode === 'settings') {
+    if (!userHasPermission(actorUser, 'settings.manage') && !userHasPermission(actorUser, '*')) {
+      return { ok: false, error: 'You do not have permission to change user permissions.' };
+    }
+  } else if (
+    !userHasPermission(actorUser, 'hr.staff.manage') &&
+    !userHasPermission(actorUser, 'settings.manage') &&
+    !userHasPermission(actorUser, '*')
+  ) {
     return { ok: false, error: 'You do not have permission to change user permissions.' };
   }
   if (!Array.isArray(permissions)) {
@@ -1957,8 +2044,8 @@ export function validatePermissionGrant(actorUser, permissions) {
   return { ok: true };
 }
 
-export function updateAppUserPermissions(db, targetUserId, permissions, actorUser = null) {
-  const grant = validatePermissionGrant(actorUser, permissions);
+export function updateAppUserPermissions(db, targetUserId, permissions, actorUser = null, opts = {}) {
+  const grant = validatePermissionGrant(actorUser, permissions, opts);
   if (!grant.ok) return grant;
   const tid = String(targetUserId || '').trim();
   const actorId = String(actorUser?.id || '').trim();

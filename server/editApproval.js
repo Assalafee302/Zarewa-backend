@@ -314,6 +314,14 @@ export function ledgerReceiptMovementRevisionRequiresEditApproval(db, user, move
 }
 
 /**
+ * Expense / payment pay-from corrections are open to Finance — no second-party token.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function expenseOutflowCorrectionRequiresEditApproval(db, user, movementId) {
+  return false;
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {object} user
  * @param {string} entityId

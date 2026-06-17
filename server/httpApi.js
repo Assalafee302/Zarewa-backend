@@ -217,6 +217,7 @@ import {
   handlePatchWithEditApprovalQuotation,
   handleWriteWithEditApproval,
   ledgerReceiptMovementRevisionRequiresEditApproval,
+  expenseOutflowCorrectionRequiresEditApproval,
   listPendingEditApprovals,
   receiptFinanceSettlementRequiresEditApproval,
   stripEditApprovalFromBody,
@@ -4628,7 +4629,11 @@ export function registerHttpApi(app, db) {
                 workspaceViewAll: Boolean(req.workspaceViewAll),
               },
               req.user
-            )
+            ),
+          {
+            requiresEditApproval: (database, user, mid) =>
+              expenseOutflowCorrectionRequiresEditApproval(database, user, mid),
+          }
         );
       } catch (e) {
         console.error(e);

@@ -6,6 +6,7 @@ import {
   consumeEditApprovalInTransaction,
   createEditApprovalRequest,
   receiptFinanceSettlementRequiresEditApproval,
+  expenseOutflowCorrectionRequiresEditApproval,
   salesReceiptReconciliationIsFinalized,
   cuttingListEditRequiresEditApproval,
   cuttingListIsPushedToProduction,
@@ -309,6 +310,11 @@ describe('editApproval (no MySQL)', () => {
     );
     expect(executeWrite).toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
+  });
+
+  it('expense outflow correction skips edit-approval token', () => {
+    const finance = { roleKey: 'finance_officer', permissions: ['finance.post'] };
+    expect(expenseOutflowCorrectionRequiresEditApproval({}, finance, 'TM-EXP-1')).toBe(false);
   });
 
   it('createEditApprovalRequest returns EDIT_APPROVAL_ALREADY_PENDING when a pending row exists', () => {

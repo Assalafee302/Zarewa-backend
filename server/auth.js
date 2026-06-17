@@ -1546,6 +1546,14 @@ export function updateUserProfile(db, userId, patch) {
 
   let displayName = row.display_name;
   if (patch.displayName != null) {
+    const hrProfile = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+    if (hrProfile) {
+      return {
+        ok: false,
+        error: 'Your full name is set from your HR record (first, middle, and surname). Update it under Employment in My profile.',
+        code: 'DISPLAY_NAME_LOCKED',
+      };
+    }
     const d = String(patch.displayName).trim();
     if (d.length < 1 || d.length > 120) {
       return { ok: false, error: 'Display name must be 1–120 characters.' };

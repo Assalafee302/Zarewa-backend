@@ -130,17 +130,47 @@ test.describe('HR UI smoke', () => {
 
 
 
-test.describe('My Profile smoke', () => {
+test.describe('Profile self-service smoke', () => {
 
-  test('employee my profile overview loads', async ({ page }) => {
+  test('HR services overview loads for employee', async ({ page }) => {
 
     await signInViaUi(page, 'admin', 'Admin@123');
 
     await page.goto('/my-profile/overview');
 
-    await expect(page.getByRole('heading', { name: /my profile/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /hr services/i })).toBeVisible({ timeout: 20_000 });
 
-    await expect(page.getByText(/apply leave|leave balances|quick/i).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/apply for leave|leave balances|profile health/i).first()).toBeVisible({ timeout: 15_000 });
+
+  });
+
+
+
+  test('Account hub loads and hub tabs switch', async ({ page }) => {
+
+    await signInViaUi(page, 'admin', 'Admin@123');
+
+    await page.goto('/me');
+
+    await expect(page.getByRole('heading', { name: /^account$/i })).toBeVisible({ timeout: 20_000 });
+
+    await page.getByRole('navigation', { name: /profile area/i }).getByRole('tab', { name: /hr services/i }).click();
+
+    await expect(page).toHaveURL(/\/my-profile/);
+
+    await expect(page.getByRole('heading', { name: /hr services/i })).toBeVisible({ timeout: 15_000 });
+
+  });
+
+
+
+  test('conduct record page uses updated labeling', async ({ page }) => {
+
+    await signInViaUi(page, 'admin', 'Admin@123');
+
+    await page.goto('/my-profile/discipline');
+
+    await expect(page.getByRole('heading', { name: /conduct record/i })).toBeVisible({ timeout: 20_000 });
 
   });
 

@@ -40,6 +40,9 @@ import {
   listHrProfileWorkQueue,
   getHrMeProfile,
   updateMyHrStaffProfile,
+  submitMyHrStaffProfile,
+  verifyHrStaffProfile,
+  unlockHrStaffProfile,
   getHrMeSchoolProfile,
   getHrMeScholarshipSummary,
   getHrMeDomesticSummary,
@@ -891,6 +894,29 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.post('/api/hr/me/profile/submit', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      if (!hrReady(res, db)) return;
+      const r = submitMyHrStaffProfile(db, req.user?.id);
+      if (!r.ok) return res.status(400).json(r);
+      const { user, hr } = getHrMeProfile(db, req.user?.id);
+      const ctx = hrRedactionContextFromReq(req, { subjectUserId: req.user?.id });
+      return res.json({
+        ok: true,
+        profileSubmittedAtIso: r.profileSubmittedAtIso,
+        displayName: r.displayName,
+        user: user ? { ...user, displayName: r.displayName || user.displayName } : null,
+        hr: hr ? redactStaffProfile({ ...hr, userId: req.user?.id }, ctx) : null,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not submit your profile.' });
+    }
+  });
+
   app.get('/api/hr/dashboard', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.reports.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -1123,6 +1149,34 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update staff profile.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/profile-verify', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = verifyHrStaffProfile(db, req.user?.id, userId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true, profileVerifiedAtIso: r.profileVerifiedAtIso });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not verify profile.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/profile-unlock', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = unlockHrStaffProfile(db, req.user?.id, userId, req.body?.reason);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not unlock profile.' });
     }
   });
 

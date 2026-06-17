@@ -2570,6 +2570,15 @@ function migratePriceListAndPayrollMd(db) {
   if (hr.size && !hr.has('self_service_eligible')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN self_service_eligible INTEGER NOT NULL DEFAULT 0`);
   }
+  if (hr.size && !hr.has('profile_submitted_at_iso')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN profile_submitted_at_iso TEXT`);
+  }
+  if (hr.size && !hr.has('profile_locked')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN profile_locked INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (hr.size && !hr.has('profile_verified_at_iso')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN profile_verified_at_iso TEXT`);
+  }
   const pr = tableCols('hr_payroll_runs');
   if (pr.size && !pr.has('md_approved_at_iso')) {
     db.exec(`ALTER TABLE hr_payroll_runs ADD COLUMN md_approved_at_iso TEXT`);

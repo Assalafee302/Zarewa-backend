@@ -52,6 +52,7 @@ import { buildStaffMergedOffices } from './hrOrgConstants.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
 import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
+import { composeLegalDisplayName, validateEmployeeProfileSubmit } from '../shared/lib/hrLegalDisplayName.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } from './hrIncidentRecoveryOps.js';
 import { countOpenIncidents } from './hrAccountabilityOps.js';
@@ -348,7 +349,10 @@ export function listHrStaff(db, scope, opts = {}) {
            p.leave_entitlement_band AS leaveEntitlementBand,
            p.payroll_group AS payrollGroup,
            p.salary_level AS salaryLevel,
-           p.salary_step AS salaryStep
+           p.salary_step AS salaryStep,
+           p.profile_submitted_at_iso AS profileSubmittedAtIso,
+           p.profile_locked AS profileLocked,
+           p.profile_verified_at_iso AS profileVerifiedAtIso
     FROM app_users u
     ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1
@@ -416,6 +420,9 @@ export function listHrStaff(db, scope, opts = {}) {
     const base = {
       ...row,
       selfServiceEligible: Boolean(Number(row.selfServiceEligible)),
+      profileLocked: Boolean(Number(row.profileLocked)),
+      profileSubmittedAtIso: row.profileSubmittedAtIso || null,
+      profileVerifiedAtIso: row.profileVerifiedAtIso || null,
       nextOfKin: safeJsonParse(row.nextOfKinJson, null),
       nextOfKinJson: undefined,
       profileExtra: safeJsonParse(row.profileExtraJson, {}),
@@ -1224,6 +1231,15 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       JSON.stringify(roleKeyHints.supplementalPermissions),
       userId
     );
+  }
+
+  if (
+    body?.firstName !== undefined ||
+    body?.middleName !== undefined ||
+    body?.surname !== undefined ||
+    body?.personal !== undefined
+  ) {
+    syncLegalDisplayNameFromProfile(db, userId);
   }
 
   return {
@@ -6131,6 +6147,10 @@ export function getHrMeProfile(db, userId) {
     dateOfBirthIso: p.date_of_birth ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
     selfServiceEligible: Number(p.self_service_eligible) === 1,
+    profileLocked: Number(p.profile_locked) === 1,
+    profileSubmittedAtIso: p.profile_submitted_at_iso ?? null,
+    profileVerifiedAtIso: p.profile_verified_at_iso ?? null,
+    legalDisplayName: composeLegalDisplayName(safeJsonParse(p.profile_extra_json, {}).personal || {}),
     lineManagerUserId: p.line_manager_user_id ?? null,
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
   };
@@ -6186,15 +6206,125 @@ export function getHrMeProfile(db, userId) {
   return { user, hr };
 }
 
+/** Sync app_users.display_name from HR personal name parts (legal full name). */
+export function syncLegalDisplayNameFromProfile(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid || !hrTablesReady(db)) return { ok: false };
+  const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!row) return { ok: false };
+  const personal = safeJsonParse(row.profile_extra_json, {}).personal || {};
+  const legal = composeLegalDisplayName(personal);
+  if (!legal) return { ok: false, error: 'Legal name is incomplete.' };
+  db.prepare(`UPDATE app_users SET display_name = ? WHERE id = ?`).run(legal, uid);
+  return { ok: true, displayName: legal };
+}
+
+/** Employee submits completed profile — locks self-service edits until HR approves changes. */
+export function submitMyHrStaffProfile(db, userId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'Not authenticated.' };
+
+  const staff = getHrStaffOne(db, uid);
+  if (!staff) return { ok: false, error: 'HR profile not found. Contact HR to open your employment file.' };
+  if (staff.profileLocked) {
+    return { ok: false, error: 'Your profile is already submitted and locked.', code: 'PROFILE_LOCKED' };
+  }
+
+  const validation = validateEmployeeProfileSubmit(staff);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: 'Complete all required fields before submitting.',
+      code: 'PROFILE_INCOMPLETE',
+      missing: validation.missing,
+    };
+  }
+
+  const sync = syncLegalDisplayNameFromProfile(db, uid);
+  if (!sync.ok) {
+    return { ok: false, error: sync.error || 'Could not set your full name. Check first and surname.' };
+  }
+
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_staff_profiles SET profile_submitted_at_iso = ?, profile_locked = 1, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+  ).run(now, now, uid, uid);
+
+  appendHrAuditEvent(db, {
+    actorUserId: uid,
+    action: 'hr.profile.submitted',
+    entityKind: 'hr_staff_profile',
+    entityId: uid,
+    details: { profileSubmittedAtIso: now },
+  });
+
+  return { ok: true, profileSubmittedAtIso: now, displayName: sync.displayName };
+}
+
+/** HR marks an employee profile as verified after reviewing submission. */
+export function verifyHrStaffProfile(db, actorUserId, targetUserId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(targetUserId || '').trim();
+  if (!uid) return { ok: false, error: 'userId is required.' };
+  const row = db.prepare(`SELECT profile_submitted_at_iso, profile_verified_at_iso FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'Staff profile not found.' };
+  if (!row.profile_submitted_at_iso) {
+    return { ok: false, error: 'Employee has not submitted their profile yet.' };
+  }
+  if (row.profile_verified_at_iso) {
+    return { ok: false, error: 'Profile is already verified.' };
+  }
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_staff_profiles SET profile_verified_at_iso = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+  ).run(now, now, actorUserId || null, uid);
+  appendHrAuditEvent(db, {
+    actorUserId: actorUserId || null,
+    action: 'hr.profile.verified',
+    entityKind: 'hr_staff_profile',
+    entityId: uid,
+    details: { profileVerifiedAtIso: now },
+  });
+  return { ok: true, profileVerifiedAtIso: now };
+}
+
+/** HR unlocks profile for employee to edit again (e.g. after rejection). */
+export function unlockHrStaffProfile(db, actorUserId, targetUserId, reason = '') {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(targetUserId || '').trim();
+  if (!uid) return { ok: false, error: 'userId is required.' };
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_staff_profiles SET profile_locked = 0, profile_submitted_at_iso = NULL, profile_verified_at_iso = NULL, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+  ).run(now, actorUserId || null, uid);
+  appendHrAuditEvent(db, {
+    actorUserId: actorUserId || null,
+    action: 'hr.profile.unlocked',
+    entityKind: 'hr_staff_profile',
+    entityId: uid,
+    reason: String(reason || '').trim() || null,
+    details: {},
+  });
+  return { ok: true };
+}
+
 /** Employee self-service: update personal, NOK, and qualification fields only (bank via profile_change request). */
 export function updateMyHrStaffProfile(db, userId, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const uid = String(userId || '').trim();
   if (!uid) return { ok: false, error: 'Not authenticated.' };
 
-  const existing = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  const existing = db.prepare(`SELECT user_id, profile_locked FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
   if (!existing) {
     return { ok: false, error: 'HR profile not found. Contact HR to open your employment file.' };
+  }
+  if (Number(existing.profile_locked) === 1) {
+    return {
+      ok: false,
+      error: 'Your profile is locked. Submit a change request for HR approval.',
+      code: 'PROFILE_LOCKED',
+    };
   }
 
   const patch = { userId: uid };
@@ -6237,6 +6367,7 @@ export function updateMyHrStaffProfile(db, userId, body) {
 
   const r = upsertHrStaffProfile(db, uid, patch);
   if (r.ok) {
+    syncLegalDisplayNameFromProfile(db, uid);
     appendHrAuditEvent(db, {
       actorUserId: uid,
       action: 'hr.profile.self_service_update',
@@ -6407,10 +6538,16 @@ export function getHrInboxSummary(db, scope) {
 export function listHrProfileWorkQueue(db, scope) {
   if (!hrTablesReady(db)) {
     return {
-      counts: { pendingDocumentVerifications: 0, pendingProfileChanges: 0, incompleteProfiles: 0 },
+      counts: {
+        pendingDocumentVerifications: 0,
+        pendingProfileChanges: 0,
+        incompleteProfiles: 0,
+        pendingProfileSubmissions: 0,
+      },
       pendingDocuments: [],
       profileChangeRequests: [],
       incompleteProfiles: [],
+      pendingProfileSubmissions: [],
     };
   }
 
@@ -6461,15 +6598,29 @@ export function listHrProfileWorkQueue(db, scope) {
       missingCritical: s.profileCompleteness?.missingCritical || [],
     }));
 
+  const pendingProfileSubmissions = staff
+    .filter((s) => s.profileSubmittedAtIso && !s.profileVerifiedAtIso)
+    .slice(0, 40)
+    .map((s) => ({
+      userId: s.userId,
+      displayName: s.displayName,
+      employeeNo: s.employeeNo,
+      branchId: s.branchId,
+      profileSubmittedAtIso: s.profileSubmittedAtIso,
+      overallPct: s.profileCompleteness?.overallPct ?? 0,
+    }));
+
   return {
     counts: {
       pendingDocumentVerifications: pendingDocuments.length,
       pendingProfileChanges: profileChangeRequests.length,
       incompleteProfiles: incompleteProfiles.length,
+      pendingProfileSubmissions: pendingProfileSubmissions.length,
     },
     pendingDocuments,
     profileChangeRequests,
     incompleteProfiles,
+    pendingProfileSubmissions,
   };
 }
 

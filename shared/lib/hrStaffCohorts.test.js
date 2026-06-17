@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   HR_PAYROLL_GROUPS,
+  isErpAccessRestrictedPayrollGroup,
   isPayrollRunEligible,
   isStatutoryPayrollExempt,
   requiresEmployeePensionDeduction,
@@ -39,6 +40,14 @@ describe('hrStaffCohorts payroll rules', () => {
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(true);
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(true);
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
+  });
+
+  it('mining, scholarship, and domestic cannot use ERP operational roles', () => {
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.MINING)).toBe(true);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(true);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(true);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(false);
   });
 
   it('branch staff meet pension policy unless explicitly exempt', () => {

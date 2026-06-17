@@ -22,6 +22,17 @@ describe('hrOrgStaffOps', () => {
     expect(Array.isArray(hints.supplementalPermissions)).toBe(true);
   });
 
+  it('recommendAppRoleKeys forces portal-only role for restricted payroll groups', () => {
+    const hints = recommendAppRoleKeys({
+      designationId: 'desig_hoa',
+      payrollGroup: 'mining_div',
+      currentRoleKey: 'sales_staff',
+    });
+    expect(hints.recommendedPrimary).toBe('hr_portal_only');
+    expect(hints.suggestedRoleKeys).toEqual(['hr_portal_only']);
+    expect(hints.needsReview).toBe(false);
+  });
+
   it('buildSupplementalPermissionsForRoles excludes primary role permissions', () => {
     const primary = new Set(permissionsForRole('finance_manager'));
     const extra = buildSupplementalPermissionsForRoles(['finance_manager', 'sales_manager'], 'finance_manager');

@@ -29,6 +29,21 @@ test.describe('HR API', () => {
     expect(cal.json?.ok).toBe(true);
   });
 
+  test('sales staff self-service attendance and leave calendar', async ({ page }) => {
+    await signInViaApi(page, 'sales.staff', 'Sales@123');
+    const period = '202606';
+    const att = await pageFetchJson(page, `/api/hr/me/attendance-summary?periodYyyymm=${period}`);
+    expect(att.status).toBe(200);
+    expect(att.json?.ok).toBe(true);
+    expect(att.json?.periodYyyymm).toBe(period);
+
+    const from = new Date().toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+    const cal = await pageFetchJson(page, `/api/hr/leave/calendar?from=${from}&to=${to}`);
+    expect(cal.status).toBe(200);
+    expect(cal.json?.ok).toBe(true);
+  });
+
   test('sales staff staff list has redacted compensation', async ({ page }) => {
     await signInViaApi(page, 'sales.staff', 'Sales@123');
     const res = await pageFetchJson(page, '/api/hr/staff');

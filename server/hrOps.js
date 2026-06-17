@@ -1872,18 +1872,37 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
 
   if (field === 'bankDetails') {
     const v = payload.requestedValue && typeof payload.requestedValue === 'object' ? payload.requestedValue : {};
-    const acct = String(v.bankAccountNo || '').trim();
-    const masked = acct.length >= 4 ? `****${acct.slice(-4)}` : acct || null;
-    db.prepare(
-      `UPDATE hr_staff_profiles SET bank_name = ?, bank_account_name = ?, bank_account_no_masked = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
-    ).run(
-      String(v.bankName || '').trim() || null,
-      String(v.bankAccountName || '').trim() || null,
-      masked,
-      now,
-      actorId,
-      userId
-    );
+    const acct = String(v.bankAccountNo || '').replace(/\s/g, '');
+    const masked = acct ? maskBankAccount(acct) : null;
+    const encrypted = acct ? encryptBankAccount(acct) : null;
+    const bankCode =
+      v.bankCode !== undefined ? String(v.bankCode || '').trim() || null : undefined;
+    if (bankCode !== undefined) {
+      db.prepare(
+        `UPDATE hr_staff_profiles SET bank_name = ?, bank_account_name = ?, bank_account_no = ?, bank_account_no_masked = ?, bank_code = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+      ).run(
+        String(v.bankName || '').trim() || null,
+        String(v.bankAccountName || '').trim() || null,
+        encrypted,
+        masked,
+        bankCode,
+        now,
+        actorId,
+        userId
+      );
+    } else {
+      db.prepare(
+        `UPDATE hr_staff_profiles SET bank_name = ?, bank_account_name = ?, bank_account_no = ?, bank_account_no_masked = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+      ).run(
+        String(v.bankName || '').trim() || null,
+        String(v.bankAccountName || '').trim() || null,
+        encrypted,
+        masked,
+        now,
+        actorId,
+        userId
+      );
+    }
     return { ok: true };
   }
 

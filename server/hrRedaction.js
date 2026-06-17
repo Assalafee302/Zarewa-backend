@@ -3,7 +3,11 @@
  * @module server/hrRedaction
  */
 
-import { userCanViewOrgSensitiveHr, userCanViewStaffCompensation } from './hrPermissions.js';
+import {
+  hrUserHas,
+  userCanViewOrgSensitiveHr,
+  userCanViewStaffCompensation,
+} from './hrPermissions.js';
 
 const STAFF_SENSITIVE_KEYS = [
   'baseSalaryNgn',
@@ -18,7 +22,11 @@ const STAFF_SENSITIVE_KEYS = [
   'bankAccountNo',
   'bankCode',
   'bonusAccrualNote',
+  'welfareNotes',
+  'trainingSummary',
 ];
+
+const IDENTITY_KEYS = ['ninNumber', 'bvnNumber'];
 
 const PAYROLL_LINE_SENSITIVE = [
   'grossNgn',
@@ -30,9 +38,23 @@ const PAYROLL_LINE_SENSITIVE = [
   'netNgn',
 ];
 
+function scrubProfileExtra(extra, ctx) {
+  if (!extra || typeof extra !== 'object') return extra;
+  const pe = { ...extra };
+  delete pe.salaryHistory;
+  delete pe.compensationNotes;
+  if (ctx.isSelf || !ctx.canViewHrNotes) {
+    delete pe.hrNotes;
+  }
+  if (!ctx.canViewDiscipline) {
+    delete pe.disciplinaryEvents;
+  }
+  return pe;
+}
+
 /**
  * @param {object | null | undefined} row
- * @param {{ canViewSensitive?: boolean; maskBank?: boolean }} ctx
+ * @param {{ canViewSensitive?: boolean; maskBank?: boolean; isSelf?: boolean; canViewIdentity?: boolean; canViewHrNotes?: boolean; canViewDiscipline?: boolean }} ctx
  */
 export function redactStaffProfile(row, ctx = {}) {
   if (!row || typeof row !== 'object') return row;
@@ -42,19 +64,24 @@ export function redactStaffProfile(row, ctx = {}) {
       if (out.bankAccountNo) out.bankAccountNo = maskAccount(out.bankAccountNo);
       if (out.bankAccountNoMasked) out.bankAccountNoMasked = maskAccount(out.bankAccountNoMasked);
     }
+    if ('profileExtra' in out && out.profileExtra) {
+      out.profileExtra = scrubProfileExtra(out.profileExtra, ctx);
+    }
     return out;
   }
   for (const k of STAFF_SENSITIVE_KEYS) {
     if (k in out) out[k] = null;
   }
+  if (!ctx.canViewIdentity) {
+    for (const k of IDENTITY_KEYS) {
+      if (k in out) out[k] = null;
+    }
+  }
   if (row.bankAccountNoMasked) {
     out.bankAccountNoMasked = maskAccount(row.bankAccountNoMasked);
   }
   if ('profileExtra' in out && out.profileExtra && typeof out.profileExtra === 'object') {
-    const pe = { ...out.profileExtra };
-    delete pe.salaryHistory;
-    delete pe.compensationNotes;
-    out.profileExtra = pe;
+    out.profileExtra = scrubProfileExtra(out.profileExtra, ctx);
   }
   out.compensationRedacted = true;
   return out;
@@ -66,13 +93,28 @@ export function redactStaffProfile(row, ctx = {}) {
  */
 export function hrRedactionContextFromReq(req, opts = {}) {
   const user = req?.user;
+  const viewerId = String(user?.id || '').trim();
   const sub = String(opts.subjectUserId || req?.params?.userId || '').trim();
+  const isSelf = Boolean(sub && viewerId && sub === viewerId);
   const canViewSensitive = userCanViewStaffCompensation(user, sub, {
     sensitiveUnlocked: Boolean(opts.sensitiveUnlocked ?? req?.hrSensitiveUnlocked),
   });
+  const canViewIdentity =
+    isSelf || userCanViewOrgSensitiveHr(user) || hrUserHas(user, 'hr.staff.manage');
+  const canViewHrNotes = userCanViewOrgSensitiveHr(user) || hrUserHas(user, 'hr.staff.manage');
+  const canViewDiscipline =
+    isSelf ||
+    hrUserHas(user, 'hr.discipline.manage') ||
+    hrUserHas(user, 'hr.staff.manage') ||
+    userCanViewOrgSensitiveHr(user);
+
   return {
     canViewSensitive,
     maskBank: !userCanViewOrgSensitiveHr(user),
+    isSelf,
+    canViewIdentity,
+    canViewHrNotes,
+    canViewDiscipline,
   };
 }
 
@@ -137,5 +179,5 @@ export function redactHrRequest(reqRow, ctx = {}) {
  * @param {object} row
  */
 export function redactStaffForAi(row) {
-  return redactStaffProfile(row, { canViewSensitive: false });
+  return redactStaffProfile(row, { canViewSensitive: false, canViewIdentity: false });
 }

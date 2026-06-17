@@ -60,6 +60,10 @@ describe('hrPermissions', () => {
 
   it('team and self API paths allowed without main HR workspace', () => {
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/my/discipline-cases', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/me/profile', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/me/scholarship-summary', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/payslips', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/templates/guarantor-form', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/team/summary', { teamUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/payroll-runs', { teamUser: true })).toBe(false);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/dashboard', { selfUser: true })).toBe(false);

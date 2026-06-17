@@ -23,6 +23,8 @@ import {
   notifyHrRequestQueueHandoff,
   notifyHrRequestSubmitted,
   notifyIncidentMemoReported,
+  notifyIdCardReady,
+  notifyIdCardRequestSubmitted,
   notifyPayrollRunStatus,
   notifyScholarshipPaymentApproved,
   notifyScholarshipPaymentPaid,
@@ -7518,6 +7520,19 @@ export function createHrIdCardRequest(db, actorUser, data) {
   const now = nowIso();
   const uid = String(data?.userId || actorUser?.id || '').trim();
   if (!uid) return { ok: false, error: 'Employee is required.' };
+  const requestType = String(data.requestType || 'new').trim() || 'new';
+  const reason = String(data.reason || data.replacementReason || '').trim();
+  if (requestType === 'replacement' && !reason) {
+    return { ok: false, error: 'Replacement reason is required.' };
+  }
+  const open = db
+    .prepare(
+      `SELECT id FROM hr_id_cards WHERE user_id = ? AND status IN ('pending','processing','printed','ready') LIMIT 1`
+    )
+    .get(uid);
+  if (open) {
+    return { ok: false, error: 'You already have an open ID card request.' };
+  }
   db.prepare(
     `INSERT INTO hr_id_cards (
       id, user_id, request_type, reason, status, requested_at_iso, notes,
@@ -7526,22 +7541,24 @@ export function createHrIdCardRequest(db, actorUser, data) {
   ).run(
     id,
     uid,
-    data.requestType || 'new',
-    data.reason || data.replacementReason || null,
+    requestType,
+    requestType === 'replacement' ? reason : data.reason || data.replacementReason || null,
     'pending',
     now,
     data.notes || null,
     data.bloodGroup || null,
     data.emergencyContact || null,
-    data.replacementReason || null,
+    requestType === 'replacement' ? reason : data.replacementReason || null,
     data.lostDamaged ? 1 : 0
   );
+  notifyIdCardRequestSubmitted(db, { id, user_id: uid }, actorUser?.id);
   return { ok: true, id };
 }
 export function patchHrIdCardRequest(db, actorUser, requestId, data) {
   const now = nowIso();
   const row = db.prepare(`SELECT * FROM hr_id_cards WHERE id=?`).get(requestId);
   if (!row) return { ok: false, error: 'ID card request not found.' };
+  const prevStatus = row.status;
   const status = data.status || row.status;
   const tempIssued = data.tempCardIssued ? 1 : row.temp_card_issued;
   try {
@@ -7577,6 +7594,9 @@ export function patchHrIdCardRequest(db, actorUser, requestId, data) {
       data.tempCardIssued ? now : row.temp_card_issued_at_iso,
       requestId
     );
+  }
+  if (status === 'ready' && prevStatus !== 'ready') {
+    notifyIdCardReady(db, { id: requestId, user_id: row.user_id });
   }
   return { ok: true };
 }

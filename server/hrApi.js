@@ -3758,7 +3758,16 @@ export function registerHrApi(app, db) {
     try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load ID card requests.'});}
   });
   app.post('/api/hr/id-cards', (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=createHrIdCardRequest(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to create ID card request.'});}
+    try {
+      if(!hrReady(res,db)) return;
+      const body = { ...(req.body || {}) };
+      if (!userCanAccessHrModule(req.user)) {
+        body.userId = req.user?.id;
+      }
+      const r=createHrIdCardRequest(db,req.user,body);
+      if (!r.ok) return res.status(400).json(r);
+      return res.status(201).json(r);
+    } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to create ID card request.'});}
   });
   app.patch('/api/hr/id-cards/:id', requireHrAny('hr.*','hr.staff.manage'), (req,res) => {
     try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update ID card request.'});}

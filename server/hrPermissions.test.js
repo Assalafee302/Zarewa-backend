@@ -64,6 +64,7 @@ describe('hrPermissions', () => {
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/me/scholarship-summary', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/me/attendance-summary', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/leave/calendar', { selfUser: true })).toBe(true);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/staff/USR-SS/loan-schedule', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/payslips', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/templates/guarantor-form', { selfUser: true })).toBe(true);
     expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/team/summary', { teamUser: true })).toBe(true);

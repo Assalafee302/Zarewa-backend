@@ -3,7 +3,7 @@
  * @module server/hrPermissions
  */
 
-import { userHasPermission } from './auth.js';
+import { userHasPermission, permissionsForRole } from './auth.js';
 import {
   isDomesticStaff,
   isScholarshipBeneficiary,
@@ -54,10 +54,26 @@ const LEGACY_GM = new Set(['hr.requests.gm_approve', 'hr.requests.final_approve'
  * @param {object | null | undefined} user
  * @param {string} permission
  */
+function userEffectivePermissionList(user) {
+  if (Array.isArray(user?.permissions) && user.permissions.length) return user.permissions;
+  return permissionsForRole(user?.roleKey);
+}
+
+/**
+ * @param {object | null | undefined} user
+ * @param {string} permission
+ */
 export function hrUserHas(user, permission) {
   if (!permission) return false;
   if (userHasPermission(user, '*')) return true;
   if (userHasPermission(user, permission)) return true;
+  const perm = String(permission).trim();
+  if (perm.endsWith('.*')) {
+    const prefix = perm.slice(0, -1);
+    return userEffectivePermissionList(user).some(
+      (p) => p === '*' || String(p).startsWith(prefix)
+    );
+  }
   if (LEGACY_REVIEW.has(permission)) {
     return [...LEGACY_REVIEW].some((p) => userHasPermission(user, p));
   }
@@ -161,6 +177,8 @@ export const HR_SELF_SERVICE_API_PATTERNS = [
   /^\/staff\/[^/]+\/documents(\/|$)/,
   /^\/api\/hr\/staff\/[^/]+\/passport-photo$/,
   /^\/staff\/[^/]+\/passport-photo$/,
+  /^\/api\/hr\/staff\/[^/]+\/loan-schedule$/,
+  /^\/staff\/[^/]+\/loan-schedule$/,
   /^\/api\/hr\/id-cards(\/|$)/,
   /^\/id-cards(\/|$)/,
   /^\/api\/hr\/engagement\/open$/,

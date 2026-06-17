@@ -282,6 +282,7 @@ import {
   previewStaffRenumbering,
   saveStaffNumberConfig,
 } from './hrStaffNumbering.js';
+import { previewSampleEmployeeNumber } from '../shared/lib/hrEmployeeNumber.js';
 import {
   buildBulkImportTemplateXlsx,
   commitBulkStaffImport,
@@ -4608,7 +4609,10 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       const config = getStaffNumberConfig(db);
       const preview = previewStaffRenumbering(db, config);
-      return res.json({ ok: true, config, preview, missingNumbers: listStaffWithoutEmployeeNo(db, hrListScope(req)) });
+      const sampleNextNumber = previewSampleEmployeeNumber(config, db, {
+        branchId: hrListScope(req).branchId || 'BR-KD',
+      });
+      return res.json({ ok: true, config, preview, sampleNextNumber, missingNumbers: listStaffWithoutEmployeeNo(db, hrListScope(req)) });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load staff numbering settings.' });

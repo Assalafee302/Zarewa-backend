@@ -7,6 +7,7 @@
 import { getBranch, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
 import { getBranchCodeUpper } from './humanId.js';
 import { setSuppressLegacyDemoPackAfterOperationsReset } from './legacyDemoPackPolicy.js';
+import { resetHrBranchOperationalData } from './hrAdminDataResetOps.js';
 
 /** @type {{ id: string, label: string, warning: string, tables: string[] }[]} */
 export const ADMIN_DATA_RESET_PRESETS = [
@@ -115,6 +116,14 @@ export const ADMIN_DATA_RESET_PRESETS = [
     label: 'Expenses, AP, payment requests & bank rec lines',
     warning: 'Deletes expenses, payables, payment requests, and bank reconciliation lines for this branch only.',
     tables: ['payment_requests', 'accounts_payable', 'expenses', 'bank_reconciliation_lines'],
+  },
+  {
+    id: 'hr_staff_payroll',
+    label: 'HR staff profiles, payroll & requests',
+    warning:
+      'Removes HR employee records, documents, leave/payroll rows, discipline, and transfer data for this branch only. Usernames and passwords in Team & access are NOT changed or deleted — logins stay exactly as they are. HR settings, departments, designations, and salary matrix are kept.',
+    tables: [],
+    customReset: true,
   },
   {
     id: 'audit_log',
@@ -335,17 +344,25 @@ export function applyAdminDataReset(db, presetIds, confirmPhrase, meta = {}) {
 
   const orderedTables = [];
   const seen = new Set();
+  const skippedTables = [];
+  let tablesCleared = 0;
+
   for (const id of sortedPresetIds) {
     const p = PRESET_BY_ID.get(id);
+    if (p?.customReset) {
+      if (id === 'hr_staff_payroll') {
+        const hr = resetHrBranchOperationalData(db, branchId);
+        if (!hr.ok) throw new Error(hr.error || 'HR reset failed.');
+        tablesCleared += 1;
+      }
+      continue;
+    }
     for (const t of p.tables) {
       if (seen.has(t)) continue;
       seen.add(t);
       orderedTables.push(t);
     }
   }
-
-  const skippedTables = [];
-  let tablesCleared = 0;
 
   try {
     db.transaction(() => {

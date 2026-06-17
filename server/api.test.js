@@ -321,6 +321,49 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(still).toBe(false);
   });
 
+  it('GET /api/users/zero-audit-candidates lists never-used logins; POST bulk-delete removes them', async () => {
+    const signedAgent = request.agent(app);
+    await loginAs(signedAgent);
+    const boot = await signedAgent.get('/api/bootstrap');
+    const branchId = boot.body?.session?.branches?.[0]?.id || 'BR-KD';
+    const create = await signedAgent.post('/api/users').send({
+      username: 'e2e.zero.audit.user',
+      displayName: 'E2E Zero Audit',
+      password: 'TempPass@999!',
+      roleKey: 'sales_staff',
+      branchId,
+    });
+    expect(create.status).toBe(201);
+    const userId = create.body.userId;
+
+    const scan = await signedAgent.get('/api/users/zero-audit-candidates');
+    expect(scan.status).toBe(200);
+    expect(scan.body.ok).toBe(true);
+    expect(scan.body.confirmPhrase).toBe('DELETE UNUSED LOGINS');
+    const found = (scan.body.candidates || []).some((c) => c.userId === userId);
+    expect(found).toBe(true);
+
+    const bad = await signedAgent.post('/api/users/bulk-delete-zero-audit').send({
+      confirmPhrase: 'wrong phrase',
+      dryRun: false,
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.ok).toBe(false);
+
+    const del = await signedAgent.post('/api/users/bulk-delete-zero-audit').send({
+      confirmPhrase: 'DELETE UNUSED LOGINS',
+      dryRun: false,
+    });
+    expect(del.status).toBe(200);
+    expect(del.body.ok).toBe(true);
+    expect((del.body.deleted || []).some((d) => d.userId === userId)).toBe(true);
+
+    const rescan = await signedAgent.get('/api/users/zero-audit-candidates');
+    expect(rescan.status).toBe(200);
+    const still = (rescan.body.candidates || []).some((c) => c.userId === userId);
+    expect(still).toBe(false);
+  });
+
   it('PATCH /api/session/dashboard-prefs persists and returns on bootstrap', async () => {
     const signedAgent = request.agent(app);
     await loginAs(signedAgent);

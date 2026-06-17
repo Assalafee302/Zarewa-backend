@@ -92,6 +92,11 @@ import {
   userMayViewManagementReports,
 } from './auth.js';
 import {
+  bulkDeleteZeroAuditUsers,
+  listZeroAuditUserCandidates,
+  ZERO_AUDIT_BULK_DELETE_CONFIRM_PHRASE,
+} from './userZeroAuditCleanup.js';
+import {
   buildFinanceLiveProfileReport,
   financeProfileTokenMatches,
   openFinanceProfileMysqlConnection,
@@ -3559,6 +3564,42 @@ export function registerHttpApi(app, db) {
           note: `Deleted user ${String(stripped?.confirmUsername || '').trim()}`,
         });
         return { ok: true };
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/users/zero-audit-candidates', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const r = listZeroAuditUserCandidates(db, { actorUserId: req.user.id });
+      res.json({
+        ...r,
+        confirmPhrase: ZERO_AUDIT_BULK_DELETE_CONFIRM_PHRASE,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/users/bulk-delete-zero-audit', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const dryRun = body.dryRun !== false && body.dryRun !== 0 && body.dryRun !== '0';
+      const r = bulkDeleteZeroAuditUsers(db, req.user, {
+        confirmPhrase: body.confirmPhrase,
+        dryRun,
+        userIds: Array.isArray(body.userIds) ? body.userIds : undefined,
+      });
+      if (!r.ok) {
+        res.status(400).json(r);
+        return;
+      }
+      res.json({
+        ...r,
+        confirmPhrase: ZERO_AUDIT_BULK_DELETE_CONFIRM_PHRASE,
       });
     } catch (e) {
       console.error(e);

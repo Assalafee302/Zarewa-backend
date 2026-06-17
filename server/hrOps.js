@@ -27,6 +27,12 @@ import {
 } from './hrTenureOps.js';
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
+import {
+  allocateNextEmployeeNumber,
+  getDefaultStaffNumberConfig,
+  normalizeEmployeeNumberForSave,
+  normalizeStaffNumberConfig,
+} from '../shared/lib/hrEmployeeNumber.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
 import { buildHrOrgChart, hrStaffReportingContext } from '../shared/lib/hrOrgChart.js';
@@ -129,6 +135,13 @@ function safeJsonParse(raw, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function readStaffNumberConfig(db) {
+  if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
+  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE key = 'staff_number_config'`).get();
+  if (!row?.value_json) return getDefaultStaffNumberConfig();
+  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
 }
 
 function sha256(input) {
@@ -922,10 +935,19 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     return Object.keys(extra).length ? extra : prevExtraRow ? prevExtra : null;
   })();
 
-  const resolvedEmployeeNo =
+  const staffNumberConfig = readStaffNumberConfig(db);
+  let resolvedEmployeeNo =
     body?.employeeNo !== undefined
       ? String(body.employeeNo ?? '').trim() || null
       : prevRow?.employee_no ?? null;
+  if (resolvedEmployeeNo) {
+    resolvedEmployeeNo = normalizeEmployeeNumberForSave(resolvedEmployeeNo, staffNumberConfig, {
+      branchId,
+      db,
+    });
+  } else if (!existing && opts.autoAssignEmployeeNo !== false) {
+    resolvedEmployeeNo = allocateNextEmployeeNumber(db, staffNumberConfig, { branchId, db });
+  }
   if (resolvedEmployeeNo) {
     const conflict = db
       .prepare(

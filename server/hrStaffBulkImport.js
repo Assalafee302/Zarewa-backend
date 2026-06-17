@@ -12,6 +12,13 @@ import { lookupHrSalaryMatrixRow } from './hrCompensationOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification } from './hrNotifications.js';
 import { listHrDesignations } from './hrMasterData.js';
+import {
+  createEmployeeNumberAllocator,
+  getDefaultStaffNumberConfig,
+  normalizeEmployeeNumberForSave,
+  normalizeStaffNumberConfig,
+} from '../shared/lib/hrEmployeeNumber.js';
+import { getStaffNumberConfig } from './hrStaffNumbering.js';
 
 export const BULK_IMPORT_DEFAULT_PASSWORD = 'Zarewa@123';
 
@@ -162,6 +169,11 @@ export const BULK_IMPORT_COLUMNS = [
   { key: 'phoneNumber', header: 'Phone Number', required: false },
   { key: 'email', header: 'Email', required: false },
   { key: 'employeeNumber', header: 'Employee Number', required: false },
+  {
+    key: 'username',
+    header: 'Username (existing login)',
+    required: false,
+  },
   { key: 'workLocation', header: 'Work Location', required: false },
   { key: 'branchCode', header: 'Branch Code', required: false },
   { key: 'branchName', header: 'Branch Name', required: false },
@@ -189,6 +201,31 @@ export const BULK_IMPORT_COLUMNS = [
   { key: 'payAdditionNgn', header: 'Pay Addition (NGN)', required: false },
   { key: 'compensationVarianceType', header: 'Variance Type', required: false },
   { key: 'compensationVarianceNotes', header: 'Variance Notes', required: false },
+  { key: 'middleName', header: 'Middle Name', required: false },
+  { key: 'maritalStatus', header: 'Marital Status', required: false },
+  { key: 'stateOfOrigin', header: 'State of Origin', required: false },
+  { key: 'localGovernment', header: 'Local Government', required: false },
+  { key: 'nationality', header: 'Nationality', required: false },
+  { key: 'bloodGroup', header: 'Blood Group', required: false },
+  { key: 'nin', header: 'NIN', required: false },
+  { key: 'taxId', header: 'Tax ID / TIN', required: false },
+  { key: 'pensionRsaPin', header: 'Pension RSA PIN', required: false },
+  { key: 'institution', header: 'Institution', required: false },
+  { key: 'courseField', header: 'Course / Field', required: false },
+  { key: 'yearCompleted', header: 'Year Completed', required: false },
+  { key: 'professionalCertificates', header: 'Professional Certificates', required: false },
+  { key: 'probationEnd', header: 'Probation End Date', required: false },
+  { key: 'confirmationDate', header: 'Confirmation Date', required: false },
+  { key: 'contractEnd', header: 'Contract End Date', required: false },
+  { key: 'actingEndDate', header: 'Acting End Date', required: false },
+  { key: 'lineManagerUsername', header: 'Line Manager Username', required: false },
+  { key: 'supervisorName', header: 'Supervisor Name', required: false },
+  { key: 'roleKey', header: 'System Role Key', required: false },
+  { key: 'leaveEntitlementBand', header: 'Leave Entitlement Band', required: false },
+  { key: 'nhisNumber', header: 'NHIS Number', required: false },
+  { key: 'pensionAdministrator', header: 'Pension Administrator', required: false },
+  { key: 'promotionGrade', header: 'Promotion Grade', required: false },
+  { key: 'hrInternalNotes', header: 'HR Internal Notes', required: false },
 ];
 
 function nowIso() {
@@ -236,6 +273,7 @@ function mapRow(raw, headerMap) {
     phoneNumber: get('phoneNumber'),
     email: get('email'),
     employeeNumber: get('employeeNumber'),
+    username: get('username').toLowerCase(),
     workLocation: get('workLocation'),
     branchCode: get('branchCode'),
     branchName: get('branchName'),
@@ -263,15 +301,62 @@ function mapRow(raw, headerMap) {
     payAdditionNgn: get('payAdditionNgn'),
     compensationVarianceType: get('compensationVarianceType'),
     compensationVarianceNotes: get('compensationVarianceNotes'),
+    middleName: get('middleName'),
+    maritalStatus: get('maritalStatus'),
+    stateOfOrigin: get('stateOfOrigin'),
+    localGovernment: get('localGovernment'),
+    nationality: get('nationality'),
+    bloodGroup: get('bloodGroup'),
+    nin: get('nin'),
+    taxId: get('taxId'),
+    pensionRsaPin: get('pensionRsaPin'),
+    institution: get('institution'),
+    courseField: get('courseField'),
+    yearCompleted: get('yearCompleted'),
+    professionalCertificates: get('professionalCertificates'),
+    probationEnd: parseDateIso(raw[headerMap.probationEnd]),
+    confirmationDate: parseDateIso(raw[headerMap.confirmationDate]),
+    contractEnd: parseDateIso(raw[headerMap.contractEnd]),
+    actingEndDate: parseDateIso(raw[headerMap.actingEndDate]),
+    lineManagerUsername: get('lineManagerUsername').toLowerCase(),
+    supervisorName: get('supervisorName'),
+    roleKey: get('roleKey'),
+    leaveEntitlementBand: get('leaveEntitlementBand'),
+    nhisNumber: get('nhisNumber'),
+    pensionAdministrator: get('pensionAdministrator'),
+    promotionGrade: get('promotionGrade'),
+    hrInternalNotes: get('hrInternalNotes'),
   };
 }
+
+const COLUMN_HEADER_ALIASES = {
+  username: [
+    'username (existing login)',
+    'username',
+    'login',
+    'user id',
+    'erp username',
+    'legacy username',
+    'existing login',
+    'existing username',
+  ],
+  employeeNumber: ['employee number', 'employee id', 'staff id', 'emp no', 'emp id'],
+  phoneNumber: ['phone', 'mobile', 'phone number', 'mobile number'],
+  dateJoined: ['date joined', 'join date', 'start date'],
+  dateOfBirth: ['date of birth', 'dob', 'birth date'],
+  highestQualification: ['qualification', 'highest qualification', 'education'],
+  designation: ['job title', 'designation', 'title', 'position'],
+  lineManagerUsername: ['line manager', 'line manager username', 'manager username'],
+  taxId: ['tax id', 'tin', 'tax identification'],
+  pensionRsaPin: ['rsa pin', 'pension pin', 'pension rsa pin'],
+};
 
 function buildHeaderMap(sheetHeaders) {
   const map = {};
   for (const col of BULK_IMPORT_COLUMNS) {
-    const want = normHeader(col.header);
+    const wants = new Set([normHeader(col.header), ...(COLUMN_HEADER_ALIASES[col.key] || []).map(normHeader)]);
     for (const h of sheetHeaders) {
-      if (normHeader(h) === want) {
+      if (wants.has(normHeader(h))) {
         map[col.key] = h;
         break;
       }
@@ -282,13 +367,19 @@ function buildHeaderMap(sheetHeaders) {
 
 export function buildBulkImportTemplateXlsx() {
   const headers = BULK_IMPORT_COLUMNS.map((c) => c.header);
-  const kadunaBranchSample = [
+  const padRow = (cells) => {
+    const row = [...cells];
+    while (row.length < headers.length) row.push('');
+    return row.slice(0, headers.length);
+  };
+  const kadunaBranchSample = padRow([
     'Amina',
     'Bello',
     'Amina Bello',
     '08030000001',
     'amina.bello@example.com',
-    'KD-001',
+    'ZAPKD006',
+    'bello.zapkd006',
     'Branch',
     'BR-KD',
     'Kaduna',
@@ -316,14 +407,15 @@ export function buildBulkImportTemplateXlsx() {
     '',
     '',
     '',
-  ];
-  const hqSample = [
+  ]);
+  const hqSample = padRow([
     'Musa',
     'Ibrahim',
     'Musa Ibrahim',
     '08030000003',
     'musa.ibrahim@example.com',
-    'HQ-010',
+    'ZAPKD010',
+    '',
     'HQ',
     'BR-KD',
     'Head Office',
@@ -351,7 +443,43 @@ export function buildBulkImportTemplateXlsx() {
     '300000',
     'multi_role_consolidation',
     'Head Accountant + acting desks',
-  ];
+  ]);
+  const legacyLinkSample = padRow([
+    '',
+    '',
+    'John Okoro',
+    '08030000099',
+    'john.okoro@example.com',
+    'ZAPYL015',
+    'john.okoro',
+    'Branch',
+    'BR-YL',
+    'Yola Factory',
+    'SAL',
+    'Sales',
+    'Sales Officer',
+    'permanent',
+    'active',
+    '2018-03-01',
+    '120000',
+    '',
+    '',
+    '',
+    '',
+    'Male',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'SO',
+    'branch_ops',
+    '2',
+    '1',
+    '',
+    '',
+    '',
+  ]);
   const guideHeaders = ['Staff type', 'Work Location', 'Branch Code', 'Branch Name', 'Notes'];
   const guideRows = BULK_IMPORT_BRANCH_GUIDE.map((g) => [
     g.staffType,
@@ -360,10 +488,20 @@ export function buildBulkImportTemplateXlsx() {
     g.branchName,
     g.notes || '',
   ]);
-  const ws = XLSX.utils.aoa_to_sheet([headers, kadunaBranchSample, hqSample]);
+  const legacyGuideHeaders = ['Step', 'Instruction'];
+  const legacyGuideRows = [
+    ['1', 'Only fill columns you have data for — blank cells are left empty on the employee record.'],
+    ['2', 'Copy usernames from Settings → Team & access into the Username column to link existing logins.'],
+    ['3', 'Use Update & add mode — do not create a second login for the same person.'],
+    ['4', 'Preview & validate before import — review each row, then confirm import.'],
+    ['5', 'Never delete a login that created sales, office, or finance records — merge duplicates into it instead.'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([headers, kadunaBranchSample, hqSample, legacyLinkSample]);
   const guideWs = XLSX.utils.aoa_to_sheet([guideHeaders, ...guideRows]);
+  const legacyWs = XLSX.utils.aoa_to_sheet([legacyGuideHeaders, ...legacyGuideRows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Staff Import');
+  XLSX.utils.book_append_sheet(wb, legacyWs, 'Legacy link guide');
   XLSX.utils.book_append_sheet(wb, guideWs, 'Branch guide');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
@@ -502,6 +640,10 @@ export function sanitizeImportRow(row) {
   out.dateJoined = joined || '';
   const dob = parseDateIso(out.dateOfBirth);
   out.dateOfBirth = dob || '';
+  out.probationEnd = parseDateIso(out.probationEnd) || '';
+  out.confirmationDate = parseDateIso(out.confirmationDate) || '';
+  out.contractEnd = parseDateIso(out.contractEnd) || '';
+  out.actingEndDate = parseDateIso(out.actingEndDate) || '';
   const acct = sanitizeAccountNumber(out.accountNumber);
   out.accountNumber = acct;
   if (!acct) out.bankCode = '';
@@ -789,6 +931,23 @@ function buildEmailToUserIdMap(db) {
   return emailToUserId;
 }
 
+function buildUsernameToUserIdMap(db) {
+  const usernameToUserId = new Map();
+  const rows = db
+    .prepare(`SELECT id, lower(trim(username)) AS username FROM app_users WHERE username IS NOT NULL AND trim(username) != ''`)
+    .all();
+  for (const row of rows) {
+    if (row.username) usernameToUserId.set(row.username, row.id);
+  }
+  return usernameToUserId;
+}
+
+function resolveLineManagerUserId(db, username) {
+  const u = String(username || '').trim().toLowerCase();
+  if (!u) return null;
+  return db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = ? LIMIT 1`).get(u)?.id || null;
+}
+
 function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } = {}) {
   const displayName = deriveDisplayName(row);
   const hasNextOfKin = String(row.nextOfKinName || row.nextOfKinPhone || '').trim();
@@ -815,6 +974,7 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     ...(userId ? { userId } : {}),
     displayName,
     firstName: row.firstName || undefined,
+    middleName: row.middleName || undefined,
     surname: row.surname || undefined,
     personalEmail: row.email || undefined,
     phone: row.phoneNumber || undefined,
@@ -827,18 +987,42 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     employmentStatus: row.employmentStatus || undefined,
     workLocation: row.workLocation || undefined,
     dateJoinedIso: row.dateJoined || undefined,
+    probationEndIso: row.probationEnd || undefined,
+    confirmationDateIso: row.confirmationDate || undefined,
+    contractEndIso: row.contractEnd || undefined,
+    actingEndDateIso: row.actingEndDate || undefined,
     payrollGroup,
     gender: row.gender || undefined,
     dateOfBirthIso: row.dateOfBirth || undefined,
     dateOfBirth: row.dateOfBirth || undefined,
     residentialAddress: row.residentialAddress || undefined,
     minimumQualification: row.highestQualification || undefined,
+    maritalStatus: row.maritalStatus || undefined,
+    stateOfOrigin: row.stateOfOrigin || undefined,
+    localGovernment: row.localGovernment || undefined,
+    nationality: row.nationality || undefined,
+    bloodGroup: row.bloodGroup || undefined,
+    institution: row.institution || undefined,
+    courseField: row.courseField || undefined,
+    yearCompleted: row.yearCompleted || undefined,
+    professionalCertificates: row.professionalCertificates || undefined,
+    taxId: row.taxId || undefined,
+    pensionRsaPin: row.pensionRsaPin || undefined,
+    ninNumber: row.nin || undefined,
+    nhisNumber: row.nhisNumber || undefined,
+    pensionAdministrator: row.pensionAdministrator || undefined,
+    promotionGrade: row.promotionGrade || undefined,
+    supervisorName: row.supervisorName || undefined,
+    leaveEntitlementBand: row.leaveEntitlementBand || undefined,
+    hrInternalNotes: row.hrInternalNotes || undefined,
     bankName: row.bankName || undefined,
     bankAccountName: row.accountName || undefined,
     bankAccountNoMasked: row.accountNumber ? `****${String(row.accountNumber).slice(-4)}` : undefined,
     nextOfKin: hasNextOfKin ? { name: row.nextOfKinName || null, phone: row.nextOfKinPhone || null } : undefined,
     selfServiceEligible: true,
   };
+  const lineManagerUserId = resolveLineManagerUserId(db, row.lineManagerUsername);
+  if (lineManagerUserId) body.lineManagerUserId = lineManagerUserId;
 
   if (salaryLevel && salaryStep) {
     body.salaryLevel = salaryLevel;
@@ -861,7 +1045,9 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     body.username = row.proposedUsername;
     body.password = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || BULK_IMPORT_DEFAULT_PASSWORD).trim();
     body.roleKey =
-      row.roleKey || mapRoleKeyFromJob(row.mappedJobTitle, row.departmentName || row.departmentCode, payrollGroup);
+      row.roleKey ||
+      row.resolvedRoleKey ||
+      mapRoleKeyFromJob(row.mappedJobTitle, row.departmentName || row.departmentCode, payrollGroup);
   }
   return body;
 }
@@ -870,14 +1056,27 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   const errors = [];
   const warnings = [];
   const mode = normalizeImportMode(importMode);
-  const displayName = deriveDisplayName(row);
+  let displayName = deriveDisplayName(row);
   if (!displayName) {
-    errors.push({
+    displayName = `Staff import row ${rowNum}`;
+    warnings.push({
       field: 'displayName',
-      message: 'At least one of Display Name, First Name, Surname, or Employee Number is required',
+      message: 'No name supplied — placeholder display name used; update after import',
     });
   }
-  const empNo = String(row.employeeNumber || '').trim();
+  const staffNumberConfig = existingKeys.staffNumberConfig || getDefaultStaffNumberConfig();
+  const branchIdForEmp = resolveBranchId(db, row, {});
+  const empNoRaw = String(row.employeeNumber || '').trim();
+  let empNo = empNoRaw
+    ? normalizeEmployeeNumberForSave(empNoRaw, staffNumberConfig, { branchId: branchIdForEmp, db })
+    : '';
+  if (empNo && empNo !== empNoRaw) {
+    row.employeeNumber = empNo;
+    warnings.push({
+      field: 'employeeNumber',
+      message: `Formatted as ${empNo}`,
+    });
+  }
   let importAction = 'create';
   let existingUserId = null;
   let existingUsername = null;
@@ -891,6 +1090,30 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
     existingUsername = existingKeys.userIdToUsername?.get(existingUserId) || null;
   } else if (empNo && mode === 'update' && existingKeys.employeeNos?.has(empNo)) {
     errors.push({ field: 'employeeNumber', message: 'Duplicate employee number' });
+  }
+
+  const explicitLogin = String(row.username || '').trim().toLowerCase();
+  if (explicitLogin) {
+    const owner = existingKeys.usernameToUserId?.get(explicitLogin);
+    if (!owner) {
+      warnings.push({
+        field: 'username',
+        message: `No login found for "${explicitLogin}" — a new account will be created`,
+      });
+    } else if (!existingUserId) {
+      importAction = 'update';
+      existingUserId = owner;
+      existingUsername = explicitLogin;
+      warnings.push({
+        field: 'username',
+        message: 'Existing login — HR profile will be linked to this account (audit history preserved)',
+      });
+    } else if (existingUserId !== owner) {
+      errors.push({
+        field: 'username',
+        message: 'Employee number and username refer to different accounts — fix the row or merge duplicates first',
+      });
+    }
   }
 
   const email = String(row.email || '').trim().toLowerCase();
@@ -919,14 +1142,30 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
       : titleResolved;
   const payrollGroup =
     row.payrollGroup || detectStaffPayrollGroup({ ...row, designation: resolvedTitle.jobTitle || row.designation });
-  const roleKey = mapRoleKeyFromJob(
-    resolvedTitle.jobTitle || row.designation,
-    row.departmentName || row.departmentCode,
-    payrollGroup
-  );
-  const proposedUsername = existingUsername || buildSurnameIdUsername(row, rowNum, usedUsernames);
-  if (!existingUsername && mode !== 'replace' && existingKeys.usernames?.has(proposedUsername)) {
-    errors.push({ field: 'username', message: `Username "${proposedUsername}" already exists` });
+  const roleKey =
+    String(row.roleKey || '').trim() ||
+    mapRoleKeyFromJob(
+      resolvedTitle.jobTitle || row.designation,
+      row.departmentName || row.departmentCode,
+      payrollGroup
+    );
+  let proposedUsername =
+    existingUsername || explicitLogin || buildSurnameIdUsername(row, rowNum, usedUsernames);
+  if (!existingUsername && !explicitLogin && mode !== 'replace' && existingKeys.usernames?.has(proposedUsername)) {
+    const base = proposedUsername;
+    let suffix = 1;
+    while (existingKeys.usernames.has(`${base}${suffix}`.slice(0, 48))) suffix += 1;
+    proposedUsername = `${base}${suffix}`.slice(0, 48);
+    warnings.push({
+      field: 'username',
+      message: `Username adjusted to "${proposedUsername}" — original was already taken`,
+    });
+  }
+  if (row.lineManagerUsername && !resolveLineManagerUserId(db, row.lineManagerUsername)) {
+    warnings.push({
+      field: 'lineManagerUsername',
+      message: `Line manager "${row.lineManagerUsername}" not found — field will be left blank`,
+    });
   }
   if (row.designationCode && !codeMatch) {
     warnings.push({ field: 'designationCode', message: `Unknown designation code "${row.designationCode}" — using job title match` });
@@ -934,8 +1173,16 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   if (row.payAdditionNgn && !row.salaryLevel) {
     warnings.push({ field: 'payAdditionNgn', message: 'Pay addition ignored without salary level/step — set level or use legacy pay backfill' });
   }
-  if (importAction === 'update') {
+  if (importAction === 'update' && !explicitLogin) {
     warnings.push({ field: 'employeeNumber', message: 'Existing employee — profile will be updated' });
+  }
+  if (!empNo && importAction === 'create' && existingKeys.employeeNumberAllocator) {
+    empNo = existingKeys.employeeNumberAllocator.next({ branchId });
+    row.employeeNumber = empNo;
+    warnings.push({
+      field: 'employeeNumber',
+      message: `Assigned employee ID ${empNo}`,
+    });
   }
 
   return {
@@ -977,11 +1224,16 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   );
   const { phones: existingPhones, phoneToUserId } = collectExistingPhones(db);
   const emailToUserId = buildEmailToUserIdMap(db);
+  const usernameToUserId = buildUsernameToUserIdMap(db);
   const existingUsernames = new Set(
     db.prepare(`SELECT lower(trim(username)) AS u FROM app_users`).all().map((r) => r.u).filter(Boolean)
   );
   const { employeeNoToUserId, userIdToUsername } = buildExistingStaffMaps(db);
   const designationIndex = buildDesignationIndex(db);
+  const staffNumberConfig = normalizeStaffNumberConfig(getStaffNumberConfig(db));
+  const employeeNumberAllocator = createEmployeeNumberAllocator(db, staffNumberConfig, {
+    takenFormatted: new Set(importMode === 'replace' ? [] : [...existingNos]),
+  });
   const usedUsernames = new Set(importMode === 'replace' ? [] : existingUsernames);
   const employeeNosInFile = new Set();
   const preview = [];
@@ -1007,9 +1259,12 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
       userIdToUsername,
       emails: importMode === 'replace' ? new Set() : existingEmails,
       emailToUserId,
+      usernameToUserId,
       phones: importMode === 'replace' ? new Set() : existingPhones,
       phoneToUserId,
       usernames: importMode === 'replace' ? new Set() : existingUsernames,
+      staffNumberConfig,
+      employeeNumberAllocator,
     };
     const {
       errors,
@@ -1046,8 +1301,10 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
       originalJobTitle: originalJobTitle || mapped.designation || null,
       payrollGroup,
       roleKey,
+      resolvedRoleKey: roleKey,
       importAction,
       existingUserId: existingUserId || null,
+      employeeNumber: mapped.employeeNumber || '',
       errors,
       warnings,
       valid: errors.length === 0,
@@ -1073,10 +1330,23 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
       username: r.proposedUsername,
     }));
   const staffToSuspend = importMode === 'replace' ? countActiveHrStaffForImportClean(db) : 0;
+  const previewTable = preview.slice(0, 200).map((r) => ({
+    row: r.rowNum,
+    name: r.displayName || '—',
+    employeeId: r.employeeNumber || '—',
+    action: r.importAction === 'update' ? 'Update' : 'Create',
+    username: r.proposedUsername || '—',
+    jobTitle: r.mappedJobTitle || r.designation || '—',
+    branch: r.branchId || '—',
+    status: r.valid ? 'Ready' : 'Blocked',
+    warningCount: r.warnings?.length || 0,
+    errorCount: r.errors?.length || 0,
+  }));
   return {
     ok: true,
     importMode,
     preview,
+    previewTable,
     summary: {
       total: totalRows,
       valid,
@@ -1140,10 +1410,18 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
       const displayName = deriveDisplayName(row);
 
       if (row.importAction === 'update' && row.existingUserId) {
-        db.prepare(`UPDATE app_users SET display_name = ?, status = 'active' WHERE id = ?`).run(
-          displayName,
-          row.existingUserId
-        );
+        if (row.roleKey) {
+          db.prepare(`UPDATE app_users SET display_name = ?, status = 'active', role_key = ? WHERE id = ?`).run(
+            displayName,
+            row.roleKey,
+            row.existingUserId
+          );
+        } else {
+          db.prepare(`UPDATE app_users SET display_name = ?, status = 'active' WHERE id = ?`).run(
+            displayName,
+            row.existingUserId
+          );
+        }
         const profilePatch = rowToProfileBody(db, row, scope, {
           userId: row.existingUserId,
           includeCredentials: false,

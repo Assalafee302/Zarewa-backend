@@ -4,16 +4,17 @@
  */
 
 import crypto from 'node:crypto';
+import {
+  createEmployeeNumberAllocator,
+  expandReservedEmployeeNumbers,
+  formatStaffEmployeeNumber,
+  getDefaultStaffNumberConfig,
+  isReservedEmployeeNumber,
+  normalizeStaffNumberConfig,
+  resolveEmployeeBranchCode,
+} from '../shared/lib/hrEmployeeNumber.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-
-const DEFAULT_RESERVED = [
-  { number: '1', label: 'CEO / Chairman' },
-  { number: '2', label: 'Managing Director' },
-  { number: '3', label: 'Director 1' },
-  { number: '4', label: 'Director 2' },
-  { number: '5', label: 'Director 3' },
-];
 
 function nowIso() {
   return new Date().toISOString();
@@ -32,77 +33,78 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
-export function getDefaultStaffNumberConfig() {
-  return {
-    format: 'numeric',
-    prefix: '',
-    startingNumber: 6,
-    reserved: DEFAULT_RESERVED,
-    lastAppliedAtIso: null,
-  };
-}
+export { getDefaultStaffNumberConfig } from '../shared/lib/hrEmployeeNumber.js';
 
 export function getStaffNumberConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
   const row = db.prepare(`SELECT value_json FROM hr_settings WHERE key = 'staff_number_config'`).get();
   if (!row?.value_json) return getDefaultStaffNumberConfig();
-  return { ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) };
+  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
 }
 
 export function saveStaffNumberConfig(db, config, actor) {
   if (!hrTableExists(db, 'hr_settings')) return { ok: false, error: 'HR settings not initialised.' };
+  const normalized = normalizeStaffNumberConfig(config);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_settings (key, value_json, updated_at_iso, updated_by_user_id)
      VALUES ('staff_number_config', ?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at_iso=excluded.updated_at_iso, updated_by_user_id=excluded.updated_by_user_id`
-  ).run(JSON.stringify(config), now, actor?.id || null);
+  ).run(JSON.stringify(normalized), now, actor?.id || null);
   appendHrAuditEvent(db, {
     actorUserId: actor?.id,
     action: 'hr.staff_id.config_updated',
     entityKind: 'hr_settings',
     entityId: 'staff_number_config',
   });
-  return { ok: true, config };
-}
-
-function formatEmployeeNo(config, n) {
-  const num = Math.round(Number(n) || 0);
-  if (config.format === 'prefixed' && config.prefix) {
-    return `${config.prefix}${String(num).padStart(4, '0')}`;
-  }
-  return String(num);
+  return { ok: true, config: normalized };
 }
 
 export function previewStaffRenumbering(db, config) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR not initialised.' };
-  const reservedNums = new Set((config.reserved || []).map((r) => String(r.number).trim()));
+  const cfg = normalizeStaffNumberConfig(config);
+  const reservedNums = expandReservedEmployeeNumbers(cfg);
   const staff = db
     .prepare(
-      `SELECT p.user_id AS userId, u.display_name AS displayName, p.employee_no AS currentEmployeeNo, p.job_title AS jobTitle
+      `SELECT p.user_id AS userId, p.branch_id AS branchId, u.display_name AS displayName,
+              p.employee_no AS currentEmployeeNo, p.job_title AS jobTitle
        FROM hr_staff_profiles p JOIN app_users u ON u.id = p.user_id
        WHERE p.employment_status IS NULL OR lower(p.employment_status) NOT IN ('terminated','separated')
        ORDER BY u.display_name ASC`
     )
     .all();
-  let next = Math.max(config.startingNumber || 6, 6);
+  const allocator =
+    cfg.format === 'branch_prefixed'
+      ? createEmployeeNumberAllocator(db, cfg, { takenFormatted: new Set() })
+      : null;
+  let next = Math.max(cfg.startingNumber || 6, 6);
   const mappings = [];
   const conflicts = [];
   for (const s of staff) {
     const cur = String(s.currentEmployeeNo || '').trim();
-    if (cur && reservedNums.has(cur)) {
+    if (cur && (reservedNums.has(cur) || isReservedEmployeeNumber(cur, cfg))) {
       mappings.push({ ...s, newEmployeeNo: cur, reserved: true });
       continue;
     }
-    while (reservedNums.has(String(next))) next += 1;
-    const newNo = formatEmployeeNo(config, next);
+    let newNo;
+    if (allocator) {
+      newNo = allocator.next({ branchId: s.branchId });
+    } else {
+      while (
+        reservedNums.has(String(next)) ||
+        isReservedEmployeeNumber(formatStaffEmployeeNumber(cfg, next, { branchId: s.branchId, db }), cfg)
+      ) {
+        next += 1;
+      }
+      newNo = formatStaffEmployeeNumber(cfg, next, { branchId: s.branchId, db });
+      next += 1;
+    }
     if (staff.some((x) => x !== s && String(x.currentEmployeeNo) === newNo)) {
       conflicts.push({ userId: s.userId, displayName: s.displayName, newEmployeeNo: newNo });
     }
     mappings.push({ ...s, newEmployeeNo: newNo, reserved: false });
-    next += 1;
   }
-  return { ok: true, mappings, conflicts, reserved: config.reserved || DEFAULT_RESERVED };
+  return { ok: true, mappings, conflicts, reserved: cfg.reserved || [] };
 }
 
 export function applyStaffRenumbering(db, actor, config, { confirmPhrase } = {}) {
@@ -126,7 +128,7 @@ export function applyStaffRenumbering(db, actor, config, { confirmPhrase } = {})
       ).run(newId('HRNUMH'), m.userId, m.currentEmployeeNo || null, m.newEmployeeNo, batchId, now, actor?.id || null);
     }
   }
-  const saved = { ...config, lastAppliedAtIso: now, lastBatchId: batchId };
+  const saved = { ...normalizeStaffNumberConfig(config), lastAppliedAtIso: now, lastBatchId: batchId };
   saveStaffNumberConfig(db, saved, actor);
   appendHrAuditEvent(db, {
     actorUserId: actor?.id,
@@ -160,3 +162,5 @@ export function listStaffWithoutEmployeeNo(db, scope) {
   }
   return db.prepare(sql).all(...args);
 }
+
+export { resolveEmployeeBranchCode };

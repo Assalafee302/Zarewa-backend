@@ -16,7 +16,7 @@ describe('admin data reset branch scope', () => {
       branchId: 'ALL',
     });
     expect(r.ok).toBe(false);
-    expect(String(r.error || '')).toMatch(/single branch/i);
+    expect(String(r.error || '')).toMatch(/one branch/i);
   });
 
   it('rejects reset when workspace view-all is set', () => {

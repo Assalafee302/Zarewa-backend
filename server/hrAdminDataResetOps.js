@@ -16,12 +16,22 @@ function isIgnorableMissingTableError(e) {
   );
 }
 
+function isIgnorableUnknownColumnError(e) {
+  const msg = String(e?.message || e || '');
+  const code = String(e?.code || '');
+  return (
+    code === 'ER_BAD_FIELD_ERROR' ||
+    msg.includes('Unknown column') ||
+    msg.includes('1054')
+  );
+}
+
 function safeDelete(db, sql, params = []) {
   try {
     db.prepare(sql).run(...params);
     return true;
   } catch (e) {
-    if (isIgnorableMissingTableError(e)) return false;
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return false;
     throw e;
   }
 }
@@ -45,6 +55,48 @@ function deleteForUserIds(db, table, column, userIds) {
   }
 }
 
+function deleteRequestDetailsForBranch(db, branchId) {
+  const bid = String(branchId || '').trim();
+  if (!bid || !hrTableExists(db, 'hr_requests')) return;
+  for (const table of ['hr_request_leave', 'hr_request_loan', 'hr_request_discipline']) {
+    if (!hrTableExists(db, table)) continue;
+    safeDelete(
+      db,
+      `DELETE FROM \`${table}\` WHERE request_id IN (SELECT id FROM hr_requests WHERE branch_id = ?)`,
+      [bid]
+    );
+  }
+  safeDelete(db, `DELETE FROM hr_requests WHERE branch_id = ?`, [bid]);
+}
+
+function deleteBenefitPaymentsForUserIds(db, userIds) {
+  if (!userIds.length || !hrTableExists(db, 'hr_benefit_payments') || !hrTableExists(db, 'hr_beneficiaries')) return;
+  const chunkSize = 200;
+  for (let i = 0; i < userIds.length; i += chunkSize) {
+    const chunk = userIds.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    safeDelete(
+      db,
+      `DELETE FROM hr_benefit_payments WHERE beneficiary_id IN (SELECT id FROM hr_beneficiaries WHERE user_id IN (${placeholders}))`,
+      chunk
+    );
+  }
+}
+
+function deleteExitPropertyForUserIds(db, userIds) {
+  if (!userIds.length || !hrTableExists(db, 'hr_exit_property_items') || !hrTableExists(db, 'hr_exit_clearance')) return;
+  const chunkSize = 200;
+  for (let i = 0; i < userIds.length; i += chunkSize) {
+    const chunk = userIds.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    safeDelete(
+      db,
+      `DELETE FROM hr_exit_property_items WHERE clearance_id IN (SELECT id FROM hr_exit_clearance WHERE user_id IN (${placeholders}))`,
+      chunk
+    );
+  }
+}
+
 /**
  * Clears HR transactional data for one branch. Does not remove app_users, hr_settings,
  * hr_designations, hr_departments, hr_salary_matrix, hr_policy_config, or import audit logs.
@@ -63,11 +115,8 @@ export function resetHrBranchOperationalData(db, branchId) {
     steps += 1;
   };
 
-  // Request detail tables before hr_requests
-  runUserScoped('hr_request_leave');
-  runUserScoped('hr_request_loan');
-  runUserScoped('hr_request_discipline');
-  safeDelete(db, `DELETE FROM hr_requests WHERE branch_id = ?`, [bid]);
+  // HR request detail rows use request_id (not user_id) — delete via parent hr_requests.
+  deleteRequestDetailsForBranch(db, bid);
   steps += 1;
 
   runUserScoped('hr_payroll_line_loans');
@@ -85,24 +134,25 @@ export function resetHrBranchOperationalData(db, branchId) {
   runUserScoped('hr_staff_documents');
   runUserScoped('hr_staff_branch_history');
   runUserScoped('hr_staff_skills');
+  deleteBenefitPaymentsForUserIds(db, userIds);
+  steps += 1;
   runUserScoped('hr_beneficiaries');
-  runUserScoped('hr_benefit_payments');
   runUserScoped('hr_incident_memos');
   runUserScoped('hr_transfer_recommendations');
   runUserScoped('hr_transfer_requests');
   runUserScoped('hr_absence_reports');
   runUserScoped('hr_grievances');
   runUserScoped('hr_exit_interviews');
+  deleteExitPropertyForUserIds(db, userIds);
+  steps += 1;
   runUserScoped('hr_exit_clearance');
-  runUserScoped('hr_exit_property_items');
   runUserScoped('hr_training_records');
   runUserScoped('hr_policy_acknowledgements');
   runUserScoped('hr_employment_letters');
   runUserScoped('hr_feedback_notes', 'subject_user_id');
   runUserScoped('hr_appraisal_forms', 'subject_user_id');
-  runUserScoped('hr_performance_reviews', 'subject_user_id');
-  runUserScoped('hr_performance_recognitions', 'subject_user_id');
-  runUserScoped('hr_notifications', 'recipient_user_id');
+  runUserScoped('hr_performance_recognitions');
+  runUserScoped('hr_notifications');
   runUserScoped('hr_employee_number_history');
   runUserScoped('hr_sensitive_tokens');
 

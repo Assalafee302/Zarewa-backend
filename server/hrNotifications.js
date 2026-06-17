@@ -327,6 +327,63 @@ export function notifyHrRequestQueueHandoff(db, row, nextStatus, actorUserId) {
   }
 }
 
+function hrIdCardRoutePath(requestId) {
+  return `/hr/employees?tab=id-cards&requestId=${encodeURIComponent(String(requestId || '').trim())}`;
+}
+
+/**
+ * Notify HR when an ID card request is submitted and confirm to the employee.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id: string; user_id: string }} row
+ * @param {string} [actorUserId]
+ */
+export function notifyIdCardRequestSubmitted(db, row, actorUserId) {
+  if (!row?.id || !row?.user_id) return;
+  const uid = String(row.user_id).trim();
+  const actorId = String(actorUserId || '').trim();
+  const staff = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(uid);
+  const staffName = staff?.display_name || 'Staff member';
+  const branchId = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid)?.branch_id;
+  notifyUsers(db, listHrReviewersForBranch(db, branchId, actorId), {
+    kind: 'id_card_hr_review',
+    title: 'ID card request awaiting processing',
+    body: `${staffName} submitted ID card request ${row.id}.`,
+    routePath: hrIdCardRoutePath(row.id),
+    entityKind: 'hr_id_card',
+    entityId: row.id,
+  });
+  createHrNotification(db, {
+    userId: uid,
+    kind: 'id_card_submitted',
+    title: 'ID card request submitted',
+    body:
+      actorId && actorId !== uid
+        ? `HR opened ID card request ${row.id} on your behalf. You will be notified when it is ready.`
+        : `Your ID card request (${row.id}) is with HR for processing.`,
+    routePath: '/my-profile/id-card',
+    entityKind: 'hr_id_card',
+    entityId: row.id,
+  });
+}
+
+/**
+ * Notify employee when an ID card is ready for collection.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id: string; user_id: string }} row
+ */
+export function notifyIdCardReady(db, row) {
+  if (!row?.id || !row?.user_id) return;
+  createHrNotification(db, {
+    userId: row.user_id,
+    kind: 'id_card_ready',
+    title: 'ID card ready for collection',
+    body: `Your staff ID card (${row.id}) is ready. Please collect it from HR.`,
+    routePath: '/my-profile/id-card',
+    entityKind: 'hr_id_card',
+    entityId: row.id,
+  });
+}
+
 function hrTransferRoutePath(transferId, scope) {
   const id = encodeURIComponent(String(transferId || '').trim());
   const sc = scope ? `&scope=${encodeURIComponent(scope)}` : '';

@@ -199,14 +199,6 @@ export function scanHrStaffDuplicates(db) {
   };
 }
 
-function runOptionalDelete(db, sql, userId) {
-  try {
-    db.prepare(sql).run(userId);
-  } catch {
-    /* table may be missing or row absent */
-  }
-}
-
 /** @param {import('better-sqlite3').Database} db */
 function tableHasColumn(db, table, column) {
   try {

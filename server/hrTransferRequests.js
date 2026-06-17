@@ -4,6 +4,7 @@
  */
 
 import { hrTablesReady, listHrStaff, upsertHrStaffProfile } from './hrOps.js';
+import { userCanGmApproveHr } from './hrPermissions.js';
 import { serviceYearsFromJoinedIso } from './hrBusinessRules.js';
 import { evaluateTransferTenurePolicy } from './hrPolicyConstants.js';
 import {

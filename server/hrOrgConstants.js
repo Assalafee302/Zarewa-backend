@@ -53,6 +53,7 @@ export const DESIGNATION_OFFICE_KEYS = {
   desig_hrrep: 'hr',
   desig_hoa: 'finance',
   desig_acct: 'finance',
+  desig_aud: 'finance',
   desig_aacct: 'finance',
   desig_actacct: 'finance',
   desig_adm: 'office_admin',

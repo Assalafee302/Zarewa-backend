@@ -2916,6 +2916,98 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
   };
 }
 
+/**
+ * Employee self-service attendance summary for a payroll month.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {string} [periodYyyymm]
+ */
+export function getHrAttendanceSummaryForUser(db, userId, periodYyyymm) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  const prof = db
+    .prepare(`SELECT branch_id AS branchId FROM hr_staff_profiles WHERE user_id = ?`)
+    .get(uid);
+  if (!prof) return { ok: false, error: 'No employment record on file.' };
+  const period = String(periodYyyymm || '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
+  if (!/^\d{6}$/.test(period)) return { ok: false, error: 'periodYyyymm must be YYYYMM.' };
+
+  const branchId = prof.branchId;
+  const stats = attendanceDeductionForUser(db, uid, branchId, period);
+
+  const y = period.slice(0, 4);
+  const m = period.slice(4, 6);
+  const ym = `${y}-${m}`;
+  const dayRows = db
+    .prepare(
+      `SELECT day_iso AS dayIso, rows_json FROM hr_daily_roll_calls
+       WHERE branch_id = ? AND substr(day_iso, 1, 7) = ?
+       ORDER BY day_iso ASC`
+    )
+    .all(branchId, ym);
+  const days = [];
+  for (const dr of dayRows) {
+    const list = safeJsonParse(dr.rows_json, []);
+    const hit = list.find((x) => String(x?.userId || '').trim() === uid);
+    if (hit) {
+      days.push({
+        dayIso: dr.dayIso,
+        status: String(hit.status || 'present').toLowerCase(),
+        inTime: hit.inTime || null,
+        outTime: hit.outTime || null,
+        remark: hit.remark || null,
+      });
+    }
+  }
+
+  const upload = db
+    .prepare(
+      `SELECT rows_json FROM hr_attendance_uploads
+       WHERE branch_id = ? AND period_yyyymm = ?
+       ORDER BY created_at_iso DESC LIMIT 1`
+    )
+    .get(branchId, period);
+  let monthlyAbsentDays = null;
+  if (upload) {
+    const rows = safeJsonParse(upload.rows_json, []);
+    const hit = rows.find((r) => String(r?.userId || '').trim() === uid);
+    if (hit) monthlyAbsentDays = Math.max(0, Math.round(Number(hit.absentDays) || 0));
+  }
+
+  const exceptionRows = db
+    .prepare(
+      `SELECT id, status, title, payload_json, created_at_iso AS createdAtIso
+       FROM hr_requests
+       WHERE user_id = ? AND kind = 'attendance_exception'
+       ORDER BY created_at_iso DESC LIMIT 25`
+    )
+    .all(uid);
+  const exceptions = exceptionRows.map((row) => {
+    const payload = safeJsonParse(row.payload_json, {});
+    return {
+      id: row.id,
+      status: row.status,
+      title: row.title,
+      createdAtIso: row.createdAtIso,
+      dayIso: String(payload.dayIso || payload.dateIso || '').slice(0, 10) || null,
+      type: String(payload.type || '').trim().toLowerCase() || null,
+      reason: String(payload.reason || payload.body || '').trim() || null,
+    };
+  });
+
+  return {
+    ok: true,
+    periodYyyymm: period,
+    branchId,
+    monthlyAbsentDays,
+    days,
+    exceptions,
+    ...stats,
+  };
+}
+
 function salaryMatrixReady(db) {
   return Boolean(
     hrTablesReady(db) &&

@@ -151,6 +151,8 @@ export const HR_SELF_SERVICE_API_PATTERNS = [
   /^\/requests(\/|$)/,
   /^\/api\/hr\/leave\/balances(\/|$)/,
   /^\/leave\/balances(\/|$)/,
+  /^\/api\/hr\/leave\/calendar$/,
+  /^\/leave\/calendar$/,
   /^\/api\/hr\/employment-letters(\/|$)/,
   /^\/employment-letters(\/|$)/,
   /^\/api\/hr\/staff\/[^/]+$/,

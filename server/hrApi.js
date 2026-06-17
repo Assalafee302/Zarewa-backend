@@ -36,6 +36,7 @@ import {
   patchPayrollLineAdjustments,
   generateStaffLoanAgreementLetter,
   getHrDailyRollCall,
+  getHrAttendanceSummaryForUser,
   getHrInboxSummary,
   listHrProfileWorkQueue,
   getHrMeProfile,
@@ -914,6 +915,22 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not submit your profile.' });
+    }
+  });
+
+  app.get('/api/hr/me/attendance-summary', (req, res) => {
+    try {
+      if (!userCanAccessMyProfileHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'HR self-service is not enabled for your role.' });
+      }
+      if (!hrReady(res, db)) return;
+      const periodYyyymm = String(req.query?.periodYyyymm || req.query?.period || '').trim();
+      const r = getHrAttendanceSummaryForUser(db, req.user?.id, periodYyyymm || undefined);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load attendance summary.' });
     }
   });
 

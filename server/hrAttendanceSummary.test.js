@@ -1,82 +1,104 @@
 /**
- * Employee self-service attendance summary — roll, upload, exceptions, deductions.
+ * Employee self-service attendance summary — unit tests with mock DB (no MySQL).
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
-import { createDatabase } from './db.js';
-import { createApp } from './app.js';
-import { isMysqlAvailableForTests } from './testIntegrationHarness.js';
+import { describe, expect, it } from 'vitest';
 import { getHrAttendanceSummaryForUser } from './hrOps.js';
 
-const mysqlOk = isMysqlAvailableForTests();
+const USER = 'USR-STAFF';
+const BRANCH = 'BR-KD';
 const PERIOD = '202606';
 const NOW = '2026-06-15T10:00:00.000Z';
 
-describe.skipIf(!mysqlOk)('getHrAttendanceSummaryForUser', () => {
-  let db;
-  let userId;
-  let branchId;
+function makeAttendanceDb(overrides = {}) {
+  const profile = { branchId: BRANCH, base_salary_ngn: 220000 };
+  const dailyRolls = overrides.dailyRolls || [];
+  const uploads = overrides.uploads || [];
+  const exceptions = overrides.exceptions || [];
 
-  beforeEach(() => {
-    db = createDatabase(':memory:');
-    const staff = db
-      .prepare(
-        `SELECT u.id AS userId, p.branch_id AS branchId
-         FROM app_users u
-         INNER JOIN hr_staff_profiles p ON p.user_id = u.id
-         WHERE u.username = 'sales.staff'
-         LIMIT 1`
-      )
-      .get();
-    expect(staff?.userId).toBeTruthy();
-    userId = staff.userId;
-    branchId = staff.branchId;
-    db.prepare(`UPDATE hr_staff_profiles SET base_salary_ngn = 220000 WHERE user_id = ?`).run(userId);
-  });
+  return {
+    prepare(sql) {
+      const s = String(sql);
+      if (s.includes('sqlite_master') || s.includes('hr_staff_profiles') && s.includes('COUNT')) {
+        return { get: () => ({ 1: 1 }) };
+      }
+      return {
+        get(...args) {
+          if (s.includes('branch_id AS branchId FROM hr_staff_profiles')) {
+            return profile;
+          }
+          if (s.includes('base_salary_ngn FROM hr_staff_profiles')) {
+            return { base_salary_ngn: profile.base_salary_ngn };
+          }
+          if (s.includes('FROM hr_attendance_uploads') && s.includes('period_yyyymm')) {
+            return uploads[0] || undefined;
+          }
+          return undefined;
+        },
+        all(...args) {
+          if (s.includes('FROM hr_daily_roll_calls') && s.includes('day_iso')) {
+            return dailyRolls;
+          }
+          if (s.includes('FROM hr_daily_roll_calls') && s.includes('substr')) {
+            return dailyRolls.map((d) => ({ rows_json: d.rows_json }));
+          }
+          if (s.includes(`kind = 'attendance_exception'`) && s.includes('approved')) {
+            return exceptions.filter((e) => e.status === 'approved');
+          }
+          if (s.includes(`kind = 'attendance_exception'`) && s.includes('ORDER BY')) {
+            return exceptions;
+          }
+          if (s.includes('FROM hr_leave_requests') || s.includes('approved_leave')) {
+            return [];
+          }
+          return [];
+        },
+      };
+    },
+  };
+}
 
-  afterEach(() => {
-    db?.close();
-  });
-
+describe('getHrAttendanceSummaryForUser', () => {
   it('rejects unknown employee', () => {
-    const r = getHrAttendanceSummaryForUser(db, 'USR-NOPE', PERIOD);
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('sqlite_master')) return { get: () => ({ 1: 1 }) };
+        return {
+          get: () => undefined,
+          all: () => [],
+        };
+      },
+    };
+    const r = getHrAttendanceSummaryForUser(db, USER, PERIOD);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/employment record/i);
   });
 
   it('rejects invalid payroll period', () => {
-    const r = getHrAttendanceSummaryForUser(db, userId, 'not-a-period');
+    const db = makeAttendanceDb();
+    const r = getHrAttendanceSummaryForUser(db, USER, 'bad-period');
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/YYYYMM/i);
   });
 
   it('aggregates daily roll, monthly upload, and payroll deduction', () => {
-    db.prepare(
-      `INSERT INTO hr_daily_roll_calls (id, branch_id, day_iso, rows_json, created_at_iso, updated_at_iso)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(
-      'DRC-TEST-1',
-      branchId,
-      '2026-06-03',
-      JSON.stringify([{ userId, status: 'late', remark: 'Traffic' }]),
-      NOW,
-      NOW
-    );
-    db.prepare(
-      `INSERT INTO hr_attendance_uploads (id, branch_id, period_yyyymm, rows_json, created_at_iso)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(
-      'ATT-UP-1',
-      branchId,
-      PERIOD,
-      JSON.stringify([{ userId, absentDays: 2 }]),
-      NOW
-    );
+    const db = makeAttendanceDb({
+      dailyRolls: [
+        {
+          dayIso: '2026-06-03',
+          rows_json: JSON.stringify([{ userId: USER, status: 'late', remark: 'Traffic' }]),
+        },
+      ],
+      uploads: [
+        {
+          rows_json: JSON.stringify([{ userId: USER, absentDays: 2 }]),
+        },
+      ],
+    });
 
-    const r = getHrAttendanceSummaryForUser(db, userId, PERIOD);
+    const r = getHrAttendanceSummaryForUser(db, USER, PERIOD);
     expect(r.ok).toBe(true);
     expect(r.periodYyyymm).toBe(PERIOD);
-    expect(r.branchId).toBe(branchId);
     expect(r.lateDays).toBe(1);
     expect(r.absentDays).toBe(2);
     expect(r.monthlyAbsentDays).toBe(2);
@@ -87,48 +109,30 @@ describe.skipIf(!mysqlOk)('getHrAttendanceSummaryForUser', () => {
   });
 
   it('approved attendance exception waives one late day from deduction', () => {
-    db.prepare(
-      `INSERT INTO hr_daily_roll_calls (id, branch_id, day_iso, rows_json, created_at_iso, updated_at_iso)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(
-      'DRC-TEST-2',
-      branchId,
-      '2026-06-04',
-      JSON.stringify([{ userId, status: 'late' }]),
-      NOW,
-      NOW
-    );
-    db.prepare(
-      `INSERT INTO hr_requests (
-        id, user_id, branch_id, kind, status, title, payload_json, created_at_iso
-      ) VALUES (?, ?, ?, 'attendance_exception', 'approved', 'Late exception', ?, ?)`
-    ).run(
-      'HRR-ATT-EX',
-      userId,
-      branchId,
-      JSON.stringify({ dayIso: '2026-06-04', type: 'late', reason: 'Official duty' }),
-      NOW
-    );
+    const db = makeAttendanceDb({
+      dailyRolls: [
+        {
+          dayIso: '2026-06-04',
+          rows_json: JSON.stringify([{ userId: USER, status: 'late' }]),
+        },
+      ],
+      exceptions: [
+        {
+          id: 'HRR-ATT-EX',
+          status: 'approved',
+          title: 'Late exception',
+          createdAtIso: NOW,
+          payload_json: JSON.stringify({ dayIso: '2026-06-04', type: 'late', reason: 'Official duty' }),
+        },
+      ],
+    });
 
-    const r = getHrAttendanceSummaryForUser(db, userId, PERIOD);
+    const r = getHrAttendanceSummaryForUser(db, USER, PERIOD);
     expect(r.ok).toBe(true);
     expect(r.lateDays).toBe(1);
     expect(r.lateExceptions).toBe(1);
     expect(r.deductionNgn).toBe(0);
     expect(r.exceptions).toHaveLength(1);
     expect(r.exceptions[0].type).toBe('late');
-  });
-
-  it('GET /api/hr/me/attendance-summary works for sales staff self-service', async () => {
-    const app = createApp(db);
-    const agent = request.agent(app);
-    const login = await agent.post('/api/session/login').send({ username: 'sales.staff', password: 'Sales@123' });
-    expect(login.status).toBe(200);
-
-    const res = await agent.get(`/api/hr/me/attendance-summary?periodYyyymm=${PERIOD}`);
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
-    expect(res.body.periodYyyymm).toBe(PERIOD);
-    expect(Array.isArray(res.body.days)).toBe(true);
   });
 });

@@ -6,6 +6,7 @@
 import { appendAuditLog } from './controlOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { purgeHrStaffUser } from './hrStaffDuplicateCleanup.js';
+import { purgeUserHrOperationalData } from './hrUserOperationalCleanup.js';
 
 export const ZERO_AUDIT_BULK_DELETE_CONFIRM_PHRASE = 'DELETE UNUSED LOGINS';
 
@@ -128,6 +129,7 @@ function deleteZeroAuditUser(db, userId, actorUserId) {
 
   try {
     db.transaction(() => {
+      purgeUserHrOperationalData(db, uid);
       db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(uid);
       db.prepare(`DELETE FROM app_users WHERE id = ?`).run(uid);
     })();
@@ -201,14 +203,18 @@ export function bulkDeleteZeroAuditUsers(db, actor, opts = {}) {
   }
 
   if (deleted.length && actor) {
-    appendAuditLog(db, {
-      actor,
-      action: 'user.bulk_delete_zero_audit',
-      entityKind: 'app_users',
-      entityId: 'bulk',
-      note: `Removed ${deleted.length} unused login(s) with zero audit trail`,
-      details: { deleted: deleted.map((d) => d.username), failed: failed.length },
-    });
+    try {
+      appendAuditLog(db, {
+        actor,
+        action: 'user.bulk_delete_zero_audit',
+        entityKind: 'app_users',
+        entityId: 'bulk',
+        note: `Removed ${deleted.length} unused login(s) with zero audit trail`,
+        details: { deleted: deleted.map((d) => d.username), failed: failed.length },
+      });
+    } catch {
+      /* audit row is best-effort after bulk delete */
+    }
   }
 
   return {

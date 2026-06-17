@@ -4,37 +4,15 @@
  */
 
 import { hrTableExists } from './hrTableChecks.js';
-
-function isIgnorableMissingTableError(e) {
-  const msg = String(e?.message || e || '');
-  const code = String(e?.code || '');
-  return (
-    code === 'ER_NO_SUCH_TABLE' ||
-    msg.includes('1146') ||
-    msg.includes('42S02') ||
-    msg.includes('no such table')
-  );
-}
-
-function isIgnorableUnknownColumnError(e) {
-  const msg = String(e?.message || e || '');
-  const code = String(e?.code || '');
-  return (
-    code === 'ER_BAD_FIELD_ERROR' ||
-    msg.includes('Unknown column') ||
-    msg.includes('1054')
-  );
-}
-
-function safeDelete(db, sql, params = []) {
-  try {
-    db.prepare(sql).run(...params);
-    return true;
-  } catch (e) {
-    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return false;
-    throw e;
-  }
-}
+import {
+  USER_HR_SUBJECT_DELETE_SPECS,
+  deleteBenefitPaymentsForUsers,
+  deleteDisciplineSubgraphForUsers,
+  deleteExitPropertyForUsers,
+  deleteRequestDetailsForBranch,
+  deleteRowsForUsers,
+  safeDelete,
+} from './hrUserOperationalCleanup.js';
 
 function branchStaffUserIds(db, branchId) {
   if (!hrTableExists(db, 'hr_staff_profiles')) return [];
@@ -43,58 +21,6 @@ function branchStaffUserIds(db, branchId) {
     .all(String(branchId || '').trim())
     .map((r) => r.userId)
     .filter(Boolean);
-}
-
-function deleteForUserIds(db, table, column, userIds) {
-  if (!userIds.length || !hrTableExists(db, table)) return;
-  const chunkSize = 200;
-  for (let i = 0; i < userIds.length; i += chunkSize) {
-    const chunk = userIds.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => '?').join(',');
-    safeDelete(db, `DELETE FROM \`${table}\` WHERE \`${column}\` IN (${placeholders})`, chunk);
-  }
-}
-
-function deleteRequestDetailsForBranch(db, branchId) {
-  const bid = String(branchId || '').trim();
-  if (!bid || !hrTableExists(db, 'hr_requests')) return;
-  for (const table of ['hr_request_leave', 'hr_request_loan', 'hr_request_discipline']) {
-    if (!hrTableExists(db, table)) continue;
-    safeDelete(
-      db,
-      `DELETE FROM \`${table}\` WHERE request_id IN (SELECT id FROM hr_requests WHERE branch_id = ?)`,
-      [bid]
-    );
-  }
-  safeDelete(db, `DELETE FROM hr_requests WHERE branch_id = ?`, [bid]);
-}
-
-function deleteBenefitPaymentsForUserIds(db, userIds) {
-  if (!userIds.length || !hrTableExists(db, 'hr_benefit_payments') || !hrTableExists(db, 'hr_beneficiaries')) return;
-  const chunkSize = 200;
-  for (let i = 0; i < userIds.length; i += chunkSize) {
-    const chunk = userIds.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => '?').join(',');
-    safeDelete(
-      db,
-      `DELETE FROM hr_benefit_payments WHERE beneficiary_id IN (SELECT id FROM hr_beneficiaries WHERE user_id IN (${placeholders}))`,
-      chunk
-    );
-  }
-}
-
-function deleteExitPropertyForUserIds(db, userIds) {
-  if (!userIds.length || !hrTableExists(db, 'hr_exit_property_items') || !hrTableExists(db, 'hr_exit_clearance')) return;
-  const chunkSize = 200;
-  for (let i = 0; i < userIds.length; i += chunkSize) {
-    const chunk = userIds.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => '?').join(',');
-    safeDelete(
-      db,
-      `DELETE FROM hr_exit_property_items WHERE clearance_id IN (SELECT id FROM hr_exit_clearance WHERE user_id IN (${placeholders}))`,
-      chunk
-    );
-  }
 }
 
 /**
@@ -110,86 +36,28 @@ export function resetHrBranchOperationalData(db, branchId) {
   const userIds = branchStaffUserIds(db, bid);
   let steps = 0;
 
-  const runUserScoped = (table, column = 'user_id') => {
-    deleteForUserIds(db, table, column, userIds);
-    steps += 1;
-  };
-
-  // HR request detail rows use request_id (not user_id) — delete via parent hr_requests.
   deleteRequestDetailsForBranch(db, bid);
   steps += 1;
 
-  runUserScoped('hr_payroll_line_loans');
-  runUserScoped('hr_payroll_line_recoveries');
-  if (hrTableExists(db, 'hr_payroll_lines') && userIds.length) {
-    const placeholders = userIds.map(() => '?').join(',');
-    safeDelete(db, `DELETE FROM hr_payroll_lines WHERE user_id IN (${placeholders})`, userIds);
-  }
+  deleteBenefitPaymentsForUsers(db, userIds);
+  deleteExitPropertyForUsers(db, userIds);
+  deleteDisciplineSubgraphForUsers(db, userIds);
   steps += 1;
 
-  runUserScoped('hr_leave_balances');
-  runUserScoped('hr_leave_accrual_ledger');
-  runUserScoped('hr_attendance_events');
-  runUserScoped('hr_salary_history');
-  runUserScoped('hr_staff_documents');
-  runUserScoped('hr_staff_branch_history');
-  runUserScoped('hr_staff_skills');
-  deleteBenefitPaymentsForUserIds(db, userIds);
-  steps += 1;
-  runUserScoped('hr_beneficiaries');
-  runUserScoped('hr_incident_memos');
-  runUserScoped('hr_transfer_recommendations');
-  runUserScoped('hr_transfer_requests');
-  runUserScoped('hr_absence_reports');
-  runUserScoped('hr_grievances');
-  runUserScoped('hr_exit_interviews');
-  deleteExitPropertyForUserIds(db, userIds);
-  steps += 1;
-  runUserScoped('hr_exit_clearance');
-  runUserScoped('hr_training_records');
-  runUserScoped('hr_policy_acknowledgements');
-  runUserScoped('hr_employment_letters');
-  runUserScoped('hr_feedback_notes', 'subject_user_id');
-  runUserScoped('hr_appraisal_forms', 'subject_user_id');
-  runUserScoped('hr_performance_recognitions');
-  runUserScoped('hr_notifications');
-  runUserScoped('hr_employee_number_history');
-  runUserScoped('hr_sensitive_tokens');
-
-  // Discipline subgraph
-  if (hrTableExists(db, 'hr_discipline_cases') && userIds.length) {
-    const caseIds = db
-      .prepare(`SELECT id FROM hr_discipline_cases WHERE user_id IN (${userIds.map(() => '?').join(',')})`)
-      .all(...userIds)
-      .map((r) => r.id);
-    if (caseIds.length) {
-      const cp = caseIds.map(() => '?').join(',');
-      for (const t of [
-        'hr_discipline_appeals',
-        'hr_discipline_case_witnesses',
-        'hr_discipline_case_evidence',
-        'hr_discipline_events',
-      ]) {
-        safeDelete(db, `DELETE FROM \`${t}\` WHERE case_id IN (${cp})`, caseIds);
-      }
-      safeDelete(db, `DELETE FROM hr_discipline_cases WHERE id IN (${cp})`, caseIds);
-    }
+  for (const { table, column } of USER_HR_SUBJECT_DELETE_SPECS) {
+    deleteRowsForUsers(db, table, column, userIds);
   }
   steps += 1;
 
   safeDelete(db, `DELETE FROM hr_attendance_uploads WHERE branch_id = ?`, [bid]);
   safeDelete(db, `DELETE FROM hr_daily_roll_calls WHERE branch_id = ?`, [bid]);
   safeDelete(db, `DELETE FROM hr_branch_payroll_contributions WHERE branch_id = ?`, [bid]);
-  safeDelete(db, `DELETE FROM hr_bonus_requests WHERE branch_id = ?`, [bid]);
-  safeDelete(db, `DELETE FROM hr_payroll_reconciliations WHERE branch_id = ?`, [bid]);
   safeDelete(db, `DELETE FROM hr_performance_reviews WHERE branch_id = ?`, [bid]);
   steps += 1;
 
-  runUserScoped('hr_domestic_staff_profiles');
   safeDelete(db, `DELETE FROM hr_staff_profiles WHERE branch_id = ?`, [bid]);
   steps += 1;
 
-  // Branch-scoped audit only — company-wide hr_audit_events are kept
   safeDelete(db, `DELETE FROM hr_audit_events WHERE branch_id = ?`, [bid]);
 
   return { ok: true, branchId: bid, staffProfilesRemoved: userIds.length, steps };

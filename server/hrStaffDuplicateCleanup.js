@@ -6,6 +6,7 @@
 import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
+import { purgeUserHrOperationalData } from './hrUserOperationalCleanup.js';
 
 const PROTECTED_ROLES = new Set(['admin', 'md']);
 
@@ -486,22 +487,7 @@ export function purgeHrStaffUser(db, userId, actorUserId) {
 
   try {
     db.transaction(() => {
-      db.prepare(`UPDATE hr_staff_profiles SET line_manager_user_id = NULL WHERE line_manager_user_id = ?`).run(uid);
-      if (hrTableExists(db, 'hr_notifications')) {
-        runOptionalDelete(db, `DELETE FROM hr_notifications WHERE user_id = ?`, uid);
-      }
-      if (hrTableExists(db, 'hr_policy_acknowledgements')) {
-        runOptionalDelete(db, `DELETE FROM hr_policy_acknowledgements WHERE user_id = ?`, uid);
-      }
-      if (hrTableExists(db, 'hr_staff_documents')) {
-        runOptionalDelete(db, `DELETE FROM hr_staff_documents WHERE user_id = ?`, uid);
-      }
-      if (hrTableExists(db, 'hr_requests')) {
-        runOptionalDelete(db, `DELETE FROM hr_requests WHERE user_id = ?`, uid);
-      }
-      if (hrTableExists(db, 'hr_staff_profiles')) {
-        db.prepare(`DELETE FROM hr_staff_profiles WHERE user_id = ?`).run(uid);
-      }
+      purgeUserHrOperationalData(db, uid);
       db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(uid);
       db.prepare(`DELETE FROM app_users WHERE id = ?`).run(uid);
     })();

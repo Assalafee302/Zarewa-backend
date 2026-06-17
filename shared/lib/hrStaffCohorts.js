@@ -18,6 +18,13 @@ export const SCHOLARSHIP_GROUPS = [HR_PAYROLL_GROUPS.SCHOLARSHIP];
 
 export const DOMESTIC_GROUPS = [HR_PAYROLL_GROUPS.DOMESTIC];
 
+/** No ERP module access — My Profile / executive-benefits self-service only. */
+export const ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS = [
+  HR_PAYROLL_GROUPS.MINING,
+  HR_PAYROLL_GROUPS.SCHOLARSHIP,
+  HR_PAYROLL_GROUPS.DOMESTIC,
+];
+
 export const HQ_SPECIAL_GROUPS = [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN];
 
 /** Not tied to a branch; excluded from daily attendance roll. */
@@ -67,6 +74,11 @@ export function isScholarshipBeneficiary(payrollGroup) {
 /** @param {string | null | undefined} payrollGroup */
 export function isDomesticStaff(payrollGroup) {
   return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.DOMESTIC;
+}
+
+/** Mining, scholarship, and domestic staff must not receive ERP operational roles. */
+export function isErpAccessRestrictedPayrollGroup(payrollGroup) {
+  return ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS.includes(normalizePayrollGroup(payrollGroup));
 }
 
 /** Included in HQ monthly payroll runs (not scholarship or domestic — those use Executive benefits). */

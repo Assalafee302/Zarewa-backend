@@ -652,8 +652,11 @@ export function detectStaffPayrollGroup(row) {
 }
 
 export function mapRoleKeyFromJob(jobTitle, department, payrollGroup) {
+  const pg = String(payrollGroup || '').trim();
+  if (pg === 'scholarship' || pg === 'chairman_staffs' || pg === 'mining_div') {
+    return 'hr_portal_only';
+  }
   const s = normTitleToken(`${jobTitle || ''} ${department || ''}`);
-  if (payrollGroup === 'scholarship' || payrollGroup === 'chairman_staffs') return 'sales_staff';
   if (!s) return 'sales_staff';
   if (/\bceo\b|chief executive/.test(s)) return 'ceo';
   if (/managing director|\bmd\b/.test(s)) return 'md';

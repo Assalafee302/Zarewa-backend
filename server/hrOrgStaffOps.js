@@ -14,6 +14,8 @@ import {
   computeCompensationVariance,
   lookupHrSalaryMatrixRow,
 } from './hrCompensationOps.js';
+import { isErpAccessRestrictedPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
+import { HR_PORTAL_ONLY_ROLE_KEY } from './hrStaffAccessPolicy.js';
 
 /** designation id → suggested app role_key (permissions, not HR title) */
 export const DESIGNATION_APP_ROLE_HINTS = {
@@ -126,9 +128,19 @@ function parseExtra(raw) {
 }
 
 /**
- * @param {{ designationId?: string; secondaryRoles?: object[]; currentRoleKey?: string }} input
+ * @param {{ designationId?: string; secondaryRoles?: object[]; currentRoleKey?: string; payrollGroup?: string }} input
  */
 export function recommendAppRoleKeys(input = {}) {
+  const payrollGroup = String(input.payrollGroup || '').trim();
+  if (payrollGroup && isErpAccessRestrictedPayrollGroup(payrollGroup)) {
+    return {
+      recommendedPrimary: HR_PORTAL_ONLY_ROLE_KEY,
+      suggestedRoleKeys: [HR_PORTAL_ONLY_ROLE_KEY],
+      supplementalPermissions: [],
+      needsReview: false,
+      note: 'Domestic, scholarship, and mining staff use HR portal only — no ERP system roles.',
+    };
+  }
   const suggested = new Set();
   const designationId = String(input.designationId || '').trim();
   if (DESIGNATION_APP_ROLE_HINTS[designationId]) suggested.add(DESIGNATION_APP_ROLE_HINTS[designationId]);

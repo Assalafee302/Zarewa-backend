@@ -3,6 +3,7 @@ import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { normalizeWorkspaceDepartment } from './departmentRoleTemplates.js';
 import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
+import { validateStaffRoleForPayrollGroup } from './hrStaffAccessPolicy.js';
 
 function appUsersHasColumn(db, name) {
   try {
@@ -288,6 +289,11 @@ export const ROLE_DEFINITIONS = {
       'refunds.request',
       ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
+  },
+  /** Domestic / scholarship / mining — My Profile only; no ERP modules. */
+  hr_portal_only: {
+    label: 'HR portal only',
+    permissions: [...HR_ROLE_PERMISSION_BUNDLES.selfService],
   },
   hr_admin: {
     label: 'HR / Admin',
@@ -1880,6 +1886,17 @@ export function updateAppUserRole(db, targetUserId, roleKey) {
   const current = db.prepare(`SELECT role_key FROM app_users WHERE id = ?`).get(targetUserId);
   if (!current) {
     return { ok: false, error: 'User not found.' };
+  }
+  try {
+    const profile = db
+      .prepare(`SELECT payroll_group AS payrollGroup FROM hr_staff_profiles WHERE user_id = ?`)
+      .get(targetUserId);
+    if (profile?.payrollGroup) {
+      const roleCheck = validateStaffRoleForPayrollGroup(roleKey, profile.payrollGroup);
+      if (!roleCheck.ok) return roleCheck;
+    }
+  } catch {
+    /* hr tables optional */
   }
   const wasPri = PRIVILEGED_ROLE_KEYS.has(current.role_key);
   const willPri = PRIVILEGED_ROLE_KEYS.has(roleKey);

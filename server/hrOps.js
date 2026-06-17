@@ -43,6 +43,11 @@ import {
   ZAREWA_DEMO_MULTI_ROLE_PROFILE,
   resolveDemoProfileUserId,
 } from './hrOrgStaffOps.js';
+import {
+  defaultRoleKeyForPayrollGroup,
+  enforcePortalOnlyRole,
+  validateStaffRoleForPayrollGroup,
+} from './hrStaffAccessPolicy.js';
 import { buildStaffMergedOffices } from './hrOrgConstants.js';
 import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScope.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
@@ -53,6 +58,7 @@ import { countOpenIncidents } from './hrAccountabilityOps.js';
 import { hrTransferRequestsTableReady } from './hrTransferRequests.js';
 import {
   isDomesticStaff,
+  isErpAccessRestrictedPayrollGroup,
   isNonBranchStaff,
   isPayrollRunEligible,
   isScholarshipBeneficiary,
@@ -334,6 +340,7 @@ export function listHrStaff(db, scope, opts = {}) {
            p.self_service_eligible AS selfServiceEligible,
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
+           p.bvn_number AS bvnNumber,
            p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
            p.nhis_deduction_ngn AS nhisDeductionNgn,
            p.profile_extra_json AS profileExtraJson,
@@ -717,6 +724,17 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       ? String(body.payrollGroup || '').trim() || null
       : prevRow?.payroll_group ?? null;
   const normalizedPayrollGroup = normalizePayrollGroup(payrollGroup);
+  if (isErpAccessRestrictedPayrollGroup(normalizedPayrollGroup)) {
+    selfServiceEligible = 1;
+    const roleCheck = validateStaffRoleForPayrollGroup(
+      db.prepare(`SELECT role_key AS roleKey FROM app_users WHERE id = ?`).get(userId)?.roleKey,
+      normalizedPayrollGroup
+    );
+    if (!roleCheck.ok && body?.applyRecommendedRoleKey === true) {
+      return { ok: false, error: roleCheck.error };
+    }
+    enforcePortalOnlyRole(db, userId, normalizedPayrollGroup);
+  }
   let branchId;
   if (body?.branchId !== undefined) {
     branchId = String(body.branchId || '').trim() || null;
@@ -935,6 +953,10 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       body?.ninNumber !== undefined
         ? String(body.ninNumber ?? '').trim() || null
         : prevRow?.nin_number ?? null,
+    bvn_number:
+      body?.bvnNumber !== undefined
+        ? String(body.bvnNumber ?? '').trim() || null
+        : prevRow?.bvn_number ?? null,
     base_salary_ngn: resolvedBaseSalaryNgn,
     housing_allowance_ngn: resolvedHousingAllowanceNgn,
     transport_allowance_ngn: resolvedTransportAllowanceNgn,
@@ -1004,7 +1026,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number, bvn_number=@bvn_number,
           base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
           transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
           minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
@@ -1028,7 +1050,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number, bvn_number=@bvn_number,
           base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
           transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
           minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
@@ -1078,7 +1100,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
         `INSERT INTO hr_staff_profiles (
           user_id, branch_id, employee_no, job_title, department, department_id, designation_id,
           employment_type, date_joined_iso, probation_end_iso,
-          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number, bvn_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
           paye_tax_percent, paye_tax_ngn, pension_percent_override, profile_extra_json, self_service_eligible,
@@ -1088,7 +1110,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
         ) VALUES (
           @user_id, @branch_id, @employee_no, @job_title, @department, @department_id, @designation_id,
           @employment_type, @date_joined_iso, @probation_end_iso,
-          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number, @bvn_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
           @paye_tax_percent, @paye_tax_ngn, @pension_percent_override, @profile_extra_json, @self_service_eligible,
@@ -1102,7 +1124,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       db.prepare(
         `INSERT INTO hr_staff_profiles (
           user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
-          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number, bvn_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
           paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
@@ -1110,7 +1132,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           updated_at_iso, updated_by_user_id
         ) VALUES (
           @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
-          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number, @bvn_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
           @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
@@ -1185,8 +1207,11 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     designationId,
     secondaryRoles: profileExtraFinal?.employmentMeta?.secondaryRoles || body?.secondaryRoles,
     currentRoleKey: currentUser?.roleKey,
+    payrollGroup: normalizedPayrollGroup,
   });
   if (body?.applyRecommendedRoleKey === true && roleKeyHints.recommendedPrimary) {
+    const roleCheck = validateStaffRoleForPayrollGroup(roleKeyHints.recommendedPrimary, normalizedPayrollGroup);
+    if (!roleCheck.ok) return { ok: false, error: roleCheck.error };
     const supplemental =
       body?.applyMultiRolePermissions !== false ? roleKeyHints.supplementalPermissions || [] : [];
     db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = ? WHERE id = ?`).run(
@@ -1810,6 +1835,13 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
   if (field === 'ninNumber') {
     db.prepare(
       `UPDATE hr_staff_profiles SET nin_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
+    ).run(String(payload.requestedValue || '').trim() || null, now, actorId, userId);
+    return { ok: true };
+  }
+
+  if (field === 'bvnNumber') {
+    db.prepare(
+      `UPDATE hr_staff_profiles SET bvn_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
     ).run(String(payload.requestedValue || '').trim() || null, now, actorId, userId);
     return { ok: true };
   }
@@ -6094,6 +6126,7 @@ export function getHrMeProfile(db, userId) {
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
     nextOfKin: safeJsonParse(p.next_of_kin_json, null),
     ninNumber: p.nin_number ?? null,
+    bvnNumber: p.bvn_number ?? null,
     gender: p.gender ?? null,
     dateOfBirthIso: p.date_of_birth ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
@@ -6167,6 +6200,7 @@ export function updateMyHrStaffProfile(db, userId, body) {
   const patch = { userId: uid };
   const allowed = [
     'ninNumber',
+    'bvnNumber',
     'firstName',
     'middleName',
     'surname',
@@ -6775,14 +6809,25 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     workspaceDepartment,
     applicantId: _applicantId,
     skipProfileFetch: _skipInBody,
+    payrollGroup: bodyPayrollGroup,
     ...profileFields
   } = body || {};
   const skipProfileFetch = Boolean(opts.skipProfileFetch || _skipInBody);
+  const payrollGroup = normalizePayrollGroup(bodyPayrollGroup || profileFields?.payrollGroup);
+  let effectiveRoleKey = String(roleKey || '').trim() || defaultRoleKeyForPayrollGroup(payrollGroup);
+  const roleCheck = validateStaffRoleForPayrollGroup(effectiveRoleKey, payrollGroup);
+  if (!roleCheck.ok) {
+    if (isErpAccessRestrictedPayrollGroup(payrollGroup)) {
+      effectiveRoleKey = defaultRoleKeyForPayrollGroup(payrollGroup);
+    } else {
+      return roleCheck;
+    }
+  }
   const created = createAppUserRecord(db, {
     username,
     displayName,
     password,
-    roleKey,
+    roleKey: effectiveRoleKey,
     workspaceDepartment,
   });
   if (!created.ok) return created;
@@ -6792,6 +6837,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     {
       ...profileFields,
       userId: created.userId,
+      payrollGroup,
       branchId: String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID,
       employmentType: profileFields?.employmentType || 'permanent',
       baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,

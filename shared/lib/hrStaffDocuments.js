@@ -12,15 +12,14 @@ export const HR_STAFF_DOC_KINDS = [
     accept: '.pdf,.png,.jpg,.jpeg,.webp',
   },
   { value: 'guarantor_form', label: 'Guarantor form(s)', accept: '.pdf,.png,.jpg,.jpeg,.webp', downloadableTemplate: true },
-  { value: 'employment_letter', label: 'Employment / offer letter (signed copy)', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
+  { value: 'employment_letter', label: 'Appointment / employment letter (signed copy)', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
+  { value: 'employee_signature', label: 'Signature on white paper', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
   { value: 'nin_slip', label: 'NIN slip / NIN card', accept: '.pdf,.png,.jpg,.jpeg,.webp' },
 ];
 
-export const HR_REQUIRED_DOC_KINDS = HR_STAFF_DOC_KINDS.filter((d) => d.value !== 'employment_letter').map(
-  (d) => d.value
-);
+export const HR_REQUIRED_DOC_KINDS = HR_STAFF_DOC_KINDS.map((d) => d.value);
 
-export const HR_STAFF_IDENTITY_FIELDS = ['ninNumber', 'nextOfKin'];
+export const HR_STAFF_IDENTITY_FIELDS = ['ninNumber', 'bvnNumber', 'nextOfKin'];
 
 /** @param {string} kind */
 export function hrStaffDocKindLabel(kind) {
@@ -30,6 +29,7 @@ export function hrStaffDocKindLabel(kind) {
 /**
  * @param {{
  *   ninNumber?: string | null;
+ *   bvnNumber?: string | null;
  *   nextOfKin?: { name?: string; phone?: string; relationship?: string; address?: string } | null;
  *   avatarUrl?: string | null;
  *   uploadedDocKinds?: string[];
@@ -43,6 +43,12 @@ export function buildHrStaffOnboardingChecklist(input = {}) {
   if (!nin || nin.length < 11) {
     missing.push('ninNumber');
     missingLabels.push('NIN number');
+  }
+
+  const bvn = String(input.bvnNumber || '').trim();
+  if (!bvn || bvn.length < 11) {
+    missing.push('bvnNumber');
+    missingLabels.push('BVN number');
   }
 
   const nok = input.nextOfKin && typeof input.nextOfKin === 'object' ? input.nextOfKin : null;

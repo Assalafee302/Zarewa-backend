@@ -18,6 +18,7 @@ describe('buildHrStaffOnboardingChecklist', () => {
   it('passes when all requirements met', () => {
     const r = buildHrStaffOnboardingChecklist({
       ninNumber: '12345678901',
+      bvnNumber: '22345678901',
       nextOfKin: { name: 'Jane Doe', phone: '08012345678' },
       avatarUrl: 'data:image/png;base64,abc',
       uploadedDocKinds: [
@@ -26,6 +27,8 @@ describe('buildHrStaffOnboardingChecklist', () => {
         'secondary_certificate',
         'tertiary_qualification',
         'guarantor_form',
+        'employment_letter',
+        'employee_signature',
         'nin_slip',
       ],
     });

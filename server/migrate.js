@@ -3689,6 +3689,9 @@ function migrateHrStaffDocumentsSchema(db) {
   if (hr.size && !hr.has('nin_number')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN nin_number TEXT`);
   }
+  if (hr.size && !hr.has('bvn_number')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN bvn_number TEXT`);
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS hr_staff_documents (
       id TEXT PRIMARY KEY,

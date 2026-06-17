@@ -31,6 +31,7 @@ const DOC_CATEGORY_BY_KIND = {
   nin_slip: 'identity',
   passport_photo: 'identity',
   appointment_letter: 'employment',
+  employee_signature: 'identity',
   cv: 'qualification',
   academic_credentials: 'qualification',
   confidentiality_pledge: 'policy',
@@ -253,6 +254,7 @@ export function enrichStaffWithOnboarding(db, staff, avatarUrl = null) {
   const uploadedDocKinds = [...new Set(metas.map((m) => m.docKind))];
   const checklist = buildHrStaffOnboardingChecklist({
     ninNumber: staff.ninNumber,
+    bvnNumber: staff.bvnNumber,
     nextOfKin: staff.nextOfKin,
     avatarUrl: avatarUrl ?? staff.avatarUrl,
     uploadedDocKinds,

@@ -137,7 +137,7 @@ export function getDefaultLetterRefConfig() {
 
 export function getLetterReferenceConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultLetterRefConfig();
-  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE key = 'letter_reference_config'`).get();
+  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'letter_reference_config'`).get();
   if (!row?.value_json) return getDefaultLetterRefConfig();
   return { ...getDefaultLetterRefConfig(), ...safeJsonParse(row.value_json, {}) };
 }
@@ -146,9 +146,9 @@ export function saveLetterReferenceConfig(db, config, actor) {
   if (!hrTableExists(db, 'hr_settings')) return { ok: false, error: 'HR settings not initialised.' };
   const now = nowIso();
   db.prepare(
-    `INSERT INTO hr_settings (key, value_json, updated_at_iso, updated_by_user_id)
+    `INSERT INTO hr_settings (\`key\`, value_json, updated_at_iso, updated_by_user_id)
      VALUES ('letter_reference_config', ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at_iso=excluded.updated_at_iso, updated_by_user_id=excluded.updated_by_user_id`
+     ON CONFLICT(\`key\`) DO UPDATE SET value_json=excluded.value_json, updated_at_iso=excluded.updated_at_iso, updated_by_user_id=excluded.updated_by_user_id`
   ).run(JSON.stringify(config), now, actor?.id || null);
   return { ok: true };
 }

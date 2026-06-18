@@ -330,6 +330,10 @@ function mapRow(raw, headerMap) {
 }
 
 const COLUMN_HEADER_ALIASES = {
+  firstName: ['first name', 'firstname', 'given name', 'forename'],
+  surname: ['surname', 'last name', 'lastname', 'family name'],
+  displayName: ['display name', 'full name', 'staff name', 'name'],
+  email: ['email', 'e-mail', 'e mail', 'email address', 'mail'],
   username: [
     'username (existing login)',
     'username',
@@ -339,17 +343,143 @@ const COLUMN_HEADER_ALIASES = {
     'legacy username',
     'existing login',
     'existing username',
+    'system username',
   ],
-  employeeNumber: ['employee number', 'employee id', 'staff id', 'emp no', 'emp id'],
-  phoneNumber: ['phone', 'mobile', 'phone number', 'mobile number'],
-  dateJoined: ['date joined', 'join date', 'start date'],
-  dateOfBirth: ['date of birth', 'dob', 'birth date'],
-  highestQualification: ['qualification', 'highest qualification', 'education'],
-  designation: ['job title', 'designation', 'title', 'position'],
-  lineManagerUsername: ['line manager', 'line manager username', 'manager username'],
-  taxId: ['tax id', 'tin', 'tax identification'],
-  pensionRsaPin: ['rsa pin', 'pension pin', 'pension rsa pin'],
+  employeeNumber: [
+    'employee number',
+    'employee id',
+    'employee no',
+    'emp no',
+    'emp id',
+    'staff id',
+    'staff number',
+    'id number',
+  ],
+  phoneNumber: ['phone', 'mobile', 'phone number', 'mobile number', 'telephone', 'contact number'],
+  dateJoined: [
+    'date joined',
+    'join date',
+    'start date',
+    'date of join',
+    'date of joining',
+    'joining date',
+    'employment date',
+  ],
+  dateOfBirth: ['date of birth', 'dob', 'birth date', 'birthdate', 'birth day'],
+  highestQualification: ['qualification', 'highest qualification', 'education', 'academic qualification'],
+  designation: ['job title', 'designation', 'title', 'position', 'job role', 'role title'],
+  lineManagerUsername: ['line manager', 'line manager username', 'manager username', 'supervisor username'],
+  taxId: ['tax id', 'tin', 'tax identification', 'tax identification number'],
+  pensionRsaPin: ['rsa pin', 'pension pin', 'pension rsa pin', 'pension pin number'],
+  branchName: ['branch name', 'branch', 'location', 'office', 'work branch', 'site'],
+  branchCode: ['branch code', 'branch id', 'branch ref'],
+  departmentName: ['department name', 'department', 'dept', 'dept name', 'unit', 'division'],
+  departmentCode: ['department code', 'dept code'],
+  workLocation: ['work location', 'location type', 'hq or branch'],
+  employmentType: ['employment type', 'emp type', 'contract type'],
+  employmentStatus: ['employment status', 'emp status', 'staff status'],
+  basicSalary: ['basic salary', 'salary', 'monthly salary', 'gross salary'],
+  bankName: ['bank name', 'bank'],
+  accountNumber: ['account number', 'bank account number', 'bank account no', 'account no', 'acct number'],
+  accountName: ['account name', 'bank account name', 'acct name'],
+  roleKey: ['system role key', 'role key', 'role', 'system role', 'login role', 'app role', 'user role'],
+  gender: ['gender', 'sex'],
+  salaryLevel: ['salary level', 'job grade', 'grade', 'level'],
+  nin: ['nin', 'national id', 'national identification number'],
+  nextOfKinName: ['next of kin name', 'next of kin', 'nok name', 'kin name'],
+  nextOfKinPhone: ['next of kin phone', 'nok phone', 'kin phone'],
+  residentialAddress: ['residential address', 'address', 'home address'],
+  payrollGroup: ['payroll group', 'pay group'],
 };
+
+const STAFF_HEADER_SIGNALS = [
+  'first name',
+  'surname',
+  'last name',
+  'display name',
+  'employee id',
+  'employee number',
+  'username',
+  'email',
+  'e mail',
+  'job title',
+];
+
+function headerKeysLookLikeStaffRow(keys) {
+  const norms = keys.map((k) => normHeader(k)).filter(Boolean);
+  if (!norms.length) return false;
+  let hits = 0;
+  for (const signal of STAFF_HEADER_SIGNALS) {
+    if (norms.some((k) => k === signal || k.includes(signal))) hits += 1;
+  }
+  return hits >= 2;
+}
+
+function rowsFromSheetAoA(sheet) {
+  const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (!aoa.length) return [];
+  let headerRowIdx = 0;
+  for (let i = 0; i < Math.min(aoa.length, 8); i += 1) {
+    const cells = (aoa[i] || []).map((c) => String(c ?? '').trim()).filter(Boolean);
+    if (headerKeysLookLikeStaffRow(cells)) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+  const headers = (aoa[headerRowIdx] || []).map((h, idx) => {
+    const label = String(h ?? '').trim();
+    return label || `Column_${idx + 1}`;
+  });
+  const rows = [];
+  for (let i = headerRowIdx + 1; i < aoa.length; i += 1) {
+    const line = aoa[i] || [];
+    if (!line.some((c) => String(c ?? '').trim())) continue;
+    const row = {};
+    headers.forEach((h, colIdx) => {
+      row[h] = line[colIdx] ?? '';
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function scoreStaffImportRows(rows) {
+  if (!rows?.length) return 0;
+  const keys = Object.keys(rows[0] || {});
+  let score = headerKeysLookLikeStaffRow(keys) ? 20 : 0;
+  const sample = rows.slice(0, 30);
+  for (const row of sample) {
+    const bag = Object.values(row)
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean);
+    if (!bag.length) continue;
+    score += 1;
+    const joined = bag.join(' ').toLowerCase();
+    if (/\b(emp|zap)\w*\d+/i.test(joined)) score += 2;
+    if (/@/.test(joined)) score += 1;
+  }
+  return score;
+}
+
+/**
+ * Reads the best worksheet and normalises header row detection for legacy uploads.
+ * @param {Buffer} buffer
+ */
+export function readBulkImportWorkbookRows(buffer) {
+  const wb = XLSX.read(buffer, { type: 'buffer', cellText: true, cellDates: true });
+  let best = { rows: [], sheetName: '', score: -1 };
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet) continue;
+    let rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    if (!rows.length || !headerKeysLookLikeStaffRow(Object.keys(rows[0] || {}))) {
+      rows = rowsFromSheetAoA(sheet);
+    }
+    const score = scoreStaffImportRows(rows);
+    if (score > best.score) best = { rows, sheetName, score };
+  }
+  return best;
+}
 
 function buildHeaderMap(sheetHeaders) {
   const map = {};
@@ -363,6 +493,39 @@ function buildHeaderMap(sheetHeaders) {
     }
   }
   return map;
+}
+
+export function describeBulkImportHeaderMap(sheetHeaders) {
+  const map = buildHeaderMap(sheetHeaders);
+  const matched = Object.entries(map).map(([key, header]) => ({ key, header }));
+  const used = new Set(matched.map((m) => m.header));
+  const unmatched = sheetHeaders.filter((h) => String(h || '').trim() && !used.has(h));
+  return { matched, unmatched, map };
+}
+
+function enrichMappedRowFromExtras(mapped, raw, headerMap) {
+  const out = { ...mapped };
+  const readLoose = (aliases) => {
+    const wants = new Set(aliases.map((a) => normHeader(a)));
+    for (const h of Object.keys(raw)) {
+      if (wants.has(normHeader(h))) return String(raw[h] ?? '').trim();
+    }
+    return '';
+  };
+  if (!out.departmentName) {
+    const division = readLoose(['division']);
+    const unit = readLoose(['unit']);
+    out.departmentName = [division, unit].filter(Boolean).join(' / ') || out.departmentName;
+  }
+  if (!out.workLocation && out.branchName) {
+    const b = normHeader(out.branchName);
+    if (b.includes('hq') || b.includes('head office')) out.workLocation = 'HQ';
+    else if (b) out.workLocation = 'Branch';
+  }
+  if (!out.displayName && out.firstName && out.surname) {
+    out.displayName = `${out.firstName} ${out.surname}`.trim();
+  }
+  return out;
 }
 
 export function buildBulkImportTemplateXlsx() {
@@ -1211,11 +1374,24 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
 export function previewBulkStaffImport(db, buffer, scope = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const importMode = normalizeImportMode(scope.importMode);
-  const wb = XLSX.read(buffer, { type: 'buffer', cellText: true, cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-  if (!rows.length) return { ok: false, error: 'Excel file is empty.' };
+  const { rows, sheetName } = readBulkImportWorkbookRows(buffer);
+  if (!rows.length) {
+    return {
+      ok: false,
+      error:
+        'No staff rows found. Put headers in row 1 (First Name, Surname, Employee ID, Username, etc.) and data from row 2. Save as .xlsx.',
+    };
+  }
   const headerMap = buildHeaderMap(Object.keys(rows[0] || {}));
+  const headerInfo = describeBulkImportHeaderMap(Object.keys(rows[0] || {}));
+  if (!headerInfo.matched.length) {
+    return {
+      ok: false,
+      error:
+        'Could not match any column headers. Use First Name, Surname, Employee ID or Employee Number, Username, Email, Branch, Job Title, Date of Join.',
+      detectedHeaders: Object.keys(rows[0] || {}).filter((h) => String(h).trim()),
+    };
+  }
   const existingNos = new Set(
     db.prepare(`SELECT trim(employee_no) AS n FROM hr_staff_profiles WHERE employee_no IS NOT NULL AND trim(employee_no) != ''`).all().map((r) => r.n)
   );
@@ -1246,7 +1422,11 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   let updateCount = 0;
   let createCount = 0;
   for (let i = 0; i < rows.length; i += 1) {
-    const mapped = sanitizeImportRow(mapRow(rows[i], headerMap));
+    const mapped = enrichMappedRowFromExtras(
+      sanitizeImportRow(mapRow(rows[i], headerMap)),
+      rows[i],
+      headerMap
+    );
     if (isBlankImportRow(mapped)) {
       skippedBlank += 1;
       continue;
@@ -1317,6 +1497,15 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
     if (proposedUsername) usedUsernames.add(proposedUsername);
   }
   const totalRows = preview.length;
+  if (!totalRows && rows.length) {
+    return {
+      ok: false,
+      error: `Found ${rows.length} spreadsheet row(s) on sheet "${sheetName || 'Sheet1'}" but none contained staff data. Check that names or employee IDs are filled in.`,
+      detectedHeaders: Object.keys(rows[0] || {}).filter((h) => String(h).trim()),
+      matchedColumns: headerInfo.matched,
+      skippedBlank,
+    };
+  }
   const flatErrors = preview.flatMap((r) =>
     r.errors.map((e) => ({ row: r.rowNum, column: e.field, message: e.message }))
   );
@@ -1345,6 +1534,9 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   return {
     ok: true,
     importMode,
+    sheetName: sheetName || null,
+    matchedColumns: headerInfo.matched,
+    unmatchedHeaders: headerInfo.unmatched.slice(0, 40),
     preview,
     previewTable,
     summary: {

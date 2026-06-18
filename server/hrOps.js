@@ -139,7 +139,7 @@ function safeJsonParse(raw, fallback) {
 
 function readStaffNumberConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
-  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE key = 'staff_number_config'`).get();
+  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'staff_number_config'`).get();
   if (!row?.value_json) return getDefaultStaffNumberConfig();
   return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
 }

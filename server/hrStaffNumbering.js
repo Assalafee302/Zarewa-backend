@@ -37,7 +37,7 @@ export { getDefaultStaffNumberConfig } from '../shared/lib/hrEmployeeNumber.js';
 
 export function getStaffNumberConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
-  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE key = 'staff_number_config'`).get();
+  const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'staff_number_config'`).get();
   if (!row?.value_json) return getDefaultStaffNumberConfig();
   return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
 }
@@ -47,9 +47,9 @@ export function saveStaffNumberConfig(db, config, actor) {
   const normalized = normalizeStaffNumberConfig(config);
   const now = nowIso();
   db.prepare(
-    `INSERT INTO hr_settings (key, value_json, updated_at_iso, updated_by_user_id)
+    `INSERT INTO hr_settings (\`key\`, value_json, updated_at_iso, updated_by_user_id)
      VALUES ('staff_number_config', ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at_iso=excluded.updated_at_iso, updated_by_user_id=excluded.updated_by_user_id`
+     ON CONFLICT(\`key\`) DO UPDATE SET value_json=excluded.value_json, updated_at_iso=excluded.updated_at_iso, updated_by_user_id=excluded.updated_by_user_id`
   ).run(JSON.stringify(normalized), now, actor?.id || null);
   appendHrAuditEvent(db, {
     actorUserId: actor?.id,

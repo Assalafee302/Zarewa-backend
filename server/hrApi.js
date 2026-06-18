@@ -239,6 +239,24 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
 import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
+  actorMayManageObligations,
+  getStaffObligationAccountDetail,
+  listStaffObligationAccounts,
+  migrateLegacyStaffLoan,
+  recordObligationCashRepayment,
+  staffObligationTablesReady,
+  OBLIGATION_KIND,
+} from './staffObligationOps.js';
+import {
+  computeStaffPurchaseCreditEligibility,
+  ensureStaffSalesCustomer,
+} from './staffPurchaseCreditOps.js';
+import {
+  buildObligationAccountStatementPdf,
+  buildObligationDisbursementVoucherPdf,
+  buildObligationRepaymentReceiptPdf,
+} from './staffObligationPdf.js';
+import {
   addHrExitPropertyItem,
   adminClearHrExit,
   closeHrAbsenceReport,
@@ -2031,7 +2049,7 @@ export function registerHrApi(app, db) {
   app.patch('/api/hr/requests/:requestId/submit', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const r = submitHrRequest(db, req.params.requestId, req.user?.id);
+      const r = submitHrRequest(db, req.params.requestId, req.user);
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
@@ -3606,10 +3624,190 @@ export function registerHrApi(app, db) {
   app.get('/api/hr/loan-schedule-issues', requireHrAny('hr.loans.manage', 'hr.payroll.manage', 'hr.staff.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      return res.json({ ok: true, issues: listLoanScheduleIssues(db, hrListScope(req)) });
+      return res.json({ ok: true, issues: listLoanScheduleIssues(db) });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load loan schedule issues.' });
+    }
+  });
+
+  app.get('/api/hr/obligation-accounts', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!staffObligationTablesReady(db)) {
+        return res.json({ ok: true, accounts: [], ledgerReady: false });
+      }
+      const userId = String(req.query?.userId || req.query?.staffId || '').trim();
+      const isSelf = userId && userId === req.user?.id;
+      if (!userId && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (userId && !isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (userId && !staffScopeGate(req, res, userId)) return;
+      const scope = hrListScope(req);
+      const accounts = listStaffObligationAccounts(db, {
+        userId: userId || undefined,
+        kind: String(req.query?.kind || 'loan').trim() || 'loan',
+        branchId: scope.viewAll ? 'ALL' : scope.branchId,
+      });
+      return res.json({ ok: true, ledgerReady: true, accounts });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load obligation accounts.' });
+    }
+  });
+
+  app.get('/api/hr/obligation-accounts/:accountId', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!staffObligationTablesReady(db)) {
+        return res.status(404).json({ ok: false, error: 'Obligation ledger not available.' });
+      }
+      const detail = getStaffObligationAccountDetail(db, req.params.accountId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
+      const isSelf = detail.userId === req.user?.id;
+      if (!isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
+      return res.json({ ok: true, account: detail });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load obligation account.' });
+    }
+  });
+
+  app.post('/api/hr/obligation-accounts/migrate', requireHrAny('hr.loans.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = migrateLegacyStaffLoan(db, req.user, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not register legacy loan.' });
+    }
+  });
+
+  app.post('/api/hr/obligation-accounts/:accountId/repayments', requireHrAny('hr.loans.manage', 'finance.post'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = recordObligationCashRepayment(db, req.user, req.params.accountId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not record repayment.' });
+    }
+  });
+
+  app.get('/api/hr/obligation-accounts/:accountId/statement.pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const detail = getStaffObligationAccountDetail(db, req.params.accountId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
+      const isSelf = detail.userId === req.user?.id;
+      if (!isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
+      const built = buildObligationAccountStatementPdf(db, req.params.accountId);
+      if (!built.ok) return res.status(400).json(built);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
+      return res.send(built.pdf);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate statement PDF.' });
+    }
+  });
+
+  app.get('/api/hr/obligation-accounts/:accountId/disbursement-voucher.pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const detail = getStaffObligationAccountDetail(db, req.params.accountId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
+      const isSelf = detail.userId === req.user?.id;
+      if (!isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
+      const built = buildObligationDisbursementVoucherPdf(db, req.params.accountId);
+      if (!built.ok) return res.status(400).json(built);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
+      return res.send(built.pdf);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate disbursement voucher.' });
+    }
+  });
+
+  app.get('/api/hr/obligation-accounts/:accountId/transactions/:txId/receipt.pdf', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const detail = getStaffObligationAccountDetail(db, req.params.accountId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
+      const isSelf = detail.userId === req.user?.id;
+      if (!isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
+      const built = buildObligationRepaymentReceiptPdf(db, req.params.accountId, req.params.txId);
+      if (!built.ok) return res.status(400).json(built);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
+      return res.send(built.pdf);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate repayment receipt.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/money-summary', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      const isSelf = userId === req.user?.id;
+      if (!isSelf && !actorMayManageObligations(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!staffScopeGate(req, res, userId)) return;
+      const loans = staffObligationTablesReady(db)
+        ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.LOAN })
+        : [];
+      const purchases = staffObligationTablesReady(db)
+        ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.PURCHASE })
+        : [];
+      const purchaseEligibility = computeStaffPurchaseCreditEligibility(db, userId);
+      const totalOutstanding =
+        [...loans, ...purchases].reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
+      return res.json({
+        ok: true,
+        totalOutstandingNgn: totalOutstanding,
+        loans,
+        purchases,
+        purchaseEligibility,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load money summary.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/ensure-sales-customer', requireHrAny('hr.staff.manage', 'hr.loans.manage', 'sales.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = ensureStaffSalesCustomer(db, userId, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not link sales customer.' });
     }
   });
 

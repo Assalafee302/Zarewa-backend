@@ -26,6 +26,12 @@ import {
   validateStaffTenureForSave,
 } from './hrTenureOps.js';
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
+import {
+  activeObligationBreakdownForPayroll,
+  openLoanObligationFromHrApproval,
+  settleObligationAfterPayrollDeduction,
+  staffObligationTablesReady,
+} from './staffObligationOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import {
   allocateNextEmployeeNumber,
@@ -1922,14 +1928,25 @@ export function createHrRequest(db, userId, body) {
   return { ok: true, request: reqRow };
 }
 
-export function submitHrRequest(db, requestId, userId) {
+export function submitHrRequest(db, requestId, actorOrUserId) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const actor =
+    typeof actorOrUserId === 'object' && actorOrUserId != null ? actorOrUserId : { id: actorOrUserId };
+  const actorId = String(actor.id || '').trim();
   const row = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
-  if (!row || row.user_id !== userId) return { ok: false, error: 'Request not found.' };
+  if (!row) return { ok: false, error: 'Request not found.' };
+  if (row.user_id !== actorId) {
+    const onBehalf =
+      userHasPermission(actor, '*') ||
+      userHasPermission(actor, 'hr.staff.manage') ||
+      userHasPermission(actor, 'hr.requests.review');
+    if (!onBehalf) return { ok: false, error: 'Request not found.' };
+  }
   if (row.status !== 'draft') return { ok: false, error: 'Only draft requests can be submitted.' };
+  const subjectUserId = String(row.user_id || '').trim();
   if (String(row.kind) === 'leave') {
     const leaveRow = db.prepare(`SELECT * FROM hr_request_leave WHERE request_id = ?`).get(requestId);
-    const leaveVal = validateLeaveRequest(db, userId, {
+    const leaveVal = validateLeaveRequest(db, subjectUserId, {
       leaveType: leaveRow?.leave_type,
       daysRequested: leaveRow?.days_requested,
     });
@@ -1940,15 +1957,16 @@ export function submitHrRequest(db, requestId, userId) {
     `UPDATE hr_requests SET status = 'hr_review', submitted_at_iso = ? WHERE id = ?`
   ).run(now, requestId);
   appendHrAuditEvent(db, {
-    actorUserId: userId,
-    action: 'hr.request.submit',
+    actorUserId: actorId,
+    action: row.user_id === actorId ? 'hr.request.submit' : 'hr.request.submit_on_behalf',
     entityKind: 'hr_request',
     entityId: requestId,
     branchId: row.branch_id,
+    details: row.user_id === actorId ? undefined : { subjectUserId },
   });
   const submitted = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
   if (submitted && (submitted.kind === 'leave' || submitted.kind === 'loan')) {
-    notifyHrRequestSubmitted(db, submitted, userId);
+    notifyHrRequestSubmitted(db, submitted, actorId);
   }
   return { ok: true };
 }
@@ -2399,6 +2417,8 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
         const refreshed = db.prepare(`SELECT * FROM hr_requests WHERE id = ?`).get(requestId);
         const prov = provisionStaffLoanForFinanceQueue(db, actor, refreshed);
         if (!prov.ok) throw new Error(prov.error);
+        const ob = openLoanObligationFromHrApproval(db, refreshed, actor);
+        if (!ob.ok && !ob.skipped) throw new Error(ob.error || 'Could not open loan obligation account.');
       })();
     } catch (e) {
       return { ok: false, error: String(e.message || e) };
@@ -2927,6 +2947,10 @@ export function adjustHrLeaveBalance(db, actor, body = {}) {
  * @returns {{ total: number; loans: { hrRequestId: string; amountNgn: number; title: string }[] }}
  */
 function activeStaffLoanBreakdown(db, userId) {
+  if (staffObligationTablesReady(db)) {
+    const ob = activeObligationBreakdownForPayroll(db, userId);
+    if (ob) return ob;
+  }
   const rows = db
     .prepare(`SELECT id, title, payload_json FROM hr_requests WHERE user_id = ? AND kind = 'loan' AND status = 'approved'`)
     .all(userId);
@@ -2998,9 +3022,13 @@ function settleLoanAfterPayrollDeduction(db, loanId, userId, deductedNgn) {
  */
 function incrementLoanMonthsFromPayrollRun(db, runId) {
   const items = db
-    .prepare(`SELECT user_id, hr_request_id, amount_ngn FROM hr_payroll_line_loans WHERE run_id = ? AND amount_ngn > 0`)
+    .prepare(`SELECT user_id, hr_request_id, obligation_account_id, amount_ngn FROM hr_payroll_line_loans WHERE run_id = ? AND amount_ngn > 0`)
     .all(runId);
   for (const item of items) {
+    const obId = String(item.obligation_account_id || '').trim();
+    if (staffObligationTablesReady(db) && obId) {
+      settleObligationAfterPayrollDeduction(db, obId, item.user_id, item.amount_ngn, runId);
+    }
     settleLoanAfterPayrollDeduction(db, item.hr_request_id, item.user_id, item.amount_ngn);
   }
   incrementRecoveriesFromPayrollRun(db, runId);
@@ -3660,7 +3688,24 @@ export function computePayrollRun(db, runId) {
       }
     }
     for (const ln of loanParts) {
-      insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
+      try {
+        db.prepare(
+          `INSERT INTO hr_payroll_line_loans (
+            run_id, user_id, hr_request_id, obligation_account_id, period_yyyymm, amount_ngn, loan_title, computed_at_iso
+          ) VALUES (?,?,?,?,?,?,?,?)`
+        ).run(
+          runId,
+          s.user_id,
+          ln.hrRequestId,
+          ln.obligationAccountId || null,
+          period,
+          ln.amountNgn,
+          ln.title,
+          computedAt
+        );
+      } catch {
+        insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
+      }
     }
     if (insRecovery) {
       for (const rc of recoveryParts) {

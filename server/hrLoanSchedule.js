@@ -1,12 +1,17 @@
 /**
- * Staff loan deduction schedule views (Phase 5).
+ * Staff loan deduction schedule views (Phase 5 + obligation ledger).
  * @module server/hrLoanSchedule
  */
 
 import { hrTablesReady, listHrRequests } from './hrOps.js';
+import { getStaffObligationLoanSchedule, staffObligationTablesReady, listObligationScheduleIssues } from './staffObligationOps.js';
 
 export function getStaffLoanSchedule(db, userId) {
   if (!hrTablesReady(db)) return [];
+  if (staffObligationTablesReady(db)) {
+    const fromLedger = getStaffObligationLoanSchedule(db, userId);
+    if (fromLedger) return fromLedger;
+  }
   const loans = listHrRequests(db, { viewAll: true }, { userId, kind: 'loan' }).filter(
     (r) => r.status === 'approved' || r.status === 'paid' || r.status === 'completed'
   );
@@ -35,6 +40,9 @@ export function getStaffLoanSchedule(db, userId) {
 
 export function listLoanScheduleIssues(db) {
   if (!hrTablesReady(db)) return [];
+  if (staffObligationTablesReady(db)) {
+    return listObligationScheduleIssues(db);
+  }
   const issues = [];
   const staffIds = new Set(
     db.prepare(`SELECT user_id FROM hr_staff_profiles`).all().map((r) => r.user_id)

@@ -12,6 +12,7 @@ import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 import { withMigrationLock } from './migrationLock.js';
 import { seedZarewaOrgStandard } from './hrOrgSeed.js';
+import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -310,6 +311,21 @@ function runMigrationsUnlocked(db) {
   }
   if (!q.has('quotation_lifecycle_note')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN quotation_lifecycle_note TEXT`);
+  }
+  if (!q.has('payment_balance_waived_ngn')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waived_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!q.has('payment_balance_waived_at_iso')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waived_at_iso TEXT`);
+  }
+  if (!q.has('payment_balance_waived_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waived_by_user_id TEXT`);
+  }
+  if (!q.has('payment_balance_waived_by_name')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waived_by_name TEXT`);
+  }
+  if (!q.has('payment_balance_waive_note')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waive_note TEXT`);
   }
 
   const r = tableCols('sales_receipts');
@@ -1041,6 +1057,8 @@ function runMigrationsUnlocked(db) {
     throw e;
   }
   migrateHrAccountability2026(db);
+  migrateStaffObligationLedger2026(db);
+  migrateStaffPurchaseCredit2026(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
@@ -5301,6 +5319,112 @@ function migrateHrAccountability2026(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_performance_user ON hr_performance_recognitions(user_id, created_at_iso DESC);
   `);
+}
+
+/** Staff financial obligation ledger — loans, future purchase credit / recovery unification. */
+function migrateStaffObligationLedger2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_staff_obligation_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'loan',
+      origin TEXT NOT NULL DEFAULT 'new',
+      title TEXT NOT NULL,
+      principal_original_ngn INTEGER NOT NULL DEFAULT 0,
+      principal_outstanding_ngn INTEGER NOT NULL DEFAULT 0,
+      installment_ngn INTEGER NOT NULL DEFAULT 0,
+      term_months INTEGER NOT NULL DEFAULT 0,
+      months_paid INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'approved_pending_disbursement',
+      deductions_active INTEGER NOT NULL DEFAULT 0,
+      hr_request_id TEXT,
+      quotation_ref TEXT,
+      discipline_case_id TEXT,
+      finance_payment_request_id TEXT,
+      disbursed_at_iso TEXT,
+      due_date_iso TEXT,
+      note TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_obligation_hr_request ON hr_staff_obligation_accounts(hr_request_id)
+      WHERE hr_request_id IS NOT NULL AND trim(hr_request_id) != '';
+    CREATE INDEX IF NOT EXISTS idx_hr_obligation_user_status ON hr_staff_obligation_accounts(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hr_obligation_branch ON hr_staff_obligation_accounts(branch_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hr_obligation_fin_pr ON hr_staff_obligation_accounts(finance_payment_request_id);
+
+    CREATE TABLE IF NOT EXISTS hr_staff_obligation_transactions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      principal_before_ngn INTEGER NOT NULL DEFAULT 0,
+      principal_after_ngn INTEGER NOT NULL DEFAULT 0,
+      effective_at_iso TEXT NOT NULL,
+      source_kind TEXT,
+      source_id TEXT,
+      payment_reference TEXT,
+      note TEXT,
+      recorded_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (account_id) REFERENCES hr_staff_obligation_accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_obligation_tx_account ON hr_staff_obligation_transactions(account_id, created_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_hr_obligation_tx_source ON hr_staff_obligation_transactions(source_kind, source_id);
+  `);
+
+  const loanCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(hr_payroll_line_loans)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (loanCols.size && !loanCols.has('obligation_account_id')) {
+    db.exec(`ALTER TABLE hr_payroll_line_loans ADD COLUMN obligation_account_id TEXT`);
+  }
+
+  try {
+    backfillStaffObligationsFromLoans(db);
+  } catch (e) {
+    console.warn('[migrate] staff obligation backfill skipped:', e?.message || e);
+  }
+}
+
+/** Staff purchase credit — link HR staff to sales customer + quotation flags. */
+function migrateStaffPurchaseCredit2026(db) {
+  const profCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (profCols.size && !profCols.has('sales_customer_id')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN sales_customer_id TEXT`);
+  }
+
+  const qCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(quotations)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (qCols.size && !qCols.has('is_staff_purchase')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN is_staff_purchase INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (qCols.size && !qCols.has('staff_purchase_credit_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN staff_purchase_credit_id TEXT`);
+  }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_quotations_staff_purchase ON quotations(staff_purchase_credit_id)`);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Ledger / receipt duplicate-check hot paths (bootstrap, finance desk). */

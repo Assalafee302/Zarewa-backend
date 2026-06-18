@@ -95,6 +95,7 @@ import {
 } from './deliveryReleaseGate.js';
 import { productionGateOverrideEffective, quotationHasRecordedPayment } from './productionGateAccess.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
+import { activateLoanObligationOnDisbursement } from './staffObligationOps.js';
 import {
   nextBankReconLineHumanId,
   nextCoilControlEventHumanId,
@@ -348,7 +349,15 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
     .get(qid);
   const overpayApplied = Math.round(Number(r3?.s) || 0);
 
-  const paidTotal = receiptSum + advanceApplied + overpayApplied;
+  const r4 = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+       WHERE type = 'STAFF_PURCHASE_CREDIT' AND quotation_ref = ?`
+    )
+    .get(qid);
+  const staffPurchaseCredit = Math.round(Number(r4?.s) || 0);
+
+  const paidTotal = receiptSum + advanceApplied + overpayApplied + staffPurchaseCredit;
   const total = Math.round(Number(row.total_ngn) || 0);
   let paymentStatus;
   if (paidTotal <= 0) paymentStatus = 'Unpaid';
@@ -366,6 +375,7 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
     receiptSumNgn: receiptSum,
     advanceAppliedNgn: advanceApplied,
     overpayAppliedNgn: overpayApplied,
+    staffPurchaseCreditNgn: staffPurchaseCredit,
   };
 }
 
@@ -938,6 +948,15 @@ function syncStaffLoanDisbursementOnFullPay(db, paymentRequestId, paidAtISO) {
             : 0,
     };
     db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), r.id);
+    try {
+      activateLoanObligationOnDisbursement(db, {
+        paymentRequestId: prId,
+        disbursedAtIso: day,
+        amountNgn,
+      });
+    } catch {
+      /* obligation ledger optional until migrate */
+    }
     return;
   }
 }

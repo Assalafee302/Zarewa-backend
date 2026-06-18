@@ -1,4 +1,4 @@
-import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
+import { effectiveOutstandingNgn, rawOutstandingNgn } from './paymentOutstandingTolerance.js';
 
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
@@ -155,9 +155,29 @@ export function firstProductionDateISO(quotationRef, productionJobs = []) {
  * @param {{ id: string, totalNgn?: number, paidNgn?: number, dueDateISO?: string, dateISO?: string }} q
  * @param {Array<{ status?: string, quotationRef?: string, actualMeters?: number, completedAtISO?: string, endDateISO?: string }>} productionJobs
  */
+/** Waived balance on a quotation row (manager round-off / small balance write-off). */
+export function quotationWaivedBalanceNgn(q) {
+  return Math.round(Number(q?.paymentBalanceWaivedNgn ?? q?.payment_balance_waived_ngn) || 0);
+}
+
+/**
+ * Accounts receivable outstanding — exact total minus paid minus manager waiver (no 99.5% tolerance).
+ * @param {number} totalNgn
+ * @param {number} paidNgn
+ * @param {number} [waivedNgn]
+ */
+export function accountingReceivableOutstandingNgn(totalNgn, paidNgn, waivedNgn = 0) {
+  const raw = rawOutstandingNgn(totalNgn, paidNgn);
+  if (raw <= 0) return 0;
+  const waived = Math.min(raw, Math.round(Number(waivedNgn) || 0));
+  return Math.max(0, raw - waived);
+}
+
 export function receivableDueOnQuotationFromEntries(entries, q, productionJobs = []) {
   if (!quotationHasCompletedProduction(q?.id, productionJobs)) return 0;
-  return amountDueOnQuotationFromEntries(entries, q);
+  const total = Math.round(Number(q?.totalNgn ?? q?.total_ngn) || 0);
+  const paid = Math.round(Number(q?.paidNgn ?? q?.paid_ngn) || 0);
+  return accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(q));
 }
 
 export function ledgerReceiptTotalFromEntries(entries, customerID) {

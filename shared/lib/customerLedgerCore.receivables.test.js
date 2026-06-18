@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   amountDueOnQuotationFromEntries,
+  accountingReceivableOutstandingNgn,
   quotationHasCompletedProduction,
   receivableDueOnQuotationFromEntries,
 } from './customerLedgerCore.js';
+import { isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
 
 describe('receivableDueOnQuotationFromEntries', () => {
   const quote = { id: 'QT-1', totalNgn: 100_000, paidNgn: 40_000 };
@@ -29,5 +31,23 @@ describe('receivableDueOnQuotationFromEntries', () => {
   it('returns zero when fully paid after production', () => {
     const paid = { ...quote, paidNgn: 100_000 };
     expect(receivableDueOnQuotationFromEntries([], paid, jobs)).toBe(0);
+  });
+
+  it('uses exact balance for receivables — not the 99.5% tolerance', () => {
+    const roundOff = { id: 'QT-1', totalNgn: 1_250_300, paidNgn: 1_250_000 };
+    expect(isEffectivelyFullyPaid(roundOff.paidNgn, roundOff.totalNgn)).toBe(true);
+    expect(amountDueOnQuotationFromEntries([], roundOff)).toBe(0);
+    expect(receivableDueOnQuotationFromEntries([], roundOff, jobs)).toBe(300);
+  });
+
+  it('drops receivable after manager balance waiver', () => {
+    const waived = {
+      id: 'QT-1',
+      totalNgn: 1_250_300,
+      paidNgn: 1_250_000,
+      paymentBalanceWaivedNgn: 300,
+    };
+    expect(accountingReceivableOutstandingNgn(waived.totalNgn, waived.paidNgn, waived.paymentBalanceWaivedNgn)).toBe(0);
+    expect(receivableDueOnQuotationFromEntries([], waived, jobs)).toBe(0);
   });
 });

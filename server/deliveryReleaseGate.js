@@ -5,6 +5,7 @@ import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingToleranc
 import { quotationHasCompletedProduction } from '../shared/lib/customerLedgerCore.js';
 import { listProductionJobs } from './readModel.js';
 import { resolveActiveCreditForQuotation, creditExceptionsTableReady } from './creditExceptionOps.js';
+import { resolveActiveStaffPurchaseCreditForQuotation } from './staffPurchaseCreditOps.js';
 import { quotationHasUnclearedReceipts } from './writeOps.js';
 
 /** @typedef {'off' | 'warn' | 'enforce'} DeliveryPaymentGateMode */
@@ -150,6 +151,32 @@ export function evaluateDeliveryPaymentRelease(db, opts = {}) {
         warningOnly: mode === 'warn',
       };
     }
+  }
+
+  /** Staff purchase credit — approved obligation covering balance (payroll collection). */
+  const staffPurchaseCredit = resolveActiveStaffPurchaseCreditForQuotation(db, quotationRef, pay.balanceNgn);
+  if (staffPurchaseCredit?.coversBalance) {
+    return {
+      ...base,
+      wouldBlock: false,
+      allowed: true,
+      code: 'DELIVERY_RELEASE_STAFF_PURCHASE_CREDIT',
+      message: `Approved staff purchase credit covers outstanding balance (₦${formatNgn(pay.balanceNgn)}). Repayment via payroll or direct payment.`,
+      reason: pay.reason,
+      balanceNgn: pay.balanceNgn,
+      outstandingReceivableNgn: pay.balanceNgn,
+      policyPhase: pay.policyPhase,
+      staffPurchaseCredit: {
+        id: staffPurchaseCredit.id,
+        status: staffPurchaseCredit.status,
+        amountNgn: staffPurchaseCredit.amountNgn,
+        coversBalance: true,
+        dueDateISO: staffPurchaseCredit.dueDateISO,
+        installmentNgn: staffPurchaseCredit.installmentNgn,
+      },
+      creditAllowed: true,
+      warningOnly: mode === 'warn',
+    };
   }
 
   const mdOverride =

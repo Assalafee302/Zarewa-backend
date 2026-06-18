@@ -66,6 +66,28 @@ describe('reviewQuotation manager holds', () => {
     expect(row.manager_cleared_at_iso).toBeTruthy();
   });
 
+  it('waive_balance clears accounting receivable for small round-off', () => {
+    db.prepare(
+      `UPDATE quotations SET paid_ngn = 1250000, total_ngn = 1250300, payment_balance_waived_ngn = 0 WHERE id = ?`
+    ).run('QT-PARTIAL');
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'waive_balance', note: 'Round-off' }, actor);
+    expect(r.ok).toBe(true);
+    expect(r.waivedAmountNgn).toBe(300);
+    const row = db.prepare(
+      `SELECT payment_balance_waived_ngn, payment_balance_waived_at_iso, manager_cleared_at_iso FROM quotations WHERE id = ?`
+    ).get('QT-PARTIAL');
+    expect(row.payment_balance_waived_ngn).toBe(300);
+    expect(row.payment_balance_waived_at_iso).toBeTruthy();
+    expect(row.manager_cleared_at_iso).toBeTruthy();
+  });
+
+  it('blocks waive_balance when no payment recorded', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 0, total_ngn = 1250300 WHERE id = ?`).run('QT-PARTIAL');
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'waive_balance' }, actor);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no payment/i);
+  });
+
   it('allows manager clear when quotation is fully paid', () => {
     db.prepare(`UPDATE quotations SET paid_ngn = 21725 WHERE id = ?`).run('QT-PARTIAL');
     const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'clear' }, actor);

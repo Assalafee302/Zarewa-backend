@@ -41,7 +41,8 @@ import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
 } from '../shared/workspaceGovernance.js';
-import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
+import { isEffectivelyFullyPaid, rawOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
@@ -3224,11 +3225,11 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quoteId);
   if (!row) return { ok: false, error: 'Quotation not found.' };
 
-  const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production', 'release_payments'
+  const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production', 'release_payments', 'waive_balance'
   const note = String(payload.note ?? '').trim();
   const now = new Date().toISOString();
 
-  if (decision === 'clear' || decision === 'flag') {
+  if (decision === 'clear' || decision === 'flag' || decision === 'waive_balance') {
     if (!userMayPerformManagerQuotationClearance(actor)) {
       return {
         ok: false,
@@ -3250,17 +3251,56 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   if (decision === 'clear') {
     const paid = Math.round(Number(row.paid_ngn) || 0);
     const total = Math.round(Number(row.total_ngn) || 0);
-    if (total > 0 && !isEffectivelyFullyPaid(paid, total)) {
+    const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(row));
+    if (total > 0 && receivable > 0 && !isEffectivelyFullyPaid(paid, total)) {
       return {
         ok: false,
-        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}; 99.5% or more counts as fully paid). Post remaining payment before manager clearance.`,
+        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Use Clear as paid to waive a small round-off, or post the remaining payment.`,
       };
     }
   }
 
+  if (decision === 'waive_balance') {
+    const paid = Math.round(Number(row.paid_ngn) || 0);
+    const total = Math.round(Number(row.total_ngn) || 0);
+    const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(row));
+    if (paid <= 0) {
+      return { ok: false, error: 'Cannot waive balance: no payment recorded on this quotation yet.' };
+    }
+    if (receivable <= 0) {
+      return { ok: false, error: 'This quotation has no receivable balance to waive.' };
+    }
+  }
+
+  let waivedAmountNgn = 0;
   try {
     db.transaction(() => {
-      if (decision === 'clear') {
+      if (decision === 'waive_balance') {
+        const paid = Math.round(Number(row.paid_ngn) || 0);
+        const total = Math.round(Number(row.total_ngn) || 0);
+        const priorWaived = quotationWaivedBalanceNgn(row);
+        waivedAmountNgn = accountingReceivableOutstandingNgn(total, paid, priorWaived);
+        db.prepare(
+          `UPDATE quotations
+           SET payment_balance_waived_ngn = ?,
+               payment_balance_waived_at_iso = ?,
+               payment_balance_waived_by_user_id = ?,
+               payment_balance_waived_by_name = ?,
+               payment_balance_waive_note = ?,
+               manager_cleared_at_iso = COALESCE(manager_cleared_at_iso, ?),
+               manager_flagged_at_iso = NULL,
+               manager_flag_reason = NULL
+           WHERE id = ?`
+        ).run(
+          priorWaived + waivedAmountNgn,
+          now,
+          actorId(actor),
+          actorName(actor),
+          note || null,
+          now,
+          quoteId
+        );
+      } else if (decision === 'clear') {
         db.prepare(
           `UPDATE quotations 
            SET manager_cleared_at_iso = ?, manager_flagged_at_iso = NULL, manager_flag_reason = NULL 
@@ -3328,10 +3368,12 @@ export function reviewQuotation(db, quoteId, payload, actor) {
         entityKind: 'quotation',
         entityId: quoteId,
         note: `Manager ${decision} action on ${quoteId}`,
-        details: { note, decision },
+        details: { note, decision, waivedAmountNgn: waivedAmountNgn || undefined },
       });
     })();
-    return { ok: true };
+    return decision === 'waive_balance'
+      ? { ok: true, waivedAmountNgn }
+      : { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
   }

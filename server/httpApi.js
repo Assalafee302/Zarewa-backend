@@ -279,6 +279,15 @@ import {
   revokeCreditException,
   userMayViewCreditExceptions,
 } from './creditExceptionOps.js';
+import {
+  createStaffPurchaseCreditRequest,
+  decideStaffPurchaseCredit,
+  ensureStaffSalesCustomer,
+  getQuotationStaffPurchaseCreditStatus,
+  listStaffPurchaseCreditQueue,
+  syncQuotationStaffPurchaseFlag,
+  userMayRequestStaffPurchaseCredit,
+} from './staffPurchaseCreditOps.js';
 import { issueZarewaFilingReference } from './referenceIssuance.js';
 import {
   createInterBranchRequest,
@@ -2448,6 +2457,56 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load quotation credit status.' });
+    }
+  });
+
+  app.get('/api/staff-purchase-credits', requireAuth, (req, res) => {
+    try {
+      if (!userMayRequestStaffPurchaseCredit(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      }
+      const branchId = String(req.workspaceBranchId || req.query?.branchId || '').trim();
+      const rows = listStaffPurchaseCreditQueue(db, {
+        status: String(req.query?.status || '').trim() || undefined,
+        branchId: branchId || 'ALL',
+      });
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list staff purchase credits.' });
+    }
+  });
+
+  app.post('/api/staff-purchase-credits', requireAuth, (req, res) => {
+    try {
+      const r = createStaffPurchaseCreditRequest(db, req.user, req.body || {});
+      return res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/staff-purchase-credits/:id/decision', requireAuth, (req, res) => {
+    try {
+      const decision = String(req.body?.decision || '').trim().toLowerCase();
+      const r = decideStaffPurchaseCredit(db, req.params.id, decision, req.user, req.body || {});
+      return res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/quotations/:id/staff-purchase-status', requireAuth, (req, res) => {
+    try {
+      const qg = assertQuotationIdInWorkspace(db, req, req.params.id);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
+      const status = getQuotationStaffPurchaseCreditStatus(db, req.params.id);
+      return res.json(status);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load staff purchase status.' });
     }
   });
 
@@ -8250,6 +8309,7 @@ export function registerHttpApi(app, db) {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      syncQuotationStaffPurchaseFlag(db, id);
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
@@ -8354,6 +8414,7 @@ export function registerHttpApi(app, db) {
       }
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
         const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
+        syncQuotationStaffPurchaseFlag(db, qid);
         const quotation = getQuotation(db, qid);
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);

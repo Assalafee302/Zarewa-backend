@@ -13,6 +13,7 @@ import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingToleran
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
+import { buildStaffObligationCreditorItems, OBLIGATION_KIND, staffObligationTablesReady } from './staffObligationOps.js';
 import { hrTablesReady } from './hrOps.js';
 import { interBranchLoanBalances, listInterBranchLoans } from './interBranchLoanOps.js';
 import { branchPredicate } from './branchSql.js';
@@ -409,6 +410,9 @@ export function clearAccountingRegisterLine(db, lineId, user) {
 }
 
 function buildStaffLoanItems(db, branchScope) {
+  if (staffObligationTablesReady(db)) {
+    return buildStaffObligationCreditorItems(db, branchScope);
+  }
   if (!hrTablesReady(db)) return [];
   if (!tableExists(db, 'hr_staff_profiles') || !tableExists(db, 'app_users')) return [];
   let staffRows = [];
@@ -447,6 +451,27 @@ function buildStaffLoanItems(db, branchScope) {
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
+function buildStaffPurchaseReceivableItems(db, branchScope) {
+  if (!staffObligationTablesReady(db)) return [];
+  return buildStaffObligationCreditorItems(db, branchScope, OBLIGATION_KIND.PURCHASE);
+}
+
+function quotationHasActiveStaffPurchaseCredit(db, quotationRef) {
+  if (!staffObligationTablesReady(db)) return false;
+  try {
+    const cols = new Set(db.prepare(`PRAGMA table_info(quotations)`).all().map((c) => c.name));
+    if (!cols.has('is_staff_purchase')) return false;
+  } catch {
+    return false;
+  }
+  const q = db.prepare(`SELECT is_staff_purchase, staff_purchase_credit_id FROM quotations WHERE id = ?`).get(quotationRef);
+  if (!q || !Number(q.is_staff_purchase)) return false;
+  const acctId = String(q.staff_purchase_credit_id || '').trim();
+  if (!acctId) return false;
+  const acct = db.prepare(`SELECT status FROM hr_staff_obligation_accounts WHERE id = ?`).get(acctId);
+  return acct && ['active', 'pending_approval'].includes(String(acct.status));
+}
+
 function buildCustomerReceivableItems(db, branchScope) {
   const quotations = listQuotations(db, branchScope);
   const productionJobs = listProductionJobs(db, branchScope);
@@ -454,6 +479,7 @@ function buildCustomerReceivableItems(db, branchScope) {
   const byCustomer = new Map();
 
   for (const q of quotations) {
+    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
     const due = receivableDueOnQuotationFromEntries([], q, productionJobs);
     if (due <= 0) continue;
     const cid = String(q.customerID || q.customerId || '').trim();
@@ -687,6 +713,12 @@ export function buildCreditorsRegister(db, opts = {}) {
       'Staff loan receivables',
       'Outstanding staff loans — payroll deductions and manual recovery.',
       safeRegisterItems('creditors.staff_loans', () => buildStaffLoanItems(db, branchScope))
+    ),
+    section(
+      'staff_purchase_receivables',
+      'Staff purchase credit',
+      'Roofing and materials sold to staff on credit — recovered via payroll.',
+      safeRegisterItems('creditors.staff_purchase', () => buildStaffPurchaseReceivableItems(db, branchScope))
     ),
     section(
       'customer_receivables',

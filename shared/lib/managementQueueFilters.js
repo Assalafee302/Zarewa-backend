@@ -1,7 +1,8 @@
 /**
  * Manager queue inclusion rules — keep in sync with frontend src/lib/managementQueueFilters.js
  */
-import { isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
+import { effectiveOutstandingNgn, isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
+import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from './customerLedgerCore.js';
 
 /** Paid quotation awaiting branch manager clearance (any payment counts). */
 export function quotationNeedsManagerClearance(q) {
@@ -28,11 +29,13 @@ export function cuttingListInProductionGate(cl, q) {
   return true;
 }
 
-/** Collections follow-up — skip quotes treated as fully paid under the 99.5% rule. */
+/** Collections follow-up — skip when no accounting receivable and no operational balance due. */
 export function quotationIsOverdueForCollections(q, todayIso) {
   const total = Number(q?.totalNgn ?? q?.total_ngn) || 0;
   const paid = Number(q?.paidNgn ?? q?.paid_ngn) || 0;
-  if (isEffectivelyFullyPaid(paid, total)) return false;
+  const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(q));
+  const opsDue = effectiveOutstandingNgn(total, paid);
+  if (receivable <= 0 && opsDue <= 0) return false;
   if (String(q?.paymentStatus || '').trim().toLowerCase() === 'paid') return false;
   const due = q?.dueDateISO ?? q?.due_date_iso;
   if (!due) return false;

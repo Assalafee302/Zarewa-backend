@@ -14,6 +14,7 @@ import { createHrNotification } from './hrNotifications.js';
 import { listHrDesignations } from './hrMasterData.js';
 import {
   createEmployeeNumberAllocator,
+  employeeNumberToUsername,
   getDefaultStaffNumberConfig,
   normalizeEmployeeNumberForSave,
   normalizeStaffNumberConfig,
@@ -654,7 +655,7 @@ export function buildBulkImportTemplateXlsx() {
   const legacyGuideHeaders = ['Step', 'Instruction'];
   const legacyGuideRows = [
     ['1', 'Only fill columns you have data for — blank cells are left empty on the employee record.'],
-    ['2', 'Copy usernames from Settings → Team & access into the Username column to link existing logins.'],
+    ['2', 'Username column is only for linking an existing login — new staff get login = employee ID (e.g. zapkd001).'],
     ['3', 'Use Update & add mode — do not create a second login for the same person.'],
     ['4', 'Preview & validate before import — review each row, then confirm import.'],
     ['5', 'Never delete a login that created sales, office, or finance records — merge duplicates into it instead.'],
@@ -979,15 +980,9 @@ export function mapRoleKeyFromJob(jobTitle, department, payrollGroup) {
   return 'sales_staff';
 }
 
-export function buildSurnameIdUsername(row, rowNum, usedUsernames) {
-  const surname = slugToken(row.surname || deriveDisplayName(row).split(/\s+/).pop(), 24);
-  const empId = slugToken(String(row.employeeNumber || '').replace(/^emp[-\s]*/i, ''), 20);
-  let base = '';
-  if (surname && empId) base = `${surname}.${empId}`;
-  else if (surname) base = `${surname}.r${rowNum}`;
-  else if (empId) base = `staff.${empId}`;
-  else base = slugUsername(deriveDisplayName(row), row.employeeNumber);
-  let username = base.slice(0, 48);
+export function buildEmployeeIdUsername(employeeNumber, rowNum, usedUsernames) {
+  let username = employeeNumberToUsername(employeeNumber, rowNum) || `staff.r${rowNum}`;
+  const base = username;
   let suffix = 0;
   while (usedUsernames.has(username)) {
     suffix += 1;
@@ -995,6 +990,11 @@ export function buildSurnameIdUsername(row, rowNum, usedUsernames) {
   }
   usedUsernames.add(username);
   return username;
+}
+
+/** @deprecated Use buildEmployeeIdUsername — login matches employee ID. */
+export function buildSurnameIdUsername(row, rowNum, usedUsernames) {
+  return buildEmployeeIdUsername(row.employeeNumber, rowNum, usedUsernames);
 }
 
 function deriveDisplayName(row) {
@@ -1312,8 +1312,18 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
       row.departmentName || row.departmentCode,
       payrollGroup
     );
+  if (!empNo && importAction === 'create' && existingKeys.employeeNumberAllocator) {
+    empNo = existingKeys.employeeNumberAllocator.next({ branchId });
+    row.employeeNumber = empNo;
+    warnings.push({
+      field: 'employeeNumber',
+      message: `Assigned employee ID ${empNo}`,
+    });
+  }
   let proposedUsername =
-    existingUsername || explicitLogin || buildSurnameIdUsername(row, rowNum, usedUsernames);
+    existingUsername ||
+    explicitLogin ||
+    buildEmployeeIdUsername(empNo, rowNum, usedUsernames);
   if (!existingUsername && !explicitLogin && mode !== 'replace' && existingKeys.usernames?.has(proposedUsername)) {
     const base = proposedUsername;
     let suffix = 1;
@@ -1338,14 +1348,6 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
   }
   if (importAction === 'update' && !explicitLogin) {
     warnings.push({ field: 'employeeNumber', message: 'Existing employee — profile will be updated' });
-  }
-  if (!empNo && importAction === 'create' && existingKeys.employeeNumberAllocator) {
-    empNo = existingKeys.employeeNumberAllocator.next({ branchId });
-    row.employeeNumber = empNo;
-    warnings.push({
-      field: 'employeeNumber',
-      message: `Assigned employee ID ${empNo}`,
-    });
   }
 
   return {
@@ -1636,7 +1638,7 @@ export function commitBulkStaffImport(db, actor, buffer, scope = {}) {
         continue;
       }
 
-      let username = row.proposedUsername || buildSurnameIdUsername(row, row.rowNum, new Set());
+      let username = row.proposedUsername || buildEmployeeIdUsername(row.employeeNumber, row.rowNum, new Set());
       let suffix = 0;
       const baseUsername = username;
       while (db.prepare(`SELECT 1 FROM app_users WHERE lower(trim(username)) = ?`).get(username)) {

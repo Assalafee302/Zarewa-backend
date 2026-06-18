@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   allocateNextEmployeeNumber,
   formatStaffEmployeeNumber,
+  employeeNumberToUsername,
   getDefaultStaffNumberConfig,
   isReservedEmployeeNumber,
   normalizeEmployeeNumberForSave,
@@ -17,6 +18,12 @@ test('formatStaffEmployeeNumber uses ZAP branch codes by default', () => {
   assert.equal(formatStaffEmployeeNumber(cfg, 1, { branchCode: 'KD' }), 'ZAPKD001');
   assert.equal(formatStaffEmployeeNumber(cfg, 2, { branchCode: 'YL' }), 'ZAPYL002');
   assert.equal(formatStaffEmployeeNumber(cfg, 6, { branchCode: 'KD' }), 'ZAPKD006');
+});
+
+test('employeeNumberToUsername lowercases staff IDs for login', () => {
+  assert.equal(employeeNumberToUsername('ZAPKD001'), 'zapkd001');
+  assert.equal(employeeNumberToUsername(''), '');
+  assert.equal(employeeNumberToUsername('', 4), 'staff.r4');
 });
 
 test('normalizeEmployeeNumberForSave coerces branch numbers', () => {

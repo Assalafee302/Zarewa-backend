@@ -29,6 +29,7 @@ import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './w
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import {
   allocateNextEmployeeNumber,
+  employeeNumberToUsername,
   getDefaultStaffNumberConfig,
   normalizeEmployeeNumberForSave,
   normalizeStaffNumberConfig,
@@ -7282,8 +7283,19 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   const actorUser = publicUserFromId(db, actorUserId);
   const assignCheck = assertActorMayAssignRoleKey(actorUser, effectiveRoleKey);
   if (!assignCheck.ok) return assignCheck;
+  const branchId = String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID;
+  const staffNumberConfig = readStaffNumberConfig(db);
+  let resolvedEmployeeNo = String(profileFields?.employeeNo ?? '').trim();
+  if (resolvedEmployeeNo) {
+    resolvedEmployeeNo = normalizeEmployeeNumberForSave(resolvedEmployeeNo, staffNumberConfig, { branchId, db });
+  } else if (opts.autoAssignEmployeeNo !== false) {
+    resolvedEmployeeNo = allocateNextEmployeeNumber(db, staffNumberConfig, { branchId, db });
+  }
+  const usernameInput = String(username || '').trim().toLowerCase();
+  const effectiveUsername = employeeNumberToUsername(resolvedEmployeeNo) || usernameInput;
+  if (!effectiveUsername) return { ok: false, error: 'Employee ID or username is required.' };
   const created = createAppUserRecord(db, {
-    username,
+    username: effectiveUsername,
     displayName,
     password,
     roleKey: effectiveRoleKey,
@@ -7296,8 +7308,9 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     {
       ...profileFields,
       userId: created.userId,
+      employeeNo: resolvedEmployeeNo || profileFields?.employeeNo,
       payrollGroup,
-      branchId: String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID,
+      branchId,
       employmentType: profileFields?.employmentType || 'permanent',
       baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,
       housingAllowanceNgn: profileFields?.housingAllowanceNgn ?? 0,

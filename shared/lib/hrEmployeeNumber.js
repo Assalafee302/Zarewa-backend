@@ -36,6 +36,16 @@ function baseStaffNumberConfig() {
   };
 }
 
+export function employeeNumberToUsername(employeeNo, rowNum = 0) {
+  const slug = String(employeeNo || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 48);
+  if (slug) return slug;
+  return rowNum > 0 ? `staff.r${rowNum}` : '';
+}
+
 export function resolveEmployeeBranchCode(db, branchId) {
   const id = String(branchId || '').trim();
   if (!id) return DEFAULT_RESERVED_BRANCH_CODE;

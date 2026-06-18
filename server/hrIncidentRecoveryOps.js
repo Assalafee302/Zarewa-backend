@@ -43,12 +43,17 @@ export function listRecoverySchedulesForCase(db, caseId) {
   if (!recoverySchedulesTableReady(db)) return [];
   return db
     .prepare(
-      `SELECT s.*, c.case_number FROM hr_incident_recovery_schedules s
+      `SELECT s.*, c.case_number, u.display_name AS staff_display_name
+       FROM hr_incident_recovery_schedules s
        LEFT JOIN hr_discipline_cases c ON c.id = s.case_id
+       LEFT JOIN app_users u ON u.id = s.user_id
        WHERE s.case_id = ? ORDER BY s.created_at_iso ASC`
     )
     .all(String(caseId || '').trim())
-    .map(mapRecoveryScheduleRow);
+    .map((row) => ({
+      ...mapRecoveryScheduleRow(row),
+      staffDisplayName: row.staff_display_name || null,
+    }));
 }
 
 export function listRecoverySchedulesForUser(db, userId) {

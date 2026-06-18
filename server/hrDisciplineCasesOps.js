@@ -655,6 +655,7 @@ export function generateDisciplineCaseLetter(db, actor, caseId, letterType, extr
     sourceRecordKind: 'hr_discipline_case',
     sourceRecordId: c.id,
     incidentDescription: c.description || c.summary,
+    incidentDate: extra.incidentDate || c.incidentDateIso || '',
     offenseDescription: c.description || c.summary,
     suspensionReason: c.sanction || c.description,
     terminationReason: c.finalOutcome || c.managementDecision || c.description,
@@ -719,6 +720,27 @@ export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}
         const relatedLetterIds = Array.isArray(c.relatedLetterIds) ? [...c.relatedLetterIds] : [];
         for (const p of parties) {
           const sched = scheduleByUser.get(p.userId);
+          const existingRecoveryLetter = db
+            .prepare(
+              `SELECT id FROM hr_employment_letters
+               WHERE source_record_kind = 'hr_discipline_case' AND source_record_id = ?
+                 AND user_id = ? AND letter_kind = 'salary_recovery' AND status != 'voided'
+               LIMIT 1`
+            )
+            .get(c.id, p.userId);
+          if (existingRecoveryLetter?.id) {
+            if (!relatedLetterIds.includes(existingRecoveryLetter.id)) {
+              relatedLetterIds.push(existingRecoveryLetter.id);
+            }
+            actions.push({
+              kind: 'letter',
+              letterId: existingRecoveryLetter.id,
+              letterType: 'salary_recovery',
+              userId: p.userId,
+              existing: true,
+            });
+            continue;
+          }
           const lr = createDraftLetter(db, actor, {
             userId: p.userId,
             letterKind: 'salary_recovery',

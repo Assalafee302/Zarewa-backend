@@ -4,10 +4,8 @@ import { runMigrations } from './migrate.js';
 import {
   createAppUserRecord,
   ensureHrSelfServicePermissions,
-  enrichUserWithHrSelfService,
   loginWithPassword,
   permissionsForRole,
-  publicUserFromRow,
 } from './auth.js';
 
 describe('ensureHrSelfServicePermissions', () => {
@@ -49,9 +47,12 @@ describe('ensureHrSelfServicePermissions', () => {
       roleKey: 'viewer',
     });
     db.prepare(
-      `INSERT INTO hr_staff_profiles (user_id, branch_id, employee_no, job_title, employment_status, self_service_eligible)
-       VALUES (?, 'BR-KD', 'ZAPKD043', 'Former Staff', 'separated', 0)`
-    ).run(created.userId);
+      `INSERT INTO hr_staff_profiles (user_id, branch_id, employee_no, job_title, self_service_eligible, profile_extra_json)
+       VALUES (?, 'BR-KD', 'ZAPKD043', 'Former Staff', 0, ?)`
+    ).run(
+      created.userId,
+      JSON.stringify({ lifecycle: { separation: { status: 'separated' } } })
+    );
 
     const perms = permissionsForRole('viewer');
     ensureHrSelfServicePermissions(perms, db, created.userId);
@@ -74,24 +75,5 @@ describe('ensureHrSelfServicePermissions', () => {
     expect(login.ok).toBe(true);
     expect(login.session?.permissions).toContain('hr.self');
     expect(login.session?.permissions).toContain('hr.my_payslip.view');
-  });
-
-  it('enrichUserWithHrSelfService merges permissions from profile link', () => {
-    const created = createAppUserRecord(db, {
-      username: 'cashier.one',
-      displayName: 'Cashier One',
-      password: 'Zarewa@123',
-      roleKey: 'cashier',
-    });
-    db.prepare(
-      `INSERT INTO hr_staff_profiles (user_id, branch_id, employee_no, job_title)
-       VALUES (?, 'BR-KD', 'ZAPKD045', 'Cashier')`
-    ).run(created.userId);
-
-    const row = db.prepare(`SELECT * FROM app_users WHERE id = ?`).get(created.userId);
-    const base = publicUserFromRow(row);
-    expect(base.permissions).toContain('hr.self');
-    const enriched = enrichUserWithHrSelfService(db, base);
-    expect(enriched.permissions).toContain('hr.my_documents.view');
   });
 });

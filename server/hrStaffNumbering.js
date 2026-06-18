@@ -69,7 +69,7 @@ export function previewStaffRenumbering(db, config) {
       `SELECT p.user_id AS userId, p.branch_id AS branchId, u.display_name AS displayName,
               p.employee_no AS currentEmployeeNo, p.job_title AS jobTitle
        FROM hr_staff_profiles p JOIN app_users u ON u.id = p.user_id
-       WHERE p.employment_status IS NULL OR lower(p.employment_status) NOT IN ('terminated','separated')
+       WHERE u.status = 'active'
        ORDER BY u.display_name ASC`
     )
     .all();

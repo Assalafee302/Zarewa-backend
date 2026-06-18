@@ -703,6 +703,27 @@ export function ensureSalesDeskPermissions(permissions, ctx = {}) {
 
 const HR_SELF_SERVICE_PERMISSION_KEYS = HR_ROLE_PERMISSION_BUNDLES.selfService;
 
+/** @param {{ selfServiceEligible?: number | boolean, profileExtraJson?: string | null }} profile */
+function hrStaffProfileMayUseSelfService(profile) {
+  if (!profile) return false;
+  if (Number(profile.selfServiceEligible) === 1) return true;
+  if (Number(profile.selfServiceEligible) === 0) {
+    let extra = {};
+    try {
+      extra = JSON.parse(String(profile.profileExtraJson || '').trim() || '{}');
+    } catch {
+      extra = {};
+    }
+    const sep = extra?.lifecycle?.separation;
+    if (sep && typeof sep === 'object' && String(sep.status || '').trim().toLowerCase() === 'separated') {
+      return false;
+    }
+    // Legacy imports defaulted self_service_eligible to 0 — still allow active linked staff.
+    return true;
+  }
+  return false;
+}
+
 /**
  * Active employees with a linked HR profile should reach My Profile even when their
  * role template omitted HR self-service (legacy imports, operations/cashier roles, etc.).
@@ -718,18 +739,14 @@ export function ensureHrSelfServicePermissions(permissions, db, userId) {
   try {
     profile = db
       .prepare(
-        `SELECT self_service_eligible AS selfServiceEligible, employment_status AS employmentStatus
+        `SELECT self_service_eligible AS selfServiceEligible, profile_extra_json AS profileExtraJson
          FROM hr_staff_profiles WHERE user_id = ?`
       )
       .get(userId);
   } catch {
     return;
   }
-  if (!profile) return;
-  const status = String(profile.employmentStatus || '')
-    .trim()
-    .toLowerCase();
-  if (status === 'terminated' || status === 'separated') return;
+  if (!hrStaffProfileMayUseSelfService(profile)) return;
   for (const p of HR_SELF_SERVICE_PERMISSION_KEYS) {
     if (!permissions.includes(p)) permissions.push(p);
   }

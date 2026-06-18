@@ -2570,19 +2570,6 @@ function migratePriceListAndPayrollMd(db) {
   if (hr.size && !hr.has('self_service_eligible')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN self_service_eligible INTEGER NOT NULL DEFAULT 0`);
   }
-  if (hr.size && hr.has('self_service_eligible') && hr.has('user_id')) {
-    db.exec(`
-      UPDATE hr_staff_profiles
-      SET self_service_eligible = 1
-      WHERE user_id IS NOT NULL AND trim(user_id) != ''
-        AND self_service_eligible = 0
-        AND (
-          employment_status IS NULL
-          OR trim(employment_status) = ''
-          OR lower(trim(employment_status)) NOT IN ('terminated', 'separated')
-        )
-    `);
-  }
   if (hr.size && !hr.has('profile_submitted_at_iso')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN profile_submitted_at_iso TEXT`);
   }

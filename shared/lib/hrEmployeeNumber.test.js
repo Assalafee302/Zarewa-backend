@@ -25,6 +25,10 @@ test('normalizeEmployeeNumberForSave coerces branch numbers', () => {
   assert.equal(normalizeEmployeeNumberForSave('002', cfg, { branchCode: 'YL' }), 'ZAPYL002');
   assert.equal(normalizeEmployeeNumberForSave('YL002', cfg, { branchCode: 'YL' }), 'ZAPYL002');
   assert.equal(normalizeEmployeeNumberForSave('ZAPKD006', cfg, { branchCode: 'KD' }), 'ZAPKD006');
+  assert.equal(normalizeEmployeeNumberForSave('EMP001', cfg, { branchCode: 'KD' }), 'ZAPKD001');
+  assert.equal(normalizeEmployeeNumberForSave('ZAP001', cfg, { branchCode: 'KD' }), 'ZAPKD001');
+  assert.equal(normalizeEmployeeNumberForSave('ZAPZAPKD001', cfg, { branchCode: 'KD' }), 'ZAPKD001');
+  assert.equal(normalizeEmployeeNumberForSave('ZAPEMP001', cfg, { branchCode: 'KD' }), 'ZAPKD001');
 });
 
 test('normalizeEmployeeNumberForSave keeps unrelated legacy IDs', () => {

@@ -141,8 +141,19 @@ export function normalizeStaffNumberConfig(config) {
   return merged;
 }
 
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collapseDuplicateCompanyPrefix(raw, company) {
+  let out = String(raw || '').trim().toUpperCase();
+  const doubled = `${company}${company}`;
+  while (out.startsWith(doubled)) out = out.slice(company.length);
+  return out;
+}
+
 export function parseEmployeeNumberParts(employeeNo, config) {
-  const raw = String(employeeNo || '').trim().toUpperCase();
+  let raw = String(employeeNo || '').trim().toUpperCase();
   if (!raw) return null;
   const cfg =
     config?.format != null || config?.companyPrefix != null
@@ -151,15 +162,45 @@ export function parseEmployeeNumberParts(employeeNo, config) {
 
   if (cfg.format === 'branch_prefixed') {
     const company = String(cfg.companyPrefix || DEFAULT_COMPANY_PREFIX).toUpperCase();
-    const companyRe = new RegExp(`^${company}([A-Z]{2,5})(\\d+)$`, 'i');
+    raw = collapseDuplicateCompanyPrefix(raw, company);
+
+    const empLegacy = raw.match(/^EMP[-\s]?(\d+)$/i);
+    if (empLegacy) {
+      return { companyPrefix: company, branchCode: null, numeric: parseInt(empLegacy[1], 10) };
+    }
+
+    const companyRe = new RegExp(`^${escapeRegExp(company)}([A-Z]{2,5})(\\d+)$`, 'i');
     const m = raw.match(companyRe);
     if (m) {
-      return { companyPrefix: company, branchCode: m[1].toUpperCase(), numeric: parseInt(m[2], 10) };
+      const branchCode = m[1].toUpperCase();
+      const numeric = parseInt(m[2], 10);
+      if (branchCode === 'EMP') {
+        return { companyPrefix: company, branchCode: null, numeric };
+      }
+      if (branchCode !== company) {
+        return { companyPrefix: company, branchCode, numeric };
+      }
     }
+
+    if (raw.startsWith(company)) {
+      const afterCompany = raw.slice(company.length);
+      if (/^\d+$/.test(afterCompany)) {
+        return { companyPrefix: company, branchCode: null, numeric: parseInt(afterCompany, 10) };
+      }
+    }
+
     const branchOnlyRe = /^([A-Z]{2,5})(\d+)$/;
     const m2 = raw.match(branchOnlyRe);
     if (m2) {
-      return { companyPrefix: company, branchCode: m2[1].toUpperCase(), numeric: parseInt(m2[2], 10) };
+      const branchCode = m2[1].toUpperCase();
+      const numeric = parseInt(m2[2], 10);
+      if (branchCode === 'EMP') {
+        return { companyPrefix: company, branchCode: null, numeric };
+      }
+      if (branchCode !== company) {
+        return { companyPrefix: company, branchCode, numeric };
+      }
+      return { companyPrefix: company, branchCode: null, numeric };
     }
     if (/^\d+$/.test(raw)) {
       return { companyPrefix: company, branchCode: null, numeric: parseInt(raw, 10) };

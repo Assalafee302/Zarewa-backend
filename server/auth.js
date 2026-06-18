@@ -1372,11 +1372,42 @@ function openSessionForUser(db, row) {
   };
 }
 
+export function findAppUserByLoginIdentifier(db, identifier) {
+  const raw = String(identifier || '').trim();
+  if (!raw) return null;
+  const key = raw.toLowerCase();
+
+  let row = db.prepare(`SELECT * FROM app_users WHERE lower(trim(username)) = ?`).get(key);
+  if (row) return row;
+
+  row = db
+    .prepare(
+      `SELECT * FROM app_users
+       WHERE email IS NOT NULL AND trim(email) != '' AND lower(trim(email)) = ?`
+    )
+    .get(key);
+  if (row) return row;
+
+  try {
+    row = db
+      .prepare(
+        `SELECT u.* FROM app_users u
+         INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+         WHERE lower(trim(p.employee_no)) = ?
+         LIMIT 1`
+      )
+      .get(key);
+    if (row) return row;
+  } catch {
+    /* hr_staff_profiles may not exist in partial schemas */
+  }
+
+  return null;
+}
+
 export function loginWithPassword(db, username, password) {
   const key = String(username || '').trim().toLowerCase();
-  const row = db
-    .prepare(`SELECT * FROM app_users WHERE lower(trim(username)) = ?`)
-    .get(key);
+  const row = findAppUserByLoginIdentifier(db, key);
   if (!row || row.status !== 'active') {
     return {
       ok: false,
@@ -1638,16 +1669,9 @@ export function patchAppUserWorkspaceDepartment(db, actorUser, targetUserId, raw
 }
 
 function findUserByIdentifier(db, identifier) {
-  const id = String(identifier || '').trim();
-  if (!id) return null;
-  const lower = id.toLowerCase();
-  return db
-    .prepare(
-      `SELECT * FROM app_users
-       WHERE status = 'active'
-         AND (lower(username) = ? OR (email IS NOT NULL AND trim(email) != '' AND lower(email) = ?))`
-    )
-    .get(lower, lower);
+  const row = findAppUserByLoginIdentifier(db, identifier);
+  if (!row || row.status !== 'active') return null;
+  return row;
 }
 
 function issuePasswordResetTokenForUserId(db, userId) {

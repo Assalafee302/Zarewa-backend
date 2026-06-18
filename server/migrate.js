@@ -2570,6 +2570,19 @@ function migratePriceListAndPayrollMd(db) {
   if (hr.size && !hr.has('self_service_eligible')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN self_service_eligible INTEGER NOT NULL DEFAULT 0`);
   }
+  if (hr.size && hr.has('self_service_eligible') && hr.has('user_id')) {
+    db.exec(`
+      UPDATE hr_staff_profiles
+      SET self_service_eligible = 1
+      WHERE user_id IS NOT NULL AND trim(user_id) != ''
+        AND self_service_eligible = 0
+        AND (
+          employment_status IS NULL
+          OR trim(employment_status) = ''
+          OR lower(trim(employment_status)) NOT IN ('terminated', 'separated')
+        )
+    `);
+  }
   if (hr.size && !hr.has('profile_submitted_at_iso')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN profile_submitted_at_iso TEXT`);
   }
@@ -5183,6 +5196,25 @@ function migrateHrAccountability2026(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_recovery_case ON hr_incident_recovery_schedules(case_id, status);
     CREATE INDEX IF NOT EXISTS idx_hr_recovery_user ON hr_incident_recovery_schedules(user_id, status);
+
+    CREATE TABLE IF NOT EXISTS hr_incident_recovery_settlements (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      case_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      principal_before_ngn INTEGER NOT NULL,
+      principal_after_ngn INTEGER NOT NULL,
+      payment_reference TEXT,
+      payment_date_iso TEXT,
+      note TEXT,
+      settlement_kind TEXT NOT NULL DEFAULT 'lump_sum',
+      recorded_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      FOREIGN KEY (schedule_id) REFERENCES hr_incident_recovery_schedules(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_recovery_settlement_sched
+      ON hr_incident_recovery_settlements(schedule_id, created_at_iso DESC);
 
     CREATE TABLE IF NOT EXISTS hr_payroll_line_recoveries (
       run_id TEXT NOT NULL,

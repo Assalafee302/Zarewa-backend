@@ -56,6 +56,12 @@ describe('operations_officer role aliases', () => {
     expect(permissionsForRole('storekeeper')).toEqual(ops);
     expect(permissionsForRole('store_keeper')).toEqual(ops);
   });
+
+  it('includes HR self-service so floor staff can use My Profile', () => {
+    const ops = permissionsForRole('operations_officer');
+    expect(ops).toContain('hr.self');
+    expect(ops).toContain('hr.my_payslip.view');
+  });
 });
 
 describe('publicUserFromRow role normalization', () => {

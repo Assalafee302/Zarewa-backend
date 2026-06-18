@@ -9,7 +9,7 @@ import {
   assertCaseClosureReady,
   validateResponsibilityParties,
 } from './hrAccountabilityOps.js';
-import { createRecoverySchedulesFromCase } from './hrIncidentRecoveryOps.js';
+import { createRecoverySchedulesFromCase, recordRecoverySettlement } from './hrIncidentRecoveryOps.js';
 import { applyDecisionActions, getDisciplineCase, patchDisciplineCase, fileDisciplineCaseAppeal } from './hrDisciplineCasesOps.js';
 
 describe.skipIf(!isMysqlAvailableForTests())('hrAccountability integration', () => {
@@ -124,6 +124,17 @@ describe.skipIf(!isMysqlAvailableForTests())('hrAccountability integration', () 
     const sched = createRecoverySchedulesFromCase(db, actor, c.id, { activate: true, durationMonths: 12 });
     expect(sched.ok).toBe(true);
     expect(sched.schedules.length).toBeGreaterThanOrEqual(1);
+    const scheduleId = sched.schedules[0].id;
+    const before = sched.schedules[0].principalOutstandingNgn;
+    const settled = recordRecoverySettlement(db, actor, scheduleId, {
+      payInFull: true,
+      paymentReference: 'TELLER-TEST-001',
+      note: 'Staff paid balance in full.',
+    });
+    expect(settled.ok).toBe(true);
+    expect(settled.schedule.principalOutstandingNgn).toBe(0);
+    expect(settled.schedule.status).toBe('completed');
+    expect(settled.settlement.amountNgn).toBe(before);
   });
 
   it('GET /api/incidents requires auth', async () => {

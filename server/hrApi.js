@@ -359,6 +359,7 @@ import {
   createRecoverySchedulesFromCase,
   listRecoverySchedulesForCase,
   listRecoverySchedulesForUser,
+  recordRecoverySettlement,
 } from './hrIncidentRecoveryOps.js';
 import {
   listAssetCustodyTimeline,
@@ -1531,7 +1532,12 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(400).json(r);
         return res.json(r);
       }
-      return res.status(400).json({ ok: false, error: 'Unsupported action.' });
+      if (req.body?.action === 'settle') {
+        const r = recordRecoverySettlement(db, req.user, req.params.id, req.body || {});
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      }
+      return res.status(400).json({ ok: false, error: 'Unsupported action. Use action: cancel or settle.' });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update recovery schedule.' });

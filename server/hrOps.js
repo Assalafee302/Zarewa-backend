@@ -762,6 +762,9 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   } else if (existing) {
     const prev = db.prepare(`SELECT self_service_eligible FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
     selfServiceEligible = Number(prev?.self_service_eligible) ? 1 : 0;
+  } else {
+    // New staff profiles default to HR self-service unless explicitly disabled.
+    selfServiceEligible = 1;
   }
 
   const nullableNonNegNumber = (v) => {

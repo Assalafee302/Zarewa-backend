@@ -3,6 +3,7 @@ import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { normalizeWorkspaceDepartment } from './departmentRoleTemplates.js';
 import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
+import { hrTableExists } from './hrTableChecks.js';
 import { validateStaffRoleForPayrollGroup } from './hrStaffAccessPolicy.js';
 
 function appUsersHasColumn(db, name) {
@@ -228,6 +229,7 @@ export const ROLE_DEFINITIONS = {
       'accounting.reconciliation.view',
       'accounting.gl.view',
       ...HR_ROLE_PERMISSION_BUNDLES.financeHr,
+      ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
   },
   cashier: {
@@ -249,6 +251,7 @@ export const ROLE_DEFINITIONS = {
       /** Phase B: desk routes — legacy finance perms retained for compatibility until B3. */
       'cashier.desk.view',
       'cashier.receipts.confirm',
+      ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
   },
   sales_manager: {
@@ -274,6 +277,7 @@ export const ROLE_DEFINITIONS = {
       'inventory.adjust',
       'material_incidents.approve',
       ...HR_ROLE_PERMISSION_BUNDLES.branchManager,
+      ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
   },
   sales_staff: {
@@ -318,7 +322,7 @@ export const ROLE_DEFINITIONS = {
   },
   operations_officer: {
     label: 'Operations officer / Store keeper',
-    permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS],
+    permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS, ...HR_ROLE_PERMISSION_BUNDLES.selfService],
   },
   ceo: {
     label: 'Chief Executive Officer',
@@ -697,6 +701,51 @@ export function ensureSalesDeskPermissions(permissions, ctx = {}) {
   }
 }
 
+const HR_SELF_SERVICE_PERMISSION_KEYS = HR_ROLE_PERMISSION_BUNDLES.selfService;
+
+/**
+ * Active employees with a linked HR profile should reach My Profile even when their
+ * role template omitted HR self-service (legacy imports, operations/cashier roles, etc.).
+ * @param {string[]} permissions — mutated in place
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function ensureHrSelfServicePermissions(permissions, db, userId) {
+  if (!Array.isArray(permissions) || !userId || permissions.includes('*')) return;
+  if (HR_SELF_SERVICE_PERMISSION_KEYS.some((p) => permissions.includes(p))) return;
+  if (!hrTableExists(db, 'hr_staff_profiles')) return;
+  let profile;
+  try {
+    profile = db
+      .prepare(
+        `SELECT self_service_eligible AS selfServiceEligible, employment_status AS employmentStatus
+         FROM hr_staff_profiles WHERE user_id = ?`
+      )
+      .get(userId);
+  } catch {
+    return;
+  }
+  if (!profile) return;
+  const status = String(profile.employmentStatus || '')
+    .trim()
+    .toLowerCase();
+  if (status === 'terminated' || status === 'separated') return;
+  for (const p of HR_SELF_SERVICE_PERMISSION_KEYS) {
+    if (!permissions.includes(p)) permissions.push(p);
+  }
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {ReturnType<typeof publicUserFromRow> | null} user
+ */
+export function enrichUserWithHrSelfService(db, user) {
+  if (!user?.id) return user;
+  const permissions = Array.isArray(user.permissions) ? [...user.permissions] : [];
+  ensureHrSelfServicePermissions(permissions, db, user.id);
+  return { ...user, permissions };
+}
+
 export function userHasPermission(user, permission) {
   if (!user || !permission) return false;
   const perms = Array.isArray(user.permissions) ? user.permissions : permissionsForRole(user.roleKey);
@@ -817,7 +866,10 @@ export function buildSessionPayload(user) {
   if (!user) {
     return { authenticated: false, user: null, permissions: [] };
   }
-  const normalized = publicUserFromRow(user);
+  const normalized =
+    user.permissions && user.roleKey !== undefined && user.id !== undefined
+      ? user
+      : publicUserFromRow(user);
   return {
     authenticated: true,
     user: normalized,
@@ -1204,7 +1256,7 @@ export function attachAuthContext(db) {
       return next();
     }
 
-    const user = publicUserFromRow(row);
+    const user = enrichUserWithHrSelfService(db, publicUserFromRow(row));
     req.user = user;
     const baseBranch = defaultBranchIdForDb(db);
     let currentBranchId = String(row.current_branch_id || '').trim() || baseBranch;
@@ -1359,11 +1411,12 @@ function openSessionForUser(db, row) {
     db.prepare(`UPDATE app_users SET last_login_at_iso = ? WHERE id = ?`).run(createdAtISO, row.id);
   })();
 
+  const user = enrichUserWithHrSelfService(db, publicUserFromRow({ ...row, last_login_at_iso: createdAtISO }));
   return {
     ok: true,
     sessionToken,
     session: {
-      ...buildSessionPayload({ ...row, last_login_at_iso: createdAtISO }),
+      ...buildSessionPayload(user),
       currentBranchId: branchId,
       viewAllBranches: false,
       branches: listBranches(db),

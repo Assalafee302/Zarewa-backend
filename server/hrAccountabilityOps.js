@@ -408,12 +408,14 @@ export function assertCaseClosureReady(db, caseId) {
     if (!hrTableExists(db, 'hr_incident_recovery_schedules')) {
       blockers.push('Recovery schedules module not migrated.');
     } else {
-      const schedules = db
+      const scheduleCount = db
         .prepare(
-          `SELECT status FROM hr_incident_recovery_schedules WHERE case_id = ? AND status NOT IN ('cancelled','completed')`
+          `SELECT COUNT(*) AS c FROM hr_incident_recovery_schedules WHERE case_id = ? AND status != 'cancelled'`
         )
-        .all(row.id);
-      if (!schedules.length) blockers.push('Active recovery schedules required for deduction decisions with financial impact.');
+        .get(row.id)?.c || 0;
+      if (!scheduleCount) {
+        blockers.push('Recovery schedules required for deduction decisions with financial impact.');
+      }
     }
     if (parties.length) {
       const letters = safeJsonParse(row.related_letter_ids_json, []);

@@ -5,6 +5,7 @@
 
 import crypto from 'node:crypto';
 import { hrTableExists } from './hrTableChecks.js';
+import { appendHrAuditEvent } from './hrOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -12,6 +13,71 @@ function nowIso() {
 
 function newId(prefix) {
   return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
+}
+
+function appendDisciplineCaseEventInline(db, actor, caseId, body = {}) {
+  if (!hrTableExists(db, 'hr_discipline_events')) return;
+  const cid = String(caseId || '').trim();
+  const note = String(body.note || '').trim();
+  if (!cid || note.length < 2) return;
+  const id = newId('HRDISev');
+  db.prepare(
+    `INSERT INTO hr_discipline_events (id, case_id, event_kind, note, actor_user_id, created_at_iso)
+     VALUES (?,?,?,?,?,?)`
+  ).run(id, cid, String(body.eventKind || 'note').trim(), note, actor?.id || null, nowIso());
+}
+
+export function recoverySettlementsTableReady(db) {
+  return hrTableExists(db, 'hr_incident_recovery_settlements');
+}
+
+export function mapRecoverySettlementRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    scheduleId: row.schedule_id,
+    caseId: row.case_id,
+    userId: row.user_id,
+    amountNgn: Math.round(Number(row.amount_ngn) || 0),
+    principalBeforeNgn: Math.round(Number(row.principal_before_ngn) || 0),
+    principalAfterNgn: Math.round(Number(row.principal_after_ngn) || 0),
+    paymentReference: row.payment_reference || null,
+    paymentDateIso: row.payment_date_iso || null,
+    note: row.note || null,
+    settlementKind: row.settlement_kind || 'lump_sum',
+    recordedByUserId: row.recorded_by_user_id || null,
+    createdAtIso: row.created_at_iso,
+  };
+}
+
+export function listRecoverySettlementsForSchedule(db, scheduleId) {
+  if (!recoverySettlementsTableReady(db)) return [];
+  return db
+    .prepare(
+      `SELECT * FROM hr_incident_recovery_settlements WHERE schedule_id = ? ORDER BY created_at_iso DESC`
+    )
+    .all(String(scheduleId || '').trim())
+    .map(mapRecoverySettlementRow);
+}
+
+function listRecoverySettlementsForSchedules(db, scheduleIds) {
+  if (!recoverySettlementsTableReady(db) || !scheduleIds?.length) return new Map();
+  const ids = [...new Set(scheduleIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM hr_incident_recovery_settlements WHERE schedule_id IN (${placeholders}) ORDER BY created_at_iso DESC`
+    )
+    .all(...ids);
+  const bySchedule = new Map();
+  for (const row of rows) {
+    const mapped = mapRecoverySettlementRow(row);
+    const list = bySchedule.get(mapped.scheduleId) || [];
+    list.push(mapped);
+    bySchedule.set(mapped.scheduleId, list);
+  }
+  return bySchedule;
 }
 
 export function recoverySchedulesTableReady(db) {
@@ -41,7 +107,7 @@ export function mapRecoveryScheduleRow(row) {
 
 export function listRecoverySchedulesForCase(db, caseId) {
   if (!recoverySchedulesTableReady(db)) return [];
-  return db
+  const rows = db
     .prepare(
       `SELECT s.*, c.case_number, u.display_name AS staff_display_name
        FROM hr_incident_recovery_schedules s
@@ -49,11 +115,16 @@ export function listRecoverySchedulesForCase(db, caseId) {
        LEFT JOIN app_users u ON u.id = s.user_id
        WHERE s.case_id = ? ORDER BY s.created_at_iso ASC`
     )
-    .all(String(caseId || '').trim())
-    .map((row) => ({
-      ...mapRecoveryScheduleRow(row),
-      staffDisplayName: row.staff_display_name || null,
-    }));
+    .all(String(caseId || '').trim());
+  const settlementsBySchedule = listRecoverySettlementsForSchedules(
+    db,
+    rows.map((row) => row.id)
+  );
+  return rows.map((row) => ({
+    ...mapRecoveryScheduleRow(row),
+    staffDisplayName: row.staff_display_name || null,
+    settlements: settlementsBySchedule.get(row.id) || [],
+  }));
 }
 
 export function listRecoverySchedulesForUser(db, userId) {
@@ -182,11 +253,139 @@ export function cancelRecoverySchedule(db, actor, scheduleId, reason = '') {
   if (!recoverySchedulesTableReady(db)) return { ok: false, error: 'Recovery schedules not migrated.' };
   const row = db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(String(scheduleId || '').trim());
   if (!row) return { ok: false, error: 'Schedule not found.' };
+  if (String(row.status) === 'completed') {
+    return { ok: false, error: 'Completed schedules cannot be cancelled.' };
+  }
   const now = nowIso();
   db.prepare(
     `UPDATE hr_incident_recovery_schedules SET status = 'cancelled', deductions_active = 0, closed_at_iso = ?, cancel_reason = ? WHERE id = ?`
   ).run(now, String(reason || '').trim() || null, row.id);
   return { ok: true, schedule: mapRecoveryScheduleRow(db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(row.id)) };
+}
+
+/**
+ * Record a direct (non-payroll) recovery payment — full or partial lump sum.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null} actor
+ * @param {string} scheduleId
+ * @param {{ amountNgn?: number; payInFull?: boolean; paymentReference?: string; paymentDateIso?: string; note?: string }} body
+ */
+export function recordRecoverySettlement(db, actor, scheduleId, body = {}) {
+  if (!recoverySchedulesTableReady(db)) return { ok: false, error: 'Recovery schedules not migrated.' };
+  if (!recoverySettlementsTableReady(db)) {
+    return { ok: false, error: 'Recovery settlements not migrated.' };
+  }
+  const sid = String(scheduleId || '').trim();
+  const row = db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(sid);
+  if (!row) return { ok: false, error: 'Schedule not found.' };
+  if (String(row.status) !== 'active') {
+    return { ok: false, error: 'Only active schedules can receive direct payments.' };
+  }
+
+  const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
+  if (outstanding <= 0) return { ok: false, error: 'Nothing outstanding on this schedule.' };
+
+  const payInFull = body.payInFull === true;
+  let amountNgn = payInFull
+    ? outstanding
+    : Math.round(Number(body.amountNgn ?? body.amount_ngn) || 0);
+  if (amountNgn <= 0) return { ok: false, error: 'Payment amount must be greater than zero.' };
+  if (amountNgn > outstanding) {
+    return { ok: false, error: `Payment cannot exceed outstanding balance (NGN ${outstanding.toLocaleString()}).` };
+  }
+
+  const paymentReference = String(body.paymentReference ?? body.payment_reference ?? '').trim() || null;
+  const paymentDateIso =
+    String(body.paymentDateIso ?? body.payment_date_iso ?? '').trim().slice(0, 10) ||
+    nowIso().slice(0, 10);
+  const note = String(body.note ?? '').trim() || null;
+  const settlementKind = amountNgn >= outstanding ? 'lump_sum' : 'partial';
+  const now = nowIso();
+  const principalAfter = outstanding - amountNgn;
+  const completed = principalAfter <= 0;
+  const settlementId = newId('HRRcvPay');
+
+  const staff = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(row.user_id);
+  const staffLabel = staff?.display_name || row.user_id;
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO hr_incident_recovery_settlements (
+        id, schedule_id, case_id, user_id, amount_ngn, principal_before_ngn, principal_after_ngn,
+        payment_reference, payment_date_iso, note, settlement_kind, recorded_by_user_id, created_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      settlementId,
+      row.id,
+      row.case_id,
+      row.user_id,
+      amountNgn,
+      outstanding,
+      principalAfter,
+      paymentReference,
+      paymentDateIso,
+      note,
+      settlementKind,
+      actor?.id || null,
+      now
+    );
+    db.prepare(
+      `UPDATE hr_incident_recovery_schedules SET
+        principal_outstanding_ngn = ?,
+        deductions_active = ?,
+        status = ?,
+        closed_at_iso = ?
+       WHERE id = ?`
+    ).run(
+      principalAfter,
+      completed ? 0 : row.deductions_active,
+      completed ? 'completed' : row.status,
+      completed ? now : row.closed_at_iso,
+      row.id
+    );
+  })();
+
+  const eventNote = [
+    `Direct recovery payment recorded for ${staffLabel}: NGN ${amountNgn.toLocaleString()}`,
+    completed ? '(paid in full — payroll deductions stopped)' : `(outstanding now NGN ${principalAfter.toLocaleString()})`,
+    paymentReference ? `Ref: ${paymentReference}` : '',
+    note || '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  appendDisciplineCaseEventInline(db, actor, row.case_id, {
+    eventKind: 'recovery_settlement',
+    note: eventNote,
+  });
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id,
+    action: 'hr.recovery.settlement',
+    entityKind: 'hr_incident_recovery_schedule',
+    entityId: row.id,
+    details: {
+      settlementId,
+      caseId: row.case_id,
+      userId: row.user_id,
+      amountNgn,
+      principalAfterNgn: principalAfter,
+      settlementKind,
+      paymentReference,
+    },
+  });
+
+  const updated = db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(row.id);
+  return {
+    ok: true,
+    settlement: mapRecoverySettlementRow(
+      db.prepare(`SELECT * FROM hr_incident_recovery_settlements WHERE id = ?`).get(settlementId)
+    ),
+    schedule: {
+      ...mapRecoveryScheduleRow(updated),
+      staffDisplayName: staff?.display_name || null,
+      settlements: listRecoverySettlementsForSchedule(db, row.id),
+    },
+  };
 }
 
 export function settleRecoveryAfterPayrollDeduction(db, scheduleId, userId, deductedNgn) {

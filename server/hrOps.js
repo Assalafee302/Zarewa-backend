@@ -68,6 +68,8 @@ import {
 import {
   defaultRoleKeyForPayrollGroup,
   enforcePortalOnlyRole,
+  suspendLoginForBeneficiaryPayrollGroup,
+  validatePayrollGroupMayHaveLogin,
   validateStaffRoleForPayrollGroup,
 } from './hrStaffAccessPolicy.js';
 import { buildStaffMergedOffices } from './hrOrgConstants.js';
@@ -80,6 +82,7 @@ import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } fr
 import { countOpenIncidents } from './hrAccountabilityOps.js';
 import { hrTransferRequestsTableReady } from './hrTransferRequests.js';
 import {
+  isBeneficiaryOnlyPayrollGroup,
   isDomesticStaff,
   isErpAccessRestrictedPayrollGroup,
   isNonBranchStaff,
@@ -787,6 +790,10 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       ? String(body.payrollGroup || '').trim() || null
       : prevRow?.payroll_group ?? null;
   const normalizedPayrollGroup = normalizePayrollGroup(payrollGroup);
+  if (isBeneficiaryOnlyPayrollGroup(normalizedPayrollGroup)) {
+    if (existing) suspendLoginForBeneficiaryPayrollGroup(db, userId);
+    return { ok: false, error: validatePayrollGroupMayHaveLogin(normalizedPayrollGroup).error };
+  }
   if (isErpAccessRestrictedPayrollGroup(normalizedPayrollGroup)) {
     selfServiceEligible = 1;
     const roleCheck = validateStaffRoleForPayrollGroup(
@@ -6659,6 +6666,7 @@ export function updateMyHrStaffProfile(db, userId, body) {
     'institution',
     'courseField',
     'yearCompleted',
+    'nextOfKin',
     'nextOfKinName',
     'nextOfKinPhone',
     'nextOfKinRelationship',
@@ -6669,6 +6677,39 @@ export function updateMyHrStaffProfile(db, userId, body) {
     if (body && Object.prototype.hasOwnProperty.call(body, key)) {
       patch[key] = body[key];
     }
+  }
+  if (patch.nextOfKin === undefined) {
+    const nokKeys = [
+      'nextOfKinName',
+      'nextOfKinPhone',
+      'nextOfKinRelationship',
+      'nextOfKinAddress',
+      'nextOfKinAltPhone',
+    ];
+    const hasNokField = nokKeys.some((k) => Object.prototype.hasOwnProperty.call(body || {}, k));
+    if (hasNokField) {
+      const name = String(body.nextOfKinName ?? '').trim();
+      const phone = String(body.nextOfKinPhone ?? '').trim();
+      patch.nextOfKin =
+        name || phone
+          ? {
+              name: name || null,
+              phone: phone || null,
+              relationship: String(body.nextOfKinRelationship ?? '').trim() || null,
+              address: String(body.nextOfKinAddress ?? '').trim() || null,
+              altPhone: String(body.nextOfKinAltPhone ?? '').trim() || null,
+            }
+          : null;
+    }
+  }
+  for (const k of [
+    'nextOfKinName',
+    'nextOfKinPhone',
+    'nextOfKinRelationship',
+    'nextOfKinAddress',
+    'nextOfKinAltPhone',
+  ]) {
+    delete patch[k];
   }
   if (Object.keys(patch).length <= 1) {
     return { ok: false, error: 'No profile fields to update.' };
@@ -7274,7 +7315,12 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   } = body || {};
   const skipProfileFetch = Boolean(opts.skipProfileFetch || _skipInBody);
   const payrollGroup = normalizePayrollGroup(bodyPayrollGroup || profileFields?.payrollGroup);
+  const loginCheck = validatePayrollGroupMayHaveLogin(payrollGroup);
+  if (!loginCheck.ok) return loginCheck;
   let effectiveRoleKey = String(roleKey || '').trim() || defaultRoleKeyForPayrollGroup(payrollGroup);
+  if (!effectiveRoleKey) {
+    return { ok: false, error: loginCheck.error || 'Invalid payroll group for staff registration.' };
+  }
   const roleCheck = validateStaffRoleForPayrollGroup(effectiveRoleKey, payrollGroup);
   if (!roleCheck.ok) {
     if (isErpAccessRestrictedPayrollGroup(payrollGroup)) {

@@ -14,7 +14,7 @@ import {
   computeCompensationVariance,
   lookupHrSalaryMatrixRow,
 } from './hrCompensationOps.js';
-import { isErpAccessRestrictedPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
+import { isBeneficiaryOnlyPayrollGroup, isErpAccessRestrictedPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { HR_PORTAL_ONLY_ROLE_KEY } from './hrStaffAccessPolicy.js';
 
 /** designation id → suggested app role_key (permissions, not HR title) */
@@ -133,13 +133,22 @@ function parseExtra(raw) {
  */
 export function recommendAppRoleKeys(input = {}) {
   const payrollGroup = String(input.payrollGroup || '').trim();
+  if (payrollGroup && isBeneficiaryOnlyPayrollGroup(payrollGroup)) {
+    return {
+      recommendedPrimary: null,
+      suggestedRoleKeys: [],
+      supplementalPermissions: [],
+      needsReview: true,
+      note: 'Executive family and household staff do not receive ERP logins — use Chairman Accounts.',
+    };
+  }
   if (payrollGroup && isErpAccessRestrictedPayrollGroup(payrollGroup)) {
     return {
       recommendedPrimary: HR_PORTAL_ONLY_ROLE_KEY,
       suggestedRoleKeys: [HR_PORTAL_ONLY_ROLE_KEY],
       supplementalPermissions: [],
       needsReview: false,
-      note: 'Domestic, scholarship, and mining staff use HR portal only — no ERP system roles.',
+      note: 'Mining division staff use HR portal only — no ERP system roles.',
     };
   }
   const suggested = new Set();

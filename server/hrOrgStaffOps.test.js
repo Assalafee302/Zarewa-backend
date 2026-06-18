@@ -22,7 +22,7 @@ describe('hrOrgStaffOps', () => {
     expect(Array.isArray(hints.supplementalPermissions)).toBe(true);
   });
 
-  it('recommendAppRoleKeys forces portal-only role for restricted payroll groups', () => {
+  it('recommendAppRoleKeys forces portal-only role for mining payroll group', () => {
     const hints = recommendAppRoleKeys({
       designationId: 'desig_hoa',
       payrollGroup: 'mining_div',
@@ -31,6 +31,17 @@ describe('hrOrgStaffOps', () => {
     expect(hints.recommendedPrimary).toBe('hr_portal_only');
     expect(hints.suggestedRoleKeys).toEqual(['hr_portal_only']);
     expect(hints.needsReview).toBe(false);
+  });
+
+  it('recommendAppRoleKeys rejects beneficiary payroll groups', () => {
+    const hints = recommendAppRoleKeys({
+      payrollGroup: 'scholarship',
+      currentRoleKey: 'sales_staff',
+    });
+    expect(hints.recommendedPrimary).toBeNull();
+    expect(hints.suggestedRoleKeys).toEqual([]);
+    expect(hints.needsReview).toBe(true);
+    expect(hints.note).toMatch(/Chairman Accounts/i);
   });
 
   it('buildSupplementalPermissionsForRoles excludes primary role permissions', () => {

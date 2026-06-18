@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   HR_PAYROLL_GROUPS,
+  isBeneficiaryOnlyPayrollGroup,
   isErpAccessRestrictedPayrollGroup,
   isPayrollRunEligible,
   isStatutoryPayrollExempt,
+  payrollGroupMayHaveLogin,
   requiresEmployeePensionDeduction,
   requiresPaye,
   staffMeetsPensionPolicy,
@@ -42,10 +44,20 @@ describe('hrStaffCohorts payroll rules', () => {
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
   });
 
-  it('mining, scholarship, and domestic cannot use ERP operational roles', () => {
+  it('beneficiary payroll groups cannot have ERP logins', () => {
+    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
+      expect(isBeneficiaryOnlyPayrollGroup(g)).toBe(true);
+      expect(payrollGroupMayHaveLogin(g)).toBe(false);
+    }
+    for (const g of [HR_PAYROLL_GROUPS.BRANCH_OPS, HR_PAYROLL_GROUPS.HQ_ADMIN, HR_PAYROLL_GROUPS.MINING]) {
+      expect(payrollGroupMayHaveLogin(g)).toBe(true);
+    }
+  });
+
+  it('only mining is ERP-access restricted', () => {
     expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.MINING)).toBe(true);
-    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(true);
-    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(true);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(false);
+    expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(false);
     expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
     expect(isErpAccessRestrictedPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(false);
   });

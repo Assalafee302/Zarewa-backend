@@ -3,6 +3,7 @@ import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { normalizeWorkspaceDepartment } from './departmentRoleTemplates.js';
 import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
+import { payrollGroupMayHaveLogin } from '../shared/lib/hrStaffCohorts.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { validateStaffRoleForPayrollGroup } from './hrStaffAccessPolicy.js';
 
@@ -294,7 +295,7 @@ export const ROLE_DEFINITIONS = {
       ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
   },
-  /** Domestic / scholarship / mining — My Profile only; no ERP modules. */
+  /** Mining division — My Profile self-service; no ERP modules. */
   hr_portal_only: {
     label: 'HR portal only',
     permissions: [...HR_ROLE_PERMISSION_BUNDLES.selfService],
@@ -739,13 +740,15 @@ export function ensureHrSelfServicePermissions(permissions, db, userId) {
   try {
     profile = db
       .prepare(
-        `SELECT self_service_eligible AS selfServiceEligible, profile_extra_json AS profileExtraJson
+        `SELECT self_service_eligible AS selfServiceEligible, profile_extra_json AS profileExtraJson,
+                payroll_group AS payrollGroup
          FROM hr_staff_profiles WHERE user_id = ?`
       )
       .get(userId);
   } catch {
     return;
   }
+  if (!payrollGroupMayHaveLogin(profile?.payrollGroup)) return;
   if (!hrStaffProfileMayUseSelfService(profile)) return;
   for (const p of HR_SELF_SERVICE_PERMISSION_KEYS) {
     if (!permissions.includes(p)) permissions.push(p);

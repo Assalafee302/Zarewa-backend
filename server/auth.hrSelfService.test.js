@@ -76,4 +76,21 @@ describe('ensureHrSelfServicePermissions', () => {
     expect(login.session?.permissions).toContain('hr.self');
     expect(login.session?.permissions).toContain('hr.my_payslip.view');
   });
+
+  it('does not grant My Profile for beneficiary payroll groups', () => {
+    const created = createAppUserRecord(db, {
+      username: 'scholar.child',
+      displayName: 'Scholar Child',
+      password: 'Zarewa@123',
+      roleKey: 'viewer',
+    });
+    db.prepare(
+      `INSERT INTO hr_staff_profiles (user_id, branch_id, employee_no, job_title, payroll_group)
+       VALUES (?, 'BR-KD', 'ZAPKD099', 'Student', 'scholarship')`
+    ).run(created.userId);
+
+    const perms = permissionsForRole('viewer');
+    ensureHrSelfServicePermissions(perms, db, created.userId);
+    expect(perms).not.toContain('hr.self');
+  });
 });

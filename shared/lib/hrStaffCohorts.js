@@ -18,12 +18,14 @@ export const SCHOLARSHIP_GROUPS = [HR_PAYROLL_GROUPS.SCHOLARSHIP];
 
 export const DOMESTIC_GROUPS = [HR_PAYROLL_GROUPS.DOMESTIC];
 
-/** No ERP module access — My Profile / executive-benefits self-service only. */
-export const ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS = [
-  HR_PAYROLL_GROUPS.MINING,
+/** Executive family and household staff — HR records only; no ERP login. */
+export const BENEFICIARY_ONLY_PAYROLL_GROUPS = [
   HR_PAYROLL_GROUPS.SCHOLARSHIP,
   HR_PAYROLL_GROUPS.DOMESTIC,
 ];
+
+/** Mining staff may log in but are limited to HR portal (no sales/finance/operations). */
+export const ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS = [HR_PAYROLL_GROUPS.MINING];
 
 export const HQ_SPECIAL_GROUPS = [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN];
 
@@ -76,7 +78,17 @@ export function isDomesticStaff(payrollGroup) {
   return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.DOMESTIC;
 }
 
-/** Mining, scholarship, and domestic staff must not receive ERP operational roles. */
+/** @param {string | null | undefined} payrollGroup */
+export function isBeneficiaryOnlyPayrollGroup(payrollGroup) {
+  return BENEFICIARY_ONLY_PAYROLL_GROUPS.includes(normalizePayrollGroup(payrollGroup));
+}
+
+/** Branch, HQ, and mining employees may have app logins; beneficiaries may not. */
+export function payrollGroupMayHaveLogin(payrollGroup) {
+  return !isBeneficiaryOnlyPayrollGroup(payrollGroup);
+}
+
+/** Mining staff must not receive ERP operational roles. */
 export function isErpAccessRestrictedPayrollGroup(payrollGroup) {
   return ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS.includes(normalizePayrollGroup(payrollGroup));
 }

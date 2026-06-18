@@ -20,6 +20,8 @@ import {
   normalizeStaffNumberConfig,
 } from '../shared/lib/hrEmployeeNumber.js';
 import { getStaffNumberConfig } from './hrStaffNumbering.js';
+import { isBeneficiaryOnlyPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
+import { BENEFICIARY_NO_LOGIN_ERROR } from './hrStaffAccessPolicy.js';
 
 export const BULK_IMPORT_DEFAULT_PASSWORD = 'Zarewa@123';
 
@@ -959,7 +961,7 @@ export function detectStaffPayrollGroup(row) {
 
 export function mapRoleKeyFromJob(jobTitle, department, payrollGroup) {
   const pg = String(payrollGroup || '').trim();
-  if (pg === 'scholarship' || pg === 'chairman_staffs' || pg === 'mining_div') {
+  if (pg === 'mining_div') {
     return 'hr_portal_only';
   }
   const s = normTitleToken(`${jobTitle || ''} ${department || ''}`);
@@ -1305,6 +1307,9 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
       : titleResolved;
   const payrollGroup =
     row.payrollGroup || detectStaffPayrollGroup({ ...row, designation: resolvedTitle.jobTitle || row.designation });
+  if (isBeneficiaryOnlyPayrollGroup(payrollGroup)) {
+    errors.push({ field: 'payrollGroup', message: BENEFICIARY_NO_LOGIN_ERROR });
+  }
   const roleKey =
     String(row.roleKey || '').trim() ||
     mapRoleKeyFromJob(

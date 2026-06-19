@@ -664,7 +664,7 @@ function insertTreasurySplitTx(db, lines, base) {
   return rows;
 }
 
-function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = '', actor = null, opts = {}) {
+export function reverseTreasurySourceTx(db, sourceKind, sourceId, reversalType, note = '', actor = null, opts = {}) {
   const postedAtISO =
     normalizeIsoTimestamp(String(opts.postedAtISO || '').trim()) || new Date().toISOString();
   const rows = db
@@ -5725,7 +5725,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   const qrow = db
     .prepare(
       `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, manager_production_approval_level,
-              branch_id, lines_json,
+              branch_id, lines_json, date_iso,
               md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
               price_exception_md_review_required
        FROM quotations WHERE id = ?`
@@ -5739,6 +5739,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
       id: qref,
       lines_json: qrow.lines_json,
       branch_id: qrow.branch_id,
+      date_iso: qrow.date_iso,
     };
     const { violations, hasFloorRows } = quotationPriceViolations(db, priceRow);
     const priceMapped = {
@@ -7682,11 +7683,25 @@ const BELOW_FLOOR_MD_GATE_MESSAGE =
  * @param {object} linesJson
  * @param {string} branchId
  */
-function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId) {
+function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dateIsoOverride) {
+  const qid = String(quotationId || '').trim() || 'draft-floor-check';
+  let date_iso =
+    dateIsoOverride != null && String(dateIsoOverride).trim()
+      ? String(dateIsoOverride).trim().slice(0, 10)
+      : undefined;
+  if (!date_iso && qid && qid !== 'draft-floor-check') {
+    try {
+      const q = db.prepare(`SELECT date_iso FROM quotations WHERE id = ?`).get(qid);
+      date_iso = q?.date_iso ?? undefined;
+    } catch {
+      date_iso = undefined;
+    }
+  }
   const row = {
-    id: String(quotationId || '').trim() || 'draft-floor-check',
+    id: qid,
     lines_json: JSON.stringify(linesJson),
     branch_id: branchId,
+    ...(date_iso ? { date_iso } : {}),
   };
   const { violations, hasFloorRows } = quotationPriceViolations(db, row);
   return {
@@ -7703,8 +7718,8 @@ function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId) {
  * @param {object} linesJson
  * @param {string} branchId
  */
-function syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, branchId) {
-  const snap = quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId);
+function syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, branchId, dateIsoOverride) {
+  const snap = quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dateIsoOverride);
   const qid = String(quotationId || '').trim();
   if (qid) {
     db.prepare(`UPDATE quotations SET price_exception_md_review_required = ? WHERE id = ?`).run(
@@ -7756,16 +7771,17 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
+  const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
   const pricingHeaderCtx = {
     materialTypeId: linesJson.materialTypeId,
     materialGauge: linesJson.materialGauge,
     materialDesign: linesJson.materialDesign,
+    asAtIso: dateISO,
   };
   applyPricingSnapshotsToServices(db, linesJson.products, bid, pricingHeaderCtx);
   applyPricingSnapshotsToServices(db, linesJson.services, bid, pricingHeaderCtx);
   const totalNgn = sumQuotationLinesJson(linesJson);
   const id = nextQuotationHumanId(db, bid);
-  const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
   const dueDateISO = payload.dueDateISO || '';
   const totalDisplay = `₦${totalNgn.toLocaleString('en-NG')}`;
@@ -7812,7 +7828,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
     syncQuotationLineRows(db, id, linesJson);
   })();
 
-  syncQuotationBelowFloorReviewFlag(db, id, linesJson, bid);
+  syncQuotationBelowFloorReviewFlag(db, id, linesJson, bid, dateISO);
 
   return id;
 }
@@ -7951,14 +7967,22 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (payload.lines) {
     const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim();
     enrichQuotationLinesWithMaterialHeader(linesJson);
+    const quoteDateIso = String(payload.dateISO ?? existing.date_iso ?? '').trim().slice(0, 10);
     const pricingHeaderCtx = {
       materialTypeId: linesJson.materialTypeId,
       materialGauge: linesJson.materialGauge,
       materialDesign: linesJson.materialDesign,
+      ...(quoteDateIso.match(/^\d{4}-\d{2}-\d{2}$/) ? { asAtIso: quoteDateIso } : {}),
     };
     applyPricingSnapshotsToServices(db, linesJson.products, bidUpd, pricingHeaderCtx);
     applyPricingSnapshotsToServices(db, linesJson.services, bidUpd, pricingHeaderCtx);
-    syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, bidUpd);
+    syncQuotationBelowFloorReviewFlag(
+      db,
+      quotationId,
+      linesJson,
+      bidUpd,
+      payload.dateISO ?? existing.date_iso
+    );
   } else {
     enrichQuotationLinesWithMaterialHeader(linesJson);
   }

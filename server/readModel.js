@@ -85,11 +85,34 @@ function mapCustomerRow(row) {
     crmTags: parseCrmTagsJson(row.crm_tags_json),
     crmProfileNotes: row.crm_profile_notes ?? '',
     branchId: row.branch_id ?? '',
+    staffEmployeeNo: String(row.staff_employee_no ?? '').trim(),
+    staffDisplayName: String(row.staff_display_name ?? '').trim(),
   };
 }
 
+function staffSalesCustomerJoinReady(db) {
+  try {
+    const cols = new Set(db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name));
+    return cols.has('sales_customer_id');
+  } catch {
+    return false;
+  }
+}
+
+const STAFF_LINKED_CUSTOMER_SELECT = `
+  SELECT c.*, p.employee_no AS staff_employee_no, u.display_name AS staff_display_name
+  FROM customers c
+  LEFT JOIN hr_staff_profiles p ON trim(IFNULL(p.sales_customer_id, '')) = trim(c.customer_id)
+  LEFT JOIN app_users u ON u.id = p.user_id`;
+
 export function listCustomers(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'customers', branchScope);
+  if (staffSalesCustomerJoinReady(db)) {
+    return db
+      .prepare(`${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')} ORDER BY c.name COLLATE NOCASE`)
+      .all(...b.args)
+      .map((row) => mapCustomerRow(row));
+  }
   return db
     .prepare(`SELECT * FROM customers WHERE 1=1${b.sql} ORDER BY name COLLATE NOCASE`)
     .all(...b.args)
@@ -98,6 +121,14 @@ export function listCustomers(db, branchScope = 'ALL') {
 
 export function getCustomer(db, customerId, branchScope = 'ALL') {
   const b = branchWhere(db, 'customers', branchScope);
+  if (staffSalesCustomerJoinReady(db)) {
+    const row = db
+      .prepare(
+        `${STAFF_LINKED_CUSTOMER_SELECT} WHERE c.customer_id = ?${b.sql.replace(/branch_id/g, 'c.branch_id')}`
+      )
+      .get(customerId, ...b.args);
+    return mapCustomerRow(row);
+  }
   const row = db
     .prepare(`SELECT * FROM customers WHERE customer_id = ?${b.sql}`)
     .get(customerId, ...b.args);

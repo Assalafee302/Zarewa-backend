@@ -146,6 +146,34 @@ export function ensureStaffSalesCustomer(db, userId, actor = null) {
   return { ok: true, customerId, created: true };
 }
 
+/** Sync linked staff customer names from HR profiles (employee no + display name). */
+export function backfillStaffSalesCustomerNames(db) {
+  if (!hrTablesReady(db) || !staffPurchaseCreditColumnsReady(db)) {
+    return { ok: false, error: 'HR staff purchase credit not migrated.' };
+  }
+  const rows = db
+    .prepare(
+      `SELECT p.sales_customer_id, p.employee_no, u.display_name, u.username
+       FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id
+       WHERE trim(IFNULL(p.sales_customer_id, '')) != ''`
+    )
+    .all();
+  let synced = 0;
+  for (const row of rows) {
+    const cid = String(row.sales_customer_id || '').trim();
+    if (!cid) continue;
+    const expectedName = formatStaffSalesCustomerName(row.display_name || row.username, row.employee_no);
+    const cust = db.prepare(`SELECT name FROM customers WHERE customer_id = ?`).get(cid);
+    if (!cust) continue;
+    if (String(cust.name || '').trim() !== expectedName) {
+      syncStaffSalesCustomerName(db, cid, expectedName);
+      synced += 1;
+    }
+  }
+  return { ok: true, synced, total: rows.length };
+}
+
 export function computeStaffPurchaseCreditEligibility(db, userId) {
   const policy = getStaffPurchaseCreditPolicy(db);
   const issues = [];

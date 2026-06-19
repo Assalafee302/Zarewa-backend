@@ -14,6 +14,7 @@ import { withMigrationLock } from './migrationLock.js';
 import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
+import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -5508,6 +5509,11 @@ function migrateStaffPurchaseCredit2026(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_quotations_staff_purchase ON quotations(staff_purchase_credit_id)`);
   } catch {
     /* ignore */
+  }
+  try {
+    backfillStaffSalesCustomerNames(db);
+  } catch (e) {
+    console.warn('[migrate] staff sales customer name backfill skipped:', e?.message || e);
   }
 }
 

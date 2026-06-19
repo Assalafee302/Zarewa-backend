@@ -692,6 +692,74 @@ function runMigrationsUnlocked(db) {
     }
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bank_deposits (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      bank_date_iso TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      allocated_ngn INTEGER NOT NULL DEFAULT 0,
+      description TEXT,
+      bank_reference TEXT,
+      treasury_account_id INTEGER NOT NULL,
+      treasury_movement_id TEXT,
+      status TEXT NOT NULL DEFAULT 'OPEN',
+      reserved_at_iso TEXT,
+      reserved_by_user_id TEXT,
+      reserved_by_name TEXT,
+      reserved_until_iso TEXT,
+      registered_at_iso TEXT NOT NULL,
+      registered_by_user_id TEXT,
+      registered_by_name TEXT,
+      note TEXT,
+      bank_recon_line_id TEXT,
+      reversed_at_iso TEXT,
+      reversed_by_user_id TEXT,
+      reversed_by_name TEXT,
+      reclass_kind TEXT,
+      reclass_note TEXT,
+      reclassified_at_iso TEXT,
+      reclassified_by_user_id TEXT,
+      reclassified_by_name TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_deposits_branch_status ON bank_deposits(branch_id, status);
+
+    CREATE TABLE IF NOT EXISTS bank_deposit_allocations (
+      id TEXT PRIMARY KEY,
+      bank_deposit_id TEXT NOT NULL,
+      allocated_to_kind TEXT NOT NULL,
+      allocated_to_id TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      allocated_at_iso TEXT NOT NULL,
+      allocated_by_user_id TEXT,
+      allocated_by_name TEXT,
+      FOREIGN KEY (bank_deposit_id) REFERENCES bank_deposits(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_deposit_alloc_deposit ON bank_deposit_allocations(bank_deposit_id);
+  `);
+
+  const bankDeposits = tableCols('bank_deposits');
+  if (bankDeposits.size > 0) {
+    if (!bankDeposits.has('reversed_by_name')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reversed_by_name TEXT`);
+    }
+    if (!bankDeposits.has('reclass_kind')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reclass_kind TEXT`);
+    }
+    if (!bankDeposits.has('reclass_note')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reclass_note TEXT`);
+    }
+    if (!bankDeposits.has('reclassified_at_iso')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reclassified_at_iso TEXT`);
+    }
+    if (!bankDeposits.has('reclassified_by_user_id')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reclassified_by_user_id TEXT`);
+    }
+    if (!bankDeposits.has('reclassified_by_name')) {
+      db.exec(`ALTER TABLE bank_deposits ADD COLUMN reclassified_by_name TEXT`);
+    }
+  }
+
   const customers = tableCols('customers');
   if (!customers.has('company_name')) {
     db.exec(`ALTER TABLE customers ADD COLUMN company_name TEXT`);
@@ -4650,6 +4718,7 @@ function migrateCanonicalBranchIds(db) {
     'transport_agents',
     'products',
     'bank_reconciliation_lines',
+    'bank_deposits',
     'stock_movements',
     'hr_staff_profiles',
     'hr_requests',
@@ -4785,6 +4854,7 @@ function migrateBranches(db) {
   }
   addBranch('products');
   addBranch('bank_reconciliation_lines');
+  addBranch('bank_deposits');
   if (tableCols('treasury_accounts').has('branch_id')) {
     db.prepare(
       `UPDATE treasury_accounts SET branch_id = 'BR-KD' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`

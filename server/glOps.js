@@ -110,6 +110,8 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-fa-furniture', '1502', 'Furniture & fittings', 'asset', 34);
   ins.run('acc-fa-generator', '1504', 'Generators', 'asset', 36);
   ins.run('acc-fa-gain-loss', '6200', 'Gain/loss on asset disposal', 'expense', 93);
+  ins.run('acc-bank-suspense', '2150', 'Unallocated bank receipts', 'liability', 76);
+  ins.run('acc-inter-branch', '1300', 'Inter-branch receivable', 'asset', 22);
 }
 
 export function getGlAccountIdByCode(db, code) {
@@ -564,6 +566,203 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
       { accountCode: '1000', debitNgn: amt, memo: refundId },
     ],
   });
+}
+
+/** Dr Cash (1000), Cr suspense (2150) — when Finance registers an unlinked bank deposit. */
+export function tryPostBankDepositRegisterGl(db, payload) {
+  const depositId = String(payload.depositId || '').trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (!depositId || amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid bank deposit GL date.' };
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Unlinked bank deposit ${depositId}`,
+      sourceKind: 'BANK_DEPOSIT_REGISTER_GL',
+      sourceId: depositId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '1000', debitNgn: amt, memo: depositId },
+        { accountCode: '2150', creditNgn: amt, memo: depositId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** Dr suspense (2150), Cr AR/advances — when deposit is linked to a customer receipt or advance. */
+export function tryPostBankDepositAllocationGl(db, payload) {
+  const depositId = String(payload.depositId || '').trim();
+  const ledgerEntryId = String(payload.ledgerEntryId || '').trim();
+  const allocId = String(payload.allocationId || `${depositId}:${ledgerEntryId}`).trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (!depositId || !ledgerEntryId || amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid allocation GL date.' };
+  ensureSupplementalGlAccounts(db);
+  const kind = String(payload.allocKind || '').trim().toLowerCase();
+  let creditAccount = '1200';
+  if (kind === 'advance') {
+    creditAccount = '2500';
+  } else {
+    const le = db.prepare(`SELECT quotation_ref, at_iso FROM ledger_entries WHERE id = ?`).get(ledgerEntryId);
+    creditAccount = resolveCustomerReceiptGlCreditAccount(db, {
+      quotationRef: le?.quotation_ref,
+      entryDateISO: date,
+      receiptAtISO: le?.at_iso || date,
+    });
+  }
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Link bank deposit ${depositId} to ${ledgerEntryId}`,
+      sourceKind: 'BANK_DEPOSIT_ALLOC_GL',
+      sourceId: allocId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '2150', debitNgn: amt, memo: ledgerEntryId },
+        { accountCode: creditAccount, creditNgn: amt, memo: ledgerEntryId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** Reverse register GL (Dr 2150, Cr 1000) when an unlinked deposit is reversed. */
+export function tryPostBankDepositReverseGl(db, payload) {
+  const depositId = String(payload.depositId || '').trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (!depositId || amt <= 0) return { ok: true, skipped: true };
+  const has = db
+    .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = 'BANK_DEPOSIT_REGISTER_GL' AND source_id = ?`)
+    .get(depositId);
+  if (!has) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid reverse GL date.' };
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Reverse unlinked bank deposit ${depositId}`,
+      sourceKind: 'BANK_DEPOSIT_REVERSE_GL',
+      sourceId: depositId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '2150', debitNgn: amt, memo: depositId },
+        { accountCode: '1000', creditNgn: amt, memo: depositId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** Move suspense to final account when deposit is not a customer payment. */
+export function tryPostBankDepositReclassGl(db, payload) {
+  const depositId = String(payload.depositId || '').trim();
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  const creditAccount = String(payload.creditAccountCode || '').trim();
+  if (!depositId || amt <= 0 || !creditAccount) return { ok: true, skipped: true };
+  const has = db
+    .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = 'BANK_DEPOSIT_REGISTER_GL' AND source_id = ?`)
+    .get(depositId);
+  if (!has) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid reclass GL date.' };
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: payload.memo || `Reclass bank deposit ${depositId}`,
+      sourceKind: 'BANK_DEPOSIT_RECLASS_GL',
+      sourceId: depositId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '2150', debitNgn: amt, memo: depositId },
+        { accountCode: creditAccount, creditNgn: amt, memo: depositId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** Undo duplicate receipt cash GL after merge (Dr AR/adv, Cr 1000). */
+export function tryPostBankDepositMergeDuplicateReceiptGl(db, payload) {
+  const ledgerEntryId = String(payload.ledgerEntryId || '').trim();
+  const depositId = String(payload.depositId || '').trim();
+  const mergeId = `${depositId}:${ledgerEntryId}`;
+  if (!ledgerEntryId || !depositId) return { ok: true, skipped: true };
+  const has = db
+    .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = 'CUSTOMER_RECEIPT_GL' AND source_id = ?`)
+    .get(ledgerEntryId);
+  if (!has) return { ok: true, skipped: true };
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid merge GL date.' };
+  const resolved = resolveReceiptReversalAccountFromMetaOrJournalLines(db, ledgerEntryId);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.message, code: resolved.reasonCode, requiresManualReview: true };
+  }
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Merge duplicate receipt cash ${ledgerEntryId} → ${depositId}`,
+      sourceKind: 'BANK_DEPOSIT_MERGE_RECEIPT_GL',
+      sourceId: mergeId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: resolved.accountCode, debitNgn: amt, memo: ledgerEntryId },
+        { accountCode: '1000', creditNgn: amt, memo: ledgerEntryId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** Undo duplicate advance cash GL after merge (Dr 2500, Cr 1000). */
+export function tryPostBankDepositMergeDuplicateAdvanceGl(db, payload) {
+  const ledgerEntryId = String(payload.ledgerEntryId || '').trim();
+  const depositId = String(payload.depositId || '').trim();
+  const mergeId = `${depositId}:${ledgerEntryId}`;
+  if (!ledgerEntryId || !depositId) return { ok: true, skipped: true };
+  const has = db
+    .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = 'CUSTOMER_ADVANCE_GL' AND source_id = ?`)
+    .get(ledgerEntryId);
+  if (!has) return { ok: true, skipped: true };
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  if (amt <= 0) return { ok: true, skipped: true };
+  const date = String(payload.entryDateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid merge GL date.' };
+  ensureSupplementalGlAccounts(db);
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo: `Merge duplicate advance cash ${ledgerEntryId} → ${depositId}`,
+      sourceKind: 'BANK_DEPOSIT_MERGE_ADVANCE_GL',
+      sourceId: mergeId,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: '2500', debitNgn: amt, memo: ledgerEntryId },
+        { accountCode: '1000', creditNgn: amt, memo: ledgerEntryId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 }
 
 export function listGlJournalEntries(db, startDate, endDate) {

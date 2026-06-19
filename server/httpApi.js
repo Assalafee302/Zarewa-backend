@@ -407,6 +407,7 @@ import {
   priceListItemsToCsv,
   quotationPriceViolations,
   upsertPriceListItem,
+  normalizePricingAsAtIso,
 } from './pricingOps.js';
 import { getPricingPolicyBundle, patchPricingPolicyBundle } from './pricingPolicyOps.js';
 import { buildCustomerPriceBookHtml } from './customerPriceBook.js';
@@ -422,6 +423,21 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import {
+  allocateBankDepositTx,
+  findSimilarOpenBankDeposits,
+  getBankDepositById,
+  listBankDepositAllocationsForDeposit,
+  listBankDepositDuplicateExceptions,
+  listBankDeposits,
+  mergeBankDepositDuplicate,
+  reclassBankDeposit,
+  registerBankDeposit,
+  releaseBankDepositReservation,
+  reserveBankDeposit,
+  reverseBankDeposit,
+} from './bankDepositOps.js';
+import { BANK_DEPOSIT_ALLOC_KIND_ADVANCE, BANK_DEPOSIT_ALLOC_KIND_RECEIPT } from '../shared/lib/bankDeposits.js';
 import {
   approveMaterialIncident,
   computePoolSummary,
@@ -4333,7 +4349,9 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/pricing/price-list', requirePermission(['pricing.manage', 'md.price_exception.approve']), (req, res) => {
     try {
-      res.json({ ok: true, items: listPriceListItems(db) });
+      const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
+      const pricingAsAtIso = asAtIso || normalizePricingAsAtIso(null);
+      res.json({ ok: true, items: listPriceListItems(db, asAtIso), pricingAsAtIso });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load price list.' });
@@ -4345,8 +4363,10 @@ export function registerHttpApi(app, db) {
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
     (req, res) => {
       try {
-        const csv = priceListItemsToCsv(listPriceListItems(db));
-        const name = `price-list-items-${new Date().toISOString().slice(0, 10)}.csv`;
+        const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
+        const csv = priceListItemsToCsv(listPriceListItems(db, asAtIso));
+        const label = asAtIso || new Date().toISOString().slice(0, 10);
+        const name = `price-list-items-${label}.csv`;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
         res.send(`\uFEFF${csv}`);
@@ -4381,7 +4401,8 @@ export function registerHttpApi(app, db) {
     try {
       const materialKey = String(req.query.materialKey || '').trim();
       const branchId = String(req.query.branchId || '').trim();
-      const r = listMaterialPricingSheet(db, materialKey, branchId);
+      const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
+      const r = listMaterialPricingSheet(db, materialKey, branchId, asAtIso);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -4418,7 +4439,11 @@ export function registerHttpApi(app, db) {
           return;
         }
         const branchLabel = String(req.query.branchName || req.query.branchLabel || '').trim();
-        const html = buildMaterialWorkbookAllHtml(db, branchId, { branchLabel: branchLabel || undefined });
+        const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
+        const html = buildMaterialWorkbookAllHtml(db, branchId, {
+          branchLabel: branchLabel || undefined,
+          asAtIso,
+        });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
       } catch (e) {
@@ -4482,7 +4507,7 @@ export function registerHttpApi(app, db) {
         const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
@@ -4525,7 +4550,7 @@ export function registerHttpApi(app, db) {
         const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
@@ -4585,7 +4610,8 @@ export function registerHttpApi(app, db) {
     requirePermission(['pricing.manage', 'md.price_exception.approve', 'pricing.policy.manage']),
     (req, res) => {
       try {
-        const html = buildCustomerPriceBookHtml(db);
+        const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
+        const html = buildCustomerPriceBookHtml(db, asAtIso);
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
       } catch (e) {
@@ -4598,7 +4624,7 @@ export function registerHttpApi(app, db) {
   app.get('/api/quotations/:id/pricing-violations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const qid = String(req.params.id || '').trim();
-      const raw = db.prepare(`SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
+      const raw = db.prepare(`SELECT id, lines_json, branch_id, date_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
       if (!raw) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const v = quotationPriceViolations(db, raw);
       res.json({
@@ -6097,6 +6123,7 @@ export function registerHttpApi(app, db) {
         profileName: q.profileName,
         materialTypeName: q.materialTypeName,
         designLabel: q.designLabel,
+        asAtIso: String(q.asAtIso || q.asOf || '').trim().slice(0, 10) || undefined,
       });
       res.json({ ok: true, result });
     } catch (e) {
@@ -8159,6 +8186,130 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.get('/api/bank-deposits', requirePermission([...LEDGER_RELATED_PERMS, 'finance.view']), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const openOnly = String(req.query?.openOnly ?? req.query?.open_only ?? '') === '1';
+      const deposits = listBankDeposits(db, branchScope, { openOnly });
+      res.json({ ok: true, deposits });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to list bank deposits.' });
+    }
+  });
+
+  app.get(
+    '/api/bank-deposits/exceptions/duplicates',
+    requirePermission([...LEDGER_RELATED_PERMS, 'finance.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const exceptions = listBankDepositDuplicateExceptions(db, branchScope);
+        res.json({ ok: true, exceptions });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load duplicate bank deposit exceptions.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/bank-deposits/:depositId',
+    requirePermission([...LEDGER_RELATED_PERMS, 'finance.view']),
+    (req, res) => {
+      try {
+        const deposit = getBankDepositById(db, req.params.depositId);
+        if (!deposit) return res.status(404).json({ ok: false, error: 'Bank deposit not found.' });
+        const allocations = listBankDepositAllocationsForDeposit(db, deposit.id);
+        res.json({ ok: true, deposit, allocations });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load bank deposit.' });
+      }
+    }
+  );
+
+  app.post('/api/bank-deposits', requirePermission('finance.post'), (req, res) => {
+    try {
+      if (req.workspaceViewAll) {
+        return res.status(403).json({ ok: false, error: 'Select a single branch workspace to register bank payments.' });
+      }
+      const r = registerBankDeposit(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, req.user);
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/bank-deposits/:depositId/reserve', requirePermission('receipts.post'), (req, res) => {
+    try {
+      const r = reserveBankDeposit(db, req.params.depositId, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.patch('/api/bank-deposits/:depositId/release-reservation', requirePermission('receipts.post'), (req, res) => {
+    try {
+      const r = releaseBankDepositReservation(db, req.params.depositId, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/bank-deposits/:depositId/merge', requirePermission('finance.post'), (req, res) => {
+    try {
+      if (req.workspaceViewAll) {
+        return res.status(403).json({ ok: false, error: 'Select a single branch workspace to merge bank deposits.' });
+      }
+      const ledgerEntryId = String(req.body?.ledgerEntryId ?? req.body?.ledger_entry_id ?? '').trim();
+      const r = mergeBankDepositDuplicate(db, {
+        depositId: req.params.depositId,
+        ledgerEntryId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/bank-deposits/:depositId/reverse', requirePermission('finance.post'), (req, res) => {
+    try {
+      if (req.workspaceViewAll) {
+        return res.status(403).json({ ok: false, error: 'Select a single branch workspace to reverse bank deposits.' });
+      }
+      const note = String(req.body?.note ?? '').trim();
+      const r = reverseBankDeposit(db, req.params.depositId, req.user, note);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/bank-deposits/:depositId/reclass', requirePermission('finance.post'), (req, res) => {
+    try {
+      if (req.workspaceViewAll) {
+        return res.status(403).json({ ok: false, error: 'Select a single branch workspace to reclass bank deposits.' });
+      }
+      const r = reclassBankDeposit(db, req.params.depositId, req.user, {
+        reclassKind: req.body?.reclassKind ?? req.body?.reclass_kind,
+        note: req.body?.note,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.patch('/api/customers/:customerId', requirePermission('customers.manage'), (req, res) => {
     try {
       const cid = req.params.customerId;
@@ -8288,7 +8439,7 @@ export function registerHttpApi(app, db) {
       const amountDueNgn = policyFlags.accountingPolicyV1Labels
         ? paymentPolicy.amountDueNgn
         : amountDueOnQuotationFromEntries(allEntries, row);
-      const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(req.params.id);
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(req.params.id);
       const pv = quotationPriceViolations(db, rawPv);
       res.json({
         ok: true,
@@ -8310,7 +8461,7 @@ export function registerHttpApi(app, db) {
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       syncQuotationStaffPurchaseFlag(db, id);
       const quotation = getQuotation(db, id);
-      const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(id);
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
       const duplicateWarnings = duplicateQuotationCreateSignals(db, {
         customerID: quotation?.customerID ?? req.body?.customerID,
@@ -8415,7 +8566,7 @@ export function registerHttpApi(app, db) {
         const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
         syncQuotationStaffPurchaseFlag(db, qid);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return {
           quotation: {
@@ -8605,12 +8756,52 @@ export function registerHttpApi(app, db) {
       });
       if (!plan.ok) return res.status(400).json(plan);
 
+      const postAmountNgn = Math.round(Number(amountNgn) || 0);
       const treasuryLines = normalizeTreasuryLines(req.body || {});
-      if (treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== Math.round(Number(amountNgn) || 0)) {
+      const bankDepositId = String(req.body?.bankDepositId ?? req.body?.bank_deposit_id ?? '').trim();
+      let depositCoverNgn = 0;
+      if (bankDepositId) {
+        const dep = getBankDepositById(db, bankDepositId);
+        if (!dep) {
+          return res.status(404).json({ ok: false, error: 'Linked bank deposit not found.', code: 'BANK_DEPOSIT_NOT_FOUND' });
+        }
+        if (String(dep.branchId || '') !== String(req.workspaceBranchId || DEFAULT_BRANCH_ID).trim()) {
+          return res.status(400).json({ ok: false, error: 'Bank deposit belongs to a different branch.' });
+        }
+        depositCoverNgn = Math.min(postAmountNgn, Math.round(Number(dep.remainingNgn) || 0));
+        if (depositCoverNgn <= 0) {
+          return res.status(400).json({
+            ok: false,
+            error: 'This bank deposit has no remaining balance to link.',
+            code: 'BANK_DEPOSIT_EXHAUSTED',
+          });
+        }
+      }
+      const treasuryCashRequired = postAmountNgn - depositCoverNgn;
+      if (treasuryCashRequired > 0) {
+        if (treasuryLines.length === 0) {
+          return res.status(400).json({
+            ok: false,
+            error: `Enter treasury payment lines for the remaining ₦${treasuryCashRequired.toLocaleString('en-NG')} not covered by the linked bank deposit.`,
+            code: 'TREASURY_REMAINDER_REQUIRED',
+          });
+        }
+        if (totalTreasuryLines(treasuryLines) !== treasuryCashRequired) {
+          return res.status(400).json({
+            ok: false,
+            error: `Treasury lines must equal ₦${treasuryCashRequired.toLocaleString('en-NG')} (advance total minus linked deposit).`,
+          });
+        }
+      } else if (treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== 0) {
+        return res.status(400).json({
+          ok: false,
+          error: 'When the full advance is covered by a linked bank deposit, omit treasury payment lines.',
+        });
+      } else if (!bankDepositId && treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== postAmountNgn) {
         return res.status(400).json({ ok: false, error: 'Treasury lines must equal the advance amount.' });
       }
 
-      const [entry] = db.transaction(() => {
+      const { saved, bankDepositAllocation } = db.transaction(() => {
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const saved = insertLedgerRows(
           db,
@@ -8625,6 +8816,19 @@ export function registerHttpApi(app, db) {
           write.insertAdvanceInEvent(db, row);
         }
         const [created] = saved;
+        let bankDepositAllocation = null;
+        if (created?.id && bankDepositId && depositCoverNgn > 0) {
+          const alloc = allocateBankDepositTx(db, {
+            depositId: bankDepositId,
+            ledgerEntryId: created.id,
+            kind: BANK_DEPOSIT_ALLOC_KIND_ADVANCE,
+            amountNgn: depositCoverNgn,
+            actor: req.user,
+            branchId: wb,
+          });
+          if (!alloc.ok) throw new Error(alloc.error || 'Could not link bank deposit.');
+          bankDepositAllocation = alloc;
+        }
         if (created && treasuryLines.length > 0) {
           write.recordCustomerAdvanceCash(db, {
             sourceId: created.id,
@@ -8640,7 +8844,7 @@ export function registerHttpApi(app, db) {
             actor: req.user,
           });
         }
-        if (created && treasuryLines.length > 0) {
+        if (created && (treasuryLines.length > 0 || bankDepositId)) {
           const glA = tryPostCustomerAdvanceGl(db, {
             ledgerEntryId: created.id,
             amountNgn: created.amountNgn,
@@ -8660,9 +8864,19 @@ export function registerHttpApi(app, db) {
           note: purpose || 'Customer advance posted',
           details: { customerID, amountNgn: Math.round(Number(amountNgn) || 0) },
         });
-        return saved;
+        return { saved, bankDepositAllocation };
       })();
-      const payload = { ok: true, entry };
+      const [entry] = saved;
+      const similarUnlinkedDeposits =
+        !bankDepositId && postAmountNgn > 0
+          ? findSimilarOpenBankDeposits(db, {
+              branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              amountNgn: postAmountNgn,
+              bankDateISO: dateISO,
+              bankReference,
+            })
+          : [];
+      const payload = { ok: true, entry, bankDepositAllocation: bankDepositAllocation ?? null, similarUnlinkedDeposits };
       storeIdempotentSuccess(db, req, 'ledger.advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
@@ -8869,8 +9083,49 @@ export function registerHttpApi(app, db) {
       if (!plan.ok) return res.status(400).json(plan);
 
       const treasuryLines = normalizeTreasuryLines(req.body || {});
-      if (treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== Math.round(Number(amountNgn) || 0)) {
+      const bankDepositId = String(req.body?.bankDepositId ?? req.body?.bank_deposit_id ?? '').trim();
+      let depositCoverNgn = 0;
+      if (bankDepositId) {
+        const dep = getBankDepositById(db, bankDepositId);
+        if (!dep) {
+          return res.status(404).json({ ok: false, error: 'Linked bank deposit not found.', code: 'BANK_DEPOSIT_NOT_FOUND' });
+        }
+        if (String(dep.branchId || '') !== String(req.workspaceBranchId || DEFAULT_BRANCH_ID).trim()) {
+          return res.status(400).json({ ok: false, error: 'Bank deposit belongs to a different branch.' });
+        }
+        depositCoverNgn = Math.min(postAmountNgn, Math.round(Number(dep.remainingNgn) || 0));
+        if (depositCoverNgn <= 0) {
+          return res.status(400).json({
+            ok: false,
+            error: 'This bank deposit has no remaining balance to link.',
+            code: 'BANK_DEPOSIT_EXHAUSTED',
+          });
+        }
+      }
+      const treasuryCashRequired = postAmountNgn - depositCoverNgn;
+      if (treasuryCashRequired > 0) {
+        if (treasuryLines.length === 0) {
+          return res.status(400).json({
+            ok: false,
+            error: `Enter treasury payment lines for the remaining ₦${treasuryCashRequired.toLocaleString('en-NG')} not covered by the linked bank deposit.`,
+            code: 'TREASURY_REMAINDER_REQUIRED',
+          });
+        }
+        if (totalTreasuryLines(treasuryLines) !== treasuryCashRequired) {
+          return res.status(400).json({
+            ok: false,
+            error: `Treasury lines must equal ₦${treasuryCashRequired.toLocaleString('en-NG')} (receipt total minus linked deposit).`,
+          });
+        }
+      } else if (treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== 0) {
+        return res.status(400).json({
+          ok: false,
+          error: 'When the full receipt is covered by a linked bank deposit, omit treasury payment lines.',
+        });
+      } else if (!bankDepositId && treasuryLines.length > 0 && totalTreasuryLines(treasuryLines) !== Math.round(Number(amountNgn) || 0)) {
         return res.status(400).json({ ok: false, error: 'Treasury lines must equal the receipt amount.' });
+      } else if (!bankDepositId && treasuryLines.length === 0 && postAmountNgn > 0) {
+        return res.status(400).json({ ok: false, error: 'Treasury payment lines are required for this receipt.' });
       }
 
       const amendSalesReceiptId = String(
@@ -8897,7 +9152,7 @@ export function registerHttpApi(app, db) {
         });
       }
 
-      const { saved, receipt, overpay } = db.transaction(() => {
+      const { saved, receipt, overpay, bankDepositAllocation } = db.transaction(() => {
         const wb = req.workspaceBranchId || DEFAULT_BRANCH_ID;
         const posted = insertLedgerRows(
           db,
@@ -8914,6 +9169,19 @@ export function registerHttpApi(app, db) {
           }
         }
         const parsed = receiptResultFromSavedRows(posted);
+        let bankDepositAllocation = null;
+        if (parsed.receipt?.id && bankDepositId && depositCoverNgn > 0) {
+          const alloc = allocateBankDepositTx(db, {
+            depositId: bankDepositId,
+            ledgerEntryId: parsed.receipt.id,
+            kind: BANK_DEPOSIT_ALLOC_KIND_RECEIPT,
+            amountNgn: depositCoverNgn,
+            actor: req.user,
+            branchId: wb,
+          });
+          if (!alloc.ok) throw new Error(alloc.error || 'Could not link bank deposit.');
+          bankDepositAllocation = alloc;
+        }
         if ((parsed.receipt || parsed.overpay) && treasuryLines.length > 0) {
           write.recordCustomerReceiptCash(db, {
             sourceId: parsed.receipt?.id || parsed.overpay?.id,
@@ -8929,7 +9197,7 @@ export function registerHttpApi(app, db) {
             actor: req.user,
           });
         }
-        if (parsed.receipt?.id && treasuryLines.length > 0) {
+        if (parsed.receipt?.id && (treasuryLines.length > 0 || bankDepositId)) {
           const glR = tryPostCustomerReceiptGl(db, {
             ledgerEntryId: parsed.receipt.id,
             amountNgn: parsed.receipt.amountNgn,
@@ -8966,9 +9234,25 @@ export function registerHttpApi(app, db) {
           },
         });
         write.syncQuotationPaidFromLedger(db, quotationId);
-        return { saved: posted, receipt: parsed.receipt, overpay: parsed.overpay };
+        return { saved: posted, receipt: parsed.receipt, overpay: parsed.overpay, bankDepositAllocation };
       })();
-      const payload = { ok: true, receipt, overpay, entries: saved };
+      const similarUnlinkedDeposits =
+        !bankDepositId && postAmountNgn > 0
+          ? findSimilarOpenBankDeposits(db, {
+              branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              amountNgn: postAmountNgn,
+              bankDateISO: dateISO,
+              bankReference: resolvedBankReference,
+            })
+          : [];
+      const payload = {
+        ok: true,
+        receipt,
+        overpay,
+        entries: saved,
+        bankDepositAllocation: bankDepositAllocation ?? null,
+        similarUnlinkedDeposits,
+      };
       storeIdempotentSuccess(db, req, 'ledger.receipt', 201, payload);
       res.status(201).json(payload);
     } catch (e) {

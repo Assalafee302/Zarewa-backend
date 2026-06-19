@@ -1013,7 +1013,13 @@ CREATE TABLE IF NOT EXISTS bank_deposits (
   note TEXT,
   bank_recon_line_id TEXT,
   reversed_at_iso TEXT,
-  reversed_by_user_id TEXT
+  reversed_by_user_id TEXT,
+  reversed_by_name TEXT,
+  reclass_kind TEXT,
+  reclass_note TEXT,
+  reclassified_at_iso TEXT,
+  reclassified_by_user_id TEXT,
+  reclassified_by_name TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_bank_deposits_branch_status ON bank_deposits(branch_id, status);

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { appendAuditLog } from './controlOps.js';
 import { upsertPriceListItem } from './pricingOps.js';
+import { listMaterialPricingRowsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
 
 export { roundConv2 } from '../shared/lib/conversionKgPerM.js';
@@ -461,8 +462,9 @@ function mapRow(row) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} materialKey
  * @param {string} branchId
+ * @param {string | null | undefined} [asAtIso]
  */
-export function listMaterialPricingSheet(db, materialKey, branchId) {
+export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
   const mk = normKey(materialKey);
   const bid = String(branchId || '').trim();
   if (!mk || (mk !== 'alu' && mk !== 'aluzinc' && mk !== 'stone-coated')) {
@@ -519,14 +521,48 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
       if (c != null) catalogHintByGauge[g] = roundConv2(c) ?? c;
     }
   }
-  const dbRows = db
-    .prepare(
-      `SELECT * FROM material_pricing_sheet_rows
-       WHERE material_key = ? AND branch_id = ?
-       ORDER BY gauge_mm ASC, design_key ASC`
-    )
-    .all(mk, bid)
-    .map((r) => mapRow(r));
+  const dbRows = (() => {
+    const asAt =
+      asAtIso != null && String(asAtIso).trim() ? normalizePricingAsAtIso(asAtIso) : null;
+    if (asAt) {
+      return listMaterialPricingRowsAsOf(db, bid, asAt)
+        .filter((r) => normKey(r.materialKey) === mk)
+        .map((r) => ({
+          id: r.id ?? `MPS-HIST-${mk}-${r.gaugeMm}-${r.designKey}`,
+          materialKey: r.materialKey,
+          gaugeMm: r.gaugeMm,
+          branchId: r.branchId,
+          designKey: r.designKey ?? '',
+          syncMinimumToPriceList: false,
+          syncDesignKey: '',
+          conversionStandardKgPerM: null,
+          conversionReferenceKgPerM: null,
+          conversionHistoryKgPerM: null,
+          conversionAvgKgPerM: null,
+          conversionUsedKgPerM: null,
+          costPerKgNgn: 0,
+          overheadNgnPerM: 0,
+          profitNgnPerM: 0,
+          suggestedPricePerMeterNgn: null,
+          minimumPricePerMeterNgn: r.minimumPricePerMeterNgn,
+          commissionNgnPerM: r.commissionNgnPerM,
+          publishedListPriceNgn: r.publishedListPriceNgn,
+          gaugeCustomerLabel: '',
+          notes: '',
+          updatedAtIso: null,
+          updatedByUserId: null,
+          pricingAsAtIso: asAt,
+        }));
+    }
+    return db
+      .prepare(
+        `SELECT * FROM material_pricing_sheet_rows
+         WHERE material_key = ? AND branch_id = ?
+         ORDER BY gauge_mm ASC, design_key ASC`
+      )
+      .all(mk, bid)
+      .map((r) => mapRow(r));
+  })();
 
   /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; usedSuggested: number | null; used: number | null }>} */
   const resolvedByGauge = {};
@@ -554,6 +590,7 @@ export function listMaterialPricingSheet(db, materialKey, branchId) {
     ok: true,
     materialKey: mk,
     branchId: bid,
+    pricingAsAtIso: asAtIso != null && String(asAtIso).trim() ? normalizePricingAsAtIso(asAtIso) : null,
     gauges: gaugeList,
     theoreticalStandardByGauge,
     catalogHintByGauge,

@@ -2,6 +2,7 @@
  * DB-backed material workbook prices for quotations.
  */
 import { resolveAliasForDesign, normKey } from './pricingPolicyResolve.js';
+import { listMaterialPricingRowsAsOf } from './pricingAsOf.js';
 import {
   designKeysToTry,
   gaugeMmKeyFromLabel,
@@ -122,7 +123,10 @@ export function resolveMaterialWorkbookPriceForQuotation(db, ctx) {
   if (!mk || !g) return null;
 
   const designKeys = expandedDesignKeys(db, ctx.designLabel);
-  const rows = listMaterialPricingRowsForSnapshot(db, bid);
+  const asAt = ctx.asAtIso != null && String(ctx.asAtIso).trim() ? String(ctx.asAtIso).trim().slice(0, 10) : null;
+  const rows = asAt
+    ? listMaterialPricingRowsAsOf(db, bid, asAt)
+    : listMaterialPricingRowsForSnapshot(db, bid);
   return resolveMaterialWorkbookPriceFromRows(rows, {
     materialKey: mk,
     gaugeMm: g,

@@ -173,6 +173,7 @@ export function serviceLineToFloorCtx(db, line, branchId) {
  * @returns {number | null}
  */
 export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
+  const asAtIso = headerCtx?.asAtIso;
   const productName = String(headerCtx?.productName ?? line?.name ?? '').trim();
   const isMeterSheet =
     isMeterSheetProductLine(productName) ||
@@ -187,6 +188,7 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
       gaugeLabel: headerCtx.materialGauge ?? line?.gauge ?? line?.gaugeLabel,
       designLabel: headerCtx.materialDesign ?? line?.design ?? line?.profile,
       branchId,
+      asAtIso,
     });
     if (wb != null && wb > 0) return wb;
   }
@@ -200,9 +202,9 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
     const girthMm = Number(line?.girthMm ?? line?.girth ?? 0) || 0;
     const roofingLine = { ...line, lineKind: 'roofing' };
     const ctx = serviceLineToFloorCtx(db, roofingLine, branchId);
-    const base = resolvePriceListItemFloorNgn(db, ctx);
+    const base = resolvePriceListItemFloorNgn(db, { ...ctx, asAtIso });
     if (!base?.unitPricePerMeterNgn || girthMm <= 0) {
-      const direct = resolvePriceListItemFloorNgn(db, serviceLineToFloorCtx(db, line, branchId));
+      const direct = resolvePriceListItemFloorNgn(db, { ...serviceLineToFloorCtx(db, line, branchId), asAtIso });
       return direct?.unitPricePerMeterNgn ?? null;
     }
     const segments = 1200 / girthMm;
@@ -213,7 +215,7 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
   }
 
   const ctx = serviceLineToFloorCtx(db, line, branchId);
-  const floor = resolvePriceListItemFloorNgn(db, ctx);
+  const floor = resolvePriceListItemFloorNgn(db, { ...ctx, asAtIso });
   return floor?.unitPricePerMeterNgn ?? null;
 }
 

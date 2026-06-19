@@ -76,6 +76,8 @@ export function getAllowedLegacyAccountTabs(user) {
  */
 export function getDefaultLegacyAccountTab(user) {
   const allowed = getAllowedLegacyAccountTabs(user);
+  const rk = String(user?.roleKey || user?.role_key || '').trim().toLowerCase();
+  if (rk === ROLE_CASHIER && allowed.includes('desk')) return 'desk';
   if (allowed.includes('treasury')) return 'treasury';
   return allowed[0] || 'treasury';
 }
@@ -100,7 +102,10 @@ export function resolveLegacyAccountsRedirect(user, tabId = '') {
   if (allowed.includes(tab)) return null;
   if (rk === ROLE_CASHIER) {
     const fallback = getDefaultLegacyAccountTab(user);
-    return { to: `/accounts?tab=${fallback}`, reason: 'tab_denied' };
+    return {
+      to: fallback === 'treasury' ? '/accounts' : `/accounts?tab=${fallback}`,
+      reason: 'tab_denied',
+    };
   }
   if (rk === ROLE_ACCOUNTANT) return { to: '/accounting', reason: 'tab_denied' };
   const fallback = allowed[0] || 'treasury';

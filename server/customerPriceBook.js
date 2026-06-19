@@ -2,7 +2,7 @@
  * Customer-facing price book HTML (print). Premium column is PDF-only (3.5% + rounding).
  */
 
-import { listPriceListItems } from './pricingOps.js';
+import { listPriceListItemsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { listMasterData } from './masterData.js';
 import { customerRidgeListAddOnNgn, getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { premiumProfilePriceFromBase } from './pricingPolicyResolve.js';
@@ -21,19 +21,16 @@ function fmtNgn(n) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} [asAtIso]
  */
-export function buildCustomerPriceBookHtml(db) {
-  const items = listPriceListItems(db);
+export function buildCustomerPriceBookHtml(db, asAtIso) {
+  const asAt = normalizePricingAsAtIso(asAtIso);
+  const items = listPriceListItemsAsOf(db, asAt);
   const md = listMasterData(db);
   const accessories = (md.quoteItems || []).filter((q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false);
   const policy = getPricingPolicyBundle(db);
 
-  let maxEff = '';
-  for (const it of items) {
-    const e = String(it.effectiveFromIso || '').trim();
-    if (e && e > maxEff) maxEff = e;
-  }
-  const effectiveLabel = maxEff || new Date().toISOString().slice(0, 10);
+  const effectiveLabel = asAt;
 
   const normMt = (s) =>
     String(s ?? '')

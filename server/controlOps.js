@@ -41,12 +41,18 @@ import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
 } from '../shared/workspaceGovernance.js';
-import { isEffectivelyFullyPaid, rawOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
+import {
+  quotationPricingAsAtIso,
+  workbookFloorPerMeterAsOf,
+  workbookFloorMinPerMeterAsOf,
+  selectPriceListRowsAsOf,
+} from './pricingAsOf.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
@@ -417,8 +423,8 @@ function gaugeKeyLookupCandidates(gaugeRaw) {
   return [...seen];
 }
 
-/** Published list ₦/m for gauge + design (same rules as `pricingOps.floorPricePerMeterForGaugeDesign`; inlined to avoid circular imports). */
-function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
+/** Published list ₦/m for gauge + design effective on {@link asAtIso} (quotation period). */
+function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId, asAtIso) {
   const d = normKeyPriceList(designRaw);
   if (!d) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
@@ -434,49 +440,33 @@ function listPricePerMeterFromGaugeDesign(db, gaugeRaw, designRaw, branchId) {
         profileName: '',
         materialTypeName: '',
         branchId: bid,
+        asAtIso,
       });
       if (scored?.unitPricePerMeterNgn) return scored.unitPricePerMeterNgn;
     } catch {
-      /* Floor resolver must not block direct price_list_items lookup (e.g. legacy DB quirks). */
-    }
-    try {
-      const row = db
-        .prepare(
-          `SELECT unit_price_per_meter_ngn FROM price_list_items
-           WHERE gauge_key = ? AND design_key = ? AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)
-           ORDER BY CASE WHEN branch_id IS NOT NULL THEN 0 ELSE 1 END,
-                    COALESCE(effective_from_iso, '') DESC,
-                    sort_order ASC
-           LIMIT 1`
-        )
-        .get(g, d, bid, bid);
-      if (row) {
-        const n = Math.round(Number(row.unit_price_per_meter_ngn) || 0);
-        if (n > 0) return n;
-      }
-    } catch {
-      /* ignore */
+      /* Floor resolver must not block legacy lookups. */
     }
   }
   return null;
 }
 
-/** Minimum workbook ₦/m for a gauge across all design_key rows (branch filter). Used when design/colour strings do not match any design_key. */
-function listPricePerMeterMinForGaugeAcrossDesigns(db, gaugeRaw, branchId) {
+/** Minimum list ₦/m for a gauge across designs, as at {@link asAtIso}. */
+function listPricePerMeterMinForGaugeAcrossDesigns(db, gaugeRaw, branchId, asAtIso) {
   const gaugeKeys = gaugeKeyLookupCandidates(gaugeRaw);
   if (!gaugeKeys.length) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
-  const placeholders = gaugeKeys.map(() => '?').join(', ');
+  const gaugeSet = new Set(gaugeKeys.map((g) => normKeyPriceList(g)));
   try {
-    const row = db
-      .prepare(
-        `SELECT MIN(unit_price_per_meter_ngn) AS m FROM price_list_items
-         WHERE gauge_key IN (${placeholders}) AND COALESCE(unit_price_per_meter_ngn, 0) > 0
-           AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)`
-      )
-      .get(...gaugeKeys, bid, bid, bid);
-    const m = row?.m != null ? Math.round(Number(row.m) || 0) : 0;
-    return m > 0 ? m : null;
+    const collapsed = selectPriceListRowsAsOf(db.prepare(`SELECT * FROM price_list_items`).all(), asAtIso);
+    let min = 0;
+    for (const row of collapsed) {
+      if (!gaugeSet.has(normKeyPriceList(row.gauge_key))) continue;
+      const rb = row.branch_id != null && String(row.branch_id).trim() ? String(row.branch_id).trim() : null;
+      if (bid && rb && rb !== bid) continue;
+      const n = Math.round(Number(row.unit_price_per_meter_ngn) || 0);
+      if (n > 0 && (min === 0 || n < min)) min = n;
+    }
+    return min > 0 ? min : null;
   } catch {
     return null;
   }
@@ -505,15 +495,6 @@ function workbookGaugeMmKeyFromCoilLabel(coilGaugeRaw) {
     if (Math.abs(parseFloat(g, 10) - mm) < 1e-4) return g;
   }
   return null;
-}
-
-function canReadMaterialPricingSheetRows(db) {
-  try {
-    db.prepare(`SELECT 1 FROM material_pricing_sheet_rows LIMIT 1`).get();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -569,57 +550,23 @@ function materialPricingMaterialKeyFromProductId(db, productId) {
 }
 
 /** Minimum ₦/m from material pricing workbook (excludes commission); branch required on sheet rows. */
-function floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, designKeyNorm, sheetBranchId) {
-  if (!canReadMaterialPricingSheetRows(db)) return null;
-  const mk = String(materialKey || '').trim().toLowerCase();
-  const g = String(gaugeMmKey || '').trim();
-  const bid = String(sheetBranchId || '').trim();
-  if (!mk || !g || !bid) return null;
-  const d = normKeyPriceList(designKeyNorm);
-  try {
-    const row = db
-      .prepare(
-        `SELECT minimum_price_per_m_ngn FROM material_pricing_sheet_rows
-         WHERE material_key = ? AND gauge_mm = ? AND branch_id = ? AND design_key = ?
-         LIMIT 1`
-      )
-      .get(mk, g, bid, d);
-    const n = Math.round(Number(row?.minimum_price_per_m_ngn) || 0);
-    return n > 0 ? n : null;
-  } catch {
-    return null;
-  }
+function floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, designKeyNorm, sheetBranchId, asAtIso) {
+  return workbookFloorPerMeterAsOf(db, materialKey, gaugeMmKey, designKeyNorm, sheetBranchId, asAtIso);
 }
 
-function floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranchId) {
-  if (!canReadMaterialPricingSheetRows(db)) return null;
-  const mk = String(materialKey || '').trim().toLowerCase();
-  const g = String(gaugeMmKey || '').trim();
-  const bid = String(sheetBranchId || '').trim();
-  if (!mk || !g || !bid) return null;
-  try {
-    const row = db
-      .prepare(
-        `SELECT MIN(minimum_price_per_m_ngn) AS m FROM material_pricing_sheet_rows
-         WHERE material_key = ? AND gauge_mm = ? AND branch_id = ? AND COALESCE(minimum_price_per_m_ngn, 0) > 0`
-      )
-      .get(mk, g, bid);
-    const m = row?.m != null ? Math.round(Number(row.m) || 0) : 0;
-    return m > 0 ? m : null;
-  } catch {
-    return null;
-  }
+function floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranchId, asAtIso) {
+  return workbookFloorMinPerMeterAsOf(db, materialKey, gaugeMmKey, sheetBranchId, asAtIso);
 }
 
-function workbookFloorPpmForQuotedGaugeDesign(db, materialKey, quotedGd, sheetBranchId) {
+function workbookFloorPpmForQuotedGaugeDesign(db, materialKey, quotedGd, sheetBranchId, asAtIso) {
   if (!quotedGd || !materialKey) return null;
   const gk = workbookGaugeMmKeyFromCoilLabel(quotedGd.gauge);
   if (!gk) return null;
   for (const dKey of expandedDesignKeysForWorkbook(db, quotedGd.design)) {
-    const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, dKey, sheetBranchId);
+    const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, dKey, sheetBranchId, asAtIso);
     if (f != null && f > 0) return f;
   }
-  const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, '', sheetBranchId);
+  const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gk, '', sheetBranchId, asAtIso);
   return blank != null && blank > 0 ? blank : null;
 }
 
@@ -688,7 +635,7 @@ function expandedDesignKeysForWorkbook(db, designLabelRaw) {
  * **allocated coil gauge** + design/colour, then published list from `price_list_items` if no sheet row.
  * Returns null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
-function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '') {
+function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '', asAtIso) {
   const ov = positiveNumber(overrideSubPpm);
   if (ov != null && ov > 0) return ov;
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
@@ -701,11 +648,11 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   const tryFloorThenList = (dKeyRaw) => {
     const dKey = dKeyRaw != null ? normKeyPriceList(dKeyRaw) : '';
     if (materialKey && gaugeMmKey) {
-      const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, dKey, sheetBranch);
+      const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, dKey, sheetBranch, asAtIso);
       if (f != null && f > 0) return f;
     }
     if (!dKey) return null;
-    return listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId);
+    return listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId, asAtIso);
   };
 
   for (const dRaw of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
@@ -767,12 +714,12 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
     /* ignore */
   }
   if (materialKey && gaugeMmKey) {
-    const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, '', sheetBranch);
+    const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, '', sheetBranch, asAtIso);
     if (blank != null && blank > 0) return blank;
-    const floorMin = floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranch);
+    const floorMin = floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranch, asAtIso);
     if (floorMin != null && floorMin > 0) return floorMin;
   }
-  const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId);
+  const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId, asAtIso);
   if (minAcross != null && minAcross > 0) return minAcross;
   return null;
 }
@@ -786,7 +733,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   if (!ref) return [];
   let quote;
   try {
-    quote = db.prepare(`SELECT lines_json, branch_id FROM quotations WHERE id = ?`).get(ref);
+    quote = db.prepare(`SELECT lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(ref);
   } catch {
     return [];
   }
@@ -811,6 +758,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const pricingAsAtIso = quotationPricingAsAtIso(quote);
   const issues = [];
 
   const hasPositiveMetres = productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0);
@@ -839,7 +787,15 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
         continue;
       }
       if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
-      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGdIssue, null, quote?.lines_json ?? '');
+      const ppm = listWorkbookPpmForJobAllocatedCoil(
+        db,
+        j,
+        branchId,
+        quotedGdIssue,
+        null,
+        quote?.lines_json ?? '',
+        pricingAsAtIso
+      );
       if (ppm == null || ppm <= 0) {
         const pid = String(j.product_id ?? '').trim();
         issues.push({
@@ -1503,7 +1459,8 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         .filter((l) => String(l.category || '').trim() === 'Customer commission')
         .reduce((s, l) => s + roundMoney(l.amountNgn), 0);
       if (commissionRefundSum > 0) {
-        const { maxNgn } = maxCustomerCommissionRefundNgn(db, quotationRef);
+        const quoteRow = db.prepare(`SELECT date_iso FROM quotations WHERE id = ?`).get(quotationRef);
+        const { maxNgn } = maxCustomerCommissionRefundNgn(db, quotationRef, quotationPricingAsAtIso(quoteRow));
         if (commissionRefundSum > maxNgn) {
           return {
             ok: false,
@@ -1987,7 +1944,7 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
  * Explains substitution preview per production job (gauge on quotation vs gauge on allocated coil; workbook ₦/m).
  * Used when `payload.substitutionDiagnosis` is true — not returned over HTTP by default callers.
  */
-function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm) {
+function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter, overrideSubPpm, pricingAsAtIso) {
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
@@ -2016,7 +1973,15 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
       outcome =
         'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
     } else {
-      const ppm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm, quote?.lines_json ?? '');
+      const ppm = listWorkbookPpmForJobAllocatedCoil(
+        db,
+        j,
+        branchId,
+        quotedGd,
+        overrideSubPpm,
+        quote?.lines_json ?? '',
+        pricingAsAtIso
+      );
       producedPpm = ppm;
       if (ppm == null || ppm <= 0) {
         outcome =
@@ -2058,6 +2023,7 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
   }
   return {
     substitutionModel: 'quoted_gauge_vs_coil_gauge_workbook',
+    pricingAsAtIso,
     quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
     firstQuotedProductGaugeDesign: quotedGd,
     branchId,
@@ -2152,6 +2118,7 @@ export function previewRefundRequest(db, payload) {
     : roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
   const receiptCashNgn = cashBreakdown?.receiptCashNgn ?? paidOnQuoteNgn;
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
+  const pricingAsAtIso = quotationPricingAsAtIso(quote);
 
   // Quoted vs Actual Produced (optional payload overrides for tools/tests)
   const quotedMetersFromQuote = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
@@ -2223,7 +2190,7 @@ export function previewRefundRequest(db, payload) {
   ) {
     const el = quotationMeetsRefundEligibility(db, quotationRef);
     if (el.ok) {
-      const { maxNgn, warnings: commissionWarnings } = maxCustomerCommissionRefundNgn(db, quotationRef);
+      const { maxNgn, warnings: commissionWarnings } = maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIso);
       for (const w of commissionWarnings) {
         warnings.push(w);
       }
@@ -2362,7 +2329,7 @@ export function previewRefundRequest(db, payload) {
 
   /**
    * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (0.02mm tolerance).
-   * Credit = max(0, quoted blended ₦/m − workbook **floor** ₦/m (`minimum_price_per_m_ngn`) for coil gauge + design when present,
+   * Credit = max(0, quoted blended ₦/m − workbook **floor** ₦/m for coil gauge + design as at **quotation date**,
    * else published list from `price_list_items`) × actual metres per job.
    * Does not use job product name or FG card gauge for the comparison trigger.
    */
@@ -2382,10 +2349,10 @@ export function previewRefundRequest(db, payload) {
     if (quotedGd) {
       quotedListPpm =
         mkQuotedCtx != null
-          ? workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch)
+          ? workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch, pricingAsAtIso)
           : null;
       if (quotedListPpm == null || quotedListPpm <= 0) {
-        quotedListPpm = listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId);
+        quotedListPpm = listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId, pricingAsAtIso);
       }
     }
     const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
@@ -2428,7 +2395,15 @@ export function previewRefundRequest(db, payload) {
         continue;
       }
 
-      const producedPpm = listWorkbookPpmForJobAllocatedCoil(db, j, branchId, quotedGd, overrideSubPpm, quote?.lines_json ?? '');
+      const producedPpm = listWorkbookPpmForJobAllocatedCoil(
+        db,
+        j,
+        branchId,
+        quotedGd,
+        overrideSubPpm,
+        quote?.lines_json ?? '',
+        pricingAsAtIso
+      );
       if (producedPpm == null || producedPpm <= 0) {
         missingListPriceLabels.push(jobLabel);
         continue;
@@ -2692,7 +2667,8 @@ export function previewRefundRequest(db, payload) {
         quote,
         productionJobs,
         pricePerMeter,
-        positiveNumber(payload.substitutePricePerMeterNgn)
+        positiveNumber(payload.substitutePricePerMeterNgn),
+        pricingAsAtIso
       ),
       substitutionPerMeterBreakdown,
       suggestedLinesSubstitution: suggestedLines.filter((l) => l.category === 'Substitution Difference'),
@@ -2734,6 +2710,7 @@ export function previewRefundRequest(db, payload) {
       quotedMeters,
       actualMeters,
       pricePerMeterNgn: pricePerMeter ? Math.round(pricePerMeter) : null,
+      pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
       substitutionPerMeterBreakdown,
       suggestedAmountNgn,
@@ -2901,7 +2878,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
  * Maximum “customer commission” refund: (recommended − quoted) × metres per line, capped so the implied
  * effective selling ₦/m after refund would not fall below {@link pricingPolicyNumbersForServiceLine} minAllowed.
  */
-export function maxCustomerCommissionRefundNgn(db, quotationRef) {
+export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoOverride) {
   const ref = String(quotationRef ?? '').trim();
   const warnings = [];
   if (!ref) return { maxNgn: 0, warnings };
@@ -2910,6 +2887,11 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef) {
   const el = quotationMeetsRefundEligibility(db, ref);
   if (!el.ok) return { maxNgn: 0, warnings };
   const branchId = quote.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const pricingAsAtIso =
+    pricingAsAtIsoOverride != null && String(pricingAsAtIsoOverride).trim()
+      ? String(pricingAsAtIsoOverride).trim().slice(0, 10)
+      : quotationPricingAsAtIso(quote);
+  const headerCtx = { asAtIso: pricingAsAtIso };
   let linesParsed;
   try {
     linesParsed = typeof quote.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
@@ -2925,7 +2907,7 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef) {
     if (!Number.isFinite(rec) || rec <= 0 || !Number.isFinite(up) || !Number.isFinite(m) || m <= 0) continue;
     if (up >= rec - 0.001) continue;
     const rawConcession = roundMoney((rec - up) * m);
-    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId);
+    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx);
     const minAllowed = nums.minAllowed;
     let capped = rawConcession;
     if (minAllowed != null && Number.isFinite(minAllowed)) {

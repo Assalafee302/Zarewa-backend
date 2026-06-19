@@ -4,6 +4,7 @@
 
 import { fmtConv2 } from '../shared/lib/conversionKgPerM.js';
 import { listMaterialPricingSheet, suggestedPricePerMeterNgn } from './materialPricingOps.js';
+import { normalizePricingAsAtIso } from './pricingAsOf.js';
 import { roundPublishedPrice } from './pricingPolicyResolve.js';
 import { listMasterData } from './masterData.js';
 import { getPricingPolicyBundle } from './pricingPolicyOps.js';
@@ -35,6 +36,10 @@ function isWorkbookDesignKey(dk) {
 export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
   const bid = String(branchId || '').trim();
   const branchLabel = String(opts.branchLabel || bid).trim() || bid;
+  const asAtIso =
+    opts.asAtIso != null && String(opts.asAtIso).trim()
+      ? normalizePricingAsAtIso(String(opts.asAtIso).trim())
+      : null;
   if (!bid) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Error</title></head><body><p>branchId is required.</p></body></html>`;
   }
@@ -47,7 +52,7 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
 
   const sheets = [];
   for (const m of materials) {
-    const r = listMaterialPricingSheet(db, m.key, bid);
+    const r = listMaterialPricingSheet(db, m.key, bid, asAtIso);
     if (!r.ok) {
       return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Error</title></head><body><p>${esc(r.error)}</p></body></html>`;
     }
@@ -61,6 +66,7 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
   const policy = getPricingPolicyBundle(db);
   const lookbackDays = sheets[0]?.purchaseCostLookbackDays ?? 30;
   const printed = new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+  const periodLabel = asAtIso ? `Prices as at ${asAtIso}` : 'Current prices';
 
   const ridgeRows = (policy.ridgeAddOns || [])
     .map(
@@ -201,6 +207,7 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
   <h1>Material pricing workbook — all materials</h1>
   <div class="meta">
     <strong>Branch:</strong> ${esc(branchLabel)}<br/>
+    <strong>Price period:</strong> ${esc(periodLabel)}<br/>
     <strong>Printed:</strong> ${esc(printed)}
   </div>
   <p class="muted">Internal reference: Aluminium, Aluzinc, stone-coated gauges, ridge add-ons, and accessories. Customer-facing list: Pricing policy → Customer price book.</p>

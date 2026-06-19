@@ -24,6 +24,8 @@ const SAFE_TABLES = new Set([
   'stock_movements',
   'coil_requests',
   'bank_reconciliation_lines',
+  'bank_deposits',
+  'bank_deposit_allocations',
   'customer_crm_interactions',
   'customer_refunds',
   'payment_requests',
@@ -255,6 +257,14 @@ export function nextCoilRequestHumanId(db, branchId) {
 
 export function nextBankReconLineHumanId(db, branchId) {
   return allocateHumanId(db, 'BKR', branchId, { table: 'bank_reconciliation_lines', idColumn: 'id' });
+}
+
+export function nextBankDepositHumanId(db, branchId) {
+  return allocateHumanId(db, 'BD', branchId, { table: 'bank_deposits', idColumn: 'id' });
+}
+
+export function nextBankDepositAllocationHumanId(db, branchId) {
+  return allocateHumanId(db, 'BDA', branchId, { table: 'bank_deposit_allocations', idColumn: 'id' });
 }
 
 export function nextCrmInteractionHumanId(db, branchId) {

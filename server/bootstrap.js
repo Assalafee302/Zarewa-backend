@@ -82,6 +82,7 @@ import {
 import { sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
+import { listBankDeposits } from './bankDepositOps.js';
 
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
@@ -241,6 +242,8 @@ export function buildBootstrap(db, opts = {}) {
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
+    bankDeposits:
+      ledgerOk || finOk ? listBankDeposits(db, branchScope, { openOnly: false }) : [],
     coilRequests: coilReqOk ? listCoilRequests(db, branchScope) : [],
     yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],

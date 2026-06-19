@@ -6109,8 +6109,11 @@ export function updateCuttingList(db, cuttingListId, payload) {
 export function recordCuttingListPrint(db, cuttingListId, actor = null) {
   const id = String(cuttingListId ?? '').trim();
   if (!id) return { ok: false, error: 'Cutting list id is required.' };
-  const row = db.prepare(`SELECT id FROM cutting_lists WHERE id = ?`).get(id);
+  const row = db.prepare(`SELECT id, status FROM cutting_lists WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Cutting list not found.' };
+  if (String(row.status ?? '').trim() === 'Draft') {
+    return { ok: false, error: 'Draft cutting lists cannot be printed. Save the list first.' };
+  }
   const iso = new Date().toISOString();
   const by =
     String(actor?.displayName || actor?.username || '').trim() || 'Staff';

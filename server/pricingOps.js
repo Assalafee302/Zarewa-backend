@@ -7,6 +7,9 @@ import {
   pricingPolicyNumbersForServiceLine,
 } from './pricingPolicyResolve.js';
 import { canReadPriceListItems } from './pricingResolve.js';
+import { listPriceListItemsAsOf, floorPricePerMeterForGaugeDesignAsOf } from './pricingAsOf.js';
+
+export { quotationPricingAsAtIso, listPriceListItemsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
 import { userHasPermission } from './auth.js';
@@ -142,23 +145,8 @@ export function priceListItemsToCsv(items) {
  * @param {string | null} branchId
  * @returns {number | null}
  */
-export function floorPricePerMeterForGaugeDesign(db, gaugeKey, designKey, branchId) {
-  const g = normKey(gaugeKey);
-  const d = normKey(designKey);
-  if (!g || !d) return null;
-  const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
-  const row = db
-    .prepare(
-      `SELECT unit_price_per_meter_ngn FROM price_list_items
-       WHERE gauge_key = ? AND design_key = ? AND (branch_id IS NULL OR branch_id = ? OR ? IS NULL)
-       ORDER BY CASE WHEN branch_id IS NOT NULL THEN 0 ELSE 1 END,
-                COALESCE(effective_from_iso, '') DESC,
-                sort_order ASC
-       LIMIT 1`
-    )
-    .get(g, d, bid, bid);
-  if (!row) return null;
-  return Math.round(Number(row.unit_price_per_meter_ngn) || 0) || null;
+export function floorPricePerMeterForGaugeDesign(db, gaugeKey, designKey, branchId, asAtIso) {
+  return floorPricePerMeterForGaugeDesignAsOf(db, gaugeKey, designKey, branchId, asAtIso);
 }
 
 /**
@@ -200,10 +188,15 @@ export function quotationPriceViolations(db, quoteRow) {
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
+  const pricingAsAtIso =
+    String(quoteRow?.date_iso ?? '').trim().slice(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)
+      ? String(quoteRow.date_iso).trim().slice(0, 10)
+      : undefined;
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
     materialGauge: headerGauge,
     materialDesign: headerDesign,
+    ...(pricingAsAtIso ? { asAtIso: pricingAsAtIso } : {}),
   };
 
   const withHeader = (line, cat, idx) => ({
@@ -293,30 +286,11 @@ export function quotationPriceViolations(db, quoteRow) {
 /**
  * @param {import('better-sqlite3').Database} db
  */
-export function listPriceListItems(db) {
+export function listPriceListItems(db, asAtIso) {
   if (!canReadPriceListItems(db)) {
     return [];
   }
-  return db
-    .prepare(
-      `SELECT * FROM price_list_items ORDER BY gauge_key ASC, design_key ASC, sort_order ASC, id ASC`
-    )
-    .all()
-    .map((row) => ({
-      id: row.id,
-      gaugeKey: row.gauge_key,
-      designKey: row.design_key,
-      unitPricePerMeterNgn: Math.round(Number(row.unit_price_per_meter_ngn) || 0),
-      sortOrder: Number(row.sort_order) || 0,
-      notes: row.notes ?? '',
-      branchId: row.branch_id ?? null,
-      effectiveFromIso: row.effective_from_iso ?? null,
-      updatedAtIso: row.updated_at_iso ?? null,
-      updatedByUserId: row.updated_by_user_id ?? null,
-      materialTypeKey: row.material_type_key ?? '',
-      colourKey: row.colour_key ?? '',
-      profileKey: row.profile_key ?? '',
-    }));
+  return listPriceListItemsAsOf(db, asAtIso);
 }
 
 /**

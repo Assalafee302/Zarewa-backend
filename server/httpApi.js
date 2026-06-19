@@ -284,8 +284,12 @@ import {
   createStaffPurchaseCreditRequest,
   decideStaffPurchaseCredit,
   getQuotationStaffPurchaseCreditStatus,
+  linkSalesCustomerToStaff,
+  listStaffForSalesCustomerLink,
   listStaffPurchaseCreditQueue,
   syncQuotationStaffPurchaseFlag,
+  unlinkSalesCustomerFromStaff,
+  userMayLinkStaffSalesCustomer,
   userMayRequestStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
 import { issueZarewaFilingReference } from './referenceIssuance.js';
@@ -5256,7 +5260,28 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/customers', requirePermission('customers.manage'), (req, res) => {
     try {
-      const id = write.insertCustomer(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      const body = req.body || {};
+      const linkedStaffUserId = String(body.linkedStaffUserId || body.staffUserId || '').trim();
+      const id = write.insertCustomer(db, body, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      if (linkedStaffUserId) {
+        if (!userMayLinkStaffSalesCustomer(req.user)) {
+          return res.status(403).json({ ok: false, error: 'You cannot link staff to customers.', customerID: id });
+        }
+        const link = linkSalesCustomerToStaff(db, id, linkedStaffUserId, req.user);
+        if (!link.ok) {
+          return res.status(400).json({ ok: false, error: link.error, customerID: id, code: link.code });
+        }
+        return res.status(201).json({
+          ok: true,
+          customerID: id,
+          staffLink: {
+            staffUserId: link.staffUserId,
+            staffDisplayName: link.staffDisplayName,
+            staffEmployeeNo: link.staffEmployeeNo,
+            customerName: link.customerName,
+          },
+        });
+      }
       res.status(201).json({ ok: true, customerID: id });
     } catch (e) {
       if (e?.code === 'DUPLICATE_CUSTOMER_REGISTRATION') {
@@ -7996,6 +8021,41 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load customers' });
+    }
+  });
+
+  app.get('/api/customers/staff-link-options', requirePermission('customers.manage'), (req, res) => {
+    try {
+      if (!userMayLinkStaffSalesCustomer(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const items = listStaffForSalesCustomerLink(db, branchScope, req.query.q || req.query.query || '');
+      return res.json({ ok: true, items });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load staff link options.' });
+    }
+  });
+
+  app.put('/api/customers/:customerId/staff-link', requirePermission('customers.manage'), (req, res) => {
+    try {
+      if (!userMayLinkStaffSalesCustomer(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.' });
+      }
+      const cid = String(req.params.customerId || '').trim();
+      const staffUserId = String(req.body?.staffUserId ?? req.body?.linkedStaffUserId ?? '').trim();
+      if (!staffUserId) {
+        const r = unlinkSalesCustomerFromStaff(db, cid, req.user);
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      }
+      const r = linkSalesCustomerToStaff(db, cid, staffUserId, req.user);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update staff link.' });
     }
   });
 

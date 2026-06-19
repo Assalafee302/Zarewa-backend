@@ -85,6 +85,7 @@ function mapCustomerRow(row) {
     crmTags: parseCrmTagsJson(row.crm_tags_json),
     crmProfileNotes: row.crm_profile_notes ?? '',
     branchId: row.branch_id ?? '',
+    staffUserId: String(row.staff_user_id ?? '').trim(),
     staffEmployeeNo: String(row.staff_employee_no ?? '').trim(),
     staffDisplayName: String(row.staff_display_name ?? '').trim(),
   };
@@ -100,7 +101,7 @@ function staffSalesCustomerJoinReady(db) {
 }
 
 const STAFF_LINKED_CUSTOMER_SELECT = `
-  SELECT c.*, p.employee_no AS staff_employee_no, u.display_name AS staff_display_name
+  SELECT c.*, p.user_id AS staff_user_id, p.employee_no AS staff_employee_no, u.display_name AS staff_display_name
   FROM customers c
   LEFT JOIN hr_staff_profiles p ON trim(IFNULL(p.sales_customer_id, '')) = trim(c.customer_id)
   LEFT JOIN app_users u ON u.id = p.user_id`;

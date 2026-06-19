@@ -174,6 +174,186 @@ export function backfillStaffSalesCustomerNames(db) {
   return { ok: true, synced, total: rows.length };
 }
 
+function mergeStaffPurchaseCrmTags(existingJson) {
+  let tags = [];
+  try {
+    const parsed = JSON.parse(String(existingJson || '[]'));
+    tags = Array.isArray(parsed) ? parsed.filter((t) => typeof t === 'string') : [];
+  } catch {
+    tags = [];
+  }
+  if (!tags.includes('staff-purchase')) tags.push('staff-purchase');
+  return JSON.stringify(tags);
+}
+
+export function userMayLinkStaffSalesCustomer(actor) {
+  if (userHasPermission(actor, '*')) return true;
+  return (
+    userHasPermission(actor, 'customers.manage') ||
+    userHasPermission(actor, 'sales.manage') ||
+    userHasPermission(actor, 'hr.staff.manage')
+  );
+}
+
+/**
+ * Staff rows Sales can pick when linking a customer account.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {string} [query]
+ */
+export function listStaffForSalesCustomerLink(db, branchScope = 'ALL', query = '') {
+  if (!hrTablesReady(db) || !staffPurchaseCreditColumnsReady(db)) return [];
+  const q = String(query || '').trim().toLowerCase();
+  let sql = `
+    SELECT p.user_id AS userId, u.display_name AS displayName, u.username,
+           p.employee_no AS employeeNo, p.branch_id AS branchId,
+           p.sales_customer_id AS salesCustomerId
+    FROM hr_staff_profiles p
+    JOIN app_users u ON u.id = p.user_id
+    WHERE u.status = 'active'`;
+  const args = [];
+  if (branchScope && branchScope !== 'ALL') {
+    sql += ` AND p.branch_id = ?`;
+    args.push(String(branchScope).trim());
+  }
+  if (q) {
+    sql += ` AND (
+      lower(IFNULL(u.display_name, '')) LIKE ? ESCAPE '\\\\'
+      OR lower(IFNULL(u.username, '')) LIKE ? ESCAPE '\\\\'
+      OR lower(IFNULL(p.employee_no, '')) LIKE ? ESCAPE '\\\\'
+    )`;
+    const like = `%${q.replace(/\\/g, '\\\\')}%`;
+    args.push(like, like, like);
+  }
+  sql += ` ORDER BY u.display_name COLLATE NOCASE, p.employee_no COLLATE NOCASE LIMIT 80`;
+  return db.prepare(sql).all(...args).map((row) => ({
+    userId: row.userId,
+    displayName: row.displayName || row.username || row.userId,
+    employeeNo: String(row.employeeNo || '').trim(),
+    branchId: row.branchId || '',
+    salesCustomerId: String(row.salesCustomerId || '').trim() || null,
+    label: formatStaffSalesCustomerName(row.displayName || row.username, row.employeeNo),
+  }));
+}
+
+/**
+ * Link an existing sales customer to an HR staff member (purchase credit).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerId
+ * @param {string} staffUserId
+ * @param {object | null} [actor]
+ */
+export function linkSalesCustomerToStaff(db, customerId, staffUserId, actor = null) {
+  if (!hrTablesReady(db) || !staffPurchaseCreditColumnsReady(db)) {
+    return { ok: false, error: 'Staff purchase credit is not available.' };
+  }
+  const cid = String(customerId || '').trim();
+  const uid = String(staffUserId || '').trim();
+  if (!cid || !uid) return { ok: false, error: 'Customer and staff are required.' };
+
+  const cust = db
+    .prepare(`SELECT customer_id, name, branch_id, crm_tags_json, crm_profile_notes FROM customers WHERE customer_id = ?`)
+    .get(cid);
+  if (!cust) return { ok: false, error: 'Customer not found.' };
+
+  const prof = db
+    .prepare(
+      `SELECT p.user_id, p.branch_id, p.employee_no, p.sales_customer_id, u.display_name, u.username
+       FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id
+       WHERE p.user_id = ?`
+    )
+    .get(uid);
+  if (!prof) return { ok: false, error: 'Staff profile not found.' };
+
+  const existingForStaff = String(prof.sales_customer_id || '').trim();
+  if (existingForStaff && existingForStaff !== cid) {
+    return {
+      ok: false,
+      error: `This staff member is already linked to customer ${existingForStaff}. Unlink there first.`,
+      code: 'STAFF_ALREADY_LINKED',
+      existingCustomerId: existingForStaff,
+    };
+  }
+
+  const expectedName = formatStaffSalesCustomerName(prof.display_name || prof.username, prof.employee_no);
+  const profileNotes = `Linked staff user ${uid}${prof.employee_no ? ` · ${prof.employee_no}` : ''}`;
+  const tagsJson = mergeStaffPurchaseCrmTags(cust.crm_tags_json);
+  const at = nowIso();
+
+  db.transaction(() => {
+    const others = db
+      .prepare(`SELECT user_id FROM hr_staff_profiles WHERE sales_customer_id = ? AND user_id != ?`)
+      .all(cid, uid);
+    for (const row of others) {
+      db.prepare(`UPDATE hr_staff_profiles SET sales_customer_id = NULL, updated_at_iso = ? WHERE user_id = ?`).run(
+        at,
+        row.user_id
+      );
+    }
+    db.prepare(`UPDATE hr_staff_profiles SET sales_customer_id = ?, updated_at_iso = ? WHERE user_id = ?`).run(
+      cid,
+      at,
+      uid
+    );
+    db.prepare(
+      `UPDATE customers SET name = ?, tier = 'Staff', payment_terms = 'Staff credit',
+       crm_tags_json = ?, crm_profile_notes = ? WHERE customer_id = ?`
+    ).run(expectedName, tagsJson, profileNotes, cid);
+    syncStaffSalesCustomerName(db, cid, expectedName);
+  })();
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    action: 'hr.purchase_credit.customer_linked',
+    entityKind: 'customer',
+    entityId: cid,
+    branchId: cust.branch_id || prof.branch_id || null,
+    details: { staffUserId: uid, customerName: expectedName },
+  });
+
+  return {
+    ok: true,
+    customerId: cid,
+    staffUserId: uid,
+    customerName: expectedName,
+    staffDisplayName: prof.display_name || prof.username,
+    staffEmployeeNo: prof.employee_no || '',
+  };
+}
+
+/**
+ * Remove staff link from a sales customer.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerId
+ * @param {object | null} [actor]
+ */
+export function unlinkSalesCustomerFromStaff(db, customerId, actor = null) {
+  if (!staffPurchaseCreditColumnsReady(db)) return { ok: false, error: 'Staff link not available.' };
+  const cid = String(customerId || '').trim();
+  if (!cid) return { ok: false, error: 'Customer id required.' };
+
+  const row = db.prepare(`SELECT user_id, branch_id FROM hr_staff_profiles WHERE sales_customer_id = ?`).get(cid);
+  if (!row) return { ok: true, already: true };
+
+  const at = nowIso();
+  db.prepare(`UPDATE hr_staff_profiles SET sales_customer_id = NULL, updated_at_iso = ? WHERE user_id = ?`).run(
+    at,
+    row.user_id
+  );
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    action: 'hr.purchase_credit.customer_unlinked',
+    entityKind: 'customer',
+    entityId: cid,
+    branchId: row.branch_id || null,
+    details: { staffUserId: row.user_id },
+  });
+
+  return { ok: true, staffUserId: row.user_id };
+}
+
 export function computeStaffPurchaseCreditEligibility(db, userId) {
   const policy = getStaffPurchaseCreditPolicy(db);
   const issues = [];

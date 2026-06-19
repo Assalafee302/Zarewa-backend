@@ -4,6 +4,7 @@
  */
 
 import { userHasPermission, permissionsForRole } from './auth.js';
+import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
 import {
   isDomesticStaff,
   isScholarshipBeneficiary,
@@ -49,6 +50,7 @@ const SENSITIVE_VIEW_PERMISSIONS = [
 
 const LEGACY_REVIEW = new Set(['hr.requests.hr_review', 'hr.requests.review']);
 const LEGACY_GM = new Set(['hr.requests.gm_approve', 'hr.requests.final_approve']);
+const HR_SELF_SERVICE_KEYS = new Set(HR_ROLE_PERMISSION_BUNDLES.selfService);
 
 /**
  * @param {object | null | undefined} user
@@ -68,6 +70,13 @@ export function hrUserHas(user, permission) {
   if (userHasPermission(user, '*')) return true;
   if (userHasPermission(user, permission)) return true;
   const perm = String(permission).trim();
+  if (perm === 'hr.*') {
+    return userEffectivePermissionList(user).some((p) => {
+      if (p === '*') return true;
+      const key = String(p);
+      return key.startsWith('hr.') && !HR_SELF_SERVICE_KEYS.has(key);
+    });
+  }
   if (perm.endsWith('.*')) {
     const prefix = perm.slice(0, -1);
     return userEffectivePermissionList(user).some(

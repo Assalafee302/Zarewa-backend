@@ -8,11 +8,11 @@ function mockDbForCuttingList(status = 'Planned') {
       const s = String(sql);
       return {
         get: vi.fn(() => {
-          if (/FROM cutting_lists WHERE id/i.test(s)) {
-            return { id: 'CL-26-001', status };
-          }
           if (/print_count FROM cutting_lists/i.test(s)) {
             return { print_count: 1 };
+          }
+          if (/FROM cutting_lists WHERE id/i.test(s)) {
+            return { id: 'CL-26-001', status };
           }
           return undefined;
         }),

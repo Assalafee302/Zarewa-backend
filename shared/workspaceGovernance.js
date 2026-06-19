@@ -67,6 +67,14 @@ export function userMayReleaseQuotationPaymentHold(actor) {
   return rk === 'admin' || isExecutiveRoleKey(rk);
 }
 
+/**
+ * Permanently block or unblock customer refunds on a quotation — MD / admin only.
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMayBlockQuotationRefunds(actor) {
+  return userMayReleaseQuotationPaymentHold(actor);
+}
+
 /** Finance desk roles that may approve payment requests when they hold finance.approve. */
 export function isFinanceDeskApproverRoleKey(roleKey) {
   const rk = String(roleKey || '').trim().toLowerCase();

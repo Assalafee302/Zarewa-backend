@@ -28,7 +28,12 @@ import {
 import {
   userMayPerformManagerQuotationClearance,
   userMayReleaseQuotationPaymentHold,
+  userMayBlockQuotationRefunds,
 } from '../shared/workspaceGovernance.js';
+import {
+  quotationRefundsBlocked,
+  QUOTATION_REFUNDS_BLOCK_REASON_MIN_LEN,
+} from '../shared/lib/quotationRefundsBlocked.js';
 import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
@@ -1653,6 +1658,22 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   if (status === 'Approved' && approvedAmountNgn <= 0) {
     return { ok: false, error: 'Approved refund amount must be positive.' };
   }
+  const qrefApprove = String(row.quotation_ref ?? '').trim();
+  if (status === 'Approved' && qrefApprove) {
+    const qBlock = db
+      .prepare(`SELECT refunds_blocked_at_iso, refunds_blocked_reason FROM quotations WHERE id = ?`)
+      .get(qrefApprove);
+    if (quotationRefundsBlocked(qBlock)) {
+      const why = String(qBlock?.refunds_blocked_reason ?? '').trim();
+      return {
+        ok: false,
+        error: why
+          ? `Refunds are permanently blocked on this quotation: ${why}`
+          : 'Refunds are permanently blocked on this quotation.',
+        refundsBlocked: true,
+      };
+    }
+  }
   if (status === 'Approved') {
     const decideCalcLines = Array.isArray(payload.calculationLines) ? payload.calculationLines : null;
     if (decideCalcLines && decideCalcLines.length > 0) {
@@ -2827,11 +2848,22 @@ export function quotationMeetsRefundEligibility(db, quotationRef) {
     .prepare(
       `SELECT id, paid_ngn, total_ngn, status,
               bm_price_exception_approved_at_iso, price_exception_md_review_required,
-              price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso
+              price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso,
+              refunds_blocked_at_iso, refunds_blocked_reason
        FROM quotations WHERE id = ?`
     )
     .get(ref);
   if (!q) return { ok: false, error: 'Quotation not found.' };
+  if (quotationRefundsBlocked(q)) {
+    const why = String(q.refunds_blocked_reason ?? '').trim();
+    return {
+      ok: false,
+      error: why
+        ? `Refunds are permanently blocked on this quotation: ${why}`
+        : 'Refunds are permanently blocked on this quotation.',
+      refundsBlocked: true,
+    };
+  }
   const paidNgn = roundMoney(q.paid_ngn);
   const cashInNgn = quotationCashInNgn(db, ref);
   const quoteTotalNgn = roundMoney(q.total_ngn);
@@ -2976,6 +3008,7 @@ export function getEligibleRefundQuotations(db) {
       ), 0) AS total_refunded
     FROM quotations q
     WHERE q.paid_ngn > 0
+      AND TRIM(COALESCE(q.refunds_blocked_at_iso, '')) = ''
       AND NOT EXISTS (
         SELECT 1 FROM production_jobs j2
         WHERE j2.quotation_ref = q.id
@@ -3398,6 +3431,91 @@ export function reviewQuotation(db, quoteId, payload, actor) {
       : { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
+  }
+}
+
+export function setQuotationRefundsBlocked(db, quoteId, payload, actor) {
+  if (!userMayBlockQuotationRefunds(actor)) {
+    return {
+      ok: false,
+      error: 'Blocking refunds requires Managing Director or Administrator authority.',
+      code: 'FORBIDDEN',
+    };
+  }
+  const id = String(quoteId ?? '').trim();
+  if (!id) return { ok: false, error: 'Quotation id is required.' };
+  const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Quotation not found.' };
+
+  const unblock = payload.blocked === false || payload.blocked === 0 || payload.unblock === true;
+  const reason = String(payload.reason ?? payload.note ?? '').trim();
+  const now = new Date().toISOString();
+
+  if (!unblock) {
+    if (reason.length < QUOTATION_REFUNDS_BLOCK_REASON_MIN_LEN) {
+      return {
+        ok: false,
+        error: `A reason of at least ${QUOTATION_REFUNDS_BLOCK_REASON_MIN_LEN} characters is required when blocking refunds.`,
+      };
+    }
+    if (quotationRefundsBlocked(row)) {
+      return { ok: false, error: 'Refunds are already blocked on this quotation.' };
+    }
+    try {
+      db.transaction(() => {
+        db.prepare(
+          `UPDATE quotations
+           SET refunds_blocked_at_iso = ?,
+               refunds_blocked_by_user_id = ?,
+               refunds_blocked_by_name = ?,
+               refunds_blocked_reason = ?
+           WHERE id = ?`
+        ).run(now, actorId(actor), actorName(actor), reason, id);
+        appendAuditLog(db, {
+          actor,
+          action: 'quotation.refunds_block',
+          entityKind: 'quotation',
+          entityId: id,
+          note: reason,
+          details: { blockedAtISO: now },
+        });
+      })();
+      return {
+        ok: true,
+        blocked: true,
+        refundsBlockedAtISO: now,
+        refundsBlockedReason: reason,
+      };
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
+  }
+
+  if (!quotationRefundsBlocked(row)) {
+    return { ok: false, error: 'Refunds are not blocked on this quotation.' };
+  }
+  try {
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE quotations
+         SET refunds_blocked_at_iso = NULL,
+             refunds_blocked_by_user_id = NULL,
+             refunds_blocked_by_name = NULL,
+             refunds_blocked_reason = NULL
+         WHERE id = ?`
+      ).run(id);
+      appendAuditLog(db, {
+        actor,
+        action: 'quotation.refunds_unblock',
+        entityKind: 'quotation',
+        entityId: id,
+        note: reason || 'Refunds unblocked',
+        details: { priorReason: row.refunds_blocked_reason || null },
+      });
+    })();
+    return { ok: true, blocked: false };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
   }
 }
 

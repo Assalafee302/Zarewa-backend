@@ -595,6 +595,13 @@ describe('Refund Security & Substitution Logic', () => {
       ...REFUND_PAYEE,
     });
     expect(second.status).toBe(201);
+
+    const rows = getEligibleRefundQuotations(db);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('QT-RFS-DUP-001');
+    const row = rows.find((r) => r.id === 'QT-RFS-DUP-001');
+    expect(Number(row?.remaining_ngn)).toBeGreaterThan(0);
+    expect(Number(row?.cash_in_ngn)).toBeGreaterThan(0);
   });
 
   it('blocks order cancellation after a delivery is marked for the quotation', async () => {

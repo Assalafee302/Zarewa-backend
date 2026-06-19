@@ -203,6 +203,7 @@ import {
   getEligibleRefundQuotations,
   quotationMeetsRefundEligibility,
   reviewQuotation,
+  setQuotationRefundsBlocked,
   unlockAccountingPeriod,
   upsertTreasuryAccount,
 } from './controlOps.js';
@@ -7137,7 +7138,12 @@ export function registerHttpApi(app, db) {
           ? Math.round(Number(preview.preview.suggestedAmountNgn) || 0)
           : 0;
       const remainingNgn = meets.ok ? meets.remainingNgn : 0;
-      const qRow = db.prepare(`SELECT id, paid_ngn, total_ngn, status FROM quotations WHERE id = ?`).get(quotationRef);
+      const qRow = db
+        .prepare(
+          `SELECT id, paid_ngn, total_ngn, status, refunds_blocked_at_iso, refunds_blocked_reason, refunds_blocked_by_name
+           FROM quotations WHERE id = ?`
+        )
+        .get(quotationRef);
       const paidBooked = qRow != null ? Math.round(Number(qRow.paid_ngn) || 0) : null;
       const totalBooked = qRow != null ? Math.round(Number(qRow.total_ngn) || 0) : null;
       const orderOutstandingNgn =
@@ -7212,7 +7218,7 @@ export function registerHttpApi(app, db) {
               totalRefundedNgn: meets.totalRefundedNgn,
               remainingNgn: meets.remainingNgn,
             }
-          : { error: meets.error },
+          : { error: meets.error, refundsBlocked: Boolean(meets.refundsBlocked) },
         eligibleRefundCategories: categories,
         wouldAppearInRefundQuotationDropdown: wouldAppearInPicklist,
         manualEntryRefundAllowed,
@@ -7240,6 +7246,9 @@ export function registerHttpApi(app, db) {
             amountNgn: r.amount_ngn,
             paidOutNgn: r.paid_amount_ngn,
           })),
+          refundsBlockedAtISO: qRow?.refunds_blocked_at_iso ?? null,
+          refundsBlockedReason: qRow?.refunds_blocked_reason ?? null,
+          refundsBlockedByName: qRow?.refunds_blocked_by_name ?? null,
         },
       });
     } catch (e) {
@@ -8658,6 +8667,22 @@ export function registerHttpApi(app, db) {
       }
     }
   );
+
+  app.patch('/api/quotations/:id/refunds-blocked', requireAuth, (req, res) => {
+    try {
+      const qid = String(req.params.id ?? '').trim();
+      const qg = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
+      const r = setQuotationRefundsBlocked(db, qid, req.body || {}, req.user);
+      if (!r.ok && r.code === 'FORBIDDEN') {
+        return res.status(403).json(r);
+      }
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update refund block on quotation.' });
+    }
+  });
 
   app.post(
     '/api/quotations/:id/reconcile-receipt-mirrors',

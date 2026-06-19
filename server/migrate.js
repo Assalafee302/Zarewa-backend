@@ -328,6 +328,18 @@ function runMigrationsUnlocked(db) {
   if (!q.has('payment_balance_waive_note')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN payment_balance_waive_note TEXT`);
   }
+  if (!q.has('refunds_blocked_at_iso')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN refunds_blocked_at_iso TEXT`);
+  }
+  if (!q.has('refunds_blocked_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN refunds_blocked_by_user_id TEXT`);
+  }
+  if (!q.has('refunds_blocked_by_name')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN refunds_blocked_by_name TEXT`);
+  }
+  if (!q.has('refunds_blocked_reason')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN refunds_blocked_reason TEXT`);
+  }
 
   const r = tableCols('sales_receipts');
   if (!r.has('ledger_entry_id')) {

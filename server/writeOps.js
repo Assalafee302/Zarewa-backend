@@ -30,6 +30,7 @@ import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotation
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import {
@@ -7429,6 +7430,22 @@ export function payRefundEntry(db, refundId, payload) {
   if (!branchGate.ok) return { ok: false, error: branchGate.error };
   if (String(row.status || '') !== 'Approved') {
     return { ok: false, error: 'Only approved refunds can be paid.' };
+  }
+  const qrefPay = String(row.quotation_ref ?? '').trim();
+  if (qrefPay) {
+    const qBlock = db
+      .prepare(`SELECT refunds_blocked_at_iso, refunds_blocked_reason FROM quotations WHERE id = ?`)
+      .get(qrefPay);
+    if (quotationRefundsBlocked(qBlock)) {
+      const why = String(qBlock?.refunds_blocked_reason ?? '').trim();
+      return {
+        ok: false,
+        error: why
+          ? `Refunds are permanently blocked on this quotation: ${why}`
+          : 'Refunds are permanently blocked on this quotation.',
+        refundsBlocked: true,
+      };
+    }
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);

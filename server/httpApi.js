@@ -3600,6 +3600,49 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /**
+   * Re-apply finance-confirmed bank amounts to receipt rows, ledger RECEIPT/OVERPAY splits, and quotation paid.
+   * Use when reconciled receipts still reflect stale sales-posted totals (e.g. mistaken overpayment entries).
+   */
+  app.post('/api/admin/reapply-finance-reconciled-receipts', requireAuth, (req, res) => {
+    try {
+      if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only the administrator role can run this maintenance job.',
+        });
+      }
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Send JSON body { "confirm": true } to re-apply finance-confirmed bank amounts on all cleared receipts in this branch scope.',
+        });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const r = write.reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope, req.user);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'admin.reapply_finance_reconciled_receipts',
+        entityKind: 'system',
+        entityId: 'finance_reconciled_receipts',
+        note: `Reapplied finance-confirmed receipt amounts (${r.receiptCount} receipts, branch scope ${branchScope})`,
+        details: {
+          branchScope,
+          receiptCount: r.receiptCount,
+          changed: r.changed,
+          unchanged: r.unchanged,
+          quotationsSynced: r.quotationsSynced,
+          failures: r.failures?.length ?? 0,
+        },
+      });
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.patch('/api/users/:id/status', requirePermission('settings.manage'), (req, res) => {
     try {
       const id = req.params.id;

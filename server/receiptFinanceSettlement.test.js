@@ -3,6 +3,7 @@ import { createDatabase } from './db.js';
 import {
   applyFinanceConfirmedReceiptBookAmountTx,
   patchSalesReceiptFinanceSettlement,
+  reapplyFinanceReconciledReceiptAmountsForBranchScope,
   syncQuotationPaidFromReceipts,
 } from './writeOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
@@ -157,5 +158,98 @@ describe('finance-reconciled split-till overpay (refund cash dedupe)', () => {
     const over = prev.preview.suggestedLines.find((l) => l.category === 'Overpayment');
     expect(over?.amountNgn).toBe(1_420_400);
     expect(prev.preview.remainingRefundableNgn).toBe(1_420_400);
+  });
+});
+
+describe('finance confirm replaces mistaken sales-posted overpay', () => {
+  let db;
+
+  beforeEach(() => {
+    db = createDatabase(':memory:');
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
+      VALUES ('QT-KD-26-0566', 'CUS-1', 'Test Customer', 1151580, 1500000, 'Paid', 'Finished', '{}', '2026-05-14');
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, ledger_entry_id
+      ) VALUES (
+        'LE-566', 'CUS-1', 'Test Customer', 'QT-KD-26-0566', 1500000, 'Pending clearance', '2026-05-14', 'LE-566'
+      );
+      INSERT INTO ledger_entries (
+        id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso,
+        payment_method, bank_reference, note
+      ) VALUES
+        (
+          'LE-566', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-KD-26-0566', 1151580,
+          '2026-05-14T12:00:00.000Z', 'Bank', 'REF566', 'Settlement to quotation balance (receipt)'
+        ),
+        (
+          'LE-566-O', 'OVERPAY_ADVANCE', 'CUS-1', 'Test Customer', 'QT-KD-26-0566', 348420,
+          '2026-05-14T12:00:00.000Z', 'Bank', 'REF566',
+          'Overpayment vs remaining balance on QT-KD-26-0566 → customer credit'
+        );
+      INSERT INTO production_jobs (job_id, quotation_ref, status)
+      VALUES ('PRO-566', 'QT-KD-26-0566', 'Completed');
+    `);
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  it('zeros phantom overpay when bank received is below quote total', () => {
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-566',
+      { bankReceivedAmountNgn: 1_150_000 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const rec = db.prepare(`SELECT amount_ngn, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`).get('LE-566');
+    expect(rec.amount_ngn).toBe(1_150_000);
+    expect(rec.bank_received_amount_ngn).toBe(1_150_000);
+
+    const receiptLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-566'`).get();
+    const overpayLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-566-O'`).get();
+    expect(receiptLedger.amount_ngn).toBe(1_150_000);
+    expect(overpayLedger.amount_ngn).toBe(0);
+
+    const qt = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = ?`).get('QT-KD-26-0566');
+    expect(qt.paid_ngn).toBe(1_150_000);
+
+    const cash = quotationPaymentCashBreakdown(db, 'QT-KD-26-0566');
+    expect(cash.receiptCashNgn).toBe(1_150_000);
+    expect(cash.cashInNgn).toBe(1_150_000);
+    expect(cash.netOverpayLedgerNgn).toBe(0);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
+    expect(prev.ok).toBe(true);
+    const over = prev.preview.suggestedLines.find((l) => l.category === 'Overpayment');
+    expect(over).toBeUndefined();
+    expect(prev.preview.overpaymentExcessNgn).toBe(0);
+  });
+
+  it('bulk reapply fixes already-cleared receipts with stale ledger splits', () => {
+    db.prepare(
+      `UPDATE sales_receipts SET
+         amount_ngn = 1500000,
+         bank_received_amount_ngn = 1150000,
+         finance_reconciliation_saved_at_iso = '2026-06-01T10:00:00.000Z',
+         status = 'Cleared'
+       WHERE id = 'LE-566'`
+    ).run();
+
+    const r = reapplyFinanceReconciledReceiptAmountsForBranchScope(db, 'ALL');
+    expect(r.ok).toBe(true);
+    expect(r.changed).toBeGreaterThan(0);
+
+    const overpayLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-566-O'`).get();
+    expect(overpayLedger.amount_ngn).toBe(0);
+
+    const rec = db.prepare(`SELECT amount_ngn FROM sales_receipts WHERE id = ?`).get('LE-566');
+    expect(rec.amount_ngn).toBe(1_150_000);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
+    expect(prev.preview.overpaymentExcessNgn).toBe(0);
   });
 });

@@ -8836,6 +8836,94 @@ function syncTreasuryMovementsToConfirmedReceiptAmountTx(db, receiptId, ledgerEn
 }
 
 /**
+ * Resplit RECEIPT vs OVERPAY_ADVANCE when finance confirms actual bank/cash received.
+ * Confirmed total is authoritative — replaces the sales-posted amount, not the old bundle.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {string} receiptLedgerId
+ * @param {number} confirmedTotalNgn
+ */
+export function computeFinanceConfirmedLedgerSplit(db, quotationRef, receiptLedgerId, confirmedTotalNgn) {
+  const qref = String(quotationRef || '').trim();
+  const confirmed = roundMoney(confirmedTotalNgn);
+  const rid = String(receiptLedgerId || '').trim();
+
+  const quoteRow = qref ? db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qref) : null;
+  const quoteTotal = roundMoney(quoteRow?.total_ngn);
+
+  const otherReceipt = qref
+    ? roundMoney(
+        db
+          .prepare(
+            `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+             WHERE type = 'RECEIPT' AND quotation_ref = ?
+               AND (COALESCE(?, '') = '' OR id != ?)`
+          )
+          .get(qref, rid, rid)?.s ?? 0
+      )
+    : 0;
+  const advanceApplied = qref
+    ? roundMoney(
+        db
+          .prepare(
+            `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+             WHERE type = 'ADVANCE_APPLIED' AND quotation_ref = ?`
+          )
+          .get(qref)?.s ?? 0
+      )
+    : 0;
+  const overpayApplied = qref
+    ? roundMoney(
+        db
+          .prepare(
+            `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+             WHERE type = 'OVERPAY_APPLIED' AND quotation_ref = ?`
+          )
+          .get(qref)?.s ?? 0
+      )
+    : 0;
+  const staffCredit = qref
+    ? roundMoney(
+        db
+          .prepare(
+            `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+             WHERE type = 'STAFF_PURCHASE_CREDIT' AND quotation_ref = ?`
+          )
+          .get(qref)?.s ?? 0
+      )
+    : 0;
+
+  const paidExcludingThisReceipt = otherReceipt + advanceApplied + overpayApplied + staffCredit;
+  const amountDue = Math.max(0, quoteTotal - paidExcludingThisReceipt);
+  const newRec = amountDue <= 0 ? confirmed : Math.min(confirmed, amountDue);
+  const newOver = Math.max(0, confirmed - newRec);
+  return { newRec, newOver, amountDue, quoteTotal, confirmed };
+}
+
+function financeConfirmedReceiptAlreadyAligned(db, rec, ledgerRow, overpayId, confirmed) {
+  const bookAmt = roundMoney(rec?.amount_ngn);
+  if (bookAmt !== confirmed) return false;
+  if (!ledgerRow) return true;
+
+  const qref = String(rec?.quotation_ref || '').trim();
+  const { newRec, newOver } = computeFinanceConfirmedLedgerSplit(
+    db,
+    qref,
+    String(ledgerRow.id || ''),
+    confirmed
+  );
+  const curRec = roundMoney(ledgerRow.amount_ngn);
+  let curOver = 0;
+  if (overpayId) {
+    const overRow = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = ?`).get(overpayId);
+    curOver = roundMoney(overRow?.amount_ngn);
+  } else if (newOver > 0) {
+    return false;
+  }
+  return curRec === newRec && curOver === newOver;
+}
+
+/**
  * After finance confirms bank/cash received, align sales receipt + RECEIPT ledger (and treasury when present)
  * so quotation paid_ngn and refund caps match money actually received.
  * @param {import('better-sqlite3').Database} db
@@ -8865,17 +8953,12 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
     ? db.prepare(`SELECT * FROM ledger_entries WHERE id = ? AND type = 'RECEIPT'`).get(ledgerId)
     : null;
 
-  let companionOver = 0;
   let overpayId = null;
   if (ledgerRow) {
     overpayId = resolveOverpaySiblingId(db, ledgerRow);
-    if (overpayId) {
-      const overRow = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = ?`).get(overpayId);
-      companionOver = roundMoney(overRow?.amount_ngn);
-    }
   }
 
-  if (confirmed === bookAmt && (!ledgerRow || roundMoney(ledgerRow.amount_ngn) === confirmed)) {
+  if (financeConfirmedReceiptAlreadyAligned(db, rec, ledgerRow, overpayId, confirmed)) {
     if (!options.skipTreasurySync) {
       syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor);
     }
@@ -8884,19 +8967,22 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
     return { ok: true, changed: false, confirmedAmountNgn: confirmed, previousAmountNgn: bookAmt };
   }
 
+  const qref = String(rec.quotation_ref || '').trim();
+  let newRec = confirmed;
+  let newOver = 0;
+  if (ledgerRow && qref) {
+    const split = computeFinanceConfirmedLedgerSplit(db, qref, ledgerId, confirmed);
+    newRec = split.newRec;
+    newOver = split.newOver;
+  }
+
   if (ledgerRow) {
-    const oldRec = roundMoney(ledgerRow.amount_ngn);
+    db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newRec, ledgerId);
     if (overpayId) {
-      const bundleTotal = oldRec + companionOver;
-      const newRec = confirmed;
-      const newOver = confirmed <= bundleTotal ? roundMoney(bundleTotal - confirmed) : 0;
-      db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newRec, ledgerId);
       db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newOver, overpayId);
-    } else {
-      db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(confirmed, ledgerId);
     }
     const freshRec = db.prepare(`SELECT * FROM ledger_entries WHERE id = ?`).get(ledgerId);
-    const qt = getQuotation(db, String(rec.quotation_ref || '').trim());
+    const qt = getQuotation(db, qref);
     if (qt && freshRec) {
       upsertSalesReceiptForLedgerEntry(
         db,
@@ -8915,20 +9001,19 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
         freshRec.branch_id || null
       );
     }
-  } else {
-    const display = `₦${confirmed.toLocaleString('en-NG')}`;
-    db.prepare(`UPDATE sales_receipts SET amount_ngn = ?, amount_display = ? WHERE id = ?`).run(
-      confirmed,
-      display,
-      id
-    );
   }
+
+  const display = `₦${confirmed.toLocaleString('en-NG')}`;
+  db.prepare(`UPDATE sales_receipts SET amount_ngn = ?, amount_display = ? WHERE id = ?`).run(
+    confirmed,
+    display,
+    id
+  );
 
   if (!options.skipTreasurySync) {
     syncTreasuryMovementsToConfirmedReceiptAmountTx(db, id, ledgerId, confirmed, actor);
   }
 
-  const qref = String(rec.quotation_ref || '').trim();
   if (qref) syncQuotationPaidFromReceipts(db, qref);
 
   appendAuditLog(db, {
@@ -8937,10 +9022,81 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
     entityKind: 'sales_receipt',
     entityId: id,
     note: `Sales receipt amount aligned to finance-confirmed ₦${confirmed.toLocaleString('en-NG')} (was ₦${bookAmt.toLocaleString('en-NG')}).`,
-    details: { confirmedAmountNgn: confirmed, previousAmountNgn: bookAmt, quotationRef: qref || null },
+    details: {
+      confirmedAmountNgn: confirmed,
+      previousAmountNgn: bookAmt,
+      quotationRef: qref || null,
+      receiptLedgerNgn: newRec,
+      overpayLedgerNgn: newOver,
+    },
   });
 
   return { ok: true, changed: true, confirmedAmountNgn: confirmed, previousAmountNgn: bookAmt };
+}
+
+/**
+ * Admin maintenance: re-apply finance-confirmed bank amounts to receipt rows, ledger splits, and quotation paid.
+ * Use after fixing split logic or when reconciled receipts still show stale sales-posted totals.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {object | null} [actor]
+ */
+export function reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope = 'ALL', actor = null) {
+  const b = branchWhere(db, 'sales_receipts', branchScope);
+  const rows = db
+    .prepare(
+      `SELECT id, quotation_ref, bank_received_amount_ngn, amount_ngn
+       FROM sales_receipts
+       WHERE 1=1${b.sql}
+         AND finance_reconciliation_saved_at_iso IS NOT NULL
+         AND TRIM(finance_reconciliation_saved_at_iso) != ''
+         AND bank_received_amount_ngn IS NOT NULL
+         AND bank_received_amount_ngn > 0
+         AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')
+       ORDER BY date_iso ASC, id ASC`
+    )
+    .all(...b.args);
+
+  const failures = [];
+  let changed = 0;
+  let unchanged = 0;
+  /** @type {Set<string>} */
+  const quotationRefs = new Set();
+
+  for (const row of rows) {
+    const receiptId = String(row.id || '').trim();
+    const confirmed = roundMoney(row.bank_received_amount_ngn);
+    if (!receiptId || confirmed <= 0) continue;
+    try {
+      const r = applyFinanceConfirmedReceiptBookAmountTx(db, receiptId, confirmed, actor, {
+        skipTreasurySync: true,
+      });
+      if (!r.ok) {
+        failures.push({ id: receiptId, error: r.error || 'Reapply failed.' });
+        continue;
+      }
+      if (r.changed) changed += 1;
+      else unchanged += 1;
+      const qref = String(row.quotation_ref || '').trim();
+      if (qref) quotationRefs.add(qref);
+    } catch (e) {
+      failures.push({ id: receiptId, error: String(e?.message || e) });
+    }
+  }
+
+  for (const qref of quotationRefs) {
+    syncQuotationPaidFromReceipts(db, qref);
+  }
+
+  return {
+    ok: true,
+    branchScope,
+    receiptCount: rows.length,
+    changed,
+    unchanged,
+    quotationsSynced: quotationRefs.size,
+    failures,
+  };
 }
 
 /**

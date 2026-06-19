@@ -40,6 +40,8 @@ import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationP
 import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
+import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
+import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { userHasPermission } from './auth.js';
 import {
@@ -218,6 +220,10 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    staffRecoveriesDue:
+      finOk && recoverySchedulesTableReady(db)
+        ? listStaffRecoveriesDueForCashier(db, branchScope)
+        : [],
   };
 }
 

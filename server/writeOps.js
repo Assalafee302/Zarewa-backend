@@ -9194,7 +9194,14 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   const finalized =
     row.finance_reconciliation_saved_at_iso != null && String(row.finance_reconciliation_saved_at_iso).trim() !== '';
 
-  const clearForDelivery = Boolean(payload?.clearForDelivery);
+  const corrections = Array.isArray(payload?.paymentLineCorrections) ? payload.paymentLineCorrections : [];
+  let correctionsSum = 0;
+  for (const c of corrections) {
+    correctionsSum += roundMoney(c?.amountNgn);
+  }
+
+  const clearForDelivery =
+    payload?.holdForDelivery === true || payload?.clearForDelivery === false ? false : true;
   const rawAmt = payload?.bankReceivedAmountNgn;
   const hasBankAmt =
     rawAmt !== undefined && rawAmt !== null && String(rawAmt).trim() !== '';
@@ -9205,7 +9212,18 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     if (n < 0) return { ok: false, error: 'Bank received amount cannot be negative.' };
     nextBankReceived = n;
   }
-  if (!finalized && (!hasBankAmt || nextBankReceived == null || nextBankReceived <= 0)) {
+  if (corrections.length > 0 && correctionsSum > 0) {
+    if (hasBankAmt && Math.abs(nextBankReceived - correctionsSum) > 0.005) {
+      return {
+        ok: false,
+        code: 'BANK_LINES_MISMATCH',
+        error: `Payment lines total ${correctionsSum} must match amount received (${nextBankReceived}). Adjust the lines or total.`,
+      };
+    }
+    nextBankReceived = correctionsSum;
+  }
+  const bankAmtResolved = nextBankReceived != null && nextBankReceived > 0;
+  if (!finalized && !bankAmtResolved) {
     return {
       ok: false,
       code: 'BANK_RECEIVED_REQUIRED',
@@ -9213,8 +9231,6 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
         'Enter the amount actually received in bank or cash before clearing this receipt. Finance must confirm the payment matches real money.',
     };
   }
-
-  const corrections = Array.isArray(payload?.paymentLineCorrections) ? payload.paymentLineCorrections : [];
 
   const now = new Date().toISOString();
   const uid = actor?.id ?? null;
@@ -9244,7 +9260,7 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
         }
       }
 
-      if (hasBankAmt && nextBankReceived != null && nextBankReceived > 0) {
+      if (bankAmtResolved) {
         const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived, actor, {
           skipTreasurySync: corrections.length > 0,
         });

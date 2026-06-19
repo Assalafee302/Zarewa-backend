@@ -54,6 +54,11 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(rec.bank_received_amount_ngn).toBe(620_000);
     expect(String(rec.status)).toBe('Cleared');
 
+    const cleared = db
+      .prepare(`SELECT finance_delivery_cleared_at_iso FROM sales_receipts WHERE id = ?`)
+      .get('LE-261');
+    expect(cleared.finance_delivery_cleared_at_iso).toBeTruthy();
+
     const led = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = ?`).get('LE-261');
     expect(led.amount_ngn).toBe(620_000);
 
@@ -71,6 +76,44 @@ describe('receipt finance settlement aligns paid amount', () => {
     const cash = quotationPaymentCashBreakdown(db, 'QT-146');
     expect(cash.receiptCashNgn).toBe(620_000);
     expect(cash.cashInNgn).toBe(620_000);
+  });
+
+  it('payment line corrections sum becomes authoritative bank received', () => {
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      {
+        paymentLineCorrections: [{ movementId: 'TM-261', amountNgn: 500_000, treasuryAccountId: 1 }],
+      },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const rec = db.prepare(`SELECT amount_ngn, bank_received_amount_ngn FROM sales_receipts WHERE id = ?`).get(
+      'LE-261'
+    );
+    expect(rec.amount_ngn).toBe(500_000);
+    expect(rec.bank_received_amount_ngn).toBe(500_000);
+
+    const treas = db
+      .prepare(`SELECT amount_ngn FROM treasury_movements WHERE id = 'TM-261'`)
+      .get();
+    expect(treas.amount_ngn).toBe(500_000);
+  });
+
+  it('holdForDelivery skips finance delivery clearance', () => {
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 620_000, holdForDelivery: true },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+
+    const cleared = db
+      .prepare(`SELECT finance_delivery_cleared_at_iso FROM sales_receipts WHERE id = ?`)
+      .get('LE-261');
+    expect(cleared.finance_delivery_cleared_at_iso).toBeFalsy();
   });
 
   it('syncQuotationPaidFromReceipts uses bank_received for already-reconciled receipts', () => {

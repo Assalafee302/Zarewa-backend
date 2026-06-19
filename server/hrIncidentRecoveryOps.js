@@ -280,6 +280,73 @@ export function cancelRecoverySchedule(db, actor, scheduleId, reason = '') {
 }
 
 /**
+ * Core settlement write — schedule row + settlement insert. Caller must run inside a transaction when needed.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null} actor
+ * @param {object} row hr_incident_recovery_schedules row
+ * @param {{
+ *   amountNgn: number;
+ *   paymentReference?: string | null;
+ *   paymentDateIso?: string;
+ *   note?: string | null;
+ *   settlementKind?: string;
+ *   now?: string;
+ *   settlementId?: string;
+ * }} params
+ */
+export function applyRecoverySettlementTx(db, actor, row, params) {
+  const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
+  const amountNgn = Math.round(Number(params.amountNgn) || 0);
+  const principalAfter = outstanding - amountNgn;
+  const completed = principalAfter <= 0;
+  const settlementId = String(params.settlementId || '').trim() || newId('HRRcvPay');
+  const now = params.now || nowIso();
+  const paymentReference = String(params.paymentReference ?? '').trim() || null;
+  const paymentDateIso =
+    String(params.paymentDateIso ?? '').trim().slice(0, 10) || now.slice(0, 10);
+  const note = String(params.note ?? '').trim() || null;
+  const settlementKind =
+    String(params.settlementKind || '').trim() || (amountNgn >= outstanding ? 'lump_sum' : 'partial');
+
+  db.prepare(
+    `INSERT INTO hr_incident_recovery_settlements (
+      id, schedule_id, case_id, user_id, amount_ngn, principal_before_ngn, principal_after_ngn,
+      payment_reference, payment_date_iso, note, settlement_kind, recorded_by_user_id, created_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    settlementId,
+    row.id,
+    row.case_id,
+    row.user_id,
+    amountNgn,
+    outstanding,
+    principalAfter,
+    paymentReference,
+    paymentDateIso,
+    note,
+    settlementKind,
+    actor?.id || null,
+    now
+  );
+  db.prepare(
+    `UPDATE hr_incident_recovery_schedules SET
+      principal_outstanding_ngn = ?,
+      deductions_active = ?,
+      status = ?,
+      closed_at_iso = ?
+     WHERE id = ?`
+  ).run(
+    principalAfter,
+    completed ? 0 : row.deductions_active,
+    completed ? 'completed' : row.status,
+    completed ? now : row.closed_at_iso,
+    row.id
+  );
+
+  return { settlementId, amountNgn, principalAfter, completed };
+}
+
+/**
  * Record a direct (non-payroll) recovery payment — full or partial lump sum.
  * @param {import('better-sqlite3').Database} db
  * @param {object | null} actor
@@ -317,49 +384,22 @@ export function recordRecoverySettlement(db, actor, scheduleId, body = {}) {
   const note = String(body.note ?? '').trim() || null;
   const settlementKind = amountNgn >= outstanding ? 'lump_sum' : 'partial';
   const now = nowIso();
-  const principalAfter = outstanding - amountNgn;
-  const completed = principalAfter <= 0;
   const settlementId = newId('HRRcvPay');
 
   const staff = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(row.user_id);
   const staffLabel = staff?.display_name || row.user_id;
 
-  db.transaction(() => {
-    db.prepare(
-      `INSERT INTO hr_incident_recovery_settlements (
-        id, schedule_id, case_id, user_id, amount_ngn, principal_before_ngn, principal_after_ngn,
-        payment_reference, payment_date_iso, note, settlement_kind, recorded_by_user_id, created_at_iso
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(
-      settlementId,
-      row.id,
-      row.case_id,
-      row.user_id,
+  const { principalAfter, completed } = db.transaction(() =>
+    applyRecoverySettlementTx(db, actor, row, {
       amountNgn,
-      outstanding,
-      principalAfter,
       paymentReference,
       paymentDateIso,
       note,
       settlementKind,
-      actor?.id || null,
-      now
-    );
-    db.prepare(
-      `UPDATE hr_incident_recovery_schedules SET
-        principal_outstanding_ngn = ?,
-        deductions_active = ?,
-        status = ?,
-        closed_at_iso = ?
-       WHERE id = ?`
-    ).run(
-      principalAfter,
-      completed ? 0 : row.deductions_active,
-      completed ? 'completed' : row.status,
-      completed ? now : row.closed_at_iso,
-      row.id
-    );
-  })();
+      now,
+      settlementId,
+    })
+  )();
 
   const eventNote = [
     `Direct recovery payment recorded for ${staffLabel}: NGN ${amountNgn.toLocaleString()}`,

@@ -83,6 +83,8 @@ import { sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
+import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
+import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
@@ -241,6 +243,10 @@ export function buildBootstrap(db, opts = {}) {
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    staffRecoveriesDue:
+      finOk && recoverySchedulesTableReady(db)
+        ? listStaffRecoveriesDueForCashier(db, branchScope)
+        : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     bankDeposits:
       ledgerOk || finOk ? listBankDeposits(db, branchScope, { openOnly: false }) : [],

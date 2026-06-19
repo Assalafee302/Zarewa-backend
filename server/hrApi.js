@@ -253,6 +253,10 @@ import {
 } from './staffPurchaseCreditOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import {
+  listStaffRecoveriesDueForCashier,
+  recordStaffRecoveryCashierPayment,
+} from './staffRecoveryCashierOps.js';
+import {
   buildObligationAccountStatementPdf,
   buildObligationDisbursementVoucherPdf,
   buildObligationRepaymentReceiptPdf,
@@ -3715,6 +3719,43 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not record repayment.' });
     }
   });
+
+  app.get(
+    '/api/finance/staff-recoveries-due',
+    requireHrAny('finance.post', 'finance.pay', 'cashier.desk.view', 'treasury.manage', 'hr.recovery.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const scope = hrListScope(req);
+        const branchScope = scope.viewAll ? 'ALL' : scope.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID;
+        const rows = listStaffRecoveriesDueForCashier(db, branchScope);
+        return res.json({ ok: true, recoveries: rows, ledgerReady: staffObligationTablesReady(db) });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load staff recoveries due.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/finance/staff-recoveries/:scheduleId/receive',
+    requireHrAny('finance.post', 'finance.pay', 'treasury.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = recordStaffRecoveryCashierPayment(db, req.user, req.params.scheduleId, {
+          ...(req.body || {}),
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not record staff recovery payment.' });
+      }
+    }
+  );
 
   app.get('/api/hr/obligation-accounts/:accountId/statement.pdf', (req, res) => {
     try {

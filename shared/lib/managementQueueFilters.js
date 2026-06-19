@@ -33,6 +33,7 @@ export function cuttingListInProductionGate(cl, q) {
 export function quotationIsOverdueForCollections(q, todayIso) {
   const total = Number(q?.totalNgn ?? q?.total_ngn) || 0;
   const paid = Number(q?.paidNgn ?? q?.paid_ngn) || 0;
+  if (isEffectivelyFullyPaid(paid, total)) return false;
   const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(q));
   const opsDue = effectiveOutstandingNgn(total, paid);
   if (receivable <= 0 && opsDue <= 0) return false;

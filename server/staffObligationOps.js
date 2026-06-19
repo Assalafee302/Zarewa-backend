@@ -109,6 +109,7 @@ export function mapObligationAccountRow(row) {
     hrRequestId: row.hr_request_id || null,
     quotationRef: row.quotation_ref || null,
     disciplineCaseId: row.discipline_case_id || null,
+    recoveryScheduleId: row.recovery_schedule_id || null,
     financePaymentRequestId: row.finance_payment_request_id || null,
     disbursedAtIso: row.disbursed_at_iso || null,
     dueDateIso: row.due_date_iso || null,
@@ -568,7 +569,71 @@ export function recordObligationCashRepayment(db, actor, accountId, body = {}) {
     details: { amountNgn, paymentReference, principalAfter: result.account.principalOutstandingNgn },
   });
 
+  if (String(row.kind) === OBLIGATION_KIND.LOAN && row.hr_request_id) {
+    syncLoanRequestPayloadFromObligation(db, id);
+  }
+
   return { ok: true, receiptReference: paymentReference, ...result };
+}
+
+/**
+ * Keep legacy hr_requests.payload_json in sync with the obligation ledger (loan kind only).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} accountIdOrHrRequestId obligation account id or hr_requests.id
+ */
+export function syncLoanRequestPayloadFromObligation(db, accountIdOrHrRequestId) {
+  if (!staffObligationTablesReady(db)) return { ok: false, skipped: true };
+  const key = String(accountIdOrHrRequestId || '').trim();
+  if (!key) return { ok: false, error: 'account or request id required.' };
+
+  let account = db
+    .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ? AND kind = ?`)
+    .get(key, OBLIGATION_KIND.LOAN);
+  let hrRequestId = account?.hr_request_id || null;
+  if (!account) {
+    hrRequestId = key;
+    account = db
+      .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE hr_request_id = ? AND kind = ?`)
+      .get(hrRequestId, OBLIGATION_KIND.LOAN);
+  }
+  if (!account || !hrRequestId) return { ok: false, skipped: true };
+
+  const loan = db.prepare(`SELECT id, payload_json FROM hr_requests WHERE id = ? AND kind = 'loan'`).get(hrRequestId);
+  if (!loan) return { ok: false, skipped: true };
+
+  const p = safeJsonParse(loan.payload_json, {});
+  const outstanding = Math.round(Number(account.principal_outstanding_ngn) || 0);
+  const monthsPaid = Math.round(Number(account.months_paid) || 0);
+  const termMonths = Math.round(Number(account.term_months) || 0);
+  const installmentNgn = Math.round(Number(account.installment_ngn) || 0);
+  const deductionsActive = Boolean(account.deductions_active);
+  const status = String(account.status);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const merged = {
+    ...p,
+    obligationAccountId: account.id,
+    principalOutstandingNgn: outstanding,
+    deductionsActive,
+    loanMonthsDeducted: monthsPaid,
+    deductionPerMonthNgn: installmentNgn || p.deductionPerMonthNgn,
+    repaymentMonths: termMonths || p.repaymentMonths,
+  };
+  if (account.disbursed_at_iso && !merged.loanDisbursedAtIso) {
+    merged.loanDisbursedAtIso = String(account.disbursed_at_iso).slice(0, 10);
+  }
+  if (status === OBLIGATION_STATUS.PAID_OFF || outstanding <= 0) {
+    merged.deductionsActive = false;
+    merged.principalOutstandingNgn = 0;
+    if (!merged.loanRepaidByPrincipalAtIso) merged.loanRepaidByPrincipalAtIso = today;
+  }
+  if (termMonths > 0 && monthsPaid >= termMonths) {
+    merged.deductionsActive = false;
+    if (!merged.loanRepaidByScheduleAtIso) merged.loanRepaidByScheduleAtIso = today;
+  }
+
+  db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), loan.id);
+  return { ok: true };
 }
 
 /**
@@ -605,6 +670,9 @@ export function settleObligationAfterPayrollDeduction(db, accountId, userId, ded
     sourceId: runId || null,
     note: 'Payroll loan recovery',
   });
+  if (String(row.kind) === OBLIGATION_KIND.LOAN && row.hr_request_id) {
+    syncLoanRequestPayloadFromObligation(db, id);
+  }
 }
 
 /**
@@ -636,9 +704,10 @@ export function activeObligationBreakdownForPayroll(db, userId, kinds = [OBLIGAT
       obligationAccountId: row.id,
       hrRequestId: row.hr_request_id || row.id,
       amountNgn,
-      title: row.title || (row.kind === OBLIGATION_KIND.PURCHASE ? 'Staff purchase credit' : 'Staff loan'),
+      title: row.title || (row.kind === OBLIGATION_KIND.PURCHASE ? 'Staff purchase credit' : row.kind === OBLIGATION_KIND.RECOVERY ? 'Incident recovery' : 'Staff loan'),
       kind: row.kind,
       quotationRef: row.quotation_ref || null,
+      recoveryScheduleId: row.recovery_schedule_id || null,
     });
   }
   return {

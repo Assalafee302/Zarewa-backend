@@ -13,6 +13,7 @@ import { migrateProductsBranchCompositeInventory } from './productBranchInventor
 import { withMigrationLock } from './migrationLock.js';
 import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
+import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -1059,6 +1060,7 @@ function runMigrationsUnlocked(db) {
   migrateHrAccountability2026(db);
   migrateStaffObligationLedger2026(db);
   migrateStaffPurchaseCredit2026(db);
+  migrateStaffRecoveryObligation2026(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
@@ -5424,6 +5426,44 @@ function migrateStaffPurchaseCredit2026(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_quotations_staff_purchase ON quotations(staff_purchase_credit_id)`);
   } catch {
     /* ignore */
+  }
+}
+
+/** Link incident recovery schedules to unified obligation ledger. */
+function migrateStaffRecoveryObligation2026(db) {
+  const obCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(hr_staff_obligation_accounts)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (obCols.size && !obCols.has('recovery_schedule_id')) {
+    db.exec(`ALTER TABLE hr_staff_obligation_accounts ADD COLUMN recovery_schedule_id TEXT`);
+    try {
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_obligation_recovery_schedule ON hr_staff_obligation_accounts(recovery_schedule_id) WHERE recovery_schedule_id IS NOT NULL AND trim(recovery_schedule_id) != ''`
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const recCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(hr_payroll_line_recoveries)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (recCols.size && !recCols.has('obligation_account_id')) {
+    db.exec(`ALTER TABLE hr_payroll_line_recoveries ADD COLUMN obligation_account_id TEXT`);
+  }
+
+  try {
+    backfillRecoveryObligationsFromSchedules(db);
+  } catch (e) {
+    console.warn('[migrate] recovery obligation backfill skipped:', e?.message || e);
   }
 }
 

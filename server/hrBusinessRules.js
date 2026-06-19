@@ -2,6 +2,31 @@
  * Central HR handbook-style rules (loaded from hr_policy_config with defaults).
  * @param {import('better-sqlite3').Database} db
  */
+import {
+  OBLIGATION_KIND,
+  OBLIGATION_STATUS,
+  staffObligationTablesReady,
+} from './staffObligationOps.js';
+
+const DEFAULT_STAFF_PURCHASE_CREDIT_POLICY = {
+  enabled: true,
+  minServiceYears: 1,
+  maxOutstandingNgn: 5_000_000,
+  maxSinglePurchaseNgn: 2_000_000,
+  maxRepaymentMonths: 6,
+  maxConcurrentActive: 1,
+  requireDepositPercent: 0,
+};
+
+const STAFF_PURCHASE_CREDIT_PATCH_KEYS = new Set([
+  'enabled',
+  'minServiceYears',
+  'maxOutstandingNgn',
+  'maxSinglePurchaseNgn',
+  'maxRepaymentMonths',
+  'maxConcurrentActive',
+  'requireDepositPercent',
+]);
 
 const DEFAULT_POLICY = {
   loanMinServiceYears: 3,
@@ -44,11 +69,20 @@ export function getHrPolicyPayload(db) {
     const row = db
       .prepare(`SELECT payload_json FROM hr_policy_config ORDER BY effective_from_iso DESC LIMIT 1`)
       .get();
-    if (!row?.payload_json) return { ...DEFAULT_POLICY };
+    if (!row?.payload_json) {
+      return { ...DEFAULT_POLICY, staffPurchaseCredit: { ...DEFAULT_STAFF_PURCHASE_CREDIT_POLICY } };
+    }
     const parsed = JSON.parse(String(row.payload_json));
-    return { ...DEFAULT_POLICY, ...parsed };
+    return {
+      ...DEFAULT_POLICY,
+      ...parsed,
+      staffPurchaseCredit: {
+        ...DEFAULT_STAFF_PURCHASE_CREDIT_POLICY,
+        ...(parsed.staffPurchaseCredit && typeof parsed.staffPurchaseCredit === 'object' ? parsed.staffPurchaseCredit : {}),
+      },
+    };
   } catch {
-    return { ...DEFAULT_POLICY };
+    return { ...DEFAULT_POLICY, staffPurchaseCredit: { ...DEFAULT_STAFF_PURCHASE_CREDIT_POLICY } };
   }
 }
 
@@ -86,6 +120,24 @@ export function updateHrPolicyPayload(db, patch = {}) {
     }
     next[key] = n;
   }
+
+  if (patch?.staffPurchaseCredit && typeof patch.staffPurchaseCredit === 'object') {
+    const cur = { ...DEFAULT_STAFF_PURCHASE_CREDIT_POLICY, ...(next.staffPurchaseCredit || {}) };
+    for (const [sk, raw] of Object.entries(patch.staffPurchaseCredit)) {
+      if (!STAFF_PURCHASE_CREDIT_PATCH_KEYS.has(sk)) continue;
+      if (sk === 'enabled') {
+        cur.enabled = raw === true || raw === 1 || raw === '1' || String(raw).toLowerCase() === 'true';
+        continue;
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) {
+        return { ok: false, error: `Invalid staffPurchaseCredit.${sk}.` };
+      }
+      cur[sk] = sk.includes('Months') || sk.includes('Concurrent') ? Math.round(n) : n;
+    }
+    next.staffPurchaseCredit = cur;
+  }
+
   try {
     const id = `HRPOL-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
@@ -122,6 +174,16 @@ function monthlyGrossFromProfile(prof) {
 export function countActiveApprovedLoansInBranch(db, branchId) {
   const bid = String(branchId || '').trim();
   if (!bid) return 0;
+  if (staffObligationTablesReady(db)) {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM hr_staff_obligation_accounts
+         WHERE branch_id = ? AND kind = ? AND deductions_active = 1
+           AND principal_outstanding_ngn > 0 AND status = ?`
+      )
+      .get(bid, OBLIGATION_KIND.LOAN, OBLIGATION_STATUS.ACTIVE);
+    return Math.round(Number(row?.c) || 0);
+  }
   const rows = db
     .prepare(
       `SELECT r.id, r.payload_json FROM hr_requests r

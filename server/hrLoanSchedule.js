@@ -10,7 +10,7 @@ export function getStaffLoanSchedule(db, userId) {
   if (!hrTablesReady(db)) return [];
   if (staffObligationTablesReady(db)) {
     const fromLedger = getStaffObligationLoanSchedule(db, userId);
-    if (fromLedger) return fromLedger;
+    if (fromLedger?.length) return fromLedger;
   }
   const loans = listHrRequests(db, { viewAll: true }, { userId, kind: 'loan' }).filter(
     (r) => r.status === 'approved' || r.status === 'paid' || r.status === 'completed'

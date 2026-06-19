@@ -5,6 +5,7 @@
 import { userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { getCreditPolicyConfig, requiredApprovalLevelForCreditAmount } from './creditPolicy.js';
+import { getHrPolicyPayload } from './hrBusinessRules.js';
 import { evaluateQuotationPaymentForDeliveryRelease } from './deliveryReleaseGate.js';
 import { listProductionJobs } from './readModel.js';
 import { insertCustomer, insertLedgerRows, syncQuotationPaidFromReceipts } from './writeOps.js';
@@ -44,13 +45,7 @@ export function staffPurchaseCreditColumnsReady(db) {
 
 export function getStaffPurchaseCreditPolicy(db) {
   const credit = getCreditPolicyConfig(db);
-  let hrPolicy = {};
-  try {
-    const row = db.prepare(`SELECT payload_json FROM hr_policy_config ORDER BY effective_from_iso DESC LIMIT 1`).get();
-    hrPolicy = safeJsonParse(row?.payload_json, {});
-  } catch {
-    /* optional */
-  }
+  const hrPolicy = getHrPolicyPayload(db);
   const p = hrPolicy.staffPurchaseCredit || {};
   return {
     enabled: p.enabled !== false,

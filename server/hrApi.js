@@ -251,6 +251,7 @@ import {
   computeStaffPurchaseCreditEligibility,
   ensureStaffSalesCustomer,
 } from './staffPurchaseCreditOps.js';
+import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import {
   buildObligationAccountStatementPdf,
   buildObligationDisbursementVoucherPdf,
@@ -3691,6 +3692,18 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.post('/api/hr/obligation-accounts/backfill-recoveries', requireHrAny('hr.loans.manage', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = backfillRecoveryObligationsFromSchedules(db);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not backfill recovery obligations.' });
+    }
+  });
+
   app.post('/api/hr/obligation-accounts/:accountId/repayments', requireHrAny('hr.loans.manage', 'finance.post'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -3781,14 +3794,18 @@ export function registerHrApi(app, db) {
       const purchases = staffObligationTablesReady(db)
         ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.PURCHASE })
         : [];
+      const recoveries = staffObligationTablesReady(db)
+        ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.RECOVERY })
+        : [];
       const purchaseEligibility = computeStaffPurchaseCreditEligibility(db, userId);
       const totalOutstanding =
-        [...loans, ...purchases].reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
+        [...loans, ...purchases, ...recoveries].reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
       return res.json({
         ok: true,
         totalOutstandingNgn: totalOutstanding,
         loans,
         purchases,
+        recoveries,
         purchaseEligibility,
       });
     } catch (e) {

@@ -6,6 +6,13 @@
 import crypto from 'node:crypto';
 import { hrTableExists } from './hrTableChecks.js';
 import { appendHrAuditEvent } from './hrOps.js';
+import {
+  activeRecoveryObligationBreakdownForPayroll,
+  cancelRecoveryObligationAccount,
+  mirrorRecoveryCashSettlementToObligation,
+  openRecoveryObligationFromSchedule,
+  settleRecoveryObligationAfterPayroll,
+} from './staffRecoveryObligationOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -144,6 +151,9 @@ export function listRecoverySchedulesForUser(db, userId) {
  * @param {string} userId
  */
 export function activeIncidentRecoveryBreakdown(db, userId) {
+  const fromLedger = activeRecoveryObligationBreakdownForPayroll(db, userId);
+  if (fromLedger?.recoveries?.length) return fromLedger;
+
   if (!recoverySchedulesTableReady(db)) return { total: 0, recoveries: [] };
   const rows = db
     .prepare(
@@ -227,6 +237,7 @@ export function createRecoverySchedulesFromCase(db, actor, caseId, opts = {}) {
         actor?.id || null
       );
       schedules.push(mapRecoveryScheduleRow(db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(id)));
+      if (activate) openRecoveryObligationFromSchedule(db, id, actor);
     }
   })();
 
@@ -246,7 +257,11 @@ export function activateRecoverySchedulesForCase(db, actor, caseId) {
     `UPDATE hr_incident_recovery_schedules SET status = 'active', deductions_active = 1, activated_at_iso = ?, approved_by_user_id = ?
      WHERE case_id = ? AND status = 'draft'`
   ).run(now, actor?.id || null, String(caseId || '').trim());
-  return { ok: true, schedules: listRecoverySchedulesForCase(db, caseId) };
+  const schedules = listRecoverySchedulesForCase(db, caseId);
+  for (const s of schedules) {
+    if (String(s.status) === 'active') openRecoveryObligationFromSchedule(db, s.id, actor);
+  }
+  return { ok: true, schedules };
 }
 
 export function cancelRecoverySchedule(db, actor, scheduleId, reason = '') {
@@ -260,6 +275,7 @@ export function cancelRecoverySchedule(db, actor, scheduleId, reason = '') {
   db.prepare(
     `UPDATE hr_incident_recovery_schedules SET status = 'cancelled', deductions_active = 0, closed_at_iso = ?, cancel_reason = ? WHERE id = ?`
   ).run(now, String(reason || '').trim() || null, row.id);
+  cancelRecoveryObligationAccount(db, row.id);
   return { ok: true, schedule: mapRecoveryScheduleRow(db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(row.id)) };
 }
 
@@ -375,6 +391,13 @@ export function recordRecoverySettlement(db, actor, scheduleId, body = {}) {
   });
 
   const updated = db.prepare(`SELECT * FROM hr_incident_recovery_schedules WHERE id = ?`).get(row.id);
+  mirrorRecoveryCashSettlementToObligation(db, sid, actor, {
+    amountNgn,
+    payInFull: completed,
+    paymentReference,
+    paymentDateIso,
+    note,
+  });
   return {
     ok: true,
     settlement: mapRecoverySettlementRow(
@@ -422,5 +445,6 @@ export function incrementRecoveriesFromPayrollRun(db, runId) {
     .all(runId);
   for (const it of items) {
     settleRecoveryAfterPayrollDeduction(db, it.schedule_id, it.user_id, it.amount_ngn);
+    settleRecoveryObligationAfterPayroll(db, it.schedule_id, it.user_id, it.amount_ngn, runId);
   }
 }

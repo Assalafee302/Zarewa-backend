@@ -13,7 +13,7 @@ import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingToleran
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
-import { buildStaffObligationCreditorItems, OBLIGATION_KIND, staffObligationTablesReady } from './staffObligationOps.js';
+import { buildStaffObligationCreditorItems, OBLIGATION_KIND, OBLIGATION_STATUS, staffObligationTablesReady } from './staffObligationOps.js';
 import { hrTablesReady } from './hrOps.js';
 import { interBranchLoanBalances, listInterBranchLoans } from './interBranchLoanOps.js';
 import { branchPredicate } from './branchSql.js';
@@ -300,6 +300,38 @@ export function createAccountingRegisterLine(db, body, user) {
   const partyRef = partyResolved.partyRef;
   const amountNgn = Math.round(Number(body?.amountNgn) || 0);
   if (amountNgn <= 0) return { ok: false, error: 'Amount must be greater than zero.' };
+
+  const catLower = category.toLowerCase();
+  if (
+    staffObligationTablesReady(db) &&
+    registerSide === 'creditor' &&
+    (catLower === 'staff_loan' || catLower === 'staff')
+  ) {
+    const staffRef = String(body?.partyRef || partyRef || '').trim();
+    if (staffRef) {
+      const existing = db
+        .prepare(
+          `SELECT id FROM hr_staff_obligation_accounts
+           WHERE user_id = ? AND kind = ? AND principal_outstanding_ngn > 0
+             AND status IN (?, ?, ?) LIMIT 1`
+        )
+        .get(
+          staffRef,
+          OBLIGATION_KIND.LOAN,
+          OBLIGATION_STATUS.ACTIVE,
+          OBLIGATION_STATUS.PENDING_DISBURSEMENT,
+          OBLIGATION_STATUS.PENDING_APPROVAL
+        );
+      if (existing?.id) {
+        return {
+          ok: false,
+          error:
+            'This staff member already has an HR obligation loan account. Use HR → Loans (obligation ledger) instead of a manual creditors register line.',
+        };
+      }
+    }
+  }
+
   const asAtDateIso = String(body?.asAtDateIso || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asAtDateIso)) {
     return { ok: false, error: 'Valid as-at date (YYYY-MM-DD) is required.' };
@@ -449,6 +481,11 @@ function buildStaffLoanItems(db, branchScope) {
     }
   }
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
+}
+
+function buildStaffRecoveryReceivableItems(db, branchScope) {
+  if (!staffObligationTablesReady(db)) return [];
+  return buildStaffObligationCreditorItems(db, branchScope, OBLIGATION_KIND.RECOVERY);
 }
 
 function buildStaffPurchaseReceivableItems(db, branchScope) {
@@ -719,6 +756,12 @@ export function buildCreditorsRegister(db, opts = {}) {
       'Staff purchase credit',
       'Roofing and materials sold to staff on credit — recovered via payroll.',
       safeRegisterItems('creditors.staff_purchase', () => buildStaffPurchaseReceivableItems(db, branchScope))
+    ),
+    section(
+      'staff_recovery_receivables',
+      'Staff discipline recovery',
+      'Incident-related amounts recovered from staff via payroll or direct payment.',
+      safeRegisterItems('creditors.staff_recovery', () => buildStaffRecoveryReceivableItems(db, branchScope))
     ),
     section(
       'customer_receivables',

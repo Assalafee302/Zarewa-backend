@@ -28,9 +28,13 @@ import {
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import {
   activeObligationBreakdownForPayroll,
+  OBLIGATION_STATUS,
+  OBLIGATION_TX_TYPE,
   openLoanObligationFromHrApproval,
+  postObligationTransaction,
   settleObligationAfterPayrollDeduction,
   staffObligationTablesReady,
+  syncLoanRequestPayloadFromObligation,
 } from './staffObligationOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import {
@@ -406,7 +410,8 @@ export function listHrStaff(db, scope, opts = {}) {
            p.salary_step AS salaryStep,
            p.profile_submitted_at_iso AS profileSubmittedAtIso,
            p.profile_locked AS profileLocked,
-           p.profile_verified_at_iso AS profileVerifiedAtIso
+           p.profile_verified_at_iso AS profileVerifiedAtIso,
+           p.sales_customer_id AS salesCustomerId
     FROM app_users u
     ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1
@@ -2949,7 +2954,7 @@ export function adjustHrLeaveBalance(db, actor, body = {}) {
 function activeStaffLoanBreakdown(db, userId) {
   if (staffObligationTablesReady(db)) {
     const ob = activeObligationBreakdownForPayroll(db, userId);
-    if (ob) return ob;
+    if (ob?.items?.length) return { total: ob.total, loans: ob.items };
   }
   const rows = db
     .prepare(`SELECT id, title, payload_json FROM hr_requests WHERE user_id = ? AND kind = 'loan' AND status = 'approved'`)
@@ -3028,8 +3033,9 @@ function incrementLoanMonthsFromPayrollRun(db, runId) {
     const obId = String(item.obligation_account_id || '').trim();
     if (staffObligationTablesReady(db) && obId) {
       settleObligationAfterPayrollDeduction(db, obId, item.user_id, item.amount_ngn, runId);
+    } else if (item.hr_request_id) {
+      settleLoanAfterPayrollDeduction(db, item.hr_request_id, item.user_id, item.amount_ngn);
     }
-    settleLoanAfterPayrollDeduction(db, item.hr_request_id, item.user_id, item.amount_ngn);
   }
   incrementRecoveriesFromPayrollRun(db, runId);
 }
@@ -3687,7 +3693,7 @@ export function computePayrollRun(db, runId) {
         /* pay_hold column optional until migrate */
       }
     }
-    for (const ln of loanParts) {
+    for (const ln of loanParts || []) {
       try {
         db.prepare(
           `INSERT INTO hr_payroll_line_loans (
@@ -3708,8 +3714,25 @@ export function computePayrollRun(db, runId) {
       }
     }
     if (insRecovery) {
-      for (const rc of recoveryParts) {
-        insRecovery.run(runId, s.user_id, rc.scheduleId, period, rc.amountNgn, rc.caseNumber, computedAt);
+      for (const rc of recoveryParts || []) {
+        try {
+          db.prepare(
+            `INSERT INTO hr_payroll_line_recoveries (
+              run_id, user_id, schedule_id, obligation_account_id, period_yyyymm, amount_ngn, case_number, computed_at_iso
+            ) VALUES (?,?,?,?,?,?,?,?)`
+          ).run(
+            runId,
+            s.user_id,
+            rc.scheduleId,
+            rc.obligationAccountId || null,
+            period,
+            rc.amountNgn,
+            rc.caseNumber,
+            computedAt
+          );
+        } catch {
+          insRecovery.run(runId, s.user_id, rc.scheduleId, period, rc.amountNgn, rc.caseNumber, computedAt);
+        }
       }
     }
     totalGross += Math.max(0, gross);
@@ -5068,6 +5091,50 @@ export function patchHrLoanMaintenance(db, requestId, actorUserId, body) {
     merged.loanMaintenanceAtIso = nowIso();
   }
   db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), requestId);
+
+  if (staffObligationTablesReady(db)) {
+    const obRow = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE hr_request_id = ?`).get(requestId);
+    if (obRow) {
+      const now = nowIso();
+      if (body?.closeLoan === true) {
+        const outstanding = Math.round(Number(obRow.principal_outstanding_ngn) || 0);
+        if (outstanding > 0) {
+          postObligationTransaction(db, obRow.id, {
+            type: OBLIGATION_TX_TYPE.WRITE_OFF,
+            amountNgn: outstanding,
+            effectiveAtIso: now,
+            note: String(body.note ?? '').trim() || 'Loan closed early by HR',
+            recordedByUserId: actorUserId || null,
+          });
+        }
+        db.prepare(
+          `UPDATE hr_staff_obligation_accounts SET status = ?, deductions_active = 0, updated_at_iso = ? WHERE id = ?`
+        ).run(OBLIGATION_STATUS.PAID_OFF, now, obRow.id);
+      } else {
+        const updates = [];
+        const args = [];
+        if (body?.deductionPerMonthNgn != null) {
+          updates.push('installment_ngn = ?');
+          args.push(Math.max(0, Math.round(Number(body.deductionPerMonthNgn) || 0)));
+        }
+        if (body?.repaymentMonths != null) {
+          updates.push('term_months = ?');
+          args.push(Math.max(0, Math.round(Number(body.repaymentMonths) || 0)));
+        }
+        if (body?.principalOutstandingNgn != null) {
+          updates.push('principal_outstanding_ngn = ?');
+          args.push(Math.max(0, Math.round(Number(body.principalOutstandingNgn) || 0)));
+        }
+        if (updates.length) {
+          updates.push('updated_at_iso = ?');
+          args.push(now, obRow.id);
+          db.prepare(`UPDATE hr_staff_obligation_accounts SET ${updates.join(', ')} WHERE id = ?`).run(...args);
+        }
+      }
+      syncLoanRequestPayloadFromObligation(db, obRow.id);
+    }
+  }
+
   return { ok: true };
 }
 

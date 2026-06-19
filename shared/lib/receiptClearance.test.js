@@ -4,6 +4,7 @@ import {
   isReceiptPendingClearance,
   liquidityClearanceSplit,
   pendingClearanceTotalNgn,
+  receiptEffectiveCashNgn,
 } from './receiptClearance.js';
 
 describe('receiptClearance', () => {
@@ -28,5 +29,19 @@ describe('receiptClearance', () => {
     expect(split.bookTotalNgn).toBe(1_000_000);
     expect(split.pendingClearanceNgn).toBe(200_000);
     expect(split.clearedBookNgn).toBe(800_000);
+  });
+
+  it('uses finance bank-received as effective cash when reconciled', () => {
+    expect(
+      receiptEffectiveCashNgn({
+        amountNgn: 415_350,
+        financeReconciliationSavedAtISO: '2026-05-21T10:00:00.000Z',
+        bankReceivedAmountNgn: 620_000,
+      })
+    ).toBe(620_000);
+    expect(receiptEffectiveCashNgn({ amountNgn: 100_000 })).toBe(100_000);
+    expect(
+      receiptEffectiveCashNgn({ amountNgn: 100_000 }, { companionOverpayNgn: 50_000 })
+    ).toBe(150_000);
   });
 });

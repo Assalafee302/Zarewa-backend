@@ -998,16 +998,7 @@ function sumReceiptsNgnForQuotation(salesReceipts, quotationId) {
     if (ref !== id) continue;
     const st = String(r.status || '').trim().toLowerCase();
     if (st === 'reversed') continue;
-    const reconciled = String(r.financeReconciliationSavedAtISO ?? r.finance_reconciliation_saved_at_iso ?? '').trim() !== '';
-    const confirmed =
-      reconciled && (r.bankReceivedAmountNgn ?? r.bank_received_amount_ngn) != null
-        ? Math.round(Number(r.bankReceivedAmountNgn ?? r.bank_received_amount_ngn) || 0)
-        : 0;
-    if (confirmed > 0) {
-      s += confirmed;
-      continue;
-    }
-    s += Number(r.amountNgn ?? r.amount_ngn) || 0;
+    s += receiptCashReceivedNgn(r);
   }
   return Math.round(s);
 }

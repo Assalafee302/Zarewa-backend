@@ -10,7 +10,10 @@ import {
   firstProductionDateISO,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { bankDepositRemainingNgn, bankDepositStatusLabel } from '../shared/lib/bankDeposits.js';
+import { isReceiptPendingClearance } from '../shared/lib/receiptClearance.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
+import { listBankDeposits } from './bankDepositOps.js';
 import { tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
 import { buildStaffObligationCreditorItems, OBLIGATION_KIND, OBLIGATION_STATUS, staffObligationTablesReady } from './staffObligationOps.js';
@@ -901,18 +904,16 @@ function buildOverpaymentCreditItems(db, branchScope) {
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
-function buildUnlinkedPaymentItems(db, branchScope) {
+/** Sales receipts with no quotation — suspense until matched (not uncleared workflow items). */
+function buildUnallocatedReceiptItems(db, branchScope) {
   const receipts = listSalesReceipts(db, branchScope);
   const items = [];
   for (const r of receipts) {
     if (String(r.status || '').toUpperCase() === 'REVERSED') continue;
+    const quoteRef = String(r.quotationRef || '').trim();
+    if (quoteRef) continue;
     const amount = Math.round(Number(r.amountNgn) || 0);
     if (amount <= 0) continue;
-    const quoteRef = String(r.quotationRef || '').trim();
-    const cleared = String(r.financeReconciliationSavedAtISO || '').trim() !== '';
-    const noQuote = !quoteRef;
-    const uncleared = !cleared;
-    if (!noQuote && !uncleared) continue;
     items.push(
       withEntity(
         {
@@ -923,12 +924,8 @@ function buildUnlinkedPaymentItems(db, branchScope) {
           amountNgn: amount,
           reference: r.id,
           asAtDateIso: r.dateISO,
-          detail: noQuote
-            ? 'Receipt not linked to a quotation'
-            : 'Receipt not cleared in finance reconciliation',
-          quotationRef: quoteRef || null,
-          uncleared,
-          unlinked: noQuote,
+          detail: 'Sales receipt not linked to a quotation — match in Sales or Finance',
+          unlinked: true,
         },
         r.customerID ? 'customer' : 'receipt',
         r.customerID || r.id
@@ -936,6 +933,68 @@ function buildUnlinkedPaymentItems(db, branchScope) {
     );
   }
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
+}
+
+/** Open bank-deposit pool (GL 2150 suspense) registered by Finance, not yet linked to Sales. */
+function buildBankDepositSuspenseItems(db, branchScope) {
+  if (!tableExists(db, 'bank_deposits')) return [];
+  const deposits = listBankDeposits(db, branchScope, { openOnly: true });
+  const items = [];
+  for (const d of deposits) {
+    const remaining = bankDepositRemainingNgn(d);
+    if (remaining <= 0) continue;
+    const label = String(d.description || d.bankReference || '').trim() || 'Unidentified bank inflow';
+    items.push(
+      withEntity(
+        {
+          id: d.id,
+          partyName: label,
+          partyRef: d.id,
+          branchId: d.branchId || '',
+          amountNgn: remaining,
+          reference: d.bankReference || d.id,
+          asAtDateIso: d.bankDateISO,
+          detail: `Unlinked bank deposit (GL 2150 suspense) · ${bankDepositStatusLabel(d.status)}`,
+          bankDepositId: d.id,
+        },
+        'bank_deposit',
+        d.id
+      )
+    );
+  }
+  return items.sort((a, b) => b.amountNgn - a.amountNgn);
+}
+
+/** Linked receipts awaiting finance clearance — control exceptions, not payables. */
+function buildPendingFinanceClearanceExceptions(db, branchScope) {
+  const receipts = listSalesReceipts(db, branchScope);
+  const items = [];
+  for (const r of receipts) {
+    if (!isReceiptPendingClearance(r)) continue;
+    const quoteRef = String(r.quotationRef || '').trim();
+    if (!quoteRef) continue;
+    const amount = Math.round(Number(r.amountNgn) || 0);
+    if (amount <= 0) continue;
+    items.push({
+      id: r.id,
+      partyName: r.customer || r.customerID || 'Unknown',
+      partyRef: r.customerID || '',
+      branchId: r.branchId || '',
+      amountNgn: amount,
+      reference: r.id,
+      quotationRef: quoteRef,
+      asAtDateIso: r.dateISO,
+      detail: 'Awaiting finance bank/cash confirmation — not a payable',
+    });
+  }
+  items.sort((a, b) => b.amountNgn - a.amountNgn);
+  return {
+    count: items.length,
+    totalNgn: sumSection(items),
+    description:
+      'Customer receipts linked to quotations but not yet cleared in Finance. These are workflow exceptions, not amounts owed by the company.',
+    items: items.slice(0, 50),
+  };
 }
 
 function buildInterBranchPayableItems(db, branchScope, branchLabel) {
@@ -1030,10 +1089,16 @@ export function buildDebtorsRegister(db, opts = {}) {
       overpayItems
     ),
     section(
-      'unlinked_payments',
-      'Unlinked & uncleared receipts',
-      'Bank receipts not tied to a quotation or not cleared in finance reconciliation.',
-      safeRegisterItems('debtors.unlinked_payments', () => buildUnlinkedPaymentItems(db, branchScope))
+      'unallocated_receipts',
+      'Unallocated sales receipts',
+      'Sales receipts not linked to a quotation — suspense until matched to a customer job.',
+      safeRegisterItems('debtors.unallocated_receipts', () => buildUnallocatedReceiptItems(db, branchScope))
+    ),
+    section(
+      'bank_deposit_suspense',
+      'Unlinked bank deposits (suspense)',
+      'Finance-registered bank inflows on GL 2150 not yet linked to Sales receipts or advances.',
+      safeRegisterItems('debtors.bank_deposit_suspense', () => buildBankDepositSuspenseItems(db, branchScope))
     ),
     section(
       'inter_branch_payable',
@@ -1052,32 +1117,48 @@ export function buildDebtorsRegister(db, opts = {}) {
   ];
 
   const legacySection = sections.find((s) => s.id === 'legacy_inherited');
+  const sectionSubtotal = (id) => sections.find((s) => s.id === id)?.subtotalNgn ?? 0;
   const totalNgn = sections.reduce((s, sec) => s + sec.subtotalNgn, 0);
+  const pendingFinanceClearance = (() => {
+    try {
+      return buildPendingFinanceClearanceExceptions(db, branchScope);
+    } catch (err) {
+      console.error('[accounting-register] pending clearance exceptions failed:', err);
+      return { count: 0, totalNgn: 0, description: '', items: [] };
+    }
+  })();
   return {
     ok: true,
     label: 'Debtors register',
     description:
-      'Amounts Zarewa owes or must refund — supplier AP, customer deposits, overpayments, unlinked payments, inter-branch, and inherited balances.',
+      'Amounts Zarewa owes or must refund — supplier AP, customer deposits, overpayments, unallocated receipts, bank suspense, inter-branch, and inherited balances.',
     branchScope: branchScope === 'ALL' ? null : branchScope,
     generatedAtISO: new Date().toISOString(),
     significantOverpayThresholdNgn: SIGNIFICANT_OVERPAY_NGN,
     summary: {
       totalNgn,
-      supplierPayablesNgn: sections[0].subtotalNgn,
-      customerDepositsNgn: sections[1].subtotalNgn,
-      overpaymentCreditsNgn: sections[2].subtotalNgn,
+      supplierPayablesNgn: sectionSubtotal('supplier_payables'),
+      customerDepositsNgn: sectionSubtotal('customer_deposits'),
+      overpaymentCreditsNgn: sectionSubtotal('overpayment_credits'),
       significantOverpaymentCount: significantOverpay.length,
       significantOverpaymentNgn: sumSection(significantOverpay),
-      unlinkedPaymentsNgn: sections[3].subtotalNgn,
-      interBranchPayableNgn: sections[4].subtotalNgn,
-      legacyInheritedNgn: sections[5].subtotalNgn,
+      unallocatedReceiptsNgn: sectionSubtotal('unallocated_receipts'),
+      bankDepositSuspenseNgn: sectionSubtotal('bank_deposit_suspense'),
+      interBranchPayableNgn: sectionSubtotal('inter_branch_payable'),
+      legacyInheritedNgn: sectionSubtotal('legacy_inherited'),
       unlinkedLegacyCount: legacySection?.unlinkedLegacyCount ?? 0,
+      pendingFinanceClearanceCount: pendingFinanceClearance.count ?? 0,
+      pendingFinanceClearanceNgn: pendingFinanceClearance.totalNgn ?? 0,
     },
     sections,
+    exceptions: {
+      pendingFinanceClearance,
+    },
     notes: [
       'Record pre-system overpayments (e.g. April project ₦8M) under “Add legacy line” on this tab.',
       'Significant overpayments should be reviewed for refund or re-application to the correct quotation.',
-      'Unlinked receipts may need manual matching in Finance → Receipts.',
+      'Unallocated receipts and unlinked bank deposits are suspense items until matched — not trade payables.',
+      'Receipts pending finance clearance are listed separately; they are not part of this register total.',
     ],
   };
 }

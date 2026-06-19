@@ -23,6 +23,7 @@ import { listInTransitLoads } from './inTransitOps.js';
 import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 /** @param {import('better-sqlite3').Database} db */
 
 function hasColumn(db, table, column) {
@@ -1386,24 +1387,13 @@ function ngnListDisplay(n) {
  */
 export function enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerEntries) {
   const rows = Array.isArray(receiptRows) ? receiptRows : [];
-  if (!ledgerEntries?.length) {
-    return rows.map((r) => ({
-      ...r,
-      cashReceivedNgn: Math.round(Number(r.amountNgn) || 0),
-    }));
-  }
-  const companion = companionOverpayNgnByReceiptId(ledgerEntries);
+  const companion = ledgerEntries?.length ? companionOverpayNgnByReceiptId(ledgerEntries) : new Map();
   return rows.map((r) => {
-    const reconciled = String(r.financeReconciliationSavedAtISO || '').trim() !== '';
-    const confirmed =
-      reconciled && r.bankReceivedAmountNgn != null && Math.round(Number(r.bankReceivedAmountNgn) || 0) > 0
-        ? Math.round(Number(r.bankReceivedAmountNgn) || 0)
-        : null;
-    const alloc = Math.round(Number(r.amountNgn) || 0);
     const rid = String(r.id || '');
     const lid = r.ledgerEntryId != null ? String(r.ledgerEntryId) : '';
     const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
-    const cash = confirmed != null ? confirmed : Math.round(alloc + extra);
+    const cash = receiptEffectiveCashNgn(r, { companionOverpayNgn: extra });
+    const alloc = Math.round(Number(r.amountNgn) || 0);
     const next = { ...r, cashReceivedNgn: cash };
     if (extra > 0) {
       next.quotationAllocatedNgn = alloc;
@@ -2913,7 +2903,7 @@ export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
   });
   const kpis = {
     salesMtdNgn: qInRange.reduce((s, q) => s + (Number(q?.totalNgn) || 0), 0),
-    receiptsMtdNgn: rInRange.reduce((s, r) => s + (Number(r?.amountNgn) || 0), 0),
+    receiptsMtdNgn: rInRange.reduce((s, r) => s + receiptEffectiveCashNgn(r), 0),
     outstandingReceivablesNgn: quotations.reduce(
       (s, q) => s + receivableDueOnQuotationFromEntries([], q, productionJobs),
       0
@@ -2953,7 +2943,7 @@ export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
     if (toIso && d > toIso) return;
     const key = d.slice(0, 7);
     const curr = rows.get(key) || { key, salesNgn: 0, receiptsNgn: 0 };
-    curr.receiptsNgn += Number(r?.amountNgn) || 0;
+    curr.receiptsNgn += receiptEffectiveCashNgn(r);
     rows.set(key, curr);
   });
   return { ok: true, rows: [...rows.values()].sort((a, b) => a.key.localeCompare(b.key)) };

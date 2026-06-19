@@ -3,6 +3,7 @@
  */
 import { loadLedgerEntries, amountDueOnQuotation } from './customerLedgerStore.js';
 import { companionOverpayNgnByReceiptId } from './customerLedgerCore.js';
+import { receiptEffectiveCashNgn } from './receiptClearance.js';
 import { formatNgn } from './formatNgn.js';
 
 function reversalTargetId(raw) {
@@ -19,11 +20,9 @@ function shortDateFromISO(iso) {
   return `${d} ${mo}`;
 }
 
-/** Cash actually received for a sales receipt (overpay splits use `cashReceivedNgn` from API / merge). */
+/** Cash actually received for a sales receipt (reconciled bank amount when finance confirmed). */
 export function receiptCashReceivedNgn(r) {
-  if (!r) return 0;
-  if (r.cashReceivedNgn != null) return Math.round(Number(r.cashReceivedNgn) || 0);
-  return Math.round(Number(r.amountNgn ?? r.amount_ngn) || 0);
+  return receiptEffectiveCashNgn(r);
 }
 
 /** Map typo/graphical dashes to ASCII hyphen (aligned with server bank recon + Word/PDF paste). */
@@ -150,7 +149,12 @@ export function mergeReceiptRowsForSales(importedReceipts, quotations, _ledgerEp
       const mirror = regById.get(String(e.id)) || regByLedgerId.get(String(e.id));
       const alloc = Math.round(Number(e.amountNgn) || 0);
       const extra = companionOverpay.get(String(e.id)) || 0;
-      const cash = Math.round(alloc + extra);
+      const receiptRow = {
+        amountNgn: alloc,
+        financeReconciliationSavedAtISO: mirror?.financeReconciliationSavedAtISO ?? null,
+        bankReceivedAmountNgn: mirror?.bankReceivedAmountNgn ?? null,
+      };
+      const cash = receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra });
       return {
         id: e.id,
         source: 'ledger',
@@ -189,8 +193,8 @@ export function mergeReceiptRowsForSales(importedReceipts, quotations, _ledgerEp
     .map((r) => {
       const q = r.quotationRef ? qMap.get(r.quotationRef) : null;
       const hint = quotePaymentHint(q);
-      const cash =
-        r.cashReceivedNgn != null ? Math.round(Number(r.cashReceivedNgn) || 0) : Math.round(Number(r.amountNgn) || 0);
+      const extra = companionOverpay.get(String(r.id || '')) || (r.ledgerEntryId ? companionOverpay.get(String(r.ledgerEntryId)) : 0) || 0;
+      const cash = receiptEffectiveCashNgn(r, { companionOverpayNgn: extra });
       return {
         ...r,
         source: 'imported',
@@ -219,6 +223,11 @@ export function mergeReceiptRowsForSales(importedReceipts, quotations, _ledgerEp
  */
 export function quotationReceiptPrintHistory(quotationId, importedReceipts = []) {
   if (!quotationId) return [];
+  const mirrorById = new Map();
+  for (const r of importedReceipts || []) {
+    if (r?.id) mirrorById.set(String(r.id), r);
+    if (r?.ledgerEntryId) mirrorById.set(String(r.ledgerEntryId), r);
+  }
   const ledgerEntries = loadLedgerEntries();
   const reversedReceiptIds = new Set(
     ledgerEntries
@@ -233,11 +242,17 @@ export function quotationReceiptPrintHistory(quotationId, importedReceipts = [])
     .map((e) => {
       const alloc = Math.round(Number(e.amountNgn) || 0);
       const extra = companionPrint.get(String(e.id)) || 0;
+      const mirror = mirrorById.get(String(e.id || ''));
+      const receiptRow = {
+        amountNgn: alloc,
+        financeReconciliationSavedAtISO: mirror?.financeReconciliationSavedAtISO ?? null,
+        bankReceivedAmountNgn: mirror?.bankReceivedAmountNgn ?? null,
+      };
       return {
         id: e.id,
         dateStr: formatPrintDate((e.atISO || '').slice(0, 10)),
         iso: (e.atISO || '').slice(0, 10),
-        amountNgn: Math.round(alloc + extra),
+        amountNgn: receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra }),
         source: 'Ledger',
         detail: e.bankReference || e.note || '—',
       };
@@ -254,10 +269,7 @@ export function quotationReceiptPrintHistory(quotationId, importedReceipts = [])
       id: r.id,
       dateStr: formatPrintDate(r.dateISO) || r.date || '—',
       iso: r.dateISO || '',
-      amountNgn:
-        r.cashReceivedNgn != null
-          ? Math.round(Number(r.cashReceivedNgn) || 0)
-          : Math.round(Number(r.amountNgn) || 0),
+      amountNgn: receiptEffectiveCashNgn(r),
       source: 'Imported',
       detail: r.method ? `Method: ${r.method}` : 'Imported receipt',
     }));

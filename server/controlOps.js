@@ -68,6 +68,8 @@ import {
 import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
+import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import {
   assertCashierMayNotApproveRefund,
   assertRefundApproverNotRequester,
@@ -2111,8 +2113,10 @@ export function previewRefundRequest(db, payload) {
     }
   });
 
-  const paidOnQuoteNgn = receipts.reduce((sum, row) => sum + roundMoney(row.amount_ngn), 0);
   const cashBreakdown = quotationRef ? quotationPaymentCashBreakdown(db, quotationRef) : null;
+  const paidOnQuoteNgn =
+    cashBreakdown?.receiptAllocatedSumNgn ??
+    receipts.reduce((sum, row) => sum + roundMoney(row.amount_ngn), 0);
   const cashInNgn = cashBreakdown
     ? cashBreakdown.cashInNgn
     : roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
@@ -2639,12 +2643,36 @@ export function previewRefundRequest(db, payload) {
       materialDelivered,
       blockedRefundCategoriesSnapshot: [...blockedRefundCategories],
       substitutionCategoryAlreadyInRefund: refundedCategories.has('Substitution Difference'),
-      receipts: receipts.map((r) => ({
-        id: r.id,
-        amountNgn: roundMoney(r.amount_ngn),
-        status: r.status,
-        dateIso: r.date_iso,
-      })),
+      receipts: (() => {
+        const ledgerRows = db.prepare(`SELECT * FROM ledger_entries WHERE quotation_ref = ?`).all(quotationRef);
+        const companion = companionOverpayNgnByReceiptId(
+          ledgerRows.map((row) => ({
+            id: row.id,
+            type: row.type,
+            amountNgn: row.amount_ngn,
+            bankReference: row.bank_reference,
+            note: row.note,
+          }))
+        );
+        return receipts.map((r) => {
+          const rid = String(r.id || '');
+          const lid = r.ledger_entry_id != null ? String(r.ledger_entry_id) : '';
+          const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
+          return {
+            id: r.id,
+            amountNgn: receiptEffectiveCashNgn(
+              {
+                amountNgn: r.amount_ngn,
+                financeReconciliationSavedAtISO: r.finance_reconciliation_saved_at_iso,
+                bankReceivedAmountNgn: r.bank_received_amount_ngn,
+              },
+              { companionOverpayNgn: extra }
+            ),
+            status: r.status,
+            dateIso: r.date_iso,
+          };
+        });
+      })(),
       cuttingLists,
       refunds: existingRefunds.map((r) => ({
         refundId: r.refund_id,

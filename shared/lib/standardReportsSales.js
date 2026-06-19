@@ -3,6 +3,7 @@
  */
 
 import { receivableDueOnQuotationFromEntries } from './customerLedgerCore.js';
+import { receiptEffectiveCashNgn } from './receiptClearance.js';
 import {
   allocatedQuotationRevenueForProductionJob,
   metersProducedByQuotationRef,
@@ -64,7 +65,7 @@ export function receiptsRegisterReportRows(
     rows.push({
       dateISO: iso,
       customer: String(r.customer || '').trim() || '—',
-      amountNgn: Math.round(Number(r.amountNgn ?? r.cashReceivedNgn) || 0),
+      amountNgn: receiptEffectiveCashNgn(r),
       quotationRefFull: qref || '—',
       quotationRefDisplay: displayDocNumber(qref) || '—',
       receiptIdFull: String(r.id || '').trim() || '—',

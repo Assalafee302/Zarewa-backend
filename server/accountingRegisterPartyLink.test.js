@@ -47,6 +47,41 @@ function insertUnlinkedLegacyLine(db, overrides = {}) {
   );
 }
 
+function insertSalesReceipt(db, overrides = {}) {
+  db.prepare(
+    `INSERT OR REPLACE INTO sales_receipts (
+      id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?)`
+  ).run(
+    overrides.id || 'RCPT-TEST-1',
+    overrides.customerId || 'CUS-001',
+    overrides.customerName || 'Test Customer',
+    overrides.quotationRef ?? null,
+    overrides.amountNgn ?? 100_000,
+    overrides.status || 'Pending clearance',
+    overrides.dateIso || '2026-05-20',
+    overrides.financeReconciliationSavedAtIso ?? null
+  );
+}
+
+function insertOpenBankDeposit(db, overrides = {}) {
+  db.prepare(
+    `INSERT OR REPLACE INTO bank_deposits (
+      id, branch_id, bank_date_iso, amount_ngn, allocated_ngn, description, bank_reference, status, registered_at_iso
+    ) VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(
+    overrides.id || 'BD-TEST-1',
+    overrides.branchId || DEFAULT_BRANCH_ID,
+    overrides.bankDateIso || '2026-05-20',
+    overrides.amountNgn ?? 250_000,
+    overrides.allocatedNgn ?? 0,
+    overrides.description || 'Test bank inflow',
+    overrides.bankReference || 'REF-TEST',
+    overrides.status || 'OPEN',
+    new Date().toISOString()
+  );
+}
+
 describe.skipIf(!mysqlOk)('accounting register party linking', () => {
   let db;
 
@@ -207,5 +242,41 @@ describe.skipIf(!mysqlOk)('accounting register party linking', () => {
     const legacy = reg.sections.find((s) => s.id === 'legacy_inherited');
     expect(legacy?.items.some((i) => i.id === 'REG-KD-LEG')).toBe(true);
     expect(legacy?.items.some((i) => i.id === 'REG-OTHER-LEG')).toBe(false);
+  });
+
+  it('excludes uncleared linked receipts from debtors sections but lists them as exceptions', () => {
+    insertSalesReceipt(db, {
+      id: 'RCPT-UNCLEARED-LINKED',
+      quotationRef: 'QT-CLR-001',
+      amountNgn: 300_000,
+      financeReconciliationSavedAtIso: null,
+    });
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const unallocated = reg.sections.find((s) => s.id === 'unallocated_receipts');
+    expect(unallocated?.items.some((i) => i.id === 'RCPT-UNCLEARED-LINKED')).toBe(false);
+    expect(reg.exceptions?.pendingFinanceClearance?.count).toBe(1);
+    expect(reg.exceptions.pendingFinanceClearance.totalNgn).toBe(300_000);
+    expect(reg.summary.pendingFinanceClearanceCount).toBe(1);
+  });
+
+  it('includes unlinked sales receipts in unallocated section only', () => {
+    insertSalesReceipt(db, {
+      id: 'RCPT-UNLINKED',
+      quotationRef: null,
+      amountNgn: 150_000,
+    });
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const unallocated = reg.sections.find((s) => s.id === 'unallocated_receipts');
+    expect(unallocated?.items.some((i) => i.id === 'RCPT-UNLINKED')).toBe(true);
+    expect(reg.summary.unallocatedReceiptsNgn).toBe(150_000);
+    expect(reg.exceptions?.pendingFinanceClearance?.count).toBe(0);
+  });
+
+  it('includes open bank deposits in bank deposit suspense section', () => {
+    insertOpenBankDeposit(db, { id: 'BD-SUSP-1', amountNgn: 400_000 });
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const suspense = reg.sections.find((s) => s.id === 'bank_deposit_suspense');
+    expect(suspense?.items.some((i) => i.id === 'BD-SUSP-1')).toBe(true);
+    expect(reg.summary.bankDepositSuspenseNgn).toBe(400_000);
   });
 });

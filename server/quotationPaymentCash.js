@@ -4,6 +4,7 @@
 import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
 import { SETTLED_QUOTE_OVERPAY_NOTE_SNIP } from '../shared/lib/customerPaymentIntegrity.js';
 import { quotationActualCashInNgn } from '../shared/lib/refundQuotationMoney.js';
+import { receiptEffectiveCashNgn, receiptReconciledCashNgn } from '../shared/lib/receiptClearance.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -62,26 +63,20 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
   let receiptAllocatedSumNgn = 0;
   let companionOverpayOnQuoteNgn = 0;
   for (const r of receiptRows) {
-    const reconciled = String(r.finance_reconciliation_saved_at_iso || '').trim() !== '';
-    const confirmed =
-      reconciled && r.bank_received_amount_ngn != null && roundMoney(r.bank_received_amount_ngn) > 0
-        ? roundMoney(r.bank_received_amount_ngn)
-        : null;
-    if (confirmed != null) {
-      receiptAllocatedSumNgn += confirmed;
-      receiptCashNgn += confirmed;
-      const rid = String(r.id || '');
-      const lid = r.ledger_entry_id != null ? String(r.ledger_entry_id) : '';
-      const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
-      companionOverpayOnQuoteNgn += extra;
-      continue;
-    }
-    const alloc = roundMoney(r.amount_ngn);
     const rid = String(r.id || '');
     const lid = r.ledger_entry_id != null ? String(r.ledger_entry_id) : '';
     const extra = companion.get(rid) || (lid ? companion.get(lid) : 0) || 0;
-    receiptAllocatedSumNgn += alloc;
-    receiptCashNgn += alloc + extra;
+    const receiptRow = {
+      amountNgn: r.amount_ngn,
+      amount_ngn: r.amount_ngn,
+      financeReconciliationSavedAtISO: r.finance_reconciliation_saved_at_iso,
+      bankReceivedAmountNgn: r.bank_received_amount_ngn,
+      bank_received_amount_ngn: r.bank_received_amount_ngn,
+    };
+    const cash = receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra });
+    const reconciled = receiptReconciledCashNgn(receiptRow);
+    receiptAllocatedSumNgn += reconciled != null ? reconciled : roundMoney(r.amount_ngn);
+    receiptCashNgn += cash;
     companionOverpayOnQuoteNgn += extra;
   }
 

@@ -11,6 +11,7 @@ import {
   receivablesAgingBuckets,
 } from './liveAnalytics.js';
 import { normalizeMaterialProfile } from './materialProfileNormalize.js';
+import { receiptEffectiveCashNgn } from './receiptClearance.js';
 
 const ALU_PRODUCT_IDS = new Set(['COIL-ALU', 'MAT-001']);
 const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
@@ -1006,7 +1007,7 @@ export function computeSalesAnalytics(data, opts = {}) {
     return d && d >= startIso && d <= asOfISO;
   });
 
-  const collectedNgn = receiptsInPeriod.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0);
+  const collectedNgn = receiptsInPeriod.reduce((s, r) => s + receiptEffectiveCashNgn(r), 0);
   const quotedNgn = qInPeriod.reduce((s, q) => s + (Number(q.totalNgn) || 0), 0);
 
   const funnel = {

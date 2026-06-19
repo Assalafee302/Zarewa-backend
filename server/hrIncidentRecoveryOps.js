@@ -57,6 +57,33 @@ export function mapRecoverySettlementRow(row) {
   };
 }
 
+function enrichRecoverySettlementForDisplay(db, settlement) {
+  if (!settlement) return settlement;
+  const ref = String(settlement.paymentReference || '').trim();
+  if (!ref) {
+    return { ...settlement, collectionChannel: 'hr_direct' };
+  }
+  const tm = db
+    .prepare(
+      `SELECT tm.id, tm.posted_at_iso, tm.type, tm.note, ta.name AS account_name
+       FROM treasury_movements tm
+       LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE tm.id = ?`
+    )
+    .get(ref);
+  if (!tm) {
+    return { ...settlement, collectionChannel: 'other' };
+  }
+  const collectionChannel = tm.type === 'STAFF_RECOVERY_IN' ? 'cashier' : 'treasury';
+  return {
+    ...settlement,
+    collectionChannel,
+    treasuryMovementId: tm.id,
+    treasuryAccountName: tm.account_name || null,
+    treasuryPostedAtIso: tm.posted_at_iso || null,
+  };
+}
+
 export function listRecoverySettlementsForSchedule(db, scheduleId) {
   if (!recoverySettlementsTableReady(db)) return [];
   return db
@@ -64,7 +91,8 @@ export function listRecoverySettlementsForSchedule(db, scheduleId) {
       `SELECT * FROM hr_incident_recovery_settlements WHERE schedule_id = ? ORDER BY created_at_iso DESC`
     )
     .all(String(scheduleId || '').trim())
-    .map(mapRecoverySettlementRow);
+    .map(mapRecoverySettlementRow)
+    .map((s) => enrichRecoverySettlementForDisplay(db, s));
 }
 
 function listRecoverySettlementsForSchedules(db, scheduleIds) {
@@ -79,7 +107,7 @@ function listRecoverySettlementsForSchedules(db, scheduleIds) {
     .all(...ids);
   const bySchedule = new Map();
   for (const row of rows) {
-    const mapped = mapRecoverySettlementRow(row);
+    const mapped = enrichRecoverySettlementForDisplay(db, mapRecoverySettlementRow(row));
     const list = bySchedule.get(mapped.scheduleId) || [];
     list.push(mapped);
     bySchedule.set(mapped.scheduleId, list);
@@ -127,11 +155,17 @@ export function listRecoverySchedulesForCase(db, caseId) {
     db,
     rows.map((row) => row.id)
   );
-  return rows.map((row) => ({
-    ...mapRecoveryScheduleRow(row),
-    staffDisplayName: row.staff_display_name || null,
-    settlements: settlementsBySchedule.get(row.id) || [],
-  }));
+  return rows.map((row) => {
+    const initiator = row.created_by_user_id
+      ? db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(row.created_by_user_id)
+      : null;
+    return {
+      ...mapRecoveryScheduleRow(row),
+      staffDisplayName: row.staff_display_name || null,
+      initiatedByName: initiator?.display_name || null,
+      settlements: settlementsBySchedule.get(row.id) || [],
+    };
+  });
 }
 
 export function listRecoverySchedulesForUser(db, userId) {

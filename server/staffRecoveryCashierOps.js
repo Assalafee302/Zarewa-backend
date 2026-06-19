@@ -59,6 +59,9 @@ export function listStaffRecoveriesDueForCashier(db, branchScope = 'ALL') {
   return db.prepare(sql).all(...args).map((row) => {
     const mapped = mapRecoveryScheduleRow(row);
     const obligationAccountId = resolveObligationAccountIdForRecoverySchedule(db, row.id);
+    const initiator = row.created_by_user_id
+      ? db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(row.created_by_user_id)
+      : null;
     return {
       scheduleId: mapped.id,
       caseId: mapped.caseId,
@@ -69,8 +72,12 @@ export function listStaffRecoveriesDueForCashier(db, branchScope = 'ALL') {
       staffEmployeeNo: String(row.staff_employee_no || '').trim() || null,
       branchId: String(row.branch_id || DEFAULT_BRANCH_ID).trim(),
       totalAmountNgn: mapped.totalAmountNgn,
+      hrInitiatedAmountNgn: mapped.totalAmountNgn,
+      amountDueNgn: mapped.principalOutstandingNgn,
       installmentAmountNgn: mapped.installmentAmountNgn,
       principalOutstandingNgn: mapped.principalOutstandingNgn,
+      initiatedAtIso: mapped.activatedAtIso || mapped.createdAtIso || null,
+      initiatedByName: initiator?.display_name || null,
       obligationAccountId,
       title: `Recovery — ${mapped.caseNumber || mapped.caseId || mapped.id}`,
     };
@@ -235,7 +242,9 @@ export function recordStaffRecoveryCashierPayment(db, actor, scheduleId, body = 
     ok: true,
     receiptReference,
     treasuryMovementId: treasuryMovement?.id,
+    treasuryAccountId,
     treasuryAccountName: treasuryMovement?.accountName || null,
+    paymentDateIso,
     obligationAccountId,
     obligationTransactionId: obligationTxId,
     settlement: mapRecoverySettlementRow(

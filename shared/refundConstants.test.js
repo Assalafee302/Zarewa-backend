@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeRefundReasonCategoriesForApi,
+  quotationMeetsRefundPickerFloor,
   REFUND_PREVIEW_VERSION,
   MIN_REFUND_QUOTATION_REMAINING_NGN,
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
@@ -32,6 +33,37 @@ describe('refundConstants', () => {
 
   it('exposes refund picker remaining floor', () => {
     expect(MIN_REFUND_QUOTATION_REMAINING_NGN).toBe(1000);
+  });
+
+  it('quotationMeetsRefundPickerFloor requires categories, remaining, and preview total', () => {
+    expect(
+      quotationMeetsRefundPickerFloor({
+        eligible_refund_categories: ['Overpayment'],
+        remaining_ngn: 5000,
+        suggested_preview_amount_ngn: 2500,
+      })
+    ).toBe(true);
+    expect(
+      quotationMeetsRefundPickerFloor({
+        eligible_refund_categories: ['Overpayment'],
+        remaining_ngn: 999,
+        suggested_preview_amount_ngn: 5000,
+      })
+    ).toBe(false);
+    expect(
+      quotationMeetsRefundPickerFloor({
+        eligible_refund_categories: ['Overpayment'],
+        remaining_ngn: 5000,
+        suggested_preview_amount_ngn: 500,
+      })
+    ).toBe(false);
+    expect(
+      quotationMeetsRefundPickerFloor({
+        eligible_refund_categories: [],
+        remaining_ngn: 5000,
+        suggested_preview_amount_ngn: 5000,
+      })
+    ).toBe(false);
   });
 
   it('exposes amount vs lines tolerance', () => {

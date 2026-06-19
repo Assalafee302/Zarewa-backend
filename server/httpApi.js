@@ -7257,16 +7257,16 @@ export function registerHttpApi(app, db) {
           `Order still has ₦${(orderOutstandingNgn ?? 0).toLocaleString('en-NG')} outstanding (picker only lists fully paid quotations; residuals under 0.01% are ignored).`
         );
       }
-      if (meets.ok && remainingNgn > 0 && remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) {
+      if (meets.ok && remainingNgn > 0 && remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) {
         blockingReasons.push(
-          `Remaining refundable amount ₦${remainingNgn.toLocaleString('en-NG')} must be greater than ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} for the dropdown.`
+          `Remaining refundable amount ₦${remainingNgn.toLocaleString('en-NG')} must be at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} for the dropdown.`
         );
       }
       const wouldAppearInPicklist =
         meets.ok &&
         categories.length > 0 &&
         suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         isOrderFullySettledForPicker === true;
       /** Valid sale + categories, but automatic preview total below picker floor — excluded from pick list; manual entry when allowed. */
       const manualEntryRefundAllowed =
@@ -7274,7 +7274,7 @@ export function registerHttpApi(app, db) {
         Boolean(preview?.ok) &&
         categories.length > 0 &&
         suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         isOrderFullySettledForPicker === true;
       res.json({
         ok: true,

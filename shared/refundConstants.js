@@ -6,10 +6,34 @@ export const REFUND_PREVIEW_VERSION = 9;
 
 /**
  * Refund quotation picker:
- * - remaining refundable must be strictly greater than this (₦), and
+ * - remaining refundable must be at least this (₦), and
  * - automatic preview suggested total must be at least this (₦).
  */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
+
+/**
+ * Whether a quotation row belongs in refund form picklists (dropdown / potential refunds).
+ * @param {{
+ *   remaining_ngn?: number | null,
+ *   remainingNgn?: number | null,
+ *   suggested_preview_amount_ngn?: number | null,
+ *   suggestedPreviewAmountNgn?: number | null,
+ *   eligible_refund_categories?: string[] | null,
+ *   eligibleRefundCategories?: string[] | null,
+ * }} row
+ */
+export function quotationMeetsRefundPickerFloor(row) {
+  const remaining = Math.round(Number(row?.remaining_ngn ?? row?.remainingNgn) || 0);
+  const suggested = Math.round(
+    Number(row?.suggested_preview_amount_ngn ?? row?.suggestedPreviewAmountNgn) || 0
+  );
+  const cats = row?.eligible_refund_categories ?? row?.eligibleRefundCategories;
+  const hasCategories = Array.isArray(cats) && cats.length > 0;
+  if (!hasCategories) return false;
+  if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
+  if (suggested < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
+  return true;
+}
 
 /** Allowed absolute difference (₦) between refund header amount and sum of included breakdown lines (rounding). */
 export const REFUND_AMOUNT_LINE_TOLERANCE_NGN = 1;

@@ -12,6 +12,7 @@ import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import {
   MIN_REFUND_QUOTATION_REMAINING_NGN,
   normalizeRefundReasonCategoriesForApi,
+  quotationMeetsRefundPickerFloor,
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
@@ -2996,10 +2997,9 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Listing uses {@link quotationMeetsRefundEligibility} only — full {@link previewRefundRequest} runs when a
- * quotation is selected (POST /api/refunds/preview), not for every picker row.
- * Rows include `cash_in_ngn` and `remaining_ngn` for the picker UI; `suggested_preview_amount_ngn` is a
- * lightweight overpayment hint when cash exceeds quote total (not the full preview engine).
+ * Listing runs {@link previewRefundRequest} per row so only quotations with preview total ≥
+ * {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear (same rules as eligibility-check picklist).
+ * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  */
 export function getEligibleRefundQuotations(db) {
   const sql = `
@@ -3032,21 +3032,26 @@ export function getEligibleRefundQuotations(db) {
   const out = [];
   for (const row of rows) {
     const meets = quotationMeetsRefundEligibility(db, row.id, row);
-    if (!meets.ok || meets.remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
+    if (!meets.ok || meets.remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
     const total = roundMoney(row.total_ngn);
     const paid = roundMoney(row.paid_ngn);
     if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
 
-    const overpayExcess = roundMoney(
-      meets.overpaymentExcessNgn ?? Math.max(0, meets.cashInNgn - meets.quoteTotalNgn)
-    );
-    out.push({
+    const preview = previewRefundRequest(db, { quotationRef: row.id });
+    if (!preview?.ok) continue;
+    const categories = Array.isArray(preview.preview?.eligibleRefundCategories)
+      ? preview.preview.eligibleRefundCategories.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const suggestedPreviewAmountNgn = Math.round(Number(preview.preview?.suggestedAmountNgn) || 0);
+    const pickRow = {
       ...row,
-      eligible_refund_categories: overpayExcess > 0 ? ['Overpayment'] : [],
-      suggested_preview_amount_ngn: overpayExcess > 0 ? overpayExcess : null,
+      eligible_refund_categories: categories,
+      suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
       cash_in_ngn: meets.cashInNgn,
       remaining_ngn: meets.remainingNgn,
-    });
+    };
+    if (!quotationMeetsRefundPickerFloor(pickRow)) continue;
+    out.push(pickRow);
   }
   return out;
 }

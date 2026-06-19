@@ -52,7 +52,7 @@ export function getStaffPurchaseCreditPolicy(db) {
     minServiceYears: Number(p.minServiceYears) || 1,
     maxOutstandingNgn: Number(p.maxOutstandingNgn) || 5_000_000,
     maxSinglePurchaseNgn: Number(p.maxSinglePurchaseNgn) || 2_000_000,
-    maxRepaymentMonths: Number(p.maxRepaymentMonths) || 6,
+    maxRepaymentMonths: Number(p.maxRepaymentMonths) || 12,
     maxConcurrentActive: Number(p.maxConcurrentActive) || 1,
     requireDepositPercent: Number(p.requireDepositPercent) || 0,
     branchManagerLimitNgn: credit.branchManagerLimitNgn,

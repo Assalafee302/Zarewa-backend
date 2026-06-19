@@ -13,7 +13,7 @@ const DEFAULT_STAFF_PURCHASE_CREDIT_POLICY = {
   minServiceYears: 1,
   maxOutstandingNgn: 5_000_000,
   maxSinglePurchaseNgn: 2_000_000,
-  maxRepaymentMonths: 6,
+  maxRepaymentMonths: 12,
   maxConcurrentActive: 1,
   requireDepositPercent: 0,
 };

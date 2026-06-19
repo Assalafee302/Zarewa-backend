@@ -15,6 +15,7 @@ import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
+import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
 
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
@@ -5514,6 +5515,15 @@ function migrateStaffPurchaseCredit2026(db) {
     backfillStaffSalesCustomerNames(db);
   } catch (e) {
     console.warn('[migrate] staff sales customer name backfill skipped:', e?.message || e);
+  }
+  try {
+    const policy = getHrPolicyPayload(db);
+    const months = Number(policy.staffPurchaseCredit?.maxRepaymentMonths);
+    if (!Number.isFinite(months) || months === 6) {
+      updateHrPolicyPayload(db, { staffPurchaseCredit: { maxRepaymentMonths: 12 } });
+    }
+  } catch (e) {
+    console.warn('[migrate] staff purchase credit repayment cap bump skipped:', e?.message || e);
   }
 }
 

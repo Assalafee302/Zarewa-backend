@@ -60,18 +60,27 @@ export function buildLoginSecuritySummary(db, opts = {}) {
   };
 
   let currentlyLockedAccounts = 0;
+  let lockedAccounts = [];
   try {
     const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
     if (cols.some((c) => c.name === 'locked_until_iso')) {
-      currentlyLockedAccounts =
-        Number(
-          db
-            .prepare(
-              `SELECT COUNT(*) AS c FROM app_users
-               WHERE locked_until_iso IS NOT NULL AND trim(locked_until_iso) != '' AND locked_until_iso > ?`
-            )
-            .get(now)?.c
-        ) || 0;
+      lockedAccounts = db
+        .prepare(
+          `SELECT id, username, display_name, role_key, failed_login_count, locked_until_iso
+           FROM app_users
+           WHERE locked_until_iso IS NOT NULL AND trim(locked_until_iso) != '' AND locked_until_iso > ?
+           ORDER BY locked_until_iso ASC`
+        )
+        .all(now)
+        .map((row) => ({
+          userId: row.id,
+          username: row.username,
+          displayName: row.display_name ?? row.username,
+          roleKey: row.role_key ?? '',
+          failedLoginCount: Number(row.failed_login_count || 0),
+          lockedUntilIso: row.locked_until_iso,
+        }));
+      currentlyLockedAccounts = lockedAccounts.length;
     }
   } catch {
     /* ignore */
@@ -119,6 +128,7 @@ export function buildLoginSecuritySummary(db, opts = {}) {
     successfulLogins: countAction('session.login'),
     sessionTimeouts: countAction('session.timeout'),
     currentlyLockedAccounts,
+    lockedAccounts,
     activeSessionCount,
     recentEvents,
   };

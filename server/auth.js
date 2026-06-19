@@ -487,6 +487,44 @@ function clearAccountLock(db, userId) {
   ).run(userId);
 }
 
+/** @param {Record<string, unknown> | null | undefined} row */
+export function accountLockMetaFromRow(row) {
+  if (!row) {
+    return { failedLoginCount: 0, accountLockedUntilIso: '', isAccountLocked: false };
+  }
+  const hasLockCols = 'locked_until_iso' in row || 'failed_login_count' in row;
+  if (!hasLockCols) {
+    return { failedLoginCount: 0, accountLockedUntilIso: '', isAccountLocked: false };
+  }
+  const lockedUntil = String(row.locked_until_iso ?? '').trim();
+  const failedLoginCount = Number(row.failed_login_count || 0);
+  const isAccountLocked = Boolean(lockedUntil && lockedUntil > nowIso());
+  return {
+    failedLoginCount,
+    accountLockedUntilIso: isAccountLocked ? lockedUntil : '',
+    isAccountLocked,
+  };
+}
+
+/**
+ * Admin: clear failed-login lock so the user can sign in again.
+ * @returns {{ ok: true; username: string } | { ok: false; error: string; code?: string }}
+ */
+export function adminUnlockAccount(db, targetUserId) {
+  const uid = String(targetUserId || '').trim();
+  if (!uid) return { ok: false, error: 'User id is required.' };
+  const row = db
+    .prepare(`SELECT id, username, locked_until_iso, failed_login_count FROM app_users WHERE id = ?`)
+    .get(uid);
+  if (!row) return { ok: false, error: 'User not found.' };
+  const meta = accountLockMetaFromRow(row);
+  if (!meta.isAccountLocked && meta.failedLoginCount === 0) {
+    return { ok: false, error: 'Account is not locked.', code: 'NOT_LOCKED' };
+  }
+  clearAccountLock(db, uid);
+  return { ok: true, username: row.username };
+}
+
 /**
  * @returns {{ locked: boolean; lockedUntilIso?: string; userId?: string; attemptCount?: number }}
  */
@@ -1952,7 +1990,7 @@ export function listAllAppUsers(db) {
     const u = publicUserFromRow(r);
     const bid = String(r.hr_branch_id ?? r.HR_BRANCH_ID ?? '').trim();
     const registeredPassword = resolveRegisteredPasswordDisplay(db, r);
-    return { ...u, branchId: bid || null, registeredPassword };
+    return { ...u, branchId: bid || null, registeredPassword, ...accountLockMetaFromRow(r) };
   });
 }
 

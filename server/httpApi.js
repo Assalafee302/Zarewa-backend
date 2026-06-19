@@ -64,6 +64,7 @@ import {
   completePasswordReset,
   completeUserTraining,
   adminSetUserPassword,
+  adminUnlockAccount,
   canRevealUserPasswords,
   createAppUserRecord,
   listAllAppUsers,
@@ -3434,6 +3435,25 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not set password.' });
+    }
+  });
+
+  app.post('/api/users/:id/unlock-account', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const r = adminUnlockAccount(db, id);
+      if (!r.ok) return res.status(400).json(r);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'session.account_unlocked',
+        entityKind: 'user',
+        entityId: id,
+        note: `Admin unlocked sign-in lock for ${r.username}`,
+      });
+      return res.json({ ok: true, username: r.username });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not unlock account.' });
     }
   });
 

@@ -10,6 +10,7 @@ import {
   firstProductionDateISO,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
 import { bankDepositRemainingNgn, bankDepositStatusLabel } from '../shared/lib/bankDeposits.js';
 import { isReceiptPendingClearance } from '../shared/lib/receiptClearance.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
@@ -20,7 +21,9 @@ import { buildStaffObligationCreditorItems, OBLIGATION_KIND, OBLIGATION_STATUS, 
 import { hrTablesReady } from './hrOps.js';
 import { interBranchLoanBalances, listInterBranchLoans } from './interBranchLoanOps.js';
 import { branchPredicate } from './branchSql.js';
+import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import {
+  branchWhere,
   listAccountsPayable,
   listCustomers,
   listLedgerEntries,
@@ -878,13 +881,61 @@ function buildCustomerDepositItems(db, branchScope) {
   return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
+/**
+ * Sum per-quotation economic overpayment (cash in minus quote total) — same basis as refund preview.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerID
+ * @param {'ALL' | string} branchScope
+ */
+function economicOverpayExcessSumForCustomer(db, customerID, branchScope) {
+  const cid = String(customerID || '').trim();
+  if (!cid) return 0;
+  const b = branchWhere(db, 'quotations', branchScope);
+  const quotes = db
+    .prepare(`SELECT id, total_ngn FROM quotations WHERE customer_id = ?${b.sql}`)
+    .all(cid, ...b.args);
+  let sum = 0;
+  for (const q of quotes) {
+    const cash = quotationPaymentCashBreakdown(db, q.id);
+    sum += quotationOverpaymentExcessNgn({
+      cashInNgn: cash.cashInNgn,
+      quoteTotalNgn: q.total_ngn,
+    });
+  }
+  return Math.round(sum);
+}
+
+/**
+ * Refundable overpayment for debtors register: ledger OVERPAY_ADVANCE pool capped by economic excess.
+ * Display-only — does not mutate ledger rows.
+ * @param {import('better-sqlite3').Database} db
+ * @param {Array<{ customerID: string, type: string, amountNgn?: number }>} ledger
+ * @param {string} customerID
+ * @param {'ALL' | string} branchScope
+ */
+export function refundableOverpayCreditNgnForCustomer(db, ledger, customerID, branchScope) {
+  const ledgerPoolNgn = overpayCreditBalanceFromEntries(ledger, customerID);
+  const economicExcessNgn = economicOverpayExcessSumForCustomer(db, customerID, branchScope);
+  const amountNgn = Math.min(Math.max(0, ledgerPoolNgn), Math.max(0, economicExcessNgn));
+  return { amountNgn, ledgerPoolNgn, economicExcessNgn };
+}
+
 function buildOverpaymentCreditItems(db, branchScope) {
   const ledger = listLedgerEntries(db, branchScope);
   const customers = listCustomers(db, branchScope);
   const items = [];
   for (const c of customers) {
-    const overpay = overpayCreditBalanceFromEntries(ledger, c.customerID);
-    if (overpay <= 0) continue;
+    const { amountNgn, ledgerPoolNgn, economicExcessNgn } = refundableOverpayCreditNgnForCustomer(
+      db,
+      ledger,
+      c.customerID,
+      branchScope
+    );
+    if (amountNgn <= 0) continue;
+    const detail =
+      ledgerPoolNgn > amountNgn
+        ? `Refundable overpayment credit (₦${amountNgn.toLocaleString()} economic excess; ledger pool ₦${ledgerPoolNgn.toLocaleString()})`
+        : 'Refundable overpayment credit — cash received above quote total';
     items.push(
       withEntity(
         {
@@ -892,9 +943,11 @@ function buildOverpaymentCreditItems(db, branchScope) {
           partyName: c.name,
           partyRef: c.customerID,
           branchId: c.branchId || '',
-          amountNgn: overpay,
-          detail: 'Split-till overpayment credit — refundable to customer',
-          isSignificant: overpay >= SIGNIFICANT_OVERPAY_NGN,
+          amountNgn,
+          ledgerPoolNgn,
+          economicExcessNgn,
+          detail,
+          isSignificant: amountNgn >= SIGNIFICANT_OVERPAY_NGN,
         },
         'customer',
         c.customerID
@@ -1085,7 +1138,7 @@ export function buildDebtorsRegister(db, opts = {}) {
     section(
       'overpayment_credits',
       'Overpayment & refundable credits',
-      `Customer overpayments available for refund or re-application (significant ≥ ₦${SIGNIFICANT_OVERPAY_NGN.toLocaleString()}).`,
+      `Economic overpayment (cash in minus quote total), capped by ledger pool — significant ≥ ₦${SIGNIFICANT_OVERPAY_NGN.toLocaleString()}.`,
       overpayItems
     ),
     section(
@@ -1156,7 +1209,8 @@ export function buildDebtorsRegister(db, opts = {}) {
     },
     notes: [
       'Record pre-system overpayments (e.g. April project ₦8M) under “Add legacy line” on this tab.',
-      'Significant overpayments should be reviewed for refund or re-application to the correct quotation.',
+      'Overpayment credits use economic excess (cash in minus quote total), capped by the ledger pool — same basis as refund preview.',
+      'When detail shows a higher ledger pool than the amount, finance may reverse stale OVERPAY_ADVANCE rows.',
       'Unallocated receipts and unlinked bank deposits are suspense items until matched — not trade payables.',
       'Receipts pending finance clearance are listed separately; they are not part of this register total.',
     ],

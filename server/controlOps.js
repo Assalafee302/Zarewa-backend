@@ -2961,8 +2961,10 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
+ * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
  * Also requires refund preview {@link previewRefundRequest} suggested total ≥ {@link MIN_REFUND_QUOTATION_REMAINING_NGN};
  * quotations with automatic preview below that floor (including ₦0) are omitted.
+ * Rows include `cash_in_ngn` and `remaining_ngn` for the picker UI.
  * Logic mirrors {@link quotationMeetsRefundEligibility} per row.
  */
 export function getEligibleRefundQuotations(db) {
@@ -2999,18 +3001,28 @@ export function getEligibleRefundQuotations(db) {
         ? preview.preview.eligibleRefundCategories
         : [];
       const suggestedPreviewAmountNgn = roundMoney(preview?.preview?.suggestedAmountNgn ?? 0);
+      const meets = quotationMeetsRefundEligibility(db, row.id);
+      const cashInNgn = meets.ok ? meets.cashInNgn : quotationCashInNgn(db, row.id);
       return {
         ...row,
         eligible_refund_categories: eligibleRefundCategories,
         suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
+        cash_in_ngn: cashInNgn,
+        remaining_ngn: meets.ok ? meets.remainingNgn : 0,
+        _meets: meets,
       };
     })
     .filter((row) => {
       if (row.eligible_refund_categories.length === 0) return false;
       if (roundMoney(row.suggested_preview_amount_ngn) < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
-      const meets = quotationMeetsRefundEligibility(db, row.id);
-      return meets.ok && meets.remainingNgn > MIN_REFUND_QUOTATION_REMAINING_NGN;
-    });
+      const meets = row._meets;
+      if (!meets?.ok || meets.remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
+      const total = roundMoney(row.total_ngn);
+      const paid = roundMoney(row.paid_ngn);
+      if (total > 0 && !isEffectivelyFullyPaid(paid, total)) return false;
+      return true;
+    })
+    .map(({ _meets, ...row }) => row);
 }
 
 function positiveNumber(value) {

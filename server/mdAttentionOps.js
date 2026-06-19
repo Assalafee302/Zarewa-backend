@@ -5,6 +5,7 @@ import { listManagementItems } from './readModel.js';
 import { listPendingEditApprovals } from './editApproval.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildPendingApprovalsReport, buildProductionStatusReport } from './operationalReportsOps.js';
+import { listStaffPurchaseCreditQueue } from './staffPurchaseCreditOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -175,6 +176,33 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       branchId: e.branchId || '',
       reasons: ['Second approval required before save'],
       row: e,
+    });
+  }
+
+  const purchaseBranch = branchScope === 'ALL' ? 'ALL' : String(branchScope || '').trim();
+  for (const pc of listStaffPurchaseCreditQueue(db, {
+    status: 'pending_approval',
+    branchId: purchaseBranch || 'ALL',
+  })) {
+    const amt = Math.round(Number(pc.principalOriginalNgn) || 0);
+    const inst = Math.round(Number(pc.installmentNgn) || 0);
+    const quote = String(pc.quotationRef || '').trim();
+    pushItem(items, {
+      id: `staff_purchase_credit:${pc.id}`,
+      kind: 'staff_purchase_credit',
+      priority: 86,
+      accountId: pc.id,
+      quotationRef: quote,
+      title: quote || pc.id,
+      subtitle: `${pc.staffDisplayName || pc.userId || 'Staff'} · ${pc.title || 'Materials on credit'}`,
+      amountNgn: amt,
+      atIso: pc.createdAtIso || pc.updatedAtIso,
+      branchId: pc.branchId || '',
+      reasons: [
+        'MD approval required — staff purchase credit',
+        inst > 0 ? `₦${inst.toLocaleString('en-NG')}/mo payroll` : null,
+      ].filter(Boolean),
+      row: pc,
     });
   }
 

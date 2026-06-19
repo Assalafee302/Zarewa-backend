@@ -8923,6 +8923,67 @@ function financeConfirmedReceiptAlreadyAligned(db, rec, ledgerRow, overpayId, co
   return curRec === newRec && curOver === newOver;
 }
 
+const FINANCE_SPLIT_OVERPAY_NOTE_SNIP = 'Overpayment vs remaining balance on';
+
+/**
+ * Align OVERPAY_ADVANCE rows after finance confirms actual bank total (including when sibling id lookup fails).
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null | undefined} ledgerRow
+ * @param {string | null | undefined} overpayId
+ * @param {number} newOverNgn
+ */
+function syncFinanceConfirmedOverpayLedgerRows(db, ledgerRow, overpayId, newOverNgn) {
+  const newOver = roundMoney(newOverNgn);
+  if (!ledgerRow) return;
+  const qref = String(ledgerRow.quotation_ref || '').trim();
+  if (!qref) return;
+
+  const ex = String(overpayId || '').trim();
+  if (ex) {
+    db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ? AND type = 'OVERPAY_ADVANCE'`).run(newOver, ex);
+    return;
+  }
+
+  const cid = String(ledgerRow.customer_id || '').trim();
+  const pm = String(ledgerRow.payment_method ?? '').trim();
+  const br = String(ledgerRow.bank_reference ?? '').trim();
+  const day = String(ledgerRow.at_iso || '').slice(0, 10);
+  if (!cid || !day) return;
+
+  const matched = db
+    .prepare(
+      `SELECT id FROM ledger_entries
+       WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = ? AND customer_id = ?
+         AND TRIM(COALESCE(payment_method,'')) = ? AND TRIM(COALESCE(bank_reference,'')) = ?
+         AND substr(at_iso,1,10) = ?
+         AND note LIKE ?
+       ORDER BY id ASC`
+    )
+    .all(qref, cid, pm, br, day, `%${FINANCE_SPLIT_OVERPAY_NOTE_SNIP}%`);
+
+  if (matched.length > 0) {
+    for (let i = 0; i < matched.length; i++) {
+      const amt = i === 0 ? newOver : 0;
+      db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(amt, matched[i].id);
+    }
+    return;
+  }
+
+  if (newOver > 0) return;
+
+  const orphans = db
+    .prepare(
+      `SELECT id FROM ledger_entries
+       WHERE type = 'OVERPAY_ADVANCE' AND quotation_ref = ?
+         AND amount_ngn > 0 AND note LIKE ?
+       ORDER BY id ASC`
+    )
+    .all(qref, `%${FINANCE_SPLIT_OVERPAY_NOTE_SNIP}%`);
+  if (orphans.length === 1) {
+    db.prepare(`UPDATE ledger_entries SET amount_ngn = 0 WHERE id = ?`).run(orphans[0].id);
+  }
+}
+
 /**
  * After finance confirms bank/cash received, align sales receipt + RECEIPT ledger (and treasury when present)
  * so quotation paid_ngn and refund caps match money actually received.
@@ -8978,9 +9039,7 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
 
   if (ledgerRow) {
     db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newRec, ledgerId);
-    if (overpayId) {
-      db.prepare(`UPDATE ledger_entries SET amount_ngn = ? WHERE id = ?`).run(newOver, overpayId);
-    }
+    syncFinanceConfirmedOverpayLedgerRows(db, ledgerRow, overpayId, newOver);
     const freshRec = db.prepare(`SELECT * FROM ledger_entries WHERE id = ?`).get(ledgerId);
     const qt = getQuotation(db, qref);
     if (qt && freshRec) {

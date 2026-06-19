@@ -252,4 +252,29 @@ describe('finance confirm replaces mistaken sales-posted overpay', () => {
     const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
     expect(prev.preview.overpaymentExcessNgn).toBe(0);
   });
+
+  it('refund cash ignores orphan OVERPAY when receipt is finance-reconciled', () => {
+    db.prepare(
+      `UPDATE sales_receipts SET
+         amount_ngn = 1500000,
+         bank_received_amount_ngn = 1150000,
+         finance_reconciliation_saved_at_iso = '2026-06-01T10:00:00.000Z',
+         status = 'Cleared'
+       WHERE id = 'LE-566'`
+    ).run();
+    db.prepare(`UPDATE ledger_entries SET payment_method = 'Different bank label' WHERE id = 'LE-566-O'`).run();
+
+    const cash = quotationPaymentCashBreakdown(db, 'QT-KD-26-0566');
+    expect(cash.reconciledReceiptCashNgn).toBe(1_150_000);
+    expect(cash.cashInNgn).toBe(1_150_000);
+    expect(cash.netOverpayLedgerNgn).toBe(348_420);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
+    expect(prev.preview.overpaymentExcessNgn).toBe(0);
+
+    const r = reapplyFinanceReconciledReceiptAmountsForBranchScope(db, 'ALL');
+    expect(r.ok).toBe(true);
+    const overpayLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-566-O'`).get();
+    expect(overpayLedger.amount_ngn).toBe(0);
+  });
 });

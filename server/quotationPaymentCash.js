@@ -4,7 +4,12 @@
 import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
 import { SETTLED_QUOTE_OVERPAY_NOTE_SNIP } from '../shared/lib/customerPaymentIntegrity.js';
 import { quotationActualCashInNgn } from '../shared/lib/refundQuotationMoney.js';
-import { receiptEffectiveCashNgn, receiptReconciledCashNgn } from '../shared/lib/receiptClearance.js';
+import {
+  isReceiptFinanceReconciled,
+  receiptBankReceivedAmountNgn,
+  receiptEffectiveCashNgn,
+  receiptReconciledCashNgn,
+} from '../shared/lib/receiptClearance.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -60,6 +65,7 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
 
   const companion = companionOverpayNgnByReceiptId(ledgerRows);
   let receiptCashNgn = 0;
+  let reconciledReceiptCashNgn = 0;
   let receiptAllocatedSumNgn = 0;
   let companionOverpayOnQuoteNgn = 0;
   for (const r of receiptRows) {
@@ -73,18 +79,39 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
       bankReceivedAmountNgn: r.bank_received_amount_ngn,
       bank_received_amount_ngn: r.bank_received_amount_ngn,
     };
-    const cash = receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra });
     const reconciled = receiptReconciledCashNgn(receiptRow);
     receiptAllocatedSumNgn += reconciled != null ? reconciled : roundMoney(r.amount_ngn);
-    receiptCashNgn += cash;
-    companionOverpayOnQuoteNgn += extra;
+    if (isReceiptFinanceReconciled(receiptRow)) {
+      reconciledReceiptCashNgn += receiptBankReceivedAmountNgn(receiptRow) ?? 0;
+    } else {
+      const cash = receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra });
+      receiptCashNgn += cash;
+      companionOverpayOnQuoteNgn += extra;
+    }
   }
+  receiptCashNgn += reconciledReceiptCashNgn;
 
   const advanceAppliedNgn = roundMoney(
     db
       .prepare(
         `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
          WHERE type = 'ADVANCE_APPLIED' AND quotation_ref = ?`
+      )
+      .get(ref)?.s ?? 0
+  );
+  const overpayAppliedNgn = roundMoney(
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+         WHERE type = 'OVERPAY_APPLIED' AND quotation_ref = ?`
+      )
+      .get(ref)?.s ?? 0
+  );
+  const staffPurchaseCreditNgn = roundMoney(
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM ledger_entries
+         WHERE type = 'STAFF_PURCHASE_CREDIT' AND quotation_ref = ?`
       )
       .get(ref)?.s ?? 0
   );
@@ -113,21 +140,29 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
     settledQuoteFullOverpayNgn += roundMoney(row.amount_ngn);
   }
 
-  const cashInNgn = quotationActualCashInNgn({
-    receiptCashNgn,
-    advanceAppliedNgn,
-    netOverpayLedgerNgn,
-    companionOverpayOnQuoteNgn,
-    settledQuoteFullOverpayNgn,
-  });
+  const cashInNgn =
+    reconciledReceiptCashNgn > 0
+      ? roundMoney(
+          receiptCashNgn + advanceAppliedNgn + overpayAppliedNgn + staffPurchaseCreditNgn
+        )
+      : quotationActualCashInNgn({
+          receiptCashNgn,
+          advanceAppliedNgn,
+          netOverpayLedgerNgn,
+          companionOverpayOnQuoteNgn,
+          settledQuoteFullOverpayNgn,
+        });
 
   return {
     receiptCashNgn,
     receiptAllocatedSumNgn,
     advanceAppliedNgn,
+    overpayAppliedNgn,
+    staffPurchaseCreditNgn,
     netOverpayLedgerNgn,
     companionOverpayOnQuoteNgn,
     settledQuoteFullOverpayNgn,
+    reconciledReceiptCashNgn,
     cashInNgn,
   };
 }

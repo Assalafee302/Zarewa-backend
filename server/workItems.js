@@ -18,6 +18,11 @@ import { listCoilRequests, listManagementItems, listPaymentRequests } from './re
 import { listHrRequests } from './hrOps.js';
 import { resolveResponsibleUserForOffice } from './hrOrgStaffOps.js';
 import { listHrTransferRequests } from './hrTransferRequests.js';
+import {
+  listStaffPurchaseCreditQueue,
+  userMayApproveStaffPurchaseCredit,
+  userMayRejectStaffPurchaseCredit,
+} from './staffPurchaseCreditOps.js';
 import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
 import {
   isConfidentialLevel,
@@ -147,6 +152,9 @@ export function userMayDecideWorkItem(user, row, opts = {}) {
   }
   if (docType === 'refund_request') {
     return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
+  }
+  if (docType === 'staff_purchase_credit') {
+    return userMayApproveStaffPurchaseCredit(user);
   }
   if (docType === 'payment_request' || docType === 'po_transport_payment' || docType === 'bank_recon_exceptions') {
     return userHasPermission(user, 'finance.approve');
@@ -931,6 +939,7 @@ export function syncDerivedWorkItems(db, scope, user) {
     ...listLegacyEditApprovalWorkItems(db, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
+    ...listLegacyStaffPurchaseCreditWorkItems(db, scope, user),
     ...listLegacyHrTransferWorkItems(db, scope, user),
     ...listLegacyHrDisciplineCaseWorkItems(db, scope, user),
     ...listLegacyHrPerformanceReviewWorkItems(db, scope, user),
@@ -1272,6 +1281,62 @@ function listLegacyHrRequestWorkItems(db, scope, user) {
   return out;
 }
 
+function listLegacyStaffPurchaseCreditWorkItems(db, scope, user) {
+  if (!user) return [];
+  if (!userMayApproveStaffPurchaseCredit(user) && !userMayRejectStaffPurchaseCredit(user)) return [];
+  const scopeNorm = {
+    viewAll: Boolean(scope?.viewAll) || canUseAllBranchesRollup(user),
+    branchId: String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+  };
+  const rows = listStaffPurchaseCreditQueue(db, {
+    status: 'pending_approval',
+    branchId: scopeNorm.viewAll ? 'ALL' : scopeNorm.branchId,
+  });
+  const out = [];
+  for (const row of rows) {
+    const amountNgn = Math.round(Number(row.principalOriginalNgn) || 0);
+    const installmentNgn = Math.round(Number(row.installmentNgn) || 0);
+    const quoteRef = String(row.quotationRef || '').trim();
+    out.push(
+      legacyWorkItemBase({
+        id: legacyItemId('staff-purchase-credit', row.id),
+        referenceNo: row.id,
+        branchId: row.branchId || scopeNorm.branchId,
+        officeKey: 'executive',
+        responsibleOfficeKey: 'executive',
+        documentClass: 'approval',
+        documentType: 'staff_purchase_credit',
+        status: 'pending_review',
+        priority: 'normal',
+        title: `Staff purchase credit · ${row.staffDisplayName || row.userId || row.id}`,
+        summary: [
+          row.title || '',
+          quoteRef ? `Quote ${quoteRef}` : '',
+          amountNgn ? `₦${amountNgn.toLocaleString('en-NG')}` : '',
+          installmentNgn ? `₦${installmentNgn.toLocaleString('en-NG')}/mo` : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        createdAtIso: row.createdAtIso || row.updatedAtIso || '',
+        updatedAtIso: row.updatedAtIso || row.createdAtIso || '',
+        sourceKind: 'staff_purchase_credit',
+        sourceId: row.id,
+        routePath: '/hr/payroll?tab=loans',
+        data: {
+          accountId: row.id,
+          quotationRef: quoteRef,
+          amountNgn,
+          installmentNgn,
+          termMonths: row.termMonths,
+          staffUserId: row.userId,
+          staffDisplayName: row.staffDisplayName,
+        },
+      })
+    );
+  }
+  return out;
+}
+
 function userCanActOnHrTransferQueue(user, status) {
   if (!user) return false;
   if (userHasPermission(user, '*')) return true;
@@ -1602,6 +1667,7 @@ export function listUnifiedWorkItems(db, scope, user, filter = {}) {
     ...listLegacyEditApprovalWorkItems(db, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
+    ...listLegacyStaffPurchaseCreditWorkItems(db, scope, user),
     ...listLegacyHrTransferWorkItems(db, scope, user),
     ...listLegacyHrDisciplineCaseWorkItems(db, scope, user),
     ...listLegacyHrPerformanceReviewWorkItems(db, scope, user),

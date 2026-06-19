@@ -2,6 +2,16 @@ import { hasPermissionInList } from './moduleAccess.js';
 import { userCanApproveEditMutationsClient } from './editApprovalUi.js';
 import { isManagerInboxWorkItemDocType } from './managerInboxWorkItemTypes.js';
 
+function userMaySeeStaffPurchaseCreditQueue(roleKey, permissions) {
+  const rk = String(roleKey || '').trim().toLowerCase();
+  if (hasPermissionInList(permissions, '*')) return true;
+  if (rk === 'md') return true;
+  if (hasPermissionInList(permissions, 'hr.payroll.md_approve')) return true;
+  return (
+    hasPermissionInList(permissions, 'hr.loans.manage') || hasPermissionInList(permissions, 'hr.staff.manage')
+  );
+}
+
 /**
  * Mirrors server `canSeeManagementApprovalQueues` (workItems.js) for client-side inbox filtering.
  */
@@ -68,6 +78,10 @@ export function workItemShowsOnWorkspaceUnifiedInbox(item, { userId, roleKey, pe
   }
 
   if (dt === 'refund_request' && userMaySeeRefundApprovalQueue(permissions)) {
+    return true;
+  }
+
+  if (dt === 'staff_purchase_credit' && userMaySeeStaffPurchaseCreditQueue(roleKey, permissions)) {
     return true;
   }
 

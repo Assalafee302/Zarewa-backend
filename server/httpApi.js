@@ -291,6 +291,8 @@ import {
   unlinkSalesCustomerFromStaff,
   userMayLinkStaffSalesCustomer,
   userMayRequestStaffPurchaseCredit,
+  userMayApproveStaffPurchaseCredit,
+  userMayRejectStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
 import { issueZarewaFilingReference } from './referenceIssuance.js';
 import {
@@ -2482,13 +2484,25 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/staff-purchase-credits', requireAuth, (req, res) => {
     try {
-      if (!userMayRequestStaffPurchaseCredit(req.user)) {
+      const canList =
+        userMayRequestStaffPurchaseCredit(req.user) ||
+        userMayApproveStaffPurchaseCredit(req.user) ||
+        userMayRejectStaffPurchaseCredit(req.user);
+      if (!canList) {
         return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
       }
-      const branchId = String(req.workspaceBranchId || req.query?.branchId || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      const viewAll =
+        branchScope === 'ALL' ||
+        canUseAllBranchesRollup(req.user) ||
+        userMayApproveStaffPurchaseCredit(req.user);
+      const branchId = viewAll
+        ? 'ALL'
+        : String(branchScope === 'ALL' ? req.workspaceBranchId || DEFAULT_BRANCH_ID : branchScope).trim() ||
+          DEFAULT_BRANCH_ID;
       const rows = listStaffPurchaseCreditQueue(db, {
         status: String(req.query?.status || '').trim() || undefined,
-        branchId: branchId || 'ALL',
+        branchId,
       });
       return res.json({ ok: true, items: rows });
     } catch (e) {

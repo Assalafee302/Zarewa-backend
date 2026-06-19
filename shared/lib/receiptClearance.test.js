@@ -44,4 +44,17 @@ describe('receiptClearance', () => {
       receiptEffectiveCashNgn({ amountNgn: 100_000 }, { companionOverpayNgn: 50_000 })
     ).toBe(150_000);
   });
+
+  it('uses bank received for Cleared receipts even without finance saved timestamp', () => {
+    expect(
+      receiptEffectiveCashNgn(
+        {
+          amountNgn: 1_500_000,
+          status: 'Cleared',
+          bankReceivedAmountNgn: 1_150_000,
+        },
+        { companionOverpayNgn: 348_420 }
+      )
+    ).toBe(1_150_000);
+  });
 });

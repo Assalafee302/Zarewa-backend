@@ -43,23 +43,39 @@ export function receiptBankReceivedAmountNgn(row) {
   return n > 0 ? n : null;
 }
 
-/** Finance-confirmed cash when reconciled; otherwise null. */
+/**
+ * Bank-received amount is authoritative when finance saved reconciliation, the receipt is Cleared,
+ * or finance recorded a bank figure that differs from the sales-posted book amount.
+ * @param {object} row
+ * @returns {number | null}
+ */
+export function receiptAuthoritativeBankCashNgn(row) {
+  if (!row || isReceiptReversed(row)) return null;
+  const bank = receiptBankReceivedAmountNgn(row);
+  if (bank == null) return null;
+  if (isReceiptFinanceReconciled(row)) return bank;
+  if (isReceiptCleared(row)) return bank;
+  const alloc = Math.round(Number(row.amountNgn ?? row.amount_ngn) || 0);
+  if (Math.abs(bank - alloc) > 1) return bank;
+  return null;
+}
+
+/** Finance-confirmed cash when bank amount is authoritative; otherwise null. */
 export function receiptReconciledCashNgn(row) {
-  if (!isReceiptFinanceReconciled(row)) return null;
-  return receiptBankReceivedAmountNgn(row);
+  return receiptAuthoritativeBankCashNgn(row);
 }
 
 /**
  * Cash tied to a receipt for refunds, analytics, and treasury tie-out.
- * Reconciled receipts use bank-received (what was actually paid); otherwise posted allocation + companion overpay.
+ * Authoritative bank-received replaces sales-posted allocation + companion overpay.
  * @param {object} row
  * @param {{ companionOverpayNgn?: number }} [opts]
  */
 export function receiptEffectiveCashNgn(row, opts = {}) {
   if (!row) return 0;
   if (row.cashReceivedNgn != null) return Math.round(Number(row.cashReceivedNgn) || 0);
-  const reconciled = receiptReconciledCashNgn(row);
-  if (reconciled != null) return reconciled;
+  const authoritative = receiptAuthoritativeBankCashNgn(row);
+  if (authoritative != null) return authoritative;
   const alloc = Math.round(Number(row.amountNgn ?? row.amount_ngn) || 0);
   const extra = Math.max(0, Math.round(Number(opts.companionOverpayNgn) || 0));
   return Math.round(alloc + extra);

@@ -3620,7 +3620,10 @@ export function registerHttpApi(app, db) {
         });
       }
       const branchScope = resolveBootstrapBranchScope(req);
-      const r = write.reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope, req.user);
+      const quotationRef = String(req.body?.quotationRef || req.body?.quotation_ref || '').trim();
+      const r = write.reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope, req.user, {
+        quotationRef: quotationRef || undefined,
+      });
       appendAuditLog(db, {
         actor: req.user,
         action: 'admin.reapply_finance_reconciled_receipts',

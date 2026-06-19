@@ -277,4 +277,21 @@ describe('finance confirm replaces mistaken sales-posted overpay', () => {
     const overpayLedger = db.prepare(`SELECT amount_ngn FROM ledger_entries WHERE id = 'LE-566-O'`).get();
     expect(overpayLedger.amount_ngn).toBe(0);
   });
+
+  it('refund cash uses Cleared bank received without finance saved timestamp', () => {
+    db.prepare(
+      `UPDATE sales_receipts SET
+         amount_ngn = 1500000,
+         bank_received_amount_ngn = 1150000,
+         finance_reconciliation_saved_at_iso = NULL,
+         status = 'Cleared'
+       WHERE id = 'LE-566'`
+    ).run();
+
+    const cash = quotationPaymentCashBreakdown(db, 'QT-KD-26-0566');
+    expect(cash.cashInNgn).toBe(1_150_000);
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-KD-26-0566' });
+    expect(prev.preview.overpaymentExcessNgn).toBe(0);
+  });
 });

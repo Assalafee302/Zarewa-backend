@@ -5,8 +5,7 @@ import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore
 import { SETTLED_QUOTE_OVERPAY_NOTE_SNIP } from '../shared/lib/customerPaymentIntegrity.js';
 import { quotationActualCashInNgn } from '../shared/lib/refundQuotationMoney.js';
 import {
-  isReceiptFinanceReconciled,
-  receiptBankReceivedAmountNgn,
+  receiptAuthoritativeBankCashNgn,
   receiptEffectiveCashNgn,
   receiptReconciledCashNgn,
 } from '../shared/lib/receiptClearance.js';
@@ -50,7 +49,7 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
 
   const receiptRows = db
     .prepare(
-      `SELECT id, amount_ngn, ledger_entry_id, finance_reconciliation_saved_at_iso, bank_received_amount_ngn
+      `SELECT id, amount_ngn, ledger_entry_id, finance_reconciliation_saved_at_iso, bank_received_amount_ngn, status
        FROM sales_receipts
        WHERE quotation_ref = ?
          AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))`
@@ -75,14 +74,16 @@ export function quotationPaymentCashBreakdown(db, quotationRef) {
     const receiptRow = {
       amountNgn: r.amount_ngn,
       amount_ngn: r.amount_ngn,
+      status: r.status,
       financeReconciliationSavedAtISO: r.finance_reconciliation_saved_at_iso,
       bankReceivedAmountNgn: r.bank_received_amount_ngn,
       bank_received_amount_ngn: r.bank_received_amount_ngn,
     };
     const reconciled = receiptReconciledCashNgn(receiptRow);
     receiptAllocatedSumNgn += reconciled != null ? reconciled : roundMoney(r.amount_ngn);
-    if (isReceiptFinanceReconciled(receiptRow)) {
-      reconciledReceiptCashNgn += receiptBankReceivedAmountNgn(receiptRow) ?? 0;
+    const authoritativeBank = receiptAuthoritativeBankCashNgn(receiptRow);
+    if (authoritativeBank != null) {
+      reconciledReceiptCashNgn += authoritativeBank;
     } else {
       const cash = receiptEffectiveCashNgn(receiptRow, { companionOverpayNgn: extra });
       receiptCashNgn += cash;

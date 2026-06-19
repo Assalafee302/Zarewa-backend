@@ -320,10 +320,13 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
     .prepare(
       `SELECT COALESCE(SUM(
          CASE
-           WHEN finance_reconciliation_saved_at_iso IS NOT NULL
-             AND TRIM(finance_reconciliation_saved_at_iso) != ''
-             AND bank_received_amount_ngn IS NOT NULL
+           WHEN bank_received_amount_ngn IS NOT NULL
              AND bank_received_amount_ngn > 0
+             AND (
+               (finance_reconciliation_saved_at_iso IS NOT NULL AND TRIM(finance_reconciliation_saved_at_iso) != '')
+               OR TRIM(LOWER(COALESCE(status, ''))) = 'cleared'
+               OR ABS(COALESCE(bank_received_amount_ngn, 0) - COALESCE(amount_ngn, 0)) > 100
+             )
            THEN bank_received_amount_ngn
            ELSE amount_ngn
          END
@@ -9100,21 +9103,26 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
  * @param {'ALL' | string} branchScope
  * @param {object | null} [actor]
  */
-export function reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope = 'ALL', actor = null) {
+export function reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchScope = 'ALL', actor = null, options = {}) {
+  const quotationRefFilter = String(options.quotationRef || '').trim();
   const b = branchWhere(db, 'sales_receipts', branchScope);
   const rows = db
     .prepare(
       `SELECT id, quotation_ref, bank_received_amount_ngn, amount_ngn
        FROM sales_receipts
        WHERE 1=1${b.sql}
-         AND finance_reconciliation_saved_at_iso IS NOT NULL
-         AND TRIM(finance_reconciliation_saved_at_iso) != ''
          AND bank_received_amount_ngn IS NOT NULL
          AND bank_received_amount_ngn > 0
          AND TRIM(LOWER(COALESCE(status, ''))) NOT IN ('reversed')
+         AND (
+           (finance_reconciliation_saved_at_iso IS NOT NULL AND TRIM(finance_reconciliation_saved_at_iso) != '')
+           OR TRIM(LOWER(COALESCE(status, ''))) = 'cleared'
+           OR ABS(COALESCE(bank_received_amount_ngn, 0) - COALESCE(amount_ngn, 0)) > 100
+         )
+         ${quotationRefFilter ? 'AND quotation_ref = ?' : ''}
        ORDER BY date_iso ASC, id ASC`
     )
-    .all(...b.args);
+    .all(...b.args, ...(quotationRefFilter ? [quotationRefFilter] : []));
 
   const failures = [];
   let changed = 0;

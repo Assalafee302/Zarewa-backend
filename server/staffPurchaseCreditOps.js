@@ -4,7 +4,7 @@
  */
 import { userHasPermission } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { getCreditPolicyConfig, requiredApprovalLevelForCreditAmount } from './creditPolicy.js';
+import { getCreditPolicyConfig } from './creditPolicy.js';
 import { getHrPolicyPayload } from './hrBusinessRules.js';
 import { evaluateQuotationPaymentForDeliveryRelease } from './deliveryReleaseGate.js';
 import { listProductionJobs } from './readModel.js';
@@ -177,11 +177,17 @@ export function userMayRequestStaffPurchaseCredit(actor) {
   return userHasPermission(actor, 'quotations.manage') || userHasPermission(actor, 'sales.manage');
 }
 
-export function userMayApproveStaffPurchaseCredit(actor, requiredLevel) {
+export function userMayApproveStaffPurchaseCredit(actor) {
   const rk = roleKey(actor);
-  if (rk === 'md' || rk === 'admin' || userHasPermission(actor, '*')) return true;
-  if (requiredLevel === 'branch_manager' && (rk === 'sales_manager' || rk === 'branch_manager')) return true;
+  if (userHasPermission(actor, '*')) return true;
+  if (rk === 'md') return true;
+  if (userHasPermission(actor, 'hr.payroll.md_approve')) return true;
   return false;
+}
+
+export function userMayRejectStaffPurchaseCredit(actor) {
+  if (userMayApproveStaffPurchaseCredit(actor)) return true;
+  return userHasPermission(actor, 'hr.loans.manage') || userHasPermission(actor, 'hr.staff.manage');
 }
 
 function addDaysIso(isoDate, days) {
@@ -379,7 +385,7 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
     details: { quotationRef, amountNgn, staffUserId },
   });
 
-  const requiredLevel = requiredApprovalLevelForCreditAmount(db, amountNgn);
+  const requiredLevel = 'md';
   return { ok: true, account: ins.account, requiredApprovalLevel: requiredLevel };
 }
 
@@ -401,16 +407,14 @@ export function decideStaffPurchaseCredit(db, accountId, decision, actor, body =
   }
 
   const amountNgn = Math.round(Number(row.principal_original_ngn) || 0);
-  const requiredLevel = requiredApprovalLevelForCreditAmount(db, amountNgn);
-  if (!userMayApproveStaffPurchaseCredit(actor, requiredLevel)) {
-    return { ok: false, error: 'You cannot approve this purchase credit amount.', code: 'FORBIDDEN' };
-  }
-
   const dec = String(decision || '').toLowerCase();
   const note = String(body.note || body.decisionNote || '').trim() || null;
   const now = nowIso();
 
   if (dec === 'reject') {
+    if (!userMayRejectStaffPurchaseCredit(actor)) {
+      return { ok: false, error: 'You cannot reject this purchase credit request.', code: 'FORBIDDEN' };
+    }
     db.prepare(`UPDATE hr_staff_obligation_accounts SET status = ?, note = ?, updated_at_iso = ? WHERE id = ?`).run(
       OBLIGATION_STATUS.REJECTED,
       note,
@@ -421,6 +425,14 @@ export function decideStaffPurchaseCredit(db, accountId, decision, actor, body =
   }
 
   if (dec !== 'approve') return { ok: false, error: 'decision must be approve or reject.' };
+
+  if (!userMayApproveStaffPurchaseCredit(actor)) {
+    return {
+      ok: false,
+      error: 'Only the Managing Director can approve staff purchase credit.',
+      code: 'FORBIDDEN',
+    };
+  }
 
   const quotationRef = String(row.quotation_ref || '').trim();
   const jobs = listProductionJobs(db, 'ALL');
@@ -453,7 +465,7 @@ export function decideStaffPurchaseCredit(db, accountId, decision, actor, body =
     action: 'hr.purchase_credit.approved',
     entityKind: 'hr_staff_obligation_account',
     entityId: id,
-    details: { quotationRef, recognizeNgn, requiredLevel },
+    details: { quotationRef, recognizeNgn, requiredLevel: 'md' },
   });
 
   return { ok: true, account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)) };

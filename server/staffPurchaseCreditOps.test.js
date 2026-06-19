@@ -70,7 +70,7 @@ describe.skipIf(!isMysqlAvailableForTests())('staffPurchaseCreditOps', () => {
       .get(quotationRef);
     expect(pending?.id).toBeTruthy();
 
-    const approved = decideStaffPurchaseCredit(db, pending.id, 'approve', actor, { note: 'BM approved UAT' });
+    const approved = decideStaffPurchaseCredit(db, pending.id, 'approve', actor, { note: 'MD approved UAT' });
     expect(approved.ok).toBe(true);
     expect(approved.account.status).toBe('active');
     expect(approved.account.principalOutstandingNgn).toBeGreaterThan(0);

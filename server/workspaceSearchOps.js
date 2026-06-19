@@ -43,12 +43,13 @@ export function workspaceQuickSearch(db, req, rawQuery, limit) {
       const bp = branchPredicate(db, 'customers', branchScope);
       const rows = db
         .prepare(
-          `SELECT customer_id, name, phone_number, email, company_name FROM customers WHERE 1=1${bp.sql}
+          `SELECT customer_id, name, phone_number, email, company_name, tier, crm_profile_notes FROM customers WHERE 1=1${bp.sql}
            AND (customer_id LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\' OR IFNULL(phone_number,'') LIKE ? ESCAPE '\\\\'
-                OR IFNULL(email,'') LIKE ? ESCAPE '\\\\' OR IFNULL(company_name,'') LIKE ? ESCAPE '\\\\')
+                OR IFNULL(email,'') LIKE ? ESCAPE '\\\\' OR IFNULL(company_name,'') LIKE ? ESCAPE '\\\\'
+                OR IFNULL(tier,'') LIKE ? ESCAPE '\\\\' OR IFNULL(crm_profile_notes,'') LIKE ? ESCAPE '\\\\')
            ORDER BY name COLLATE NOCASE LIMIT ?`
         )
-        .all(...bp.args, likeArg, likeArg, likeArg, likeArg, likeArg, n);
+        .all(...bp.args, likeArg, likeArg, likeArg, likeArg, likeArg, likeArg, likeArg, n);
       for (const c of rows) {
         push({
           kind: 'customer',

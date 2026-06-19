@@ -68,6 +68,27 @@ export function getStaffSalesCustomerId(db, userId) {
   return String(row?.sales_customer_id || '').trim() || null;
 }
 
+/** Display name for linked staff sales customer — includes employee no when set. */
+export function formatStaffSalesCustomerName(displayName, employeeNo) {
+  const base = String(displayName || 'Staff').trim();
+  const eno = String(employeeNo || '').trim().toUpperCase();
+  if (eno) return `${base} · ${eno} (Staff)`;
+  return `${base} (Staff)`;
+}
+
+function syncStaffSalesCustomerName(db, customerId, name) {
+  const cid = String(customerId || '').trim();
+  const label = String(name || '').trim();
+  if (!cid || !label) return;
+  db.prepare(`UPDATE customers SET name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE quotations SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE sales_receipts SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE cutting_lists SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE customer_refunds SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE ledger_entries SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+  db.prepare(`UPDATE advance_in_events SET customer_name = ? WHERE customer_id = ?`).run(label, cid);
+}
+
 export function ensureStaffSalesCustomer(db, userId, actor = null) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const uid = String(userId || '').trim();
@@ -83,14 +104,21 @@ export function ensureStaffSalesCustomer(db, userId, actor = null) {
     .get(uid);
   if (!prof) return { ok: false, error: 'Staff profile not found.' };
 
+  const expectedName = formatStaffSalesCustomerName(prof.display_name || prof.username, prof.employee_no);
+
   const existing = String(prof.sales_customer_id || '').trim();
   if (existing) {
-    const cust = db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get(existing);
-    if (cust) return { ok: true, customerId: existing, already: true };
+    const cust = db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(existing);
+    if (cust) {
+      if (String(cust.name || '').trim() !== expectedName) {
+        syncStaffSalesCustomerName(db, existing, expectedName);
+      }
+      return { ok: true, customerId: existing, already: true, nameSynced: String(cust.name || '').trim() !== expectedName };
+    }
   }
 
   const bid = String(prof.branch_id || DEFAULT_BRANCH_ID).trim();
-  const name = `${String(prof.display_name || prof.username || 'Staff').trim()} (Staff)`;
+  const name = expectedName;
   const customerId = insertCustomer(
     db,
     {

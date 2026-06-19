@@ -135,6 +135,25 @@ describe.skipIf(!mysqlOk)('Phase 12 login security (HTTP)', () => {
     expect(direct.code).toBe('ACCOUNT_LOCKED');
   });
 
+  it('admin can unlock a locked account from Team & access API', async () => {
+    await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+
+    const victimAgent = request.agent(app);
+    for (let i = 0; i < FAILED_LOGIN_LOCK_THRESHOLD; i++) {
+      await victimAgent.post('/api/session/login').send({ username: 'sales.staff', password: 'wrong' });
+    }
+    expect(loginWithPassword(db, 'sales.staff', 'Sales@123').ok).toBe(false);
+
+    const staffRow = db.prepare(`SELECT id FROM app_users WHERE lower(trim(username)) = 'sales.staff'`).get();
+    const unlock = await agent
+      .post(`/api/users/${encodeURIComponent(staffRow.id)}/unlock-account`)
+      .send({});
+    expect(unlock.status).toBe(200);
+    expect(unlock.body.ok).toBe(true);
+
+    expect(loginWithPassword(db, 'sales.staff', 'Sales@123').ok).toBe(true);
+  });
+
   it('records failed login audits', async () => {
     await agent.post('/api/session/login').send({ username: 'admin', password: 'bad' });
     const summary = buildLoginSecuritySummary(db, { hours: 1 });

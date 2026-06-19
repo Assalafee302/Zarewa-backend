@@ -132,7 +132,6 @@ function assertDepositLinkable(db, depositId, actor, { forAmountNgn = null } = {
     const expired = until && Date.parse(until) < Date.now();
     if (expired) {
       refreshDepositStatus(db, depositId);
-      const refreshed = db.prepare(`SELECT * FROM bank_deposits WHERE id = ?`).get(depositId);
       return assertDepositLinkable(db, depositId, actor, { forAmountNgn });
     }
     if (uid && me && uid !== me) {

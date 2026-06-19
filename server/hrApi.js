@@ -255,6 +255,7 @@ import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligat
 import {
   listStaffRecoveriesDueForCashier,
   recordStaffRecoveryCashierPayment,
+  enrichRecoveryObligationsForDisplay,
 } from './staffRecoveryCashierOps.js';
 import {
   buildObligationAccountStatementPdf,
@@ -3835,16 +3836,22 @@ export function registerHrApi(app, db) {
       const purchases = staffObligationTablesReady(db)
         ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.PURCHASE })
         : [];
-      const recoveries = staffObligationTablesReady(db)
+      const recoveriesRaw = staffObligationTablesReady(db)
         ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.RECOVERY })
         : [];
+      const recoveries = enrichRecoveryObligationsForDisplay(db, recoveriesRaw);
       const purchaseEligibility = computeStaffPurchaseCreditEligibility(db, userId);
-      const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+      const prof = db
+        .prepare(`SELECT branch_id, employee_no FROM hr_staff_profiles WHERE user_id = ?`)
+        .get(userId);
+      const recoveryDueNgn = recoveries.reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
       const totalOutstanding =
         [...loans, ...purchases, ...recoveries].reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
       return res.json({
         ok: true,
         staffBranchId: prof?.branch_id || null,
+        staffEmployeeNo: String(prof?.employee_no || '').trim() || null,
+        recoveryDueNgn,
         totalOutstandingNgn: totalOutstanding,
         loans,
         purchases,

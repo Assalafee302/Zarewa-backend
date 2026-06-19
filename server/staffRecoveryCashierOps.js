@@ -41,7 +41,8 @@ function nowIso() {
 export function listStaffRecoveriesDueForCashier(db, branchScope = 'ALL') {
   if (!recoverySchedulesTableReady(db)) return [];
   let sql = `
-    SELECT s.*, c.case_number, u.display_name AS staff_display_name, p.branch_id
+    SELECT s.*, c.case_number, u.display_name AS staff_display_name, u.username AS staff_username,
+           p.branch_id, p.employee_no AS staff_employee_no
     FROM hr_incident_recovery_schedules s
     INNER JOIN hr_staff_profiles p ON p.user_id = s.user_id
     LEFT JOIN hr_discipline_cases c ON c.id = s.case_id
@@ -64,6 +65,8 @@ export function listStaffRecoveriesDueForCashier(db, branchScope = 'ALL') {
       caseNumber: mapped.caseNumber,
       userId: mapped.userId,
       staffDisplayName: row.staff_display_name || mapped.userId,
+      staffUsername: row.staff_username || null,
+      staffEmployeeNo: String(row.staff_employee_no || '').trim() || null,
       branchId: String(row.branch_id || DEFAULT_BRANCH_ID).trim(),
       totalAmountNgn: mapped.totalAmountNgn,
       installmentAmountNgn: mapped.installmentAmountNgn,
@@ -246,4 +249,30 @@ export function recordStaffRecoveryCashierPayment(db, actor, scheduleId, body = 
     principalOutstandingNgn: roundMoney(updated?.principal_outstanding_ngn),
     paidInFull: completed,
   };
+}
+
+/**
+ * Add case numbers for employee/cashier display on recovery obligation rows.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object[]} recoveries
+ */
+export function enrichRecoveryObligationsForDisplay(db, recoveries = []) {
+  return recoveries.map((r) => {
+    if (!r?.recoveryScheduleId && !r?.disciplineCaseId) return r;
+    let caseNumber = null;
+    if (r.disciplineCaseId) {
+      caseNumber =
+        db.prepare(`SELECT case_number FROM hr_discipline_cases WHERE id = ?`).get(r.disciplineCaseId)
+          ?.case_number || null;
+    } else if (r.recoveryScheduleId) {
+      caseNumber =
+        db
+          .prepare(
+            `SELECT c.case_number FROM hr_incident_recovery_schedules s
+             LEFT JOIN hr_discipline_cases c ON c.id = s.case_id WHERE s.id = ?`
+          )
+          .get(r.recoveryScheduleId)?.case_number || null;
+    }
+    return { ...r, caseNumber: caseNumber ? String(caseNumber).trim() : null };
+  });
 }

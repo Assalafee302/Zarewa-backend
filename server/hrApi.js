@@ -3798,10 +3798,12 @@ export function registerHrApi(app, db) {
         ? listStaffObligationAccounts(db, { userId, kind: OBLIGATION_KIND.RECOVERY })
         : [];
       const purchaseEligibility = computeStaffPurchaseCreditEligibility(db, userId);
+      const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
       const totalOutstanding =
         [...loans, ...purchases, ...recoveries].reduce((s, a) => s + (a.principalOutstandingNgn || 0), 0) || 0;
       return res.json({
         ok: true,
+        staffBranchId: prof?.branch_id || null,
         totalOutstandingNgn: totalOutstanding,
         loans,
         purchases,

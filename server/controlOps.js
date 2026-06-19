@@ -2841,18 +2841,20 @@ export function quotationCashInNgn(db, quotationRef) {
  * Single-quotation checks aligned with {@link getEligibleRefundQuotations} listing rules, plus
  * remaining headroom from cash on this quote minus quote total (when overpaid) or cash minus refunds.
  */
-export function quotationMeetsRefundEligibility(db, quotationRef) {
+export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = null) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return { ok: false, error: 'Quotation reference is required.' };
-  const q = db
-    .prepare(
-      `SELECT id, paid_ngn, total_ngn, status,
-              bm_price_exception_approved_at_iso, price_exception_md_review_required,
-              price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso,
-              refunds_blocked_at_iso, refunds_blocked_reason
-       FROM quotations WHERE id = ?`
-    )
-    .get(ref);
+  const q =
+    existingRow ??
+    db
+      .prepare(
+        `SELECT id, paid_ngn, total_ngn, status,
+                bm_price_exception_approved_at_iso, price_exception_md_review_required,
+                price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso,
+                refunds_blocked_at_iso, refunds_blocked_reason
+         FROM quotations WHERE id = ?`
+      )
+      .get(ref);
   if (!q) return { ok: false, error: 'Quotation not found.' };
   if (quotationRefundsBlocked(q)) {
     const why = String(q.refunds_blocked_reason ?? '').trim();
@@ -2994,10 +2996,10 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Also requires refund preview {@link previewRefundRequest} suggested total ≥ {@link MIN_REFUND_QUOTATION_REMAINING_NGN};
- * quotations with automatic preview below that floor (including ₦0) are omitted.
- * Rows include `cash_in_ngn` and `remaining_ngn` for the picker UI.
- * Logic mirrors {@link quotationMeetsRefundEligibility} per row.
+ * Listing uses {@link quotationMeetsRefundEligibility} only — full {@link previewRefundRequest} runs when a
+ * quotation is selected (POST /api/refunds/preview), not for every picker row.
+ * Rows include `cash_in_ngn` and `remaining_ngn` for the picker UI; `suggested_preview_amount_ngn` is a
+ * lightweight overpayment hint when cash exceeds quote total (not the full preview engine).
  */
 export function getEligibleRefundQuotations(db) {
   const sql = `
@@ -3027,35 +3029,26 @@ export function getEligibleRefundQuotations(db) {
     ORDER BY q.date_iso DESC
   `;
   const rows = db.prepare(sql).all();
-  return rows
-    .map((row) => {
-      const preview = previewRefundRequest(db, { quotationRef: row.id });
-      const eligibleRefundCategories = Array.isArray(preview?.preview?.eligibleRefundCategories)
-        ? preview.preview.eligibleRefundCategories
-        : [];
-      const suggestedPreviewAmountNgn = roundMoney(preview?.preview?.suggestedAmountNgn ?? 0);
-      const meets = quotationMeetsRefundEligibility(db, row.id);
-      const cashInNgn = meets.ok ? meets.cashInNgn : quotationCashInNgn(db, row.id);
-      return {
-        ...row,
-        eligible_refund_categories: eligibleRefundCategories,
-        suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
-        cash_in_ngn: cashInNgn,
-        remaining_ngn: meets.ok ? meets.remainingNgn : 0,
-        _meets: meets,
-      };
-    })
-    .filter((row) => {
-      if (row.eligible_refund_categories.length === 0) return false;
-      if (roundMoney(row.suggested_preview_amount_ngn) < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
-      const meets = row._meets;
-      if (!meets?.ok || meets.remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
-      const total = roundMoney(row.total_ngn);
-      const paid = roundMoney(row.paid_ngn);
-      if (total > 0 && !isEffectivelyFullyPaid(paid, total)) return false;
-      return true;
-    })
-    .map(({ _meets, ...row }) => row);
+  const out = [];
+  for (const row of rows) {
+    const meets = quotationMeetsRefundEligibility(db, row.id, row);
+    if (!meets.ok || meets.remainingNgn <= MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
+    const total = roundMoney(row.total_ngn);
+    const paid = roundMoney(row.paid_ngn);
+    if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
+
+    const overpayExcess = roundMoney(
+      meets.overpaymentExcessNgn ?? Math.max(0, meets.cashInNgn - meets.quoteTotalNgn)
+    );
+    out.push({
+      ...row,
+      eligible_refund_categories: overpayExcess > 0 ? ['Overpayment'] : [],
+      suggested_preview_amount_ngn: overpayExcess > 0 ? overpayExcess : null,
+      cash_in_ngn: meets.cashInNgn,
+      remaining_ngn: meets.remainingNgn,
+    });
+  }
+  return out;
 }
 
 function positiveNumber(value) {

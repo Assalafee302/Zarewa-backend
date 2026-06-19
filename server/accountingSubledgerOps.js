@@ -9,8 +9,11 @@ import {
   receivableDueOnQuotationFromEntries,
   firstProductionDateISO,
 } from '../shared/lib/customerLedgerCore.js';
+import { quotationPaymentPolicyPhase } from '../shared/lib/accountingPolicyV1.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
+import { quotationRefundsBlocked, refundQuotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
+import { refundOutstandingAmount } from '../shared/lib/refundsStore.js';
 import { bankDepositRemainingNgn, bankDepositStatusLabel } from '../shared/lib/bankDeposits.js';
 import { isReceiptPendingClearance } from '../shared/lib/receiptClearance.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
@@ -29,9 +32,11 @@ import {
   listLedgerEntries,
   listProductionJobs,
   listQuotations,
+  listRefunds,
   listSalesReceipts,
   listSuppliers,
 } from './readModel.js';
+import { quotationHasUnclearedReceipts } from './writeOps.js';
 
 const SIGNIFICANT_OVERPAY_NGN = Math.max(
   0,
@@ -50,6 +55,150 @@ function matchesBranch(branchId, scope) {
 
 function sumSection(items) {
   return items.reduce((s, i) => s + (Math.round(Number(i.amountNgn) || 0) || 0), 0);
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value) || 0);
+}
+
+/** Production completed/cancelled or paid void — same closure basis as refund eligibility. */
+function quotationProductionClosedForRefund(q, productionJobs) {
+  const ref = String(q?.id || '').trim();
+  if (!ref) return false;
+  const isVoid = String(q?.status || '').trim().toLowerCase() === 'void';
+  if (isVoid && roundMoney(q?.paidNgn) > 0) return true;
+  return (productionJobs || []).some((j) => {
+    if (String(j?.quotationRef || '').trim() !== ref) return false;
+    const st = String(j?.status || '').trim().toLowerCase();
+    return st === 'completed' || st === 'cancelled';
+  });
+}
+
+/** Reserved refund amounts on a quote (pending + approved outstanding). */
+function sumRefundCommitmentNgnForQuotation(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return 0;
+  const rows = db
+    .prepare(
+      `SELECT status, amount_ngn, approved_amount_ngn, paid_amount_ngn
+       FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled', 'paid')`
+    )
+    .all(qid);
+  let sum = 0;
+  for (const row of rows) {
+    const st = String(row.status || '').trim();
+    if (st === 'Pending') {
+      sum += roundMoney(row.amount_ngn);
+    } else if (st === 'Approved') {
+      const approved = roundMoney(row.approved_amount_ngn || row.amount_ngn);
+      const paid = roundMoney(row.paid_amount_ngn);
+      sum += effectiveOutstandingNgn(approved, paid);
+    }
+  }
+  return sum;
+}
+
+function buildPreProductionCustomerDepositItems(db, branchScope) {
+  const quotations = listQuotations(db, branchScope);
+  const productionJobs = listProductionJobs(db, branchScope);
+  const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
+  const items = [];
+  for (const q of quotations) {
+    if (quotationRefundsBlocked(q)) continue;
+    if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
+    if (quotationHasUnclearedReceipts(db, q.id)) continue;
+    const cash = quotationPaymentCashBreakdown(db, q.id);
+    if (cash.cashInNgn <= 0) continue;
+    const quoteTotal = roundMoney(q.totalNgn);
+    const depositBase = quoteTotal > 0 ? Math.min(cash.cashInNgn, quoteTotal) : cash.cashInNgn;
+    const reserved = sumRefundCommitmentNgnForQuotation(db, q.id);
+    const amountNgn = Math.max(0, depositBase - reserved);
+    if (amountNgn <= 0) continue;
+    const cid = String(q.customerID || '').trim();
+    items.push(
+      withEntity(
+        {
+          id: `${q.id}-preprod-deposit`,
+          partyName: customers.get(cid)?.name || q.customer || cid || 'Customer',
+          partyRef: cid,
+          branchId: q.branchId || '',
+          amountNgn,
+          reference: q.id,
+          quotationRef: q.id,
+          asAtDateIso: String(q.dateISO || '').slice(0, 10) || null,
+          detail: 'Customer deposit — paid quotation before production completes (Policy v1)',
+          policyPhase: 'pre_production',
+        },
+        'customer',
+        cid
+      )
+    );
+  }
+  return items.sort((a, b) => b.amountNgn - a.amountNgn);
+}
+
+function buildCustomerRefundCommitmentItems(db, branchScope) {
+  const refunds = listRefunds(db, branchScope);
+  const productionJobs = listProductionJobs(db, branchScope);
+  const quotations = new Map(listQuotations(db, branchScope).map((q) => [q.id, q]));
+  const items = [];
+  for (const r of refunds) {
+    if (refundQuotationRefundsBlocked(r)) continue;
+    const qref = String(r.quotationRef || '').trim();
+    if (!qref) continue;
+    const q = quotations.get(qref);
+    if (!q || quotationRefundsBlocked(q)) continue;
+    if (!quotationProductionClosedForRefund(q, productionJobs)) continue;
+    const st = String(r.status || '').trim();
+    if (st === 'Pending') {
+      const amountNgn = roundMoney(r.amountNgn);
+      if (amountNgn <= 0) continue;
+      items.push(
+        withEntity(
+          {
+            id: r.refundID,
+            partyName: r.customer || q.customer || r.customerID || 'Customer',
+            partyRef: r.customerID || q.customerID || '',
+            branchId: r.branchId || q.branchId || '',
+            amountNgn,
+            reference: r.refundID,
+            quotationRef: qref,
+            asAtDateIso: String(r.requestedAtISO || '').slice(0, 10) || null,
+            detail: 'Refund requested — awaiting approval (not yet paid from treasury)',
+            refundStatus: 'Pending',
+          },
+          'customer',
+          r.customerID || q.customerID
+        )
+      );
+      continue;
+    }
+    if (st === 'Approved') {
+      const amountNgn = refundOutstandingAmount(r);
+      if (amountNgn <= 0) continue;
+      items.push(
+        withEntity(
+          {
+            id: r.refundID,
+            partyName: r.customer || q.customer || r.customerID || 'Customer',
+            partyRef: r.customerID || q.customerID || '',
+            branchId: r.branchId || q.branchId || '',
+            amountNgn,
+            reference: r.refundID,
+            quotationRef: qref,
+            asAtDateIso: String(r.approvalDate || r.requestedAtISO || '').slice(0, 10) || null,
+            detail: 'Refund approved — committed liability, not yet paid from treasury',
+            refundStatus: 'Approved',
+          },
+          'customer',
+          r.customerID || q.customerID
+        )
+      );
+    }
+  }
+  return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
 /** @param {object} item @param {string} entityType @param {string} [entityId] */
@@ -1136,6 +1285,22 @@ export function buildDebtorsRegister(db, opts = {}) {
       safeRegisterItems('debtors.customer_deposits', () => buildCustomerDepositItems(db, branchScope))
     ),
     section(
+      'pre_production_deposits',
+      'Pre-production customer deposits',
+      'Cleared payments on quotations before production completes — customer deposit liability (Policy v1). Excludes permanently blocked quotations.',
+      safeRegisterItems('debtors.pre_production_deposits', () =>
+        buildPreProductionCustomerDepositItems(db, branchScope)
+      )
+    ),
+    section(
+      'customer_refund_commitments',
+      'Customer refund commitments',
+      'Pending or approved refunds on closed production — treasury payout may still be outstanding. Excludes permanently blocked quotations.',
+      safeRegisterItems('debtors.customer_refund_commitments', () =>
+        buildCustomerRefundCommitmentItems(db, branchScope)
+      )
+    ),
+    section(
       'overpayment_credits',
       'Overpayment & refundable credits',
       `Economic overpayment (cash in minus quote total), capped by ledger pool — significant ≥ ₦${SIGNIFICANT_OVERPAY_NGN.toLocaleString()}.`,
@@ -1192,6 +1357,8 @@ export function buildDebtorsRegister(db, opts = {}) {
       totalNgn,
       supplierPayablesNgn: sectionSubtotal('supplier_payables'),
       customerDepositsNgn: sectionSubtotal('customer_deposits'),
+      preProductionDepositsNgn: sectionSubtotal('pre_production_deposits'),
+      customerRefundCommitmentsNgn: sectionSubtotal('customer_refund_commitments'),
       overpaymentCreditsNgn: sectionSubtotal('overpayment_credits'),
       significantOverpaymentCount: significantOverpay.length,
       significantOverpaymentNgn: sumSection(significantOverpay),
@@ -1209,6 +1376,8 @@ export function buildDebtorsRegister(db, opts = {}) {
     },
     notes: [
       'Record pre-system overpayments (e.g. April project ₦8M) under “Add legacy line” on this tab.',
+      'Pre-production deposits are cleared quote payments before production completes — not the same as treasury “Record pay” (use that for approved refund payout).',
+      'Refund commitments include pending and approved unpaid refunds on closed jobs; permanently blocked quotations are excluded from this register.',
       'Overpayment credits use economic excess (cash in minus quote total), capped by the ledger pool — same basis as refund preview.',
       'When detail shows a higher ledger pool than the amount, finance may reverse stale OVERPAY_ADVANCE rows.',
       'Unallocated receipts and unlinked bank deposits are suspense items until matched — not trade payables.',

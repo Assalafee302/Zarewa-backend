@@ -7169,7 +7169,7 @@ export function registerHttpApi(app, db) {
       }
       if (meets.ok && categories.length === 0) {
         blockingReasons.push(
-          'Refund preview returned no eligible refund categories (quotations are dropped from GET /api/refunds/eligible-quotations when this list is empty).'
+          'Refund preview returned no eligible refund categories (use Use quotation id when manual entry is allowed).'
         );
       }
       if (

@@ -794,7 +794,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThanOrEqual(1000);
   });
 
-  it('GET /api/refunds/eligibility-check: ₦0 automatic preview but otherwise valid → manualEntryRefundAllowed; excluded from eligible list', async () => {
+  it('GET /api/refunds/eligibility-check: ₦0 automatic preview but otherwise valid → manualEntryRefundAllowed; appears in fast eligible list', async () => {
     const linesJson = JSON.stringify({
       products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
       accessories: [],
@@ -835,7 +835,9 @@ describe('Refund Security & Substitution Logic', () => {
     );
 
     const rows = getEligibleRefundQuotations(db);
-    expect(rows.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(false);
+    expect(rows.some((r) => r.id === 'QT-RFS-MAN-ZERO')).toBe(true);
+    const listed = rows.find((r) => r.id === 'QT-RFS-MAN-ZERO');
+    expect(Number(listed?.remaining_ngn)).toBeGreaterThan(1000);
   });
 
   it('GET /api/refunds/eligibility-check: missing quotationRef → 400', async () => {

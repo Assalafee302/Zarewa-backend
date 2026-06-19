@@ -402,7 +402,11 @@ export function computeStaffPurchaseCreditEligibility(db, userId) {
 
 function staffUserIdForCustomer(db, customerId) {
   if (!staffPurchaseCreditColumnsReady(db)) return null;
-  const row = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE sales_customer_id = ?`).get(customerId);
+  const cid = String(customerId || '').trim();
+  if (!cid) return null;
+  const row = db
+    .prepare(`SELECT user_id FROM hr_staff_profiles WHERE trim(IFNULL(sales_customer_id, '')) = ?`)
+    .get(cid);
   return row?.user_id || null;
 }
 
@@ -748,22 +752,52 @@ export function resolveActiveStaffPurchaseCreditForQuotation(db, quotationRef, b
  */
 export function getQuotationStaffPurchaseCreditStatus(db, quotationRef) {
   const ref = String(quotationRef || '').trim();
-  if (!ref || !staffObligationTablesReady(db)) {
-    return { ok: true, quotationRef: ref, staffPurchaseCredit: null };
+  const qRow = ref
+    ? db.prepare(`SELECT customer_id, is_staff_purchase FROM quotations WHERE id = ?`).get(ref)
+    : null;
+  const customerId = String(qRow?.customer_id || '').trim();
+  const staffUserId = customerId ? staffUserIdForCustomer(db, customerId) : null;
+  const isStaffCustomer = Boolean(staffUserId) || Number(qRow?.is_staff_purchase) === 1;
+
+  if (!ref) {
+    return {
+      ok: true,
+      quotationRef: ref,
+      balanceNgn: 0,
+      isStaffCustomer,
+      staffUserId: staffUserId || null,
+      account: null,
+      activeCredit: null,
+      policy: getStaffPurchaseCreditPolicy(db),
+    };
   }
-  const row = db
-    .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE quotation_ref = ? ORDER BY created_at_iso DESC LIMIT 1`)
-    .all(ref)[0];
+
   const jobs = listProductionJobs(db, 'ALL');
   const pay = evaluateQuotationPaymentForDeliveryRelease(db, ref, jobs);
   const balance = Math.round(Number(pay.balanceNgn) || 0);
+
+  if (!staffObligationTablesReady(db)) {
+    return {
+      ok: true,
+      quotationRef: ref,
+      balanceNgn: balance,
+      isStaffCustomer,
+      staffUserId: staffUserId || null,
+      account: null,
+      activeCredit: null,
+      policy: getStaffPurchaseCreditPolicy(db),
+    };
+  }
+
+  const row = db
+    .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE quotation_ref = ? ORDER BY created_at_iso DESC LIMIT 1`)
+    .all(ref)[0];
   const active = row ? resolveActiveStaffPurchaseCreditForQuotation(db, ref, balance) : null;
-  const staffUserId = staffUserIdForCustomer(db, db.prepare(`SELECT customer_id FROM quotations WHERE id = ?`).get(ref)?.customer_id);
   return {
     ok: true,
     quotationRef: ref,
     balanceNgn: balance,
-    isStaffCustomer: Boolean(staffUserId),
+    isStaffCustomer,
     staffUserId: staffUserId || null,
     account: row ? mapObligationAccountRow(row) : null,
     activeCredit: active,

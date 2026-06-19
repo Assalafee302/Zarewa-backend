@@ -4,6 +4,7 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
 import {
@@ -1745,8 +1746,17 @@ export function listRefunds(db, branchScope = 'ALL') {
      ORDER BY tm.posted_at_iso ASC, tm.id ASC`
   );
   const b = branchWhere(db, 'customer_refunds', branchScope);
+  const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
   return db
-    .prepare(`SELECT * FROM customer_refunds WHERE 1=1${b.sql} ORDER BY requested_at_iso DESC`)
+    .prepare(
+      `SELECT cr.*,
+              q.refunds_blocked_at_iso AS quotation_refunds_blocked_at_iso,
+              q.refunds_blocked_reason AS quotation_refunds_blocked_reason
+       FROM customer_refunds cr
+       LEFT JOIN quotations q ON q.id = cr.quotation_ref
+       WHERE 1=1${branchSql}
+       ORDER BY cr.requested_at_iso DESC`
+    )
     .all(...b.args)
     .map((row) => {
       let calculationLines = [];
@@ -1812,6 +1822,8 @@ export function listRefunds(db, branchScope = 'ALL') {
         payeeBankName: row.payee_bank_name ?? '',
         payoutHistory,
         branchId: row.branch_id ?? '',
+        quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,
+        quotationRefundsBlockedReason: row.quotation_refunds_blocked_reason ?? '',
       };
     });
 }
@@ -2915,11 +2927,7 @@ export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
     pendingQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'requested').length,
     approvedQuotations: quotations.filter((q) => normalizeSalesDashboardStatus(q?.status) === 'approved').length,
     paidQuotations: quotations.filter((q) => ['paid', 'partial'].includes(String(q?.paymentStatus || '').toLowerCase())).length,
-    refundsAwaitingPayout: refunds.filter(
-      (r) =>
-        String(r?.status || '').toLowerCase() === 'approved' &&
-        effectiveOutstandingNgn(Number(r?.amountNgn) || 0, Number(r?.paidAmountNgn) || 0) > 0
-    ).length,
+    refundsAwaitingPayout: approvedRefundsAwaitingPayment(refunds).length,
     cuttingWaiting: cuttingLists.filter((c) => !c?.productionRegistered || c?.productionReleasePending).length,
     producedMeters: productionJobs.reduce((s, j) => s + (Number(j?.actualMeters || j?.plannedMeters || 0) || 0), 0),
   };

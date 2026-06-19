@@ -11,6 +11,7 @@ import { buildInventoryValuationTrialSummary } from './ap2InventoryValuationOps.
 import { buildGlAlignmentTrialSummary } from './ap2GlAlignmentOps.js';
 import { buildAp3CostingReadinessTrialSummary } from './ap3CostingReadinessOps.js';
 import { buildAp3MaterialCostTrialSummary } from './ap3MaterialCostOps.js';
+import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 
 /**
  * Use the app's MySQL worker (`db.prepare`) or a mysql2/promise connection.
@@ -123,7 +124,8 @@ export async function buildFinanceTrialExceptionSummary(source, opts = {}) {
         conn,
         `SELECT COUNT(*) FROM customer_refunds
          WHERE TRIM(COALESCE(status,'')) = 'Approved'
-           AND COALESCE(paid_amount_ngn,0) < COALESCE(approved_amount_ngn, amount_ngn, 0)`
+           AND COALESCE(paid_amount_ngn,0) < COALESCE(approved_amount_ngn, amount_ngn, 0)
+           AND ${refundPayableQuotationWhereSql('customer_refunds')}`
       )
     ),
     sameDisplayNamePaymentApprovePay: Number(

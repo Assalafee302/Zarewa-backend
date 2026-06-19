@@ -3,6 +3,7 @@
  */
 import { branchWhere, listManagementItems } from './readModel.js';
 import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../shared/workspaceGovernance.js';
+import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 import { metreVarianceExceedsThreshold } from '../shared/lib/productionMetreVariance.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 
@@ -23,6 +24,7 @@ export function buildPendingApprovalsReport(db, branchScope = 'ALL') {
       `SELECT refund_id, customer_name, quotation_ref, approved_amount_ngn, amount_ngn, approved_by, approval_date, branch_id
        FROM customer_refunds
        WHERE TRIM(COALESCE(LOWER(status), '')) = 'approved'
+         AND ${refundPayableQuotationWhereSql('customer_refunds')}
        ${bRef.sql}
        ORDER BY approval_date DESC LIMIT 100`
     )

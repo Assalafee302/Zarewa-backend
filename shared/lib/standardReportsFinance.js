@@ -3,7 +3,7 @@
  */
 
 import { displayDocNumber } from './reportDisplayFormat.js';
-import { refundApprovedAmount, refundOutstandingAmount } from './refundsStore.js';
+import { refundApprovedAmount, refundOutstandingAmount, isRefundPayable } from './refundsStore.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -105,6 +105,7 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
   for (const r of refunds || []) {
     const st = String(r.status || '').trim();
     if (st === 'Paid') continue;
+    if (st === 'Approved' && !isRefundPayable(r)) continue;
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
     const approved = refundApprovedAmount(r);
     const paid = Math.round(Number(r.paidAmountNgn) || 0);

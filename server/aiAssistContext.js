@@ -24,7 +24,7 @@ import { buildWorkspaceNotifications } from '../shared/lib/workspaceNotification
 import { quotationNeedsFollowUpAlert } from '../shared/lib/quotationLifecycleUi.js';
 import { computeCuttingListMaterialReadiness } from '../shared/lib/salesCuttingListMaterialReadiness.js';
 import { openAuditQueue, totalLiquidityNgn } from '../shared/lib/liveAnalytics.js';
-import { refundOutstandingAmount } from '../shared/lib/refundsStore.js';
+import { refundOutstandingAmount, approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 
 export const AI_ASSISTANT_MODES = ['search', 'sales', 'procurement', 'operations', 'finance', 'hr'];
 
@@ -260,7 +260,7 @@ function salesContextLines(db, req, snapshot, branchScope, pageContext) {
     if (!due) return false;
     return due < new Date().toISOString().slice(0, 10);
   });
-  const refundsAwaitingPay = refunds.filter((row) => row.status === 'Approved' && refundOutstandingAmount(row) > 0);
+  const refundsAwaitingPay = approvedRefundsAwaitingPayment(refunds);
   const readiness = computeCuttingListMaterialReadiness(
     cuttingLists,
     quotes,
@@ -406,7 +406,7 @@ function financeContextLines(db, req, snapshot, branchScope, pageContext) {
   const bankReconciliation = Array.isArray(snapshot?.bankReconciliation) ? snapshot.bankReconciliation : [];
   const receipts = Array.isArray(snapshot?.receipts) ? snapshot.receipts : [];
   const auditQueue = openAuditQueue(bankReconciliation, paymentRequests, refunds);
-  const refundsAwaitingPay = refunds.filter((row) => row.status === 'Approved' && refundOutstandingAmount(row) > 0);
+  const refundsAwaitingPay = approvedRefundsAwaitingPayment(refunds);
   const openPayables = payables.reduce(
     (sum, row) => sum + Math.max(0, (Number(row.amountNgn) || 0) - (Number(row.paidNgn) || 0)),
     0

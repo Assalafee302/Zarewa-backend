@@ -3,6 +3,7 @@
  * Live data comes from workspace snapshot; localStorage is legacy-only if present.
  */
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
+import { refundQuotationRefundsBlocked } from './quotationRefundsBlocked.js';
 
 const STORAGE_KEY = 'zarewa.sales.refunds';
 
@@ -80,7 +81,19 @@ export function normalizeRefund(r) {
     paymentNote: r.paymentNote ?? '',
     payoutHistory: Array.isArray(r.payoutHistory) ? r.payoutHistory.map(normalizePayoutLine) : [],
     outstandingAmountNgn: effectiveOutstandingNgn(approvedAmountNgn, paidAmountNgn),
+    quotationRefundsBlockedAtISO:
+      r.quotationRefundsBlockedAtISO ?? r.quotation_refunds_blocked_at_iso ?? null,
+    quotationRefundsBlockedReason:
+      r.quotationRefundsBlockedReason ?? r.quotation_refunds_blocked_reason ?? '',
   };
+}
+
+export function isRefundPayable(r) {
+  return (
+    r?.status === 'Approved' &&
+    refundOutstandingAmount(r) > 0 &&
+    !refundQuotationRefundsBlocked(r)
+  );
 }
 
 export function loadRefunds() {
@@ -107,5 +120,5 @@ export function saveRefunds(list) {
 }
 
 export function approvedRefundsAwaitingPayment(list) {
-  return (list ?? []).filter((r) => r.status === 'Approved' && refundOutstandingAmount(r) > 0);
+  return (list ?? []).filter(isRefundPayable);
 }

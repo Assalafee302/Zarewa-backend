@@ -2,6 +2,7 @@
  * Read-only finance/cashier/accounting aggregates (SELECT only). No PII in output.
  */
 import mysql from 'mysql2/promise';
+import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 
@@ -401,7 +402,8 @@ export async function buildFinanceLiveProfileReport(conn, meta = {}) {
         conn,
         `SELECT COUNT(*) FROM customer_refunds
          WHERE TRIM(COALESCE(status,'')) = 'Approved'
-           AND COALESCE(paid_amount_ngn,0) < COALESCE(approved_amount_ngn, amount_ngn, 0)`
+           AND COALESCE(paid_amount_ngn,0) < COALESCE(approved_amount_ngn, amount_ngn, 0)
+           AND ${refundPayableQuotationWhereSql('customer_refunds')}`
       )
     ),
   };

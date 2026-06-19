@@ -4,7 +4,7 @@ import {
 } from './customerLedgerCore.js';
 import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
-import { refundOutstandingAmount } from './refundsStore.js';
+import { refundOutstandingAmount, isRefundPayable, approvedRefundsAwaitingPayment } from './refundsStore.js';
 import { receiptCashReceivedNgn } from './salesReceiptsList.js';
 
 function toIsoDate(value) {
@@ -752,6 +752,7 @@ export function salesPeriodCashBridgeExportRows(
     }
     const out = refundOutstandingAmount(r);
     if (out <= 0) continue;
+    if (st === 'Approved' && !isRefundPayable(r)) continue;
     if (st === 'Approved' || st === 'Paid') {
       rows.push({
         reportSection: 'Refunds awaiting payout',
@@ -1237,9 +1238,7 @@ export function openAuditQueue(bankReconciliation = [], paymentRequests = [], re
         desc: x.approvalStatus === 'Approved' ? x.expenseID || 'Awaiting payout' : x.expenseID || 'Awaiting approval',
       });
     });
-  refunds
-    .filter((x) => x.status === 'Approved' && refundOutstandingAmount(x) > 0)
-    .forEach((x) => {
+  approvedRefundsAwaitingPayment(refunds).forEach((x) => {
       items.push({
         id: x.refundID,
         customer: x.customer,

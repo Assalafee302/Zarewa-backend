@@ -1,5 +1,5 @@
 import { getManagementQueueCounts } from './managementQueueCounts.js';
-import { refundOutstandingAmount } from './refundsStore.js';
+import { approvedRefundsAwaitingPayment } from './refundsStore.js';
 import {
   userMaySeeManagementApprovalQueues,
   userMaySeeRefundApprovalQueue,
@@ -228,7 +228,7 @@ export function buildWorkspaceNotifications({
   }
 
   const refunds = Array.isArray(snapshot?.refunds) ? snapshot.refunds : [];
-  const refundDue = refunds.filter((x) => x.status === 'Approved' && refundOutstandingAmount(x) > 0);
+  const refundDue = approvedRefundsAwaitingPayment(refunds);
   if (canAccessModule('finance') && (can('finance.pay') || can('cashier.desk.view')) && refundDue.length > 0) {
     items.push({
       id: 'refund-payouts',

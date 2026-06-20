@@ -136,6 +136,7 @@ import {
   listRegisterSettlements,
   payRegisterSettlement,
   registerLineAvailableSettlementNgn,
+  registerLineSettlementCapacity,
 } from './accountingRegisterSettlementOps.js';
 import {
   createFixedAsset,
@@ -1151,8 +1152,8 @@ export function registerHttpApi(app, db) {
         return res.status(403).json({ ok: false, error: lineGate.error });
       }
       if (!lineGate.ok) return res.status(404).json({ ok: false, error: lineGate.error });
-      const availableNgn = registerLineAvailableSettlementNgn(db, req.params.lineId);
-      return res.json({ ok: true, availableNgn });
+      const capacity = registerLineSettlementCapacity(db, req.params.lineId);
+      return res.json(capacity);
     } catch (e) {
       console.error('[accounting-settlement-capacity]', e);
       return res.status(500).json({ ok: false, error: 'Could not read settlement capacity.' });

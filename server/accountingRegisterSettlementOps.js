@@ -131,14 +131,48 @@ export function reservedSettlementNgnOnLine(db, lineId) {
 }
 
 /** @param {import('better-sqlite3').Database} db @param {string} lineId */
-export function registerLineAvailableSettlementNgn(db, lineId) {
+export function registerLineSettlementCapacity(db, lineId) {
   ensureAccountingRegisterSchema(db);
+  ensureAccountingRegisterSettlementSchema(db);
   const line = db
     .prepare(`SELECT amount_ngn, status FROM accounting_register_lines WHERE id = ?`)
     .get(lineId);
-  if (!line || line.status !== 'open') return 0;
-  const open = roundMoney(line.amount_ngn);
-  return Math.max(0, open - reservedSettlementNgnOnLine(db, lineId));
+  if (!line || line.status !== 'open') {
+    return { ok: true, openNgn: 0, reservedNgn: 0, availableNgn: 0, blockingItems: [] };
+  }
+  const openNgn = roundMoney(line.amount_ngn);
+  const reservedNgn = reservedSettlementNgnOnLine(db, lineId);
+  const blockingItems = db
+    .prepare(
+      `SELECT * FROM accounting_register_settlements
+       WHERE register_line_id = ? AND status IN ('Pending', 'Approved')
+       ORDER BY requested_at_iso DESC, settlement_id DESC`
+    )
+    .all(lineId)
+    .map(mapSettlementRow)
+    .map((row) => ({
+      ...row,
+      reservedNgn:
+        row.status === 'Pending'
+          ? roundMoney(row.amountNgn)
+          : Math.max(
+              0,
+              roundMoney(row.approvedAmountNgn || row.amountNgn) - roundMoney(row.paidAmountNgn)
+            ),
+    }))
+    .filter((row) => row.reservedNgn > 0);
+  return {
+    ok: true,
+    openNgn,
+    reservedNgn,
+    availableNgn: Math.max(0, openNgn - reservedNgn),
+    blockingItems,
+  };
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} lineId */
+export function registerLineAvailableSettlementNgn(db, lineId) {
+  return registerLineSettlementCapacity(db, lineId).availableNgn;
 }
 
 /** @param {import('better-sqlite3').Database} db @param {{ registerLineId?: string; status?: string; branchId?: string }} [opts] */
@@ -157,7 +191,7 @@ export function listRegisterSettlements(db, opts = {}) {
     args.push(status);
   }
   const branchId = String(opts.branchId || '').trim();
-  if (branchId && branchId !== 'ALL') {
+  if (branchId && branchId !== 'ALL' && !lineId) {
     sql += ` AND branch_id = ?`;
     args.push(branchId);
   }

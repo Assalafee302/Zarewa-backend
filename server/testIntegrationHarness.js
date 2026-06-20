@@ -4,7 +4,7 @@ import { createApp } from './app.js';
 /** @type {boolean | null} */
 let mysqlAvailableCache = null;
 
-/** Whether local MySQL (Vitest `:memory:` harness) is reachable. */
+/** Whether local MySQL (Vitest `:memory:` harness) is reachable — schema only, no demo seed. */
 export function isMysqlAvailableForTests() {
   if (mysqlAvailableCache != null) return mysqlAvailableCache;
   try {
@@ -46,6 +46,7 @@ export function closeIntegrationHarness() {
     cached.db?.close();
     cached = null;
     refCount = 0;
+    mysqlAvailableCache = null;
   }
 }
 

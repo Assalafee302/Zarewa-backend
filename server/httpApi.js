@@ -1463,12 +1463,16 @@ export function registerHttpApi(app, db) {
       const limitSamples = Number(req.query?.limitSamples) || undefined;
       const report = buildAp1cDryRunReport(db, { branchId, period, limitSamples });
       const flags = readFinanceFeatureFlags();
-      return res.json({ ...report, flags: {
-        accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl,
-        accountingPolicyV1ProductionRelease: flags.accountingPolicyV1ProductionRelease,
-        accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge,
-        reclassPreProductionReceipts: flags.reclassPreProductionReceipts,
-      } });
+      return res.json({
+        ...report,
+        flags: {
+          accountingPolicyV1Diagnostics: flags.accountingPolicyV1Diagnostics,
+          accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl,
+          accountingPolicyV1ProductionRelease: flags.accountingPolicyV1ProductionRelease,
+          accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge,
+          reclassPreProductionReceipts: flags.reclassPreProductionReceipts,
+        },
+      });
     } catch (e) {
       console.error('[ap1c-dry-run]', e);
       return res.status(500).json({ ok: false, error: 'AP1c dry-run failed.' });

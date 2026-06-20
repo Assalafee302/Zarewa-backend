@@ -49,6 +49,33 @@ describe('ap3CostingClassification', () => {
   });
 });
 
+describe('buildBranchContributionDraft', () => {
+  it('allocates labour, diesel, and overhead by branch metres share', async () => {
+    const { buildBranchContributionDraft } = await import('./ap3CostingReadinessOps.js');
+    const byBranch = [
+      { branchId: 'BR-KD', producedMetres: 100, materialCostNgn: 160_000 },
+      { branchId: 'BR-YL', producedMetres: 50, materialCostNgn: 80_000 },
+    ];
+    const summary = {
+      labourExpenseNgn: 90_000,
+      dieselExpenseNgn: 30_000,
+      productionExpenseNgn: 140_000,
+    };
+    const draft = buildBranchContributionDraft(byBranch, summary);
+    expect(draft.ok).toBe(true);
+    expect(draft.poolNgn.overhead).toBe(20_000);
+    const kd = draft.rows.find((r) => r.branchId === 'BR-KD');
+    const yl = draft.rows.find((r) => r.branchId === 'BR-YL');
+    expect(kd.labourAllocatedNgn).toBe(60_000);
+    expect(yl.labourAllocatedNgn).toBe(30_000);
+    expect(kd.dieselAllocatedNgn).toBe(20_000);
+    expect(yl.dieselAllocatedNgn).toBe(10_000);
+    expect(kd.overheadAllocatedNgn).toBe(13_333);
+    expect(kd.totalProductionCostNgn).toBeGreaterThan(kd.materialCostNgn);
+    expect(kd.draftCostPerMetreNgn).toBeGreaterThan(0);
+  });
+});
+
 const mysqlTestReady = Boolean(String(process.env.ZAREWA_MYSQL_PASSWORD || '').trim());
 
 describe.skipIf(!mysqlTestReady)('ap3CostingReadinessOps', () => {
@@ -97,6 +124,13 @@ describe.skipIf(!mysqlTestReady)('ap3CostingReadinessOps', () => {
     expect(r.summary.dieselExpenseNgn).toBe(30000);
     const diesel = r.expenseClassification.find((x) => x.bucket === 'diesel_fuel');
     expect(diesel?.count).toBe(1);
+  });
+
+  it('includes AP3c branch contribution draft', () => {
+    const r = buildAp3CostingReadinessReport(db, { period: '2026-06' });
+    expect(r.branchContributionDraft).toBeDefined();
+    expect(Array.isArray(r.branchContributionDraft.rows)).toBe(true);
+    expect(r.branchContributionDraft.method).toBe('proportional_by_metres');
   });
 
   it('labour/payroll readiness handles missing HR safely', () => {

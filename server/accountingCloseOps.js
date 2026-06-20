@@ -52,6 +52,22 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
+  const ap1c = opts.trialExceptions?.ap1cDryRun;
+  const legacyReceiptGl =
+    !opts.trialExceptions?.flags?.accountingPolicyV1ReceiptGl &&
+    Number(ap1c?.receiptsBeforeProductionCredited1200Count) > 0;
+  if (legacyReceiptGl || (ap1c?.available && Number(ap1c?.receiptsBeforeProductionCredited1200Count) > 0)) {
+    steps.push(
+      step(
+        'warn',
+        'receipt_policy',
+        'Receipt / deposit policy',
+        `${ap1c?.receiptsBeforeProductionCredited1200Count ?? '?'} receipt(s) credited to AR before production — review Policy tab before cutover.`,
+        'policy'
+      )
+    );
+  }
+
   const depPreview = previewDepreciationRun(db, periodKey, branchScope);
   if (depPreview.ok && depPreview.totalDepreciationNgn > 0) {
     const sid = `${b.periodKey}:${branchScope || 'ALL'}`;

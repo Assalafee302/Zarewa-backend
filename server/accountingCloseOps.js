@@ -17,11 +17,55 @@ function step(status, id, label, detail, focusTab = '') {
   return { id, label, status, detail, focusTab };
 }
 
+export function buildPeriodLockCloseMeta(periodKey, periodLockRow, ready) {
+  const periodLock = periodLockRow || { locked: false, periodKey };
+  if (periodLockRow?.locked) {
+    return {
+      periodLock: periodLockRow,
+      readyToLock: false,
+      periodLockStep: step(
+        'ok',
+        'period_lock',
+        'Period locked',
+        `${periodLockRow.reason || 'Locked'} · ${periodLockRow.lockedByName || 'Finance'}`,
+        ''
+      ),
+      summary: `Period ${periodKey} is locked.`,
+    };
+  }
+  if (ready) {
+    return {
+      periodLock,
+      readyToLock: true,
+      periodLockStep: step(
+        'warn',
+        'period_lock',
+        'Lock accounting period',
+        'Checklist clear — lock this period to block backdated GL postings and corrections.',
+        ''
+      ),
+      summary: 'All close checks passed — lock the period when HoA sign-off is complete.',
+    };
+  }
+  return {
+    periodLock,
+    readyToLock: false,
+    periodLockStep: step(
+      'warn',
+      'period_lock',
+      'Period open',
+      'Resolve blockers and warnings before locking this period.',
+      ''
+    ),
+    summary: null,
+  };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} periodKey
  */
-function getPeriodLock(db, periodKey) {
+export function getPeriodLock(db, periodKey) {
   try {
     const row = db.prepare(`SELECT * FROM accounting_period_locks WHERE period_key = ?`).get(periodKey);
     if (!row) return null;
@@ -199,37 +243,8 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
   const ready = blockers === 0 && warnings === 0;
 
   const periodLock = getPeriodLock(db, b.periodKey);
-  if (periodLock?.locked) {
-    steps.push(
-      step(
-        'ok',
-        'period_lock',
-        'Period locked',
-        `${periodLock.reason || 'Locked'} · ${periodLock.lockedByName || 'Finance'}`,
-        ''
-      )
-    );
-  } else if (ready) {
-    steps.push(
-      step(
-        'warn',
-        'period_lock',
-        'Lock accounting period',
-        'Checklist clear — lock this period to block backdated GL postings and corrections.',
-        ''
-      )
-    );
-  } else {
-    steps.push(
-      step(
-        'warn',
-        'period_lock',
-        'Period open',
-        'Resolve blockers and warnings before locking this period.',
-        ''
-      )
-    );
-  }
+  const lockMeta = buildPeriodLockCloseMeta(b.periodKey, periodLock, ready);
+  steps.push(lockMeta.periodLockStep);
 
   return {
     ok: true,
@@ -237,15 +252,15 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     range: { start: b.start, end: b.end },
     branchScope,
     ready,
-    readyToLock: ready && !periodLock?.locked,
-    periodLock: periodLock || { locked: false, periodKey: b.periodKey },
+    readyToLock: lockMeta.readyToLock,
+    periodLock: lockMeta.periodLock,
     blockers,
     warnings,
     steps,
-    summary: periodLock?.locked
-      ? `Period ${b.periodKey} is locked.`
-      : ready
+    summary:
+      lockMeta.summary ??
+      (ready
         ? 'All close checks passed — lock the period when HoA sign-off is complete.'
-        : `${blockers} blocker(s), ${warnings} warning(s) — resolve before locking the period.`,
+        : `${blockers} blocker(s), ${warnings} warning(s) — resolve before locking the period.`),
   };
 }

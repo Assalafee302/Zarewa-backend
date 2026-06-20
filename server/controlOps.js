@@ -30,7 +30,14 @@ import {
   userMayPerformManagerQuotationClearance,
   userMayReleaseQuotationPaymentHold,
   userMayBlockQuotationRefunds,
+  userMayWriteOffReceivableBadDebt,
 } from '../shared/workspaceGovernance.js';
+import {
+  evaluateReceivableWriteOff,
+  maxRoundOffWaiveNgn,
+  RECEIVABLE_WRITEOFF_NOTE_MIN_LEN,
+} from '../shared/lib/receivableWriteOffPolicy.js';
+import { tryPostReceivableWriteOffGl } from './accountingReceivableWriteOffOps.js';
 import {
   quotationRefundsBlocked,
   QUOTATION_REFUNDS_BLOCK_REASON_MIN_LEN,
@@ -3278,8 +3285,9 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quoteId);
   if (!row) return { ok: false, error: 'Quotation not found.' };
 
-  const decision = String(payload.decision ?? '').trim(); // 'clear', 'flag', 'approve_production', 'release_payments', 'waive_balance'
+  const decision = String(payload.decision ?? '').trim(); // clear, flag, approve_production, release_payments, waive_balance, write_off_receivable
   const note = String(payload.note ?? '').trim();
+  const writeOffCategory = String(payload.category ?? payload.writeOffCategory ?? 'bad_debt').trim();
   const now = new Date().toISOString();
 
   if (decision === 'clear' || decision === 'flag' || decision === 'waive_balance') {
@@ -3287,6 +3295,15 @@ export function reviewQuotation(db, quoteId, payload, actor) {
       return {
         ok: false,
         error: 'Quotation clearance requires Branch Manager, Managing Director, or Administrator authority.',
+        code: 'FORBIDDEN',
+      };
+    }
+  }
+  if (decision === 'write_off_receivable') {
+    if (!userMayWriteOffReceivableBadDebt(actor)) {
+      return {
+        ok: false,
+        error: 'Material receivable write-off requires Managing Director or Administrator authority.',
         code: 'FORBIDDEN',
       };
     }
@@ -3301,38 +3318,59 @@ export function reviewQuotation(db, quoteId, payload, actor) {
     }
   }
 
+  const paid = Math.round(Number(row.paid_ngn) || 0);
+  const total = Math.round(Number(row.total_ngn) || 0);
+  const priorWaived = quotationWaivedBalanceNgn(row);
+  const receivable = accountingReceivableOutstandingNgn(total, paid, priorWaived);
+  const writeOffEval = evaluateReceivableWriteOff(total, paid, priorWaived);
+
   if (decision === 'clear') {
-    const paid = Math.round(Number(row.paid_ngn) || 0);
-    const total = Math.round(Number(row.total_ngn) || 0);
-    const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(row));
     if (total > 0 && receivable > 0 && !isEffectivelyFullyPaid(paid, total)) {
       return {
         ok: false,
-        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Use Clear as paid to waive a small round-off, or post the remaining payment.`,
+        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Customer must pay to at least 99.5% before clearance, or MD must write off the balance.`,
       };
     }
   }
 
   if (decision === 'waive_balance') {
-    const paid = Math.round(Number(row.paid_ngn) || 0);
-    const total = Math.round(Number(row.total_ngn) || 0);
-    const receivable = accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(row));
-    if (paid <= 0) {
-      return { ok: false, error: 'Cannot waive balance: no payment recorded on this quotation yet.' };
+    if (writeOffEval.kind !== 'round_off') {
+      return {
+        ok: false,
+        error:
+          writeOffEval.blockReason ||
+          'Round-off waiver only applies to small balances within the 99.5% payment tolerance (max ₦5,000). Material balances require MD write-off.',
+      };
     }
+  }
+
+  if (decision === 'write_off_receivable') {
     if (receivable <= 0) {
-      return { ok: false, error: 'This quotation has no receivable balance to waive.' };
+      return { ok: false, error: 'This quotation has no receivable balance to write off.' };
+    }
+    if (writeOffEval.kind === 'round_off') {
+      return {
+        ok: false,
+        error: 'This balance qualifies as a small round-off — Branch Manager should use Clear as paid, not MD write-off.',
+      };
+    }
+    if (note.length < RECEIVABLE_WRITEOFF_NOTE_MIN_LEN) {
+      return {
+        ok: false,
+        error: `Write-off reason required (at least ${RECEIVABLE_WRITEOFF_NOTE_MIN_LEN} characters).`,
+      };
     }
   }
 
   let waivedAmountNgn = 0;
+  let writeOffCategoryApplied = '';
   try {
     db.transaction(() => {
-      if (decision === 'waive_balance') {
-        const paid = Math.round(Number(row.paid_ngn) || 0);
-        const total = Math.round(Number(row.total_ngn) || 0);
-        const priorWaived = quotationWaivedBalanceNgn(row);
-        waivedAmountNgn = accountingReceivableOutstandingNgn(total, paid, priorWaived);
+      const persistWaive = (amount, category, waiveNote) => {
+        const amt = Math.round(Number(amount) || 0);
+        if (amt <= 0) return;
+        waivedAmountNgn = amt;
+        writeOffCategoryApplied = category;
         db.prepare(
           `UPDATE quotations
            SET payment_balance_waived_ngn = ?,
@@ -3345,15 +3383,44 @@ export function reviewQuotation(db, quoteId, payload, actor) {
                manager_flag_reason = NULL
            WHERE id = ?`
         ).run(
-          priorWaived + waivedAmountNgn,
+          priorWaived + amt,
           now,
           actorId(actor),
           actorName(actor),
-          note || null,
+          waiveNote || null,
           now,
           quoteId
         );
+        try {
+          tryPostReceivableWriteOffGl(db, {
+            quotationRef: quoteId,
+            amountNgn: amt,
+            entryDateISO: now.slice(0, 10),
+            branchId: row.branch_id || null,
+            createdByUserId: actorId(actor),
+            category,
+            memo: waiveNote || `${category} — ${quoteId}`,
+          });
+        } catch (glErr) {
+          console.warn('[receivable-write-off-gl]', glErr);
+        }
+      };
+
+      if (decision === 'waive_balance') {
+        persistWaive(writeOffEval.waivableNgn, 'round_off', note || 'Round-off within payment tolerance');
+      } else if (decision === 'write_off_receivable') {
+        const category =
+          writeOffCategory === 'settlement' && writeOffEval.kind === 'settlement'
+            ? 'settlement'
+            : 'bad_debt';
+        persistWaive(receivable, category, note);
       } else if (decision === 'clear') {
+        if (receivable > 0 && isEffectivelyFullyPaid(paid, total)) {
+          const autoWaive = maxRoundOffWaiveNgn(total, paid, priorWaived);
+          if (autoWaive > 0) {
+            persistWaive(autoWaive, 'round_off', note || 'Auto round-off on manager clearance');
+          }
+        }
         db.prepare(
           `UPDATE quotations 
            SET manager_cleared_at_iso = ?, manager_flagged_at_iso = NULL, manager_flag_reason = NULL 
@@ -3421,12 +3488,18 @@ export function reviewQuotation(db, quoteId, payload, actor) {
         entityKind: 'quotation',
         entityId: quoteId,
         note: `Manager ${decision} action on ${quoteId}`,
-        details: { note, decision, waivedAmountNgn: waivedAmountNgn || undefined },
+        details: {
+          note,
+          decision,
+          waivedAmountNgn: waivedAmountNgn || undefined,
+          writeOffCategory: writeOffCategoryApplied || undefined,
+        },
       });
     })();
-    return decision === 'waive_balance'
-      ? { ok: true, waivedAmountNgn }
-      : { ok: true };
+    if (decision === 'waive_balance' || decision === 'write_off_receivable') {
+      return { ok: true, waivedAmountNgn, writeOffCategory: writeOffCategoryApplied || undefined };
+    }
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
   }

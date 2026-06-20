@@ -55,8 +55,7 @@ export function userMayPerformManagerQuotationClearance(actor) {
   return isManagerClearanceAuthorityRoleKey(actor.roleKey);
 }
 
-/**
- * Lifting payment holds on flagged quotations — MD / admin only.
+/** Lifting payment holds on flagged quotations — MD / admin only.
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
  */
 export function userMayReleaseQuotationPaymentHold(actor) {
@@ -65,6 +64,15 @@ export function userMayReleaseQuotationPaymentHold(actor) {
   if (perms.includes('*')) return true;
   const rk = String(actor.roleKey || '').trim().toLowerCase();
   return rk === 'admin' || isExecutiveRoleKey(rk);
+}
+
+/**
+ * Material receivable write-off (bad debt / settlement) — MD / admin only.
+ * Round-off within tolerance remains Branch Manager via waive_balance.
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMayWriteOffReceivableBadDebt(actor) {
+  return userMayReleaseQuotationPaymentHold(actor);
 }
 
 /**

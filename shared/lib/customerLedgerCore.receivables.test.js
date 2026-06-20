@@ -33,11 +33,12 @@ describe('receivableDueOnQuotationFromEntries', () => {
     expect(receivableDueOnQuotationFromEntries([], paid, jobs)).toBe(0);
   });
 
-  it('uses exact balance for receivables — not the 99.5% tolerance', () => {
+  it('uses exact balance for strict receivables — register hides immaterial round-off', () => {
     const roundOff = { id: 'QT-1', totalNgn: 1_250_300, paidNgn: 1_250_000 };
     expect(isEffectivelyFullyPaid(roundOff.paidNgn, roundOff.totalNgn)).toBe(true);
     expect(amountDueOnQuotationFromEntries([], roundOff)).toBe(0);
-    expect(receivableDueOnQuotationFromEntries([], roundOff, jobs)).toBe(300);
+    expect(receivableDueOnQuotationFromEntries([], roundOff, jobs)).toBe(0);
+    expect(accountingReceivableOutstandingNgn(roundOff.totalNgn, roundOff.paidNgn, 0)).toBe(300);
   });
 
   it('drops receivable after manager balance waiver', () => {

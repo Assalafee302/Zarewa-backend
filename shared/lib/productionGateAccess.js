@@ -30,7 +30,7 @@ export function productionGateApprovalLevelForActor(actor) {
   const rk = roleKey(actor);
   if (rk === 'admin') return 'admin';
   if (rk === 'md') return 'md';
-  if (rk === 'sales_manager') return 'branch_manager';
+  if (rk === 'sales_manager' || rk === 'branch_manager') return 'branch_manager';
   return null;
 }
 

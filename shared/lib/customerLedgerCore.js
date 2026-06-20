@@ -1,4 +1,5 @@
 import { effectiveOutstandingNgn, rawOutstandingNgn } from './paymentOutstandingTolerance.js';
+import { registerReceivableOutstandingNgn } from './receivableWriteOffPolicy.js';
 
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
@@ -177,7 +178,7 @@ export function receivableDueOnQuotationFromEntries(entries, q, productionJobs =
   if (!quotationHasCompletedProduction(q?.id, productionJobs)) return 0;
   const total = Math.round(Number(q?.totalNgn ?? q?.total_ngn) || 0);
   const paid = Math.round(Number(q?.paidNgn ?? q?.paid_ngn) || 0);
-  return accountingReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(q));
+  return registerReceivableOutstandingNgn(total, paid, quotationWaivedBalanceNgn(q));
 }
 
 export function ledgerReceiptTotalFromEntries(entries, customerID) {

@@ -10,6 +10,8 @@ describe('reviewQuotation manager holds', () => {
     db.exec(`
       INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
       VALUES ('u1', 'manager.user', 'Manager', 'test-hash', 'branch_manager', '2026-01-01T00:00:00.000Z');
+      INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
+      VALUES ('md1', 'md.user', 'MD', 'test-hash', 'md', '2026-01-01T00:00:00.000Z');
       INSERT INTO customers (customer_id, name, branch_id)
       VALUES ('CUS-1', 'Test', 'BR1');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
@@ -81,11 +83,44 @@ describe('reviewQuotation manager holds', () => {
     expect(row.manager_cleared_at_iso).toBeTruthy();
   });
 
+  it('blocks waive_balance when balance is material underpayment', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 800000, total_ngn = 1000000, payment_balance_waived_ngn = 0 WHERE id = ?`).run(
+      'QT-PARTIAL'
+    );
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'waive_balance', note: 'Try skip payment' }, actor);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/round-off|MD/i);
+  });
+
   it('blocks waive_balance when no payment recorded', () => {
     db.prepare(`UPDATE quotations SET paid_ngn = 0, total_ngn = 1250300 WHERE id = ?`).run('QT-PARTIAL');
     const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'waive_balance' }, actor);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/no payment/i);
+    expect(r.error).toMatch(/round-off|MD|payment/i);
+  });
+
+  it('write_off_receivable requires MD', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 800000, total_ngn = 1000000, payment_balance_waived_ngn = 0 WHERE id = ?`).run(
+      'QT-PARTIAL'
+    );
+    const bm = reviewQuotation(
+      db,
+      'QT-PARTIAL',
+      { decision: 'write_off_receivable', note: 'Customer insolvent — board approved write-off' },
+      actor
+    );
+    expect(bm.ok).toBe(false);
+    expect(bm.code).toBe('FORBIDDEN');
+
+    const mdActor = { id: 'md1', displayName: 'MD', roleKey: 'md' };
+    const md = reviewQuotation(
+      db,
+      'QT-PARTIAL',
+      { decision: 'write_off_receivable', note: 'Customer insolvent — board approved write-off' },
+      mdActor
+    );
+    expect(md.ok).toBe(true);
+    expect(md.waivedAmountNgn).toBe(200_000);
   });
 
   it('allows manager clear when quotation is fully paid', () => {
@@ -120,6 +155,9 @@ describe('reviewQuotation production gate override', () => {
   beforeAll(() => {
     db = createDatabase(':memory:');
     db.exec(`
+      INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
+      VALUES ('bm1', 'bm.user', 'Branch Manager', 'test-hash', 'branch_manager', '2026-01-01T00:00:00.000Z'),
+             ('md1', 'md.user', 'MD', 'test-hash', 'md', '2026-01-01T00:00:00.000Z');
       INSERT INTO customers (customer_id, name, branch_id)
       VALUES ('CUS-2', 'Low Pay', 'BR1'), ('CUS-3', 'Zero Pay', 'BR1');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)

@@ -989,6 +989,24 @@ export function registerHttpApi(app, db) {
     return { ok: true, line: found.line };
   }
 
+  function assertRegisterLineWorkspaceRead(req, lineId) {
+    const found = getAccountingRegisterLine(db, lineId);
+    if (!found.ok) return { ok: false, status: 404, error: found.error };
+    const lineBranch = String(found.line.branchId || '').trim();
+    const workspaceBranch = String(req.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID;
+    if (req.workspaceViewAll && canUseAllBranchesRollup(req.user)) {
+      return { ok: true, line: found.line };
+    }
+    if (!lineBranch || lineBranch === workspaceBranch) {
+      return { ok: true, line: found.line };
+    }
+    return {
+      ok: false,
+      status: 403,
+      error: `This register line belongs to branch ${lineBranch}. Switch workspace to that branch, or turn on All branches view.`,
+    };
+  }
+
   function assertFixedAssetWorkspaceWrite(req, assetId) {
     const row = db.prepare(`SELECT branch_id FROM fixed_assets WHERE id = ?`).get(String(assetId || '').trim());
     if (!row) return { ok: false, status: 404, error: 'Asset not found.' };
@@ -1148,12 +1166,13 @@ export function registerHttpApi(app, db) {
       if (!userMayViewAccountingSubledger(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
-      const lineGate = assertRegisterLineWorkspaceWrite(req, req.params.lineId);
+      const lineGate = assertRegisterLineWorkspaceRead(req, req.params.lineId);
       if (!lineGate.ok && lineGate.status === 403) {
         return res.status(403).json({ ok: false, error: lineGate.error });
       }
       if (!lineGate.ok) return res.status(404).json({ ok: false, error: lineGate.error });
       const capacity = registerLineSettlementCapacity(db, req.params.lineId);
+      if (capacity.ok === false) return res.status(404).json(capacity);
       return res.json(capacity);
     } catch (e) {
       console.error('[accounting-settlement-capacity]', e);

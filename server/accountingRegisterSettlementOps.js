@@ -120,7 +120,12 @@ export function reservedSettlementNgnOnLine(db, lineId) {
       `SELECT COALESCE(SUM(
          CASE
            WHEN status = 'Pending' THEN amount_ngn
-           WHEN status = 'Approved' THEN MAX(0, COALESCE(NULLIF(approved_amount_ngn, 0), amount_ngn) - paid_amount_ngn)
+           WHEN status = 'Approved' THEN
+             CASE
+               WHEN (COALESCE(NULLIF(approved_amount_ngn, 0), amount_ngn) - paid_amount_ngn) > 0
+               THEN (COALESCE(NULLIF(approved_amount_ngn, 0), amount_ngn) - paid_amount_ngn)
+               ELSE 0
+             END
            ELSE 0
          END
        ), 0) AS reserved
@@ -138,10 +143,21 @@ export function registerLineSettlementCapacity(db, lineId) {
   const line = db
     .prepare(`SELECT amount_ngn, status FROM accounting_register_lines WHERE id = ?`)
     .get(lineId);
-  if (!line || line.status !== 'open') {
-    return { ok: true, openNgn: 0, reservedNgn: 0, availableNgn: 0, blockingItems: [] };
+  if (!line) {
+    return { ok: false, error: 'Register line not found.' };
   }
   const openNgn = roundMoney(line.amount_ngn);
+  if (line.status !== 'open') {
+    return {
+      ok: true,
+      openNgn,
+      reservedNgn: 0,
+      availableNgn: 0,
+      blockingItems: [],
+      lineStatus: line.status,
+      blockedReason: `This register line is ${line.status}, not open — withdrawals cannot be requested.`,
+    };
+  }
   const reservedNgn = reservedSettlementNgnOnLine(db, lineId);
   const blockingItems = db
     .prepare(
@@ -173,7 +189,9 @@ export function registerLineSettlementCapacity(db, lineId) {
 
 /** @param {import('better-sqlite3').Database} db @param {string} lineId */
 export function registerLineAvailableSettlementNgn(db, lineId) {
-  return registerLineSettlementCapacity(db, lineId).availableNgn;
+  const cap = registerLineSettlementCapacity(db, lineId);
+  if (cap.ok === false) return 0;
+  return cap.availableNgn;
 }
 
 /** @param {import('better-sqlite3').Database} db @param {{ registerLineId?: string; status?: string; branchId?: string }} [opts] */

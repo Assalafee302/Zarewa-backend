@@ -4574,7 +4574,7 @@ export function patchPayrollRun(db, runId, body, actor) {
 export function listPayrollRuns(db) {
   if (!hrTablesReady(db)) return [];
   return db
-    .prepare(`SELECT * FROM hr_payroll_runs ORDER BY created_at_iso DESC LIMIT 100`)
+    .prepare(`SELECT * FROM hr_payroll_runs ORDER BY period_yyyymm DESC, created_at_iso DESC LIMIT 100`)
     .all()
     .map((row) => ({
       id: row.id,
@@ -4942,6 +4942,9 @@ function payrollLinesWithProfile(db, runId) {
         taxNgn: row.tax_ngn,
         pensionNgn: row.pension_ngn,
         netNgn: row.net_ngn,
+        payHold: Number(row.pay_hold) === 1,
+        holdReason: row.hold_reason || null,
+        held: Number(row.pay_hold) === 1 || Math.round(Number(row.net_ngn) || 0) <= 0,
         loanDeductions: loansByUser.get(row.user_id) || [],
         loanDeductionTotalNgn: loanTotal,
         bankAccountName: row.bankAccountName,
@@ -7470,7 +7473,18 @@ export function listHrStaffBranchHistory(db, userId) {
 
 export function getHrInboxSummary(db, scope) {
   if (!hrTablesReady(db)) {
-    return { ok: true, counts: { pendingHrReview: 0, pendingBranchEndorse: 0, pendingGmHrReview: 0, draftPayrollRuns: 0, draftPayrollAwaitingGm: 0 } };
+    return {
+      ok: true,
+      counts: {
+        pendingHrReview: 0,
+        pendingBranchEndorse: 0,
+        pendingGmHrReview: 0,
+        draftPayrollRuns: 0,
+        draftPayrollAwaitingGm: 0,
+        primaryDraftPayrollRunId: null,
+        primaryDraftPayrollAwaitingGmRunId: null,
+      },
+    };
   }
   const obs = listHrObservability(db, scope);
   const draftPayroll = db.prepare(`SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE status = 'draft'`).get().c;
@@ -7479,6 +7493,14 @@ export function getHrInboxSummary(db, scope) {
       `SELECT COUNT(*) AS c FROM hr_payroll_runs WHERE status = 'draft' AND COALESCE(TRIM(gm_approved_at_iso), '') = ''`
     )
     .get().c;
+  const primaryDraftPayrollRun = db
+    .prepare(`SELECT id FROM hr_payroll_runs WHERE status = 'draft' ORDER BY period_yyyymm DESC LIMIT 1`)
+    .get();
+  const primaryDraftPayrollAwaitingGm = db
+    .prepare(
+      `SELECT id FROM hr_payroll_runs WHERE status = 'draft' AND COALESCE(TRIM(gm_approved_at_iso), '') = '' ORDER BY period_yyyymm DESC LIMIT 1`
+    )
+    .get();
   const profileWork = listHrProfileWorkQueue(db, scope);
   return {
     ok: true,
@@ -7489,6 +7511,8 @@ export function getHrInboxSummary(db, scope) {
       overdueRequests: obs.summary?.overdueRequests ?? 0,
       draftPayrollRuns: draftPayroll,
       draftPayrollAwaitingGm,
+      primaryDraftPayrollRunId: primaryDraftPayrollRun?.id ?? null,
+      primaryDraftPayrollAwaitingGmRunId: primaryDraftPayrollAwaitingGm?.id ?? null,
       pendingDocumentVerifications: profileWork.counts.pendingDocumentVerifications,
       pendingProfileChanges: profileWork.counts.pendingProfileChanges,
       incompleteProfiles: profileWork.counts.incompleteProfiles,

@@ -2223,6 +2223,10 @@ export function registerHrApi(app, db) {
       } else {
         return res.status(400).json({ ok: false, error: 'Invalid scope.' });
       }
+      const staffUserId = String(req.query?.userId || req.query?.staffUserId || '').trim();
+      if (staffUserId && scopeParam !== 'mine') {
+        filter.userId = staffUserId;
+      }
       const rows = listHrRequests(db, scope, filter);
       const ctxBase = hrRedactionContextFromReq(req);
       const requests = rows.map((r) => {

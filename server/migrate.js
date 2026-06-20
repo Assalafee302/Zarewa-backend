@@ -1144,6 +1144,7 @@ function runMigrationsUnlocked(db) {
   migrateStaffPurchaseCredit2026(db);
   migrateStaffRecoveryObligation2026(db);
   migrateHrStaffDirectoryViews2026(db);
+  migratePayrollPeriodUnique2026(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
@@ -5580,6 +5581,20 @@ function migrateHrStaffDirectoryViews2026(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_dir_views_user_name ON hr_staff_directory_views(user_id, name);
     CREATE INDEX IF NOT EXISTS idx_hr_dir_views_user ON hr_staff_directory_views(user_id, updated_at_iso DESC);
   `);
+}
+
+/** One HQ payroll run per calendar month (skip if legacy duplicates exist). */
+function migratePayrollPeriodUnique2026(db) {
+  try {
+    if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_payroll_runs'`).get()) return;
+    const dup = db
+      .prepare(`SELECT period_yyyymm FROM hr_payroll_runs GROUP BY period_yyyymm HAVING COUNT(*) > 1 LIMIT 1`)
+      .get();
+    if (dup?.period_yyyymm) return;
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_payroll_runs_period_yyyymm ON hr_payroll_runs(period_yyyymm)`);
+  } catch {
+    /* ignore — duplicate periods or host limitation */
+  }
 }
 
 /** Ledger / receipt duplicate-check hot paths (bootstrap, finance desk). */

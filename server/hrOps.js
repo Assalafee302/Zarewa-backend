@@ -710,7 +710,7 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
     /* already filtered by lineManagerUserId */
   }
 
-  const countRow = db.prepare(`SELECT COUNT(*) AS c FROM (${sql})`).get(...args);
+  const countRow = db.prepare(`SELECT COUNT(*) AS c FROM (${sql}) AS dir_sub`).get(...args);
   const total = Number(countRow?.c) || 0;
 
   const sortKey = String(opts.sortKey || 'name').trim();

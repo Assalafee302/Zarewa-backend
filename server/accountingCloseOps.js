@@ -20,6 +20,26 @@ function step(status, id, label, detail, focusTab = '') {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} periodKey
+ */
+function getPeriodLock(db, periodKey) {
+  try {
+    const row = db.prepare(`SELECT * FROM accounting_period_locks WHERE period_key = ?`).get(periodKey);
+    if (!row) return null;
+    return {
+      locked: true,
+      periodKey: row.period_key,
+      lockedAtISO: row.locked_at_iso,
+      lockedByName: row.locked_by_name ?? '',
+      reason: row.reason ?? '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} periodKey
  * @param {'ALL' | string} branchScope
  * @param {{ trialExceptions?: object }} [opts]
  */
@@ -178,17 +198,54 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
   const warnings = steps.filter((s) => s.status === 'warn').length;
   const ready = blockers === 0 && warnings === 0;
 
+  const periodLock = getPeriodLock(db, b.periodKey);
+  if (periodLock?.locked) {
+    steps.push(
+      step(
+        'ok',
+        'period_lock',
+        'Period locked',
+        `${periodLock.reason || 'Locked'} · ${periodLock.lockedByName || 'Finance'}`,
+        ''
+      )
+    );
+  } else if (ready) {
+    steps.push(
+      step(
+        'warn',
+        'period_lock',
+        'Lock accounting period',
+        'Checklist clear — lock this period to block backdated GL postings and corrections.',
+        ''
+      )
+    );
+  } else {
+    steps.push(
+      step(
+        'warn',
+        'period_lock',
+        'Period open',
+        'Resolve blockers and warnings before locking this period.',
+        ''
+      )
+    );
+  }
+
   return {
     ok: true,
     periodKey: b.periodKey,
     range: { start: b.start, end: b.end },
     branchScope,
     ready,
+    readyToLock: ready && !periodLock?.locked,
+    periodLock: periodLock || { locked: false, periodKey: b.periodKey },
     blockers,
     warnings,
     steps,
-    summary: ready
-      ? 'All close checks passed for this period.'
-      : `${blockers} blocker(s), ${warnings} warning(s) — resolve before locking the period.`,
+    summary: periodLock?.locked
+      ? `Period ${b.periodKey} is locked.`
+      : ready
+        ? 'All close checks passed — lock the period when HoA sign-off is complete.'
+        : `${blockers} blocker(s), ${warnings} warning(s) — resolve before locking the period.`,
   };
 }

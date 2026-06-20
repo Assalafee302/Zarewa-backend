@@ -46,7 +46,7 @@ import {
 } from '../shared/lib/hrEmployeeNumber.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
-import { buildHrOrgChart, hrStaffReportingContext } from '../shared/lib/hrOrgChart.js';
+import { buildHrOrgChart, hrStaffReportingContext, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
 import {
   notifyAppraisalFormOpened,
   notifyHrRequestOutcome,
@@ -1093,9 +1093,10 @@ export function getHrStaffOne(db, userId) {
  * @param {{ viewAll: boolean; branchId: string; includeUnassigned?: boolean }} scope
  */
 export function getHrOrgChart(db, scope) {
-  if (!hrTablesReady(db)) return { roots: [], orphans: [], total: 0 };
+  if (!hrTablesReady(db)) return { roots: [], orphans: [], total: 0, summary: summarizeHrOrgChart({ roots: [], orphans: [], total: 0 }) };
   const staff = listHrStaff(db, scope, { includeInactive: false });
-  return buildHrOrgChart(staff);
+  const chart = buildHrOrgChart(staff);
+  return { ...chart, summary: summarizeHrOrgChart(chart) };
 }
 
 /**

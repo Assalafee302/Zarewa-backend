@@ -11,6 +11,7 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { quotationPaymentPolicySnapshot } from '../shared/lib/accountingPolicyV1.js';
 import { readFinanceFeatureFlags, accountingPolicyV1HealthCapabilities } from './financeFeatureFlags.js';
+import { ACCOUNTING_OPENING_DATE_ISO, ACCOUNTING_OPENING_SOURCE_ID } from '../shared/lib/accountingCutover.js';
 import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
@@ -1149,7 +1150,12 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/accounting/settlements/:settlementId', requireAuth, (req, res) => {
     try {
-      if (!userMayViewAccountingSubledger(req.user)) {
+      const canSee =
+        userMayViewAccountingSubledger(req.user) ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'refunds.approve') ||
+        userHasPermission(req.user, '*');
+      if (!canSee) {
         return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
       }
       const result = getRegisterSettlement(db, req.params.settlementId);
@@ -1197,6 +1203,30 @@ export function registerHttpApi(app, db) {
         req.user
       );
       if (!result.ok) return res.status(400).json(result);
+      const settlement = result.settlement;
+      if (settlement) {
+        const amt = Math.round(Number(settlement.amountNgn) || 0);
+        const gov = getOrgGovernanceLimits(db);
+        const mdTier = amt >= gov.refundExecutiveThresholdNgn;
+        upsertWorkItemBySource(db, {
+          actor: req.user,
+          sourceKind: 'register_settlement',
+          sourceId: String(settlement.settlementId || ''),
+          branchId: settlement.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          officeKey: mdTier ? 'executive' : 'branch_manager',
+          responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
+          documentClass: 'approval',
+          documentType: 'register_settlement',
+          status: 'pending',
+          title: `Register withdrawal ${String(settlement.settlementId || '').trim()}`,
+          summary: `${settlement.partyName || 'Party'} · ₦${amt.toLocaleString('en-NG')} · ${String(settlement.reason || 'Withdrawal request').trim()}`,
+          requiresApproval: true,
+          data: {
+            routePath: '/accounting',
+            routeState: { focusTab: 'debtors', settlementId: settlement.settlementId },
+          },
+        });
+      }
       return res.status(201).json(result);
     } catch (e) {
       console.error('[accounting-settlement-create]', e);
@@ -1217,13 +1247,16 @@ export function registerHttpApi(app, db) {
       if (result.ok) {
         const outcome = String(req.body?.status || '').trim() || 'reviewed';
         const settlement = result.settlement;
+        const amt = Math.round(Number(settlement?.approvedAmountNgn || settlement?.amountNgn) || 0);
+        const gov = getOrgGovernanceLimits(db);
+        const mdTier = amt >= gov.refundExecutiveThresholdNgn;
         const target = upsertWorkItemBySource(db, {
           actor: req.user,
           sourceKind: 'register_settlement',
           sourceId: String(req.params.settlementId || ''),
           branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
-          officeKey: 'branch_manager',
-          responsibleOfficeKey: 'branch_manager',
+          officeKey: mdTier ? 'executive' : 'branch_manager',
+          responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
           documentClass: 'approval',
           documentType: 'register_settlement',
           status: outcome.toLowerCase(),
@@ -4025,8 +4058,8 @@ export function registerHttpApi(app, db) {
     try {
       const body = req.body || {};
       const result = postOpeningBalanceJournal(db, {
-        entryDateISO: body.entryDateISO || '2026-07-01',
-        sourceId: body.sourceId || 'OPENING_BALANCE_2026',
+        entryDateISO: body.entryDateISO || ACCOUNTING_OPENING_DATE_ISO,
+        sourceId: body.sourceId || ACCOUNTING_OPENING_SOURCE_ID,
         branchId: body.branchId || req.workspaceBranchId || null,
         createdByUserId: req.user?.id,
         memo: body.memo || 'Opening balance cutover',

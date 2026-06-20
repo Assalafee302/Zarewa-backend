@@ -6,6 +6,7 @@ import { listPendingEditApprovals } from './editApproval.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildPendingApprovalsReport, buildProductionStatusReport } from './operationalReportsOps.js';
 import { listStaffPurchaseCreditQueue } from './staffPurchaseCreditOps.js';
+import { listRegisterSettlements } from './accountingRegisterSettlementOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -125,6 +126,30 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       branchId: r.branch_id || '',
       reasons: ['Pending refund approval', amt >= refundHi ? 'Above executive refund threshold' : null].filter(Boolean),
       row: r,
+    });
+  }
+
+  const settleOpts = { status: 'Pending' };
+  if (branchScope !== 'ALL') {
+    settleOpts.branchId = String(branchScope || '').trim();
+  }
+  for (const s of listRegisterSettlements(db, settleOpts).items || []) {
+    const amt = Number(s.amountNgn) || 0;
+    pushItem(items, {
+      id: `register_settlement:${s.settlementId}`,
+      kind: 'register_settlement',
+      priority: 74 + (amt >= refundHi ? 12 : 0),
+      settlementId: s.settlementId,
+      title: s.settlementId,
+      subtitle: `${s.partyName || 'Party'} · Register withdrawal`,
+      amountNgn: amt,
+      atIso: s.requestedAtIso,
+      branchId: s.branchId || '',
+      reasons: [
+        'Pending register withdrawal approval',
+        amt >= refundHi ? 'Above executive refund threshold (MD only)' : null,
+      ].filter(Boolean),
+      row: s,
     });
   }
 

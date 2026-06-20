@@ -4,6 +4,7 @@
  */
 
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
+import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { assertPeriodOpen } from './controlOps.js';
 import {
   ensureGlSchema,
@@ -223,7 +224,7 @@ export function tryPostExpensePaymentGlTx(db, payload) {
  */
 export function postOpeningBalanceJournal(db, payload) {
   ensureArchitecturalGlAccounts(db);
-  const entryDate = String(payload.entryDateISO || '2026-07-01').slice(0, 10);
+  const entryDate = String(payload.entryDateISO || ACCOUNTING_OPENING_DATE_ISO).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
     return { ok: false, error: 'entryDateISO must be YYYY-MM-DD.' };
   }

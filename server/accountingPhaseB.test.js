@@ -9,6 +9,7 @@ import {
 } from './testIntegrationHarness.js';
 import { ensureArchitecturalGlAccounts, postOpeningBalanceJournal, tryPostExpensePaymentGlTx, tryPostSupplierPaymentGlTx } from './accountingPostingOps.js';
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
+import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { monthBounds, getAccountingStatementsPack } from './accountingStatementsOps.js';
 import { createFixedAsset } from './accountingPhase2Ops.js';
 import { previewDepreciationRun } from './depreciationRunOps.js';
@@ -68,7 +69,7 @@ describe('accounting GL (Phase A + B integration)', () => {
     it('posts opening balance journal when balanced', ({ skip }) => {
       if (!ready) skip();
       const r = postOpeningBalanceJournal(db, {
-        entryDateISO: '2026-07-01',
+        entryDateISO: ACCOUNTING_OPENING_DATE_ISO,
         sourceId: uid('TEST-OPENING'),
         lines: [
           { accountCode: '1000', debitNgn: 500_000 },
@@ -89,7 +90,7 @@ describe('accounting GL (Phase A + B integration)', () => {
         tryPostSupplierPaymentGlTx(db, {
           treasuryAccountId: 9,
           amountNgn: 50_000,
-          entryDateISO: '2026-07-02',
+          entryDateISO: '2026-06-02',
           sourceKind: 'SUPPLIER_PAYMENT_GL',
           sourceId: sid,
           forceDebitCode: '2000',
@@ -99,7 +100,7 @@ describe('accounting GL (Phase A + B integration)', () => {
         tryPostSupplierPaymentGlTx(db, {
           treasuryAccountId: 9,
           amountNgn: 50_000,
-          entryDateISO: '2026-07-02',
+          entryDateISO: '2026-06-02',
           sourceKind: 'SUPPLIER_PAYMENT_GL',
           sourceId: sid,
           forceDebitCode: '2000',
@@ -117,7 +118,7 @@ describe('accounting GL (Phase A + B integration)', () => {
         tryPostExpensePaymentGlTx(db, {
           treasuryAccountId: 8,
           amountNgn: 12_000,
-          entryDateISO: '2026-07-03',
+          entryDateISO: '2026-06-03',
           sourceId: sid,
           expenseCategory: 'Fuel & lubricant',
         }).ok

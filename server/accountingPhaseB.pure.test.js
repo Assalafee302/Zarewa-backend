@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { monthBounds } from './accountingStatementsOps.js';
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
 import { mapFixedAssetRow } from './accountingPhase2Ops.js';
+import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 
 describe('accounting Phase B (pure)', () => {
+  it('accounting cutover opening date is June 2026', () => {
+    expect(ACCOUNTING_OPENING_DATE_ISO).toBe('2026-06-01');
+  });
+
   it('monthBounds parses YYYY-MM', () => {
     expect(monthBounds('bad')).toBeNull();
     expect(monthBounds('2026-02')?.end).toBe('2026-02-28');

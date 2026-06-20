@@ -2,6 +2,7 @@
  * Phase B — month-end close checklist (read-only gates).
  */
 import { monthBounds, getAccountingStatementsPack } from './accountingStatementsOps.js';
+import { ACCOUNTING_OPENING_DATE_LABEL } from '../shared/lib/accountingCutover.js';
 import { getOpeningBalanceStatus } from './accountingPostingOps.js';
 import { previewDepreciationRun } from './depreciationRunOps.js';
 import { trialBalanceRows } from './glOps.js';
@@ -100,7 +101,7 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
       opening.posted ? 'ok' : 'warn',
       'opening_balance',
       'Opening balance posted',
-      opening.posted ? 'Cutover journal exists in GL.' : 'Post 1 July opening balance before first close.',
+      opening.posted ? 'Cutover journal exists in GL.' : `Post ${ACCOUNTING_OPENING_DATE_LABEL} opening balance before first close.`,
       'opening'
     )
   );

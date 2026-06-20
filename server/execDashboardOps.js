@@ -278,6 +278,18 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     /* optional */
   }
 
+  let pendingRegisterSettlements = { count: 0, scopeBasis: isAll ? 'company' : 'branch' };
+  try {
+    const bSet = branchWhere(db, 'accounting_register_settlements', scope);
+    pendingRegisterSettlements = countRow(
+      `SELECT COUNT(*) AS c FROM accounting_register_settlements WHERE status = 'Pending'${bSet.sql}`,
+      bSet.args,
+      isAll ? 'company' : 'branch'
+    );
+  } catch {
+    /* optional */
+  }
+
   const org = execOrgSummary(db);
   return {
     pendingRefunds,
@@ -287,6 +299,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     priceExceptionsPendingMd,
     pendingProductionJobs,
     stockRegisterPendingMd,
+    pendingRegisterSettlements,
     bankReconciliationLinesInReview: {
       count: org.bankReconciliationLinesInReview ?? 0,
       scopeBasis: 'company',
@@ -469,6 +482,9 @@ function canActOnWorkItemKind(user, kind) {
   if (userHasPermission(user, '*')) return true;
   const k = String(kind || '').toLowerCase();
   if (k === 'refunds') return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
+  if (k === 'register_settlement') {
+    return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
+  }
   if (k === 'payments') return userHasPermission(user, 'finance.approve');
   if (k === 'material') return userHasPermission(user, 'material_incidents.approve');
   if (k === 'edit_approvals') return userHasPermission(user, 'audit.view') || userHasPermission(user, 'quotations.manage');
@@ -484,6 +500,7 @@ function canActOnWorkItemKind(user, kind) {
 function workItemRoute(kind, row = {}) {
   const k = String(kind || '').toLowerCase();
   if (k === 'refunds') return '/manager';
+  if (k === 'register_settlement') return '/accounting';
   if (k === 'payments') return '/manager';
   if (k === 'material') return '/operations/material-exceptions';
   if (k === 'edit_approvals') return '/manager';
@@ -528,6 +545,7 @@ function mapAttentionToWorkTray(db, attention, user, readOnly) {
         quotationRef: String(it.quotationRef || it.row?.id || it.row?.quotation_ref || '').trim(),
         jobId: String(it.jobId || it.row?.job_id || '').trim(),
         refundId: String(it.refundId || it.row?.refund_id || it.row?.refundId || '').trim(),
+        settlementId: String(it.settlementId || it.row?.settlementId || it.row?.settlement_id || '').trim(),
         requestId: String(it.requestId || it.row?.request_id || '').trim(),
         cuttingListId: String(it.cuttingListId || it.row?.id || '').trim(),
         materialIncidentId: String(it.row?.id || '').trim(),
@@ -709,6 +727,12 @@ export function buildQueueSummaryTray(scopedCounts) {
     });
   };
   pushSummary(scopedCounts.pendingRefunds, 'refunds', 'Refund approvals pending', '/manager');
+  pushSummary(
+    scopedCounts.pendingRegisterSettlements,
+    'register_settlement',
+    'Register withdrawals pending',
+    '/accounting'
+  );
   pushSummary(scopedCounts.pendingPaymentRequests, 'payments', 'Payment requests pending', '/manager');
   pushSummary(
     scopedCounts.payrollDraftsAwaitingMd,

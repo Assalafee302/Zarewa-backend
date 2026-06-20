@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildHrOrgChart, buildHrOrgChartGrouped, hrStaffReportingContext, summarizeHrOrgChart } from './hrOrgChart.js';
+import { buildHrOrgChart, buildHrOrgChartGrouped, hrStaffReportingContext, summarizeHrOrgChart, wouldCreateReportingCycle } from './hrOrgChart.js';
 
 describe('hrOrgChart', () => {
   it('builds a tree from line managers', () => {
@@ -41,6 +41,18 @@ describe('hrOrgChart', () => {
     const hr = sections.find((s) => s.key === 'HR');
     expect(hr?.count).toBe(2);
     expect(hr?.roots[0].userId).toBe('A');
+  });
+
+  it('detects reporting cycles', () => {
+    const staff = [
+      { userId: 'MD', displayName: 'MD', lineManagerUserId: null },
+      { userId: 'A', displayName: 'Alice', lineManagerUserId: 'MD' },
+      { userId: 'B', displayName: 'Bob', lineManagerUserId: 'A' },
+    ];
+    expect(wouldCreateReportingCycle(staff, 'MD', 'B')).toBe(true);
+    expect(wouldCreateReportingCycle(staff, 'A', 'B')).toBe(true);
+    expect(wouldCreateReportingCycle(staff, 'B', 'MD')).toBe(false);
+    expect(wouldCreateReportingCycle(staff, 'A', 'A')).toBe(true);
   });
 
   it('resolves manager and direct reports', () => {

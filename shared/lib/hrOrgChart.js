@@ -194,6 +194,33 @@ export function buildHrOrgChartGrouped(chart, groupBy = 'department') {
 }
 
 /**
+ * True if assigning newManagerUserId as line manager of subjectUserId would create a cycle.
+ * @param {Array<{ userId: string; lineManagerUserId?: string | null }>} staff
+ * @param {string} subjectUserId
+ * @param {string | null | undefined} newManagerUserId
+ */
+export function wouldCreateReportingCycle(staff, subjectUserId, newManagerUserId) {
+  const subject = String(subjectUserId || '').trim();
+  let current = String(newManagerUserId || '').trim();
+  if (!current) return false;
+  if (current === subject) return true;
+  const byId = new Map();
+  for (const s of staff) {
+    const id = String(s.userId || '').trim();
+    if (id) byId.set(id, s);
+  }
+  const seen = new Set();
+  while (current) {
+    if (current === subject) return true;
+    if (seen.has(current)) return true;
+    seen.add(current);
+    const row = byId.get(current);
+    current = row?.lineManagerUserId ? String(row.lineManagerUserId).trim() : '';
+  }
+  return false;
+}
+
+/**
  * @param {Array<{ userId: string; displayName?: string; username?: string; jobTitle?: string; lineManagerUserId?: string | null }>} staff
  * @param {string} userId
  */

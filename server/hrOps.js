@@ -1168,6 +1168,29 @@ export function appendHrDisciplinaryEvent(db, userId, body, actorUserId) {
  * @param {string} actorUserId
  * @param {object} body
  */
+/**
+ * Walk manager chain upward; true if subject would become an ancestor of newManager.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} subjectUserId
+ * @param {string | null} newManagerUserId
+ */
+function wouldCreateReportingCycleFromDb(db, subjectUserId, newManagerUserId) {
+  const subject = String(subjectUserId || '').trim();
+  let current = String(newManagerUserId || '').trim();
+  if (!current) return false;
+  if (current === subject) return true;
+  const seen = new Set();
+  const stmt = db.prepare(`SELECT line_manager_user_id AS lineManagerUserId FROM hr_staff_profiles WHERE user_id = ?`);
+  while (current) {
+    if (current === subject) return true;
+    if (seen.has(current)) return true;
+    seen.add(current);
+    const row = stmt.get(current);
+    current = row?.lineManagerUserId ? String(row.lineManagerUserId).trim() : '';
+  }
+  return false;
+}
+
 export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const userId = String(body?.userId || '').trim();
@@ -1190,6 +1213,16 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     body?.lineManagerUserId !== undefined
       ? String(body.lineManagerUserId || '').trim() || null
       : prevRow?.line_manager_user_id ?? null;
+
+  if (body?.lineManagerUserId !== undefined) {
+    if (lineManagerUserId && lineManagerUserId === userId) {
+      return { ok: false, error: 'A staff member cannot be their own line manager.' };
+    }
+    if (lineManagerUserId && wouldCreateReportingCycleFromDb(db, userId, lineManagerUserId)) {
+      return { ok: false, error: 'That manager assignment would create a circular reporting line.' };
+    }
+  }
+
   let resolvedLeaveBand = prevRow?.leave_entitlement_band ?? null;
 
   let selfServiceEligible = 0;

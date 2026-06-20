@@ -103,7 +103,12 @@ export function mapFixedAssetRow(row) {
   const salvage = Math.round(Number(row.salvage_ngn) || 0);
   const life = Math.max(1, Math.round(Number(row.useful_life_months) || 1));
   const depBase = Math.max(0, cost - salvage);
-  const monthlyDepreciationNgn = row.depreciation_method === 'straight_line' ? Math.round(depBase / life) : 0;
+  const monthlyDepreciationNgn =
+    String(row.category || '').toLowerCase() === 'land'
+      ? 0
+      : row.depreciation_method === 'straight_line'
+        ? Math.round(depBase / life)
+        : 0;
   const endDate =
     row.status === 'disposed' && row.disposal_date_iso
       ? String(row.disposal_date_iso).slice(0, 10)

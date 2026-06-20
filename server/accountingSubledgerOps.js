@@ -19,7 +19,7 @@ import { bankDepositRemainingNgn, bankDepositStatusLabel } from '../shared/lib/b
 import { isReceiptPendingClearance } from '../shared/lib/receiptClearance.js';
 import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
-import { tableExists } from './ap2ReceivedBasisOps.js';
+import { hasColumn, tableExists } from './ap2ReceivedBasisOps.js';
 import { getStaffLoanSchedule } from './hrLoanSchedule.js';
 import { buildStaffObligationCreditorItems, OBLIGATION_KIND, OBLIGATION_STATUS, staffObligationTablesReady } from './staffObligationOps.js';
 import { hrTablesReady } from './hrOps.js';
@@ -62,10 +62,22 @@ function roundMoney(value) {
   return Math.round(Number(value) || 0);
 }
 
-/** Production completed/cancelled or paid void — same closure basis as refund eligibility. */
+/** True when any production row for the quote is not terminal (Completed / Cancelled). */
+function quotationHasOpenProductionJobFromList(quotationRef, productionJobs) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return false;
+  return (productionJobs || []).some((j) => {
+    if (String(j?.quotationRef || '').trim() !== ref) return false;
+    const st = String(j?.status || '').trim().toLowerCase();
+    return st !== 'completed' && st !== 'cancelled';
+  });
+}
+
+/** Production completed/cancelled or paid void — aligned with refund eligibility (no open jobs). */
 function quotationProductionClosedForRefund(q, productionJobs) {
   const ref = String(q?.id || '').trim();
   if (!ref) return false;
+  if (quotationHasOpenProductionJobFromList(ref, productionJobs)) return false;
   const isVoid = String(q?.status || '').trim().toLowerCase() === 'void';
   if (isVoid && roundMoney(q?.paidNgn) > 0) return true;
   return (productionJobs || []).some((j) => {
@@ -108,6 +120,7 @@ function buildPreProductionCustomerDepositItems(db, branchScope) {
   const items = [];
   for (const q of quotations) {
     if (quotationRefundsBlocked(q)) continue;
+    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
     if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
     if (quotationHasUnclearedReceipts(db, q.id)) continue;
     const cash = quotationPaymentCashBreakdown(db, q.id);
@@ -651,12 +664,7 @@ function buildStaffPurchaseReceivableItems(db, branchScope) {
 
 function quotationHasActiveStaffPurchaseCredit(db, quotationRef) {
   if (!staffObligationTablesReady(db)) return false;
-  try {
-    const cols = new Set(db.prepare(`PRAGMA table_info(quotations)`).all().map((c) => c.name));
-    if (!cols.has('is_staff_purchase')) return false;
-  } catch {
-    return false;
-  }
+  if (!hasColumn(db, 'quotations', 'is_staff_purchase')) return false;
   const q = db.prepare(`SELECT is_staff_purchase, staff_purchase_credit_id FROM quotations WHERE id = ?`).get(quotationRef);
   if (!q || !Number(q.is_staff_purchase)) return false;
   const acctId = String(q.staff_purchase_credit_id || '').trim();
@@ -1048,6 +1056,7 @@ function economicOverpayExcessSumForCustomer(db, customerID, branchScope) {
     .all(cid, ...b.args);
   let sum = 0;
   for (const q of quotes) {
+    if (quotationHasUnclearedReceipts(db, q.id)) continue;
     const cash = quotationPaymentCashBreakdown(db, q.id);
     sum += quotationOverpaymentExcessNgn({
       cashInNgn: cash.cashInNgn,
@@ -1381,7 +1390,7 @@ export function buildDebtorsRegister(db, opts = {}) {
       'Record pre-system overpayments (e.g. April project ₦8M) under “Add legacy line” on this tab.',
       'Pre-production deposits are cleared quote payments before production completes — not the same as treasury “Record pay” (use that for approved refund payout).',
       'Refund commitments include pending and approved unpaid refunds on closed jobs; permanently blocked quotations are excluded from this register.',
-      'Overpayment credits use economic excess (cash in minus quote total), capped by the ledger pool — same basis as refund preview.',
+      'Overpayment credits use economic excess (cash in minus quote total) on finance-cleared quotes only, capped by the ledger pool — same basis as refund preview.',
       'When detail shows a higher ledger pool than the amount, finance may reverse stale OVERPAY_ADVANCE rows.',
       'Unallocated receipts and unlinked bank deposits are suspense items until matched — not trade payables.',
       'Receipts pending finance clearance are listed separately; they are not part of this register total.',

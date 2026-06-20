@@ -1,16 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createDatabase } from './db.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  acquireIntegrationHarness,
+  closeIntegrationHarness,
+  isMysqlAvailableForTests,
+} from './testIntegrationHarness.js';
 import { monthBounds, getAccountingStatementsPack } from './accountingStatementsOps.js';
 
-describe('accountingStatementsOps', () => {
+const mysqlOk = isMysqlAvailableForTests();
+
+describe.skipIf(!mysqlOk)('accountingStatementsOps', () => {
   let db;
 
-  beforeEach(() => {
-    db = createDatabase(':memory:');
+  beforeAll(() => {
+    db = acquireIntegrationHarness().db;
   });
 
-  afterEach(() => {
-    db?.close();
+  afterAll(() => {
+    closeIntegrationHarness();
   });
 
   it('monthBounds parses YYYY-MM', () => {

@@ -25,6 +25,7 @@ export function previewDepreciationRun(db, periodKey, branchScope = 'ALL') {
   let total = 0;
   for (const a of assets || []) {
     if (!activeInMonth(a, periodKey)) continue;
+    if (String(a.category || '').toLowerCase() === 'land') continue;
     const m = Math.round(Number(a.monthlyDepreciationNgn) || 0);
     if (m <= 0) continue;
     rows.push({

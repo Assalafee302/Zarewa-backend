@@ -8,6 +8,10 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
 } from './glOps.js';
+import {
+  tryPostExpensePaymentGlTx,
+  tryPostSupplierPaymentGlTx,
+} from './accountingPostingOps.js';
 import { syncFixedAssetFromCapexExpense } from './fixedAssetAutomationOps.js';
 import {
   ensureStoneFlatsheetProduct,
@@ -1734,7 +1738,7 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
         detail: `${amt}${note ? ` — ${note}` : ''}`,
       });
       if (opts.treasuryAccountId) {
-        insertTreasuryMovementTx(db, {
+        const tm = insertTreasuryMovementTx(db, {
           type: 'SUPPLIER_PAYMENT',
           treasuryAccountId: opts.treasuryAccountId,
           amountNgn: -amt,
@@ -1751,6 +1755,20 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
           workspaceViewAll: opts.workspaceViewAll,
           actor: opts.actor,
         });
+        const glPay = tryPostSupplierPaymentGlTx(db, {
+          treasuryAccountId: opts.treasuryAccountId,
+          amountNgn: amt,
+          entryDateISO: String(opts.dateISO || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+          sourceKind: 'SUPPLIER_PAYMENT_GL',
+          sourceId: tm.id,
+          poId: poID,
+          branchId: opts.workspaceBranchId || null,
+          createdByUserId: opts.actor?.id ?? null,
+          memo: note || `Supplier payment ${poID}`,
+        });
+        if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
+          throw new Error(glPay.error || 'Supplier payment GL posting failed.');
+        }
       }
       appendAuditLog(db, {
         actor: opts.actor,
@@ -7327,6 +7345,25 @@ export function payPaymentRequest(db, requestID, payload) {
         }
       }
 
+      for (const mv of created || []) {
+        const lineAmt = Math.abs(roundMoney(mv.amountNgn));
+        if (lineAmt <= 0) continue;
+        const glExp = tryPostExpensePaymentGlTx(db, {
+          treasuryAccountId: mv.treasuryAccountId,
+          amountNgn: lineAmt,
+          entryDateISO: String(mv.postedAtISO || paidAtISO).slice(0, 10),
+          sourceId: mv.id,
+          expenseCategory: linkedExpense?.category || 'Others',
+          branchId: linkedExpense?.branch_id || workspaceBranchId || null,
+          createdByUserId: actor?.id ?? null,
+          paymentRequestId: requestID,
+          memo: fresh.description || `Payment request ${requestID}`,
+        });
+        if (!glExp.ok && !glExp.skipped && !glExp.duplicate) {
+          throw new Error(glExp.error || 'Expense payment GL posting failed.');
+        }
+      }
+
       return { movements: created, paidAmountNgn: nextPaid, requestedFresh };
     })();
 
@@ -7386,7 +7423,7 @@ export function payAccountsPayable(db, apId, payload) {
           });
         }
       }
-      insertTreasuryMovementTx(db, {
+      const tm = insertTreasuryMovementTx(db, {
         type: 'AP_PAYMENT',
         treasuryAccountId: payload.treasuryAccountId,
         amountNgn: -apply,
@@ -7402,6 +7439,22 @@ export function payAccountsPayable(db, apId, payload) {
         workspaceViewAll: payload.workspaceViewAll,
         actor: payload.actor,
       });
+      const glPay = tryPostSupplierPaymentGlTx(db, {
+        treasuryAccountId: payload.treasuryAccountId,
+        amountNgn: apply,
+        entryDateISO: postDay,
+        sourceKind: 'SUPPLIER_PAYMENT_GL',
+        sourceId: tm.id,
+        poId: row.po_ref || '',
+        apId,
+        branchId: payload.workspaceBranchId || null,
+        createdByUserId: payload.actor?.id ?? null,
+        forceDebitCode: '2000',
+        memo: payload.reference || row.invoice_ref || `AP payment ${apId}`,
+      });
+      if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
+        throw new Error(glPay.error || 'AP payment GL posting failed.');
+      }
       appendAuditLog(db, {
         actor: payload.actor,
         action: 'accounts_payable.pay',

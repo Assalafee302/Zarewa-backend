@@ -509,6 +509,19 @@ import {
   getReconciliationPack,
   isValidFinancePackPeriodKey,
 } from './accountingReconciliationOps.js';
+import { getAccountingStatementsPack } from './accountingStatementsOps.js';
+import {
+  getOpeningBalanceStatus,
+  postOpeningBalanceJournal,
+  ensureArchitecturalGlAccounts,
+} from './accountingPostingOps.js';
+import { buildMonthEndCloseChecklist } from './accountingCloseOps.js';
+import { previewDepreciationRun, postDepreciationRun } from './depreciationRunOps.js';
+import {
+  payrollGlStatusForRun,
+  tryPostPayrollAccrualGlTx,
+  tryPostPayrollStatutoryRemittanceGlTx,
+} from './payrollGlOps.js';
 import {
   listInTransitLoads,
   syncInTransitLoadFromGrn,
@@ -3917,6 +3930,190 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load finance reconciliation pack.' });
+    }
+  });
+
+  app.get('/api/finance/statements-pack', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const pack = getAccountingStatementsPack(db, periodKey, branchScope);
+      if (!pack.ok) return res.status(400).json(pack);
+      res.json({
+        ...pack,
+        status: 'management_draft',
+        label: 'Management draft — Profit & Loss and Statement of Financial Position from GL.',
+      });
+    } catch (e) {
+      console.error('[finance-statements-pack]', e);
+      res.status(500).json({ ok: false, error: 'Could not load statements pack.' });
+    }
+  });
+
+  app.get('/api/finance/opening-balance/status', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      return res.json(getOpeningBalanceStatus(db));
+    } catch (e) {
+      console.error('[opening-balance-status]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load opening balance status.' });
+    }
+  });
+
+  app.post('/api/finance/opening-balance', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const body = req.body || {};
+      const result = postOpeningBalanceJournal(db, {
+        entryDateISO: body.entryDateISO || '2026-07-01',
+        sourceId: body.sourceId || 'OPENING_BALANCE_2026',
+        branchId: body.branchId || req.workspaceBranchId || null,
+        createdByUserId: req.user?.id,
+        memo: body.memo || 'Opening balance cutover',
+        lines: body.lines || [],
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.duplicate ? 200 : 201).json(result);
+    } catch (e) {
+      console.error('[opening-balance-post]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post opening balance.' });
+    }
+  });
+
+  app.get('/api/finance/month-end-close', requireAuth, async (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const branchId = branchScope === 'ALL' ? null : branchScope;
+      const trialExceptions = await buildFinanceTrialExceptionSummary(db, { branchId });
+      const checklist = buildMonthEndCloseChecklist(db, periodKey, branchScope, { trialExceptions });
+      if (!checklist.ok) return res.status(400).json(checklist);
+      return res.json(checklist);
+    } catch (e) {
+      console.error('[month-end-close]', e);
+      return res.status(500).json({ ok: false, error: 'Could not build month-end close checklist.' });
+    }
+  });
+
+  app.get('/api/finance/depreciation/preview', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      return res.json(previewDepreciationRun(db, periodKey, branchScope));
+    } catch (e) {
+      console.error('[depreciation-preview]', e);
+      return res.status(500).json({ ok: false, error: 'Could not preview depreciation.' });
+    }
+  });
+
+  app.post('/api/finance/depreciation/post', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const body = req.body || {};
+      const periodKey = String(body.period || body.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
+      ensureArchitecturalGlAccounts(db);
+      const result = postDepreciationRun(db, periodKey, branchScope, req.user, req.workspaceBranchId || null);
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.duplicate ? 200 : 201).json(result);
+    } catch (e) {
+      console.error('[depreciation-post]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post depreciation.' });
+    }
+  });
+
+  app.get('/api/finance/payroll-runs/:runId/gl-status', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      return res.json(payrollGlStatusForRun(db, req.params.runId));
+    } catch (e) {
+      console.error('[payroll-gl-status]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load payroll GL status.' });
+    }
+  });
+
+  app.post('/api/finance/payroll-runs/:runId/accrual-gl', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const result = tryPostPayrollAccrualGlTx(db, req.params.runId, {
+        createdByUserId: req.user?.id,
+        branchId: req.workspaceBranchId || null,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.duplicate ? 200 : 201).json(result);
+    } catch (e) {
+      console.error('[payroll-accrual-gl]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post payroll accrual.' });
+    }
+  });
+
+  app.post('/api/finance/payroll-remittance', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
+    try {
+      const body = req.body || {};
+      ensureArchitecturalGlAccounts(db);
+      const result = tryPostPayrollStatutoryRemittanceGlTx(db, {
+        entryDateISO: body.entryDateISO || new Date().toISOString().slice(0, 10),
+        treasuryAccountId: body.treasuryAccountId,
+        payeNgn: body.payeNgn,
+        pensionNgn: body.pensionNgn,
+        sourceId: body.sourceId || `REMIT-${body.period || body.entryDateISO || 'MANUAL'}`,
+        memo: body.memo,
+        createdByUserId: req.user?.id,
+        branchId: req.workspaceBranchId || null,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.duplicate ? 200 : 201).json(result);
+    } catch (e) {
+      console.error('[payroll-remittance]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post payroll remittance.' });
     }
   });
 

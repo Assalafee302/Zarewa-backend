@@ -111,7 +111,12 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-fa-generator', '1504', 'Generators', 'asset', 36);
   ins.run('acc-fa-gain-loss', '6200', 'Gain/loss on asset disposal', 'expense', 93);
   ins.run('acc-bank-suspense', '2150', 'Unallocated bank receipts', 'liability', 76);
-  ins.run('acc-inter-branch', '1300', 'Inter-branch receivable', 'asset', 22);
+  ins.run('acc-ap-trade', '2000', 'Trade payables — suppliers', 'liability', 38);
+  ins.run('acc-due-from-branch', '1800', 'Due from branch', 'asset', 23);
+  ins.run('acc-due-to-branch', '2800', 'Due to branch', 'liability', 78);
+  ins.run('acc-capital', '3100', "Owner's capital", 'equity', 5);
+  ins.run('acc-drawings', '3200', 'Drawings', 'equity', 6);
+  ins.run('acc-retained', '3900', 'Retained earnings', 'equity', 7);
 }
 
 export function getGlAccountIdByCode(db, code) {

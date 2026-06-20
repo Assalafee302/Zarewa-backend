@@ -26,6 +26,7 @@ import {
   validateStaffTenureForSave,
 } from './hrTenureOps.js';
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
+import { tryPostPayrollAccrualGlTx, tryPostPayrollNetPaymentGlTx } from './payrollGlOps.js';
 import {
   activeObligationBreakdownForPayroll,
   OBLIGATION_STATUS,
@@ -4570,6 +4571,8 @@ export function patchPayrollRun(db, runId, body, actor) {
     }
     const wasPaid = run.status === 'paid';
     let treasuryResult = null;
+    let glAccrualResult = null;
+    let glPaymentResult = null;
     try {
       db.transaction(() => {
         if (ns === 'draft' && String(run.status || '').toLowerCase() === 'locked') {
@@ -4580,6 +4583,15 @@ export function patchPayrollRun(db, runId, body, actor) {
         } else {
           db.prepare(`UPDATE hr_payroll_runs SET status = ? WHERE id = ?`).run(ns, runId);
         }
+        if (ns === 'locked') {
+          glAccrualResult = tryPostPayrollAccrualGlTx(db, runId, {
+            createdByUserId: actor?.id ?? null,
+            branchId: null,
+          });
+          if (!glAccrualResult.ok && !glAccrualResult.duplicate && !glAccrualResult.skipped) {
+            throw new Error(glAccrualResult.error || 'Payroll accrual GL failed.');
+          }
+        }
         if (ns === 'paid' && !wasPaid) {
           incrementLoanMonthsFromPayrollRun(db, runId);
           if (!body?.skipTreasuryPosting) {
@@ -4588,6 +4600,20 @@ export function patchPayrollRun(db, runId, body, actor) {
             });
             if (!treasuryResult.ok) {
               throw new Error(treasuryResult.error || 'Treasury posting failed.');
+            }
+            if (treasuryResult.movementId && !treasuryResult.skipped) {
+              glPaymentResult = tryPostPayrollNetPaymentGlTx(db, {
+                runId,
+                movementId: treasuryResult.movementId,
+                treasuryAccountId: treasuryResult.treasuryAccountId,
+                amountNgn: treasuryResult.amountNgn,
+                entryDateISO: new Date().toISOString().slice(0, 10),
+                createdByUserId: actor?.id ?? null,
+                branchId: null,
+              });
+              if (!glPaymentResult.ok && !glPaymentResult.duplicate && !glPaymentResult.skipped) {
+                throw new Error(glPaymentResult.error || 'Payroll payment GL failed.');
+              }
             }
           }
         }
@@ -4610,7 +4636,7 @@ export function patchPayrollRun(db, runId, body, actor) {
         notifyPayrollRunStatus(db, updatedRun, ns, userIds);
       }
     }
-    return { ok: true, treasury: treasuryResult };
+    return { ok: true, treasury: treasuryResult, glAccrual: glAccrualResult, glPayment: glPaymentResult };
   }
 
   if (body?.taxPercent != null || body?.pensionPercent != null) {

@@ -42,6 +42,7 @@ import { listProductionConversionChecks, listProductionJobCoils } from './produc
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
+import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { userHasPermission } from './auth.js';
 import {
@@ -224,6 +225,8 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       finOk && recoverySchedulesTableReady(db)
         ? listStaffRecoveriesDueForCashier(db, branchScope)
         : [],
+    registerSettlementsAwaitingPayment:
+      payReqOk ? listRegisterSettlementsAwaitingPayment(db, branchScope) : [],
   };
 }
 

@@ -17,6 +17,7 @@ import { userMayManageAccountingSubledger } from './financeDeskAccess.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { nextPostingBatchHumanId, nextRegisterSettlementHumanId } from './humanId.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
+import { branchWhere } from './readModel.js';
 import {
   clearAccountingRegisterLine,
   ensureAccountingRegisterSchema,
@@ -217,6 +218,33 @@ export function listRegisterSettlements(db, opts = {}) {
   sql += ` ORDER BY requested_at_iso DESC, settlement_id DESC`;
   const items = db.prepare(sql).all(...args).map(mapSettlementRow);
   return { ok: true, items };
+}
+
+/**
+ * Approved register withdrawals with treasury payout still due — cashier desk queue.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listRegisterSettlementsAwaitingPayment(db, branchScope = 'ALL') {
+  ensureAccountingRegisterSettlementSchema(db);
+  const b = branchWhere(db, 'accounting_register_settlements', branchScope);
+  const rows = db
+    .prepare(
+      `SELECT * FROM accounting_register_settlements
+       WHERE status = 'Approved'
+       ${b.sql}
+       ORDER BY approved_at_iso DESC, settlement_id DESC`
+    )
+    .all(...b.args);
+  return rows
+    .map(mapSettlementRow)
+    .filter(
+      (s) =>
+        effectiveOutstandingNgn(
+          roundMoney(s.approvedAmountNgn || s.amountNgn),
+          roundMoney(s.paidAmountNgn)
+        ) > 0
+    );
 }
 
 /** @param {import('better-sqlite3').Database} db @param {string} settlementId */

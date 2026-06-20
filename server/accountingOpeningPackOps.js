@@ -601,10 +601,12 @@ function buildProposedJournalLines(sources, capitalNgn = 0) {
  *   inventoryPeriodKey?: string;
  *   payrollPeriodKey?: string;
  *   capitalNgn?: number;
+ *   summaryOnly?: boolean;
  * }} [opts]
  */
 export function buildOpeningPackReport(db, opts = {}) {
   const branchScope = opts.branchScope || 'ALL';
+  const summaryOnly = Boolean(opts.summaryOnly);
   const inventoryPeriodKey =
     opts.inventoryPeriodKey || priorPeriodKey(ACCOUNTING_OPENING_PERIOD_KEY) || '2026-05';
   const payrollPeriodKey = opts.payrollPeriodKey || inventoryPeriodKey;
@@ -637,7 +639,7 @@ export function buildOpeningPackReport(db, opts = {}) {
     rollupGrniDiagnostic(db, branchScope, inventoryPeriodKey),
   ];
 
-  const proposedLines = buildProposedJournalLines(sources, capitalNgn);
+  const proposedLines = summaryOnly ? [] : buildProposedJournalLines(sources, capitalNgn);
 
   const blockers = [];
   const warnings = [];
@@ -658,12 +660,14 @@ export function buildOpeningPackReport(db, opts = {}) {
 
   let debits = 0;
   let credits = 0;
-  for (const l of proposedLines) {
-    debits += roundMoney(l.debitNgn);
-    credits += roundMoney(l.creditNgn);
-  }
-  if (debits !== credits) {
-    blockers.push('Proposed journal does not balance.');
+  if (!summaryOnly) {
+    for (const l of proposedLines) {
+      debits += roundMoney(l.debitNgn);
+      credits += roundMoney(l.creditNgn);
+    }
+    if (debits !== credits) {
+      blockers.push('Proposed journal does not balance.');
+    }
   }
 
   const scored = sources.filter((s) => s.status === 'ok' || s.status === 'empty').length;

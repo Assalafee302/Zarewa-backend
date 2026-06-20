@@ -524,6 +524,7 @@ import { buildOpeningPackReport, postOpeningPackJournal } from './accountingOpen
 import { buildControlTieOutReport } from './accountingControlTieOutOps.js';
 import { buildMonthEndCloseChecklist } from './accountingCloseOps.js';
 import { buildCutoverActionPlan } from './accountingCutoverPlanOps.js';
+import { buildAccountingDeskOverview } from './accountingDeskOverviewOps.js';
 import { previewDepreciationRun, postDepreciationRun } from './depreciationRunOps.js';
 import {
   payrollGlStatusForRun,
@@ -4231,6 +4232,27 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[cutover-plan]', e);
       return res.status(500).json({ ok: false, error: 'Could not build cutover action plan.' });
+    }
+  });
+
+  app.get('/api/finance/desk-overview', requireAuth, async (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const branchId = branchScope === 'ALL' ? null : branchScope;
+      const trialExceptions = await buildFinanceTrialExceptionSummary(db, { branchId });
+      const overview = buildAccountingDeskOverview(db, periodKey, branchScope, trialExceptions);
+      return res.json(overview);
+    } catch (e) {
+      console.error('[desk-overview]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load accounting desk overview.' });
     }
   });
 

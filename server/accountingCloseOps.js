@@ -91,6 +91,7 @@ export function getPeriodLock(db, periodKey) {
  * @param {{ trialExceptions?: object }} [opts]
  */
 export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', opts = {}) {
+  const light = Boolean(opts.light);
   const b = monthBounds(periodKey);
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
@@ -231,21 +232,33 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
-  const statements = getAccountingStatementsPack(db, periodKey, branchScope);
-  const bsBalanced = statements.ok ? Boolean(statements.balanceSheet?.balanced) : false;
-  steps.push(
-    step(
-      statements.ok ? (bsBalanced ? 'ok' : 'warn') : 'fail',
-      'statements',
-      'Draft statements',
-      statements.ok
-        ? bsBalanced
-          ? 'P&L and balance sheet generated; BS equation holds on GL data.'
-          : 'Statements generated but assets ≠ liabilities + equity — complete GL postings.'
-        : statements.error || 'Could not build statements.',
-      'statements'
-    )
-  );
+  if (light) {
+    steps.push(
+      step(
+        'ok',
+        'statements',
+        'Draft statements',
+        'Open Statements tab for full P&L and balance sheet detail.',
+        'statements'
+      )
+    );
+  } else {
+    const statements = getAccountingStatementsPack(db, periodKey, branchScope);
+    const bsBalanced = statements.ok ? Boolean(statements.balanceSheet?.balanced) : false;
+    steps.push(
+      step(
+        statements.ok ? (bsBalanced ? 'ok' : 'warn') : 'fail',
+        'statements',
+        'Draft statements',
+        statements.ok
+          ? bsBalanced
+            ? 'P&L and balance sheet generated; BS equation holds on GL data.'
+            : 'Statements generated but assets ≠ liabilities + equity — complete GL postings.'
+          : statements.error || 'Could not build statements.',
+        'statements'
+      )
+    );
+  }
 
   if (treasuryUnsettled > 0) {
     steps.push(
@@ -281,9 +294,20 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
-  const tieOut = buildControlTieOutReport(db, { periodKey, branchScope });
   let controlTieOut = null;
-  if (tieOut.ok) {
+  if (light) {
+    steps.push(
+      step(
+        'ok',
+        'control_tie_out',
+        'Register ↔ GL tie-out',
+        'Open Month-end close tab for register ↔ GL tie-out detail.',
+        'close'
+      )
+    );
+  } else {
+    const tieOut = buildControlTieOutReport(db, { periodKey, branchScope });
+    if (tieOut.ok) {
     controlTieOut = tieOut;
     const tieWarnings = tieOut.checks.filter((c) => c.status === 'warn');
     const tieFails = tieOut.checks.filter((c) => c.status === 'fail');
@@ -300,16 +324,17 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
         'close'
       )
     );
-  } else {
-    steps.push(
-      step(
-        'warn',
-        'control_tie_out',
-        'Register ↔ GL tie-out',
-        tieOut.error || 'Could not run control tie-out.',
-        'close'
-      )
-    );
+    } else {
+      steps.push(
+        step(
+          'warn',
+          'control_tie_out',
+          'Register ↔ GL tie-out',
+          tieOut.error || 'Could not run control tie-out.',
+          'close'
+        )
+      );
+    }
   }
 
   const blockers = steps.filter((s) => s.status === 'fail').length;

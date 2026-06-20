@@ -30,22 +30,25 @@ function scoreItems(items) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} [branchScope]
+ * @param {{ pack?: object; skipUnlinkedScan?: boolean }} [opts]
  */
-export function buildCutoverActionPlan(db, branchScope = 'ALL') {
+export function buildCutoverActionPlan(db, branchScope = 'ALL', opts = {}) {
   const opening = getOpeningBalanceStatus(db);
   const flags = readFinanceFeatureFlags();
-  const pack = buildOpeningPackReport(db, { branchScope });
+  const pack = opts.pack?.ok ? opts.pack : buildOpeningPackReport(db, { branchScope, summaryOnly: true });
   const ap1c = buildAp1cDryRunTrialSummary(db, branchScope);
 
   let unlinkedLegacy = 0;
-  try {
-    const branchId = branchScope === 'ALL' ? null : branchScope;
-    const cred = buildCreditorsRegister(db, branchId);
-    const debt = buildDebtorsRegister(db, branchId);
-    unlinkedLegacy =
-      Number(cred?.summary?.unlinkedLegacyCount ?? 0) + Number(debt?.summary?.unlinkedLegacyCount ?? 0);
-  } catch {
-    unlinkedLegacy = 0;
+  if (!opts.skipUnlinkedScan) {
+    try {
+      const branchId = branchScope === 'ALL' ? null : branchScope;
+      const cred = buildCreditorsRegister(db, branchId);
+      const debt = buildDebtorsRegister(db, branchId);
+      unlinkedLegacy =
+        Number(cred?.summary?.unlinkedLegacyCount ?? 0) + Number(debt?.summary?.unlinkedLegacyCount ?? 0);
+    } catch {
+      unlinkedLegacy = 0;
+    }
   }
 
   const legacyReceipts = Number(ap1c.receiptsBeforeProductionCredited1200Count) || 0;

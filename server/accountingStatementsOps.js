@@ -41,7 +41,8 @@ function accountBalanceForType(row, accountType) {
  * @param {string} periodKey
  * @param {'ALL' | string} branchScope
  */
-export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL') {
+export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL', opts = {}) {
+  const summaryOnly = Boolean(opts.summaryOnly);
   const b = monthBounds(periodKey);
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
@@ -94,7 +95,7 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL') 
   const bsBalanced = Math.abs(assets - totalLiabEq) <= 1;
 
   let receiptsNgn = 0;
-  if (hasColumn(db, 'sales_receipts', 'date_iso')) {
+  if (!summaryOnly && hasColumn(db, 'sales_receipts', 'date_iso')) {
     const bw = branchPredicate(db, 'sales_receipts', branchScope);
     const row = db
       .prepare(
@@ -104,7 +105,7 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL') 
     receiptsNgn = Math.round(Number(row?.s) || 0);
   }
 
-  return {
+  const base = {
     ok: true,
     periodKey: b.periodKey,
     range: { start: b.start, end: b.end },
@@ -113,7 +114,7 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL') 
       revenueTotalNgn: revenueTotal,
       expenseTotalNgn: expenseTotal,
       netIncomeNgn: netIncome,
-      lines: plLines,
+      lines: summaryOnly ? [] : plLines,
     },
     balanceSheet: {
       assetsNgn: assets,
@@ -121,8 +122,16 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL') 
       equityNgn: equity,
       totalLiabilitiesAndEquityNgn: totalLiabEq,
       balanced: bsBalanced,
-      lines: bsLines,
+      lines: summaryOnly ? [] : bsLines,
     },
+  };
+
+  if (summaryOnly) {
+    return { ...base, summaryOnly: true };
+  }
+
+  return {
+    ...base,
     reconciliationHints: {
       salesReceiptsInPeriodNgn: receiptsNgn,
       note:

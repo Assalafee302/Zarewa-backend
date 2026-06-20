@@ -8106,7 +8106,7 @@ export function registerHttpApi(app, db) {
   app.get('/api/customers/staff-link-options', requirePermission('customers.manage'), (req, res) => {
     try {
       if (!userMayLinkStaffSalesCustomer(req.user)) {
-        return res.status(403).json({ ok: false, error: 'Forbidden.' });
+        return res.json({ ok: true, items: [] });
       }
       const branchScope = resolveBootstrapBranchScope(req);
       const items = listStaffForSalesCustomerLink(db, branchScope, req.query.q || req.query.query || '');

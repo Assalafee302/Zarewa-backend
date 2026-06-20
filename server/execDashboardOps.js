@@ -824,19 +824,29 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
   }
 
   for (const it of listExecutiveUnifiedTrayItems(db, branchScope, user)) {
-    const kind = String(it.documentType || it.type || 'work_item').toLowerCase();
+    const docKind = String(it.documentType || it.type || 'work_item').toLowerCase();
+    const kind = docKind === 'memo' ? 'office_memo' : docKind === 'refund_request' ? 'refunds' : docKind;
+    const settlementId =
+      docKind === 'register_settlement' ? String(it.sourceId || '').trim() : '';
     add({
       id: `work:${it.id}`,
-      kind: kind === 'memo' ? 'office_memo' : 'work_item',
+      kind: kind === 'memo' ? 'office_memo' : kind,
       priority: priorityBand(70),
-      title: it.title || it.id,
+      title: it.title || settlementId || it.id,
       branchId: it.branchId || '',
       branchName: branchName(db, it.branchId),
       amountNgn: it.amountNgn != null ? Math.round(Number(it.amountNgn) || 0) : null,
       requestedBy: it.senderOfficeLabel || it.officeLabel || '—',
       ageLabel: daysSinceLabel(it.updatedAtIso || it.createdAtIso),
       status: String(it.status || 'Pending'),
-      route: it.route || '/office',
+      route: it.routePath || it.route || '/office',
+      settlementId: settlementId || undefined,
+      reviewContext: {
+        settlementId,
+        row: settlementId ? { settlementId, ...(it.data || {}) } : it.data || {},
+        reasons: settlementId ? ['Pending register withdrawal approval'] : [],
+        subtitle: String(it.summary || '').trim(),
+      },
       summaryOnly: false,
       canAct: !readOnly && canActOnWorkItemKind(user, kind),
     });

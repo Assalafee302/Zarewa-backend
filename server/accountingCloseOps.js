@@ -6,6 +6,8 @@ import { ACCOUNTING_OPENING_DATE_LABEL } from '../shared/lib/accountingCutover.j
 import { getOpeningBalanceStatus } from './accountingPostingOps.js';
 import { previewDepreciationRun } from './depreciationRunOps.js';
 import { trialBalanceRows } from './glOps.js';
+import { buildControlTieOutReport } from './accountingControlTieOutOps.js';
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 
 /**
  * @param {'ok'|'warn'|'fail'} status
@@ -118,16 +120,30 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
   );
 
   const ap1c = opts.trialExceptions?.ap1cDryRun;
+  const financeFlags = opts.trialExceptions?.flags || readFinanceFeatureFlags();
+  const ap1cPostingOn =
+    financeFlags.accountingPolicyV1ReceiptGl || financeFlags.accountingPolicyV1ProductionRelease;
+  const legacyReceiptCount = Number(ap1c?.receiptsBeforeProductionCredited1200Count) || 0;
   const legacyReceiptGl =
-    !opts.trialExceptions?.flags?.accountingPolicyV1ReceiptGl &&
-    Number(ap1c?.receiptsBeforeProductionCredited1200Count) > 0;
-  if (legacyReceiptGl || (ap1c?.available && Number(ap1c?.receiptsBeforeProductionCredited1200Count) > 0)) {
+    !financeFlags.accountingPolicyV1ReceiptGl && legacyReceiptCount > 0;
+  if (legacyReceiptGl || (ap1c?.available && legacyReceiptCount > 0)) {
+    steps.push(
+      step(
+        ap1cPostingOn && legacyReceiptCount > 0 ? 'fail' : 'warn',
+        'receipt_policy',
+        'Receipt / deposit policy',
+        `${legacyReceiptCount} receipt(s) credited to AR before production — review Policy tab before cutover.`,
+        'policy'
+      )
+    );
+  }
+  if (ap1cPostingOn && Number(ap1c?.receiptReversalsMissingResolvableMetaCount) > 0) {
     steps.push(
       step(
         'warn',
-        'receipt_policy',
-        'Receipt / deposit policy',
-        `${ap1c?.receiptsBeforeProductionCredited1200Count ?? '?'} receipt(s) credited to AR before production — review Policy tab before cutover.`,
+        'ap1c_reversal_meta',
+        'Receipt reversal metadata',
+        `${ap1c.receiptReversalsMissingResolvableMetaCount} reversal(s) missing resolvable GL metadata.`,
         'policy'
       )
     );
@@ -239,6 +255,34 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     );
   }
 
+  const tieOut = buildControlTieOutReport(db, { periodKey, branchScope });
+  let controlTieOut = null;
+  if (tieOut.ok) {
+    controlTieOut = tieOut;
+    const tieWarnings = tieOut.checks.filter((c) => c.status === 'warn');
+    steps.push(
+      step(
+        tieWarnings.length === 0 ? 'ok' : 'warn',
+        'control_tie_out',
+        'Register ↔ GL tie-out',
+        tieWarnings.length === 0
+          ? `${tieOut.checks.length} control account(s) within tolerance.`
+          : `${tieWarnings.length} variance(s) — ${tieOut.summary}`,
+        'close'
+      )
+    );
+  } else {
+    steps.push(
+      step(
+        'warn',
+        'control_tie_out',
+        'Register ↔ GL tie-out',
+        tieOut.error || 'Could not run control tie-out.',
+        'close'
+      )
+    );
+  }
+
   const blockers = steps.filter((s) => s.status === 'fail').length;
   const warnings = steps.filter((s) => s.status === 'warn').length;
   const ready = blockers === 0 && warnings === 0;
@@ -258,6 +302,7 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     blockers,
     warnings,
     steps,
+    controlTieOut,
     summary:
       lockMeta.summary ??
       (ready

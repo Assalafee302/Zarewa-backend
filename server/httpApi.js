@@ -121,6 +121,7 @@ import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
 import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
+import { buildAp3BranchPlReport } from './ap3BranchPlOps.js';
 import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import {
   buildCreditorsRegister,
@@ -518,6 +519,8 @@ import {
   postOpeningBalanceJournal,
   ensureArchitecturalGlAccounts,
 } from './accountingPostingOps.js';
+import { buildOpeningPackReport, postOpeningPackJournal } from './accountingOpeningPackOps.js';
+import { buildControlTieOutReport } from './accountingControlTieOutOps.js';
 import { buildMonthEndCloseChecklist } from './accountingCloseOps.js';
 import { previewDepreciationRun, postDepreciationRun } from './depreciationRunOps.js';
 import {
@@ -1497,6 +1500,29 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[ap3-costing-readiness]', e);
       return res.status(500).json({ ok: false, error: 'Costing readiness report failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap3-branch-pl', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp3CostingReadiness(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view branch P&L.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const report = buildAp3BranchPlReport(db, {
+        branchId,
+        period: String(req.query?.period || '').trim() || null,
+      });
+      if (!report.ok) return res.status(400).json(report);
+      return res.json(report);
+    } catch (e) {
+      console.error('[ap3-branch-pl]', e);
+      return res.status(500).json({ ok: false, error: 'Branch P&L report failed.' });
     }
   });
 
@@ -4070,6 +4096,78 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[opening-balance-post]', e);
       return res.status(500).json({ ok: false, error: 'Could not post opening balance.' });
+    }
+  });
+
+  app.get('/api/finance/opening-pack', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const inventoryPeriodKey = String(req.query.inventoryPeriod || req.query.inventoryPeriodKey || '').trim() || undefined;
+      const payrollPeriodKey = String(req.query.payrollPeriod || req.query.payrollPeriodKey || '').trim() || undefined;
+      const capitalRaw = req.query.capitalNgn ?? req.query.capital;
+      const capitalNgn = capitalRaw != null && capitalRaw !== '' ? Math.round(Number(capitalRaw)) : 0;
+      const pack = buildOpeningPackReport(db, {
+        branchScope,
+        inventoryPeriodKey,
+        payrollPeriodKey,
+        capitalNgn: Number.isFinite(capitalNgn) ? capitalNgn : 0,
+      });
+      if (!pack.ok) return res.status(400).json(pack);
+      return res.json(pack);
+    } catch (e) {
+      console.error('[opening-pack]', e);
+      return res.status(500).json({ ok: false, error: 'Could not build opening pack.' });
+    }
+  });
+
+  app.post('/api/finance/opening-pack/post', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    if (!userHasPermission(req.user, 'finance.post')) {
+      return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const body = req.body || {};
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
+      const result = postOpeningPackJournal(db, {
+        branchScope,
+        capitalNgn: body.capitalNgn,
+        inventoryPeriodKey: body.inventoryPeriodKey,
+        createdByUserId: req.user?.id,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.duplicate ? 200 : 201).json(result);
+    } catch (e) {
+      console.error('[opening-pack-post]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post opening pack.' });
+    }
+  });
+
+  app.get('/api/finance/control-tie-out', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const periodKey = String(req.query.period || req.query.periodKey || '').trim();
+      if (!isValidFinancePackPeriodKey(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
+      }
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const thresholdRaw = req.query.thresholdPct ?? req.query.threshold;
+      const thresholdPct = thresholdRaw != null && thresholdRaw !== '' ? Number(thresholdRaw) : undefined;
+      const report = buildControlTieOutReport(db, { periodKey, branchScope, thresholdPct });
+      if (!report.ok) return res.status(400).json(report);
+      return res.json(report);
+    } catch (e) {
+      console.error('[control-tie-out]', e);
+      return res.status(500).json({ ok: false, error: 'Could not build control tie-out.' });
     }
   });
 

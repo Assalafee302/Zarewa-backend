@@ -74,6 +74,18 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
     expect(run.body.run.status).toBe('locked');
   });
 
+  it('rejects a second payroll run for the same calendar month', async () => {
+    const period = '202607';
+    const first = await agent.post('/api/hr/payroll-runs').send({ periodYyyymm: period });
+    expect(first.status).toBe(201);
+    expect(first.body.ok).toBe(true);
+
+    const second = await agent.post('/api/hr/payroll-runs').send({ periodYyyymm: period });
+    expect(second.status).toBe(400);
+    expect(second.body.ok).toBe(false);
+    expect(String(second.body.error || '')).toMatch(/already exists/i);
+  });
+
   it('GET /api/hr/policy-config returns pension defaults', async () => {
     const res = await agent.get('/api/hr/policy-config');
     expect(res.status).toBe(200);

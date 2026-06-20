@@ -3972,6 +3972,33 @@ export function createPayrollRun(db, actor, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const periodYyyymm = String(body?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
   if (!/^\d{6}$/.test(periodYyyymm)) return { ok: false, error: 'periodYyyymm must be YYYYMM.' };
+  const existing = db
+    .prepare(`SELECT id, status FROM hr_payroll_runs WHERE period_yyyymm = ? LIMIT 1`)
+    .get(periodYyyymm);
+  if (existing?.id) {
+    const monthIdx = Math.max(0, Math.min(11, Number(periodYyyymm.slice(4, 6)) - 1));
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    const monthLabel = monthNames[monthIdx] || periodYyyymm.slice(4, 6);
+    const yearLabel = periodYyyymm.slice(0, 4);
+    return {
+      ok: false,
+      error: `A payroll run for ${monthLabel} ${yearLabel} already exists (${existing.status}). Only one run per month is allowed.`,
+      existingRunId: existing.id,
+    };
+  }
   const policy = getHrPolicyPayload(db);
   const penEmp = Number(policy.pensionEmployeePercent) || 8;
   const penEr = Number(policy.pensionEmployerPercent) || 10;

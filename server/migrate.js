@@ -1143,6 +1143,7 @@ function runMigrationsUnlocked(db) {
   migrateStaffObligationLedger2026(db);
   migrateStaffPurchaseCredit2026(db);
   migrateStaffRecoveryObligation2026(db);
+  migrateHrStaffDirectoryViews2026(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
@@ -5563,6 +5564,22 @@ function migrateStaffRecoveryObligation2026(db) {
   } catch (e) {
     console.warn('[migrate] recovery obligation backfill skipped:', e?.message || e);
   }
+}
+
+/** Per-user saved staff directory filter views (sync across devices). */
+function migrateHrStaffDirectoryViews2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hr_staff_directory_views (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_dir_views_user_name ON hr_staff_directory_views(user_id, name);
+    CREATE INDEX IF NOT EXISTS idx_hr_dir_views_user ON hr_staff_directory_views(user_id, updated_at_iso DESC);
+  `);
 }
 
 /** Ledger / receipt duplicate-check hot paths (bootstrap, finance desk). */

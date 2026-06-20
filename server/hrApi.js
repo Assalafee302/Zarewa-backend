@@ -29,6 +29,12 @@ import {
   getHrStaffAppraisalSummary,
   getHrStaffActivitySummary,
   bulkUpdateHrStaff,
+  listHrStaffDirectory,
+  listHrStaffDirectoryViews,
+  upsertHrStaffDirectoryView,
+  deleteHrStaffDirectoryView,
+  updateHrStaffProbation,
+  flattenHrOrgChartForExport,
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   exportPayrollBankUploadCsv,
@@ -1117,12 +1123,121 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
         scope.viewAll = false;
+      } else if (
+        userCanAccessMainHrWorkspace(req.user) &&
+        (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
+      ) {
+        scope.viewAll = true;
       }
       const chart = getHrOrgChart(db, scope);
       return res.json({ ok: true, chart });
     } catch (e) {
-      console.error(e);
+      console.error('[hr/org-chart]', e);
       return res.status(500).json({ ok: false, error: 'Could not load org chart.' });
+    }
+  });
+
+  app.get('/api/hr/org-chart/export.csv', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      if (userCanAccessMainHrWorkspace(req.user)) scope.viewAll = true;
+      const chart = getHrOrgChart(db, scope);
+      const lines = flattenHrOrgChartForExport(chart);
+      const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const header = ['Name', 'UserId', 'JobTitle', 'Department', 'Branch', 'LineManager', 'Depth'];
+      const rows = lines.map((l) =>
+        [l.displayName, l.userId, l.jobTitle, l.department, l.branchId, l.lineManager, l.depth].map(esc).join(',')
+      );
+      const csv = [header.join(','), ...rows].join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="org-chart-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return res.send(csv);
+    } catch (e) {
+      console.error('[hr/org-chart/export]', e);
+      return res.status(500).json({ ok: false, error: 'Could not export org chart.' });
+    }
+  });
+
+  app.get('/api/hr/staff/directory', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      } else if (
+        userCanAccessMainHrWorkspace(req.user) &&
+        (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
+      ) {
+        scope.viewAll = true;
+      } else if (userCanAccessScholarshipDomesticExecutive(req.user)) {
+        scope.viewAll = true;
+      }
+      const includeInactive = String(req.query?.includeInactive || '') === '1' || String(req.query?.status || '') === 'all' || String(req.query?.status || '') === 'inactive';
+      const cohort = String(req.query?.cohort || 'employees').trim();
+      const result = listHrStaffDirectory(db, scope, {
+        includeInactive,
+        cohort,
+        page: req.query?.page,
+        pageSize: req.query?.pageSize,
+        search: req.query?.search,
+        branchId: req.query?.branchId,
+        department: req.query?.department,
+        employmentType: req.query?.employmentType,
+        status: req.query?.status,
+        quickFilter: req.query?.quickFilter || req.query?.quick,
+        lineManagerUserId: req.query?.lineManagerUserId,
+        sortKey: req.query?.sortKey,
+        sortDir: req.query?.sortDir,
+      });
+      const ctx = hrRedactionContextFromReq(req);
+      return res.json({
+        ok: true,
+        staff: redactStaffList(result.staff, ctx),
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        kpis: result.kpis,
+        facets: result.facets,
+      });
+    } catch (e) {
+      console.error('[hr/staff/directory]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load staff directory.' });
+    }
+  });
+
+  app.get('/api/hr/staff/directory-views', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const views = listHrStaffDirectoryViews(db, req.user?.id);
+      return res.json({ ok: true, views });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load saved views.' });
+    }
+  });
+
+  app.post('/api/hr/staff/directory-views', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = upsertHrStaffDirectoryView(db, req.user?.id, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save view.' });
+    }
+  });
+
+  app.delete('/api/hr/staff/directory-views/:viewId', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = deleteHrStaffDirectoryView(db, req.user?.id, req.params.viewId);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not delete view.' });
     }
   });
 
@@ -1359,6 +1474,20 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not unlock profile.' });
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/probation', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = updateHrStaffProbation(db, req.user, userId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not update probation.' });
     }
   });
 

@@ -459,6 +459,15 @@ export function listHrStaff(db, scope, opts = {}) {
   sql += ` ORDER BY u.display_name ASC`;
 
   const rows = db.prepare(sql).all(...args);
+  return enrichHrStaffListRows(db, rows);
+}
+
+/**
+ * Attach derived fields, completeness, and manager names to raw staff list rows.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object[]} rows
+ */
+export function enrichHrStaffListRows(db, rows) {
   const displayNameByUserId = new Map(rows.map((r) => [String(r.userId), r.displayName]));
   const ackRows = db
     .prepare(
@@ -469,7 +478,9 @@ export function listHrStaff(db, scope, opts = {}) {
     )
     .all();
   const ackByUserId = new Map(ackRows.map((r) => [String(r.user_id), String(r.accepted_at_iso || '')]));
-  const overdueRows = listHrRequests(db, scope, {}).filter((r) => r.slaState === 'overdue');
+  const overdueRows = listHrRequests(db, { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {}).filter(
+    (r) => r.slaState === 'overdue'
+  );
   const overdueByUser = new Set(overdueRows.map((r) => String(r.userId)));
   const complianceByUserId = new Map(
     rows.map((r) => [
@@ -507,6 +518,416 @@ export function listHrStaff(db, scope, opts = {}) {
     }
     return base;
   });
+}
+
+function hrDirectoryAddDaysIso(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function attachDocExpirySummary(db, staffRows) {
+  if (!staffRows.length) return staffRows;
+  const today = nowIso().slice(0, 10);
+  const in60 = hrDirectoryAddDaysIso(60);
+  const ids = staffRows.map((s) => String(s.userId));
+  const ph = ids.map(() => '?').join(',');
+  let docRows = [];
+  try {
+    docRows = db
+      .prepare(
+        `SELECT user_id AS userId, MIN(expiry_date_iso) AS nextExpiryIso, COUNT(*) AS expiringCount
+         FROM hr_staff_documents
+         WHERE user_id IN (${ph}) AND expiry_date_iso IS NOT NULL AND expiry_date_iso BETWEEN ? AND ?
+         GROUP BY user_id`
+      )
+      .all(...ids, today, in60);
+  } catch {
+    return staffRows;
+  }
+  const byUser = new Map(docRows.map((r) => [String(r.userId), r]));
+  return staffRows.map((s) => {
+    const d = byUser.get(String(s.userId));
+    if (!d) return s;
+    return {
+      ...s,
+      docExpirySummary: {
+        nextExpiryIso: d.nextExpiryIso,
+        expiringCount: Number(d.expiringCount) || 0,
+      },
+    };
+  });
+}
+
+/**
+ * Server-paged staff directory with filters, KPIs, and document expiry hints.
+ * @param {import('better-sqlite3').Database} db
+ * @param {ReturnType<typeof hrListScope>} scope
+ * @param {object} [opts]
+ */
+export function listHrStaffDirectory(db, scope, opts = {}) {
+  if (!hrTablesReady(db)) {
+    return { staff: [], total: 0, page: 1, pageSize: 20, kpis: {}, facets: { departments: [], employmentTypes: [], managers: [] } };
+  }
+  const page = Math.max(1, Math.round(Number(opts.page) || 1));
+  const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
+  const includeInactive = Boolean(opts.includeInactive);
+  const cohortKey = opts.cohort;
+  const scopeMode = scope.scopeMode || 'branch';
+  const orgWide = Boolean(scope.viewAll) || scopeMode === 'org';
+  const joinType = 'INNER';
+  const today = nowIso().slice(0, 10);
+  const in30 = hrDirectoryAddDaysIso(30);
+  const in60 = hrDirectoryAddDaysIso(60);
+
+  let sql = `
+    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
+           u.avatar_url AS avatarUrl,
+           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
+           p.department_id AS departmentId, p.designation_id AS designationId,
+           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
+           p.contract_end_iso AS contractEndIso,
+           p.probation_end_iso AS probationEndIso,
+           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
+           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
+           p.academic_qualification AS academicQualification,
+           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
+           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
+           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
+           p.bonus_accrual_note AS bonusAccrualNote,
+           p.paye_tax_percent AS payeTaxPercent,
+           p.paye_tax_ngn AS payeTaxNgn,
+           p.pension_percent_override AS pensionPercentOverride,
+           p.self_service_eligible AS selfServiceEligible,
+           p.next_of_kin_json AS nextOfKinJson,
+           p.nin_number AS ninNumber,
+           p.bvn_number AS bvnNumber,
+           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
+           p.nhis_deduction_ngn AS nhisDeductionNgn,
+           p.profile_extra_json AS profileExtraJson,
+           p.line_manager_user_id AS lineManagerUserId,
+           p.leave_entitlement_band AS leaveEntitlementBand,
+           p.payroll_group AS payrollGroup,
+           p.salary_level AS salaryLevel,
+           p.salary_step AS salaryStep,
+           p.profile_submitted_at_iso AS profileSubmittedAtIso,
+           p.profile_locked AS profileLocked,
+           p.profile_verified_at_iso AS profileVerifiedAtIso,
+           p.sales_customer_id AS salesCustomerId
+    FROM app_users u
+    ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
+    WHERE 1=1
+  `;
+  const args = [];
+  if (!includeInactive) sql += ` AND u.status = 'active'`;
+  const cohortGroups =
+    cohortKey !== undefined && cohortKey !== null && String(cohortKey).trim() !== ''
+      ? payrollGroupsForCohort(cohortKey)
+      : null;
+  if (cohortGroups) {
+    const ph = cohortGroups.map(() => '?').join(',');
+    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') IN (${ph})`;
+    args.push(...cohortGroups);
+  }
+  if (!orgWide) {
+    const actorUserId = scope.actorUserId;
+    if (scopeMode === 'team' && actorUserId) {
+      sql += ` AND p.line_manager_user_id = ?`;
+      args.push(actorUserId);
+    } else if (scopeMode === 'department' && actorUserId) {
+      const deptIds = getDepartmentHeadDepartmentIds(db, actorUserId);
+      if (deptIds.length) {
+        const ph = deptIds.map(() => '?').join(',');
+        sql += ` AND (p.department_id IN (${ph}) OR p.line_manager_user_id = ?)`;
+        args.push(...deptIds, actorUserId);
+      } else {
+        sql += ` AND p.line_manager_user_id = ?`;
+        args.push(actorUserId);
+      }
+    } else if (scope.includeUnassigned) {
+      sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL)`;
+      args.push(scope.branchId);
+    } else {
+      sql += ` AND p.branch_id = ?`;
+      args.push(scope.branchId);
+    }
+  }
+  const statusFilter = String(opts.status || '').trim().toLowerCase();
+  if (statusFilter === 'active') sql += ` AND u.status = 'active'`;
+  else if (statusFilter === 'inactive') sql += ` AND u.status != 'active'`;
+  if (opts.branchId) {
+    sql += ` AND p.branch_id = ?`;
+    args.push(String(opts.branchId));
+  }
+  if (opts.department) {
+    sql += ` AND p.department = ?`;
+    args.push(String(opts.department));
+  }
+  if (opts.employmentType) {
+    sql += ` AND p.employment_type = ?`;
+    args.push(String(opts.employmentType));
+  }
+  if (opts.lineManagerUserId) {
+    sql += ` AND p.line_manager_user_id = ?`;
+    args.push(String(opts.lineManagerUserId));
+  }
+  const q = String(opts.search || '').trim().toLowerCase();
+  if (q) {
+    sql += ` AND (
+      lower(u.display_name) LIKE ? OR lower(u.username) LIKE ? OR lower(COALESCE(p.employee_no,'')) LIKE ?
+      OR lower(COALESCE(p.job_title,'')) LIKE ? OR lower(COALESCE(p.department,'')) LIKE ?
+    )`;
+    const like = `%${q}%`;
+    args.push(like, like, like, like, like);
+  }
+  const quick = String(opts.quickFilter || '').trim();
+  if (quick === 'probation') {
+    sql += ` AND p.probation_end_iso >= ? AND (p.date_joined_iso IS NULL OR p.probation_end_iso > p.date_joined_iso)`;
+    args.push(today);
+  } else if (quick === 'probation-ending') {
+    sql += ` AND p.probation_end_iso BETWEEN ? AND ? AND (p.date_joined_iso IS NULL OR p.probation_end_iso > p.date_joined_iso)`;
+    args.push(today, in30);
+  } else if (quick === 'contract') {
+    sql += ` AND (
+      lower(COALESCE(p.employment_type,'')) LIKE '%contract%' OR lower(COALESCE(p.employment_type,'')) LIKE '%temp%'
+    ) AND p.contract_end_iso BETWEEN ? AND ?`;
+    args.push(today, in60);
+  } else if (quick === 'no-manager') {
+    sql += ` AND (p.line_manager_user_id IS NULL OR trim(p.line_manager_user_id) = '')`;
+  } else if (quick === 'doc-expiry') {
+    sql += ` AND EXISTS (
+      SELECT 1 FROM hr_staff_documents d
+      WHERE d.user_id = u.id AND d.expiry_date_iso IS NOT NULL AND d.expiry_date_iso BETWEEN ? AND ?
+    )`;
+    args.push(today, in60);
+  } else if (quick === 'incomplete') {
+    sql += ` AND (
+      p.employee_no IS NULL OR trim(p.employee_no) = '' OR p.date_joined_iso IS NULL OR trim(p.date_joined_iso) = ''
+      OR p.job_title IS NULL OR trim(p.job_title) = '' OR p.department IS NULL OR trim(p.department) = ''
+      OR p.branch_id IS NULL OR trim(p.branch_id) = ''
+    )`;
+  } else if (quick === 'direct-reports' && opts.lineManagerUserId) {
+    /* already filtered by lineManagerUserId */
+  }
+
+  const countRow = db.prepare(`SELECT COUNT(*) AS c FROM (${sql})`).get(...args);
+  const total = Number(countRow?.c) || 0;
+
+  const sortKey = String(opts.sortKey || 'name').trim();
+  const sortDir = String(opts.sortDir || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+  const orderMap = {
+    name: 'u.display_name',
+    branch: 'p.branch_id',
+    department: 'p.department',
+    joined: 'p.date_joined_iso',
+    profile: 'p.profile_submitted_at_iso',
+  };
+  const orderCol = orderMap[sortKey] || orderMap.name;
+  sql += ` ORDER BY ${orderCol} ${sortDir}, u.display_name ASC`;
+  sql += ` LIMIT ? OFFSET ?`;
+  const offset = (page - 1) * pageSize;
+  const rawRows = db.prepare(sql).all(...args, pageSize, offset);
+  let staff = attachDocExpirySummary(db, enrichHrStaffListRows(db, rawRows));
+  if (quick === 'incomplete') {
+    staff = staff.filter((s) => (s.criticalMissing || []).length > 0 || (s.profileCompleteness?.overallPct ?? 100) < 60);
+  }
+
+  const allForKpis = listHrStaff(db, scope, {
+    includeInactive,
+    requireProfile: true,
+    cohort: cohortKey,
+  });
+  const kpis = {
+    total: allForKpis.length,
+    active: allForKpis.filter((s) => String(s.status) === 'active').length,
+    incomplete: allForKpis.filter((s) => (s.criticalMissing || []).length > 0 || (s.profileCompleteness?.overallPct ?? 100) < 60).length,
+    onProbation: allForKpis.filter((s) => {
+      const end = String(s.probationEndIso || '').slice(0, 10);
+      const joined = String(s.dateJoinedIso || '').slice(0, 10);
+      return end && end >= today && (!joined || end > joined);
+    }).length,
+    probationEnding: allForKpis.filter((s) => {
+      const end = String(s.probationEndIso || '').slice(0, 10);
+      return end && end >= today && end <= in30;
+    }).length,
+    contractsExpiring: allForKpis.filter((s) => {
+      const et = String(s.employmentType || '').toLowerCase();
+      const end = String(s.contractEndIso || '').slice(0, 10);
+      return (et.includes('contract') || et.includes('temp')) && end && end >= today && end <= in60;
+    }).length,
+    noManager: allForKpis.filter((s) => !String(s.lineManagerUserId || '').trim()).length,
+    docExpiring: 0,
+  };
+  try {
+    const docKpi = db
+      .prepare(
+        `SELECT COUNT(DISTINCT d.user_id) AS c FROM hr_staff_documents d
+         JOIN hr_staff_profiles p ON p.user_id = d.user_id
+         JOIN app_users u ON u.id = d.user_id
+         WHERE d.expiry_date_iso BETWEEN ? AND ? AND u.status = 'active'`
+      )
+      .get(today, in60);
+    kpis.docExpiring = Number(docKpi?.c) || 0;
+  } catch {
+    kpis.docExpiring = 0;
+  }
+
+  const departments = [...new Set(allForKpis.map((s) => s.department).filter(Boolean))].sort();
+  const employmentTypes = [
+    ...new Set(allForKpis.map((s) => s.employmentType || s.normalized?.taxonomy?.employmentType).filter(Boolean)),
+  ].sort();
+  const managerIds = [...new Set(allForKpis.map((s) => s.lineManagerUserId).filter(Boolean))];
+  const managers = managerIds
+    .map((id) => {
+      const m = allForKpis.find((s) => s.userId === id) || db.prepare(`SELECT id AS userId, display_name AS displayName FROM app_users WHERE id = ?`).get(id);
+      return m ? { userId: String(id), displayName: m.displayName || id } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+
+  return { staff, total, page, pageSize, kpis, facets: { departments, employmentTypes, managers } };
+}
+
+export function listHrStaffDirectoryViews(db, userId) {
+  if (!hrTablesReady(db)) return [];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT id, name, snapshot_json AS snapshotJson, created_at_iso AS createdAtIso, updated_at_iso AS updatedAtIso
+         FROM hr_staff_directory_views WHERE user_id = ? ORDER BY updated_at_iso DESC`
+      )
+      .all(String(userId || ''));
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      snapshot: safeJsonParse(r.snapshotJson, {}),
+      createdAtIso: r.createdAtIso,
+      updatedAtIso: r.updatedAtIso,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function upsertHrStaffDirectoryView(db, userId, { id, name, snapshot }) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const viewName = String(name || '').trim();
+  if (viewName.length < 2) return { ok: false, error: 'View name must be at least 2 characters.' };
+  if (viewName.length > 48) return { ok: false, error: 'View name is too long.' };
+  const now = nowIso();
+  const viewId = String(id || '').trim() || newId('HRV');
+  const snapJson = JSON.stringify(snapshot || {});
+  try {
+    const existing = db.prepare(`SELECT id FROM hr_staff_directory_views WHERE user_id = ? AND name = ?`).get(userId, viewName);
+    if (existing && existing.id !== viewId) return { ok: false, error: 'A view with this name already exists.' };
+    const row = db.prepare(`SELECT id FROM hr_staff_directory_views WHERE id = ? AND user_id = ?`).get(viewId, userId);
+    if (row) {
+      db.prepare(`UPDATE hr_staff_directory_views SET name = ?, snapshot_json = ?, updated_at_iso = ? WHERE id = ? AND user_id = ?`).run(
+        viewName,
+        snapJson,
+        now,
+        viewId,
+        userId
+      );
+    } else {
+      db.prepare(
+        `INSERT INTO hr_staff_directory_views (id, user_id, name, snapshot_json, created_at_iso, updated_at_iso)
+         VALUES (?,?,?,?,?,?)`
+      ).run(viewId, userId, viewName, snapJson, now, now);
+    }
+    return { ok: true, id: viewId, views: listHrStaffDirectoryViews(db, userId) };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || 'Could not save view.') };
+  }
+}
+
+export function deleteHrStaffDirectoryView(db, userId, viewId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const id = String(viewId || '').trim();
+  if (!id) return { ok: false, error: 'View id required.' };
+  db.prepare(`DELETE FROM hr_staff_directory_views WHERE id = ? AND user_id = ?`).run(id, userId);
+  return { ok: true, views: listHrStaffDirectoryViews(db, userId) };
+}
+
+/**
+ * Confirm or extend staff probation with audit trail.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {string} userId
+ * @param {{ action: 'confirm'|'extend'; newEndIso?: string; note?: string }} body
+ */
+export function updateHrStaffProbation(db, actor, userId, body = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'userId required.' };
+  const action = String(body.action || '').trim().toLowerCase();
+  if (action !== 'confirm' && action !== 'extend') {
+    return { ok: false, error: 'action must be confirm or extend.' };
+  }
+  const row = db.prepare(`SELECT probation_end_iso, date_joined_iso, profile_extra_json, branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'Staff profile not found.' };
+  const extra = safeJsonParse(row.profile_extra_json, {});
+  const today = nowIso().slice(0, 10);
+  const patch = { userId: uid, profileExtra: { ...extra } };
+  if (action === 'confirm') {
+    const yesterday = hrDirectoryAddDaysIso(-1);
+    patch.probationEndIso = yesterday;
+    patch.profileExtra.probationStatus = 'confirmed';
+    patch.profileExtra.probationConfirmedAtIso = today;
+    patch.profileExtra.probationConfirmedByUserId = actor?.id || null;
+    if (body.note) patch.profileExtra.probationConfirmNote = String(body.note).trim();
+  } else {
+    const newEnd = String(body.newEndIso || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newEnd)) return { ok: false, error: 'newEndIso required for extension (YYYY-MM-DD).' };
+    if (newEnd <= today) return { ok: false, error: 'Extension date must be in the future.' };
+    patch.probationEndIso = newEnd;
+    patch.profileExtra.probationStatus = 'extended';
+    patch.profileExtra.probationExtendedAtIso = today;
+    patch.profileExtra.probationExtendedByUserId = actor?.id || null;
+    if (body.note) patch.profileExtra.probationExtendNote = String(body.note).trim();
+  }
+  const r = upsertHrStaffProfile(db, actor?.id || null, patch, { allowInactive: true });
+  if (!r.ok) return r;
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || '',
+    action: action === 'confirm' ? 'hr.staff.probation_confirmed' : 'hr.staff.probation_extended',
+    entityKind: 'hr_staff_profile',
+    entityId: uid,
+    branchId: row.branch_id,
+    details: { action, newEndIso: patch.probationEndIso, note: body.note || null },
+  });
+  return { ok: true, probationEndIso: patch.probationEndIso, probationStatus: patch.profileExtra.probationStatus };
+}
+
+/** Flatten org chart to reporting-line rows for CSV export. */
+export function flattenHrOrgChartForExport(chart) {
+  const lines = [];
+  const walk = (node, depth, managerName) => {
+    lines.push({
+      userId: node.userId,
+      displayName: node.displayName,
+      jobTitle: node.jobTitle || '',
+      department: node.department || '',
+      branchId: node.branchId || '',
+      lineManager: managerName || '',
+      depth,
+    });
+    for (const child of node.children || []) walk(child, depth + 1, node.displayName);
+  };
+  for (const root of chart?.roots || []) walk(root, 0, '');
+  for (const orphan of chart?.orphans || []) {
+    lines.push({
+      userId: orphan.userId,
+      displayName: orphan.displayName,
+      jobTitle: orphan.jobTitle || '',
+      department: orphan.department || '',
+      branchId: orphan.branchId || '',
+      lineManager: '',
+      depth: 0,
+    });
+  }
+  return lines;
 }
 
 export function listHrCompensationInsights(db, scope, opts = {}) {
@@ -652,8 +1073,9 @@ export function getHrStaffOne(db, userId) {
   if (!staff) return null;
   const reporting = hrStaffReportingContext(list, userId);
   const enriched = enrichStaffWithLifecycle(enrichStaffWithOnboarding(db, staff, staff.avatarUrl));
+  const [withDocExpiry] = attachDocExpirySummary(db, [enriched]);
   return {
-    ...enriched,
+    ...withDocExpiry,
     tenure: getStaffTenureSummary(db, userId, {
       dateJoinedIso: staff.dateJoinedIso,
       salaryLevel: staff.salaryLevel,
@@ -7514,7 +7936,9 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
   if (userIds.length > 100) return { ok: false, error: 'Maximum 100 staff per bulk action.' };
   const hasManager = body.lineManagerUserId !== undefined;
   const hasStatus = body.accountStatus !== undefined && body.accountStatus !== null && body.accountStatus !== '';
-  if (!hasManager && !hasStatus) return { ok: false, error: 'Nothing to update.' };
+  const hasBranch = body.branchId !== undefined && body.branchId !== null && String(body.branchId).trim() !== '';
+  const hasReviewFlag = body.flagForReview === true;
+  if (!hasManager && !hasStatus && !hasBranch && !hasReviewFlag) return { ok: false, error: 'Nothing to update.' };
 
   let updated = 0;
   let failed = 0;
@@ -7535,6 +7959,32 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
         errors.push({ userId: uid, error: r.error || 'Could not update manager.' });
       }
     }
+    if (ok && hasBranch) {
+      const r = upsertHrStaffProfile(
+        db,
+        actor?.id || null,
+        { userId: uid, branchId: String(body.branchId).trim() },
+        { allowInactive: true }
+      );
+      if (!r.ok) {
+        ok = false;
+        errors.push({ userId: uid, error: r.error || 'Could not update branch.' });
+      }
+    }
+    if (ok && hasReviewFlag) {
+      const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+      if (row) {
+        const extra = safeJsonParse(row.profile_extra_json, {});
+        extra.flaggedForReview = true;
+        extra.flaggedForReviewAtIso = nowIso();
+        extra.flaggedForReviewByUserId = actor?.id || null;
+        const r = upsertHrStaffProfile(db, actor?.id || null, { userId: uid, profileExtra: extra }, { allowInactive: true });
+        if (!r.ok) {
+          ok = false;
+          errors.push({ userId: uid, error: r.error || 'Could not flag for review.' });
+        }
+      }
+    }
     if (ok && hasStatus) {
       const r = setAppUserAccountStatus(db, uid, body.accountStatus, actor?.id || null);
       if (!r.ok) {
@@ -7552,7 +8002,14 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
     action: 'hr.staff.bulk_update',
     entityKind: 'hr_staff_profile',
     entityId: userIds.join(','),
-    details: { updated, failed, lineManager: hasManager, accountStatus: hasStatus ? body.accountStatus : null },
+    details: {
+      updated,
+      failed,
+      lineManager: hasManager,
+      branch: hasBranch,
+      flagForReview: hasReviewFlag,
+      accountStatus: hasStatus ? body.accountStatus : null,
+    },
   });
 
   return { ok: true, updated, failed, errors };

@@ -257,7 +257,9 @@ export function buildBootstrap(db, opts = {}) {
         ? listStaffRecoveriesDueForCashier(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
-      payReqOk ? listRegisterSettlementsAwaitingPayment(db, branchScope) : [],
+      payReqOk || userHasPermission(user, 'finance.pay')
+        ? listRegisterSettlementsAwaitingPayment(db, branchScope)
+        : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     bankDeposits:
       ledgerOk || finOk ? listBankDeposits(db, branchScope, { openOnly: false }) : [],

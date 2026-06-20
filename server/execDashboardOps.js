@@ -36,6 +36,10 @@ import {
 import { buildStaffActivitySummary } from './execStaffActivityOps.js';
 import { buildExecTargetsPanel } from './execTargetsOps.js';
 import {
+  listRegisterSettlements,
+  listRegisterSettlementsAwaitingPayment,
+} from './accountingRegisterSettlementOps.js';
+import {
   buildPayablesOutflowsSummary,
   buildWorkingCapitalSnapshot,
 } from './execWorkingCapitalOps.js';
@@ -280,12 +284,23 @@ export function buildScopedExecutiveCounts(db, branchScope) {
 
   let pendingRegisterSettlements = { count: 0, scopeBasis: isAll ? 'company' : 'branch' };
   try {
-    const bSet = branchWhere(db, 'accounting_register_settlements', scope);
-    pendingRegisterSettlements = countRow(
-      `SELECT COUNT(*) AS c FROM accounting_register_settlements WHERE status = 'Pending'${bSet.sql}`,
-      bSet.args,
-      isAll ? 'company' : 'branch'
-    );
+    pendingRegisterSettlements = {
+      count: (listRegisterSettlements(db, {
+        status: 'Pending',
+        branchId: isAll ? null : scope,
+      }).items || []).length,
+      scopeBasis: isAll ? 'company' : 'branch',
+    };
+  } catch {
+    /* optional */
+  }
+
+  let approvedRegisterSettlementsAwaitingPay = { count: 0, scopeBasis: isAll ? 'company' : 'branch' };
+  try {
+    approvedRegisterSettlementsAwaitingPay = {
+      count: listRegisterSettlementsAwaitingPayment(db, scope).length,
+      scopeBasis: isAll ? 'company' : 'branch',
+    };
   } catch {
     /* optional */
   }
@@ -300,6 +315,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     pendingProductionJobs,
     stockRegisterPendingMd,
     pendingRegisterSettlements,
+    approvedRegisterSettlementsAwaitingPay,
     bankReconciliationLinesInReview: {
       count: org.bankReconciliationLinesInReview ?? 0,
       scopeBasis: 'company',
@@ -732,6 +748,12 @@ export function buildQueueSummaryTray(scopedCounts) {
     'register_settlement',
     'Register withdrawals pending',
     '/accounting'
+  );
+  pushSummary(
+    scopedCounts.approvedRegisterSettlementsAwaitingPay,
+    'register_settlement_payout',
+    'Register withdrawals awaiting payout',
+    '/accounts?tab=desk'
   );
   pushSummary(scopedCounts.pendingPaymentRequests, 'payments', 'Payment requests pending', '/manager');
   pushSummary(

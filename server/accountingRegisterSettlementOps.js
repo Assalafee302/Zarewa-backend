@@ -17,12 +17,43 @@ import { userMayManageAccountingSubledger } from './financeDeskAccess.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { nextPostingBatchHumanId, nextRegisterSettlementHumanId } from './humanId.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
-import { branchWhere } from './readModel.js';
 import {
   clearAccountingRegisterLine,
   ensureAccountingRegisterSchema,
   updateAccountingRegisterLine,
 } from './accountingSubledgerOps.js';
+
+/** @param {'ALL' | string} branchScope @param {string} [settlementAlias] @param {string} [lineAlias] */
+function settlementBranchScopeClause(branchScope, settlementAlias = 's', lineAlias = 'l') {
+  if (branchScope === 'ALL' || !branchScope) return { sql: '', args: [] };
+  const scope = String(branchScope).trim();
+  if (!scope) return { sql: '', args: [] };
+  return {
+    sql: ` AND COALESCE(NULLIF(TRIM(${settlementAlias}.branch_id), ''), NULLIF(TRIM(${lineAlias}.branch_id), '')) = ?`,
+    args: [scope],
+  };
+}
+
+/** Backfill missing settlement branch_id from the parent register line (legacy rows). */
+function backfillSettlementBranchIds(db) {
+  ensureAccountingRegisterSettlementSchema(db);
+  db.prepare(
+    `UPDATE accounting_register_settlements
+     SET branch_id = (
+       SELECT NULLIF(TRIM(l.branch_id), '')
+       FROM accounting_register_lines l
+       WHERE l.id = accounting_register_settlements.register_line_id
+     ),
+     updated_at_iso = ?
+     WHERE (branch_id IS NULL OR TRIM(branch_id) = '')
+       AND register_line_id IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM accounting_register_lines l2
+         WHERE l2.id = accounting_register_settlements.register_line_id
+           AND NULLIF(TRIM(l2.branch_id), '') IS NOT NULL
+       )`
+  ).run(nowIso());
+}
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
@@ -212,8 +243,19 @@ export function listRegisterSettlements(db, opts = {}) {
   }
   const branchId = String(opts.branchId || '').trim();
   if (branchId && branchId !== 'ALL' && !lineId) {
-    sql += ` AND branch_id = ?`;
-    args.push(branchId);
+    backfillSettlementBranchIds(db);
+    const b = settlementBranchScopeClause(branchId);
+    let scopedSql = `SELECT s.* FROM accounting_register_settlements s
+      LEFT JOIN accounting_register_lines l ON l.id = s.register_line_id
+      WHERE 1=1`;
+    const scopedArgs = [];
+    if (status && status !== 'ALL') {
+      scopedSql += ` AND s.status = ?`;
+      scopedArgs.push(status);
+    }
+    scopedSql += `${b.sql} ORDER BY s.requested_at_iso DESC, s.settlement_id DESC`;
+    const items = db.prepare(scopedSql).all(...scopedArgs, ...b.args).map(mapSettlementRow);
+    return { ok: true, items };
   }
   sql += ` ORDER BY requested_at_iso DESC, settlement_id DESC`;
   const items = db.prepare(sql).all(...args).map(mapSettlementRow);
@@ -227,13 +269,15 @@ export function listRegisterSettlements(db, opts = {}) {
  */
 export function listRegisterSettlementsAwaitingPayment(db, branchScope = 'ALL') {
   ensureAccountingRegisterSettlementSchema(db);
-  const b = branchWhere(db, 'accounting_register_settlements', branchScope);
+  backfillSettlementBranchIds(db);
+  const b = settlementBranchScopeClause(branchScope);
   const rows = db
     .prepare(
-      `SELECT * FROM accounting_register_settlements
-       WHERE status = 'Approved'
+      `SELECT s.* FROM accounting_register_settlements s
+       LEFT JOIN accounting_register_lines l ON l.id = s.register_line_id
+       WHERE s.status = 'Approved'
        ${b.sql}
-       ORDER BY approved_at_iso DESC, settlement_id DESC`
+       ORDER BY s.approved_at_iso DESC, s.settlement_id DESC`
     )
     .all(...b.args);
   return rows
@@ -283,6 +327,9 @@ export function createRegisterSettlement(db, body, user) {
   if (!reason) return { ok: false, error: 'Reason / description is required.' };
 
   const branchId = String(body?.branchId || line.branch_id || '').trim() || null;
+  if (!branchId) {
+    return { ok: false, error: 'Register line is missing branch scope — cannot create withdrawal request.' };
+  }
   const settlementId = nextRegisterSettlementHumanId(db, branchId);
   const tiso = nowIso();
   const uid = user?.id ? String(user.id) : null;

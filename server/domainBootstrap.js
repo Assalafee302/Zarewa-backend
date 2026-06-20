@@ -226,7 +226,9 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         ? listStaffRecoveriesDueForCashier(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
-      payReqOk ? listRegisterSettlementsAwaitingPayment(db, branchScope) : [],
+      payReqOk || userHasPermission(user, 'finance.pay')
+        ? listRegisterSettlementsAwaitingPayment(db, branchScope)
+        : [],
   };
 }
 

@@ -155,7 +155,7 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await expect(page.getByText(/Audit checklist/i).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Cashier: My desk pays approved refund; Accounts & balances hides payout queues', async ({ page }) => {
+  test('Cashier: My desk pays approved refund; treasury deep link merges to desk', async ({ page }) => {
     test.setTimeout(180_000);
 
     await signInViaApi(page, 'sales.staff', 'Sales@123');
@@ -201,8 +201,10 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await Promise.all([postPayout.click(), waitPay]);
     await expect(page.getByRole('heading', { name: 'Refund payout' })).toBeHidden({ timeout: 20_000 });
 
-    await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: /Accounts & balances/i }).click();
-    await expect(page.getByTestId('cashier-treasury-desk-banner')).toBeVisible({ timeout: 15_000 });
+    await page.goto('/accounts?tab=treasury');
+    await expect(page.getByRole('tab', { name: /^My desk$/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('desk-treasury-summary')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('tab', { name: /Accounts & balances/i })).toHaveCount(0);
     await expect(page.getByTestId('finance-refunds-awaiting-payout')).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /Expenses & requests/i })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /^Audit$/i })).toHaveCount(0);

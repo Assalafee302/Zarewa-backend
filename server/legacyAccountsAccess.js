@@ -11,8 +11,8 @@ const ROLE_CASHIER = 'cashier';
 const ROLE_ACCOUNTANT = 'finance_manager';
 const OVERSIGHT_ROLES = new Set(['admin', 'md']);
 
-/** Cashier: Desk + receipts + movements + treasury (balances). No disbursements register or audit. */
-const CASHIER_LEGACY_TABS = new Set(['desk', 'treasury', 'receipts', 'movements']);
+/** Cashier: Desk (accounts & statements merged) + receipts + movements. */
+const CASHIER_LEGACY_TABS = new Set(['desk', 'receipts', 'movements']);
 
 /** Accountant / Head of Accounts — reconciliation and oversight tabs. */
 const ACCOUNTANT_LEGACY_TABS = new Set(['treasury', 'receipts', 'movements', 'disbursements', 'audit']);

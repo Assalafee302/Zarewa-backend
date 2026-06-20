@@ -1260,18 +1260,17 @@ const CORE_HELP_ARTICLES = [
       'cashier cannot approve',
     ],
     answer:
-      '**My desk** (`/accounts?tab=desk`) is the cashier home for **execution**: confirm bank deposits, pay approved refunds, expenses, register withdrawals, and haulage. Use **Accounts & balances** for treasury balances and statements only — payout queues live on My desk. Cashiers **request** refunds in Sales but **cannot approve** them.',
+      '**My desk** (`/accounts?tab=desk`) is the cashier finance home: liquidity, till/bank statements, confirm receipts, pay approved refunds, expenses, register withdrawals, and haulage — all on one tab. Cashiers **request** refunds in Sales but **cannot approve** them.',
     steps: [
       'Open **Finance → My desk** from the sidebar (or `/accounts?tab=desk`).',
-      'Review liquidity and colour-coded queues — work top to bottom.',
+      'Review liquidity, account cards, and colour-coded queues — work top to bottom.',
       '**Confirm payment received** — match each pending receipt to bank/cash evidence.',
       '**Pay approved items** — refunds, payment requests, register withdrawals, and PO haulage from the desk payout panels.',
-      'Open **Accounts & balances** when you need account statements, not to pay out.',
+      'Tap any account card on My desk for statements and movements.',
       'Payment register and Audit tabs are hidden for Cashier by design (Phase 10 desk split).',
     ],
     links: [
       { label: 'My desk', to: '/accounts?tab=desk' },
-      { label: 'Accounts & balances', to: '/accounts?tab=treasury' },
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
     ],
   },
@@ -1319,7 +1318,7 @@ const CORE_HELP_ARTICLES = [
     answer:
       'Phase 10 separates **Cashier**, **Accounting**, **Manager**, and **HR** desks. If a module is hidden or returns forbidden, your **role** does not include that path — escalate to the role in staff approvals, not IT bypass.',
     steps: [
-      '**Cashier** — uses **My desk** (`/accounts?tab=desk`); **Accounts & balances** for statements only; not `/accounting`, payment register, or GL audit.',
+      '**Cashier** — uses **My desk** (`/accounts?tab=desk`) for balances, statements, receipts, and payouts; not `/accounting`, payment register, or GL audit.',
       '**Branch manager** — uses `/manager`, `/team-hr`; not main `/hr`, `/executive-hr`, or `/accounting`.',
       '**Accountant** — uses `/accounting` and `/reports`; not branch production ops or cashier desk by default.',
       '**MD** — uses `/exec` and `/executive-hr`; optional oversight of `/manager` and `/accounting`.',

@@ -258,8 +258,8 @@ export const HR_EXECUTIVE_SCHOLARSHIP_DOMESTIC_API_PATTERNS = [
 export const HR_TEAM_API_PATTERNS = [
   /^\/api\/hr\/staff$/,
   /^\/staff$/,
-  /^\/api\/hr\/org-chart$/,
-  /^\/org-chart$/,
+  /^\/api\/hr\/org-chart(\/|$)/,
+  /^\/org-chart(\/|$)/,
   /^\/api\/hr\/incident-memos(\/|$)/,
   /^\/incident-memos(\/|$)/,
   /^\/api\/hr\/transfer-recommendations(\/|$)/,

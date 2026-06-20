@@ -32,6 +32,7 @@ import {
   listHrStaffDirectory,
   listHrStaffDirectoryViews,
   upsertHrStaffDirectoryView,
+  deleteHrStaffAccount,
   deleteHrStaffDirectoryView,
   updateHrStaffProbation,
   flattenHrOrgChartForExport,
@@ -1137,17 +1138,45 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.get('/api/hr/org-chart/export.csv', requireHrAny('hr.directory.view', 'hr.staff.manage'), (req, res) => {
+  app.get('/api/hr/org-chart/export.csv', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const scope = hrListScope(req);
-      if (userCanAccessMainHrWorkspace(req.user)) scope.viewAll = true;
+      if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+        scope.viewAll = false;
+      } else if (userCanAccessMainHrWorkspace(req.user)) scope.viewAll = true;
       const chart = getHrOrgChart(db, scope);
       const lines = flattenHrOrgChartForExport(chart);
       const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const header = ['Name', 'UserId', 'JobTitle', 'Department', 'Branch', 'LineManager', 'Depth'];
+      const header = [
+        'Name',
+        'UserId',
+        'JobTitle',
+        'Department',
+        'Branch',
+        'OrgNode',
+        'RoleFamily',
+        'Seniority',
+        'DirectReportCount',
+        'LineManager',
+        'Depth',
+      ];
       const rows = lines.map((l) =>
-        [l.displayName, l.userId, l.jobTitle, l.department, l.branchId, l.lineManager, l.depth].map(esc).join(',')
+        [
+          l.displayName,
+          l.userId,
+          l.jobTitle,
+          l.department,
+          l.branchId,
+          l.orgNode,
+          l.roleFamily,
+          l.seniority,
+          l.directReportCount,
+          l.lineManager,
+          l.depth,
+        ]
+          .map(esc)
+          .join(',')
       );
       const csv = [header.join(','), ...rows].join('\n');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1173,7 +1202,12 @@ export function registerHrApi(app, db) {
       } else if (userCanAccessScholarshipDomesticExecutive(req.user)) {
         scope.viewAll = true;
       }
-      const includeInactive = String(req.query?.includeInactive || '') === '1' || String(req.query?.status || '') === 'all' || String(req.query?.status || '') === 'inactive';
+      const quickFilter = String(req.query?.quickFilter || req.query?.quick || '').trim();
+      const includeInactive =
+        String(req.query?.includeInactive || '') === '1' ||
+        String(req.query?.status || '') === 'all' ||
+        String(req.query?.status || '') === 'inactive' ||
+        quickFilter === 'exited-retired';
       const cohort = String(req.query?.cohort || 'employees').trim();
       const result = listHrStaffDirectory(db, scope, {
         includeInactive,
@@ -1185,7 +1219,7 @@ export function registerHrApi(app, db) {
         department: req.query?.department,
         employmentType: req.query?.employmentType,
         status: req.query?.status,
-        quickFilter: req.query?.quickFilter || req.query?.quick,
+        quickFilter,
         lineManagerUserId: req.query?.lineManagerUserId,
         sortKey: req.query?.sortKey,
         sortDir: req.query?.sortDir,
@@ -1401,6 +1435,20 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update staff profile.' });
+    }
+  });
+
+  app.delete('/api/hr/staff/:userId', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = deleteHrStaffAccount(db, req.user, userId, req.body || {});
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error('[hr/staff/delete]', e);
+      return res.status(500).json({ ok: false, error: 'Could not delete staff account.' });
     }
   });
 

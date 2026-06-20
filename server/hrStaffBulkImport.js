@@ -708,7 +708,7 @@ function resolveBranchId(db, row, scope) {
 
 const VALID_EMPLOYMENT_TYPES = new Set(['permanent', 'contract', 'casual', 'intern', 'temporary']);
 const VALID_GENDERS = new Set(['male', 'female', 'other']);
-const VALID_EMPLOYMENT_STATUSES = new Set(['active', 'probation', 'suspended', 'inactive', 'terminated', 'resigned']);
+const VALID_EMPLOYMENT_STATUSES = new Set(['active', 'probation', 'suspended', 'inactive', 'terminated', 'resigned', 'retired', 'exited']);
 
 function sanitizeEmail(v) {
   const s = String(v ?? '').trim().toLowerCase();
@@ -737,6 +737,11 @@ function sanitizeEmploymentStatus(v) {
   const s = normTitleToken(v);
   if (!s) return '';
   if (VALID_EMPLOYMENT_STATUSES.has(s)) return s;
+  if (s.includes('retir')) return 'retired';
+  if (s.includes('resign')) return 'resigned';
+  if (s.includes('termin')) return 'terminated';
+  if (s.includes('exit') || s.includes('separat') || s.includes('left')) return 'exited';
+  if (s.includes('inactive') || s.includes('inactiv')) return 'inactive';
   if (s.includes('active')) return 'active';
   if (s.includes('probation')) return 'probation';
   return '';

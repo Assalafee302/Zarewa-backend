@@ -12,6 +12,8 @@ import {
   hrTablesReady,
   listHrStaff,
   nowIso,
+  setAppUserAccountStatus,
+  upsertHrStaffProfile,
 } from './hrOps.js';
 import { patchHrStaffSeparation } from './hrStaffLifecycle.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
@@ -38,7 +40,7 @@ function diffDays(fromIso, toIso) {
 
 const ABSENCE_TYPES = new Set(['illness', 'family_emergency', 'bereavement', 'official', 'unauthorized', 'other']);
 const ABSENCE_STATUSES = new Set(['reported', 'hr_review', 'approved', 'rejected', 'unauthorized', 'closed']);
-const EXIT_SEPARATION_TYPES = new Set(['resignation', 'termination', 'layoff', 'retrenchment', 'dismissal']);
+const EXIT_SEPARATION_TYPES = new Set(['resignation', 'retirement', 'termination', 'layoff', 'retrenchment', 'dismissal']);
 const EXIT_STATUSES = new Set(['draft', 'in_progress', 'pending_finance', 'pending_admin', 'pending_hr_final', 'completed', 'cancelled']);
 const PROPERTY_CATEGORIES = new Set(['id_card', 'keys', 'laptop', 'phone', 'documents', 'cash', 'tools', 'uniform', 'other']);
 
@@ -589,6 +591,20 @@ export function hrFinalClearHrExit(db, actor, clearanceId, body) {
     completed_at_iso: now,
   });
   patchHrStaffSeparation(db, actor, ex.clearance.userId, { status: 'separated', lastWorkingDayIso: ex.clearance.lastWorkingDayIso });
+  const employmentStatus = ex.clearance.separationType === 'retirement' ? 'retired' : 'exited';
+  const profilePatch = upsertHrStaffProfile(
+    db,
+    actor?.id || null,
+    { userId: ex.clearance.userId, employmentStatus },
+    { allowInactive: true }
+  );
+  if (!profilePatch.ok) {
+    return { ok: false, error: profilePatch.error || 'Could not update employment status after exit.' };
+  }
+  const accountPatch = setAppUserAccountStatus(db, ex.clearance.userId, 'inactive', actor?.id || null);
+  if (!accountPatch.ok) {
+    return { ok: false, error: accountPatch.error || 'Exit recorded but account could not be deactivated.' };
+  }
   appendHrAuditEvent(db, { actorUserId: actor?.id, action: 'hr.exit.completed', entityKind: 'hr_exit_clearance', entityId: clearanceId });
   return getHrExitClearance(db, clearanceId);
 }

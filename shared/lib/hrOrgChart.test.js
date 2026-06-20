@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildHrOrgChart, buildHrOrgChartGrouped, hrStaffReportingContext, summarizeHrOrgChart, wouldCreateReportingCycle } from './hrOrgChart.js';
+import {
+  buildHrOrgChart,
+  buildHrOrgChartGrouped,
+  buildHrOrgDataQuality,
+  detectReportingCycles,
+  hrStaffReportingContext,
+  summarizeHrOrgChart,
+  wouldCreateReportingCycle,
+} from './hrOrgChart.js';
 
 describe('hrOrgChart', () => {
   it('builds a tree from line managers', () => {
@@ -64,5 +72,34 @@ describe('hrOrgChart', () => {
     const ctx = hrStaffReportingContext(staff, 'A');
     expect(ctx.lineManager?.userId).toBe('MD');
     expect(ctx.directReports.map((r) => r.userId)).toEqual(['B']);
+  });
+
+  it('includes avatarUrl on chart nodes', () => {
+    const staff = [{ userId: 'A', displayName: 'Alice', avatarUrl: 'https://cdn.example/a.jpg' }];
+    const chart = buildHrOrgChart(staff);
+    expect(chart.roots[0].avatarUrl).toBe('https://cdn.example/a.jpg');
+  });
+
+  it('detects existing reporting cycles', () => {
+    const staff = [
+      { userId: 'A', displayName: 'Alice', lineManagerUserId: 'B' },
+      { userId: 'B', displayName: 'Bob', lineManagerUserId: 'A' },
+    ];
+    const cycles = detectReportingCycles(staff);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0].members.map((m) => m.userId).sort()).toEqual(['A', 'B']);
+  });
+
+  it('builds data quality summary', () => {
+    const staff = [
+      { userId: 'MD', displayName: 'MD', lineManagerUserId: null },
+      { userId: 'A', displayName: 'Alice', lineManagerUserId: 'MD' },
+      { userId: 'X', displayName: 'Unlinked', lineManagerUserId: 'MISSING' },
+    ];
+    const chart = buildHrOrgChart(staff);
+    const dq = buildHrOrgDataQuality(staff, chart);
+    expect(dq.noManager).toBe(1);
+    expect(dq.orphans).toBe(1);
+    expect(dq.orphanBreakdown.manager_not_in_list).toBe(1);
   });
 });

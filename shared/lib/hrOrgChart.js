@@ -54,6 +54,7 @@ export function buildHrOrgChart(staff = []) {
     byId.set(userId, {
       userId,
       displayName: String(s.displayName || s.username || userId).trim(),
+      avatarUrl: s.avatarUrl || null,
       jobTitle: s.jobTitle || null,
       branchId: s.branchId || null,
       department: s.department || null,
@@ -199,6 +200,87 @@ export function buildHrOrgChartGrouped(chart, groupBy = 'department') {
  * @param {string} subjectUserId
  * @param {string | null | undefined} newManagerUserId
  */
+/**
+ * Detect existing reporting loops in flat staff data (read-time; complements write-time checks).
+ * @param {Array<{ userId: string; displayName?: string; username?: string; jobTitle?: string; lineManagerUserId?: string | null }>} staff
+ * @returns {Array<{ cycleId: string; members: Array<{ userId: string; displayName: string; jobTitle: string | null }> }>}
+ */
+export function detectReportingCycles(staff = []) {
+  const byId = new Map();
+  for (const s of staff) {
+    const id = String(s.userId || '').trim();
+    if (id) byId.set(id, s);
+  }
+
+  const inCycle = new Set();
+  const cycles = [];
+  const seenCycleKeys = new Set();
+
+  for (const s of staff) {
+    const start = String(s.userId || '').trim();
+    if (!start || inCycle.has(start)) continue;
+
+    const path = [];
+    const pathSet = new Set();
+    let current = start;
+
+    while (current) {
+      if (inCycle.has(current)) break;
+      if (pathSet.has(current)) {
+        const startIdx = path.indexOf(current);
+        const memberIds = path.slice(startIdx);
+        const cycleKey = [...memberIds].sort().join('|');
+        if (!seenCycleKeys.has(cycleKey)) {
+          seenCycleKeys.add(cycleKey);
+          cycles.push({
+            cycleId: cycleKey,
+            members: memberIds.map((userId) => {
+              const row = byId.get(userId);
+              return {
+                userId,
+                displayName: String(row?.displayName || row?.username || userId).trim(),
+                jobTitle: row?.jobTitle || null,
+              };
+            }),
+          });
+        }
+        memberIds.forEach((id) => inCycle.add(id));
+        break;
+      }
+      path.push(current);
+      pathSet.add(current);
+      const row = byId.get(current);
+      current = row?.lineManagerUserId ? String(row.lineManagerUserId).trim() : '';
+    }
+  }
+
+  return cycles;
+}
+
+/**
+ * @param {Array<{ userId: string; lineManagerUserId?: string | null }>} staff
+ * @param {{ roots?: object[]; orphans?: object[] }} chart
+ */
+export function buildHrOrgDataQuality(staff = [], chart = {}) {
+  const noManager = staff.filter((s) => !String(s.lineManagerUserId || '').trim()).length;
+  const orphanBreakdown = { self_manager: 0, manager_not_in_list: 0 };
+  for (const o of chart?.orphans || []) {
+    if (o.orphanReason === 'self_manager') orphanBreakdown.self_manager += 1;
+    else if (o.orphanReason === 'manager_not_in_list') orphanBreakdown.manager_not_in_list += 1;
+  }
+  const cycles = detectReportingCycles(staff);
+  const rootCount = chart?.roots?.length || 0;
+  return {
+    noManager,
+    orphans: chart?.orphans?.length || 0,
+    orphanBreakdown,
+    rootCount,
+    multipleRoots: rootCount > 1,
+    cycles,
+    cycleCount: cycles.length,
+  };
+}
+
 export function wouldCreateReportingCycle(staff, subjectUserId, newManagerUserId) {
   const subject = String(subjectUserId || '').trim();
   let current = String(newManagerUserId || '').trim();

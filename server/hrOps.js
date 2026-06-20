@@ -45,8 +45,9 @@ import {
   normalizeStaffNumberConfig,
 } from '../shared/lib/hrEmployeeNumber.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
+import { purgeHrStaffUser } from './hrStaffDuplicateCleanup.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
-import { buildHrOrgChart, hrStaffReportingContext, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
+import { buildHrOrgChart, buildHrOrgDataQuality, hrStaffReportingContext, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
 import {
   notifyAppraisalFormOpened,
   notifyHrRequestOutcome,
@@ -571,7 +572,8 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
   }
   const page = Math.max(1, Math.round(Number(opts.page) || 1));
   const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
-  const includeInactive = Boolean(opts.includeInactive);
+  const quick = String(opts.quickFilter || '').trim();
+  const includeInactive = Boolean(opts.includeInactive) || quick === 'exited-retired';
   const cohortKey = opts.cohort;
   const scopeMode = scope.scopeMode || 'branch';
   const orgWide = Boolean(scope.viewAll) || scopeMode === 'org';
@@ -680,7 +682,6 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
     const like = `%${q}%`;
     args.push(like, like, like, like, like);
   }
-  const quick = String(opts.quickFilter || '').trim();
   if (quick === 'probation') {
     sql += ` AND p.probation_end_iso >= ? AND (p.date_joined_iso IS NULL OR p.probation_end_iso > p.date_joined_iso)`;
     args.push(today);
@@ -705,6 +706,12 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
       p.employee_no IS NULL OR trim(p.employee_no) = '' OR p.date_joined_iso IS NULL OR trim(p.date_joined_iso) = ''
       OR p.job_title IS NULL OR trim(p.job_title) = '' OR p.department IS NULL OR trim(p.department) = ''
       OR p.branch_id IS NULL OR trim(p.branch_id) = ''
+    )`;
+  } else if (quick === 'exited-retired') {
+    sql += ` AND (
+      lower(COALESCE(json_extract(p.profile_extra_json, '$.employmentMeta.employmentStatus'), '')) IN ('exited', 'retired', 'terminated', 'resigned', 'inactive')
+      OR lower(COALESCE(json_extract(p.profile_extra_json, '$.lifecycle.separation.status'), '')) IN ('separating', 'separated')
+      OR lower(COALESCE(json_extract(p.profile_extra_json, '$.lifecycle.separation.reason'), '')) LIKE '%retir%'
     )`;
   } else if (quick === 'direct-reports' && opts.lineManagerUserId) {
     /* already filtered by lineManagerUserId */
@@ -910,6 +917,10 @@ export function flattenHrOrgChartForExport(chart) {
       jobTitle: node.jobTitle || '',
       department: node.department || '',
       branchId: node.branchId || '',
+      orgNode: node.orgNode || node.payrollGroup || '',
+      roleFamily: node.roleFamily || '',
+      seniority: node.seniority || '',
+      directReportCount: node.directReportCount ?? (node.children?.length || 0),
       lineManager: managerName || '',
       depth,
     });
@@ -923,6 +934,10 @@ export function flattenHrOrgChartForExport(chart) {
       jobTitle: orphan.jobTitle || '',
       department: orphan.department || '',
       branchId: orphan.branchId || '',
+      orgNode: orphan.orgNode || orphan.payrollGroup || '',
+      roleFamily: orphan.roleFamily || '',
+      seniority: orphan.seniority || '',
+      directReportCount: orphan.directReportCount ?? 0,
       lineManager: '',
       depth: 0,
     });
@@ -1093,10 +1108,21 @@ export function getHrStaffOne(db, userId) {
  * @param {{ viewAll: boolean; branchId: string; includeUnassigned?: boolean }} scope
  */
 export function getHrOrgChart(db, scope) {
-  if (!hrTablesReady(db)) return { roots: [], orphans: [], total: 0, summary: summarizeHrOrgChart({ roots: [], orphans: [], total: 0 }) };
+  const empty = { roots: [], orphans: [], total: 0 };
+  if (!hrTablesReady(db)) {
+    return {
+      ...empty,
+      summary: summarizeHrOrgChart(empty),
+      dataQuality: buildHrOrgDataQuality([], empty),
+    };
+  }
   const staff = listHrStaff(db, scope, { includeInactive: false });
   const chart = buildHrOrgChart(staff);
-  return { ...chart, summary: summarizeHrOrgChart(chart) };
+  return {
+    ...chart,
+    summary: summarizeHrOrgChart(chart),
+    dataQuality: buildHrOrgDataQuality(staff, chart),
+  };
 }
 
 /**
@@ -8098,6 +8124,71 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
   });
 
   return { ok: true, updated, failed, errors };
+}
+
+/**
+ * Permanently remove a staff login and HR profile (not reversible).
+ * Prefer separation/deactivate for leavers — use this for mistaken registrations and test accounts.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {string} userId
+ * @param {{ reason?: string; confirmUsername?: string }} body
+ */
+export function deleteHrStaffAccount(db, actor, userId, body = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'Staff id required.' };
+
+  const reason = String(body.reason || '').trim();
+  if (reason.length < 3) {
+    return { ok: false, error: 'Enter a short reason for permanent deletion (at least 3 characters).' };
+  }
+
+  const row = db
+    .prepare(
+      `SELECT u.id AS userId, u.username, u.display_name AS displayName, u.role_key AS roleKey, u.status,
+              p.employee_no AS employeeNo
+       FROM app_users u
+       LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+       WHERE u.id = ?`
+    )
+    .get(uid);
+  if (!row) return { ok: false, error: 'Staff account not found.' };
+
+  const confirm = String(body.confirmUsername || '').trim().toLowerCase();
+  const expected = String(row.username || '').trim().toLowerCase();
+  if (!confirm || confirm !== expected) {
+    return { ok: false, error: `Type the login username "${row.username}" exactly to confirm permanent deletion.` };
+  }
+
+  const directReports =
+    db.prepare(`SELECT COUNT(*) AS c FROM hr_staff_profiles WHERE line_manager_user_id = ?`).get(uid)?.c || 0;
+  if (directReports > 0) {
+    return {
+      ok: false,
+      error: `${directReports} staff still report to this person. Reassign their line managers in the organogram or directory first.`,
+    };
+  }
+
+  const result = purgeHrStaffUser(db, uid, actor?.id || null);
+  if (!result.ok) return result;
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.staff.permanent_delete',
+    entityKind: 'hr_staff_profile',
+    entityId: uid,
+    reason,
+    details: {
+      username: result.username,
+      displayName: row.displayName,
+      employeeNo: row.employeeNo || null,
+      previousStatus: row.status,
+    },
+  });
+
+  return { ok: true, userId: uid, username: result.username, displayName: row.displayName };
 }
 
 export function runHrScheduledJobs(db) {

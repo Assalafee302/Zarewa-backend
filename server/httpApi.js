@@ -137,6 +137,7 @@ import {
   payRegisterSettlement,
   registerLineAvailableSettlementNgn,
   registerLineSettlementCapacity,
+  withdrawRegisterSettlement,
 } from './accountingRegisterSettlementOps.js';
 import {
   createFixedAsset,
@@ -1233,6 +1234,27 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[accounting-settlement-decision]', e);
       return res.status(500).json({ ok: false, error: 'Could not decide settlement.' });
+    }
+  });
+
+  app.post('/api/accounting/settlements/:settlementId/withdraw', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAccountingSubledger(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
+      }
+      const existing = getRegisterSettlement(db, req.params.settlementId);
+      if (!existing.ok) return res.status(404).json(existing);
+      const lineGate = assertRegisterLineWorkspaceWrite(req, existing.settlement.registerLineId);
+      if (!lineGate.ok && lineGate.status === 403) {
+        return res.status(403).json({ ok: false, error: lineGate.error });
+      }
+      if (!lineGate.ok) return res.status(404).json({ ok: false, error: lineGate.error });
+      const result = withdrawRegisterSettlement(db, req.params.settlementId, req.user);
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (e) {
+      console.error('[accounting-settlement-withdraw]', e);
+      return res.status(500).json({ ok: false, error: 'Could not withdraw settlement.' });
     }
   });
 

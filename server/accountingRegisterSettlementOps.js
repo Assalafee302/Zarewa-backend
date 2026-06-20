@@ -13,6 +13,7 @@ import {
 } from '../shared/lib/treasuryPayoutDates.js';
 import { userHasPermission } from './auth.js';
 import { appendAuditLog, assertPeriodOpen, recordApprovalAction } from './controlOps.js';
+import { userMayManageAccountingSubledger } from './financeDeskAccess.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { nextPostingBatchHumanId, nextRegisterSettlementHumanId } from './humanId.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
@@ -374,6 +375,56 @@ export function decideRegisterSettlement(db, settlementId, body, actor) {
       userId: actor?.id ? String(actor.id) : null,
       userName: actorName(actor),
       detail: `${status} ₦${approvedAmountNgn.toLocaleString('en-NG')} on ${row.register_line_id}`,
+    });
+    return getRegisterSettlement(db, settlementId);
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** @param {import('better-sqlite3').Database} db */
+export function withdrawRegisterSettlement(db, settlementId, actor) {
+  ensureAccountingRegisterSettlementSchema(db);
+  const row = db.prepare(`SELECT * FROM accounting_register_settlements WHERE settlement_id = ?`).get(settlementId);
+  if (!row) return { ok: false, error: 'Settlement not found.' };
+  if (String(row.status || '') !== 'Pending') {
+    return { ok: false, error: 'Only pending withdrawals can be withdrawn.' };
+  }
+
+  const isRequestor =
+    String(row.requested_by_user_id || '') && String(row.requested_by_user_id) === String(actor?.id || '');
+  const canManage = userMayManageAccountingSubledger(actor) || userHasPermission(actor, '*');
+  if (!isRequestor && !canManage) {
+    return { ok: false, error: 'You can only withdraw your own pending requests, or ask Head of Accounts.' };
+  }
+
+  const note = 'Withdrawn by requestor before approval.';
+  const actedAtISO = nowIso().slice(0, 10);
+  try {
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE accounting_register_settlements SET
+          status = ?, approved_amount_ngn = ?, approved_at_iso = ?, approved_by_user_id = ?,
+          approved_by_name = ?, approval_note = ?, updated_at_iso = ?
+         WHERE settlement_id = ?`
+      ).run('Rejected', 0, actedAtISO, actor?.id ? String(actor.id) : null, actorName(actor), note, nowIso(), settlementId);
+      recordApprovalAction(db, {
+        entityKind: 'register_settlement',
+        entityId: settlementId,
+        action: 'withdraw',
+        status: 'Rejected',
+        actor,
+        note,
+        actedAtISO,
+      });
+    });
+    appendAuditLog(db, {
+      action: 'register_settlement.withdraw',
+      entityType: 'accounting_register_settlement',
+      entityId: settlementId,
+      userId: actor?.id ? String(actor.id) : null,
+      userName: actorName(actor),
+      detail: `Withdrew pending ₦${roundMoney(row.amount_ngn).toLocaleString('en-NG')} on ${row.register_line_id}`,
     });
     return getRegisterSettlement(db, settlementId);
   } catch (e) {

@@ -9,6 +9,7 @@ import {
   receivableDueOnQuotationFromEntries,
   firstProductionDateISO,
 } from '../shared/lib/customerLedgerCore.js';
+import { meetsCustomerTradeReceivableRegisterFloor } from '../shared/lib/accountingRegisterConstants.js';
 import { quotationPaymentPolicyPhase } from '../shared/lib/accountingPolicyV1.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
@@ -696,6 +697,7 @@ function buildCustomerReceivableItems(db, branchScope) {
   }
 
   return [...byCustomer.values()]
+    .filter((r) => meetsCustomerTradeReceivableRegisterFloor(r.amountNgn))
     .map((r) =>
       withEntity(
         {
@@ -971,6 +973,7 @@ export function buildCreditorsRegister(db, opts = {}) {
     sections,
     notes: [
       'Customer receivables include only quotations with completed production.',
+      'Customer trade receivable rows below ₦1,000 are omitted from this register (small-balance materiality).',
       'Use “Add legacy line” for balances from before go-live that are not in live transactions.',
       'Staff loan outstanding uses HR loan schedule; verify against payroll deductions.',
     ],

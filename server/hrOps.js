@@ -37,6 +37,7 @@ import {
   settleObligationAfterPayrollDeduction,
   staffObligationTablesReady,
   syncLoanRequestPayloadFromObligation,
+  actorMayChairmanWaiveObligation,
 } from './staffObligationOps.js';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import {
@@ -2932,6 +2933,16 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
     return { ok: true };
   }
   const isLoan = String(row.kind) === 'loan';
+  if (isLoan && approve) {
+    const p = safeJsonParse(row.payload_json, {});
+    if (Boolean(p.needsChairmanWaiver) && !actorMayChairmanWaiveObligation(actor)) {
+      return {
+        ok: false,
+        error: 'This loan requires Chairman approval before final approval.',
+        code: 'CHAIRMAN_REQUIRED',
+      };
+    }
+  }
   if (isLoan) {
     try {
       db.transaction(() => {
@@ -8676,7 +8687,10 @@ export function listHrLeaveCalendar(db, scope, fromIso, toIso, opts = {}) {
 
 export function listExceptionalLoanQueue(db, scope) {
   return listHrRequests(db, scope, { kind: 'loan' }).filter(
-    (r) => r.status === 'gm_hr_review' || Boolean(r.payload?.exceptionalLoan)
+    (r) =>
+      r.status === 'gm_hr_review' ||
+      Boolean(r.payload?.exceptionalLoan) ||
+      Boolean(r.payload?.needsChairmanWaiver)
   );
 }
 

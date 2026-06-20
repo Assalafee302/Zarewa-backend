@@ -39,7 +39,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Dashboard quick actions', to: '/' },
     ],
   },
@@ -117,7 +117,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -394,7 +394,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -648,7 +648,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -702,7 +702,7 @@ const CORE_HELP_ARTICLES = [
       'Manager clearance on the customer or quote is separate — resolve holds on Manager dashboard if shown.',
     ],
     links: [
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Finance & accounts', to: '/accounts' },
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
       { label: 'Manager dashboard', to: '/manager' },
@@ -1250,6 +1250,8 @@ const CORE_HELP_ARTICLES = [
       'cashier',
       'cashier desk',
       '/cashier',
+      '/accounts?tab=desk',
+      'my desk',
       'confirm receipt',
       'confirm payment received',
       'refund payout',
@@ -1258,16 +1260,18 @@ const CORE_HELP_ARTICLES = [
       'cashier cannot approve',
     ],
     answer:
-      'The **Cashier desk** (`/cashier`) is for **execution**: confirm bank deposits on receipts and **pay** approved refunds and payment requests. Cashiers **request** refunds in Sales but **cannot approve** them — segregation of duties is enforced in the app.',
+      '**My desk** (`/accounts?tab=desk`) is the cashier home for **execution**: confirm bank deposits, pay approved refunds, expenses, register withdrawals, and haulage. Use **Accounts & balances** for treasury balances and statements only — payout queues live on My desk. Cashiers **request** refunds in Sales but **cannot approve** them.',
     steps: [
-      'Open **Cashier** from the sidebar (`/cashier`).',
+      'Open **Finance → My desk** from the sidebar (or `/accounts?tab=desk`).',
+      'Review liquidity and colour-coded queues — work top to bottom.',
       '**Confirm payment received** — match each pending receipt to bank/cash evidence.',
-      '**Pay approved refunds** — only refunds already in **Approved** status; post treasury payout.',
-      '**Pay approved payment requests** — expenses and other approved PRs awaiting payout.',
-      'If Accounting desk or GL tabs are missing, that is normal for Cashier role (Phase 10 desk split).',
+      '**Pay approved items** — refunds, payment requests, register withdrawals, and PO haulage from the desk payout panels.',
+      'Open **Accounts & balances** when you need account statements, not to pay out.',
+      'Payment register and Audit tabs are hidden for Cashier by design (Phase 10 desk split).',
     ],
     links: [
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Accounts & balances', to: '/accounts?tab=treasury' },
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
     ],
   },
@@ -1315,7 +1319,7 @@ const CORE_HELP_ARTICLES = [
     answer:
       'Phase 10 separates **Cashier**, **Accounting**, **Manager**, and **HR** desks. If a module is hidden or returns forbidden, your **role** does not include that path — escalate to the role in staff approvals, not IT bypass.',
     steps: [
-      '**Cashier** — uses `/cashier`; not `/accounting` or GL audit tabs.',
+      '**Cashier** — uses **My desk** (`/accounts?tab=desk`); **Accounts & balances** for statements only; not `/accounting`, payment register, or GL audit.',
       '**Branch manager** — uses `/manager`, `/team-hr`; not main `/hr`, `/executive-hr`, or `/accounting`.',
       '**Accountant** — uses `/accounting` and `/reports`; not branch production ops or cashier desk by default.',
       '**MD** — uses `/exec` and `/executive-hr`; optional oversight of `/manager` and `/accounting`.',
@@ -1324,7 +1328,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Settings — Team', to: '/settings/team' },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Accounting desk', to: '/accounting' },
     ],
   },
@@ -1344,7 +1348,7 @@ const CORE_HELP_ARTICLES = [
       'After login, Zarewa sends you to the desk that matches your **role**. Use the sidebar if you need another module you are permitted to access.',
     steps: [
       '**Branch manager** → `/manager` (approvals inbox).',
-      '**Cashier** → `/cashier` (confirm receipts, pay refunds).',
+      '**Cashier** → `/accounts?tab=desk` (My desk — confirm receipts, pay refunds).',
       '**Accountant** → `/accounting` (reconciliation, month-end).',
       '**Managing Director** → `/exec` (Command Centre — Overview, Intelligence, Finance tabs).',
       '**HR admin / GM HR** → `/hr/dashboard`.',
@@ -1353,7 +1357,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Manager dashboard', to: '/manager' },
-      { label: 'Cashier desk', to: '/cashier' },
+      { label: 'My desk', to: '/accounts?tab=desk' },
       { label: 'Accounting desk', to: '/accounting' },
       { label: 'Command Centre', to: '/exec' },
       { label: 'Intelligence & forecasts', to: '/exec?tab=intelligence' },
@@ -1806,7 +1810,7 @@ export function quickQuestionsForPath(pathname) {
       { label: 'Material incident', query: 'How do material incidents and approvals work?' },
     ];
   }
-  if (p.startsWith('/cashier')) {
+  if (p.startsWith('/cashier') || p.includes('tab=desk')) {
     return [
       { label: 'Tour Cashier desk', query: 'Walk me through the cashier desk step by step — confirm receipts and pay approved refunds' },
       { label: 'Confirm receipt', query: 'Finance clearance before refunds — cashier desk confirm payment received' },

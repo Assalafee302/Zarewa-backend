@@ -92,6 +92,16 @@ export function buildObligationDisbursementVoucherPdf(db, accountId) {
   return { ok: true, pdf, filename: `disbursement-${detail.id}.pdf` };
 }
 
+function formatTxType(type) {
+  const t = String(type || '');
+  if (t === 'write_off') return 'Write-off / waiver';
+  if (t === 'cash_repayment') return 'Cash repayment';
+  if (t === 'payroll_deduction') return 'Payroll deduction';
+  if (t === 'disbursement') return 'Disbursement';
+  if (t === 'opening_balance') return 'Opening balance';
+  return t.replace(/_/g, ' ');
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} accountId
@@ -99,6 +109,11 @@ export function buildObligationDisbursementVoucherPdf(db, accountId) {
 export function buildObligationAccountStatementPdf(db, accountId) {
   const detail = getStaffObligationAccountDetail(db, accountId);
   if (!detail) return { ok: false, error: 'Account not found.' };
+
+  const paused =
+    detail.status === 'active' &&
+    detail.principalOutstandingNgn > 0 &&
+    detail.deductionsActive === false;
 
   const header = [
     COMPANY,
@@ -110,6 +125,10 @@ export function buildObligationAccountStatementPdf(db, accountId) {
     `Kind: ${detail.kind}`,
     `Status: ${detail.status}`,
     detail.quotationRef ? `Quotation: ${detail.quotationRef}` : null,
+    paused
+      ? `Payroll deductions: PAUSED${detail.pauseUntilIso ? ` until ${String(detail.pauseUntilIso).slice(0, 10)}` : ''}`
+      : null,
+    paused && detail.pauseReason ? `Pause reason: ${detail.pauseReason}` : null,
     '',
     `Original: ${formatNgn(detail.principalOriginalNgn)}`,
     `Outstanding: ${formatNgn(detail.principalOutstandingNgn)}`,
@@ -118,11 +137,25 @@ export function buildObligationAccountStatementPdf(db, accountId) {
     '— Transactions —',
   ].filter(Boolean);
 
-  const txLines = (detail.transactions || []).slice(0, 40).flatMap((t) => [
-    `${String(t.effectiveAtIso || '').slice(0, 10)}  ${t.type}  ${formatNgn(t.amountNgn)}  bal ${formatNgn(t.principalAfterNgn)}`,
-    t.paymentReference ? `  ref: ${t.paymentReference}` : null,
-  ].filter(Boolean));
+  const txLines = (detail.transactions || []).slice(0, 40).flatMap((t) => {
+    const label = formatTxType(t.type);
+    const lines = [
+      `${String(t.effectiveAtIso || '').slice(0, 10)}  ${label}  ${formatNgn(t.amountNgn)}  bal ${formatNgn(t.principalAfterNgn)}`,
+    ];
+    if (t.paymentReference) lines.push(`  ref: ${t.paymentReference}`);
+    if (t.note) lines.push(`  note: ${t.note}`);
+    return lines;
+  });
 
-  const pdf = buildSimpleTextPdf([{ lines: [...header, ...txLines, '', `Generated: ${new Date().toISOString().slice(0, 10)}`] }]);
+  const writeOffs = (detail.transactions || []).filter((t) => t.type === 'write_off');
+  const footer = [`Generated: ${new Date().toISOString().slice(0, 10)}`];
+  if (writeOffs.length) {
+    footer.unshift('', '— Write-offs / waivers on this account —');
+    for (const t of writeOffs) {
+      footer.push(`${String(t.effectiveAtIso || '').slice(0, 10)}: ${formatNgn(t.amountNgn)}${t.note ? ` — ${t.note}` : ''}`);
+    }
+  }
+
+  const pdf = buildSimpleTextPdf([{ lines: [...header, ...txLines, ...footer] }]);
   return { ok: true, pdf, filename: `statement-${detail.id}.pdf` };
 }

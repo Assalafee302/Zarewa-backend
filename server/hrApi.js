@@ -251,9 +251,14 @@ import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
 import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
   actorMayManageObligations,
+  actorMayRecordStaffRepayments,
+  chairmanWaiveObligationBalance,
   getStaffObligationAccountDetail,
   listStaffObligationAccounts,
+  listStaffRepayableObligationsForCashier,
+  maintainObligationAccount,
   migrateLegacyStaffLoan,
+  patchObligationDeductionPause,
   recordObligationCashRepayment,
   staffObligationTablesReady,
   OBLIGATION_KIND,
@@ -3908,10 +3913,10 @@ export function registerHrApi(app, db) {
       }
       const userId = String(req.query?.userId || req.query?.staffId || '').trim();
       const isSelf = userId && userId === req.user?.id;
-      if (!userId && !actorMayManageObligations(req.user)) {
+      if (!userId && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
-      if (userId && !isSelf && !actorMayManageObligations(req.user)) {
+      if (userId && !isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (userId && !staffScopeGate(req, res, userId)) return;
@@ -3937,7 +3942,7 @@ export function registerHrApi(app, db) {
       const detail = getStaffObligationAccountDetail(db, req.params.accountId);
       if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
       const isSelf = detail.userId === req.user?.id;
-      if (!isSelf && !actorMayManageObligations(req.user)) {
+      if (!isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
@@ -3972,7 +3977,10 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.post('/api/hr/obligation-accounts/:accountId/repayments', requireHrAny('hr.loans.manage', 'finance.post'), (req, res) => {
+  app.post(
+    '/api/hr/obligation-accounts/:accountId/repayments',
+    requireHrAny('hr.loans.manage', 'finance.post', 'finance.pay', 'cashier.desk.view'),
+    (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const r = recordObligationCashRepayment(db, req.user, req.params.accountId, req.body || {});
@@ -3983,6 +3991,92 @@ export function registerHrApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not record repayment.' });
     }
   });
+
+  app.patch(
+    '/api/hr/obligation-accounts/:accountId/pause',
+    requireHrAny('hr.loan_maintain', 'hr.loans.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = patchObligationDeductionPause(db, req.params.accountId, req.user, req.body || {});
+        if (!r.ok) return res.status(r.code === 'FORBIDDEN' ? 403 : 400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not update pause state.' });
+      }
+    }
+  );
+
+  app.patch(
+    '/api/hr/obligation-accounts/:accountId/maintenance',
+    requireHrAny('hr.loan_maintain', 'hr.loans.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = maintainObligationAccount(db, req.params.accountId, req.user, req.body || {});
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not maintain obligation account.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/hr/obligation-accounts/:accountId/chairman-waive',
+    requireHrAny('hr.chairman.manage', 'hr.loans.manage', 'hr.payroll.md_approve'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = chairmanWaiveObligationBalance(db, req.params.accountId, req.user, req.body || {});
+        if (!r.ok) return res.status(r.code === 'FORBIDDEN' ? 403 : 400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not waive obligation balance.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/finance/staff-obligations-due',
+    requireHrAny('finance.post', 'finance.pay', 'cashier.desk.view', 'treasury.manage', 'hr.loans.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const scope = hrListScope(req);
+        const branchScope = scope.viewAll ? 'ALL' : scope.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID;
+        const rows = listStaffRepayableObligationsForCashier(db, branchScope);
+        return res.json({ ok: true, obligations: rows, ledgerReady: staffObligationTablesReady(db) });
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not load staff obligations due.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/finance/staff-obligations/:accountId/receive',
+    requireHrAny('finance.post', 'finance.pay', 'cashier.desk.view', 'hr.loans.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        const r = recordObligationCashRepayment(db, req.user, req.params.accountId, {
+          ...(req.body || {}),
+          requireTreasury: true,
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        if (!r.ok) return res.status(400).json(r);
+        return res.json(r);
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not record staff obligation payment.' });
+      }
+    }
+  );
 
   app.get(
     '/api/finance/staff-recoveries-due',
@@ -4027,7 +4121,7 @@ export function registerHrApi(app, db) {
       const detail = getStaffObligationAccountDetail(db, req.params.accountId);
       if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
       const isSelf = detail.userId === req.user?.id;
-      if (!isSelf && !actorMayManageObligations(req.user)) {
+      if (!isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
@@ -4048,7 +4142,7 @@ export function registerHrApi(app, db) {
       const detail = getStaffObligationAccountDetail(db, req.params.accountId);
       if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
       const isSelf = detail.userId === req.user?.id;
-      if (!isSelf && !actorMayManageObligations(req.user)) {
+      if (!isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
@@ -4069,7 +4163,7 @@ export function registerHrApi(app, db) {
       const detail = getStaffObligationAccountDetail(db, req.params.accountId);
       if (!detail) return res.status(404).json({ ok: false, error: 'Account not found.' });
       const isSelf = detail.userId === req.user?.id;
-      if (!isSelf && !actorMayManageObligations(req.user)) {
+      if (!isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
@@ -4089,7 +4183,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       const userId = String(req.params.userId || '').trim();
       const isSelf = userId === req.user?.id;
-      if (!isSelf && !actorMayManageObligations(req.user)) {
+      if (!isSelf && !actorMayRecordStaffRepayments(req.user)) {
         return res.status(403).json({ ok: false, error: 'Permission denied.' });
       }
       if (!staffScopeGate(req, res, userId)) return;

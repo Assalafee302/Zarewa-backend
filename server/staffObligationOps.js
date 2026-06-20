@@ -6,7 +6,9 @@ import crypto from 'node:crypto';
 import { getBranchCodeUpper, bumpHumanSerial } from './humanId.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { hrTablesReady, appendHrAuditEvent, nowIso } from './hrOps.js';
-import { userHasPermission } from './auth.js';
+import { actorName, userHasPermission } from './auth.js';
+import { assertPeriodOpen } from './controlOps.js';
+import { insertTreasuryMovementTx } from './writeOps.js';
 
 function safeJsonParse(raw, fallback) {
   try {
@@ -114,6 +116,10 @@ export function mapObligationAccountRow(row) {
     disbursedAtIso: row.disbursed_at_iso || null,
     dueDateIso: row.due_date_iso || null,
     note: row.note || null,
+    pauseUntilIso: row.pause_until_iso || null,
+    pauseReason: row.pause_reason || null,
+    pausedAtIso: row.paused_at_iso || null,
+    pausedByUserId: row.paused_by_user_id || null,
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
   };
@@ -516,6 +522,42 @@ export function migrateLegacyStaffLoan(db, actor, body = {}) {
 }
 
 /**
+ * Spread remaining balance evenly over months left on the schedule (optional after lump-sum pay).
+ */
+export function recalculateObligationInstallmentFromBalance(db, accountId, actor = null) {
+  if (!staffObligationTablesReady(db)) return { ok: false, error: 'Staff obligation ledger not migrated.' };
+  const id = String(accountId || '').trim();
+  const row = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Obligation account not found.' };
+  if (String(row.status) !== OBLIGATION_STATUS.ACTIVE) {
+    return { ok: false, error: 'Only active accounts can be recalculated.' };
+  }
+  const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
+  if (outstanding <= 0) return { ok: false, error: 'Nothing outstanding to spread.' };
+  const monthsPaid = Math.round(Number(row.months_paid) || 0);
+  const termMonths = Math.round(Number(row.term_months) || 0);
+  if (termMonths <= 0) return { ok: false, error: 'Set a repayment term before recalculating installment.' };
+  const remainingMonths = Math.max(1, termMonths - monthsPaid);
+  const newInstallment = Math.ceil(outstanding / remainingMonths);
+  const now = nowIso();
+  db.prepare(
+    `UPDATE hr_staff_obligation_accounts SET installment_ngn = ?, updated_at_iso = ? WHERE id = ?`
+  ).run(newInstallment, now, id);
+  if (row.hr_request_id) syncLoanRequestPayloadFromObligation(db, id);
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    action: 'hr.obligation.recalculate_installment',
+    entityKind: 'hr_staff_obligation_account',
+    entityId: id,
+    details: { outstandingNgn: outstanding, remainingMonths, installmentNgn: newInstallment },
+  });
+  return {
+    ok: true,
+    account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)),
+  };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {object | null} actor
  * @param {string} accountId
@@ -529,9 +571,28 @@ export function recordObligationCashRepayment(db, actor, accountId, body = {}) {
   if (![OBLIGATION_STATUS.ACTIVE, OBLIGATION_STATUS.PENDING_DISBURSEMENT].includes(String(row.status))) {
     return { ok: false, error: 'Only active obligations can receive payments.' };
   }
+  if (String(row.kind) === OBLIGATION_KIND.RECOVERY) {
+    return { ok: false, error: 'Use Finance → Desk staff recovery for discipline recoveries (treasury required).' };
+  }
+
+  const branchId = String(row.branch_id || DEFAULT_BRANCH_ID).trim();
+  const workspaceBranchId = String(body.workspaceBranchId || '').trim() || branchId;
+  const workspaceViewAll = Boolean(body.workspaceViewAll);
+  if (!workspaceViewAll && workspaceBranchId && branchId !== workspaceBranchId) {
+    return {
+      ok: false,
+      error: `This employee belongs to branch ${branchId}. Switch workspace branch before receiving payment.`,
+    };
+  }
 
   const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
   if (outstanding <= 0) return { ok: false, error: 'Nothing outstanding.' };
+
+  const requireTreasury = body.requireTreasury === true;
+  const treasuryAccountId = Number(body.treasuryAccountId);
+  if (requireTreasury && !treasuryAccountId) {
+    return { ok: false, error: 'Treasury account is required.' };
+  }
 
   const payInFull = body.payInFull === true;
   let amountNgn = payInFull ? outstanding : Math.round(Number(body.amountNgn) || 0);
@@ -543,37 +604,101 @@ export function recordObligationCashRepayment(db, actor, accountId, body = {}) {
   const paymentDate =
     String(body.paymentDateIso ?? body.payment_date_iso ?? '').trim().slice(0, 10) ||
     new Date().toISOString().slice(0, 10);
-  const paymentReference =
-    String(body.paymentReference ?? body.payment_reference ?? '').trim() ||
-    newReceiptRef(db, row.branch_id);
-  const note = String(body.note ?? '').trim() || null;
 
-  const result = db.transaction(() =>
-    postObligationTransactionTx(db, id, {
-      type: OBLIGATION_TX_TYPE.CASH_REPAYMENT,
-      amountNgn,
-      effectiveAtIso: `${paymentDate}T12:00:00.000Z`,
-      sourceKind: 'cash_repayment',
-      sourceId: paymentReference,
-      paymentReference,
-      note,
-      recordedByUserId: actor?.id || null,
-    })
-  )();
+  try {
+    assertPeriodOpen(db, paymentDate, 'Staff obligation payment date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  let paymentReference =
+    String(body.paymentReference ?? body.payment_reference ?? '').trim() || null;
+  const note = String(body.note ?? '').trim() || null;
+  const staff = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(row.user_id);
+  const staffLabel = staff?.display_name || row.user_id;
+  const kindLabel =
+    row.kind === OBLIGATION_KIND.PURCHASE
+      ? 'Purchase credit'
+      : row.kind === OBLIGATION_KIND.LOAN
+        ? 'Staff loan'
+        : String(row.kind);
+
+  let treasuryMovement = null;
+  let result;
+
+  try {
+    result = db.transaction(() => {
+      if (treasuryAccountId) {
+        treasuryMovement = insertTreasuryMovementTx(db, {
+          type: 'STAFF_OBLIGATION_IN',
+          treasuryAccountId,
+          amountNgn,
+          postedAtISO: `${paymentDate}T12:00:00.000Z`,
+          reference: paymentReference || `${kindLabel} ${row.id}`,
+          counterpartyKind: 'STAFF',
+          counterpartyId: row.user_id,
+          counterpartyName: staffLabel,
+          sourceKind: 'STAFF_OBLIGATION',
+          sourceId: id,
+          note: note || `${kindLabel} repayment — ${row.title || id}`,
+          createdBy: actorName(actor),
+          workspaceBranchId: branchId,
+          workspaceViewAll,
+          actor,
+        });
+        paymentReference = paymentReference || treasuryMovement.id;
+      } else if (!paymentReference) {
+        paymentReference = newReceiptRef(db, row.branch_id);
+      }
+
+      return postObligationTransactionTx(db, id, {
+        type: OBLIGATION_TX_TYPE.CASH_REPAYMENT,
+        amountNgn,
+        effectiveAtIso: `${paymentDate}T12:00:00.000Z`,
+        sourceKind: treasuryAccountId ? 'staff_obligation_cashier' : 'cash_repayment',
+        sourceId: paymentReference,
+        paymentReference,
+        note,
+        recordedByUserId: actor?.id || null,
+      });
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  if (body.recalculateInstallment === true && result.account?.principalOutstandingNgn > 0) {
+    const recalc = recalculateObligationInstallmentFromBalance(db, id, actor);
+    if (recalc.ok) result.account = recalc.account;
+  }
 
   appendHrAuditEvent(db, {
     actorUserId: actor?.id || null,
-    action: 'hr.obligation.cash_repayment',
+    action: treasuryAccountId ? 'hr.obligation.cashier_payment' : 'hr.obligation.cash_repayment',
     entityKind: 'hr_staff_obligation_account',
     entityId: id,
-    details: { amountNgn, paymentReference, principalAfter: result.account.principalOutstandingNgn },
+    details: {
+      amountNgn,
+      paymentReference,
+      principalAfter: result.account.principalOutstandingNgn,
+      treasuryMovementId: treasuryMovement?.id || null,
+      recalculatedInstallment: Boolean(body.recalculateInstallment),
+    },
   });
 
   if (String(row.kind) === OBLIGATION_KIND.LOAN && row.hr_request_id) {
     syncLoanRequestPayloadFromObligation(db, id);
   }
 
-  return { ok: true, receiptReference: paymentReference, ...result };
+  return {
+    ok: true,
+    receiptReference: paymentReference,
+    treasuryMovementId: treasuryMovement?.id || null,
+    treasuryAccountId: treasuryAccountId || null,
+    treasuryAccountName: treasuryMovement?.accountName || null,
+    paymentDateIso: paymentDate,
+    paidInFull: amountNgn >= outstanding,
+    ...result,
+  };
 }
 
 /**
@@ -618,6 +743,8 @@ export function syncLoanRequestPayloadFromObligation(db, accountIdOrHrRequestId)
     loanMonthsDeducted: monthsPaid,
     deductionPerMonthNgn: installmentNgn || p.deductionPerMonthNgn,
     repaymentMonths: termMonths || p.repaymentMonths,
+    pauseUntilIso: account.pause_until_iso || null,
+    pauseReason: account.pause_reason || null,
   };
   if (account.disbursed_at_iso && !merged.loanDisbursedAtIso) {
     merged.loanDisbursedAtIso = String(account.disbursed_at_iso).slice(0, 10);
@@ -686,13 +813,29 @@ export function activeObligationBreakdownForPayroll(db, userId, kinds = [OBLIGAT
   const rows = db
     .prepare(
       `SELECT * FROM hr_staff_obligation_accounts
-       WHERE user_id = ? AND kind IN (${placeholders}) AND deductions_active = 1 AND status = ?
+       WHERE user_id = ? AND kind IN (${placeholders}) AND status = ?
        AND principal_outstanding_ngn > 0`
     )
     .all(userId, ...kindList, OBLIGATION_STATUS.ACTIVE);
 
+  const today = new Date().toISOString().slice(0, 10);
   const items = [];
   for (const row of rows) {
+    const pauseUntil = String(row.pause_until_iso || '').trim().slice(0, 10);
+    let deductionsActive = Boolean(row.deductions_active);
+
+    if (pauseUntil && pauseUntil <= today && !deductionsActive) {
+      db.prepare(
+        `UPDATE hr_staff_obligation_accounts SET
+          deductions_active = 1, pause_until_iso = NULL, pause_reason = NULL,
+          paused_at_iso = NULL, paused_by_user_id = NULL, updated_at_iso = ?
+         WHERE id = ?`
+      ).run(nowIso(), row.id);
+      deductionsActive = true;
+    }
+
+    if (!deductionsActive) continue;
+    if (pauseUntil && pauseUntil > today) continue;
     let amountNgn = Math.round(Number(row.installment_ngn) || 0);
     const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
     if (amountNgn <= 0 || outstanding <= 0) continue;
@@ -807,6 +950,8 @@ export function getStaffObligationLoanSchedule(db, userId) {
       monthsPaid: a.monthsPaid,
       outstandingNgn: a.principalOutstandingNgn,
       deductionsActive: a.deductionsActive && a.principalOutstandingNgn > 0,
+      pauseUntilIso: a.pauseUntilIso || null,
+      pauseReason: a.pauseReason || null,
       status:
         a.principalOutstandingNgn <= 0
           ? 'paid_off'
@@ -918,4 +1063,264 @@ export function actorMayManageObligations(actor) {
   if (!actor) return false;
   if (userHasPermission(actor, '*')) return true;
   return userHasPermission(actor, 'hr.loans.manage') || userHasPermission(actor, 'hr.staff.manage');
+}
+
+/** HR or Finance — view staff loan / purchase credit accounts and record cash repayments. */
+export function actorMayRecordStaffRepayments(actor) {
+  if (!actor) return false;
+  if (userHasPermission(actor, '*')) return true;
+  if (actorMayManageObligations(actor)) return true;
+  return (
+    userHasPermission(actor, 'finance.post') ||
+    userHasPermission(actor, 'finance.pay') ||
+    userHasPermission(actor, 'cashier.desk.view')
+  );
+}
+
+/**
+ * Active staff loans and purchase credit with outstanding balance — Finance → Desk queue.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listStaffRepayableObligationsForCashier(db, branchScope = 'ALL') {
+  if (!staffObligationTablesReady(db)) return [];
+  let sql = `
+    SELECT o.*, u.display_name AS staff_display_name, u.username AS staff_username,
+           p.employee_no AS staff_employee_no
+    FROM hr_staff_obligation_accounts o
+    JOIN app_users u ON u.id = o.user_id
+    LEFT JOIN hr_staff_profiles p ON p.user_id = o.user_id
+    WHERE o.kind IN (?, ?)
+      AND o.status = ?
+      AND COALESCE(o.principal_outstanding_ngn, 0) > 0`;
+  const args = [OBLIGATION_KIND.LOAN, OBLIGATION_KIND.PURCHASE, OBLIGATION_STATUS.ACTIVE];
+  if (branchScope && branchScope !== 'ALL') {
+    sql += ` AND o.branch_id = ?`;
+    args.push(String(branchScope).trim());
+  }
+  sql += ` ORDER BY o.updated_at_iso DESC LIMIT 200`;
+  return db.prepare(sql).all(...args).map((row) => ({
+    ...mapObligationAccountRow(row),
+    staffDisplayName: row.staff_display_name || row.user_id,
+    staffUsername: row.staff_username || null,
+    staffEmployeeNo: String(row.staff_employee_no || '').trim() || null,
+    kindLabel:
+      row.kind === OBLIGATION_KIND.PURCHASE
+        ? 'Purchase credit'
+        : row.kind === OBLIGATION_KIND.LOAN
+          ? 'Staff loan'
+          : row.kind,
+  }));
+}
+
+export function actorMayChairmanWaiveObligation(actor) {
+  if (!actor) return false;
+  if (userHasPermission(actor, '*')) return true;
+  if (userHasPermission(actor, 'hr.chairman.manage')) return true;
+  const rk = String(actor.roleKey || actor.role || '').toLowerCase();
+  return rk === 'chairman' || rk === 'md';
+}
+
+/**
+ * Pause or resume payroll deductions on an active obligation (loan / purchase credit).
+ */
+export function patchObligationDeductionPause(db, accountId, actor, body = {}) {
+  if (!staffObligationTablesReady(db)) return { ok: false, error: 'Staff obligation ledger not migrated.' };
+  const id = String(accountId || '').trim();
+  const row = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Obligation account not found.' };
+  if (String(row.kind) === OBLIGATION_KIND.RECOVERY) {
+    return { ok: false, error: 'Use discipline recovery workflow for recoveries.' };
+  }
+  if (String(row.status) !== OBLIGATION_STATUS.ACTIVE) {
+    return { ok: false, error: 'Only active accounts can be paused or resumed.' };
+  }
+
+  const pause = body.pause === true || body.paused === true;
+  const resume = body.pause === false || body.resume === true;
+  if (!pause && !resume) return { ok: false, error: 'Set pause: true or pause: false.' };
+
+  const now = nowIso();
+  const actorId = actor?.id || null;
+
+  if (pause) {
+    const reason = String(body.reason ?? body.pauseReason ?? '').trim();
+    if (reason.length < 3) return { ok: false, error: 'Pause reason is required (at least 3 characters).' };
+    const pauseUntil = String(body.pauseUntilIso ?? body.pause_until_iso ?? '').trim().slice(0, 10) || null;
+    db.prepare(
+      `UPDATE hr_staff_obligation_accounts SET
+        deductions_active = 0, pause_until_iso = ?, pause_reason = ?, paused_at_iso = ?, paused_by_user_id = ?, updated_at_iso = ?
+       WHERE id = ?`
+    ).run(pauseUntil, reason, now, actorId, now, id);
+    appendHrAuditEvent(db, {
+      actorUserId: actorId,
+      action: 'hr.obligation.pause_deductions',
+      entityKind: 'hr_staff_obligation_account',
+      entityId: id,
+      details: { pauseUntilIso: pauseUntil, reason },
+    });
+  } else {
+    db.prepare(
+      `UPDATE hr_staff_obligation_accounts SET
+        deductions_active = 1, pause_until_iso = NULL, pause_reason = NULL, paused_at_iso = NULL, paused_by_user_id = NULL, updated_at_iso = ?
+       WHERE id = ?`
+    ).run(now, id);
+    appendHrAuditEvent(db, {
+      actorUserId: actorId,
+      action: 'hr.obligation.resume_deductions',
+      entityKind: 'hr_staff_obligation_account',
+      entityId: id,
+      details: {},
+    });
+  }
+
+  const account = mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id));
+  if (account?.hrRequestId && String(row.kind) === OBLIGATION_KIND.LOAN) {
+    syncLoanRequestPayloadFromObligation(db, id);
+  }
+  return { ok: true, account };
+}
+
+/**
+ * Adjust installment / term or close loan on obligation account (loan or purchase credit).
+ */
+export function maintainObligationAccount(db, accountId, actor, body = {}) {
+  if (!staffObligationTablesReady(db)) return { ok: false, error: 'Staff obligation ledger not migrated.' };
+  const id = String(accountId || '').trim();
+  const row = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Obligation account not found.' };
+  if (String(row.kind) === OBLIGATION_KIND.RECOVERY) {
+    return { ok: false, error: 'Recoveries are maintained on the discipline case.' };
+  }
+
+  const actorId = actor?.id || null;
+  const now = nowIso();
+  const note = String(body.note ?? '').trim() || null;
+
+  if (body.closeLoan === true || body.close === true) {
+    const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
+    if (outstanding > 0) {
+      postObligationTransaction(db, id, {
+        type: OBLIGATION_TX_TYPE.WRITE_OFF,
+        amountNgn: outstanding,
+        effectiveAtIso: now,
+        note: note || 'Closed by HR',
+        recordedByUserId: actorId,
+      });
+    }
+    db.prepare(
+      `UPDATE hr_staff_obligation_accounts SET status = ?, deductions_active = 0, updated_at_iso = ? WHERE id = ?`
+    ).run(OBLIGATION_STATUS.PAID_OFF, now, id);
+    if (row.hr_request_id) {
+      syncLoanRequestPayloadFromObligation(db, id);
+    }
+    appendHrAuditEvent(db, {
+      actorUserId: actorId,
+      action: 'hr.obligation.close',
+      entityKind: 'hr_staff_obligation_account',
+      entityId: id,
+      details: { note },
+    });
+    return {
+      ok: true,
+      account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)),
+    };
+  }
+
+  if (String(row.status) !== OBLIGATION_STATUS.ACTIVE) {
+    return { ok: false, error: 'Only active accounts can be adjusted.' };
+  }
+
+  if (body.recalculateInstallment === true) {
+    return recalculateObligationInstallmentFromBalance(db, id, actor);
+  }
+
+  const updates = [];
+  const args = [];
+  if (body.installmentNgn != null || body.deductionPerMonthNgn != null) {
+    const inst = Math.max(0, Math.round(Number(body.installmentNgn ?? body.deductionPerMonthNgn) || 0));
+    if (inst <= 0) return { ok: false, error: 'Monthly installment must be greater than zero.' };
+    updates.push('installment_ngn = ?');
+    args.push(inst);
+  }
+  if (body.termMonths != null || body.repaymentMonths != null) {
+    const term = Math.max(0, Math.round(Number(body.termMonths ?? body.repaymentMonths) || 0));
+    const monthsPaid = Math.round(Number(row.months_paid) || 0);
+    if (term > 0 && monthsPaid > term) {
+      return { ok: false, error: 'Term cannot be less than months already paid via payroll.' };
+    }
+    updates.push('term_months = ?');
+    args.push(term);
+  }
+  if (!updates.length) return { ok: false, error: 'Nothing to update.' };
+
+  updates.push('updated_at_iso = ?');
+  args.push(now, id);
+  db.prepare(`UPDATE hr_staff_obligation_accounts SET ${updates.join(', ')} WHERE id = ?`).run(...args);
+
+  if (row.hr_request_id) {
+    syncLoanRequestPayloadFromObligation(db, id);
+  }
+  appendHrAuditEvent(db, {
+    actorUserId: actorId,
+    action: 'hr.obligation.maintain',
+    entityKind: 'hr_staff_obligation_account',
+    entityId: id,
+    details: { note },
+  });
+  return {
+    ok: true,
+    account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)),
+  };
+}
+
+/**
+ * Chairman / MD waives remaining balance (write-off).
+ */
+export function chairmanWaiveObligationBalance(db, accountId, actor, body = {}) {
+  if (!staffObligationTablesReady(db)) return { ok: false, error: 'Staff obligation ledger not migrated.' };
+  if (!actorMayChairmanWaiveObligation(actor)) {
+    return { ok: false, error: 'Only Chairman or MD can waive an obligation balance.', code: 'FORBIDDEN' };
+  }
+  const id = String(accountId || '').trim();
+  const row = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Obligation account not found.' };
+  if (String(row.kind) === OBLIGATION_KIND.RECOVERY) {
+    return { ok: false, error: 'Use discipline recovery workflow for recoveries.' };
+  }
+  const outstanding = Math.round(Number(row.principal_outstanding_ngn) || 0);
+  if (outstanding <= 0) return { ok: false, error: 'Nothing outstanding to waive.' };
+
+  const note =
+    String(body.note ?? body.waiverNote ?? '').trim() ||
+    'Chairman waiver';
+  if (note.length < 3) return { ok: false, error: 'Waiver note is required (at least 3 characters).' };
+
+  const now = nowIso();
+  const actorId = actor?.id || null;
+
+  postObligationTransaction(db, id, {
+    type: OBLIGATION_TX_TYPE.WRITE_OFF,
+    amountNgn: outstanding,
+    effectiveAtIso: now,
+    note: `Chairman waiver: ${note}`,
+    recordedByUserId: actorId,
+  });
+
+  appendHrAuditEvent(db, {
+    actorUserId: actorId,
+    action: 'hr.obligation.chairman_waive',
+    entityKind: 'hr_staff_obligation_account',
+    entityId: id,
+    details: { waivedNgn: outstanding, note },
+  });
+
+  if (row.hr_request_id) {
+    syncLoanRequestPayloadFromObligation(db, id);
+  }
+
+  return {
+    ok: true,
+    account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)),
+  };
 }

@@ -85,6 +85,7 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
+import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import {
   countPendingStaffPurchaseCreditRequests,
@@ -255,6 +256,10 @@ export function buildBootstrap(db, opts = {}) {
     staffRecoveriesDue:
       finOk && recoverySchedulesTableReady(db)
         ? listStaffRecoveriesDueForCashier(db, branchScope)
+        : [],
+    staffObligationsDue:
+      finOk && staffObligationTablesReady(db)
+        ? listStaffRepayableObligationsForCashier(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')

@@ -1143,6 +1143,7 @@ function runMigrationsUnlocked(db) {
   migrateStaffObligationLedger2026(db);
   migrateStaffPurchaseCredit2026(db);
   migrateStaffRecoveryObligation2026(db);
+  migrateStaffObligationPause2026(db);
   migrateHrStaffDirectoryViews2026(db);
   migratePayrollPeriodUnique2026(db);
   try {
@@ -5567,6 +5568,23 @@ function migrateStaffRecoveryObligation2026(db) {
     backfillRecoveryObligationsFromSchedules(db);
   } catch (e) {
     console.warn('[migrate] recovery obligation backfill skipped:', e?.message || e);
+  }
+}
+
+/** Pause metadata on staff obligation accounts (payroll deduction hold). */
+function migrateStaffObligationPause2026(db) {
+  const obCols = (() => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(hr_staff_obligation_accounts)`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  })();
+  if (!obCols.size) return;
+  for (const col of ['pause_until_iso', 'pause_reason', 'paused_at_iso', 'paused_by_user_id']) {
+    if (!obCols.has(col)) {
+      db.exec(`ALTER TABLE hr_staff_obligation_accounts ADD COLUMN ${col} TEXT`);
+    }
   }
 }
 

@@ -63,6 +63,7 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await ensureAllBranchesRollup(page);
     await page.goto('/accounts');
     await expect(page.getByRole('heading', { name: /finance & accounts/i })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: 'Treasury' }).click();
     await waitForRefundApprovedInBootstrap(page, refundID);
     await expect(page.getByTestId('finance-refunds-awaiting-payout')).toBeVisible({ timeout: 30_000 });
     await page
@@ -115,6 +116,7 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await ensureAllBranchesRollup(page);
     await page.goto('/accounts');
     await expect(page.getByRole('heading', { name: /finance & accounts/i })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: 'Treasury' }).click();
     await waitForRefundApprovedInBootstrap(page, refundID);
     await expect(page.getByTestId('finance-refunds-awaiting-payout')).toBeVisible({ timeout: 30_000 });
     await page
@@ -151,5 +153,58 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await tabs.getByRole('tab', { name: 'Audit' }).click();
     await expect(mainTitle).toHaveText('Audit & reconciliation');
     await expect(page.getByText(/Audit checklist/i).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('Cashier: My desk pays approved refund; Accounts & balances hides payout queues', async ({ page }) => {
+    test.setTimeout(180_000);
+
+    await signInViaApi(page, 'sales.staff', 'Sales@123');
+    const { refundID } = await seedPaidQuotationAndPendingRefund(page);
+    await signOutViaApi(page);
+
+    await signInViaApi(page, 'sales.manager', 'Sales@123');
+    await page.goto('/sales');
+    await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: 'Refunds' }).click();
+    await page.getByPlaceholder(/search refund id/i).fill(refundID);
+    const row = page.getByTestId(`refund-row-${refundID}`);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await row.locator('button[aria-haspopup="menu"]').click();
+    await page.getByRole('menuitem', { name: 'Edit' }).click();
+    await page.getByRole('button', { name: 'Approve' }).click();
+    await page.getByPlaceholder(/why was this decided/i).fill('E2E cashier path approval');
+    const saveDecision = page.getByRole('button', { name: 'Save Decision' });
+    const waitDecision = page.waitForResponse(
+      (r) => r.url().includes(`/api/refunds/${encodeURIComponent(refundID)}/decision`) && r.request().method() === 'POST',
+      { timeout: 25_000 }
+    );
+    await Promise.all([saveDecision.click(), waitDecision]);
+    await signOutViaApi(page);
+
+    await signInViaApi(page, 'cashier', 'Cashier@12345!');
+    await page.goto('/');
+    await ensureAllBranchesRollup(page);
+    await page.goto('/accounts?tab=desk');
+    await expect(page.getByRole('tab', { name: /^My desk$/i })).toBeVisible({ timeout: 20_000 });
+    await waitForRefundApprovedInBootstrap(page, refundID);
+    await expect(page.getByTestId('finance-refunds-awaiting-payout')).toBeVisible({ timeout: 30_000 });
+    await page
+      .getByTestId(`finance-refund-awaiting-row-${refundID}`)
+      .getByRole('button', { name: 'Record pay' })
+      .click();
+    await expect(page.getByRole('heading', { name: 'Refund payout' })).toBeVisible();
+    await page.getByPlaceholder(/e\.g\. Hauwa/i).fill('Playwright cashier desk payout');
+    const postPayout = page.getByRole('button', { name: 'Post refund payout' });
+    const waitPay = page.waitForResponse(
+      (r) => r.url().includes(`/api/refunds/${encodeURIComponent(refundID)}/pay`) && r.request().method() === 'POST',
+      { timeout: 25_000 }
+    );
+    await Promise.all([postPayout.click(), waitPay]);
+    await expect(page.getByRole('heading', { name: 'Refund payout' })).toBeHidden({ timeout: 20_000 });
+
+    await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: /Accounts & balances/i }).click();
+    await expect(page.getByTestId('cashier-treasury-desk-banner')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('finance-refunds-awaiting-payout')).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /Expenses & requests/i })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /^Audit$/i })).toHaveCount(0);
   });
 });

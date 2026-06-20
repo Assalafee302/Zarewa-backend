@@ -908,6 +908,8 @@ export function buildCreditorsRegister(db, opts = {}) {
   } catch (err) {
     console.error('[accounting-register] creditor legacy lines failed:', err);
   }
+  const externalLegacy = legacy.filter((l) => String(l.category || '').trim() === 'external_loan');
+  const otherLegacy = legacy.filter((l) => String(l.category || '').trim() !== 'external_loan');
 
   const sections = [
     section(
@@ -954,28 +956,43 @@ export function buildCreditorsRegister(db, opts = {}) {
     ),
     buildLegacyInheritedSection(
       db,
-      legacy,
+      otherLegacy,
       'Inherited & manual receivables',
       'Opening balances and credits carried forward from before this system.'
     ),
   ];
 
+  // Insert external loans section before legacy inherited for visibility
+  const externalIdx = sections.findIndex((s) => s.id === 'legacy_inherited');
+  if (externalIdx >= 0) {
+    sections.splice(externalIdx, 0, section(
+      'external_loans',
+      'External / non-staff loans',
+      'Directors, contractors, and other non-payroll borrowers — collect via register settlements (Finance → Accounting).',
+      registerToItems(db, externalLegacy)
+    ));
+  }
+
   const legacySection = sections.find((s) => s.id === 'legacy_inherited');
+  const sumSection = (id) => sections.find((s) => s.id === id)?.subtotalNgn ?? 0;
   const totalNgn = sections.reduce((s, sec) => s + sec.subtotalNgn, 0);
   return {
     ok: true,
     label: 'Creditors register',
     description:
-      'Amounts owed to Zarewa — staff loans, customer balances, supplier prepayments, inter-branch, and inherited credits.',
+      'Amounts owed to Zarewa — staff loans, customer balances, supplier prepayments, inter-branch, external loans, and inherited credits.',
     branchScope: branchScope === 'ALL' ? null : branchScope,
     generatedAtISO: new Date().toISOString(),
     summary: {
       totalNgn,
-      staffLoansNgn: sections[0].subtotalNgn,
-      customerReceivablesNgn: sections[1].subtotalNgn,
-      supplierPrepaymentsNgn: sections[2].subtotalNgn,
-      interBranchReceivableNgn: sections[3].subtotalNgn,
-      legacyInheritedNgn: sections[4].subtotalNgn,
+      staffLoansNgn: sumSection('staff_loans'),
+      staffPurchaseReceivablesNgn: sumSection('staff_purchase_receivables'),
+      staffRecoveryReceivablesNgn: sumSection('staff_recovery_receivables'),
+      customerReceivablesNgn: sumSection('customer_receivables'),
+      supplierPrepaymentsNgn: sumSection('supplier_prepayments'),
+      interBranchReceivableNgn: sumSection('inter_branch_receivable'),
+      legacyInheritedNgn: sumSection('legacy_inherited'),
+      externalLoansNgn: sumSection('external_loans'),
       unlinkedLegacyCount: legacySection?.unlinkedLegacyCount ?? 0,
     },
     sections,
@@ -983,7 +1000,8 @@ export function buildCreditorsRegister(db, opts = {}) {
       'Customer receivables include only quotations with completed production.',
       'Customer trade receivable rows below ₦1,000 are omitted from this register (small-balance materiality).',
       'Use “Add legacy line” for balances from before go-live that are not in live transactions.',
-      'Staff loan outstanding uses HR loan schedule; verify against payroll deductions.',
+      'Non-staff borrowers (directors, contractors) — add category External loan; collect via register settlement.',
+      'Staff loan outstanding uses HR obligation ledger; verify against payroll deductions.',
     ],
   };
 }

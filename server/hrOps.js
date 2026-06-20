@@ -4061,6 +4061,25 @@ export function listHrPayslipsForUser(db, userId, limit = 24) {
   });
 }
 
+/** Self-service hint when current-period payslip is not yet available. */
+export function getHrPayslipPeriodHint(db, userId) {
+  if (!hrTablesReady(db)) return null;
+  const uid = String(userId || '').trim();
+  if (!uid) return null;
+  const period = currentPeriodYyyymm();
+  const run = db
+    .prepare(`SELECT id, period_yyyymm AS periodYyyymm, status AS runStatus FROM hr_payroll_runs WHERE period_yyyymm = ? LIMIT 1`)
+    .get(period);
+  if (!run) {
+    return { periodYyyymm: period, runStatus: 'not_started' };
+  }
+  const onRun = db
+    .prepare(`SELECT 1 AS ok FROM hr_payroll_lines WHERE run_id = ? AND user_id = ? LIMIT 1`)
+    .get(run.id, uid);
+  if (!onRun) return null;
+  return { periodYyyymm: run.periodYyyymm, runStatus: run.runStatus };
+}
+
 export function createPayrollRun(db, actor, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const periodYyyymm = String(body?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);

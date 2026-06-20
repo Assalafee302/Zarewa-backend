@@ -85,6 +85,7 @@ import {
   listHrAttendanceDeductionPreview,
   listHrBranchPayrollContributions,
   listHrPayslipsForUser,
+  getHrPayslipPeriodHint,
   listHrSalaryMatrix,
   listHrBeneficiaries,
   listHrBenefitPayments,
@@ -2774,7 +2775,8 @@ export function registerHrApi(app, db) {
               amountsRedacted: true,
             }
       );
-      return res.json({ ok: true, payslips: slips });
+      const periodHint = isSelf ? getHrPayslipPeriodHint(db, userId) : null;
+      return res.json({ ok: true, payslips: slips, periodHint });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load payslips.' });

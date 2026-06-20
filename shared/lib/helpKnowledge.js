@@ -35,7 +35,7 @@ const CORE_HELP_ARTICLES = [
       'Select the quotation, enter amount, date, and treasury account(s), then save.',
       'Amounts **≥ ₦100,000** require typing the amount twice to confirm.',
       'Print or share the receipt reference (RCP-…) if the customer needs proof.',
-      'Bank/cash **clearance** is a separate step — Cashier desk or Finance confirms the deposit matched (see receipt clearance guide).',
+      'Bank/cash **clearance** is a separate step — confirm on **Finance → My desk** or Receipts tab (see receipt clearance guide).',
     ],
     links: [
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
@@ -113,7 +113,7 @@ const CORE_HELP_ARTICLES = [
       'Open Sales → Refunds (or the refund action on the quotation/customer).',
       'Start a refund request with category and amount; review system preview lines as starting points only.',
       'Branch manager or MD approves in Sales or Manager dashboard (MD required above governance threshold, default ₦1,000,000).',
-      'Cashier or Finance **pays** the approved refund from **Cashier desk** (`/cashier`) or Finance payments — treasury disburses.',
+      'Cashier or Finance **pays** the approved refund from **My desk** (`/accounts?tab=desk`) or Payment register (accountant).',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
@@ -387,9 +387,9 @@ const CORE_HELP_ARTICLES = [
       'Refunds combine Sales eligibility rules, manager/finance approvals, and treasury payout. **Cashiers may request but never approve** refunds. Duplicate **same category** on one quote is blocked. A customer hold may block new receipts until the refund clears.',
     steps: [
       'Start the refund from Sales on the quotation or customer record; confirm eligible balance, categories, and headroom.',
-      'Ensure all receipts on the quote are **cleared** (Cashier desk or Finance) — refunds fail if clearance is pending.',
+      'Ensure all receipts on the quote are **cleared** (My desk or Receipts) — refunds fail if clearance is pending.',
       'Submit for **manager or MD approval** (or finance.approve where granted); track status on Refunds tab or Manager inbox.',
-      'After **Approved**, Cashier opens **Cashier desk** → **Pay approved refunds** (Accountant may pay from Finance tabs).',
+      'After **Approved**, Cashier opens **My desk** → refund payout queue (Accountant may use Treasury or Payment register).',
       'Verify treasury movement and quotation balance after payout.',
     ],
     links: [
@@ -644,7 +644,7 @@ const CORE_HELP_ARTICLES = [
       'Each category shows what is eligible; only include lines that apply — do not stack categories past total headroom.',
       'If submit is blocked, reduce included lines or confirm extra receipts were posted on **this** quotation.',
       'Stone flatsheet m² and coil substitution follow different rules — use the preview suggestions rather than forcing coil lines on stone-only quotes.',
-      'Route through manager/finance approval; payout still requires treasury disbursement from **Cashier desk** or Finance after Approved status.',
+      'Route through manager/finance approval; payout from **My desk** (cashier) or Finance tabs after Approved status.',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
@@ -696,7 +696,7 @@ const CORE_HELP_ARTICLES = [
       'Finance may require **receipt clearance** (bank confirmed / delivery cleared) before refunds or certain downstream actions proceed, even when Sales shows a posted receipt.',
     steps: [
       'Sales → Payments: check clearance flags on the receipt row.',
-      '**Cashier desk** (`/cashier`) → **Confirm payment received** when bank/cash evidence matches (primary execution desk).',
+      '**My desk** (`/accounts?tab=desk`) → **Confirm payment received** when bank/cash evidence matches.',
       'Accountant may also clear from **Finance & accounts** → Receipts & recon when reconciling.',
       'If refund submit fails for clearance, finish clearance first — do not bypass in Sales.',
       'Manager clearance on the customer or quote is separate — resolve holds on Manager dashboard if shown.',
@@ -1290,7 +1290,7 @@ const CORE_HELP_ARTICLES = [
       'AP1c',
     ],
     answer:
-      'The **Accounting desk** (`/accounting`) is for **Accountant / Head of Accounts**: reconciliation exceptions, AP diagnostics, costing readiness, GL pilot, and month-end — not day-to-day receipt confirmation (that is primarily **Cashier desk**).',
+      'The **Accounting desk** (`/accounting`) is for **Accountant / Head of Accounts**: reconciliation, GL, month-end — not day-to-day receipt confirmation (**My desk**).',
     steps: [
       'Open **Accounting** from the sidebar (`/accounting`).',
       'Review Overview KPIs: recon warnings, treasury drift, AP difference, costing readiness.',
@@ -1812,7 +1812,7 @@ export function quickQuestionsForPath(pathname) {
   }
   if (p.startsWith('/cashier') || p.includes('tab=desk')) {
     return [
-      { label: 'Tour Cashier desk', query: 'Walk me through the cashier desk step by step — confirm receipts and pay approved refunds' },
+      { label: 'Tour My desk', query: 'Walk me through My desk step by step — confirm receipts and pay approved refunds' },
       { label: 'Confirm receipt', query: 'Finance clearance before refunds — cashier desk confirm payment received' },
       { label: 'Pay refund', query: 'How do I pay an approved refund as cashier' },
       { label: 'Cannot approve', query: 'Why can’t cashier approve refund' },

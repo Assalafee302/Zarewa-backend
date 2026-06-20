@@ -20,6 +20,17 @@ import {
   postObligationTransaction,
   staffObligationTablesReady,
 } from './staffObligationOps.js';
+import {
+  getStaffPurchaseCreditAuditTimeline,
+  notifyMdStaffPurchaseCreditSubmitted,
+  summarizePendingStaffPurchaseCreditByBranch,
+  syncStaffPurchaseCreditWorkItem,
+} from './staffPurchaseCreditWorkItems.js';
+
+export {
+  countPendingStaffPurchaseCreditRequests,
+  summarizePendingStaffPurchaseCreditByBranch,
+} from './staffPurchaseCreditWorkItems.js';
 
 function safeJsonParse(raw, fallback) {
   try {
@@ -417,6 +428,100 @@ export function userMayRequestStaffPurchaseCredit(actor) {
   return userHasPermission(actor, 'quotations.manage') || userHasPermission(actor, 'sales.manage');
 }
 
+/** Staff member initiating credit on their own linked quotation. */
+export function userMayInitiateOwnStaffPurchaseCredit(db, actor) {
+  const uid = String(actor?.id || '').trim();
+  if (!uid || !hrTablesReady(db)) return false;
+  return Boolean(db.prepare(`SELECT 1 FROM hr_staff_profiles WHERE user_id = ?`).get(uid));
+}
+
+/** @param {number} outstandingNgn @param {object} policy */
+export function computeStaffPurchaseCreditAmountBounds(outstandingNgn, policy = {}) {
+  const outstanding = Math.round(Number(outstandingNgn) || 0);
+  const depositPct = Math.max(0, Math.min(100, Number(policy.requireDepositPercent) || 0));
+  const depositRequiredNgn = depositPct > 0 ? Math.ceil(outstanding * (depositPct / 100)) : 0;
+  const maxCreditNgn = Math.max(0, outstanding - depositRequiredNgn);
+  return { outstandingNgn: outstanding, depositPct, depositRequiredNgn, maxCreditNgn };
+}
+
+/**
+ * Open quotations on staff sales customer with balance due (self-service picker).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} staffUserId
+ */
+export function listStaffQuotationsForPurchaseCredit(db, staffUserId) {
+  const uid = String(staffUserId || '').trim();
+  const custId = getStaffSalesCustomerId(db, uid);
+  if (!custId) return [];
+  const jobs = listProductionJobs(db, 'ALL');
+  const rows = db
+    .prepare(
+      `SELECT id, project_name, customer_name, total_ngn, paid_ngn, branch_id, date_iso, payment_status
+       FROM quotations WHERE customer_id = ?
+       ORDER BY date_iso DESC LIMIT 40`
+    )
+    .all(custId);
+  const out = [];
+  for (const q of rows) {
+    const pay = evaluateQuotationPaymentForDeliveryRelease(db, q.id, jobs);
+    const balanceNgn = Math.round(Number(pay.balanceNgn) || 0);
+    if (balanceNgn <= 0) continue;
+    const pending = db
+      .prepare(
+        `SELECT id, status FROM hr_staff_obligation_accounts
+         WHERE quotation_ref = ? AND kind = ? AND status IN (?, ?) LIMIT 1`
+      )
+      .get(q.id, OBLIGATION_KIND.PURCHASE, OBLIGATION_STATUS.PENDING_APPROVAL, OBLIGATION_STATUS.ACTIVE);
+    out.push({
+      quotationRef: q.id,
+      projectName: q.project_name || q.id,
+      balanceNgn,
+      branchId: q.branch_id || '',
+      dateIso: q.date_iso || '',
+      hasPendingCredit: Boolean(pending),
+      creditStatus: pending?.status || null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Bulk-create/link sales customers for active staff missing a link.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null} actor
+ * @param {{ branchId?: string }} [opts]
+ */
+export function bulkEnsureStaffSalesCustomers(db, actor, opts = {}) {
+  if (!hrTablesReady(db) || !staffPurchaseCreditColumnsReady(db)) {
+    return { ok: false, error: 'Staff purchase credit is not available.' };
+  }
+  const branchId = String(opts.branchId || '').trim();
+  let sql = `
+    SELECT p.user_id AS userId
+    FROM hr_staff_profiles p
+    JOIN app_users u ON u.id = p.user_id
+    WHERE u.status = 'active' AND trim(IFNULL(p.sales_customer_id, '')) = ''`;
+  const args = [];
+  if (branchId && branchId !== 'ALL') {
+    sql += ` AND p.branch_id = ?`;
+    args.push(branchId);
+  }
+  sql += ` ORDER BY u.display_name COLLATE NOCASE LIMIT 200`;
+  const rows = db.prepare(sql).all(...args);
+  let linked = 0;
+  let failed = 0;
+  const errors = [];
+  for (const row of rows) {
+    const r = ensureStaffSalesCustomer(db, row.userId, actor);
+    if (r.ok) linked += 1;
+    else {
+      failed += 1;
+      if (errors.length < 5) errors.push(`${row.userId}: ${r.error || 'failed'}`);
+    }
+  }
+  return { ok: true, scanned: rows.length, linked, failed, errors };
+}
+
 export function userMayApproveStaffPurchaseCredit(actor) {
   const rk = roleKey(actor);
   if (userHasPermission(actor, '*')) return true;
@@ -527,9 +632,6 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
   if (!staffObligationTablesReady(db)) {
     return { ok: false, error: 'Staff obligation ledger not migrated.' };
   }
-  if (!userMayRequestStaffPurchaseCredit(actor)) {
-    return { ok: false, error: 'You do not have permission to request staff purchase credit.', code: 'FORBIDDEN' };
-  }
 
   const quotationRef = String(body.quotationRef || body.quotationId || '').trim();
   if (!quotationRef) return { ok: false, error: 'quotationRef is required.' };
@@ -540,6 +642,15 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
   const staffUserId = String(body.staffUserId || body.userId || staffUserIdForCustomer(db, q.customer_id) || '').trim();
   if (!staffUserId) {
     return { ok: false, error: 'Quotation is not linked to a staff customer. Link staff sales customer first.' };
+  }
+
+  const selfInitiated =
+    Boolean(body.selfInitiated) && String(actor?.id || '').trim() === staffUserId;
+  const mayCreate =
+    userMayRequestStaffPurchaseCredit(actor) ||
+    (selfInitiated && userMayInitiateOwnStaffPurchaseCredit(db, actor));
+  if (!mayCreate) {
+    return { ok: false, error: 'You do not have permission to request staff purchase credit.', code: 'FORBIDDEN' };
   }
 
   const custLink = getStaffSalesCustomerId(db, staffUserId);
@@ -553,10 +664,20 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
   if (outstanding <= 0) return { ok: false, error: 'Quotation has no outstanding balance.' };
 
   const policy = getStaffPurchaseCreditPolicy(db);
-  const amountNgn = Math.round(Number(body.amountNgn) || outstanding);
+  const bounds = computeStaffPurchaseCreditAmountBounds(outstanding, policy);
+  let amountNgn = Math.round(Number(body.amountNgn) || bounds.maxCreditNgn || outstanding);
   if (amountNgn <= 0) return { ok: false, error: 'amountNgn must be positive.' };
   if (amountNgn > outstanding) {
     return { ok: false, error: `Amount cannot exceed quotation balance (₦${outstanding.toLocaleString('en-NG')}).` };
+  }
+  if (bounds.depositRequiredNgn > 0 && amountNgn > bounds.maxCreditNgn) {
+    return {
+      ok: false,
+      error: `Policy requires ${bounds.depositPct}% deposit (₦${bounds.depositRequiredNgn.toLocaleString('en-NG')}) before credit. Maximum credit on this quote is ₦${bounds.maxCreditNgn.toLocaleString('en-NG')}.`,
+      code: 'DEPOSIT_REQUIRED',
+      depositRequiredNgn: bounds.depositRequiredNgn,
+      maxCreditNgn: bounds.maxCreditNgn,
+    };
   }
   if (amountNgn > policy.maxSinglePurchaseNgn) {
     return { ok: false, error: `Exceeds single purchase limit (₦${policy.maxSinglePurchaseNgn.toLocaleString('en-NG')}).` };
@@ -564,10 +685,10 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
 
   const elig = computeStaffPurchaseCreditEligibility(db, staffUserId);
   if (!elig.eligible) {
-    return { ok: false, error: elig.issues[0] || 'Staff is not eligible for purchase credit.' };
+    return { ok: false, error: elig.issues[0] || 'Staff is not eligible for purchase credit.', eligibility: elig };
   }
   if (elig.activeOutstandingNgn + amountNgn > policy.maxOutstandingNgn) {
-    return { ok: false, error: 'Would exceed staff maximum outstanding purchase credit.' };
+    return { ok: false, error: 'Would exceed staff maximum outstanding purchase credit.', eligibility: elig };
   }
 
   const existing = db
@@ -594,6 +715,12 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
   const dueDateISO = String(body.dueDateISO || '').slice(0, 10) || addDaysIso(requestDate, termsDays);
   const title = String(body.title || q.project_name || `Staff purchase — ${quotationRef}`).trim();
   const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(staffUserId);
+  const requestNote = [
+    selfInitiated ? '[Staff-initiated]' : '[Sales-initiated]',
+    String(body.reason || body.note || '').trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   const ins = insertObligationAccount(db, {
     userId: staffUserId,
@@ -609,7 +736,7 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
     deductionsActive: false,
     quotationRef,
     dueDateIso: dueDateISO,
-    note: String(body.reason || body.note || '').trim() || null,
+    note: requestNote || null,
     createdByUserId: actor?.id || null,
   });
   if (!ins.ok) return ins;
@@ -622,11 +749,26 @@ export function createStaffPurchaseCreditRequest(db, actor, body = {}) {
     entityKind: 'hr_staff_obligation_account',
     entityId: ins.account.id,
     branchId: ins.account.branchId,
-    details: { quotationRef, amountNgn, staffUserId },
+    details: { quotationRef, amountNgn, staffUserId, selfInitiated, depositRequiredNgn: bounds.depositRequiredNgn },
   });
 
+  const rawRow = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(ins.account.id);
+  const staffRow = db.prepare(`SELECT display_name FROM app_users WHERE id = ?`).get(staffUserId);
+  try {
+    syncStaffPurchaseCreditWorkItem(db, rawRow, actor);
+    notifyMdStaffPurchaseCreditSubmitted(db, ins.account, actor, staffRow?.display_name);
+  } catch (e) {
+    console.warn('[staffPurchaseCredit] work item/notify skipped:', e?.message || e);
+  }
+
   const requiredLevel = 'md';
-  return { ok: true, account: ins.account, requiredApprovalLevel: requiredLevel };
+  return {
+    ok: true,
+    account: ins.account,
+    requiredApprovalLevel: requiredLevel,
+    amountBounds: bounds,
+    eligibility: elig,
+  };
 }
 
 /**
@@ -655,13 +797,29 @@ export function decideStaffPurchaseCredit(db, accountId, decision, actor, body =
     if (!userMayRejectStaffPurchaseCredit(actor)) {
       return { ok: false, error: 'You cannot reject this purchase credit request.', code: 'FORBIDDEN' };
     }
+    if (!note || note.length < 3) {
+      return { ok: false, error: 'Rejection reason is required (at least 3 characters).' };
+    }
     db.prepare(`UPDATE hr_staff_obligation_accounts SET status = ?, note = ?, updated_at_iso = ? WHERE id = ?`).run(
       OBLIGATION_STATUS.REJECTED,
       note,
       now,
       id
     );
-    return { ok: true, account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)) };
+    appendHrAuditEvent(db, {
+      actorUserId: actor?.id || null,
+      action: 'hr.purchase_credit.rejected',
+      entityKind: 'hr_staff_obligation_account',
+      entityId: id,
+      details: { note, quotationRef: String(row.quotation_ref || '') },
+    });
+    const updated = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+    try {
+      syncStaffPurchaseCreditWorkItem(db, updated, actor);
+    } catch (e) {
+      console.warn('[staffPurchaseCredit] work item sync skipped:', e?.message || e);
+    }
+    return { ok: true, account: mapObligationAccountRow(updated) };
   }
 
   if (dec !== 'approve') return { ok: false, error: 'decision must be approve or reject.' };
@@ -705,10 +863,17 @@ export function decideStaffPurchaseCredit(db, accountId, decision, actor, body =
     action: 'hr.purchase_credit.approved',
     entityKind: 'hr_staff_obligation_account',
     entityId: id,
-    details: { quotationRef, recognizeNgn, requiredLevel: 'md' },
+    details: { quotationRef, recognizeNgn, requiredLevel: 'md', note },
   });
 
-  return { ok: true, account: mapObligationAccountRow(db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id)) };
+  const updated = db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(id);
+  try {
+    syncStaffPurchaseCreditWorkItem(db, updated, actor);
+  } catch (e) {
+    console.warn('[staffPurchaseCredit] work item sync skipped:', e?.message || e);
+  }
+
+  return { ok: true, account: mapObligationAccountRow(updated) };
 }
 
 /**
@@ -791,17 +956,27 @@ export function getQuotationStaffPurchaseCreditStatus(db, quotationRef) {
 
   const row = db
     .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE quotation_ref = ? ORDER BY created_at_iso DESC LIMIT 1`)
-    .all(ref)[0];
+    .get(ref);
   const active = row ? resolveActiveStaffPurchaseCreditForQuotation(db, ref, balance) : null;
+  const policy = getStaffPurchaseCreditPolicy(db);
+  const amountBounds = computeStaffPurchaseCreditAmountBounds(balance, policy);
+  const eligibility = staffUserId ? computeStaffPurchaseCreditEligibility(db, staffUserId) : null;
+  const timeline = row ? getStaffPurchaseCreditAuditTimeline(db, row.id) : [];
+  const mapped = row ? mapObligationAccountRow(row) : null;
   return {
     ok: true,
     quotationRef: ref,
     balanceNgn: balance,
     isStaffCustomer,
     staffUserId: staffUserId || null,
-    account: row ? mapObligationAccountRow(row) : null,
+    account: mapped,
     activeCredit: active,
-    policy: getStaffPurchaseCreditPolicy(db),
+    policy,
+    amountBounds,
+    eligibility,
+    timeline,
+    rejectionNote:
+      mapped?.status === OBLIGATION_STATUS.REJECTED ? String(mapped.note || '').trim() || null : null,
   };
 }
 

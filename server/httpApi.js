@@ -288,6 +288,8 @@ import {
   linkSalesCustomerToStaff,
   listStaffForSalesCustomerLink,
   listStaffPurchaseCreditQueue,
+  listStaffQuotationsForPurchaseCredit,
+  bulkEnsureStaffSalesCustomers,
   syncQuotationStaffPurchaseFlag,
   unlinkSalesCustomerFromStaff,
   userMayLinkStaffSalesCustomer,
@@ -295,6 +297,10 @@ import {
   userMayApproveStaffPurchaseCredit,
   userMayRejectStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
+import {
+  countPendingStaffPurchaseCreditRequests,
+  summarizePendingStaffPurchaseCreditByBranch,
+} from './staffPurchaseCreditWorkItems.js';
 import { issueZarewaFilingReference } from './referenceIssuance.js';
 import {
   createInterBranchRequest,
@@ -2480,6 +2486,45 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load quotation credit status.' });
+    }
+  });
+
+  app.get('/api/staff-purchase-credits/pending-count', requireAuth, (req, res) => {
+    try {
+      const canSee =
+        userMayApproveStaffPurchaseCredit(req.user) ||
+        userMayRejectStaffPurchaseCredit(req.user) ||
+        userMayRequestStaffPurchaseCredit(req.user);
+      if (!canSee) return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+      const branchScope = resolveBootstrapBranchScope(req);
+      const viewAll =
+        branchScope === 'ALL' ||
+        canUseAllBranchesRollup(req.user) ||
+        userMayApproveStaffPurchaseCredit(req.user);
+      const branchId = viewAll
+        ? 'ALL'
+        : String(branchScope === 'ALL' ? req.workspaceBranchId || DEFAULT_BRANCH_ID : branchScope).trim() ||
+          DEFAULT_BRANCH_ID;
+      const count = countPendingStaffPurchaseCreditRequests(db, branchId);
+      const crossBranch = userMayApproveStaffPurchaseCredit(req.user)
+        ? summarizePendingStaffPurchaseCreditByBranch(db, viewAll ? '' : branchId)
+        : null;
+      return res.json({ ok: true, count, crossBranch });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load pending count.' });
+    }
+  });
+
+  app.get('/api/staff-purchase-credits/my-quotations', requireAuth, (req, res) => {
+    try {
+      const uid = String(req.user?.id || '').trim();
+      if (!uid) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+      const items = listStaffQuotationsForPurchaseCredit(db, uid);
+      return res.json({ ok: true, items });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not list quotations.' });
     }
   });
 

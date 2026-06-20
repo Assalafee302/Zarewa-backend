@@ -85,6 +85,14 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
+import {
+  countPendingStaffPurchaseCreditRequests,
+  summarizePendingStaffPurchaseCreditByBranch,
+} from './staffPurchaseCreditWorkItems.js';
+import {
+  userMayApproveStaffPurchaseCredit,
+  userMayRejectStaffPurchaseCredit,
+} from './staffPurchaseCreditOps.js';
 
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
@@ -270,6 +278,22 @@ export function buildBootstrap(db, opts = {}) {
     unifiedWorkItems: user
       ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 200 }))
       : [],
+    staffPurchaseCreditPendingCount:
+      user &&
+      (userMayApproveStaffPurchaseCredit(user) ||
+        userMayRejectStaffPurchaseCredit(user))
+        ? countPendingStaffPurchaseCreditRequests(
+            db,
+            workScope.viewAll ? 'ALL' : workScope.branchId
+          )
+        : 0,
+    staffPurchaseCreditCrossBranch:
+      user && userMayApproveStaffPurchaseCredit(user)
+        ? summarizePendingStaffPurchaseCreditByBranch(
+            db,
+            workScope.viewAll ? '' : workScope.branchId
+          )
+        : null,
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     machines: user ? listMachines(db, workScope) : [],

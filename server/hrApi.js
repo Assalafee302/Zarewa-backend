@@ -250,6 +250,7 @@ import {
 import {
   computeStaffPurchaseCreditEligibility,
   ensureStaffSalesCustomer,
+  bulkEnsureStaffSalesCustomers,
 } from './staffPurchaseCreditOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import {
@@ -1011,11 +1012,42 @@ export function registerHrApi(app, db) {
       const inbox = getHrInboxSummary(db, scope);
       const readiness = buildHrReadiness(db, scope);
       const staffAll = listHrStaff(db, scope, { includeInactive: true, requireProfile: true });
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const in30 = new Date();
+      in30.setDate(in30.getDate() + 30);
+      const in30Iso = in30.toISOString().slice(0, 10);
+      const in60 = new Date();
+      in60.setDate(in60.getDate() + 60);
+      const in60Iso = in60.toISOString().slice(0, 10);
+      const activeStaff = staffAll.filter((s) => String(s.status || '') === 'active');
+      let onProbationEnding = 0;
+      for (const s of activeStaff) {
+        const end = String(s.probationEndIso || '').slice(0, 10);
+        if (end && end >= todayIso && end <= in30Iso) onProbationEnding += 1;
+      }
+      let documentsExpiring = 0;
+      try {
+        const activeIds = activeStaff.map((s) => s.userId).filter(Boolean);
+        if (activeIds.length) {
+          const placeholders = activeIds.map(() => '?').join(',');
+          documentsExpiring =
+            db
+              .prepare(
+                `SELECT COUNT(*) AS c FROM hr_staff_documents
+                 WHERE user_id IN (${placeholders}) AND expiry_date_iso BETWEEN ? AND ?`
+              )
+              .get(...activeIds, todayIso, in60Iso)?.c || 0;
+        }
+      } catch {
+        documentsExpiring = 0;
+      }
       const staffCounts = {
         total: staffAll.length,
-        active: staffAll.filter((s) => String(s.status || '') === 'active').length,
+        active: activeStaff.length,
         inactive: staffAll.filter((s) => String(s.status || '') !== 'active').length,
         incompleteProfiles: staffAll.filter((s) => (s.criticalMissing || []).length > 0).length,
+        onProbationEnding,
+        documentsExpiring,
       };
       const ctx = hrRedactionContextFromReq(req);
       const recentRequests = listHrRequests(db, scope, {})
@@ -3878,6 +3910,22 @@ export function registerHrApi(app, db) {
     }
   });
 
+  app.post('/api/hr/staff/bulk-ensure-sales-customers', requireHrAny('hr.staff.manage', 'hr.loans.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const branchId = String(req.body?.branchId || req.query?.branchId || '').trim();
+      const scope = hrListScope(req);
+      const r = bulkEnsureStaffSalesCustomers(db, req.user, {
+        branchId: branchId || (scope.viewAll ? 'ALL' : scope.branchId),
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Bulk link failed.' });
+    }
+  });
+
   app.get('/api/hr/departments', requireHrAny('hr.settings.manage', 'hr.staff.manage', 'hr.directory.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
@@ -4344,6 +4392,7 @@ export function registerHrApi(app, db) {
         actingRolesMissingEnd: actionAlerts.actingRolesMissingEnd,
         compensationReviewDue: actionAlerts.compensationReviewDue,
         undocumentedCompensationVariance: actionAlerts.undocumentedCompensationVariance,
+        pendingTransfers: actionAlerts.pendingTransfers,
       });
     } catch (e) {
       console.error(e);

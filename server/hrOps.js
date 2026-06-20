@@ -459,6 +459,7 @@ export function listHrStaff(db, scope, opts = {}) {
   sql += ` ORDER BY u.display_name ASC`;
 
   const rows = db.prepare(sql).all(...args);
+  const displayNameByUserId = new Map(rows.map((r) => [String(r.userId), r.displayName]));
   const ackRows = db
     .prepare(
       `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
@@ -501,6 +502,9 @@ export function listHrStaff(db, scope, opts = {}) {
     }
     base.mergedOffices = buildStaffMergedOffices(base);
     base.yearsOfService = roundTenureYears(serviceYearsFromJoinedIso(base.dateJoinedIso));
+    if (base.lineManagerUserId) {
+      base.lineManagerDisplayName = displayNameByUserId.get(String(base.lineManagerUserId)) || null;
+    }
     return base;
   });
 }
@@ -4965,7 +4969,16 @@ export function runLeaveYearEndCarryOver(db, actorUser, targetYear) {
  * anniversaries, documents expiring, training expiring.
  */
 export function getHrDashboardAlerts(db) {
-  if (!hrTablesReady(db)) return { probationEnding: [], contractsExpiring: [], birthdaysThisWeek: [], anniversariesThisWeek: [], docsExpiring: [], trainingExpiring: [] };
+  if (!hrTablesReady(db)) {
+    return {
+      probationEnding: [],
+      contractsExpiring: [],
+      birthdays: [],
+      anniversaries: [],
+      documentsExpiring: [],
+      trainingExpiring: [],
+    };
+  }
   const now = new Date();
   const todayIso = now.toISOString().slice(0, 10);
   const in30 = new Date(now); in30.setDate(now.getDate() + 30);
@@ -5043,7 +5056,44 @@ export function getHrDashboardAlerts(db) {
     /* training expiry query optional */
   }
 
-  return { probationEnding, contractsExpiring, birthdaysThisWeek, anniversariesThisWeek, docsExpiring, trainingExpiring };
+  return {
+    probationEnding: probationEnding.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      probationEndIso: r.probation_end_iso,
+      jobTitle: r.job_title,
+      branchId: r.branch_id,
+    })),
+    contractsExpiring: contractsExpiring.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      contractEndIso: r.contract_end_iso,
+      jobTitle: r.job_title,
+      branchId: r.branch_id,
+    })),
+    birthdays: birthdaysThisWeek.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+    })),
+    anniversaries: anniversariesThisWeek.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      yearsCompleted: r.years,
+    })),
+    documentsExpiring: docsExpiring.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      docType: r.doc_kind,
+      fileName: r.file_name,
+      expiryIso: r.expiry_date_iso,
+    })),
+    trainingExpiring: trainingExpiring.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      courseName: r.course_name,
+      expiryIso: r.expiry_at_iso,
+    })),
+  };
 }
 
 /**
@@ -5468,6 +5518,7 @@ export function listHrObservability(db, scope) {
       ? db.prepare(`SELECT COUNT(*) AS c FROM hr_transfer_requests WHERE status = 'approved'`).get().c
       : 0,
     eeo: eeoDecisionSummary(db, scope, { days: 120 }),
+    openIncidents: countOpenIncidents(db, scope?.viewAll ? null : scope?.branchId || DEFAULT_BRANCH_ID),
   };
   return { events, summary };
 }
@@ -7333,8 +7384,11 @@ export function listHrFeedbackNotes(db, subjectUserId) {
   try {
     return db
       .prepare(
-        `SELECT id, subject_user_id AS subjectUserId, author_user_id AS authorUserId, body, created_at_iso AS createdAtIso
-         FROM hr_feedback_notes WHERE subject_user_id = ? ORDER BY created_at_iso DESC LIMIT 100`
+        `SELECT n.id, n.subject_user_id AS subjectUserId, n.author_user_id AS authorUserId,
+                u.display_name AS authorDisplayName, n.body, n.created_at_iso AS createdAtIso
+         FROM hr_feedback_notes n
+         LEFT JOIN app_users u ON u.id = n.author_user_id
+         WHERE n.subject_user_id = ? ORDER BY n.created_at_iso DESC LIMIT 100`
       )
       .all(String(subjectUserId || '').trim());
   } catch {

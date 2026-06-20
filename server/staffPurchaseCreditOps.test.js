@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { acquireIntegrationHarness, isMysqlAvailableForTests, resolveTestActor } from './testIntegrationHarness.js';
 import {
   applyStaffPurchaseCreditToQuotationPaid,
+  computeStaffPurchaseCreditAmountBounds,
   createStaffPurchaseCreditRequest,
   decideStaffPurchaseCredit,
   ensureStaffSalesCustomer,
@@ -9,6 +10,8 @@ import {
   staffPurchaseCreditColumnsReady,
   syncQuotationStaffPurchaseFlag,
 } from './staffPurchaseCreditOps.js';
+import { countPendingStaffPurchaseCreditRequests, syncStaffPurchaseCreditWorkItem, STAFF_PURCHASE_CREDIT_WORK_SOURCE } from './staffPurchaseCreditWorkItems.js';
+import { findPersistedWorkItemBySource } from './workItems.js';
 import { staffObligationTablesReady } from './staffObligationOps.js';
 import { nowIso } from './hrOps.js';
 import { syncQuotationPaidFromReceipts } from './writeOps.js';
@@ -81,5 +84,55 @@ describe.skipIf(!isMysqlAvailableForTests())('staffPurchaseCreditOps', () => {
 
     const applyDup = applyStaffPurchaseCreditToQuotationPaid(db, quotationRef, 1000, pending.id, actor);
     expect(applyDup.already).toBe(true);
+  });
+
+  it('requires rejection note and exposes deposit bounds in status', () => {
+    const bounds = computeStaffPurchaseCreditAmountBounds(400_000, { requireDepositPercent: 25 });
+    expect(bounds.depositRequiredNgn).toBe(100_000);
+    expect(bounds.maxCreditNgn).toBe(300_000);
+
+    db.prepare(
+      `UPDATE hr_staff_obligation_accounts SET status = 'paid_off', principal_outstanding_ngn = 0, updated_at_iso = ?
+       WHERE user_id = ? AND kind = 'purchase' AND status IN ('active', 'pending_approval')`
+    ).run(nowIso(), staffUserId);
+
+    const quote2 = `QT-TEST-SPC-REJ-${Date.now()}`;
+    const cust = ensureStaffSalesCustomer(db, staffUserId, actor);
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+       VALUES (?, ?, 'Test Staff', 400000, 0, 'Unpaid', 'Pending', '{}', date('now'), 'KD')`
+    ).run(quote2, cust.customerId);
+
+    const req = createStaffPurchaseCreditRequest(db, actor, {
+      quotationRef: quote2,
+      staffUserId,
+      amountNgn: 200_000,
+      termMonths: 4,
+      reason: 'Reject flow UAT',
+    });
+    expect(req.ok, req.error || 'create failed').toBe(true);
+
+    const noNote = decideStaffPurchaseCredit(db, req.account.id, 'reject', actor, { note: 'no' });
+    expect(noNote.ok).toBe(false);
+
+    const rejected = decideStaffPurchaseCredit(db, req.account.id, 'reject', actor, {
+      note: 'Not approved — policy exception',
+    });
+    expect(rejected.ok).toBe(true);
+    expect(rejected.account.status).toBe('rejected');
+
+    const status = getQuotationStaffPurchaseCreditStatus(db, quote2);
+    expect(status.rejectionNote).toMatch(/policy exception/i);
+    expect(Array.isArray(status.timeline)).toBe(true);
+    expect(status.timeline.some((e) => e.action === 'hr.purchase_credit.rejected')).toBe(true);
+
+    syncStaffPurchaseCreditWorkItem(db, db.prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE id = ?`).get(req.account.id), actor);
+    const wi = findPersistedWorkItemBySource(db, STAFF_PURCHASE_CREDIT_WORK_SOURCE, req.account.id);
+    expect(wi?.status === 'rejected' || wi?.status === 'closed').toBe(true);
+  });
+
+  it('tracks pending count for MD queue', () => {
+    const n = countPendingStaffPurchaseCreditRequests(db, 'ALL');
+    expect(typeof n).toBe('number');
   });
 });

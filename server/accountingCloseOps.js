@@ -109,6 +109,11 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
   );
 
   const pendingReceipts = Number(ex.pendingReceiptClearance) || 0;
+  const mismatch = Number(ex.receiptBankAmountMismatch) || 0;
+  const treasuryUnsettled = Number(ex.treasuryMovementWithoutFinanceSettlement) || 0;
+  const deliveryGate = Number(ex.openDeliveriesWouldBlockOnPayment) || 0;
+  const exceptionTotal = pendingReceipts + mismatch + treasuryUnsettled + deliveryGate;
+
   steps.push(
     step(
       pendingReceipts === 0 ? 'ok' : 'warn',
@@ -242,32 +247,56 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
-  const mismatch = Number(ex.receiptBankAmountMismatch) || 0;
-  if (mismatch > 0) {
+  if (treasuryUnsettled > 0) {
     steps.push(
       step(
         'warn',
-        'receipt_mismatch',
-        'Receipt bank mismatches',
-        `${mismatch} receipt(s) with bank amount variance.`,
+        'treasury_settlement',
+        'Treasury movements settled',
+        `${treasuryUnsettled} movement(s) without finance settlement.`,
         'overview'
       )
     );
   }
+  if (deliveryGate > 0) {
+    steps.push(
+      step(
+        'warn',
+        'delivery_gate',
+        'Delivery payment gate',
+        `${deliveryGate} unpaid delivery gate exception(s).`,
+        'overview'
+      )
+    );
+  }
+  steps.push(
+    step(
+      exceptionTotal === 0 ? 'ok' : 'fail',
+      'operational_exceptions',
+      'Operational exceptions cleared',
+      exceptionTotal === 0
+        ? 'No cashier, treasury, or delivery gate exceptions in scope.'
+        : `${exceptionTotal} open exception(s) — clear before lock (receipts ${pendingReceipts}, bank ${mismatch}, treasury ${treasuryUnsettled}, delivery ${deliveryGate}).`,
+      'overview'
+    )
+  );
 
   const tieOut = buildControlTieOutReport(db, { periodKey, branchScope });
   let controlTieOut = null;
   if (tieOut.ok) {
     controlTieOut = tieOut;
     const tieWarnings = tieOut.checks.filter((c) => c.status === 'warn');
+    const tieFails = tieOut.checks.filter((c) => c.status === 'fail');
     steps.push(
       step(
-        tieWarnings.length === 0 ? 'ok' : 'warn',
+        tieFails.length > 0 ? 'fail' : tieWarnings.length === 0 ? 'ok' : 'warn',
         'control_tie_out',
         'Register ↔ GL tie-out',
-        tieWarnings.length === 0
-          ? `${tieOut.checks.length} control account(s) within tolerance.`
-          : `${tieWarnings.length} variance(s) — ${tieOut.summary}`,
+        tieFails.length > 0
+          ? `${tieFails.length} material variance(s) — ${tieOut.summary}`
+          : tieWarnings.length === 0
+            ? `${tieOut.checks.length} control account(s) within tolerance.`
+            : `${tieWarnings.length} variance(s) — ${tieOut.summary}`,
         'close'
       )
     );

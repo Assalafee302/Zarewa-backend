@@ -523,6 +523,7 @@ import {
 import { buildOpeningPackReport, postOpeningPackJournal } from './accountingOpeningPackOps.js';
 import { buildControlTieOutReport } from './accountingControlTieOutOps.js';
 import { buildMonthEndCloseChecklist } from './accountingCloseOps.js';
+import { buildCutoverActionPlan } from './accountingCutoverPlanOps.js';
 import { previewDepreciationRun, postDepreciationRun } from './depreciationRunOps.js';
 import {
   payrollGlStatusForRun,
@@ -4215,6 +4216,21 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[control-tie-out]', e);
       return res.status(500).json({ ok: false, error: 'Could not build control tie-out.' });
+    }
+  });
+
+  app.get('/api/finance/cutover-plan', requireAuth, (req, res) => {
+    if (!userMayAccessAccountingGlApis(req.user)) {
+      return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
+    }
+    try {
+      ensureArchitecturalGlAccounts(db);
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const plan = buildCutoverActionPlan(db, branchScope);
+      return res.json(plan);
+    } catch (e) {
+      console.error('[cutover-plan]', e);
+      return res.status(500).json({ ok: false, error: 'Could not build cutover action plan.' });
     }
   });
 
@@ -8463,9 +8479,44 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/controls/period-locks', requirePermission('period.manage'), (req, res) => {
+  app.post('/api/controls/period-locks', requirePermission('period.manage'), async (req, res) => {
     try {
-      const r = lockAccountingPeriod(db, req.body || {}, req.user);
+      const body = req.body || {};
+      const periodKey = String(body.periodKey || body.dateISO || '').trim().slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(periodKey)) {
+        return res.status(400).json({ ok: false, error: 'periodKey must be YYYY-MM.' });
+      }
+      const force = Boolean(body.force);
+      const reason = String(body.reason ?? '').trim();
+      if (force) {
+        if (reason.length < 12) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Force lock requires a written reason of at least 12 characters (MD/HoA override).',
+            code: 'FORCE_REASON_REQUIRED',
+          });
+        }
+      } else {
+        const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
+        const branchId = branchScope === 'ALL' ? null : branchScope;
+        const trialExceptions = await buildFinanceTrialExceptionSummary(db, { branchId });
+        const checklist = buildMonthEndCloseChecklist(db, periodKey, branchScope, { trialExceptions });
+        if (!checklist.ok) {
+          return res.status(400).json(checklist);
+        }
+        if (!checklist.readyToLock) {
+          return res.status(400).json({
+            ok: false,
+            error: checklist.summary || 'Month-end close checklist is not clear.',
+            code: 'CLOSE_CHECKLIST_BLOCKED',
+            blockers: checklist.blockers,
+            warnings: checklist.warnings,
+            steps: checklist.steps.filter((s) => s.status !== 'ok' && s.id !== 'period_lock'),
+          });
+        }
+      }
+      const lockPayload = force ? { ...body, reason } : body;
+      const r = lockAccountingPeriod(db, lockPayload, req.user);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);

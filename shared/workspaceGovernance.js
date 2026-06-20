@@ -121,7 +121,7 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
   /** Strictly greater than threshold requires executive (amounts at or below threshold do not). */
   if (amt <= hi) return true;
   if (hasPermission('*')) return true;
-  const rk = String(actor?.roleKey || '').trim().toLowerCase();
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
   if (rk === 'admin') return true;
   return isExecutiveRoleKey(rk);
 }

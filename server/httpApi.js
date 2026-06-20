@@ -149,6 +149,7 @@ import {
 import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
+import { buildAp1cReclassPreview, postAp1cReclassBatch } from './ap1cReclassOps.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
 import { getProductionJobIntel } from './productionJobIntelOps.js';
@@ -1248,41 +1249,45 @@ export function registerHttpApi(app, db) {
       }
       const result = decideRegisterSettlement(db, req.params.settlementId, req.body || {}, req.user);
       if (result.ok) {
-        const outcome = String(req.body?.status || '').trim() || 'reviewed';
-        const settlement = result.settlement;
-        const amt = Math.round(Number(settlement?.approvedAmountNgn || settlement?.amountNgn) || 0);
-        const gov = getOrgGovernanceLimits(db);
-        const mdTier = amt >= gov.refundExecutiveThresholdNgn;
-        const target = upsertWorkItemBySource(db, {
-          actor: req.user,
-          sourceKind: 'register_settlement',
-          sourceId: String(req.params.settlementId || ''),
-          branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
-          officeKey: mdTier ? 'executive' : 'branch_manager',
-          responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
-          documentClass: 'approval',
-          documentType: 'register_settlement',
-          status: outcome.toLowerCase(),
-          title: `Register settlement ${String(req.params.settlementId || '').trim()}`,
-          summary:
-            String(req.body?.note || '').trim() ||
-            `${settlement?.partyName || 'Party'} · ₦${(settlement?.approvedAmountNgn || settlement?.amountNgn || 0).toLocaleString('en-NG')}`,
-          requiresApproval: true,
-          data: {
-            routePath: '/accounting',
-            routeState: { focusTab: 'debtors', settlementId: req.params.settlementId },
-          },
-        });
-        if (target.ok) {
-          appendWorkItemDecision(db, {
-            workItemId: target.item.id,
+        try {
+          const outcome = String(req.body?.status || '').trim() || 'reviewed';
+          const settlement = result.settlement;
+          const amt = Math.round(Number(settlement?.approvedAmountNgn || settlement?.amountNgn) || 0);
+          const gov = getOrgGovernanceLimits(db);
+          const mdTier = amt >= gov.refundExecutiveThresholdNgn;
+          const target = upsertWorkItemBySource(db, {
             actor: req.user,
-            actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-            decisionKey: 'register_settlement_review',
-            outcomeStatus: outcome.toLowerCase(),
-            nextStatus: outcome.toLowerCase(),
-            note: String(req.body?.note || '').trim() || `Settlement ${outcome.toLowerCase()}`,
+            sourceKind: 'register_settlement',
+            sourceId: String(req.params.settlementId || ''),
+            branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
+            officeKey: mdTier ? 'executive' : 'branch_manager',
+            responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
+            documentClass: 'approval',
+            documentType: 'register_settlement',
+            status: outcome.toLowerCase(),
+            title: `Register settlement ${String(req.params.settlementId || '').trim()}`,
+            summary:
+              String(req.body?.note || '').trim() ||
+              `${settlement?.partyName || 'Party'} · ₦${(settlement?.approvedAmountNgn || settlement?.amountNgn || 0).toLocaleString('en-NG')}`,
+            requiresApproval: true,
+            data: {
+              routePath: '/accounting',
+              routeState: { focusTab: 'debtors', settlementId: req.params.settlementId },
+            },
           });
+          if (target.ok) {
+            appendWorkItemDecision(db, {
+              workItemId: target.item.id,
+              actor: req.user,
+              actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+              decisionKey: 'register_settlement_review',
+              outcomeStatus: outcome.toLowerCase(),
+              nextStatus: outcome.toLowerCase(),
+              note: String(req.body?.note || '').trim() || `Settlement ${outcome.toLowerCase()}`,
+            });
+          }
+        } catch (syncErr) {
+          console.error('[register-settlement-work-item-sync]', syncErr);
         }
       }
       return res.status(result.ok ? 200 : 400).json(result);
@@ -1554,6 +1559,45 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[ap1c-dry-run]', e);
       return res.status(500).json({ ok: false, error: 'AP1c dry-run failed.' });
+    }
+  });
+
+  app.get('/api/finance/ap1c-reclass-preview', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp1cDryRun(req.user)) {
+        return res.status(403).json({ ok: false, error: 'AP1c access required.', code: 'FORBIDDEN' });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const preview = buildAp1cReclassPreview(db, { branchId, limit: Number(req.query?.limit) || 200 });
+      return res.json(preview);
+    } catch (e) {
+      console.error('[ap1c-reclass-preview]', e);
+      return res.status(500).json({ ok: false, error: 'Could not build reclass preview.' });
+    }
+  });
+
+  app.post('/api/finance/ap1c-reclass', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp1cDryRun(req.user)) {
+        return res.status(403).json({ ok: false, error: 'AP1c access required.', code: 'FORBIDDEN' });
+      }
+      if (!userHasPermission(req.user, 'finance.post')) {
+        return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
+      }
+      const body = req.body || {};
+      const branchRaw = String(body.branchId || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const result = postAp1cReclassBatch(db, {
+        branchId,
+        createdByUserId: req.user?.id,
+        receiptIds: body.receiptIds,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.status(result.posted ? 201 : 200).json(result);
+    } catch (e) {
+      console.error('[ap1c-reclass-post]', e);
+      return res.status(500).json({ ok: false, error: 'Could not post reclass batch.' });
     }
   });
 
@@ -4061,7 +4105,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/finance/opening-balance/status', requireAuth, (req, res) => {
+  const openingBalanceStatusHandler = (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {
       return res.status(403).json({ ok: false, error: 'Accounting / GL access required.', code: 'FORBIDDEN' });
     }
@@ -4072,7 +4116,10 @@ export function registerHttpApi(app, db) {
       console.error('[opening-balance-status]', e);
       return res.status(500).json({ ok: false, error: 'Could not load opening balance status.' });
     }
-  });
+  };
+
+  app.get('/api/finance/opening-balance/status', requireAuth, openingBalanceStatusHandler);
+  app.get('/api/finance/opening-pack/status', requireAuth, openingBalanceStatusHandler);
 
   app.post('/api/finance/opening-balance', requireAuth, (req, res) => {
     if (!userMayAccessAccountingGlApis(req.user)) {

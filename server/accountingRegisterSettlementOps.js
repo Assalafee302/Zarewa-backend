@@ -385,7 +385,17 @@ export function decideRegisterSettlement(db, settlementId, body, actor) {
         note,
         actedAtISO,
       });
-    });
+    })();
+    const outcome = getRegisterSettlement(db, settlementId);
+    if (!outcome.ok || !outcome.settlement) {
+      return { ok: false, error: 'Settlement not found after decision.' };
+    }
+    if (String(outcome.settlement.status || '') !== status) {
+      return {
+        ok: false,
+        error: `Settlement decision did not apply (still ${outcome.settlement.status || 'unknown'}).`,
+      };
+    }
     appendAuditLog(db, {
       action: `register_settlement.${status.toLowerCase()}`,
       entityType: 'accounting_register_settlement',
@@ -394,7 +404,7 @@ export function decideRegisterSettlement(db, settlementId, body, actor) {
       userName: actorName(actor),
       detail: `${status} ₦${approvedAmountNgn.toLocaleString('en-NG')} on ${row.register_line_id}`,
     });
-    return getRegisterSettlement(db, settlementId);
+    return outcome;
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -435,7 +445,7 @@ export function withdrawRegisterSettlement(db, settlementId, actor) {
         note,
         actedAtISO,
       });
-    });
+    })();
     appendAuditLog(db, {
       action: 'register_settlement.withdraw',
       entityType: 'accounting_register_settlement',
@@ -606,7 +616,7 @@ export function payRegisterSettlement(db, settlementId, payload) {
       applyRegisterLinePayment(db, fresh.register_line_id, payoutAmountNgn, settlementId, actor);
 
       return { payoutAmountNgn, fullyPaid, nextPaid };
-    });
+    })();
 
     appendAuditLog(db, {
       action: 'register_settlement.pay',

@@ -7417,6 +7417,147 @@ export function createHrFeedbackNote(db, actor, body = {}, scope = null) {
   }
 }
 
+/**
+ * Latest appraisal forms for a staff member (newest cycles first).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function getHrStaffAppraisalSummary(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid || !hrTablesReady(db)) return { latest: null, history: [] };
+  try {
+    const rows = db
+      .prepare(
+        `SELECT f.id, f.cycle_id AS cycleId, f.subject_user_id AS subjectUserId, f.reviewer_user_id AS reviewerUserId,
+                f.scores_json AS scoresJson, f.md_confirmed AS mdConfirmed, f.status, f.created_at_iso AS createdAtIso,
+                f.updated_at_iso AS updatedAtIso, c.label AS cycleLabel, c.year AS cycleYear, c.due_by_iso AS dueByIso,
+                rev.display_name AS reviewerDisplayName
+         FROM hr_appraisal_forms f
+         JOIN hr_appraisal_cycles c ON c.id = f.cycle_id
+         LEFT JOIN app_users rev ON rev.id = f.reviewer_user_id
+         WHERE f.subject_user_id = ?
+         ORDER BY c.year DESC, COALESCE(f.updated_at_iso, f.created_at_iso) DESC
+         LIMIT 5`
+      )
+      .all(uid);
+    const history = rows.map((r) => ({
+      ...r,
+      mdConfirmed: Boolean(Number(r.mdConfirmed)),
+      scores: safeJsonParse(r.scoresJson, null),
+      scoresJson: undefined,
+    }));
+    return { latest: history[0] || null, history };
+  } catch {
+    return { latest: null, history: [] };
+  }
+}
+
+/**
+ * Recent activity pointers for staff profile header.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ */
+export function getHrStaffActivitySummary(db, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid || !hrTablesReady(db)) {
+    return { lastProfileUpdate: null, profileVerifiedAt: null, lastAudit: null, lastIdCard: null, lastLeave: null };
+  }
+  const profile = db
+    .prepare(
+      `SELECT updated_at_iso AS updatedAtIso, profile_verified_at_iso AS profileVerifiedAtIso,
+              profile_submitted_at_iso AS profileSubmittedAtIso
+       FROM hr_staff_profiles WHERE user_id = ?`
+    )
+    .get(uid);
+  const lastAudit = listHrAuditEventsForStaff(db, uid, 1)[0] || null;
+  let lastIdCard = null;
+  let lastLeave = null;
+  try {
+    lastIdCard = db
+      .prepare(
+        `SELECT status, updated_at_iso AS updatedAtIso FROM hr_id_card_requests WHERE user_id = ? ORDER BY updated_at_iso DESC LIMIT 1`
+      )
+      .get(uid);
+  } catch {
+    /* optional table */
+  }
+  try {
+    lastLeave = db
+      .prepare(
+        `SELECT kind, status, updated_at_iso AS updatedAtIso FROM hr_requests
+         WHERE user_id = ? AND kind IN ('leave','casual_leave','annual_leave')
+         ORDER BY updated_at_iso DESC LIMIT 1`
+      )
+      .get(uid);
+  } catch {
+    /* ignore */
+  }
+  return {
+    lastProfileUpdate: profile?.updatedAtIso || null,
+    profileVerifiedAt: profile?.profileVerifiedAtIso || null,
+    profileSubmittedAt: profile?.profileSubmittedAtIso || null,
+    lastAudit,
+    lastIdCard,
+    lastLeave,
+  };
+}
+
+/**
+ * Bulk line-manager assignment or account activate/deactivate.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {{ userIds?: string[]; lineManagerUserId?: string | null; accountStatus?: 'active' | 'inactive' }} body
+ */
+export function bulkUpdateHrStaff(db, actor, body = {}) {
+  const userIds = Array.isArray(body.userIds) ? body.userIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+  if (!userIds.length) return { ok: false, error: 'Select at least one staff member.' };
+  if (userIds.length > 100) return { ok: false, error: 'Maximum 100 staff per bulk action.' };
+  const hasManager = body.lineManagerUserId !== undefined;
+  const hasStatus = body.accountStatus !== undefined && body.accountStatus !== null && body.accountStatus !== '';
+  if (!hasManager && !hasStatus) return { ok: false, error: 'Nothing to update.' };
+
+  let updated = 0;
+  let failed = 0;
+  /** @type {{ userId: string; error: string }[]} */
+  const errors = [];
+
+  for (const uid of userIds) {
+    let ok = true;
+    if (hasManager) {
+      const r = upsertHrStaffProfile(
+        db,
+        actor?.id || null,
+        { userId: uid, lineManagerUserId: body.lineManagerUserId },
+        { allowInactive: true }
+      );
+      if (!r.ok) {
+        ok = false;
+        errors.push({ userId: uid, error: r.error || 'Could not update manager.' });
+      }
+    }
+    if (ok && hasStatus) {
+      const r = setAppUserAccountStatus(db, uid, body.accountStatus, actor?.id || null);
+      if (!r.ok) {
+        ok = false;
+        errors.push({ userId: uid, error: r.error || 'Could not update account status.' });
+      }
+    }
+    if (ok) updated += 1;
+    else failed += 1;
+  }
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || '',
+    action: 'hr.staff.bulk_update',
+    entityKind: 'hr_staff_profile',
+    entityId: userIds.join(','),
+    details: { updated, failed, lineManager: hasManager, accountStatus: hasStatus ? body.accountStatus : null },
+  });
+
+  return { ok: true, updated, failed, errors };
+}
+
 export function runHrScheduledJobs(db) {
   if (!hrTablesReady(db)) return { ok: false, error: 'no_hr' };
   try {

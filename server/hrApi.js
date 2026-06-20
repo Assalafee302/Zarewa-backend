@@ -26,6 +26,9 @@ import {
   upsertHrAppraisalForm,
   listHrFeedbackNotes,
   createHrFeedbackNote,
+  getHrStaffAppraisalSummary,
+  getHrStaffActivitySummary,
+  bulkUpdateHrStaff,
   exportPayrollStatutoryPackCsv,
   exportPayrollTreasuryPackCsv,
   exportPayrollBankUploadCsv,
@@ -1283,6 +1286,51 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update staff profile.' });
+    }
+  });
+
+  app.post('/api/hr/staff/bulk-update', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+      for (const uid of userIds) {
+        if (uid === String(req.user?.id || '').trim()) continue;
+        const gate = assertStaffUserIdInHrScope(db, scope, uid);
+        if (!gate.ok) return res.status(gate.status || 403).json(gate);
+      }
+      const r = bulkUpdateHrStaff(db, req.user, { ...req.body, userIds }, scope);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Bulk staff update failed.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/appraisal-summary', requireHrAny('hr.staff.manage', 'hr.directory.view', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const summary = getHrStaffAppraisalSummary(db, userId);
+      return res.json({ ok: true, ...summary });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load appraisal summary.' });
+    }
+  });
+
+  app.get('/api/hr/staff/:userId/activity-summary', requireHrAny('hr.directory.view', 'hr.staff.manage', 'hr.team.view'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const activity = getHrStaffActivitySummary(db, userId);
+      return res.json({ ok: true, activity });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load activity summary.' });
     }
   });
 

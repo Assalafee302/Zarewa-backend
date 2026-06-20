@@ -45,6 +45,24 @@ describe('accountingOpeningPack (pure)', () => {
     expect(debits).toBe(credits);
   });
 
+  it('buildProposedJournalLines splits payroll liabilities across 2200/2300/2400', () => {
+    const lines = buildProposedJournalLines(
+      [
+        mockSource({ code: '1200', side: 'debit', amount: 1_000_000 }),
+        mockSource({ code: '2200', side: 'credit', amount: 600_000, label: 'Net payroll' }),
+        mockSource({ code: '2300', side: 'credit', amount: 200_000, label: 'PAYE' }),
+        mockSource({ code: '2400', side: 'credit', amount: 100_000, label: 'Pension' }),
+      ],
+      0
+    );
+    expect(lines.some((l) => l.accountCode === '2200' && l.creditNgn === 600_000)).toBe(true);
+    expect(lines.some((l) => l.accountCode === '2300' && l.creditNgn === 200_000)).toBe(true);
+    expect(lines.some((l) => l.accountCode === '2400' && l.creditNgn === 100_000)).toBe(true);
+    const debits = lines.reduce((s, l) => s + (l.debitNgn || 0), 0);
+    const credits = lines.reduce((s, l) => s + (l.creditNgn || 0), 0);
+    expect(debits).toBe(credits);
+  });
+
   it('buildProposedJournalLines skips zero amounts', () => {
     const lines = buildProposedJournalLines([mockSource({ code: '1200', side: 'debit', amount: 0 })], 0);
     expect(lines).toHaveLength(0);

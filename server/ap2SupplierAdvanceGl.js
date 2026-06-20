@@ -74,6 +74,14 @@ export function tryPostSupplierAdvancePaymentGl(db, payload) {
   ensureSupplierAdvanceGlAccount(db);
   const poId = String(payload.poId || '').trim();
   const sourceId = poId ? `PO-ADV-PAY-${poId}-${payload.paymentRef || '1'}` : String(payload.sourceId || '').trim();
+  const tid = Math.round(Number(payload.treasuryAccountId) || 0);
+  const creditCode = tid > 0 ? String(1000 + tid) : '1001';
+  if (tid > 0) {
+    const glId = `acc-cash-${tid}`;
+    db.prepare(
+      `INSERT OR IGNORE INTO gl_accounts (id, code, name, type, is_active, sort_order) VALUES (?,?,?,?,1,?)`
+    ).run(glId, creditCode, `Cash — account ${tid}`, 'asset', 10 + tid);
+  }
   return postBalancedJournal(db, {
     entryDateISO: String(payload.entryDateISO || new Date().toISOString()).slice(0, 10),
     memo: payload.memo || `Supplier prepayment ${poId}`,
@@ -83,7 +91,7 @@ export function tryPostSupplierAdvancePaymentGl(db, payload) {
     createdByUserId: payload.createdByUserId,
     lines: [
       { accountCode: SUPPLIER_ADVANCE_CODE, debitNgn: amt, memo: poId },
-      { accountCode: '1000', creditNgn: amt, memo: poId },
+      { accountCode: creditCode, creditNgn: amt, memo: poId },
     ],
   });
 }

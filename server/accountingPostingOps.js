@@ -6,6 +6,8 @@
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
 import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { assertPeriodOpen } from './controlOps.js';
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
+import { ensureSupplierAdvanceGlAccount } from './ap2SupplierAdvanceGl.js';
 import {
   ensureGlSchema,
   getGlAccountIdByCode,
@@ -122,11 +124,16 @@ function poReceivedValueNgn(db, poId) {
  * @param {number} paymentNgn
  */
 export function resolveSupplierPaymentDebitCode(db, poId, paymentNgn) {
+  const flags = readFinanceFeatureFlags();
+  if (!flags.supplierAdvanceAccountingEnabled) return '2000';
   void paymentNgn;
   const received = poReceivedValueNgn(db, poId);
   const po = db.prepare(`SELECT supplier_paid_ngn FROM purchase_orders WHERE po_id = ?`).get(String(poId || '').trim());
   const paidAfter = Math.round(Number(po?.supplier_paid_ngn) || 0);
-  if (received <= 0 || paidAfter > received) return '1400';
+  if (received <= 0 || paidAfter > received) {
+    ensureSupplierAdvanceGlAccount(db);
+    return '1400';
+  }
   return '2000';
 }
 

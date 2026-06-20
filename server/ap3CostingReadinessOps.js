@@ -19,6 +19,7 @@ import {
   coilsForJob,
   confidenceLevel,
 } from './ap3MaterialCostShared.js';
+import { computeProductionLabourByBranch } from './ap3PayrollLabourOps.js';
 
 function computeReadinessScore(summary, dataQuality) {
   let score = 100;
@@ -339,7 +340,8 @@ export function buildAp3CostingReadinessReport(db, opts = {}) {
   };
 
   const dataQuality = buildDataQuality(summary, labourReadiness, dieselReadiness, byBranch, missingDataSamples);
-  const branchContributionDraft = buildBranchContributionDraft(byBranch, summary);
+  const payrollLabour = computeProductionLabourByBranch(db, period.key, branchScope);
+  const branchContributionDraft = buildBranchContributionDraft(byBranch, summary, { payrollLabour });
 
   const nextSteps = [
     'Review missing coil costs and complete GRN/coil costing before AP3b material allocation.',
@@ -586,18 +588,22 @@ function formatNgnShort(n) {
   return `₦${v}`;
 }
 
-function buildBranchContributionDraft(byBranch, summary) {
+function buildBranchContributionDraft(byBranch, summary, opts = {}) {
   const rows = byBranch || [];
   const totalMetres = rows.reduce((s, b) => s + (b.producedMetres || 0), 0);
-  const labour = summary?.labourExpenseNgn || 0;
+  const payroll = opts.payrollLabour;
+  const usePayrollLabour = payroll?.ok && payroll?.source === 'payroll' && payroll.totalNgn > 0;
+  const labour = usePayrollLabour ? payroll.totalNgn : summary?.labourExpenseNgn || 0;
   const diesel = summary?.dieselExpenseNgn || 0;
   const productionExpense = summary?.productionExpenseNgn || 0;
-  const overhead = Math.max(0, productionExpense - labour - diesel);
+  const overhead = Math.max(0, productionExpense - (summary?.labourExpenseNgn || 0) - diesel);
 
   const mapRow = (b, share) => {
     const metres = b.producedMetres || 0;
     const material = b.materialCostNgn || 0;
-    const labourAlloc = roundMoney(labour * share);
+    const labourAlloc = usePayrollLabour
+      ? roundMoney(payroll.byBranch?.[b.branchId] || 0)
+      : roundMoney(labour * share);
     const dieselAlloc = roundMoney(diesel * share);
     const overheadAlloc = roundMoney(overhead * share);
     const total = roundMoney(material + labourAlloc + dieselAlloc + overheadAlloc);
@@ -615,12 +621,18 @@ function buildBranchContributionDraft(byBranch, summary) {
     };
   };
 
+  const baseReturn = {
+    method: usePayrollLabour ? 'payroll_labour_by_branch' : 'proportional_by_metres',
+    labourSource: usePayrollLabour ? 'payroll' : 'expense_category',
+    disclaimer: usePayrollLabour
+      ? 'AP3c — labour from production-staff payroll lines; diesel/overhead allocated by metres share.'
+      : 'Draft AP3c allocation — labour, diesel, and factory overhead allocated by branch metres share in period.',
+  };
+
   if (totalMetres <= 0) {
     return {
       ok: false,
-      method: 'proportional_by_metres',
-      disclaimer:
-        'Draft AP3c allocation — labour, diesel, and factory overhead allocated by branch metres share in period.',
+      ...baseReturn,
       totalMetres: 0,
       poolNgn: {
         labour: roundMoney(labour),
@@ -634,9 +646,7 @@ function buildBranchContributionDraft(byBranch, summary) {
 
   return {
     ok: true,
-    method: 'proportional_by_metres',
-    disclaimer:
-      'Draft AP3c allocation — labour, diesel, and factory overhead allocated by branch metres share in period.',
+    ...baseReturn,
     totalMetres,
     poolNgn: {
       labour: roundMoney(labour),
@@ -644,6 +654,7 @@ function buildBranchContributionDraft(byBranch, summary) {
       overhead: roundMoney(overhead),
       total: roundMoney(labour + diesel + overhead),
     },
+    payrollLabour: usePayrollLabour ? payroll : null,
     rows: rows
       .map((b) => mapRow(b, (b.producedMetres || 0) / totalMetres))
       .sort((a, b) => b.producedMetres - a.producedMetres),

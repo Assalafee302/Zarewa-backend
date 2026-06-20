@@ -2873,6 +2873,9 @@ function migrateHrStaffProfileColumns(db) {
   if (hr.size && !hr.has('payroll_group')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN payroll_group TEXT`);
   }
+  if (hr.size && !hr.has('is_production_staff')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN is_production_staff INTEGER NOT NULL DEFAULT 0`);
+  }
   if (hr.size && !hr.has('salary_level')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN salary_level INTEGER`);
   }

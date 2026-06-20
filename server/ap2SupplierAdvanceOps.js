@@ -5,8 +5,18 @@ import {
   computePoReceivedBasisEconomics,
   listPurchaseOrdersForAp2Scope,
   parsePeriodKey,
+  hasColumn,
   tableExists,
 } from './ap2ReceivedBasisOps.js';
+
+function treasuryMovementDateExpr(db) {
+  const cols = [];
+  if (hasColumn(db, 'treasury_movements', 'posted_at_iso')) cols.push('posted_at_iso');
+  if (hasColumn(db, 'treasury_movements', 'occurred_at_iso')) cols.push('occurred_at_iso');
+  if (hasColumn(db, 'treasury_movements', 'date_iso')) cols.push('date_iso');
+  if (!cols.length) return "''";
+  return `COALESCE(${cols.join(', ')}, '')`;
+}
 import { classifyPoSettlement } from './ap2SettlementClassification.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { describeSupplierAdvanceGlCapability } from './ap2SupplierAdvanceGl.js';
@@ -23,7 +33,7 @@ function lastSupplierPaymentDate(db, poId) {
   if (!tableExists(db, 'treasury_movements')) return null;
   const row = db
     .prepare(
-      `SELECT MAX(substr(COALESCE(occurred_at_iso, date_iso, ''),1,10)) AS d
+      `SELECT MAX(substr(${treasuryMovementDateExpr(db)},1,10)) AS d
        FROM treasury_movements
        WHERE source_kind = 'PURCHASE_ORDER' AND source_id = ?
          AND UPPER(TRIM(COALESCE(type,''))) IN ('SUPPLIER_PAYMENT','PO_SUPPLIER_PAYMENT')`
@@ -55,6 +65,8 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
     generatedAtISO: new Date().toISOString(),
     flags: {
       supplierAdvanceAccountingEnabled: flags.supplierAdvanceAccountingEnabled,
+      apReceivedBasisEnabled: flags.apReceivedBasisEnabled,
+      apReceivedBasisRebuildEnabled: flags.apReceivedBasisRebuildEnabled,
       inventoryValuationReportsEnabled: flags.inventoryValuationReportsEnabled,
       apGlAlignmentDiagnosticsEnabled: flags.apGlAlignmentDiagnosticsEnabled,
     },
@@ -186,6 +198,8 @@ export function buildSupplierAdvanceReport(db, opts = {}) {
     generatedAtISO: new Date().toISOString(),
     flags: {
       supplierAdvanceAccountingEnabled: flags.supplierAdvanceAccountingEnabled,
+      apReceivedBasisEnabled: flags.apReceivedBasisEnabled,
+      apReceivedBasisRebuildEnabled: flags.apReceivedBasisRebuildEnabled,
       inventoryValuationReportsEnabled: flags.inventoryValuationReportsEnabled,
       apGlAlignmentDiagnosticsEnabled: flags.apGlAlignmentDiagnosticsEnabled,
     },

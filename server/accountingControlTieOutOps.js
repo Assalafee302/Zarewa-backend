@@ -17,6 +17,17 @@ import { listTreasuryAccounts } from './readModel.js';
 const DEFAULT_VARIANCE_PCT = 0.01;
 const MATERIAL_FLOOR_NGN = 50_000;
 
+/** @returns {number} tolerance as decimal (e.g. 0.01 = 1%) */
+export function defaultControlTieOutThresholdPct() {
+  const raw = process.env.ACCOUNTING_TIEOUT_THRESHOLD_PCT;
+  if (raw == null || raw === '') return DEFAULT_VARIANCE_PCT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_VARIANCE_PCT;
+  if (n <= 1) return n;
+  if (n <= 100) return n / 100;
+  return DEFAULT_VARIANCE_PCT;
+}
+
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
 }
@@ -130,7 +141,8 @@ export function buildControlTieOutReport(db, opts) {
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
   const branchScope = opts.branchScope || 'ALL';
-  const thresholdPct = Number(opts.thresholdPct) > 0 ? Number(opts.thresholdPct) : DEFAULT_VARIANCE_PCT;
+  const thresholdPct =
+    Number(opts.thresholdPct) > 0 ? Number(opts.thresholdPct) : defaultControlTieOutThresholdPct();
 
   const gl = glBalanceMap(db, b.end);
   if (!gl.ok) return { ok: false, error: gl.error };

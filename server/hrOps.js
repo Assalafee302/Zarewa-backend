@@ -27,6 +27,7 @@ import {
 } from './hrTenureOps.js';
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import { tryPostPayrollAccrualGlTx, tryPostPayrollNetPaymentGlTx } from './payrollGlOps.js';
+import { hasColumn } from './ap2ReceivedBasisOps.js';
 import {
   activeObligationBreakdownForPayroll,
   OBLIGATION_STATUS,
@@ -355,6 +356,12 @@ export function hrTablesReady(db) {
   return hrCoreTablesReady(db);
 }
 
+function hrIsProductionStaffSelectSql(db) {
+  return hasColumn(db, 'hr_staff_profiles', 'is_production_staff')
+    ? 'p.is_production_staff AS isProductionStaff,'
+    : '0 AS isProductionStaff,';
+}
+
 /**
  * @param {{ user: object; workspaceBranchId?: string; workspaceViewAll?: boolean }} req
  */
@@ -379,6 +386,7 @@ export function listHrStaff(db, scope, opts = {}) {
   const scopeMode = scope.scopeMode || 'branch';
   const orgWide = Boolean(viewAll) || scopeMode === 'org';
   const joinType = requireProfile ? 'INNER' : 'LEFT';
+  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
 
   let sql = `
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
@@ -399,6 +407,7 @@ export function listHrStaff(db, scope, opts = {}) {
            p.paye_tax_ngn AS payeTaxNgn,
            p.pension_percent_override AS pensionPercentOverride,
            p.self_service_eligible AS selfServiceEligible,
+           ${isProductionStaffCol}
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
            p.bvn_number AS bvnNumber,
@@ -497,6 +506,7 @@ export function enrichHrStaffListRows(db, rows) {
     const base = {
       ...row,
       selfServiceEligible: Boolean(Number(row.selfServiceEligible)),
+      isProductionStaff: Boolean(Number(row.isProductionStaff)),
       profileLocked: Boolean(Number(row.profileLocked)),
       profileSubmittedAtIso: row.profileSubmittedAtIso || null,
       profileVerifiedAtIso: row.profileVerifiedAtIso || null,
@@ -582,6 +592,7 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
   const today = nowIso().slice(0, 10);
   const in30 = hrDirectoryAddDaysIso(30);
   const in60 = hrDirectoryAddDaysIso(60);
+  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
 
   let sql = `
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
@@ -602,6 +613,7 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
            p.paye_tax_ngn AS payeTaxNgn,
            p.pension_percent_override AS pensionPercentOverride,
            p.self_service_eligible AS selfServiceEligible,
+           ${isProductionStaffCol}
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
            p.bvn_number AS bvnNumber,
@@ -1268,6 +1280,18 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     selfServiceEligible = 1;
   }
 
+  let isProductionStaff = 0;
+  if (body?.isProductionStaff !== undefined && body?.isProductionStaff !== null) {
+    isProductionStaff =
+      body.isProductionStaff === true ||
+      body.isProductionStaff === 1 ||
+      body.isProductionStaff === '1'
+        ? 1
+        : 0;
+  } else if (existing && hasColumn(db, 'hr_staff_profiles', 'is_production_staff')) {
+    isProductionStaff = Number(prevRow?.is_production_staff) ? 1 : 0;
+  }
+
   const nullableNonNegNumber = (v) => {
     if (v === undefined || v === null) return null;
     if (v === '') return null;
@@ -1776,6 +1800,14 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       ).run(row);
     }
   }
+
+  if (hasColumn(db, 'hr_staff_profiles', 'is_production_staff')) {
+    db.prepare(`UPDATE hr_staff_profiles SET is_production_staff = ? WHERE user_id = ?`).run(
+      isProductionStaff,
+      userId
+    );
+  }
+
   if (existing && prevRow) {
     const before = compensationSnapshotFromProfileRow(prevRow);
     const after = compensationSnapshotFromProfileRow(row);
@@ -7164,6 +7196,8 @@ export function getHrMeProfile(db, userId) {
     dateOfBirthIso: p.date_of_birth ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
     selfServiceEligible: Number(p.self_service_eligible) === 1,
+    isProductionStaff:
+      hasColumn(db, 'hr_staff_profiles', 'is_production_staff') && Number(p.is_production_staff) === 1,
     profileLocked: Number(p.profile_locked) === 1,
     profileSubmittedAtIso: p.profile_submitted_at_iso ?? null,
     profileVerifiedAtIso: p.profile_verified_at_iso ?? null,

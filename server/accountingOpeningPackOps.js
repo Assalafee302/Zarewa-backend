@@ -445,17 +445,19 @@ function rollupGrniDiagnostic(db, branchScope, periodKey) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} payrollPeriodKey
  */
-function rollupPayrollSource(db, payrollPeriodKey) {
+function rollupPayrollSources(db, payrollPeriodKey) {
   if (!tableExists(db, 'hr_payroll_runs')) {
-    return packSource({
-      id: 'payroll_na',
-      module: 'payroll',
-      label: 'Payroll liabilities',
-      glAccountCode: '2200',
-      side: 'credit',
-      amountNgn: 0,
-      status: 'empty',
-    });
+    return [
+      packSource({
+        id: 'payroll_na',
+        module: 'payroll',
+        label: 'Payroll liabilities',
+        glAccountCode: '2200',
+        side: 'credit',
+        amountNgn: 0,
+        status: 'empty',
+      }),
+    ];
   }
 
   let net = 0;
@@ -480,21 +482,75 @@ function rollupPayrollSource(db, payrollPeriodKey) {
   }
 
   const total = net + paye + pension;
-  return packSource({
-    id: 'payroll_liabilities',
-    module: 'payroll',
-    label: 'Payroll accrual (unposted)',
-    glAccountCode: '2200',
-    side: 'credit',
-    amountNgn: total,
-    rowCount: runCount,
-    drillDownTab: 'payroll',
-    status: total > 0 ? 'warn' : 'empty',
-    detail:
-      total > 0
-        ? `Net ${net.toLocaleString()} + PAYE ${paye.toLocaleString()} + pension ${pension.toLocaleString()} — post accrual from Payroll tab`
-        : 'No unposted payroll accrual for period',
-  });
+  if (total <= 0) {
+    return [
+      packSource({
+        id: 'payroll_empty',
+        module: 'payroll',
+        label: 'Payroll accrual (unposted)',
+        glAccountCode: '2200',
+        side: 'credit',
+        amountNgn: 0,
+        rowCount: runCount,
+        drillDownTab: 'payroll',
+        status: 'empty',
+        detail: 'No unposted payroll accrual for period',
+      }),
+    ];
+  }
+
+  const detail = `Net ${net.toLocaleString()} + PAYE ${paye.toLocaleString()} + pension ${pension.toLocaleString()} — post accrual from Payroll tab`;
+  /** @type {ReturnType<typeof packSource>[]} */
+  const sources = [];
+  if (net > 0) {
+    sources.push(
+      packSource({
+        id: 'payroll_2200',
+        module: 'payroll',
+        label: 'Net payroll payable (unposted accrual)',
+        glAccountCode: '2200',
+        side: 'credit',
+        amountNgn: net,
+        rowCount: runCount,
+        drillDownTab: 'payroll',
+        status: 'warn',
+        detail,
+      })
+    );
+  }
+  if (paye > 0) {
+    sources.push(
+      packSource({
+        id: 'payroll_2300',
+        module: 'payroll',
+        label: 'PAYE payable (unposted accrual)',
+        glAccountCode: '2300',
+        side: 'credit',
+        amountNgn: paye,
+        rowCount: runCount,
+        drillDownTab: 'payroll',
+        status: 'warn',
+        detail,
+      })
+    );
+  }
+  if (pension > 0) {
+    sources.push(
+      packSource({
+        id: 'payroll_2400',
+        module: 'payroll',
+        label: 'Pension payable (unposted accrual)',
+        glAccountCode: '2400',
+        side: 'credit',
+        amountNgn: pension,
+        rowCount: runCount,
+        drillDownTab: 'payroll',
+        status: 'warn',
+        detail,
+      })
+    );
+  }
+  return sources;
 }
 
 /**
@@ -577,7 +633,7 @@ export function buildOpeningPackReport(db, opts = {}) {
     ...rollupFixedAssetSources(db, branchScope),
     rollupInventorySource(db, inventoryPeriodKey, branchScope),
     ...rollupTreasurySources(db, branchScope),
-    rollupPayrollSource(db, payrollPeriodKey),
+    ...rollupPayrollSources(db, payrollPeriodKey),
     rollupGrniDiagnostic(db, branchScope, inventoryPeriodKey),
   ];
 

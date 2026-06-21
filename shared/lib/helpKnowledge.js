@@ -35,11 +35,11 @@ const CORE_HELP_ARTICLES = [
       'Select the quotation, enter amount, date, and treasury account(s), then save.',
       'Amounts **≥ ₦100,000** require typing the amount twice to confirm.',
       'Print or share the receipt reference (RCP-…) if the customer needs proof.',
-      'Bank/cash **clearance** is a separate step — confirm on **Finance → My desk** or Receipts tab (see receipt clearance guide).',
+      'Bank/cash **clearance** is a separate step — confirm on **Finance → Finance desk** or Receipts tab (see receipt clearance guide).',
     ],
     links: [
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Dashboard quick actions', to: '/' },
     ],
   },
@@ -113,11 +113,11 @@ const CORE_HELP_ARTICLES = [
       'Open Sales → Refunds (or the refund action on the quotation/customer).',
       'Start a refund request with category and amount; review system preview lines as starting points only.',
       'Branch manager or MD approves in Sales or Manager dashboard (MD required above governance threshold, default ₦1,000,000).',
-      'Cashier or Finance **pays** the approved refund from **My desk** (`/accounts?tab=desk`) or Payment register (accountant).',
+      'Cashier or Finance **pays** the approved refund from **Finance desk** (`/accounts?tab=desk`) or Payment register (accountant).',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -387,14 +387,14 @@ const CORE_HELP_ARTICLES = [
       'Refunds combine Sales eligibility rules, manager/finance approvals, and treasury payout. **Cashiers may request but never approve** refunds. Duplicate **same category** on one quote is blocked. A customer hold may block new receipts until the refund clears.',
     steps: [
       'Start the refund from Sales on the quotation or customer record; confirm eligible balance, categories, and headroom.',
-      'Ensure all receipts on the quote are **cleared** (My desk or Receipts) — refunds fail if clearance is pending.',
+      'Ensure all receipts on the quote are **cleared** (Finance desk or Receipts) — refunds fail if clearance is pending.',
       'Submit for **manager or MD approval** (or finance.approve where granted); track status on Refunds tab or Manager inbox.',
-      'After **Approved**, Cashier opens **My desk** → refund payout queue (Accountant may use Treasury or Payment register).',
+      'After **Approved**, Cashier opens **Finance desk** → refund payout queue (Accountant may use Treasury or Payment register).',
       'Verify treasury movement and quotation balance after payout.',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -644,11 +644,11 @@ const CORE_HELP_ARTICLES = [
       'Each category shows what is eligible; only include lines that apply — do not stack categories past total headroom.',
       'If submit is blocked, reduce included lines or confirm extra receipts were posted on **this** quotation.',
       'Stone flatsheet m² and coil substitution follow different rules — use the preview suggestions rather than forcing coil lines on stone-only quotes.',
-      'Route through manager/finance approval; payout from **My desk** (cashier) or Finance tabs after Approved status.',
+      'Route through manager/finance approval; payout from **Finance desk** (cashier) or Finance tabs after Approved status.',
     ],
     links: [
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Manager dashboard', to: '/manager' },
     ],
   },
@@ -696,13 +696,13 @@ const CORE_HELP_ARTICLES = [
       'Finance may require **receipt clearance** (bank confirmed / delivery cleared) before refunds or certain downstream actions proceed, even when Sales shows a posted receipt.',
     steps: [
       'Sales → Payments: check clearance flags on the receipt row.',
-      '**My desk** (`/accounts?tab=desk`) → **Confirm payment received** when bank/cash evidence matches.',
+      '**Finance desk** (`/accounts?tab=desk`) → **Confirm payment received** when bank/cash evidence matches.',
       'Accountant may also clear from **Finance & accounts** → Receipts & recon when reconciling.',
       'If refund submit fails for clearance, finish clearance first — do not bypass in Sales.',
       'Manager clearance on the customer or quote is separate — resolve holds on Manager dashboard if shown.',
     ],
     links: [
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Finance & accounts', to: '/accounts' },
       { label: 'Sales — Payments', to: '/sales', state: { focusSalesTab: 'receipts' } },
       { label: 'Manager dashboard', to: '/manager' },
@@ -1260,17 +1260,17 @@ const CORE_HELP_ARTICLES = [
       'cashier cannot approve',
     ],
     answer:
-      '**My desk** (`/accounts?tab=desk`) is the cashier finance home: liquidity, till/bank statements, confirm receipts, pay approved refunds, expenses, register withdrawals, and haulage — all on one tab. Cashiers **request** refunds in Sales but **cannot approve** them.',
+      '**Finance desk** (`/accounts?tab=desk`) is the cashier finance home: liquidity, till/bank statements, confirm receipts, pay approved refunds, expenses, register withdrawals, and haulage — all on one tab. Cashiers **request** refunds in Sales but **cannot approve** them.',
     steps: [
-      'Open **Finance → My desk** from the sidebar (or `/accounts?tab=desk`).',
+      'Open **Finance → Finance desk** from the sidebar (or `/accounts?tab=desk`).',
       'Review liquidity, account cards, and colour-coded queues — work top to bottom.',
       '**Confirm payment received** — match each pending receipt to bank/cash evidence.',
       '**Pay approved items** — refunds, payment requests, register withdrawals, and PO haulage from the desk payout panels.',
-      'Tap any account card on My desk for statements and movements.',
+      'Tap any account card on Finance desk for statements and movements.',
       'Payment register and Audit tabs are hidden for Cashier by design (Phase 10 desk split).',
     ],
     links: [
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Sales — Refunds', to: '/sales', state: { focusSalesTab: 'refund' } },
     ],
   },
@@ -1289,7 +1289,7 @@ const CORE_HELP_ARTICLES = [
       'AP1c',
     ],
     answer:
-      'The **Accounting desk** (`/accounting`) is for **Accountant / Head of Accounts**: reconciliation, GL, month-end — not day-to-day receipt confirmation (**My desk**).',
+      'The **Accounting desk** (`/accounting`) is for **Accountant / Head of Accounts**: reconciliation, GL, month-end — not day-to-day receipt confirmation (**Finance desk**).',
     steps: [
       'Open **Accounting** from the sidebar (`/accounting`).',
       'Review Overview KPIs: recon warnings, treasury drift, AP difference, costing readiness.',
@@ -1318,7 +1318,7 @@ const CORE_HELP_ARTICLES = [
     answer:
       'Phase 10 separates **Cashier**, **Accounting**, **Manager**, and **HR** desks. If a module is hidden or returns forbidden, your **role** does not include that path — escalate to the role in staff approvals, not IT bypass.',
     steps: [
-      '**Cashier** — uses **My desk** (`/accounts?tab=desk`) for balances, statements, receipts, and payouts; not `/accounting`, payment register, or GL audit.',
+      '**Cashier** — uses **Finance desk** (`/accounts?tab=desk`) for balances, statements, receipts, and payouts; not `/accounting`, payment register, or GL audit.',
       '**Branch manager** — uses `/manager`, `/team-hr`; not main `/hr`, `/executive-hr`, or `/accounting`.',
       '**Accountant** — uses `/accounting` and `/reports`; not branch production ops or cashier desk by default.',
       '**MD** — uses `/exec` and `/executive-hr`; optional oversight of `/manager` and `/accounting`.',
@@ -1327,7 +1327,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Settings — Team', to: '/settings/team' },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Accounting desk', to: '/accounting' },
     ],
   },
@@ -1347,7 +1347,7 @@ const CORE_HELP_ARTICLES = [
       'After login, Zarewa sends you to the desk that matches your **role**. Use the sidebar if you need another module you are permitted to access.',
     steps: [
       '**Branch manager** → `/manager` (approvals inbox).',
-      '**Cashier** → `/accounts?tab=desk` (My desk — confirm receipts, pay refunds).',
+      '**Cashier** → `/accounts?tab=desk` (Finance desk — confirm receipts, pay refunds).',
       '**Accountant** → `/accounting` (reconciliation, month-end).',
       '**Managing Director** → `/exec` (Command Centre — Overview, Intelligence, Finance tabs).',
       '**HR admin / GM HR** → `/hr/dashboard`.',
@@ -1356,7 +1356,7 @@ const CORE_HELP_ARTICLES = [
     ],
     links: [
       { label: 'Manager dashboard', to: '/manager' },
-      { label: 'My desk', to: '/accounts?tab=desk' },
+      { label: 'Finance desk', to: '/accounts?tab=desk' },
       { label: 'Accounting desk', to: '/accounting' },
       { label: 'Command Centre', to: '/exec' },
       { label: 'Intelligence & forecasts', to: '/exec?tab=intelligence' },
@@ -1811,7 +1811,7 @@ export function quickQuestionsForPath(pathname) {
   }
   if (p.startsWith('/cashier') || p.includes('tab=desk')) {
     return [
-      { label: 'Tour My desk', query: 'Walk me through My desk step by step — confirm receipts and pay approved refunds' },
+      { label: 'Tour Finance desk', query: 'Walk me through Finance desk step by step — confirm receipts and pay approved refunds' },
       { label: 'Confirm receipt', query: 'Finance clearance before refunds — cashier desk confirm payment received' },
       { label: 'Pay refund', query: 'How do I pay an approved refund as cashier' },
       { label: 'Cannot approve', query: 'Why can’t cashier approve refund' },

@@ -1,21 +1,27 @@
 /**
  * Phase 10 — legacy `/accounts` route and tab RBAC (server).
- * Cashier Desk and Accounting Desk remain primary; `/accounts` is restricted by role/tab.
+ * Finance desk merges legacy Desk + Treasury tabs (canonical tab id: `desk`).
  */
 import { userHasPermission } from './auth.js';
 
 export const LEGACY_ACCOUNT_TAB_IDS = ['desk', 'treasury', 'receipts', 'movements', 'disbursements', 'audit'];
+
+export const FINANCE_DESK_TAB_ID = 'desk';
 
 const ROLE_BRANCH_MANAGER = 'sales_manager';
 const ROLE_CASHIER = 'cashier';
 const ROLE_ACCOUNTANT = 'finance_manager';
 const OVERSIGHT_ROLES = new Set(['admin', 'md']);
 
-/** Cashier: Desk (accounts & statements merged) + receipts + movements. */
+/** Cashier: Finance desk + receipts + movements. */
 const CASHIER_LEGACY_TABS = new Set(['desk', 'receipts', 'movements']);
 
-/** Accountant / Head of Accounts — reconciliation and oversight tabs. */
-const ACCOUNTANT_LEGACY_TABS = new Set(['treasury', 'receipts', 'movements', 'disbursements', 'audit']);
+/** Accountant — Finance desk replaces legacy Treasury tab. */
+const ACCOUNTANT_LEGACY_TABS = new Set(['desk', 'receipts', 'movements', 'disbursements', 'audit']);
+
+function withoutRetiredTreasuryTab(tabs) {
+  return tabs.filter((t) => t !== 'treasury');
+}
 
 /**
  * @param {object | null | undefined} user
@@ -51,9 +57,9 @@ export function userMayAccessLegacyAccountsRoute(user) {
  */
 export function getAllowedLegacyAccountTabs(user) {
   if (!user) return [];
-  if (userHasPermission(user, '*')) return [...LEGACY_ACCOUNT_TAB_IDS];
+  if (userHasPermission(user, '*')) return withoutRetiredTreasuryTab([...LEGACY_ACCOUNT_TAB_IDS]);
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
-  if (OVERSIGHT_ROLES.has(rk)) return [...LEGACY_ACCOUNT_TAB_IDS];
+  if (OVERSIGHT_ROLES.has(rk)) return withoutRetiredTreasuryTab([...LEGACY_ACCOUNT_TAB_IDS]);
   if (rk === ROLE_BRANCH_MANAGER) return [];
   if (rk === ROLE_CASHIER) {
     return LEGACY_ACCOUNT_TAB_IDS.filter((t) => CASHIER_LEGACY_TABS.has(t));
@@ -65,7 +71,7 @@ export function getAllowedLegacyAccountTabs(user) {
     return LEGACY_ACCOUNT_TAB_IDS.filter((t) => ACCOUNTANT_LEGACY_TABS.has(t));
   }
   if (userHasPermission(user, 'finance.view')) {
-    return ['treasury', 'receipts', 'disbursements'];
+    return ['desk', 'receipts', 'disbursements'];
   }
   return [];
 }
@@ -76,10 +82,8 @@ export function getAllowedLegacyAccountTabs(user) {
  */
 export function getDefaultLegacyAccountTab(user) {
   const allowed = getAllowedLegacyAccountTabs(user);
-  const rk = String(user?.roleKey || user?.role_key || '').trim().toLowerCase();
-  if (rk === ROLE_CASHIER && allowed.includes('desk')) return 'desk';
-  if (allowed.includes('treasury')) return 'treasury';
-  return allowed[0] || 'treasury';
+  if (allowed.includes(FINANCE_DESK_TAB_ID)) return FINANCE_DESK_TAB_ID;
+  return allowed[0] || FINANCE_DESK_TAB_ID;
 }
 
 /**
@@ -98,18 +102,12 @@ export function resolveLegacyAccountsRedirect(user, tabId = '') {
   }
   const tab = String(tabId || '').trim().toLowerCase();
   if (!tab) return null;
+  const normalizedTab = tab === 'treasury' ? FINANCE_DESK_TAB_ID : tab;
   const allowed = getAllowedLegacyAccountTabs(user);
-  if (allowed.includes(tab)) return null;
-  if (rk === ROLE_CASHIER) {
-    const fallback = getDefaultLegacyAccountTab(user);
-    return {
-      to: fallback === 'treasury' ? '/accounts' : `/accounts?tab=${fallback}`,
-      reason: 'tab_denied',
-    };
-  }
+  if (allowed.includes(normalizedTab) || tab === 'treasury') return null;
   if (rk === ROLE_ACCOUNTANT) return { to: '/accounting', reason: 'tab_denied' };
-  const fallback = allowed[0] || 'treasury';
-  return { to: fallback === 'treasury' ? '/accounts' : `/accounts?tab=${fallback}`, reason: 'tab_denied' };
+  const fallback = getDefaultLegacyAccountTab(user);
+  return { to: `/accounts?tab=${encodeURIComponent(fallback)}`, reason: 'tab_denied' };
 }
 
 /**

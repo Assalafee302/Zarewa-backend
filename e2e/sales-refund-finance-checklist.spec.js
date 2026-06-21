@@ -184,7 +184,7 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await page.goto('/');
     await ensureAllBranchesRollup(page);
     await page.goto('/accounts?tab=desk');
-    await expect(page.getByRole('tab', { name: /^My desk$/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('tab', { name: /^Finance desk$/i })).toBeVisible({ timeout: 20_000 });
     await waitForRefundApprovedInBootstrap(page, refundID);
     await expect(page.getByTestId('finance-refunds-awaiting-payout')).toBeVisible({ timeout: 30_000 });
     await page
@@ -202,9 +202,10 @@ test.describe('Focused checklist — Sales, Refund, Finance', () => {
     await expect(page.getByRole('heading', { name: 'Refund payout' })).toBeHidden({ timeout: 20_000 });
 
     await page.goto('/accounts?tab=treasury');
-    await expect(page.getByRole('tab', { name: /^My desk$/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('tab', { name: /^Finance desk$/i })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('desk-treasury-summary')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('tab', { name: /Accounts & balances/i })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /^Treasury$/i })).toHaveCount(0);
     await expect(page.getByTestId('finance-refunds-awaiting-payout')).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /Expenses & requests/i })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /^Audit$/i })).toHaveCount(0);

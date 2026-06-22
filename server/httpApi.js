@@ -3020,9 +3020,9 @@ export function registerHttpApi(app, db) {
           lockedUntilIso: result.lockedUntilIso,
         });
       }
-      setSessionCookie(res, result.sessionToken);
+      setSessionCookie(res, result.sessionToken, req);
       // CSRF cookie used by the SPA to protect cookie-authenticated write requests.
-      setCsrfCookie(res);
+      setCsrfCookie(res, undefined, req);
       appendAuditLog(db, {
         actor: result.session.user,
         action: 'session.login',
@@ -3061,13 +3061,13 @@ export function registerHttpApi(app, db) {
         });
         logoutSession(db, req.sessionToken);
       }
-      clearSessionCookie(res);
-      clearCsrfCookie(res);
+      clearSessionCookie(res, req);
+      clearCsrfCookie(res, req);
       return res.json({ ok: true, code: 'SESSION_TIMEOUT' });
     } catch (e) {
       console.error(e);
-      clearSessionCookie(res);
-      clearCsrfCookie(res);
+      clearSessionCookie(res, req);
+      clearCsrfCookie(res, req);
       return res.status(500).json({ ok: false, error: 'Could not end session.' });
     }
   });
@@ -3134,8 +3134,8 @@ export function registerHttpApi(app, db) {
         note: 'User signed out',
       });
       logoutSession(db, req.sessionToken);
-      clearSessionCookie(res);
-      clearCsrfCookie(res);
+      clearSessionCookie(res, req);
+      clearCsrfCookie(res, req);
       res.json({ ok: true });
     } catch (e) {
       console.error(e);
@@ -3491,8 +3491,9 @@ export function registerHttpApi(app, db) {
       }
       return respondBootstrap(res, payload, ifNoneMatch);
     } catch (e) {
-      console.error(e);
-      res.status(500).json({ ok: false, error: 'Bootstrap failed' });
+      const detail = String(e?.message || e || 'unknown').slice(0, 500);
+      console.error('[bootstrap]', e);
+      res.status(500).json({ ok: false, error: 'Bootstrap failed', detail });
     }
   });
 

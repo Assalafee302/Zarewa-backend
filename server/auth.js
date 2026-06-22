@@ -1349,8 +1349,8 @@ export function attachAuthContext(db) {
     if (shouldExtend) {
       refreshSessionTouch(db, token, expiresAtISO);
       // Re-issue cookies so browser Max-Age slides with the DB inactivity window (not fixed at login).
-      setSessionCookie(res, token);
-      setCsrfCookie(res, csrfToken || createCsrfToken());
+      setSessionCookie(res, token, req);
+      setCsrfCookie(res, csrfToken || createCsrfToken(), req);
     }
     return next();
   };
@@ -1387,7 +1387,22 @@ function sessionCookieDomainAttr() {
   return `; Domain=${normalized}`;
 }
 
-function sessionCookieFlags() {
+function isLocalDevRequestHost(hostHeader) {
+  const host = String(hostHeader || '').split(':')[0].trim().toLowerCase();
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '[::1]' ||
+    host.endsWith('.local')
+  );
+}
+
+/** @param {import('express').Request | null | undefined} [req] */
+function sessionCookieFlags(req) {
+  if (req && isLocalDevRequestHost(req.headers?.host)) {
+    // Production .env often sets Secure + cross-site Domain; browsers reject those on http://127.0.0.1.
+    return '; SameSite=Lax';
+  }
   const sameSite = sessionCookieSameSite();
   const domainAttr = sessionCookieDomainAttr();
   if (sameSite === 'None') {
@@ -1418,21 +1433,24 @@ function pushSetCookie(res, value) {
   }
 }
 
-export function setSessionCookie(res, token) {
-  const extra = sessionCookieFlags();
+/** @param {import('express').Response} res @param {string} token @param {import('express').Request | null | undefined} [req] */
+export function setSessionCookie(res, token, req) {
+  const extra = sessionCookieFlags(req);
   pushSetCookie(
     res,
     `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${sessionCookieMaxAgeSeconds()}${extra}`
   );
 }
 
-export function clearSessionCookie(res) {
-  const extra = sessionCookieFlags();
+/** @param {import('express').Response} res @param {import('express').Request | null | undefined} [req] */
+export function clearSessionCookie(res, req) {
+  const extra = sessionCookieFlags(req);
   pushSetCookie(res, `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0${extra}`);
 }
 
-export function setCsrfCookie(res, token = createCsrfToken()) {
-  const extra = sessionCookieFlags();
+/** @param {import('express').Response} res @param {string} [token] @param {import('express').Request | null | undefined} [req] */
+export function setCsrfCookie(res, token = createCsrfToken(), req) {
+  const extra = sessionCookieFlags(req);
   // Non-HttpOnly on purpose: the SPA must read it and send it back in `X-CSRF-Token`.
   pushSetCookie(
     res,
@@ -1440,8 +1458,9 @@ export function setCsrfCookie(res, token = createCsrfToken()) {
   );
 }
 
-export function clearCsrfCookie(res) {
-  const extra = sessionCookieFlags();
+/** @param {import('express').Response} res @param {import('express').Request | null | undefined} [req] */
+export function clearCsrfCookie(res, req) {
+  const extra = sessionCookieFlags(req);
   pushSetCookie(res, `${CSRF_COOKIE}=; Path=/; Max-Age=0${extra}`);
 }
 

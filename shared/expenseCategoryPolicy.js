@@ -180,7 +180,7 @@ export function validateExpenseCategorySelection(input = {}) {
         error: `Other expenses need a clear explanation (at least ${limits.othersMinJustificationLen} characters).`,
       };
     }
-    if (!input.hasAttachment) {
+    if (input.requireAttachment !== false && !input.hasAttachment) {
       return {
         ok: false,
         error: 'Other expenses require an invoice or receipt attachment.',

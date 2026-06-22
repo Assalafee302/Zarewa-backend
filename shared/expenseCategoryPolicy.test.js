@@ -152,4 +152,16 @@ describe('expenseCategoryPolicy', () => {
     });
     expect(r.ok).toBe(false);
   });
+
+  it('allows Others without attachment when requireAttachment is false', () => {
+    const r = validateExpenseCategorySelection({
+      actor: staff,
+      category: 'Others',
+      amountNgn: 5000,
+      categoryJustification: 'x'.repeat(40),
+      hasAttachment: false,
+      requireAttachment: false,
+    });
+    expect(r.ok).toBe(true);
+  });
 });

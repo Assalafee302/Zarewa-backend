@@ -6508,6 +6508,7 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
     description: payload.expenseType || payload.reference || '',
     categoryJustification: payload.categoryJustification,
     hasAttachment: Boolean(payload.hasAttachment),
+    requireAttachment: false,
     hasPermission: (p) => userHasPermission(payload.actor, p),
   });
   if (!catCheck.ok) return catCheck;

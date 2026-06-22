@@ -991,7 +991,9 @@ export function listStaffPurchaseCreditQueue(db, filter = {}) {
     JOIN app_users u ON u.id = o.user_id
     WHERE o.kind = ?`;
   const args = [OBLIGATION_KIND.PURCHASE];
-  if (filter.status) {
+  if (filter.status === 'all') {
+    /* all purchase-credit statuses */
+  } else if (filter.status) {
     sql += ` AND o.status = ?`;
     args.push(String(filter.status));
   } else {

@@ -988,6 +988,223 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
   });
 }
 
+/**
+ * POs in the procurement transport window that still need haulier and/or quoted fee before Finance can pay.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listPoTransportMissingLink(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  const rows = db
+    .prepare(
+      `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
+              transport_agent_id, transport_agent_name, transport_reference, transport_amount_ngn,
+              transport_paid_ngn, supplier_paid_ngn
+       FROM purchase_orders
+       WHERE LOWER(TRIM(COALESCE(status, ''))) IN ('approved', 'on loading', 'in transit')
+         AND (
+           TRIM(COALESCE(transport_agent_id, '')) = ''
+           OR COALESCE(transport_amount_ngn, 0) <= 0
+         )
+         ${b.sql}
+       ORDER BY order_date_iso DESC, po_id DESC`
+    )
+    .all(...b.args);
+  return rows.map((row) => {
+    const hasAgent = Boolean(String(row.transport_agent_id ?? '').trim());
+    const fee = Number(row.transport_amount_ngn) || 0;
+    let gapKind = 'agent_and_fee';
+    if (hasAgent && fee <= 0) gapKind = 'fee';
+    else if (!hasAgent && fee > 0) gapKind = 'agent';
+    return {
+      poID: row.po_id,
+      supplierName: row.supplier_name ?? '',
+      branchId: row.branch_id ?? '',
+      status: row.status ?? '',
+      orderDateISO: row.order_date_iso ?? '',
+      procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+      transportAgentName: row.transport_agent_name ?? '',
+      transportReference: row.transport_reference ?? '',
+      transportAmountNgn: fee,
+      transportPaidNgn: Number(row.transport_paid_ngn) || 0,
+      supplierPaidNgn: Number(row.supplier_paid_ngn) || 0,
+      gapKind,
+    };
+  });
+}
+
+const PO_TRANSPORT_CATCHUP_STATUSES = `'approved', 'on loading', 'in transit', 'received'`;
+
+/**
+ * Unified PO transport remediation queue — missing link and awaiting treasury (includes Received for catch-up).
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listPoTransportCatchUp(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  const missingRows = db
+    .prepare(
+      `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
+              transport_agent_id, transport_agent_name, transport_reference, transport_amount_ngn,
+              transport_paid_ngn, supplier_paid_ngn
+       FROM purchase_orders
+       WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${PO_TRANSPORT_CATCHUP_STATUSES})
+         AND (
+           TRIM(COALESCE(transport_agent_id, '')) = ''
+           OR COALESCE(transport_amount_ngn, 0) <= 0
+         )
+         ${b.sql}
+       ORDER BY order_date_iso DESC, po_id DESC`
+    )
+    .all(...b.args);
+
+  const awaitingRows = db
+    .prepare(
+      `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
+              transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
+              transport_amount_ngn, transport_paid_ngn, supplier_paid_ngn
+       FROM purchase_orders
+       WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${PO_TRANSPORT_CATCHUP_STATUSES})
+         AND TRIM(COALESCE(transport_agent_id, '')) != ''
+         AND COALESCE(transport_amount_ngn, 0) > COALESCE(transport_paid_ngn, 0)
+         ${b.sql}
+       ORDER BY order_date_iso DESC, po_id DESC`
+    )
+    .all(...b.args);
+
+  const missing = missingRows.map((row) => {
+    const hasAgent = Boolean(String(row.transport_agent_id ?? '').trim());
+    const fee = Number(row.transport_amount_ngn) || 0;
+    let gapKind = 'agent_and_fee';
+    if (hasAgent && fee <= 0) gapKind = 'fee';
+    else if (!hasAgent && fee > 0) gapKind = 'agent';
+    return {
+      poID: row.po_id,
+      supplierName: row.supplier_name ?? '',
+      branchId: row.branch_id ?? '',
+      status: row.status ?? '',
+      orderDateISO: row.order_date_iso ?? '',
+      procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+      transportAgentName: row.transport_agent_name ?? '',
+      transportReference: row.transport_reference ?? '',
+      transportAmountNgn: fee,
+      transportPaidNgn: Number(row.transport_paid_ngn) || 0,
+      supplierPaidNgn: Number(row.supplier_paid_ngn) || 0,
+      outstandingNgn: 0,
+      gapKind,
+      action: 'link_transport',
+      actionLabel: 'Assign transport',
+    };
+  });
+
+  const missingIds = new Set(missing.map((r) => r.poID));
+  const awaiting = awaitingRows
+    .filter((row) => !missingIds.has(row.po_id))
+    .map((row) => {
+      const total = Number(row.transport_amount_ngn) || 0;
+      const paid = Number(row.transport_paid_ngn) || 0;
+      return {
+        poID: row.po_id,
+        supplierName: row.supplier_name ?? '',
+        branchId: row.branch_id ?? '',
+        status: row.status ?? '',
+        orderDateISO: row.order_date_iso ?? '',
+        procurementKind: String(row.procurement_kind ?? '').trim() || 'coil',
+        transportAgentName: row.transport_agent_name ?? '',
+        transportReference: row.transport_reference ?? '',
+        transportFinanceAdvice: row.transport_finance_advice ?? '',
+        transportAmountNgn: total,
+        transportPaidNgn: paid,
+        supplierPaidNgn: Number(row.supplier_paid_ngn) || 0,
+        outstandingNgn: effectiveOutstandingNgn(total, paid),
+        gapKind: 'awaiting_treasury',
+        action: 'post_treasury',
+        actionLabel: 'Finance payout',
+      };
+    });
+
+  return [...missing, ...awaiting];
+}
+
+/**
+ * Treasury outflows that look like haulage but are not linked to a PO transport payment.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function listOrphanHaulageTreasuryMovements(db, branchScope = 'ALL') {
+  const scopeSql =
+    branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
+      ? { sql: '', args: [] }
+      : { sql: ` AND ta.branch_id = ?`, args: [branchScope] };
+  const rows = db
+    .prepare(
+      `SELECT tm.id, tm.posted_at_iso, tm.type, tm.amount_ngn, tm.reference, tm.note,
+              tm.counterparty_kind, tm.counterparty_id, tm.counterparty_name,
+              tm.source_kind, tm.source_id, tm.created_by,
+              ta.name AS account_name, ta.branch_id AS account_branch_id
+       FROM treasury_movements tm
+       LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE tm.amount_ngn < 0
+         AND tm.reverses_movement_id IS NULL
+         AND (
+           (
+             tm.type = 'TRANSPORT_PAYMENT'
+             AND (
+               TRIM(COALESCE(tm.source_kind, '')) != 'PURCHASE_ORDER'
+               OR TRIM(COALESCE(tm.source_id, '')) = ''
+             )
+           )
+           OR (
+             tm.type != 'TRANSPORT_PAYMENT'
+             AND (
+               LOWER(TRIM(COALESCE(tm.counterparty_kind, ''))) = 'transport_agent'
+               OR EXISTS (
+                 SELECT 1 FROM transport_agents ta2
+                 WHERE ta2.id = tm.counterparty_id
+                    OR (TRIM(COALESCE(tm.counterparty_name, '')) != '' AND ta2.name = tm.counterparty_name)
+               )
+               OR LOWER(COALESCE(tm.note, '') || ' ' || COALESCE(tm.reference, '')) LIKE '%haul%'
+               OR LOWER(COALESCE(tm.note, '') || ' ' || COALESCE(tm.reference, '')) LIKE '%freight%'
+               OR LOWER(COALESCE(tm.note, '') || ' ' || COALESCE(tm.reference, '')) LIKE '%transport%'
+             )
+           )
+         )
+         ${scopeSql.sql}
+       ORDER BY tm.posted_at_iso DESC, tm.id DESC
+       LIMIT 200`
+    )
+    .all(...scopeSql.args);
+
+  return rows.map((row) => {
+    const type = String(row.type ?? '').trim();
+    const sourceKind = String(row.source_kind ?? '').trim();
+    const sourceId = String(row.source_id ?? '').trim();
+    let reason = 'Haulage-like payment not tied to a PO';
+    if (type === 'TRANSPORT_PAYMENT' && (sourceKind !== 'PURCHASE_ORDER' || !sourceId)) {
+      reason = 'Transport payment missing PO link';
+    } else if (String(row.counterparty_kind ?? '').toLowerCase() === 'transport_agent') {
+      reason = 'Paid transport agent outside PO transport flow';
+    }
+    return {
+      movementId: row.id,
+      postedAtISO: row.posted_at_iso ?? '',
+      type,
+      amountNgn: Math.abs(Number(row.amount_ngn) || 0),
+      reference: row.reference ?? '',
+      note: row.note ?? '',
+      counterpartyKind: row.counterparty_kind ?? '',
+      counterpartyId: row.counterparty_id ?? '',
+      counterpartyName: row.counterparty_name ?? '',
+      sourceKind,
+      sourceId,
+      accountName: row.account_name ?? '',
+      branchId: row.account_branch_id ?? '',
+      createdBy: row.created_by ?? '',
+      reason,
+    };
+  });
+}
+
 export function listCoilControlEvents(db, branchScope = 'ALL') {
   if (!hasColumn(db, 'coil_control_events', 'branch_id')) return [];
   const b = branchWhere(db, 'coil_control_events', branchScope);

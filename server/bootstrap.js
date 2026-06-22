@@ -22,6 +22,9 @@ import {
   listPaymentRequests,
   listAccountsPayable,
   listPoTransportAwaitingTreasury,
+  listPoTransportMissingLink,
+  listPoTransportCatchUp,
+  listOrphanHaulageTreasuryMovements,
   listBankReconciliation,
   listCoilRequests,
   listYardCoils,
@@ -253,6 +256,12 @@ export function buildBootstrap(db, opts = {}) {
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    /** Approved / in-transit POs still missing haulier or quoted transport fee — procurement action queue. */
+    poTransportMissingLink: procOk ? listPoTransportMissingLink(db, branchScope) : [],
+    /** Unified transport catch-up (includes Received) and orphan haulage treasury lines. */
+    poTransportCatchUp: procOk || finOk ? listPoTransportCatchUp(db, branchScope) : [],
+    orphanHaulageTreasuryMovements:
+      finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
     staffRecoveriesDue:
       finOk && recoverySchedulesTableReady(db)
         ? listStaffRecoveriesDueForCashier(db, branchScope)

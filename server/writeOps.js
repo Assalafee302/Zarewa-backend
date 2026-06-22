@@ -1786,9 +1786,39 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
   }
 }
 
-export function setPoStatus(db, poID, status) {
-  const r = db.prepare(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`).run(status, poID);
-  if (r.changes === 0) return { ok: false, error: 'PO not found.' };
+export function setPoStatus(db, poID, status, opts = {}) {
+  const statusNorm = normalizePoTransitStatus(status);
+  const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
+  if (!row) return { ok: false, error: 'PO not found.' };
+
+  if (statusNorm === 'in transit') {
+    const hasAgent = Boolean(String(row.transport_agent_id ?? '').trim());
+    const fee = Number(row.transport_amount_ngn) || 0;
+    const transportGap = !hasAgent || fee <= 0;
+    if (transportGap && !opts.acknowledgeTransportGap) {
+      let detail = 'Haulier and transport fee missing';
+      if (hasAgent && fee <= 0) detail = 'Transport fee missing';
+      else if (!hasAgent && fee > 0) detail = 'Transport agent missing';
+      return {
+        ok: false,
+        code: 'PO_IN_TRANSIT_TRANSPORT_GAP',
+        needsAcknowledgement: true,
+        error: `${detail}. Link transport on the PO first, or acknowledge to mark in transit without haulage on record.`,
+      };
+    }
+    if (transportGap && opts.acknowledgeTransportGap) {
+      appendAuditLog(db, {
+        actor: opts.actor ?? null,
+        action: 'purchase_order.in_transit_transport_gap_ack',
+        entityKind: 'purchase_order',
+        entityId: poID,
+        note: 'In transit set without complete transport link',
+        details: { hasAgent, transportAmountNgn: fee },
+      });
+    }
+  }
+
+  db.prepare(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`).run(status, poID);
   appendMovementTx(db, { type: 'PO_STATUS', ref: poID, detail: status });
   syncAccountsPayableFromPurchaseOrder(db, poID);
   return { ok: true };

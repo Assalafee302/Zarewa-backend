@@ -5992,8 +5992,11 @@ export function registerHttpApi(app, db) {
     const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
     if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
-      const { status } = stripped || {};
-      return write.setPoStatus(db, poId, status);
+      const { status, acknowledgeTransportGap } = stripped || {};
+      return write.setPoStatus(db, poId, status, {
+        acknowledgeTransportGap: Boolean(acknowledgeTransportGap),
+        actor: req.user,
+      });
     });
   });
 

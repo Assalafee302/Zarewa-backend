@@ -21,6 +21,9 @@ import {
   listPaymentRequests,
   listAccountsPayable,
   listPoTransportAwaitingTreasury,
+  listPoTransportMissingLink,
+  listPoTransportCatchUp,
+  listOrphanHaulageTreasuryMovements,
   listBankReconciliation,
   listCoilRequests,
   listYardCoils,
@@ -222,6 +225,9 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    poTransportCatchUp: procOk || finOk ? listPoTransportCatchUp(db, branchScope) : [],
+    orphanHaulageTreasuryMovements:
+      finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
     staffRecoveriesDue:
       finOk && recoverySchedulesTableReady(db)
         ? listStaffRecoveriesDueForCashier(db, branchScope)
@@ -257,6 +263,10 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     inTransitLoads: f.user ? listInTransitLoads(db, branchScope) : [],
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
+    poTransportMissingLink: procOk ? listPoTransportMissingLink(db, branchScope) : [],
+    poTransportCatchUp: procOk || finOk ? listPoTransportCatchUp(db, branchScope) : [],
+    orphanHaulageTreasuryMovements:
+      finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
   };
 }
 

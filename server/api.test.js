@@ -1483,6 +1483,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const poId = po.body.poID;
     const st = await agent.patch(`/api/purchase-orders/${encodeURIComponent(poId)}/status`).send({
       status: 'In Transit',
+      acknowledgeTransportGap: true,
     });
     expect(st.status).toBe(200);
     const link = await agent.patch(`/api/purchase-orders/${encodeURIComponent(poId)}/link-transport`).send({
@@ -1499,6 +1500,74 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(row.transportAgentName).toBe('Late Haul Co');
     expect(row.transportAmountNgn).toBe(75_000);
     expect(row.status).toBe('In Transit');
+  });
+
+  it('bootstrap poTransportMissingLink lists approved POs without haulier or fee', async () => {
+    const sup = await agent.post('/api/suppliers').send({ name: 'Gap Sup', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Gap Sup',
+      orderDateISO: '2026-03-29',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L1',
+          productID: 'COIL-ALU',
+          productName: 'Coil',
+          qtyOrdered: 50,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const boot = await agent.get('/api/bootstrap');
+    const missing = (boot.body.poTransportMissingLink || []).find((r) => r.poID === po.body.poID);
+    expect(missing).toBeTruthy();
+    expect(missing.gapKind).toBe('agent_and_fee');
+    expect((boot.body.poTransportAwaitingTreasury || []).some((r) => r.poID === po.body.poID)).toBe(false);
+    const catchUp = (boot.body.poTransportCatchUp || []).find((r) => r.poID === po.body.poID);
+    expect(catchUp).toBeTruthy();
+    expect(catchUp.action).toBe('link_transport');
+  });
+
+  it('blocks In Transit status without transport unless acknowledged', async () => {
+    const sup = await agent.post('/api/suppliers').send({ name: 'Transit Gap Sup', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Transit Gap Sup',
+      orderDateISO: '2026-03-29',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L1',
+          productID: 'COIL-ALU',
+          productName: 'Coil',
+          qtyOrdered: 20,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const blocked = await agent.patch(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/status`).send({
+      status: 'In Transit',
+    });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.ok).toBe(false);
+    expect(blocked.body.code).toBe('PO_IN_TRANSIT_TRANSPORT_GAP');
+    expect(blocked.body.needsAcknowledgement).toBe(true);
+
+    const ok = await agent.patch(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/status`).send({
+      status: 'In Transit',
+      acknowledgeTransportGap: true,
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.ok).toBe(true);
   });
 
   it('POST /api/cutting-lists and /api/production-jobs persist linked production flow', async () => {

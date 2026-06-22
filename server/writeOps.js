@@ -98,7 +98,7 @@ import {
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
-import { apReceivedBasisEnabled, receivedBasisAmountForPoSync } from './ap2ReceivedBasisOps.js';
+import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn } from './ap2ReceivedBasisOps.js';
 import {
   deliveryGateShouldBlockMutation,
   evaluateDeliveryPaymentRelease,
@@ -6541,9 +6541,7 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
       }
     }
     db.transaction(() => {
-      const expHasLane = db
-        .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
-        .get();
+      const expHasLane = hasColumn(db, 'expenses', 'category_lane');
       if (expHasLane) {
         db.prepare(
           `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id, category_lane)

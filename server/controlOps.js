@@ -67,6 +67,7 @@ import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingToleranc
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { hasColumn } from './ap2ReceivedBasisOps.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
 import {
@@ -1035,12 +1036,12 @@ function validatePaymentRequestExpenseCategory(db, actor, payload, expenseCatego
 function expenseInsertColumns(db) {
   const base =
     'expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id';
-  const hasLane = db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get();
+  const hasLane = hasColumn(db, 'expenses', 'category_lane');
   return hasLane ? `${base}, category_lane` : base;
 }
 
 function expenseInsertPlaceholders(db) {
-  const hasLane = db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get();
+  const hasLane = hasColumn(db, 'expenses', 'category_lane');
   return hasLane ? '?,?,?,?,?,?,?,?,?' : '?,?,?,?,?,?,?,?';
 }
 
@@ -1125,7 +1126,7 @@ export function insertPaymentRequest(db, payload, actor) {
             `INSERT INTO expenses (${expenseInsertColumns(db)})
              VALUES (${expenseInsertPlaceholders(db)})`
           ).run(
-            ...(db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get()
+            ...(hasColumn(db, 'expenses', 'category_lane')
               ? [
                   newExpId,
                   'Payment request (pending payout)',
@@ -1150,9 +1151,7 @@ export function insertPaymentRequest(db, payload, actor) {
           );
           expenseIdForRow = newExpId;
         }
-        const prHasJustification = db
-          .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
-          .get();
+        const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
         if (prHasJustification) {
           db.prepare(
             `INSERT INTO payment_requests (
@@ -1276,12 +1275,8 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   if (!catCheck.ok) return catCheck;
   const categoryLane = getExpenseCategoryLane(expenseCategory);
   const lineItemsJson = JSON.stringify(lineItems);
-  const prHasJustification = db
-    .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
-    .get();
-  const expHasLane = db
-    .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
-    .get();
+  const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
+  const expHasLane = hasColumn(db, 'expenses', 'category_lane');
 
   try {
     assertPeriodOpen(db, requestDate, 'Payment request date');
@@ -1634,9 +1629,7 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
 
   try {
     db.transaction(() => {
-      const prHasJustification = db
-        .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
-        .get();
+      const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
       if (prHasJustification) {
         db.prepare(`UPDATE payment_requests SET category_justification = ? WHERE request_id = ?`).run(
           categoryJustification || null,
@@ -1644,9 +1637,7 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
         );
       }
       if (expenseId) {
-        const expHasLane = db
-          .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
-          .get();
+        const expHasLane = hasColumn(db, 'expenses', 'category_lane');
         if (expHasLane) {
           db.prepare(
             `UPDATE expenses SET category = ?, category_lane = ? WHERE expense_id = ?`

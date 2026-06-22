@@ -8,6 +8,7 @@ import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.
 import { resolveExpenseCategoryPolicyLimits, validateExpenseCategorySelection } from '../shared/expenseCategoryPolicy.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { hasColumn } from './ap2ReceivedBasisOps.js';
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
@@ -54,12 +55,8 @@ function updateExpenseCategory(db, expenseId, expenseCategory, categoryJustifica
   const eid = String(expenseId || '').trim();
   if (!eid) return;
   const categoryLane = getExpenseCategoryLane(expenseCategory);
-  const expHasLane = db
-    .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
-    .get();
-  const prHasJustification = db
-    .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
-    .get();
+  const expHasLane = hasColumn(db, 'expenses', 'category_lane');
+  const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
   if (expHasLane) {
     db.prepare(`UPDATE expenses SET category = ?, category_lane = ? WHERE expense_id = ?`).run(
       expenseCategory,

@@ -251,14 +251,28 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         : [],
     expenseCategoryMonthlyAlert:
       canSeeCategoryAlert && finOk
-        ? buildExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits }).summary
+        ? (() => {
+            try {
+              return buildExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits }).summary;
+            } catch (e) {
+              console.error('[domainBootstrap] expenseCategoryMonthlyAlert', e);
+              return null;
+            }
+          })()
         : null,
     expenseCategoryBranchCoachAlert:
       finOk &&
       user &&
       branchScope !== 'ALL' &&
       String(user.roleKey || '').toLowerCase() === 'branch_manager'
-        ? buildExpenseCategoryBranchCoachAlert(db, { branchScope, orgLimits })
+        ? (() => {
+            try {
+              return buildExpenseCategoryBranchCoachAlert(db, { branchScope, orgLimits });
+            } catch (e) {
+              console.error('[domainBootstrap] expenseCategoryBranchCoachAlert', e);
+              return null;
+            }
+          })()
         : null,
   };
 }

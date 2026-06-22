@@ -112,6 +112,24 @@ function userMayReceiveBranchExpenseCoachAlert(user) {
   );
 }
 
+function safeExpenseCategoryMonthlyAlert(db, opts) {
+  try {
+    return buildExpenseCategoryMonthlyAlert(db, opts).summary;
+  } catch (e) {
+    console.error('[bootstrap] expenseCategoryMonthlyAlert', e);
+    return null;
+  }
+}
+
+function safeExpenseCategoryBranchCoachAlert(db, opts) {
+  try {
+    return buildExpenseCategoryBranchCoachAlert(db, opts);
+  } catch (e) {
+    console.error('[bootstrap] expenseCategoryBranchCoachAlert', e);
+    return null;
+  }
+}
+
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
  * @param {import('better-sqlite3').Database} db
@@ -294,14 +312,14 @@ export function buildBootstrap(db, opts = {}) {
       (userHasPermission(user, 'finance.approve') ||
         userHasPermission(user, 'finance.post') ||
         userHasPermission(user, 'reports.view'))
-        ? buildExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits: orgGovernanceLimitsSnapshot }).summary
+        ? safeExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits: orgGovernanceLimitsSnapshot })
         : null,
     expenseCategoryBranchCoachAlert:
       finOk &&
       user &&
       branchScope !== 'ALL' &&
       userMayReceiveBranchExpenseCoachAlert(user)
-        ? buildExpenseCategoryBranchCoachAlert(db, {
+        ? safeExpenseCategoryBranchCoachAlert(db, {
             branchScope,
             orgLimits: orgGovernanceLimitsSnapshot,
           })

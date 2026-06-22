@@ -4,6 +4,7 @@
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { isFinanceExceptionExpenseItem, resolveExpenseCategoryPolicyLimits } from '../shared/expenseCategoryPolicy.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
+import { hasColumn } from './ap2ReceivedBasisOps.js';
 
 function roundMoney(n) {
   return Math.round(Number(n) || 0);
@@ -25,10 +26,8 @@ export function buildExpenseCategoryExceptionReport(db, opts = {}) {
   const endISO = String(opts.endISO || '').slice(0, 10);
   const branchScope = String(opts.branchScope || 'ALL').trim() || 'ALL';
 
-  const hasLane = db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get();
-  const hasJustification = db
-    .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
-    .get();
+  const hasLane = hasColumn(db, 'expenses', 'category_lane');
+  const hasJustification = hasColumn(db, 'payment_requests', 'category_justification');
 
   const rows = db
     .prepare(

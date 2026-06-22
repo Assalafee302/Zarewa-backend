@@ -1,5 +1,6 @@
 const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
-const MIGRATION_LOCK_WAIT_SEC = 120;
+const MIGRATION_LOCK_WAIT_SEC =
+  Number(process.env.ZAREWA_MIGRATION_LOCK_WAIT_SEC || 120) || 120;
 
 function isDeadlockError(err) {
   const errno = /** @type {{ errno?: number }} */ (err).errno;

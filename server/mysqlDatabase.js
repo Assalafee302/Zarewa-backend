@@ -35,8 +35,13 @@ export function databaseLabel(cfg = mysqlConfigFromEnv()) {
  * @param {{ reset?: boolean }} opts reset = wipe all tables before bootstrap (for tests)
  */
 export function createMysqlDatabase(cfg, opts = {}) {
+  const envTimeout = Number(process.env.ZAREWA_MYSQL_SYNC_TIMEOUT_MS || 0);
   const syncTimeout =
-    process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' ? 300_000 : 120_000;
+    envTimeout > 0
+      ? envTimeout
+      : process.env.NODE_ENV === 'test' || process.env.VITEST === 'true'
+        ? 300_000
+        : 120_000;
   const syncFn = createSyncFn(workerPath, { timeout: syncTimeout });
   syncFn({ op: 'init', config: cfg });
   if (opts.reset) {

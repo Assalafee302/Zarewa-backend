@@ -66,6 +66,10 @@ try {
   dbPath = '(not connected)';
   app = express();
   app.disable('x-powered-by');
+  const bootFixHint =
+    lastBootPhase === 'migrations_failed' && /Atomics\.wait/i.test(errMsg)
+      ? 'Boot migrations timed out talking to MySQL. Redeploy the latest backend, ensure only one API instance migrates at once, and set ZAREWA_MYSQL_SYNC_TIMEOUT_MS=900000 if the database is large. Run: npm run mysql:smoke'
+      : 'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke';
   const degradedProbeJson = () => ({
     ok: false,
     service: 'zarewa-api',
@@ -77,8 +81,7 @@ try {
     capabilities: { trialExceptionsB3a: 'v1' },
     mysqlTarget,
     mysqlUser: cfg.user,
-    fixHint:
-      'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke',
+    fixHint: bootFixHint,
     time: new Date().toISOString(),
   });
   const degradedProbeHandler = (_req, res) => {
@@ -109,8 +112,7 @@ try {
       bootPhase: lastBootPhase,
       bootMarker: 'po-line-type-migrate-v4',
       mysqlTarget,
-      fixHint:
-        'See GET /api/health for mysqlTarget, bootPhase, bootMarker, and bootError. Run: npm run mysql:smoke',
+      fixHint: bootFixHint,
     });
   });
 }

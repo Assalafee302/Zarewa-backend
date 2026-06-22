@@ -17,6 +17,82 @@ import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligat
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
 
+const SCHEMA_MIGRATION_PO_LINE_TYPE = 'po-line-type-migrate-v4';
+const SCHEMA_MIGRATION_PROCUREMENT_KIND = 'procurement-order-kind-v2';
+const MIGRATION_RUN_BATCH = 400;
+
+/** @param {import('better-sqlite3').Database} db */
+function ensureSchemaMigrationsTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS zarewa_schema_migrations (
+      migration_id TEXT PRIMARY KEY,
+      applied_at_iso TEXT NOT NULL
+    );
+  `);
+}
+
+/** @param {import('better-sqlite3').Database} db */
+function schemaMigrationDone(db, migrationId) {
+  try {
+    return Boolean(
+      db.prepare(`SELECT 1 FROM zarewa_schema_migrations WHERE migration_id = ?`).get(migrationId)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** @param {import('better-sqlite3').Database} db */
+function markSchemaMigrationDone(db, migrationId) {
+  db.prepare(`REPLACE INTO zarewa_schema_migrations (migration_id, applied_at_iso) VALUES (?, ?)`).run(
+    migrationId,
+    new Date().toISOString()
+  );
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ sql: string; args?: unknown[] }[]} statements
+ */
+function runManyInBatches(db, statements, batchSize = MIGRATION_RUN_BATCH) {
+  if (!statements.length) return;
+  if (typeof db.runMany === 'function') {
+    for (let i = 0; i < statements.length; i += batchSize) {
+      db.runMany(statements.slice(i, i + batchSize));
+    }
+    return;
+  }
+  for (const stmt of statements) {
+    db.prepare(stmt.sql).run(...(stmt.args || []));
+  }
+}
+
+/** Fast SQL backfill for common PO line type patterns (avoids per-row synckit round trips). */
+function bulkBackfillPurchaseOrderLineTypesSql(db) {
+  const empty = `(line_type IS NULL OR TRIM(line_type) = '')`;
+  db.exec(`UPDATE purchase_order_lines SET line_type = 'service' WHERE ${empty} AND product_id LIKE 'SVC-%'`);
+  db.exec(`UPDATE purchase_order_lines SET line_type = 'accessory' WHERE ${empty} AND product_id LIKE 'ACC-%'`);
+  db.exec(
+    `UPDATE purchase_order_lines SET line_type = 'stone_flatsheet' WHERE ${empty} AND product_id LIKE 'STONE-FS-%'`
+  );
+  db.exec(
+    `UPDATE purchase_order_lines SET line_type = 'stone_meter' WHERE ${empty} AND product_id LIKE 'STONE-%' AND product_id NOT LIKE 'STONE-FS-%'`
+  );
+  db.exec(`
+    UPDATE purchase_order_lines SET line_type = 'coil_meter'
+    WHERE ${empty}
+      AND product_id IN ('COIL-ALU', 'PRD-102')
+      AND (unit_price_per_kg_ngn IS NULL OR unit_price_per_kg_ngn <= 0)
+      AND meters_offered IS NOT NULL AND meters_offered > 0
+      AND qty_ordered IS NOT NULL AND ABS(qty_ordered - meters_offered) <= 0.001
+  `);
+  db.exec(`
+    UPDATE purchase_order_lines SET line_type = 'coil_kg'
+    WHERE ${empty} AND product_id IN ('COIL-ALU', 'PRD-102')
+  `);
+  db.exec(`UPDATE purchase_order_lines SET line_type = 'coil_kg' WHERE ${empty}`);
+}
+
 /**
  * Idempotent SQLite migrations for existing DB files (CREATE IF NOT EXISTS misses new columns).
  * @param {import('better-sqlite3').Database} db
@@ -59,6 +135,7 @@ export function runMigrations(db) {
 /** @param {import('better-sqlite3').Database} db */
 function runMigrationsUnlocked(db) {
   repairMaterialIncidentIndexesMysql(db);
+  ensureSchemaMigrationsTable(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS help_query_log (
       id TEXT PRIMARY KEY,
@@ -2013,6 +2090,8 @@ function migrateWorkspaceSearchIndexes(db) {
 /** Coil vs stone-metre vs accessory PO classification for dashboards. */
 function migrateProcurementOrderKind(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_orders'`).get()) return;
+  if (schemaMigrationDone(db, SCHEMA_MIGRATION_PROCUREMENT_KIND)) return;
+
   const cols = new Set(db.prepare(`PRAGMA table_info(purchase_orders)`).all().map((c) => c.name));
   if (!cols.has('procurement_kind')) {
     db.exec(`ALTER TABLE purchase_orders ADD COLUMN procurement_kind TEXT NOT NULL DEFAULT 'coil'`);
@@ -2023,13 +2102,30 @@ function migrateProcurementOrderKind(db) {
       db.exec(`ALTER TABLE purchase_order_lines ADD COLUMN line_type TEXT`);
     }
   }
+
+  /** @type {Map<string, { product_id?: string; line_type?: string; meters_offered?: number; qty_ordered?: number; unit_price_per_kg_ngn?: number }[]>} */
+  const linesByPo = new Map();
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
+    const allLines = db
+      .prepare(
+        `SELECT po_id, product_id, line_type, meters_offered, qty_ordered, unit_price_per_kg_ngn FROM purchase_order_lines`
+      )
+      .all();
+    for (const row of allLines) {
+      const poId = String(row.po_id || '').trim();
+      if (!poId) continue;
+      if (!linesByPo.has(poId)) linesByPo.set(poId, []);
+      linesByPo.get(poId).push(row);
+    }
+  }
+
   const pos = db.prepare(`SELECT po_id FROM purchase_orders`).all();
-  const lineStmt = db.prepare(
-    `SELECT product_id, line_type, meters_offered, qty_ordered, unit_price_per_kg_ngn FROM purchase_order_lines WHERE po_id = ?`
-  );
-  const upd = db.prepare(`UPDATE purchase_orders SET procurement_kind = ? WHERE po_id = ?`);
+  const updSql = `UPDATE purchase_orders SET procurement_kind = ? WHERE po_id = ?`;
+  const statements = [];
   for (const { po_id } of pos) {
-    const lines = lineStmt.all(po_id);
+    const poId = String(po_id || '').trim();
+    if (!poId) continue;
+    const lines = linesByPo.get(poId) || [];
     const kind = deriveProcurementKindFromPoLines(
       lines.map((l) => ({
         lineType: l.line_type,
@@ -2039,8 +2135,10 @@ function migrateProcurementOrderKind(db) {
         unitPricePerKgNgn: l.unit_price_per_kg_ngn,
       }))
     );
-    upd.run(kind, po_id);
+    statements.push({ sql: updSql, args: [kind, poId] });
   }
+  runManyInBatches(db, statements);
+  markSchemaMigrationDone(db, SCHEMA_MIGRATION_PROCUREMENT_KIND);
 }
 
 /** Per-line PO type for unified procurement (coil_kg, stone_meter, etc.). */
@@ -2048,21 +2146,39 @@ function migratePurchaseOrderLineType(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_order_lines'`).get()) {
     return;
   }
+  if (schemaMigrationDone(db, SCHEMA_MIGRATION_PO_LINE_TYPE)) return;
+
   const cols = new Set(db.prepare(`PRAGMA table_info(purchase_order_lines)`).all().map((c) => c.name));
   if (!cols.has('line_type')) {
     db.exec(`ALTER TABLE purchase_order_lines ADD COLUMN line_type TEXT`);
   }
-  const lines = db.prepare(`SELECT po_id, line_key, product_id, meters_offered, qty_ordered, unit_price_per_kg_ngn, line_type FROM purchase_order_lines`).all();
-  const upd = db.prepare(`UPDATE purchase_order_lines SET line_type = ? WHERE po_id = ? AND line_key = ?`);
-  for (const l of lines) {
-    if (String(l.line_type || '').trim()) continue;
+
+  bulkBackfillPurchaseOrderLineTypesSql(db);
+
+  const pending = db
+    .prepare(
+      `SELECT po_id, line_key, product_id, meters_offered, qty_ordered, unit_price_per_kg_ngn, line_type
+       FROM purchase_order_lines
+       WHERE line_type IS NULL OR TRIM(line_type) = ''`
+    )
+    .all();
+  if (!pending.length) {
+    markSchemaMigrationDone(db, SCHEMA_MIGRATION_PO_LINE_TYPE);
+    return;
+  }
+
+  const updSql = `UPDATE purchase_order_lines SET line_type = ? WHERE po_id = ? AND line_key = ?`;
+  const statements = [];
+  for (const l of pending) {
     const lt = inferLineTypeFromProduct(l.product_id, null, {
       metersOffered: l.meters_offered,
       qtyOrdered: l.qty_ordered,
       unitPricePerKgNgn: l.unit_price_per_kg_ngn,
     });
-    upd.run(lt, l.po_id, l.line_key);
+    statements.push({ sql: updSql, args: [lt, l.po_id, l.line_key] });
   }
+  runManyInBatches(db, statements);
+  markSchemaMigrationDone(db, SCHEMA_MIGRATION_PO_LINE_TYPE);
 }
 
 /** Canonical quotation line catalog: products, accessories, services (Zarewa 2026 list). */

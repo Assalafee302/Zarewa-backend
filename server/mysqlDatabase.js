@@ -41,7 +41,7 @@ export function createMysqlDatabase(cfg, opts = {}) {
       ? envTimeout
       : process.env.NODE_ENV === 'test' || process.env.VITEST === 'true'
         ? 300_000
-        : 120_000;
+        : 600_000;
   const syncFn = createSyncFn(workerPath, { timeout: syncTimeout });
   syncFn({ op: 'init', config: cfg });
   if (opts.reset) {
@@ -73,6 +73,11 @@ export function createMysqlDatabase(cfg, opts = {}) {
           return syncFn({ op: 'all', sql: s, args });
         },
       };
+    },
+    runMany(statements) {
+      const list = Array.isArray(statements) ? statements : [];
+      if (!list.length) return { changes: 0 };
+      return syncFn({ op: 'runMany', statements: list });
     },
     transaction(fn) {
       return (...args) => {

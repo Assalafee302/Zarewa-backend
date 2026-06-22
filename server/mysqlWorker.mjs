@@ -348,6 +348,17 @@ runAsWorker(async (payload) => {
     };
   }
 
+  if (op === 'runMany') {
+    const statements = Array.isArray(payload.statements) ? payload.statements : [];
+    let changes = 0;
+    for (const item of statements) {
+      const res = await runStatement(item?.sql, item?.args || []);
+      const hdr = /** @type {import('mysql2').ResultSetHeader} */ (res);
+      changes += hdr.affectedRows ?? 0;
+    }
+    return { changes };
+  }
+
   if (op === 'get') {
     return withDeadlockRetry(async () => {
       const { sql, args } = adaptSqlForMysql(payload.sql, payload.args || []);

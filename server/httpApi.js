@@ -217,7 +217,13 @@ import {
 } from './controlOps.js';
 import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
 import { buildExpenseCategoryMetaForActor } from '../shared/expenseCategoryPolicy.js';
-import { buildExpenseCategoryExceptionReport } from './expenseCategoryReportOps.js';
+import { buildExpenseCategoryExceptionReport, buildExpenseCategoryExceptionCsv, buildExpenseCategoryMonthlyAlert, buildExpenseCategoryOthersTrendReport } from './expenseCategoryReportOps.js';
+import { suggestExpenseCategoryForActor } from '../shared/lib/expenseCategorySuggestions.js';
+import {
+  getPaidExpenseCategoryReclassPreview,
+  reclassifyPaidExpenseCategory,
+  reclassifyPaidPaymentRequestCategory,
+} from './expenseCategoryReclassOps.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
   ADMIN_DATA_RESET_PRESETS,
@@ -2557,6 +2563,10 @@ export function registerHttpApi(app, db) {
         {
           expenseExecutiveThresholdNgn: body.expenseExecutiveThresholdNgn,
           refundExecutiveThresholdNgn: body.refundExecutiveThresholdNgn,
+          othersMinJustificationLen: body.othersMinJustificationLen,
+          othersFinanceReviewThresholdNgn: body.othersFinanceReviewThresholdNgn,
+          ap3UnclassifiedAlertThresholdNgn: body.ap3UnclassifiedAlertThresholdNgn,
+          othersBranchCoachThresholdPct: body.othersBranchCoachThresholdPct,
         },
         req.user
       );
@@ -8223,8 +8233,32 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/expense-categories', requireAuth, (req, res) => {
     try {
-      const meta = buildExpenseCategoryMetaForActor(req.user, (p) => userHasPermission(req.user, p));
+      const meta = buildExpenseCategoryMetaForActor(
+        req.user,
+        (p) => userHasPermission(req.user, p),
+        getOrgGovernanceLimits(db)
+      );
       res.json({ ok: true, ...meta });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/expense-categories/suggest', requireAuth, (req, res) => {
+    try {
+      const body = req.body || {};
+      const suggestion = suggestExpenseCategoryForActor(
+        {
+          subject: body.subject,
+          body: body.body,
+          description: body.description,
+          reference: body.reference,
+        },
+        req.user,
+        (p) => userHasPermission(req.user, p)
+      );
+      res.json(suggestion);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -8306,15 +8340,105 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/payment-requests/:requestId/reclassify-category', requirePermission('finance.approve'), (req, res) => {
+  app.post('/api/payment-requests/:requestId/reclassify-category', requireAuth, (req, res) => {
     try {
-      const r = reclassifyPaymentRequestCategory(
+      const requestId = String(req.params.requestId || '');
+      const row = db.prepare(`SELECT paid_amount_ngn FROM payment_requests WHERE request_id = ?`).get(requestId);
+      if (!row) {
+        res.status(404).json({ ok: false, error: 'Payment request not found.' });
+        return;
+      }
+      const paidNgn = Math.round(Number(row.paid_amount_ngn) || 0);
+      if (paidNgn > 0) {
+        if (!userHasPermission(req.user, 'finance.post') && !userHasPermission(req.user, '*')) {
+          res.status(403).json({ ok: false, error: 'finance.post is required to reclassify after payout.' });
+          return;
+        }
+        const r = reclassifyPaidPaymentRequestCategory(db, requestId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+        return;
+      }
+      if (!userHasPermission(req.user, 'finance.approve') && !userHasPermission(req.user, '*')) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const r = reclassifyPaymentRequestCategory(db, requestId, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/payment-requests/:requestId/category-reclass-preview', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve');
+      if (!can && !userHasPermission(req.user, '*')) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const preview = getPaidExpenseCategoryReclassPreview(db, {
+        requestId: String(req.params.requestId || ''),
+        expenseCategory: req.query.expenseCategory || req.query.category || '',
+      });
+      res.status(preview.ok ? 200 : 400).json(preview);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/expenses/:expenseId/reclassify-category', requirePermission('finance.post'), (req, res) => {
+    try {
+      const r = reclassifyPaidExpenseCategory(
         db,
-        String(req.params.requestId || ''),
+        String(req.params.expenseId || ''),
         req.body || {},
         req.user
       );
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/expenses/:expenseId/category-reclass-preview', requireAuth, (req, res) => {
+    try {
+      if (!userHasPermission(req.user, 'finance.post') && !userHasPermission(req.user, '*')) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const preview = getPaidExpenseCategoryReclassPreview(db, {
+        expenseId: String(req.params.expenseId || ''),
+        expenseCategory: req.query.expenseCategory || req.query.category || '',
+      });
+      res.status(preview.ok ? 200 : 400).json(preview);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/reports/expense-category-monthly-alert', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'reports.view');
+      if (!can) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const alert = buildExpenseCategoryMonthlyAlert(db, {
+        branchScope: req.query.branchScope || req.workspaceBranchId,
+        startISO: req.query.startDate || req.query.startISO,
+        endISO: req.query.endDate || req.query.endISO,
+        orgLimits: getOrgGovernanceLimits(db),
+      });
+      res.json(alert);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -8335,6 +8459,37 @@ export function registerHttpApi(app, db) {
         startISO: req.query.startDate || req.query.startISO,
         endISO: req.query.endDate || req.query.endISO,
         branchScope: req.query.branchScope || req.workspaceBranchId,
+      });
+      if (String(req.query.format || '').toLowerCase() === 'csv') {
+        const csv = buildExpenseCategoryExceptionCsv(report);
+        const stamp = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="expense-category-exceptions-${stamp}.csv"`);
+        res.send(csv);
+        return;
+      }
+      res.json(report);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/reports/expense-category-others-trend', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'reports.view') ||
+        userHasPermission(req.user, '*');
+      if (!can) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const report = buildExpenseCategoryOthersTrendReport(db, {
+        months: req.query.months,
+        endISO: req.query.endISO || req.query.endDate,
+        branchScope: req.query.branchScope || req.workspaceBranchId || 'ALL',
       });
       res.json(report);
     } catch (e) {

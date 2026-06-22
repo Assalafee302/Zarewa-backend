@@ -1705,6 +1705,97 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(reqRow.approvedBy).toBeTruthy();
   });
 
+  it('POST /api/payment-requests/:requestId/reclassify-category updates category before payout', async () => {
+    const createReq = await agent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Maintenance',
+      description: 'Generator service parts',
+      lineItems: [{ description: 'Filter kit', quantity: 1, unitPriceNgn: 15_000 }],
+    });
+    expect(createReq.status).toBe(201);
+    const rid = createReq.body.requestID;
+
+    const approve = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/decision`)
+      .send({ status: 'Approved', note: 'OK for reclassify test.' });
+    expect(approve.status).toBe(200);
+
+    const reclass = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/reclassify-category`)
+      .send({ expenseCategory: 'Office expenses' });
+    expect(reclass.status).toBe(200);
+    expect(reclass.body.ok).toBe(true);
+
+    const boot = await agent.get('/api/bootstrap');
+    const reqRow = boot.body.paymentRequests.find((r) => r.requestID === rid);
+    expect(reqRow.expenseCategory).toBe('Office expenses');
+  });
+
+  it('GET /api/reports/expense-category-exceptions lists special and exception lanes', async () => {
+    const createReq = await agent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Chairman withdrawal',
+      description: 'Chairman personal draw',
+      lineItems: [{ description: 'Draw', quantity: 1, unitPriceNgn: 50_000 }],
+    });
+    expect(createReq.status).toBe(201);
+
+    const report = await agent.get('/api/reports/expense-category-exceptions?startDate=2026-03-01&endDate=2026-03-31');
+    expect(report.status).toBe(200);
+    expect(report.body.ok).toBe(true);
+    expect(report.body.summary.rowCount).toBeGreaterThanOrEqual(1);
+    expect(report.body.rows.some((r) => r.requestID === createReq.body.requestID)).toBe(true);
+  });
+
+  it('POST reclassify-category after payout updates category and accepts finance.post', async () => {
+    const createReq = await agent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Maintenance',
+      description: 'Post-pay reclass test',
+      lineItems: [{ description: 'Parts', quantity: 1, unitPriceNgn: 10_000 }],
+    });
+    expect(createReq.status).toBe(201);
+    const rid = createReq.body.requestID;
+
+    await agent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/decision`)
+      .send({ status: 'Approved', note: 'OK' });
+
+    const pay = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/pay`)
+      .send({
+        paymentLines: [{ treasuryAccountId: 1, amountNgn: 10_000, dateISO: '2026-03-29' }],
+      });
+    expect(pay.status).toBe(200);
+
+    const reclass = await agent
+      .post(`/api/payment-requests/${encodeURIComponent(rid)}/reclassify-category`)
+      .send({ expenseCategory: 'Office expenses' });
+    expect(reclass.status).toBe(200);
+    expect(reclass.body.ok).toBe(true);
+    expect(reclass.body.postPay).toBe(true);
+
+    const boot = await agent.get('/api/bootstrap');
+    const reqRow = boot.body.paymentRequests.find((r) => r.requestID === rid);
+    expect(reqRow.expenseCategory).toBe('Office expenses');
+  });
+
+  it('GET /api/reports/expense-category-monthly-alert includes exception summary', async () => {
+    await agent.post('/api/payment-requests').send({
+      requestDate: '2026-03-29',
+      expenseCategory: 'Others',
+      categoryJustification: 'One-off branch repair not covered by standard categories this month',
+      description: 'Misc branch fix',
+      lineItems: [{ description: 'Fix', quantity: 1, unitPriceNgn: 5000 }],
+      attachment: { name: 'note.pdf', mime: 'application/pdf', dataBase64: 'dGVzdA==' },
+    });
+
+    const alert = await agent.get('/api/reports/expense-category-monthly-alert');
+    expect(alert.status).toBe(200);
+    expect(alert.body.ok).toBe(true);
+    expect(alert.body.summary.shouldAlert).toBe(true);
+  });
+
   it('sales officer can POST /api/payment-requests with expenses.create (line-item request)', async () => {
     const staffAgent = request.agent(app);
     await loginAs(staffAgent, 'sales.staff', 'Sales@123');

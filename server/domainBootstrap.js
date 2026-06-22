@@ -49,6 +49,8 @@ import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } f
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { userHasPermission } from './auth.js';
+import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
+import { getOrgGovernanceLimits } from './orgPolicy.js';
 import {
   canReadCoilAndMovements,
   canReadFinanceDomain,
@@ -211,6 +213,13 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const { branchScope, finOk, treasuryMovementsOk, ledgerOk, ledgerRows, treasuryOk, refundsOk, payReqOk, procOk } =
     f;
   const expensesSnapshotOk = f.expensesSnapshotOk;
+  const user = opts.user ?? null;
+  const canSeeCategoryAlert =
+    user &&
+    (userHasPermission(user, 'finance.approve') ||
+      userHasPermission(user, 'finance.post') ||
+      userHasPermission(user, 'reports.view'));
+  const orgLimits = user ? getOrgGovernanceLimits(db) : null;
   return {
     ok: true,
     domain: 'finance',
@@ -240,6 +249,17 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       payReqOk || userHasPermission(user, 'finance.pay')
         ? listRegisterSettlementsAwaitingPayment(db, branchScope)
         : [],
+    expenseCategoryMonthlyAlert:
+      canSeeCategoryAlert && finOk
+        ? buildExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits }).summary
+        : null,
+    expenseCategoryBranchCoachAlert:
+      finOk &&
+      user &&
+      branchScope !== 'ALL' &&
+      String(user.roleKey || '').toLowerCase() === 'branch_manager'
+        ? buildExpenseCategoryBranchCoachAlert(db, { branchScope, orgLimits })
+        : null,
   };
 }
 

@@ -54,6 +54,7 @@ import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
 import { userHasPermission } from './auth.js';
+import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
 import {
   canListTreasuryAccounts,
   canReadCoilAndMovements,
@@ -98,6 +99,18 @@ import {
   userMayApproveStaffPurchaseCredit,
   userMayRejectStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
+
+function userMayReceiveBranchExpenseCoachAlert(user) {
+  if (!user) return false;
+  const rk = String(user.roleKey || '').toLowerCase();
+  return (
+    rk === 'branch_manager' ||
+    rk === 'admin' ||
+    rk === 'md' ||
+    rk === 'ceo' ||
+    userHasPermission(user, 'finance.approve')
+  );
+}
 
 /**
  * Full workspace snapshot for SPA bootstrap (single round-trip), filtered by the signed-in user.
@@ -167,6 +180,7 @@ export function buildBootstrap(db, opts = {}) {
     if (Number.isFinite(m) && m > 0) o.meterTargetPerMonth = m;
     return Object.keys(o).length ? o : null;
   })();
+  const orgGovernanceLimitsSnapshot = user ? getOrgGovernanceLimits(db) : null;
   const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope, { limit: MAX_LEDGER_ROWS }) : [];
 
   if (!skipSideEffects) {
@@ -274,6 +288,24 @@ export function buildBootstrap(db, opts = {}) {
       payReqOk || userHasPermission(user, 'finance.pay')
         ? listRegisterSettlementsAwaitingPayment(db, branchScope)
         : [],
+    expenseCategoryMonthlyAlert:
+      finOk &&
+      user &&
+      (userHasPermission(user, 'finance.approve') ||
+        userHasPermission(user, 'finance.post') ||
+        userHasPermission(user, 'reports.view'))
+        ? buildExpenseCategoryMonthlyAlert(db, { branchScope, orgLimits: orgGovernanceLimitsSnapshot }).summary
+        : null,
+    expenseCategoryBranchCoachAlert:
+      finOk &&
+      user &&
+      branchScope !== 'ALL' &&
+      userMayReceiveBranchExpenseCoachAlert(user)
+        ? buildExpenseCategoryBranchCoachAlert(db, {
+            branchScope,
+            orgLimits: orgGovernanceLimitsSnapshot,
+          })
+        : null,
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     bankDeposits:
       ledgerOk || finOk ? listBankDeposits(db, branchScope, { openOnly: false }) : [],
@@ -293,7 +325,7 @@ export function buildBootstrap(db, opts = {}) {
         ? getJsonBlob(db, `user_dashboard_prefs:${session.user.id}`) ?? {}
         : {},
     orgManagerTargets,
-    orgGovernanceLimits: user ? getOrgGovernanceLimits(db) : null,
+    orgGovernanceLimits: orgGovernanceLimitsSnapshot,
     unifiedWorkItems: user
       ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 200 }))
       : [],

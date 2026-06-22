@@ -9,6 +9,11 @@ import {
 import {
   actorMaySelectExpenseCategory,
   expenseCategoriesForActor,
+  isFinanceExceptionExpenseItem,
+  resolveExpenseCategoryPolicyLimits,
+  validateExpenseCategoryForTreasuryPayout,
+  validateCapexTreasuryPayout,
+  validateSpecialLaneTreasuryPayout,
   validateExpenseCategorySelection,
 } from './expenseCategoryPolicy.js';
 
@@ -78,5 +83,73 @@ describe('expenseCategoryPolicy', () => {
     expect(flat).not.toContain('Sales');
     expect(flat).not.toContain('Refund');
     expect(flat).toContain('Office expenses');
+  });
+
+  it('flags finance exception lanes for queue filtering', () => {
+    expect(isFinanceExceptionExpenseItem('Others', 'exception')).toBe(true);
+    expect(isFinanceExceptionExpenseItem('Chairman withdrawal', 'special')).toBe(true);
+    expect(isFinanceExceptionExpenseItem('Office expenses', 'admin')).toBe(false);
+  });
+
+  it('resolves org Others limits with sane fallbacks', () => {
+    const limits = resolveExpenseCategoryPolicyLimits({
+      othersMinJustificationLen: 55,
+      othersFinanceReviewThresholdNgn: 75_000,
+      ap3UnclassifiedAlertThresholdNgn: 250_000,
+      othersBranchCoachThresholdPct: 20,
+    });
+    expect(limits.othersMinJustificationLen).toBe(55);
+    expect(limits.othersFinanceReviewThresholdNgn).toBe(75_000);
+    expect(limits.ap3UnclassifiedAlertThresholdNgn).toBe(250_000);
+    expect(limits.othersBranchCoachThresholdPct).toBe(20);
+    expect(resolveExpenseCategoryPolicyLimits({ othersMinJustificationLen: 3 }).othersMinJustificationLen).toBe(
+      40
+    );
+  });
+
+  it('blocks treasury payout for revenue categories and mis-mapped GL', () => {
+    expect(validateExpenseCategoryForTreasuryPayout('Sales').ok).toBe(false);
+    expect(validateExpenseCategoryForTreasuryPayout('Refund').ok).toBe(false);
+    expect(validateExpenseCategoryForTreasuryPayout('Office expenses').ok).toBe(true);
+  });
+
+  it('requires capex attachment and asset description before payout', () => {
+    expect(
+      validateCapexTreasuryPayout({ assetDescription: 'short', hasAttachment: true }).ok
+    ).toBe(false);
+    expect(
+      validateCapexTreasuryPayout({
+        assetDescription: 'New generator for Kaduna plant backup power',
+        hasAttachment: false,
+      }).ok
+    ).toBe(false);
+    expect(
+      validateCapexTreasuryPayout({
+        assetDescription: 'New generator for Kaduna plant backup power',
+        hasAttachment: true,
+      }).ok
+    ).toBe(true);
+  });
+
+  it('requires HR loan link for staff loan treasury payout', () => {
+    expect(
+      validateSpecialLaneTreasuryPayout({ category: 'Staff loan', hasHrLoanLink: false }).ok
+    ).toBe(false);
+    expect(
+      validateSpecialLaneTreasuryPayout({ category: 'Staff loan', hasHrLoanLink: true }).ok
+    ).toBe(true);
+  });
+
+  it('honours org Others min length on validation', () => {
+    const r = validateExpenseCategorySelection({
+      actor: staff,
+      category: 'Others',
+      amountNgn: 5000,
+      description: 'This is a long enough explanation for the custom policy minimum length rule.',
+      categoryJustification: 'Short',
+      hasAttachment: true,
+      policyLimits: resolveExpenseCategoryPolicyLimits({ othersMinJustificationLen: 60 }),
+    });
+    expect(r.ok).toBe(false);
   });
 });

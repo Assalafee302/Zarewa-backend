@@ -1,6 +1,9 @@
-import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
+import { isAllowedExpenseCategory, mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
-import { validateExpenseCategorySelection } from '../shared/expenseCategoryPolicy.js';
+import {
+  validateSpecialLaneTreasuryPayout,
+  validateExpenseCategorySelection,
+} from '../shared/expenseCategoryPolicy.js';
 import { evaluateRefundPayoutGlPolicy } from './ap1cReversalRefundOps.js';
 import {
   tryPostCustomerAdvanceReversalGl,
@@ -934,6 +937,19 @@ function parseHrLoanPayloadJson(raw) {
   }
 }
 
+function findApprovedHrLoanForPaymentRequest(db, paymentRequestId) {
+  const prId = String(paymentRequestId || '').trim();
+  if (!prId) return null;
+  const rows = db
+    .prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
+    .all();
+  for (const r of rows) {
+    const p = parseHrLoanPayloadJson(r.payload_json);
+    if (String(p.financePaymentRequestId || '') === prId) return r;
+  }
+  return null;
+}
+
 function syncStaffLoanDisbursementOnFullPay(db, paymentRequestId, paidAtISO) {
   const prId = String(paymentRequestId || '').trim();
   if (!prId) return;
@@ -1027,7 +1043,7 @@ export function provisionStaffLoanForFinanceQueue(db, actor, requestRow) {
           'Staff loan disbursement',
           amountNgn,
           today,
-          'HR — staff loan',
+          'Staff loan',
           'Pending',
           hrId,
           bid
@@ -7324,6 +7340,17 @@ export function payPaymentRequest(db, requestID, payload) {
       };
     }
   }
+
+  const payoutCategory = mapLegacyExpenseCategoryToCanonical(linkedExpense?.category || 'Others');
+  const hasPrAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+  const assetDescription = String(linkedExpense?.reference || row.description || '').trim();
+  const treasuryCatCheck = validateSpecialLaneTreasuryPayout({
+    category: payoutCategory,
+    assetDescription,
+    hasAttachment: hasPrAttachment,
+    hasHrLoanLink: Boolean(findApprovedHrLoanForPaymentRequest(db, requestID)),
+  });
+  if (!treasuryCatCheck.ok) return treasuryCatCheck;
 
   try {
     for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {

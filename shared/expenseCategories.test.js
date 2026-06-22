@@ -24,6 +24,10 @@ describe('expenseCategories', () => {
     expect(mapLegacyExpenseCategoryToCanonical('Rent & utilities')).toBe('Rent & utilities');
   });
 
+  it('mapLegacy maps Miscellaneous to Others', () => {
+    expect(mapLegacyExpenseCategoryToCanonical('Miscellaneous')).toBe('Others');
+  });
+
   it('mapLegacy maps prior canonical strings', () => {
     expect(mapLegacyExpenseCategoryToCanonical('Plant consumables')).toBe('Accessories');
     expect(mapLegacyExpenseCategoryToCanonical('PHCN / diesel top-up')).toBe('Rent & utilities');

@@ -11,10 +11,48 @@ import {
   requiresElevatedApprovalLane,
   RESTRICTED_EXPENSE_LANE_KEYS,
 } from './expenseCategoryLanes.js';
+import { glAccountForExpenseCategory } from './lib/expenseCategoryGlMap.js';
 import { isExecutiveRoleKey } from './workspaceGovernance.js';
 
 export const OTHERS_MIN_JUSTIFICATION_LEN = 40;
 export const OTHERS_FINANCE_REVIEW_THRESHOLD_NGN = 50_000;
+export const AP3_UNCLASSIFIED_ALERT_THRESHOLD_NGN = 100_000;
+export const OTHERS_BRANCH_COACH_THRESHOLD_PCT = 15;
+
+/**
+ * @param {{
+ *   othersMinJustificationLen?: number;
+ *   othersFinanceReviewThresholdNgn?: number;
+ *   ap3UnclassifiedAlertThresholdNgn?: number;
+ *   othersBranchCoachThresholdPct?: number;
+ * } | null | undefined} orgLimits
+ */
+export function resolveExpenseCategoryPolicyLimits(orgLimits) {
+  const othersMinJustificationLen = Number(orgLimits?.othersMinJustificationLen);
+  const othersFinanceReviewThresholdNgn = Number(orgLimits?.othersFinanceReviewThresholdNgn);
+  const ap3UnclassifiedAlertThresholdNgn = Number(orgLimits?.ap3UnclassifiedAlertThresholdNgn);
+  const othersBranchCoachThresholdPct = Number(orgLimits?.othersBranchCoachThresholdPct);
+  return {
+    othersMinJustificationLen:
+      Number.isFinite(othersMinJustificationLen) && othersMinJustificationLen >= 10
+        ? Math.round(othersMinJustificationLen)
+        : OTHERS_MIN_JUSTIFICATION_LEN,
+    othersFinanceReviewThresholdNgn:
+      Number.isFinite(othersFinanceReviewThresholdNgn) && othersFinanceReviewThresholdNgn >= 0
+        ? Math.round(othersFinanceReviewThresholdNgn)
+        : OTHERS_FINANCE_REVIEW_THRESHOLD_NGN,
+    ap3UnclassifiedAlertThresholdNgn:
+      Number.isFinite(ap3UnclassifiedAlertThresholdNgn) && ap3UnclassifiedAlertThresholdNgn >= 0
+        ? Math.round(ap3UnclassifiedAlertThresholdNgn)
+        : AP3_UNCLASSIFIED_ALERT_THRESHOLD_NGN,
+    othersBranchCoachThresholdPct:
+      Number.isFinite(othersBranchCoachThresholdPct) &&
+      othersBranchCoachThresholdPct >= 1 &&
+      othersBranchCoachThresholdPct <= 100
+        ? Math.round(othersBranchCoachThresholdPct)
+        : OTHERS_BRANCH_COACH_THRESHOLD_PCT,
+  };
+}
 
 const FINANCE_DESK_ROLES = new Set(['finance_manager', 'cashier', 'accountant']);
 const HR_LOAN_ROLES = new Set(['hr_admin', 'gmhr', 'hr_manager']);
@@ -87,11 +125,12 @@ export function expenseCategoriesForActor(actor, hasPermission = () => false) {
  * @param {string} category
  * @param {number} [amountNgn]
  */
-export function requiresFinanceReviewForCategory(category, amountNgn = 0) {
+export function requiresFinanceReviewForCategory(category, amountNgn = 0, policyLimits) {
+  const limits = resolveExpenseCategoryPolicyLimits(policyLimits);
   if (isExceptionExpenseCategory(category)) return true;
   if (requiresElevatedApprovalLane(category)) return true;
   const amt = Number(amountNgn) || 0;
-  if (isExceptionExpenseCategory(category) && amt > OTHERS_FINANCE_REVIEW_THRESHOLD_NGN) return true;
+  if (isExceptionExpenseCategory(category) && amt > limits.othersFinanceReviewThresholdNgn) return true;
   return false;
 }
 
@@ -106,6 +145,7 @@ export function requiresFinanceReviewForCategory(category, amountNgn = 0) {
  *   hasAttachment?: boolean;
  *   hasPermission?: (perm: string) => boolean;
  *   allowRevenue?: boolean;
+ *   policyLimits?: { othersMinJustificationLen?: number; othersFinanceReviewThresholdNgn?: number };
  * }} input
  * @returns {{ ok: true; lane: string } | { ok: false; error: string }}
  */
@@ -132,11 +172,12 @@ export function validateExpenseCategorySelection(input = {}) {
   }
 
   if (isExceptionExpenseCategory(category)) {
+    const limits = resolveExpenseCategoryPolicyLimits(input.policyLimits);
     const justification = String(input.categoryJustification ?? input.description ?? '').trim();
-    if (justification.length < OTHERS_MIN_JUSTIFICATION_LEN) {
+    if (justification.length < limits.othersMinJustificationLen) {
       return {
         ok: false,
-        error: `Other expenses need a clear explanation (at least ${OTHERS_MIN_JUSTIFICATION_LEN} characters).`,
+        error: `Other expenses need a clear explanation (at least ${limits.othersMinJustificationLen} characters).`,
       };
     }
     if (!input.hasAttachment) {
@@ -148,7 +189,91 @@ export function validateExpenseCategorySelection(input = {}) {
   }
 
   const lane = getExpenseCategoryLane(category);
-  return { ok: true, lane, requiresFinanceReview: requiresFinanceReviewForCategory(category, amountNgn) };
+  return {
+    ok: true,
+    lane,
+    requiresFinanceReview: requiresFinanceReviewForCategory(category, amountNgn, input.policyLimits),
+  };
+}
+
+/**
+ * Final gate before treasury payout — blocks revenue categories and mis-routed GL types.
+ * @param {string} category
+ */
+export function validateExpenseCategoryForTreasuryPayout(category) {
+  const cat = String(category || '').trim() || 'Others';
+  if (isRevenueExpenseCategory(cat)) {
+    return {
+      ok: false,
+      error:
+        'Revenue categories cannot be paid through treasury expense payout. Use Refunds or Finance correction.',
+    };
+  }
+  const gl = glAccountForExpenseCategory(cat, { capexAsAsset: true });
+  if (gl.accountCode === '4000' || gl.accountCode === '2500') {
+    return {
+      ok: false,
+      error: `Category "${cat}" maps to revenue/liability GL ${gl.accountCode} — cannot post as expense payout.`,
+    };
+  }
+  return {
+    ok: true,
+    category: cat,
+    glAccountCode: gl.accountCode,
+    isEquity: gl.isEquity,
+    isCapex: gl.isCapex,
+  };
+}
+
+export const CAPEX_MIN_ASSET_DESCRIPTION_LEN = 10;
+
+/**
+ * Capex lane gate — asset narrative + supporting document before treasury payout.
+ * @param {{ assetDescription?: string; hasAttachment?: boolean }} input
+ */
+export function validateCapexTreasuryPayout(input = {}) {
+  const assetDescription = String(input.assetDescription ?? '').trim();
+  if (assetDescription.length < CAPEX_MIN_ASSET_DESCRIPTION_LEN) {
+    return {
+      ok: false,
+      error: `Capex payout requires a clear asset description (at least ${CAPEX_MIN_ASSET_DESCRIPTION_LEN} characters).`,
+    };
+  }
+  if (!input.hasAttachment) {
+    return {
+      ok: false,
+      error: 'Capex payout requires an invoice, receipt, or procurement attachment.',
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Combined treasury payout gate — revenue/GL block + capex + staff-loan lane rules.
+ * @param {{
+ *   category?: string;
+ *   assetDescription?: string;
+ *   hasAttachment?: boolean;
+ *   hasHrLoanLink?: boolean;
+ * }} input
+ */
+export function validateSpecialLaneTreasuryPayout(input = {}) {
+  const category = String(input.category || '').trim() || 'Others';
+  const base = validateExpenseCategoryForTreasuryPayout(category);
+  if (!base.ok) return base;
+
+  const lane = getExpenseCategoryLane(category);
+  if (lane === 'capex') {
+    const capex = validateCapexTreasuryPayout(input);
+    if (!capex.ok) return capex;
+  }
+  if (category === 'Staff loan' && !input.hasHrLoanLink) {
+    return {
+      ok: false,
+      error: 'Staff loan payout must be linked to an approved HR loan request.',
+    };
+  }
+  return base;
 }
 
 /**
@@ -170,11 +295,14 @@ export function actorMayApprovePaymentRequestCategory(actor, category, hasPermis
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} [hasPermission]
  */
-export function buildExpenseCategoryMetaForActor(actor, hasPermission = () => false) {
+export function buildExpenseCategoryMetaForActor(actor, hasPermission = () => false, orgLimits = null) {
+  const policyLimits = resolveExpenseCategoryPolicyLimits(orgLimits);
   return {
     groups: expenseCategoriesForActor(actor, hasPermission),
-    othersMinJustificationLen: OTHERS_MIN_JUSTIFICATION_LEN,
-    othersFinanceReviewThresholdNgn: OTHERS_FINANCE_REVIEW_THRESHOLD_NGN,
+    othersMinJustificationLen: policyLimits.othersMinJustificationLen,
+    othersFinanceReviewThresholdNgn: policyLimits.othersFinanceReviewThresholdNgn,
+    ap3UnclassifiedAlertThresholdNgn: policyLimits.ap3UnclassifiedAlertThresholdNgn,
+    othersBranchCoachThresholdPct: policyLimits.othersBranchCoachThresholdPct,
   };
 }
 

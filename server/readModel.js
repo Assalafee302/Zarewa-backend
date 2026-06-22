@@ -422,7 +422,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
            pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_data_b64,
-           e.category AS expense_category, e.branch_id AS branch_id
+           e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
     FROM payment_requests pr
     LEFT JOIN expenses e ON e.expense_id = pr.expense_id
     WHERE pr.approval_status = 'Pending'

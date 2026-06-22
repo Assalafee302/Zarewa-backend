@@ -8,9 +8,12 @@ import {
   nextPaymentRequestHumanId,
   nextRefundHumanId,
 } from './humanId.js';
-import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
+import { isAllowedExpenseCategory, mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
 import {
   actorMayApprovePaymentRequestCategory,
+  CAPEX_MIN_ASSET_DESCRIPTION_LEN,
+  resolveExpenseCategoryPolicyLimits,
+  validateExpenseCategoryForTreasuryPayout,
   validateExpenseCategorySelection,
 } from '../shared/expenseCategoryPolicy.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
@@ -1015,7 +1018,8 @@ function parsePaymentRequestAttachment(payload) {
   return { name, mime, b64 };
 }
 
-function validatePaymentRequestExpenseCategory(actor, payload, expenseCategory, amountRequestedNgn, hasAttachment) {
+function validatePaymentRequestExpenseCategory(db, actor, payload, expenseCategory, amountRequestedNgn, hasAttachment) {
+  const policyLimits = resolveExpenseCategoryPolicyLimits(getOrgGovernanceLimits(db));
   return validateExpenseCategorySelection({
     actor,
     category: expenseCategory,
@@ -1024,6 +1028,7 @@ function validatePaymentRequestExpenseCategory(actor, payload, expenseCategory, 
     categoryJustification: payload.categoryJustification,
     hasAttachment,
     hasPermission: (p) => userHasPermission(actor, p),
+    policyLimits,
   });
 }
 
@@ -1075,6 +1080,7 @@ export function insertPaymentRequest(db, payload, actor) {
       return { ok: false, error: 'Line items must total a positive amount.' };
     }
     const catCheck = validatePaymentRequestExpenseCategory(
+      db,
       actor,
       payload,
       expenseCategory,
@@ -1260,6 +1266,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   const hasAttachment =
     Boolean(attB64) || Boolean(String(row.attachment_data_b64 || '').trim());
   const catCheck = validatePaymentRequestExpenseCategory(
+    db,
     actor,
     payload,
     expenseCategory,
@@ -1462,24 +1469,100 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
 }
 
 /** GL debit preview for an approved/unpaid payment request (Finance pay screen). */
+function hasApprovedHrLoanLink(db, requestId) {
+  const prId = String(requestId || '').trim();
+  if (!prId) return false;
+  const rows = db
+    .prepare(`SELECT payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
+    .all();
+  for (const r of rows) {
+    try {
+      const p = JSON.parse(String(r.payload_json || '{}'));
+      if (String(p.financePaymentRequestId || '') === prId) return true;
+    } catch {
+      /* skip */
+    }
+  }
+  return false;
+}
+
+function buildPaymentRequestPayoutGatePreview(db, row) {
+  const requestId = String(row.request_id || '').trim();
+  const category = mapLegacyExpenseCategoryToCanonical(row.expense_category || 'Others');
+  const lane = getExpenseCategoryLane(category);
+  const assetDescription = String(row.expense_reference || row.description || '').trim();
+  const hasAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+  const hasHrLoanLink = hasApprovedHrLoanLink(db, requestId);
+
+  const checks = [];
+  const glCheck = validateExpenseCategoryForTreasuryPayout(category);
+  checks.push({
+    key: 'treasury_gl',
+    label: 'Treasury GL route',
+    ok: glCheck.ok,
+    detail: glCheck.ok ? `Dr ${glCheck.glAccountCode}` : glCheck.error,
+  });
+
+  if (lane === 'capex') {
+    checks.push({
+      key: 'capex_description',
+      label: 'Asset description',
+      ok: assetDescription.length >= CAPEX_MIN_ASSET_DESCRIPTION_LEN,
+      detail:
+        assetDescription.length >= CAPEX_MIN_ASSET_DESCRIPTION_LEN
+          ? 'Present on request'
+          : `Need at least ${CAPEX_MIN_ASSET_DESCRIPTION_LEN} characters in description or reference`,
+    });
+    checks.push({
+      key: 'capex_attachment',
+      label: 'Supporting document',
+      ok: hasAttachment,
+      detail: hasAttachment ? 'Attachment on file' : 'Upload invoice or procurement document before payout',
+    });
+  }
+
+  if (category === 'Staff loan') {
+    checks.push({
+      key: 'hr_loan_link',
+      label: 'HR loan approved & linked',
+      ok: hasHrLoanLink,
+      detail: hasHrLoanLink
+        ? 'Linked to approved HR loan'
+        : 'Disburse only from an approved HR staff loan request',
+    });
+  }
+
+  const ok = checks.every((c) => c.ok);
+  const firstFail = checks.find((c) => !c.ok);
+  return {
+    ok,
+    error: ok ? null : firstFail?.detail || firstFail?.label || 'Payout blocked by category policy.',
+    checks,
+    category,
+    categoryLane: lane,
+  };
+}
+
 export function getPaymentRequestGlPreview(db, requestId) {
   const rid = String(requestId || '').trim();
   if (!rid) return { ok: false, error: 'Payment request ID is required.' };
   const row = db
     .prepare(
-      `SELECT pr.amount_requested_ngn, pr.paid_amount_ngn, e.category AS expense_category
+      `SELECT pr.request_id, pr.amount_requested_ngn, pr.paid_amount_ngn, pr.description,
+              pr.attachment_data_b64, e.category AS expense_category, e.reference AS expense_reference
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
        WHERE pr.request_id = ?`
     )
     .get(rid);
   if (!row) return { ok: false, error: 'Payment request not found.' };
-  const category = String(row.expense_category || 'Others').trim() || 'Others';
+  const category = mapLegacyExpenseCategoryToCanonical(row.expense_category || 'Others');
   const requestedNgn = roundMoney(row.amount_requested_ngn);
   const paidNgn = roundMoney(row.paid_amount_ngn);
   const remainingNgn = Math.max(0, requestedNgn - paidNgn);
   const { accountCode, isEquity, isCapex } = glAccountForExpenseCategory(category, { capexAsAsset: true });
   const lane = getExpenseCategoryLane(category);
+  const payoutGate = buildPaymentRequestPayoutGatePreview(db, row);
   return {
     ok: true,
     requestID: rid,
@@ -1494,6 +1577,7 @@ export function getPaymentRequestGlPreview(db, requestId) {
       isEquity,
       isCapex,
     },
+    payoutGate,
   };
 }
 
@@ -1538,6 +1622,7 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
     categoryJustification,
     hasAttachment,
     hasPermission: (p) => userHasPermission(actor, p),
+    policyLimits: resolveExpenseCategoryPolicyLimits(getOrgGovernanceLimits(db)),
   });
   if (!catCheck.ok) return catCheck;
 

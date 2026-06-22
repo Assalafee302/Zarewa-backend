@@ -219,6 +219,37 @@ export function tryPostExpensePaymentGlTx(db, payload) {
 }
 
 /**
+ * Reclass expense debit between GL accounts after payout (Dr new / Cr old).
+ * @param {import('better-sqlite3').Database} db
+ */
+export function tryPostExpenseCategoryReclassGlTx(db, payload) {
+  const amt = Math.round(Number(payload.amountNgn) || 0);
+  const fromCode = String(payload.fromAccountCode || '').trim();
+  const toCode = String(payload.toAccountCode || '').trim();
+  if (amt <= 0 || !fromCode || !toCode) return { ok: true, skipped: true, reason: 'missing_inputs' };
+  if (fromCode === toCode) return { ok: true, skipped: true, reason: 'same_account' };
+
+  ensureArchitecturalGlAccounts(db);
+  const movementId = String(payload.movementId || '').trim();
+  const entityId = String(payload.requestId || payload.expenseId || '').trim();
+  const sourceId = String(payload.sourceId || `${entityId}:${movementId}:reclass`).trim();
+  if (!sourceId) return { ok: false, error: 'sourceId required for category reclass GL.' };
+
+  return postBalancedJournalTx(db, {
+    entryDateISO: String(payload.entryDateISO || '').slice(0, 10),
+    memo: payload.memo || `Expense category reclass ${fromCode} → ${toCode}`,
+    sourceKind: 'EXPENSE_CATEGORY_RECLASS_GL',
+    sourceId,
+    branchId: payload.branchId ?? null,
+    createdByUserId: payload.createdByUserId ?? null,
+    lines: [
+      { accountCode: toCode, debitNgn: amt, memo: payload.memo || entityId },
+      { accountCode: fromCode, creditNgn: amt, memo: payload.memo || entityId },
+    ],
+  });
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {{
  *   entryDateISO: string;

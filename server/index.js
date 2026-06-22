@@ -20,7 +20,8 @@ console.log(
   process.version,
   `PORT=${port}`,
   `NODE_ENV=${process.env.NODE_ENV || 'development'}`,
-  `bootSeed=${runBootSeed}`
+  `bootSeed=${runBootSeed}`,
+  `mysql=${mysqlConfigFromEnv().host}:${mysqlConfigFromEnv().port}/${mysqlConfigFromEnv().database}`
 );
 
 process.on('uncaughtException', (err) => {

@@ -6,20 +6,16 @@ function repoRootEnvDir() {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 }
 
-function loadEnvFileQuiet(envPath, { override = false, presetKeys = null } = {}) {
-  if (!fs.existsSync(envPath)) return;
-  if (!override) {
-    process.loadEnvFile(envPath);
-    return;
-  }
-  const raw = fs.readFileSync(envPath, 'utf8');
+function parseEnvLines(raw) {
+  /** @type {Array<[string, string]>} */
+  const pairs = [];
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eq = trimmed.indexOf('=');
     if (eq <= 0) continue;
     const key = trimmed.slice(0, eq).trim();
-    if (!key || presetKeys?.has(key)) continue;
+    if (!key) continue;
     let value = trimmed.slice(eq + 1).trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -27,20 +23,30 @@ function loadEnvFileQuiet(envPath, { override = false, presetKeys = null } = {})
     ) {
       value = value.slice(1, -1);
     }
-    process.env[key] = value;
+    pairs.push([key, value]);
   }
+  return pairs;
+}
+
+function loadEnvFileQuiet(envPath) {
+  if (!fs.existsSync(envPath)) return;
+  process.loadEnvFile(envPath);
 }
 
 /**
- * Loads repo-root `.env` then `.env.local` (local overrides for dev machines).
- * Variables already set in the shell are never overwritten.
+ * Loads repo-root `.env` then `.env.local`.
+ * Keys in `.env.local` always override `.env` (and override shell for those keys).
  */
 export function loadProjectEnv() {
   const root = repoRootEnvDir();
-  const presetKeys = new Set(Object.keys(process.env));
   try {
     loadEnvFileQuiet(path.join(root, '.env'));
-    loadEnvFileQuiet(path.join(root, '.env.local'), { override: true, presetKeys });
+    const localPath = path.join(root, '.env.local');
+    if (fs.existsSync(localPath)) {
+      for (const [key, value] of parseEnvLines(fs.readFileSync(localPath, 'utf8'))) {
+        process.env[key] = value;
+      }
+    }
   } catch (e) {
     console.warn('[zarewa] Could not load env files:', e?.message || e);
   }

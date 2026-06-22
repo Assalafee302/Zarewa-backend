@@ -480,21 +480,52 @@ export function listHrStaff(db, scope, opts = {}) {
  * @param {import('better-sqlite3').Database} db
  * @param {object[]} rows
  */
-export function enrichHrStaffListRows(db, rows) {
+export function enrichHrStaffListRows(db, rows, opts = {}) {
+  const lightweight = Boolean(opts.lightweight);
   const displayNameByUserId = new Map(rows.map((r) => [String(r.userId), r.displayName]));
-  const ackRows = db
-    .prepare(
-      `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
-       FROM hr_policy_acknowledgements
-       WHERE policy_key = 'employee_handbook'
-       GROUP BY user_id`
-    )
-    .all();
-  const ackByUserId = new Map(ackRows.map((r) => [String(r.user_id), String(r.accepted_at_iso || '')]));
-  const overdueRows = listHrRequests(db, { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {}).filter(
-    (r) => r.slaState === 'overdue'
-  );
-  const overdueByUser = new Set(overdueRows.map((r) => String(r.userId)));
+  const rowUserIds = rows.map((r) => String(r.userId)).filter(Boolean);
+  const ackByUserId = new Map();
+  if (rowUserIds.length) {
+    const ph = rowUserIds.map(() => '?').join(',');
+    const ackRows = db
+      .prepare(
+        `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
+         FROM hr_policy_acknowledgements
+         WHERE policy_key = 'employee_handbook' AND user_id IN (${ph})
+         GROUP BY user_id`
+      )
+      .all(...rowUserIds);
+    for (const r of ackRows) ackByUserId.set(String(r.user_id), String(r.accepted_at_iso || ''));
+  } else if (!lightweight) {
+    const ackRows = db
+      .prepare(
+        `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
+         FROM hr_policy_acknowledgements
+         WHERE policy_key = 'employee_handbook'
+         GROUP BY user_id`
+      )
+      .all();
+    for (const r of ackRows) ackByUserId.set(String(r.user_id), String(r.accepted_at_iso || ''));
+  }
+  let overdueByUser = new Set();
+  if (!lightweight) {
+    const overdueRows = listHrRequests(db, { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {}).filter(
+      (r) => r.slaState === 'overdue'
+    );
+    overdueByUser = new Set(overdueRows.map((r) => String(r.userId)));
+  }
+  if (lightweight) {
+    const managerIds = [
+      ...new Set(rows.map((r) => String(r.lineManagerUserId || '').trim()).filter(Boolean)),
+    ].filter((id) => !displayNameByUserId.has(id));
+    if (managerIds.length) {
+      const ph = managerIds.map(() => '?').join(',');
+      const mgrRows = db
+        .prepare(`SELECT id, display_name AS displayName FROM app_users WHERE id IN (${ph})`)
+        .all(...managerIds);
+      for (const m of mgrRows) displayNameByUserId.set(String(m.id), m.displayName);
+    }
+  }
   const complianceByUserId = new Map(
     rows.map((r) => [
       String(r.userId),
@@ -522,10 +553,12 @@ export function enrichHrStaffListRows(db, rows) {
     base.profileCompleteness = computeProfileCompleteness(base, {
       handbookAcknowledged: compliance.handbookAcknowledged,
     });
-    if (base.salaryLevel != null && base.salaryStep != null) {
+    if (!lightweight && base.salaryLevel != null && base.salaryStep != null) {
       base.compensation = buildStaffCompensationSummary(db, base);
     }
-    base.mergedOffices = buildStaffMergedOffices(base);
+    if (!lightweight) {
+      base.mergedOffices = buildStaffMergedOffices(base);
+    }
     base.yearsOfService = roundTenureYears(serviceYearsFromJoinedIso(base.dateJoinedIso));
     if (base.lineManagerUserId) {
       base.lineManagerDisplayName = displayNameByUserId.get(String(base.lineManagerUserId)) || null;
@@ -574,68 +607,21 @@ function attachDocExpirySummary(db, staffRows) {
 }
 
 /**
- * Server-paged staff directory with filters, KPIs, and document expiry hints.
- * @param {import('better-sqlite3').Database} db
- * @param {ReturnType<typeof hrListScope>} scope
- * @param {object} [opts]
+ * Shared WHERE clauses for staff directory list, KPI, and facet queries.
+ * @returns {{ sql: string; args: unknown[]; today: string; in30: string; in60: string; quick: string }}
  */
-export function listHrStaffDirectory(db, scope, opts = {}) {
-  if (!hrTablesReady(db)) {
-    return { staff: [], total: 0, page: 1, pageSize: 20, kpis: {}, facets: { departments: [], employmentTypes: [], managers: [] } };
-  }
-  const page = Math.max(1, Math.round(Number(opts.page) || 1));
-  const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
+function buildHrStaffDirectoryFilterSql(db, scope, opts = {}) {
   const quick = String(opts.quickFilter || '').trim();
   const includeInactive = Boolean(opts.includeInactive) || quick === 'exited-retired';
   const cohortKey = opts.cohort;
   const scopeMode = scope.scopeMode || 'branch';
   const orgWide = Boolean(scope.viewAll) || scopeMode === 'org';
-  const joinType = 'INNER';
   const today = nowIso().slice(0, 10);
   const in30 = hrDirectoryAddDaysIso(30);
   const in60 = hrDirectoryAddDaysIso(60);
-  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
-
-  let sql = `
-    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
-           u.avatar_url AS avatarUrl,
-           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
-           p.department_id AS departmentId, p.designation_id AS designationId,
-           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
-           p.contract_end_iso AS contractEndIso,
-           p.probation_end_iso AS probationEndIso,
-           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
-           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
-           p.academic_qualification AS academicQualification,
-           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
-           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
-           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
-           p.bonus_accrual_note AS bonusAccrualNote,
-           p.paye_tax_percent AS payeTaxPercent,
-           p.paye_tax_ngn AS payeTaxNgn,
-           p.pension_percent_override AS pensionPercentOverride,
-           p.self_service_eligible AS selfServiceEligible,
-           ${isProductionStaffCol}
-           p.next_of_kin_json AS nextOfKinJson,
-           p.nin_number AS ninNumber,
-           p.bvn_number AS bvnNumber,
-           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
-           p.nhis_deduction_ngn AS nhisDeductionNgn,
-           p.profile_extra_json AS profileExtraJson,
-           p.line_manager_user_id AS lineManagerUserId,
-           p.leave_entitlement_band AS leaveEntitlementBand,
-           p.payroll_group AS payrollGroup,
-           p.salary_level AS salaryLevel,
-           p.salary_step AS salaryStep,
-           p.profile_submitted_at_iso AS profileSubmittedAtIso,
-           p.profile_locked AS profileLocked,
-           p.profile_verified_at_iso AS profileVerifiedAtIso,
-           p.sales_customer_id AS salesCustomerId
-    FROM app_users u
-    ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
-    WHERE 1=1
-  `;
+  let sql = '';
   const args = [];
+
   if (!includeInactive) sql += ` AND u.status = 'active'`;
   const cohortGroups =
     cohortKey !== undefined && cohortKey !== null && String(cohortKey).trim() !== ''
@@ -728,9 +714,157 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
       OR lower(COALESCE(json_extract(p.profile_extra_json, '$.lifecycle.separation.status'), '')) IN ('separating', 'separated')
       OR lower(COALESCE(json_extract(p.profile_extra_json, '$.lifecycle.separation.reason'), '')) LIKE '%retir%'
     )`;
-  } else if (quick === 'direct-reports' && opts.lineManagerUserId) {
-    /* already filtered by lineManagerUserId */
   }
+
+  return { sql, args, today, in30, in60, quick };
+}
+
+const HR_DIRECTORY_INCOMPLETE_SQL = `(
+  p.employee_no IS NULL OR trim(p.employee_no) = '' OR p.date_joined_iso IS NULL OR trim(p.date_joined_iso) = ''
+  OR p.job_title IS NULL OR trim(p.job_title) = '' OR p.department IS NULL OR trim(p.department) = ''
+  OR p.branch_id IS NULL OR trim(p.branch_id) = ''
+)`;
+
+function hrStaffDirectoryKpisFromSql(db, filterSql, filterArgs, today, in30, in60) {
+  const baseFrom = `
+    FROM app_users u
+    INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+    WHERE 1=1${filterSql}`;
+  const row = db
+    .prepare(
+      `SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN u.status = 'active' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN ${HR_DIRECTORY_INCOMPLETE_SQL} THEN 1 ELSE 0 END) AS incomplete,
+        SUM(CASE WHEN p.probation_end_iso >= ?
+          AND (p.date_joined_iso IS NULL OR p.probation_end_iso > p.date_joined_iso) THEN 1 ELSE 0 END) AS onProbation,
+        SUM(CASE WHEN p.probation_end_iso BETWEEN ? AND ?
+          AND (p.date_joined_iso IS NULL OR p.probation_end_iso > p.date_joined_iso) THEN 1 ELSE 0 END) AS probationEnding,
+        SUM(CASE WHEN (
+          lower(COALESCE(p.employment_type,'')) LIKE '%contract%' OR lower(COALESCE(p.employment_type,'')) LIKE '%temp%'
+        ) AND p.contract_end_iso BETWEEN ? AND ? THEN 1 ELSE 0 END) AS contractsExpiring,
+        SUM(CASE WHEN p.line_manager_user_id IS NULL OR trim(p.line_manager_user_id) = '' THEN 1 ELSE 0 END) AS noManager
+      ${baseFrom}`
+    )
+    .get(...filterArgs, today, today, in30, today, in60);
+  const kpis = {
+    total: Number(row?.total) || 0,
+    active: Number(row?.active) || 0,
+    incomplete: Number(row?.incomplete) || 0,
+    onProbation: Number(row?.onProbation) || 0,
+    probationEnding: Number(row?.probationEnding) || 0,
+    contractsExpiring: Number(row?.contractsExpiring) || 0,
+    noManager: Number(row?.noManager) || 0,
+    docExpiring: 0,
+  };
+  try {
+    const docKpi = db
+      .prepare(
+        `SELECT COUNT(DISTINCT d.user_id) AS c FROM hr_staff_documents d
+         JOIN app_users u ON u.id = d.user_id
+         JOIN hr_staff_profiles p ON p.user_id = u.id
+         WHERE d.expiry_date_iso BETWEEN ? AND ? AND u.status = 'active'${filterSql}`
+      )
+      .get(today, in60, ...filterArgs);
+    kpis.docExpiring = Number(docKpi?.c) || 0;
+  } catch {
+    kpis.docExpiring = 0;
+  }
+  return kpis;
+}
+
+function hrStaffDirectoryFacetsFromSql(db, filterSql, filterArgs) {
+  const baseFrom = `
+    FROM app_users u
+    INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+    WHERE 1=1${filterSql}`;
+  const departments = db
+    .prepare(
+      `SELECT DISTINCT p.department AS name ${baseFrom}
+       AND p.department IS NOT NULL AND trim(p.department) != ''
+       ORDER BY p.department COLLATE NOCASE`
+    )
+    .all(...filterArgs)
+    .map((r) => String(r.name));
+  const employmentTypes = db
+    .prepare(
+      `SELECT DISTINCT p.employment_type AS name ${baseFrom}
+       AND p.employment_type IS NOT NULL AND trim(p.employment_type) != ''
+       ORDER BY p.employment_type COLLATE NOCASE`
+    )
+    .all(...filterArgs)
+    .map((r) => String(r.name));
+  const managers = db
+    .prepare(
+      `SELECT DISTINCT p.line_manager_user_id AS userId, m.display_name AS displayName
+       FROM app_users u
+       INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+       LEFT JOIN app_users m ON m.id = p.line_manager_user_id
+       WHERE 1=1${filterSql}
+       AND p.line_manager_user_id IS NOT NULL AND trim(p.line_manager_user_id) != ''
+       ORDER BY m.display_name COLLATE NOCASE`
+    )
+    .all(...filterArgs)
+    .filter((r) => r.userId)
+    .map((r) => ({ userId: String(r.userId), displayName: r.displayName || String(r.userId) }));
+  return { departments, employmentTypes, managers };
+}
+
+/**
+ * Server-paged staff directory with filters, KPIs, and document expiry hints.
+ * @param {import('better-sqlite3').Database} db
+ * @param {ReturnType<typeof hrListScope>} scope
+ * @param {object} [opts]
+ */
+export function listHrStaffDirectory(db, scope, opts = {}) {
+  if (!hrTablesReady(db)) {
+    return { staff: [], total: 0, page: 1, pageSize: 20, kpis: {}, facets: { departments: [], employmentTypes: [], managers: [] } };
+  }
+  const page = Math.max(1, Math.round(Number(opts.page) || 1));
+  const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
+  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
+  const { sql: filterSql, args: filterArgs, today, in30, in60, quick } = buildHrStaffDirectoryFilterSql(db, scope, opts);
+
+  let sql = `
+    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
+           u.avatar_url AS avatarUrl,
+           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
+           p.department_id AS departmentId, p.designation_id AS designationId,
+           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
+           p.contract_end_iso AS contractEndIso,
+           p.probation_end_iso AS probationEndIso,
+           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
+           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
+           p.academic_qualification AS academicQualification,
+           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
+           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
+           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
+           p.bonus_accrual_note AS bonusAccrualNote,
+           p.paye_tax_percent AS payeTaxPercent,
+           p.paye_tax_ngn AS payeTaxNgn,
+           p.pension_percent_override AS pensionPercentOverride,
+           p.self_service_eligible AS selfServiceEligible,
+           ${isProductionStaffCol}
+           p.next_of_kin_json AS nextOfKinJson,
+           p.nin_number AS ninNumber,
+           p.bvn_number AS bvnNumber,
+           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
+           p.nhis_deduction_ngn AS nhisDeductionNgn,
+           p.profile_extra_json AS profileExtraJson,
+           p.line_manager_user_id AS lineManagerUserId,
+           p.leave_entitlement_band AS leaveEntitlementBand,
+           p.payroll_group AS payrollGroup,
+           p.salary_level AS salaryLevel,
+           p.salary_step AS salaryStep,
+           p.profile_submitted_at_iso AS profileSubmittedAtIso,
+           p.profile_locked AS profileLocked,
+           p.profile_verified_at_iso AS profileVerifiedAtIso,
+           p.sales_customer_id AS salesCustomerId
+    FROM app_users u
+    INNER JOIN hr_staff_profiles p ON p.user_id = u.id
+    WHERE 1=1${filterSql}
+  `;
+  const args = [...filterArgs];
 
   const countRow = db.prepare(`SELECT COUNT(*) AS c FROM (${sql}) AS dir_sub`).get(...args);
   const total = Number(countRow?.c) || 0;
@@ -745,69 +879,18 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
     profile: 'p.profile_submitted_at_iso',
   };
   const orderCol = orderMap[sortKey] || orderMap.name;
-  sql += ` ORDER BY ${orderCol} ${sortDir}, u.display_name ASC`;
-  sql += ` LIMIT ? OFFSET ?`;
+  const pageSql = `${sql} ORDER BY ${orderCol} ${sortDir}, u.display_name ASC LIMIT ? OFFSET ?`;
   const offset = (page - 1) * pageSize;
-  const rawRows = db.prepare(sql).all(...args, pageSize, offset);
-  let staff = attachDocExpirySummary(db, enrichHrStaffListRows(db, rawRows));
+  const rawRows = db.prepare(pageSql).all(...args, pageSize, offset);
+  let staff = attachDocExpirySummary(db, enrichHrStaffListRows(db, rawRows, { lightweight: true }));
   if (quick === 'incomplete') {
     staff = staff.filter((s) => (s.criticalMissing || []).length > 0 || (s.profileCompleteness?.overallPct ?? 100) < 60);
   }
 
-  const allForKpis = listHrStaff(db, scope, {
-    includeInactive,
-    requireProfile: true,
-    cohort: cohortKey,
-  });
-  const kpis = {
-    total: allForKpis.length,
-    active: allForKpis.filter((s) => String(s.status) === 'active').length,
-    incomplete: allForKpis.filter((s) => (s.criticalMissing || []).length > 0 || (s.profileCompleteness?.overallPct ?? 100) < 60).length,
-    onProbation: allForKpis.filter((s) => {
-      const end = String(s.probationEndIso || '').slice(0, 10);
-      const joined = String(s.dateJoinedIso || '').slice(0, 10);
-      return end && end >= today && (!joined || end > joined);
-    }).length,
-    probationEnding: allForKpis.filter((s) => {
-      const end = String(s.probationEndIso || '').slice(0, 10);
-      return end && end >= today && end <= in30;
-    }).length,
-    contractsExpiring: allForKpis.filter((s) => {
-      const et = String(s.employmentType || '').toLowerCase();
-      const end = String(s.contractEndIso || '').slice(0, 10);
-      return (et.includes('contract') || et.includes('temp')) && end && end >= today && end <= in60;
-    }).length,
-    noManager: allForKpis.filter((s) => !String(s.lineManagerUserId || '').trim()).length,
-    docExpiring: 0,
-  };
-  try {
-    const docKpi = db
-      .prepare(
-        `SELECT COUNT(DISTINCT d.user_id) AS c FROM hr_staff_documents d
-         JOIN hr_staff_profiles p ON p.user_id = d.user_id
-         JOIN app_users u ON u.id = d.user_id
-         WHERE d.expiry_date_iso BETWEEN ? AND ? AND u.status = 'active'`
-      )
-      .get(today, in60);
-    kpis.docExpiring = Number(docKpi?.c) || 0;
-  } catch {
-    kpis.docExpiring = 0;
-  }
+  const kpis = hrStaffDirectoryKpisFromSql(db, filterSql, filterArgs, today, in30, in60);
+  const facets = hrStaffDirectoryFacetsFromSql(db, filterSql, filterArgs);
 
-  const departments = [...new Set(allForKpis.map((s) => s.department).filter(Boolean))].sort();
-  const employmentTypes = [
-    ...new Set(allForKpis.map((s) => s.employmentType || s.normalized?.taxonomy?.employmentType).filter(Boolean)),
-  ].sort();
-  const managerIds = [...new Set(allForKpis.map((s) => s.lineManagerUserId).filter(Boolean))];
-  const managers = managerIds
-    .map((id) => {
-      const m = allForKpis.find((s) => s.userId === id) || db.prepare(`SELECT id AS userId, display_name AS displayName FROM app_users WHERE id = ?`).get(id);
-      return m ? { userId: String(id), displayName: m.displayName || id } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
-
-  return { staff, total, page, pageSize, kpis, facets: { departments, employmentTypes, managers } };
+  return { staff, total, page, pageSize, kpis, facets };
 }
 
 export function listHrStaffDirectoryViews(db, userId) {

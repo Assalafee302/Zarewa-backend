@@ -522,6 +522,57 @@ export function bulkEnsureStaffSalesCustomers(db, actor, opts = {}) {
   return { ok: true, scanned: rows.length, linked, failed, errors };
 }
 
+/** Count active staff profiles missing a linked Sales customer (purchase credit prerequisite). */
+export function countStaffMissingSalesCustomerLink(db, opts = {}) {
+  if (!hrTablesReady(db) || !staffPurchaseCreditColumnsReady(db)) {
+    return { ok: false, error: 'Staff purchase credit is not available.' };
+  }
+  const branchId = String(opts.branchId || '').trim();
+  let sql = `
+    SELECT COUNT(*) AS cnt
+    FROM hr_staff_profiles p
+    JOIN app_users u ON u.id = p.user_id
+    WHERE u.status = 'active' AND trim(IFNULL(p.sales_customer_id, '')) = ''`;
+  const args = [];
+  if (branchId && branchId !== 'ALL') {
+    sql += ` AND p.branch_id = ?`;
+    args.push(branchId);
+  }
+  const row = db.prepare(sql).get(...args);
+  return { ok: true, unlinkedCount: Number(row?.cnt) || 0, branchId: branchId || 'ALL' };
+}
+
+/**
+ * MD / HR decision context for a purchase credit obligation row.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} accountRow
+ * @param {object[] | null} [jobs]
+ */
+export function buildPurchaseCreditDecisionContext(db, accountRow, jobs = null) {
+  const userId = String(accountRow?.user_id || accountRow?.userId || '').trim();
+  const eligibility = userId ? computeStaffPurchaseCreditEligibility(db, userId) : null;
+  const policy = eligibility?.policy || getStaffPurchaseCreditPolicy(db);
+  const quoteRef = String(accountRow?.quotation_ref || accountRow?.quotationRef || '').trim();
+  let quoteBalanceNgn = null;
+  let depositRequiredNgn = null;
+  let depositPct = null;
+  if (quoteRef) {
+    const jobList = jobs || listProductionJobs(db, 'ALL');
+    const pay = evaluateQuotationPaymentForDeliveryRelease(db, quoteRef, jobList);
+    quoteBalanceNgn = Math.round(Number(pay.balanceNgn) || 0);
+    const bounds = computeStaffPurchaseCreditAmountBounds(quoteBalanceNgn, policy);
+    depositRequiredNgn = Number(bounds.depositRequiredNgn) || 0;
+    depositPct = Number(bounds.depositPct) || 0;
+  }
+  return {
+    eligibility,
+    quoteBalanceNgn,
+    depositRequiredNgn,
+    depositPct,
+    purposeNote: String(accountRow?.note || '').trim() || null,
+  };
+}
+
 export function userMayApproveStaffPurchaseCredit(actor) {
   const rk = roleKey(actor);
   if (userHasPermission(actor, '*')) return true;
@@ -1005,11 +1056,21 @@ export function listStaffPurchaseCreditQueue(db, filter = {}) {
     args.push(String(filter.branchId));
   }
   sql += ` ORDER BY o.updated_at_iso DESC LIMIT 200`;
-  return db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => ({
+  const rawRows = db.prepare(sql).all(...args);
+  const jobs = listProductionJobs(db, 'ALL');
+  return rawRows.map((row) => {
+    const mapped = {
       ...mapObligationAccountRow(row),
       staffDisplayName: row.staff_display_name,
-    }));
+    };
+    const ctx = buildPurchaseCreditDecisionContext(db, row, jobs);
+    return {
+      ...mapped,
+      ...ctx,
+      serviceYears: ctx.eligibility?.serviceYears,
+      activeOutstandingNgn: ctx.eligibility?.activeOutstandingNgn,
+      eligible: ctx.eligibility?.eligible,
+      eligibilityIssues: ctx.eligibility?.issues || [],
+    };
+  });
 }

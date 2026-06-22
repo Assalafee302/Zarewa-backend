@@ -267,6 +267,7 @@ import {
   computeStaffPurchaseCreditEligibility,
   ensureStaffSalesCustomer,
   bulkEnsureStaffSalesCustomers,
+  countStaffMissingSalesCustomerLink,
 } from './staffPurchaseCreditOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import {
@@ -4232,6 +4233,22 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not link sales customer.' });
+    }
+  });
+
+  app.get('/api/hr/staff/sales-customer-link-stats', requireHrAny('hr.staff.manage', 'hr.loans.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const branchId = String(req.query?.branchId || '').trim();
+      const scope = hrListScope(req);
+      const r = countStaffMissingSalesCustomerLink(db, {
+        branchId: branchId || (scope.viewAll ? 'ALL' : scope.branchId),
+      });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not load sales customer link stats.' });
     }
   });
 

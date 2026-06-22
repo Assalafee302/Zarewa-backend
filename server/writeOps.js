@@ -1,4 +1,6 @@
 import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
+import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
+import { validateExpenseCategorySelection } from '../shared/expenseCategoryPolicy.js';
 import { evaluateRefundPayoutGlPolicy } from './ap1cReversalRefundOps.js';
 import {
   tryPostCustomerAdvanceReversalGl,
@@ -1515,7 +1517,7 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
   }
 
   try {
-    db.transaction(() => {
+    const runCore = () => {
       let movementId = null;
       let recordedAmount = Number(row.transport_amount_ngn) || 0;
 
@@ -1619,7 +1621,9 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
       }
 
       syncPurchaseOrderTransportPaymentState(db, poID, opts.actor);
-    })();
+    };
+    if (opts.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
@@ -6481,9 +6485,17 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const expenseDate = String(payload.date ?? '').trim() || new Date().toISOString().slice(0, 10);
   const amountNgn = roundMoney(payload.amountNgn);
   if (!category) return { ok: false, error: 'Expense category is required.' };
-  if (!isAllowedExpenseCategory(category)) {
-    return { ok: false, error: 'Expense category must be chosen from the standard list.' };
-  }
+  const catCheck = validateExpenseCategorySelection({
+    actor: payload.actor,
+    category,
+    amountNgn,
+    description: payload.expenseType || payload.reference || '',
+    categoryJustification: payload.categoryJustification,
+    hasAttachment: Boolean(payload.hasAttachment),
+    hasPermission: (p) => userHasPermission(payload.actor, p),
+  });
+  if (!catCheck.ok) return catCheck;
+  const categoryLane = getExpenseCategoryLane(category);
   if (amountNgn <= 0) return { ok: false, error: 'Expense amount must be positive.' };
   try {
     assertPeriodOpen(db, expenseDate, 'Expense date');
@@ -6512,19 +6524,39 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
       }
     }
     db.transaction(() => {
-      db.prepare(
-        `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
-         VALUES (?,?,?,?,?,?,?,?)`
-      ).run(
-        expenseID,
-        expenseType,
-        amountNgn,
-        expenseDate,
-        category,
-        paymentMethod,
-        reference,
-        bid
-      );
+      const expHasLane = db
+        .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
+        .get();
+      if (expHasLane) {
+        db.prepare(
+          `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id, category_lane)
+           VALUES (?,?,?,?,?,?,?,?,?)`
+        ).run(
+          expenseID,
+          expenseType,
+          amountNgn,
+          expenseDate,
+          category,
+          paymentMethod,
+          reference,
+          bid,
+          categoryLane
+        );
+      } else {
+        db.prepare(
+          `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+           VALUES (?,?,?,?,?,?,?,?)`
+        ).run(
+          expenseID,
+          expenseType,
+          amountNgn,
+          expenseDate,
+          category,
+          paymentMethod,
+          reference,
+          bid
+        );
+      }
       if (payload.treasuryAccountId) {
         insertTreasuryMovementTx(db, {
           type: 'EXPENSE',

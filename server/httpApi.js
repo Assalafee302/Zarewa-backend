@@ -200,7 +200,9 @@ import {
   decidePaymentRequest,
   decideRefundRequest,
   deleteTreasuryAccount,
+  getPaymentRequestGlPreview,
   insertPaymentRequest,
+  reclassifyPaymentRequestCategory,
   insertRefundRequest,
   lockAccountingPeriod,
   previewRefundRequest,
@@ -214,6 +216,8 @@ import {
   upsertTreasuryAccount,
 } from './controlOps.js';
 import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
+import { buildExpenseCategoryMetaForActor } from '../shared/expenseCategoryPolicy.js';
+import { buildExpenseCategoryExceptionReport } from './expenseCategoryReportOps.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
   ADMIN_DATA_RESET_PRESETS,
@@ -5878,7 +5882,9 @@ export function registerHttpApi(app, db) {
         error: 'Recording haulage against treasury requires finance.pay permission.',
       });
     }
-    return handlePatchWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped) => {
+    return handlePatchWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
+      const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
+      const syncOpts = inOuter ? { outerTransaction: true } : {};
       const {
         transportAgentId,
         transportAgentName,
@@ -5907,12 +5913,13 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
+        skipInnerTransaction: inOuter,
       });
       if (r.ok) {
-        syncFinancePoTransportWorkItem(db, poId, req.user);
-        syncInTransitLoadFromPoLink(db, poId, req.user);
+        syncFinancePoTransportWorkItem(db, poId, req.user, syncOpts);
+        syncInTransitLoadFromPoLink(db, poId, req.user, syncOpts);
         const st = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(poId);
-        if (st?.status === 'In Transit') syncInTransitLoadFromTransportPost(db, poId, req.user);
+        if (st?.status === 'In Transit') syncInTransitLoadFromTransportPost(db, poId, req.user, syncOpts);
       }
       return r;
     });
@@ -5937,6 +5944,8 @@ export function registerHttpApi(app, db) {
         });
       }
       return handleWriteWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
+        const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
+        const syncOpts = inOuter ? { outerTransaction: true } : {};
         const r = write.postPurchaseOrderTransport(db, poId, {
           treasuryAccountId: stripped?.treasuryAccountId,
           amountNgn: stripped?.amountNgn,
@@ -5948,11 +5957,11 @@ export function registerHttpApi(app, db) {
           actor: req.user,
           workspaceBranchId: req.workspaceBranchId,
           workspaceViewAll: Boolean(req.workspaceViewAll),
-          skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+          skipInnerTransaction: inOuter,
         });
         if (r.ok) {
-          syncFinancePoTransportWorkItem(db, poId, req.user);
-          syncInTransitLoadFromTransportPost(db, poId, req.user);
+          syncFinancePoTransportWorkItem(db, poId, req.user, syncOpts);
+          syncInTransitLoadFromTransportPost(db, poId, req.user, syncOpts);
         }
         return r;
       });
@@ -8212,6 +8221,16 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/expense-categories', requireAuth, (req, res) => {
+    try {
+      const meta = buildExpenseCategoryMetaForActor(req.user, (p) => userHasPermission(req.user, p));
+      res.json({ ok: true, ...meta });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
   app.get('/api/payment-requests/:requestId/attachment', requireAuth, (req, res) => {
     try {
       const can =
@@ -8263,6 +8282,61 @@ export function registerHttpApi(app, db) {
         return;
       }
       res.json({ ok: true, request });
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/payment-requests/:requestId/gl-preview', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'finance.pay');
+      if (!can) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const preview = getPaymentRequestGlPreview(db, String(req.params.requestId || ''));
+      res.status(preview.ok ? 200 : 404).json(preview);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/payment-requests/:requestId/reclassify-category', requirePermission('finance.approve'), (req, res) => {
+    try {
+      const r = reclassifyPaymentRequestCategory(
+        db,
+        String(req.params.requestId || ''),
+        req.body || {},
+        req.user
+      );
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/reports/expense-category-exceptions', requireAuth, (req, res) => {
+    try {
+      const can =
+        userHasPermission(req.user, 'finance.post') ||
+        userHasPermission(req.user, 'finance.approve') ||
+        userHasPermission(req.user, 'reports.view');
+      if (!can) {
+        res.status(403).json({ ok: false, error: 'Forbidden' });
+        return;
+      }
+      const report = buildExpenseCategoryExceptionReport(db, {
+        startISO: req.query.startDate || req.query.startISO,
+        endISO: req.query.endDate || req.query.endISO,
+        branchScope: req.query.branchScope || req.workspaceBranchId,
+      });
+      res.json(report);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

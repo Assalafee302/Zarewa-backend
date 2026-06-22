@@ -1710,7 +1710,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     await loginAs(staffAgent, 'sales.staff', 'Sales@123');
     const createReq = await staffAgent.post('/api/payment-requests').send({
       requestDate: '2026-03-29',
-      expenseCategory: 'Stationery',
+      expenseCategory: 'Office expenses',
       description: 'Branch stationery top-up',
       lineItems: [{ description: 'Paper reams', quantity: 2, unitPriceNgn: 5000 }],
     });
@@ -1724,7 +1724,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     await loginAs(staffAgent, 'sales.staff', 'Sales@123');
     const createReq = await staffAgent.post('/api/payment-requests').send({
       requestDate: '2026-03-29',
-      expenseCategory: 'Stationery',
+      expenseCategory: 'Office expenses',
       description: 'Initial draft',
       lineItems: [{ description: 'Paper reams', quantity: 2, unitPriceNgn: 5000 }],
     });
@@ -1732,7 +1732,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const rid = createReq.body.requestID;
     const patch = await staffAgent.patch(`/api/payment-requests/${encodeURIComponent(rid)}`).send({
       requestDate: '2026-03-29',
-      expenseCategory: 'Stationery',
+      expenseCategory: 'Office expenses',
       description: 'Updated by sales',
       lineItems: [{ description: 'Paper reams', quantity: 3, unitPriceNgn: 5000 }],
     });

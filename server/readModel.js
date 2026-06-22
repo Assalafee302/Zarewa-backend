@@ -4,6 +4,7 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { publicUserFromRow, resolveRegisteredPasswordDisplay } from './auth.js';
@@ -439,6 +440,8 @@ export function listManagementItems(db, branchScope = 'ALL') {
     attachment_present: Boolean(row.attachment_data_b64 && String(row.attachment_data_b64).trim()),
     attachment_name: row.attachment_name ?? '',
     expense_category: row.expense_category ?? '',
+    expense_category_lane:
+      row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
     branch_id: row.branch_id ?? '',
   }));
 
@@ -2158,7 +2161,7 @@ export function listPaymentRequests(db, branchScope = 'ALL') {
   const scopeArgs = useScope ? [branchScope] : [];
   return db
     .prepare(
-      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.reference AS expense_reference,
+      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
@@ -2187,6 +2190,9 @@ export function listPaymentRequests(db, branchScope = 'ALL') {
         paymentNote: row.payment_note ?? '',
         branchId: row.expense_branch_id ?? '',
         expenseCategory: row.expense_category ?? '',
+        expenseCategoryLane:
+          row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
+        categoryJustification: row.category_justification ?? '',
         isStaffLoan: String(row.expense_category || '').toLowerCase().includes('staff loan'),
         hrRequestId: row.expense_reference ?? '',
         staffUserId: row.staff_user_id ?? '',
@@ -2206,7 +2212,7 @@ export function getPaymentRequestDetail(db, requestId) {
   if (!rid) return null;
   const row = db
     .prepare(
-      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.reference AS expense_reference,
+      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
@@ -2234,6 +2240,8 @@ export function getPaymentRequestDetail(db, requestId) {
     paymentNote: row.payment_note ?? '',
     branchId: row.expense_branch_id ?? '',
     expenseCategory: row.expense_category ?? '',
+    expenseCategoryLane: row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
+    categoryJustification: row.category_justification ?? '',
     isStaffLoan: String(row.expense_category || '').toLowerCase().includes('staff loan'),
     hrRequestId: row.expense_reference ?? '',
     staffUserId: row.staff_user_id ?? '',

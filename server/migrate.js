@@ -429,6 +429,17 @@ function runMigrationsUnlocked(db) {
   if (!payReq.has('attachment_data_b64')) {
     db.exec(`ALTER TABLE payment_requests ADD COLUMN attachment_data_b64 TEXT`);
   }
+  if (!payReq.has('category_justification')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN category_justification TEXT`);
+  }
+
+  const expenses = tableCols('expenses');
+  if (expenses.size && !expenses.has('category_lane')) {
+    db.exec(`ALTER TABLE expenses ADD COLUMN category_lane TEXT`);
+  }
+  if (expenses.size) {
+    db.prepare(`UPDATE expenses SET category = 'Others' WHERE TRIM(category) = 'Miscellaneous'`).run();
+  }
 
   const deliveries = tableCols('deliveries');
   if (deliveries.size) {

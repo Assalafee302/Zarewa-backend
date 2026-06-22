@@ -10,6 +10,12 @@ import {
 } from './humanId.js';
 import { isAllowedExpenseCategory } from '../shared/expenseCategories.js';
 import {
+  actorMayApprovePaymentRequestCategory,
+  validateExpenseCategorySelection,
+} from '../shared/expenseCategoryPolicy.js';
+import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
+import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
+import {
   MIN_REFUND_QUOTATION_REMAINING_NGN,
   normalizeRefundReasonCategoriesForApi,
   quotationMeetsRefundPickerFloor,
@@ -1009,6 +1015,30 @@ function parsePaymentRequestAttachment(payload) {
   return { name, mime, b64 };
 }
 
+function validatePaymentRequestExpenseCategory(actor, payload, expenseCategory, amountRequestedNgn, hasAttachment) {
+  return validateExpenseCategorySelection({
+    actor,
+    category: expenseCategory,
+    amountNgn: amountRequestedNgn,
+    description: payload.description,
+    categoryJustification: payload.categoryJustification,
+    hasAttachment,
+    hasPermission: (p) => userHasPermission(actor, p),
+  });
+}
+
+function expenseInsertColumns(db) {
+  const base =
+    'expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id';
+  const hasLane = db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get();
+  return hasLane ? `${base}, category_lane` : base;
+}
+
+function expenseInsertPlaceholders(db) {
+  const hasLane = db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get();
+  return hasLane ? '?,?,?,?,?,?,?,?,?' : '?,?,?,?,?,?,?,?';
+}
+
 
 export function insertPaymentRequest(db, payload, actor) {
   const providedRequestId = String(payload.requestID ?? '').trim();
@@ -1019,6 +1049,7 @@ export function insertPaymentRequest(db, payload, actor) {
 
   const lineItems = normalizePaymentRequestLineItems(payload.lineItems ?? payload.items);
   const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
+  const categoryJustification = String(payload.categoryJustification ?? '').trim();
   const { name: attName, mime: attMime, b64: attB64Raw } = parsePaymentRequestAttachment(payload);
   let attB64 = attB64Raw;
   if (attB64) {
@@ -1039,16 +1070,18 @@ export function insertPaymentRequest(db, payload, actor) {
   let amountRequestedNgn = roundMoney(payload.amountRequestedNgn);
 
   if (lineItems.length > 0) {
-    if (!expenseCategory) {
-      return { ok: false, error: 'Expense category is required.' };
-    }
-    if (!isAllowedExpenseCategory(expenseCategory)) {
-      return { ok: false, error: 'Expense category must be chosen from the standard list.' };
-    }
     amountRequestedNgn = lineItems.reduce((s, x) => s + x.lineTotalNgn, 0);
     if (amountRequestedNgn <= 0) {
       return { ok: false, error: 'Line items must total a positive amount.' };
     }
+    const catCheck = validatePaymentRequestExpenseCategory(
+      actor,
+      payload,
+      expenseCategory,
+      amountRequestedNgn,
+      Boolean(attB64)
+    );
+    if (!catCheck.ok) return catCheck;
   } else {
     if (!legacyExpenseID) {
       return {
@@ -1066,6 +1099,7 @@ export function insertPaymentRequest(db, payload, actor) {
 
   const maxAttempts = providedRequestId ? 1 : 3;
   let lastErr = null;
+  const categoryLane = getExpenseCategoryLane(expenseCategory);
   for (let i = 0; i < maxAttempts; i += 1) {
     const requestID =
       providedRequestId ||
@@ -1082,42 +1116,86 @@ export function insertPaymentRequest(db, payload, actor) {
             newExpId = nextExpenseHumanId(db, branchId);
           }
           db.prepare(
-            `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
-             VALUES (?,?,?,?,?,?,?,?)`
+            `INSERT INTO expenses (${expenseInsertColumns(db)})
+             VALUES (${expenseInsertPlaceholders(db)})`
           ).run(
-            newExpId,
-            'Payment request (pending payout)',
-            amountRequestedNgn,
-            requestDate,
-            expenseCategory,
-            'Pending',
-            requestReference || requestID,
-            branchId
+            ...(db.prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`).get()
+              ? [
+                  newExpId,
+                  'Payment request (pending payout)',
+                  amountRequestedNgn,
+                  requestDate,
+                  expenseCategory,
+                  'Pending',
+                  requestReference || requestID,
+                  branchId,
+                  categoryLane,
+                ]
+              : [
+                  newExpId,
+                  'Payment request (pending payout)',
+                  amountRequestedNgn,
+                  requestDate,
+                  expenseCategory,
+                  'Pending',
+                  requestReference || requestID,
+                  branchId,
+                ])
           );
           expenseIdForRow = newExpId;
         }
-        db.prepare(
-          `INSERT INTO payment_requests (
-            request_id, expense_id, amount_requested_ngn, request_date, approval_status, description,
-            approved_by, approved_at_iso, approval_note,
-            request_reference, line_items_json, attachment_name, attachment_mime, attachment_data_b64
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).run(
-          requestID,
-          expenseIdForRow,
-          amountRequestedNgn,
-          requestDate,
-          'Pending',
-          description,
-          '',
-          '',
-          '',
-          requestReference || '',
-          lineItemsJson || null,
-          attName || '',
-          attMime || '',
-          attB64 || ''
-        );
+        const prHasJustification = db
+          .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
+          .get();
+        if (prHasJustification) {
+          db.prepare(
+            `INSERT INTO payment_requests (
+              request_id, expense_id, amount_requested_ngn, request_date, approval_status, description,
+              approved_by, approved_at_iso, approval_note,
+              request_reference, line_items_json, attachment_name, attachment_mime, attachment_data_b64,
+              category_justification
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).run(
+            requestID,
+            expenseIdForRow,
+            amountRequestedNgn,
+            requestDate,
+            'Pending',
+            description,
+            '',
+            '',
+            '',
+            requestReference || '',
+            lineItemsJson || null,
+            attName || '',
+            attMime || '',
+            attB64 || '',
+            categoryJustification || null
+          );
+        } else {
+          db.prepare(
+            `INSERT INTO payment_requests (
+              request_id, expense_id, amount_requested_ngn, request_date, approval_status, description,
+              approved_by, approved_at_iso, approval_note,
+              request_reference, line_items_json, attachment_name, attachment_mime, attachment_data_b64
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).run(
+            requestID,
+            expenseIdForRow,
+            amountRequestedNgn,
+            requestDate,
+            'Pending',
+            description,
+            '',
+            '',
+            '',
+            requestReference || '',
+            lineItemsJson || null,
+            attName || '',
+            attMime || '',
+            attB64 || ''
+          );
+        }
         appendAuditLog(db, {
           actor,
           action: 'payment_request.create',
@@ -1159,6 +1237,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   const requestReference = String(payload.requestReference ?? payload.reference ?? row.request_reference ?? '').trim();
   const lineItems = normalizePaymentRequestLineItems(payload.lineItems ?? payload.items);
   const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
+  const categoryJustification = String(payload.categoryJustification ?? row.category_justification ?? '').trim();
   const { name: attName, mime: attMime, b64: attB64Raw } = parsePaymentRequestAttachment(payload);
   let attB64 = attB64Raw;
   if (attB64) {
@@ -1171,10 +1250,6 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
     }
   }
 
-  if (!expenseCategory) return { ok: false, error: 'Expense category is required.' };
-  if (!isAllowedExpenseCategory(expenseCategory)) {
-    return { ok: false, error: 'Expense category must be chosen from the standard list.' };
-  }
   if (!lineItems.length) {
     return { ok: false, error: 'Add at least one line with description, quantity, and unit price.' };
   }
@@ -1182,45 +1257,101 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   if (amountRequestedNgn <= 0) {
     return { ok: false, error: 'Line items must total a positive amount.' };
   }
+  const hasAttachment =
+    Boolean(attB64) || Boolean(String(row.attachment_data_b64 || '').trim());
+  const catCheck = validatePaymentRequestExpenseCategory(
+    actor,
+    payload,
+    expenseCategory,
+    amountRequestedNgn,
+    hasAttachment
+  );
+  if (!catCheck.ok) return catCheck;
+  const categoryLane = getExpenseCategoryLane(expenseCategory);
   const lineItemsJson = JSON.stringify(lineItems);
+  const prHasJustification = db
+    .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
+    .get();
+  const expHasLane = db
+    .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
+    .get();
 
   try {
     assertPeriodOpen(db, requestDate, 'Payment request date');
     db.transaction(() => {
-      db.prepare(
-        `UPDATE payment_requests
-         SET amount_requested_ngn = ?,
-             request_date = ?,
-             approval_status = 'Pending',
-             description = ?,
-             approved_by = '',
-             approved_at_iso = '',
-             approval_note = '',
-             request_reference = ?,
-             line_items_json = ?,
-             attachment_name = ?,
-             attachment_mime = ?,
-             attachment_data_b64 = ?
-         WHERE request_id = ?`
-      ).run(
-        amountRequestedNgn,
-        requestDate,
-        description,
-        requestReference || '',
-        lineItemsJson,
-        attB64 ? attName : String(row.attachment_name || ''),
-        attB64 ? attMime : String(row.attachment_mime || ''),
-        attB64 ? attB64 : String(row.attachment_data_b64 || ''),
-        rid
-      );
+      if (prHasJustification) {
+        db.prepare(
+          `UPDATE payment_requests
+           SET amount_requested_ngn = ?,
+               request_date = ?,
+               approval_status = 'Pending',
+               description = ?,
+               approved_by = '',
+               approved_at_iso = '',
+               approval_note = '',
+               request_reference = ?,
+               line_items_json = ?,
+               attachment_name = ?,
+               attachment_mime = ?,
+               attachment_data_b64 = ?,
+               category_justification = ?
+           WHERE request_id = ?`
+        ).run(
+          amountRequestedNgn,
+          requestDate,
+          description,
+          requestReference || '',
+          lineItemsJson,
+          attB64 ? attName : String(row.attachment_name || ''),
+          attB64 ? attMime : String(row.attachment_mime || ''),
+          attB64 ? attB64 : String(row.attachment_data_b64 || ''),
+          categoryJustification || null,
+          rid
+        );
+      } else {
+        db.prepare(
+          `UPDATE payment_requests
+           SET amount_requested_ngn = ?,
+               request_date = ?,
+               approval_status = 'Pending',
+               description = ?,
+               approved_by = '',
+               approved_at_iso = '',
+               approval_note = '',
+               request_reference = ?,
+               line_items_json = ?,
+               attachment_name = ?,
+               attachment_mime = ?,
+               attachment_data_b64 = ?
+           WHERE request_id = ?`
+        ).run(
+          amountRequestedNgn,
+          requestDate,
+          description,
+          requestReference || '',
+          lineItemsJson,
+          attB64 ? attName : String(row.attachment_name || ''),
+          attB64 ? attMime : String(row.attachment_mime || ''),
+          attB64 ? attB64 : String(row.attachment_data_b64 || ''),
+          rid
+        );
+      }
 
       const expenseId = String(row.expense_id || '').trim();
       if (expenseId) {
-        db.prepare(
-          `UPDATE expenses
-           SET amount_ngn = ?, date = ?, category = ?, reference = ?
-           WHERE expense_id = ?`
-        ).run(amountRequestedNgn, requestDate, expenseCategory, requestReference || rid, expenseId);
+        if (expHasLane) {
+          db.prepare(
+            `UPDATE expenses
+             SET amount_ngn = ?, date = ?, category = ?, category_lane = ?, reference = ?
+             WHERE expense_id = ?`
+          ).run(amountRequestedNgn, requestDate, expenseCategory, categoryLane, requestReference || rid, expenseId);
+        } else {
+          db.prepare(
+            `UPDATE expenses
+             SET amount_ngn = ?, date = ?, category = ?, reference = ?
+             WHERE expense_id = ?`
+          ).run(amountRequestedNgn, requestDate, expenseCategory, requestReference || rid, expenseId);
+        }
       }
 
       appendAuditLog(db, {
@@ -1259,6 +1390,15 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
   const expenseCategory = String(expenseRow?.category ?? '');
   const amountRequestedNgn = roundMoney(row.amount_requested_ngn ?? 0);
   const govLimits = getOrgGovernanceLimits(db);
+  if (
+    status === 'Approved' &&
+    !actorMayApprovePaymentRequestCategory(actor, expenseCategory, (p) => userHasPermission(actor, p))
+  ) {
+    return {
+      ok: false,
+      error: 'This expense category requires Finance or MD approval.',
+    };
+  }
   if (
     status === 'Approved' &&
     !actorMayApprovePaymentRequestAmount(
@@ -1316,6 +1456,134 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
         : `Accounts: payment request ${requestID} was rejected by ${actorLabel}.${notePart}`
     );
     return { ok: true, warnings };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/** GL debit preview for an approved/unpaid payment request (Finance pay screen). */
+export function getPaymentRequestGlPreview(db, requestId) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return { ok: false, error: 'Payment request ID is required.' };
+  const row = db
+    .prepare(
+      `SELECT pr.amount_requested_ngn, pr.paid_amount_ngn, e.category AS expense_category
+       FROM payment_requests pr
+       LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+       WHERE pr.request_id = ?`
+    )
+    .get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+  const category = String(row.expense_category || 'Others').trim() || 'Others';
+  const requestedNgn = roundMoney(row.amount_requested_ngn);
+  const paidNgn = roundMoney(row.paid_amount_ngn);
+  const remainingNgn = Math.max(0, requestedNgn - paidNgn);
+  const { accountCode, isEquity, isCapex } = glAccountForExpenseCategory(category, { capexAsAsset: true });
+  const lane = getExpenseCategoryLane(category);
+  return {
+    ok: true,
+    requestID: rid,
+    expenseCategory: category,
+    categoryLane: lane,
+    amountRequestedNgn: requestedNgn,
+    paidAmountNgn: paidNgn,
+    remainingNgn,
+    gl: {
+      debitAccountCode: accountCode,
+      creditSide: 'Treasury cash',
+      isEquity,
+      isCapex,
+    },
+  };
+}
+
+/**
+ * Finance may reclassify category on approved, unpaid payment requests (before treasury payout).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} requestID
+ * @param {{ expenseCategory?: string; categoryJustification?: string }} payload
+ * @param {object | null} actor
+ */
+export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) {
+  const rid = String(requestID || '').trim();
+  if (!rid) return { ok: false, error: 'Payment request ID is required.' };
+  if (!userHasPermission(actor, 'finance.approve') && !userHasPermission(actor, '*')) {
+    return { ok: false, error: 'finance.approve is required to reclassify expense category.' };
+  }
+
+  const row = db.prepare(`SELECT * FROM payment_requests WHERE request_id = ?`).get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.' };
+
+  const approvalStatus = String(row.approval_status || '').trim();
+  if (approvalStatus !== 'Approved') {
+    return { ok: false, error: 'Only approved requests awaiting payout can be reclassified.' };
+  }
+  const paidNgn = roundMoney(row.paid_amount_ngn);
+  if (paidNgn > 0) {
+    return { ok: false, error: 'Cannot reclassify after treasury payout — reverse payout first.' };
+  }
+
+  const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
+  const categoryJustification = String(
+    payload.categoryJustification ?? row.category_justification ?? ''
+  ).trim();
+  const amountRequestedNgn = roundMoney(row.amount_requested_ngn);
+  const hasAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+
+  const catCheck = validateExpenseCategorySelection({
+    actor,
+    category: expenseCategory,
+    amountNgn: amountRequestedNgn,
+    description: row.description,
+    categoryJustification,
+    hasAttachment,
+    hasPermission: (p) => userHasPermission(actor, p),
+  });
+  if (!catCheck.ok) return catCheck;
+
+  const categoryLane = getExpenseCategoryLane(expenseCategory);
+  const expenseId = String(row.expense_id || '').trim();
+  const priorCategory = expenseId
+    ? String(db.prepare(`SELECT category FROM expenses WHERE expense_id = ?`).get(expenseId)?.category || '')
+    : '';
+
+  try {
+    db.transaction(() => {
+      const prHasJustification = db
+        .prepare(`SELECT 1 FROM pragma_table_info('payment_requests') WHERE name = 'category_justification'`)
+        .get();
+      if (prHasJustification) {
+        db.prepare(`UPDATE payment_requests SET category_justification = ? WHERE request_id = ?`).run(
+          categoryJustification || null,
+          rid
+        );
+      }
+      if (expenseId) {
+        const expHasLane = db
+          .prepare(`SELECT 1 FROM pragma_table_info('expenses') WHERE name = 'category_lane'`)
+          .get();
+        if (expHasLane) {
+          db.prepare(
+            `UPDATE expenses SET category = ?, category_lane = ? WHERE expense_id = ?`
+          ).run(expenseCategory, categoryLane, expenseId);
+        } else {
+          db.prepare(`UPDATE expenses SET category = ? WHERE expense_id = ?`).run(expenseCategory, expenseId);
+        }
+      }
+      appendAuditLog(db, {
+        actor,
+        action: 'payment_request.reclassify_category',
+        entityKind: 'payment_request',
+        entityId: rid,
+        note: `Category ${priorCategory || '—'} → ${expenseCategory}`,
+        details: {
+          priorCategory,
+          expenseCategory,
+          categoryLane,
+        },
+      });
+    })();
+    return { ok: true, expenseCategory, categoryLane };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

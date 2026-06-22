@@ -72,8 +72,10 @@ export function syncFinanceBankReconExceptionWorkItem(db, branchId, actor) {
 
 /**
  * Open or close a Finance work item for PO transport fee payment (visible to cashier / finance).
+ * @param {{ outerTransaction?: boolean }} [opts] When true, skip nested db.transaction in work-item upserts (caller already in a transaction).
  */
-export function syncFinancePoTransportWorkItem(db, poID, actor) {
+export function syncFinancePoTransportWorkItem(db, poID, actor, opts = {}) {
+  const wiOpts = opts.outerTransaction ? { outerTransaction: true } : {};
   if (!workRegistryTablesReady(db)) return { ok: true, noop: true };
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false };
@@ -105,7 +107,7 @@ export function syncFinancePoTransportWorkItem(db, poID, actor) {
       requiresResponse: false,
       priority: 'normal',
       closedAtIso: new Date().toISOString(),
-    });
+    }, wiOpts);
   }
 
   if (isEffectivelyFullyPaid(paid, total)) {
@@ -130,7 +132,7 @@ export function syncFinancePoTransportWorkItem(db, poID, actor) {
       senderOfficeKey: officeKey,
       senderBranchId: bid,
       data: { routePath: '/accounts', routeState: { accountsTab: 'movements' } },
-    });
+    }, wiOpts);
   }
 
   const outstanding = total - paid;
@@ -161,7 +163,7 @@ export function syncFinancePoTransportWorkItem(db, poID, actor) {
       transportAmountNgn: total,
       transportPaidNgn: paid,
     },
-  });
+  }, wiOpts);
 }
 
 /**

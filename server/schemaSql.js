@@ -963,7 +963,8 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   line_items_json TEXT,
   attachment_name TEXT,
   attachment_mime TEXT,
-  attachment_data_b64 TEXT
+  attachment_data_b64 TEXT,
+  category_justification TEXT
 );
 
 CREATE TABLE IF NOT EXISTS accounts_payable (

@@ -175,7 +175,7 @@ function findLoadByPo(db, poId) {
     .get(poId);
 }
 
-export function syncInTransitLoadFromPoLink(db, poId, actor = null) {
+export function syncInTransitLoadFromPoLink(db, poId, actor = null, opts = {}) {
   if (!inTransitTablesReady(db)) return { ok: true, load: null };
   const po = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poId);
   if (!po) return { ok: false, error: 'PO not found.' };
@@ -199,7 +199,7 @@ export function syncInTransitLoadFromPoLink(db, poId, actor = null) {
     qtyReceived: Math.max(0, Number(line.qty_received) || 0),
     shortLandedQty: 0,
   }));
-  db.transaction(() => {
+  const runBody = () => {
     db.prepare(
       `INSERT INTO in_transit_loads (
         id, reference_no, branch_id, destination_branch_id, status, source_kind, source_id, purchase_order_id,
@@ -253,7 +253,9 @@ export function syncInTransitLoadFromPoLink(db, poId, actor = null) {
       })
     );
     upsertLoadLines(db, id, lines);
-  })();
+  };
+  if (opts.outerTransaction) runBody();
+  else db.transaction(runBody)();
   appendAuditLog(db, {
     actor,
     action: 'in_transit_load.sync_from_link',
@@ -264,12 +266,12 @@ export function syncInTransitLoadFromPoLink(db, poId, actor = null) {
   return { ok: true, load: listLoadRows(db, 'ALL').find((row) => row.id === id) || null };
 }
 
-export function syncInTransitLoadFromTransportPost(db, poId, actor = null) {
+export function syncInTransitLoadFromTransportPost(db, poId, actor = null, opts = {}) {
   if (!inTransitTablesReady(db)) return { ok: true, load: null };
   const po = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poId);
   if (!po) return { ok: false, error: 'PO not found.' };
   const existing = findLoadByPo(db, poId);
-  if (!existing) return syncInTransitLoadFromPoLink(db, poId, actor);
+  if (!existing) return syncInTransitLoadFromPoLink(db, poId, actor, opts);
   const now = nowIso();
   db.prepare(
     `UPDATE in_transit_loads

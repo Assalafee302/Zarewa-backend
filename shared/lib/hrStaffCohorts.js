@@ -173,3 +173,26 @@ export function payrollGroupsForCohort(cohort) {
   if (c === 'hq_special' || c === 'hq-special') return [...HQ_SPECIAL_GROUPS];
   return [...EMPLOYEE_DIRECTORY_GROUPS];
 }
+
+/** Kaduna (HQ) — default cashier branch for HQ and mining when profile branch is unset. */
+export const HQ_CASHIER_BRANCH_ID = 'BR-KD';
+
+/**
+ * Branch whose cashier pays approved loans and receives cash/bank repayments.
+ * Domestic staff use their host branch when set; HQ and mining default to Kaduna (HQ).
+ * @param {{ branchId?: string | null; branch_id?: string | null; payrollGroup?: string | null; payroll_group?: string | null } | null | undefined} profile
+ * @param {string} [fallbackBranchId]
+ */
+export function resolveStaffCashierBranchId(profile, fallbackBranchId = HQ_CASHIER_BRANCH_ID) {
+  const explicit = String(profile?.branchId ?? profile?.branch_id ?? '').trim();
+  if (explicit) return explicit;
+  const payrollGroup = normalizePayrollGroup(profile?.payrollGroup ?? profile?.payroll_group);
+  if (
+    payrollGroup === HR_PAYROLL_GROUPS.HQ_ADMIN ||
+    payrollGroup === HR_PAYROLL_GROUPS.MINING ||
+    payrollGroup === HR_PAYROLL_GROUPS.DOMESTIC
+  ) {
+    return String(fallbackBranchId || HQ_CASHIER_BRANCH_ID).trim() || HQ_CASHIER_BRANCH_ID;
+  }
+  return String(fallbackBranchId || HQ_CASHIER_BRANCH_ID).trim() || HQ_CASHIER_BRANCH_ID;
+}

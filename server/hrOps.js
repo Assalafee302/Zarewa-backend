@@ -108,6 +108,7 @@ import {
   payrollGroupsForCohort,
   requiresAttendance,
   requiresPaye,
+  resolveStaffCashierBranchId,
   staffMeetsPensionPolicy,
 } from '../shared/lib/hrStaffCohorts.js';
 
@@ -2369,7 +2370,7 @@ export function createHrRequest(db, userId, body) {
       }
     }
   }
-  const branchId = prof?.branch_id || DEFAULT_BRANCH_ID;
+  const branchId = resolveStaffCashierBranchId(prof, DEFAULT_BRANCH_ID);
   const id = newId('HRR');
   const now = nowIso();
   db.prepare(

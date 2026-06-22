@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   HR_PAYROLL_GROUPS,
+  HQ_CASHIER_BRANCH_ID,
   isBeneficiaryOnlyPayrollGroup,
   isErpAccessRestrictedPayrollGroup,
   isPayrollRunEligible,
@@ -8,6 +9,7 @@ import {
   payrollGroupMayHaveLogin,
   requiresEmployeePensionDeduction,
   requiresPaye,
+  resolveStaffCashierBranchId,
   staffMeetsPensionPolicy,
   usesExecutiveBenefitsMonthlyPay,
 } from './hrStaffCohorts.js';
@@ -71,5 +73,13 @@ describe('hrStaffCohorts payroll rules', () => {
       })
     ).toBe(false);
     expect(staffMeetsPensionPolicy({ payrollGroup: HR_PAYROLL_GROUPS.DOMESTIC })).toBe(false);
+  });
+
+  it('resolveStaffCashierBranchId uses host branch or Kaduna HQ default', () => {
+    expect(resolveStaffCashierBranchId({ branch_id: 'BR-YL', payroll_group: 'branch_ops' })).toBe('BR-YL');
+    expect(resolveStaffCashierBranchId({ payroll_group: 'hq_admin' })).toBe(HQ_CASHIER_BRANCH_ID);
+    expect(resolveStaffCashierBranchId({ payroll_group: 'mining_div' })).toBe(HQ_CASHIER_BRANCH_ID);
+    expect(resolveStaffCashierBranchId({ branch_id: 'BR-YL', payroll_group: 'chairman_staffs' })).toBe('BR-YL');
+    expect(resolveStaffCashierBranchId({ payroll_group: 'chairman_staffs' })).toBe(HQ_CASHIER_BRANCH_ID);
   });
 });

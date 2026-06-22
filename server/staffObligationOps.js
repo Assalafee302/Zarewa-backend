@@ -5,6 +5,7 @@
 import crypto from 'node:crypto';
 import { getBranchCodeUpper, bumpHumanSerial } from './humanId.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { resolveStaffCashierBranchId } from '../shared/lib/hrStaffCohorts.js';
 import { hrTablesReady, appendHrAuditEvent, nowIso } from './hrOps.js';
 import { actorName, userHasPermission } from './auth.js';
 import { assertPeriodOpen } from './controlOps.js';
@@ -269,8 +270,12 @@ export function insertObligationAccount(db, payload) {
   if (!staffObligationTablesReady(db)) return { ok: false, error: 'Staff obligation ledger not migrated.' };
   const userId = String(payload.userId || '').trim();
   if (!userId) return { ok: false, error: 'userId is required.' };
-  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
-  const branchId = String(payload.branchId || prof?.branch_id || DEFAULT_BRANCH_ID).trim();
+  const prof = db
+    .prepare(`SELECT branch_id, payroll_group FROM hr_staff_profiles WHERE user_id = ?`)
+    .get(userId);
+  const branchId = String(
+    payload.branchId || resolveStaffCashierBranchId(prof, DEFAULT_BRANCH_ID)
+  ).trim();
   const id = payload.id || nextObligationId(db, branchId);
   const now = nowIso();
   const principalOriginal = Math.round(Number(payload.principalOriginalNgn) || 0);
@@ -458,8 +463,11 @@ export function migrateLegacyStaffLoan(db, actor, body = {}) {
     return { ok: false, error: 'Monthly installment is required when balance remains.' };
   }
 
-  const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
+  const prof = db
+    .prepare(`SELECT branch_id, payroll_group FROM hr_staff_profiles WHERE user_id = ?`)
+    .get(userId);
   if (!prof) return { ok: false, error: 'Staff profile not found.' };
+  const cashierBranchId = resolveStaffCashierBranchId(prof, DEFAULT_BRANCH_ID);
 
   const title = String(body.title || body.purpose || 'Legacy staff loan').trim();
   const disbursedAt = String(body.disbursedAtIso ?? body.originalDisbursementDate ?? '').slice(0, 10) || null;
@@ -468,7 +476,7 @@ export function migrateLegacyStaffLoan(db, actor, body = {}) {
 
   const ins = insertObligationAccount(db, {
     userId,
-    branchId: body.branchId || prof.branch_id,
+    branchId: body.branchId || cashierBranchId,
     kind: OBLIGATION_KIND.LOAN,
     origin: OBLIGATION_ORIGIN.MIGRATED,
     title,

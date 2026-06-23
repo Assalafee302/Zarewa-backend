@@ -46,10 +46,10 @@ export function getAccountingStatementsPack(db, periodKey, branchScope = 'ALL', 
   const b = monthBounds(periodKey);
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
-  const plTb = trialBalanceRows(db, b.start, b.end);
+  const plTb = trialBalanceRows(db, b.start, b.end, { branchScope });
   if (!plTb.ok) return plTb;
 
-  const bsTb = trialBalanceRows(db, '2000-01-01', b.end);
+  const bsTb = trialBalanceRows(db, '2000-01-01', b.end, { branchScope });
   if (!bsTb.ok) return bsTb;
 
   const plLines = [];

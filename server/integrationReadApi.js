@@ -27,7 +27,15 @@ function integrationRateLimitExceeded(keyId, ip, maxPerWindow = 120, windowMs = 
   return false;
 }
 
-function logIntegrationRead(db, req, row, routeLabel) {
+/** @param {string} [queryBranchId] */
+function resolveIntegrationBranchScope(queryBranchId) {
+  const q = String(queryBranchId || '').trim();
+  if (q && q.toUpperCase() === 'ALL') return 'ALL';
+  if (q && q.startsWith('BR-')) return q;
+  return DEFAULT_BRANCH_ID;
+}
+
+function logIntegrationRead(db, req, row, routeLabel, branchScope) {
   try {
     appendAuditLog(db, {
       actor: { id: row.created_by_user_id || null, username: row.id, displayName: row.name || 'Integration key' },
@@ -38,6 +46,7 @@ function logIntegrationRead(db, req, row, routeLabel) {
       details: {
         route: routeLabel,
         ip: String(req.ip || req.socket?.remoteAddress || ''),
+        branchScope,
         costCenter: String(req.query.costCenter || '').trim() || null,
         startDate: String(req.query.startDate || '').slice(0, 10) || null,
         endDate: String(req.query.endDate || '').slice(0, 10) || null,
@@ -94,10 +103,11 @@ export function registerIntegrationReadApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const costCenter = String(req.query.costCenter || '').trim();
-      const r = trialBalanceRows(db, startDate, endDate, { costCenter });
+      const branchScope = resolveIntegrationBranchScope(req.query.branchId);
+      const r = trialBalanceRows(db, startDate, endDate, { costCenter, branchScope });
       if (!r.ok) return res.status(400).json(r);
-      logIntegrationRead(db, req, req.integrationKeyRow, 'GET /api/integration/v1/trial-balance');
-      return res.json({ ...r, ok: true, branchScope: DEFAULT_BRANCH_ID });
+      logIntegrationRead(db, req, req.integrationKeyRow, 'GET /api/integration/v1/trial-balance', branchScope);
+      return res.json({ ...r, ok: true, branchScope });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load trial balance.' });
@@ -108,10 +118,11 @@ export function registerIntegrationReadApi(app, db) {
     try {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
-      const r = listGlJournalEntries(db, startDate, endDate);
+      const branchScope = resolveIntegrationBranchScope(req.query.branchId);
+      const r = listGlJournalEntries(db, startDate, endDate, { branchScope });
       if (!r.ok) return res.status(400).json(r);
-      logIntegrationRead(db, req, req.integrationKeyRow, 'GET /api/integration/v1/journals');
-      return res.json({ ...r, ok: true, branchScope: DEFAULT_BRANCH_ID });
+      logIntegrationRead(db, req, req.integrationKeyRow, 'GET /api/integration/v1/journals', branchScope);
+      return res.json({ ...r, ok: true, branchScope });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not load journals.' });

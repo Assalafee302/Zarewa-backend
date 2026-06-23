@@ -32,6 +32,7 @@ function newPeriodId() {
 import { listCoilLots, listInventoryCoilSnapshots, listProducts, listProductionJobs, listStockMovements } from './readModel.js';
 import { listMasterData } from './masterData.js';
 import { listInTransitLoads } from './inTransitOps.js';
+import { getProductRowForWorkspace } from './productBranchInventory.js';
 import { listProductionJobCoils } from './productionTraceability.js';
 import { isBranchManagerApprovalAuthority, isExecutiveRoleKey } from '../shared/workspaceGovernance.js';
 import { purchaseUnitPriceMapByProductPrefix, resolveBranchCoilCostPerKg } from './materialPricingOps.js';
@@ -513,7 +514,7 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
       }
       for (const r of reg.accessories?.rows || []) {
         for (const pid of r.productIds || []) {
-          const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(pid);
+          const p = getProductRowForWorkspace(db, pid, bid);
           pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
         }
       }

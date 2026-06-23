@@ -1,7 +1,7 @@
 /**
  * Branch-scoped non-coil inventory vs global coil catalogue SKUs.
  */
-import { listBranches } from './branches.js';
+import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 
 export const GLOBAL_COIL_PRODUCT_IDS = new Set(['COIL-ALU', 'PRD-102']);
 
@@ -43,20 +43,52 @@ export function productsTableHasBranchCompositePk(db) {
  * @param {string} productId
  * @param {string} workspaceBranchId
  */
+function productAllowsNegativeStock(productId, row) {
+  const pid = String(productId || '').trim();
+  if (/^ACC-/i.test(pid)) return true;
+  if (!row || !/^STONE-/i.test(pid)) return false;
+  const attrs = parseDashboardAttrs(row);
+  if (attrs.stoneFlatsheet) return true;
+  if (attrs.inventoryModel === 'stone_meter') return true;
+  if (String(row.unit || '').toLowerCase() === 'm' && attrs.stoneDesign) return true;
+  return /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid);
+}
+
+/**
+ * @returns {number | null} on-hand qty for branch-scoped row, or null if missing
+ */
+export function getProductStockLevelForBranch(db, productId, branchId) {
+  const row = getProductRowForWorkspace(db, productId, branchId);
+  if (!row) return null;
+  return Number(row.stock_level) || 0;
+}
+
+/**
+ * Branch-scoped stock delta with accessory/stone negative allowance.
+ * @returns {boolean} whether a row was updated
+ */
+export function adjustProductStockForBranch(db, productId, delta, branchId) {
+  const pid = String(productId || '').trim();
+  if (!pid) return false;
+  const row = getProductRowForWorkspace(db, pid, branchId);
+  if (!row) return false;
+  const pb = String(row.branch_id ?? '').trim();
+  const raw = Number(row.stock_level) + Number(delta || 0);
+  const allowNegative = productAllowsNegativeStock(pid, row);
+  const next = allowNegative ? raw : Math.max(0, raw);
+  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
+    next,
+    pid,
+    pb
+  );
+  return true;
+}
+
 /**
  * @returns {boolean} whether a row was updated
  */
 export function bumpProductStockLevel(db, productId, branchId, delta) {
-  const row = getProductRowForWorkspace(db, productId, branchId);
-  if (!row) return false;
-  const pb = String(row.branch_id ?? '').trim();
-  const next = Number(row.stock_level) + Number(delta);
-  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
-    next,
-    productId,
-    pb
-  );
-  return true;
+  return adjustProductStockForBranch(db, productId, delta, branchId);
 }
 
 export function getProductRowForWorkspace(db, productId, workspaceBranchId) {
@@ -71,7 +103,7 @@ export function getProductRowForWorkspace(db, productId, workspaceBranchId) {
       .get(pid);
   }
   if (!wb) {
-    return db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid);
+    return getProductRowForWorkspace(db, pid, DEFAULT_BRANCH_ID);
   }
   return db.prepare(`SELECT * FROM products WHERE product_id = ? AND branch_id = ?`).get(pid, wb);
 }

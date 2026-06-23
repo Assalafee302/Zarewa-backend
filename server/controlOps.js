@@ -1,5 +1,6 @@
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
+import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
 import { DEFAULT_BRANCH_ID, getBranch } from './branches.js';
 import {
   nextApprovalActionHumanId,
@@ -3468,6 +3469,19 @@ export function upsertTreasuryAccount(db, payload, actor) {
         Object.prototype.hasOwnProperty.call(payload, 'branchId') &&
         String(payload.branchId ?? '').trim();
       if (payload.id) {
+        const existing = db
+          .prepare(`SELECT branch_id FROM treasury_accounts WHERE id = ?`)
+          .get(Number(payload.id));
+        if (!existing) throw new Error('Treasury account not found.');
+        if (!mayReassignBranch) {
+          const gate = assertEntityBranchForWorkspaceWrite(
+            actor,
+            existing.branch_id,
+            payload.workspaceBranchId,
+            Boolean(payload.workspaceViewAll)
+          );
+          if (!gate.ok) throw new Error(gate.error);
+        }
         if (mayReassignBranch) {
           db.prepare(
             `UPDATE treasury_accounts

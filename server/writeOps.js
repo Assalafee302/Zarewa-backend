@@ -21,7 +21,6 @@ import { syncFixedAssetFromCapexExpense } from './fixedAssetAutomationOps.js';
 import {
   ensureStoneFlatsheetProduct,
   ensureStoneProduct,
-  isStoneCoatedMetreProductId,
   isStoneFlatsheetProductRow,
   isStoneMeterProductRow,
   isStoneMeterQuotationLinesJson,
@@ -29,6 +28,7 @@ import {
 import {
   bumpProductStockLevel,
   getProductRowForWorkspace,
+  getProductStockLevelForBranch,
   isGlobalCoilCatalogProductId,
 } from './productBranchInventory.js';
 import {
@@ -41,7 +41,7 @@ import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
-import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
+import { insertStockMovementTx } from './stockMovementOps.js';
 import {
   latestPayoutDay,
   payoutLinePostedAtISO,
@@ -237,10 +237,16 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
  * Customer deposit advance from ledger only (matches `advanceBalanceFromEntries` in customerLedgerCore.js).
  * @param {import('better-sqlite3').Database} db
  */
-export function advanceBalanceNgnForCustomerDb(db, customerID) {
+export function advanceBalanceNgnForCustomerDb(db, customerID, branchId) {
   const id = String(customerID || '').trim();
   if (!id) return 0;
-  const rows = db.prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ?`).all(id);
+  const bid = String(branchId ?? '').trim();
+  const rows =
+    bid
+      ? db
+          .prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ? AND branch_id = ?`)
+          .all(id, bid)
+      : db.prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ?`).all(id);
   let s = 0;
   for (const e of rows) {
     const n = roundMoney(e.amount_ngn);
@@ -261,10 +267,16 @@ export function advanceBalanceNgnForCustomerDb(db, customerID) {
 }
 
 /** Overpayment credit on quotations (OVERPAY_ADVANCE), separate from deposit advance (ADVANCE_IN). */
-export function overpayCreditNgnForCustomerDb(db, customerID) {
+export function overpayCreditNgnForCustomerDb(db, customerID, branchId) {
   const id = String(customerID || '').trim();
   if (!id) return 0;
-  const rows = db.prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ?`).all(id);
+  const bid = String(branchId ?? '').trim();
+  const rows =
+    bid
+      ? db
+          .prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ? AND branch_id = ?`)
+          .all(id, bid)
+      : db.prepare(`SELECT type, amount_ngn FROM ledger_entries WHERE customer_id = ?`).all(id);
   let s = 0;
   for (const e of rows) {
     const n = roundMoney(e.amount_ngn);
@@ -399,22 +411,14 @@ export function syncQuotationPaidFromLedger(db, quotationId) {
 
 function appendMovementTx(db, entry) {
   const id = nextStockMovementHumanId(db);
-  const atISO = new Date().toISOString().slice(0, 19);
-  db.prepare(
-    `INSERT INTO stock_movements (id, at_iso, type, ref, product_id, qty, detail, date_iso, unit_price_ngn, value_ngn)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).run(
+  const atISO = entry.atISO || new Date().toISOString().slice(0, 19);
+  insertStockMovementTx(db, {
+    ...entry,
     id,
     atISO,
-    entry.type,
-    entry.ref ?? null,
-    entry.productID ?? null,
-    entry.qty ?? null,
-    entry.detail ?? null,
-    entry.dateISO ?? atISO.slice(0, 10),
-    entry.unitPriceNgn ?? null,
-    entry.valueNgn ?? null
-  );
+    productID: entry.productID,
+    dateISO: entry.dateISO ?? atISO.slice(0, 10),
+  });
   return { id, atISO, ...entry };
 }
 
@@ -1890,14 +1894,14 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
 
   try {
     db.transaction(() => {
+      const deliveryBranch =
+        String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
       const lines = db.prepare(`SELECT * FROM delivery_lines WHERE delivery_id = ? ORDER BY sort_order`).all(deliveryId);
       if (status === 'Delivered' && !row.fulfillment_posted) {
         for (const line of lines) {
           const qty = Number(line.qty) || 0;
           if (qty <= 0) continue;
-          const product = db
-            .prepare(`SELECT stock_level, name FROM products WHERE product_id = ?`)
-            .get(line.product_id);
+          const product = getProductRowForWorkspace(db, line.product_id, deliveryBranch);
           if (!product) throw new Error(`Delivery line product ${line.product_id} not found.`);
           if (Number(product.stock_level) < qty) {
             throw new Error(`Insufficient stock for ${product.name || line.product_id}.`);
@@ -1906,10 +1910,10 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
         for (const line of lines) {
           const qty = Number(line.qty) || 0;
           if (qty <= 0) continue;
-          db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(
-            qty,
-            line.product_id
-          );
+          const bumped = bumpProductStockLevel(db, line.product_id, deliveryBranch, -qty);
+          if (!bumped) {
+            throw new Error(`Could not deduct stock for ${line.product_id} at branch ${deliveryBranch}.`);
+          }
           appendMovementTx(db, {
             type: 'CUSTOMER_DELIVERY',
             ref: deliveryId,
@@ -1917,6 +1921,7 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
             qty: -qty,
             detail: `${row.customer_name || 'Customer'} · ${line.product_name || line.product_id}`,
             dateISO: deliveredDateISO,
+            branchId: deliveryBranch,
           });
         }
       }
@@ -2040,7 +2045,8 @@ export function confirmGrn(
   }
 
   const lines = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ?`).all(poID);
-  const products = db.prepare(`SELECT * FROM products`).all();
+  const coilBranch =
+    String(po.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
   const sid = supplierID ?? po.supplier_id;
   const sname = supplierName ?? po.supplier_name;
 
@@ -2056,7 +2062,7 @@ export function confirmGrn(
   if (!allowConvSkip) {
     for (const e of entries) {
       const line = findPoLine(lines, e);
-      const prodRow = products.find((row) => row.product_id === e.productID);
+      const prodRow = getProductRowForWorkspace(db, e.productID, coilBranch);
       const pid = String(e.productID || '').trim();
       const isFs =
         prodRow != null
@@ -2065,7 +2071,7 @@ export function confirmGrn(
       const isStone =
         !isFs &&
         (prodRow != null
-          ? isStoneCoatedMetreProductId(db, pid) || (isStoneMeterProductRow(prodRow) && !isStoneFlatsheetProductRow(prodRow))
+          ? isStoneMeterProductRow(prodRow) && !isStoneFlatsheetProductRow(prodRow)
           : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         prodRow != null
@@ -2123,8 +2129,6 @@ export function confirmGrn(
     }
   }
 
-  const coilBranch =
-    String(po.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
   const grnDateISO = new Date().toISOString().slice(0, 10);
   const glUserId = opts?.actor?.id != null ? String(opts.actor.id) : null;
 
@@ -2167,7 +2171,7 @@ export function confirmGrn(
       const e = entries[i];
       const line = findPoLine(lines, e);
       const qty = Number(e.qtyReceived);
-      const product = products.find((row) => row.product_id === e.productID);
+      const product = getProductRowForWorkspace(db, e.productID, coilBranch);
       const pid = String(e.productID || '').trim();
       const isFs =
         product != null
@@ -2176,7 +2180,7 @@ export function confirmGrn(
       const isStone =
         !isFs &&
         (product != null
-          ? isStoneCoatedMetreProductId(db, pid)
+          ? isStoneMeterProductRow(product) && !isStoneFlatsheetProductRow(product)
           : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         product != null
@@ -2374,7 +2378,7 @@ export function confirmGrn(
     const deltaByProduct = {};
     for (const e of entries) {
       const line = findPoLine(lines, e);
-      const prodRow = products.find((row) => row.product_id === e.productID);
+      const prodRow = getProductRowForWorkspace(db, e.productID, coilBranch);
       const pid = String(line?.product_id || e.productID || '').trim();
       const isFs =
         prodRow != null
@@ -2383,7 +2387,7 @@ export function confirmGrn(
       const isStone =
         !isFs &&
         (prodRow != null
-          ? isStoneCoatedMetreProductId(db, pid)
+          ? isStoneMeterProductRow(prodRow) && !isStoneFlatsheetProductRow(prodRow)
           : /^STONE-/i.test(pid) && !/^STONE-FS-/i.test(pid));
       const isAcc =
         prodRow != null
@@ -2403,8 +2407,14 @@ export function confirmGrn(
       deltaByProduct[e.productID] = (deltaByProduct[e.productID] || 0) + qtyDelta;
     }
     for (const pid of Object.keys(deltaByProduct)) {
-      const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(pid);
-      if (exists) bumpProductStockLevel(db, pid, coilBranch, deltaByProduct[pid]);
+      const row = getProductRowForWorkspace(db, pid, coilBranch);
+      if (!row) {
+        throw new Error(`Stock product ${pid} not found for branch ${coilBranch}.`);
+      }
+      const bumped = bumpProductStockLevel(db, pid, coilBranch, deltaByProduct[pid]);
+      if (!bumped) {
+        throw new Error(`Could not update stock for ${pid} at branch ${coilBranch}.`);
+      }
     }
   })();
 
@@ -2458,6 +2468,7 @@ export function postStoneInventoryReceipt(db, payload, branchFallback = DEFAULT_
         dateISO,
         unitPriceNgn: upM || null,
         valueNgn: landed,
+        branchId: bid,
       });
       const src = `STONE-DIR-${productId}-${dateISO}-${Date.now()}`;
       const glS = tryPostInventoryReceiptJournal(db, {
@@ -2519,6 +2530,7 @@ export function postStoneFlatsheetInventoryReceipt(db, payload, branchFallback =
         dateISO,
         unitPriceNgn: upM2 || null,
         valueNgn: landed,
+        branchId: bid,
       });
       const src = `STONE-FS-DIR-${productId}-${dateISO}-${Date.now()}`;
       const glS = tryPostInventoryReceiptJournal(db, {
@@ -2567,6 +2579,7 @@ export function postAccessoryInventoryReceipt(db, payload, branchFallback = DEFA
         dateISO,
         unitPriceNgn: up || null,
         valueNgn: landed,
+        branchId: bid,
       });
       const src = `ACC-DIR-${productID}-${dateISO}-${Date.now()}`;
       const glS = tryPostInventoryReceiptJournal(db, {
@@ -2628,39 +2641,58 @@ function resolveCoilImportProductId(db, r, bid, payloadDefault) {
   return '';
 }
 
-function reconcileCoilProductStockFromLots(db, productID, branchId) {
-  const hasB = pragmaHasColumn(db, 'coil_lots', 'branch_id');
-  const bid = String(branchId || '').trim();
-  const prow = db.prepare(`SELECT branch_id FROM products WHERE product_id = ?`).get(productID);
-  const pBranch = prow != null ? String(prow.branch_id ?? '').trim() : '';
-  const productIsGlobalCatalog = prow != null && pBranch === '';
+function coilStockBranchId(coilRow, workspaceBranchId) {
+  return String(coilRow?.branch_id || workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+}
 
-  let sumRow;
-  if (productIsGlobalCatalog) {
-    sumRow = db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(productID);
+/** Branch-scoped product stock delta for coil yard operations (global coil SKUs use catalogue row). */
+function bumpCoilLinkedProductStock(db, productId, branchId, delta) {
+  const pid = String(productId || '').trim();
+  if (!pid) throw new Error('Coil product id missing.');
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (!bumpProductStockLevel(db, pid, bid, delta)) {
+    throw new Error(`Raw material product ${pid} not found for branch ${bid}.`);
+  }
+  const stock = getProductStockLevelForBranch(db, pid, bid);
+  if (stock != null && stock < -1e-6) {
+    throw new Error('Raw material product stock would go negative — check coil vs book stock.');
+  }
+}
+
+function reconcileCoilProductStockFromLots(db, productID, branchId) {
+  const pid = String(productID || '').trim();
+  if (!pid) return;
+  const bid = String(branchId || '').trim();
+  const hasB = pragmaHasColumn(db, 'coil_lots', 'branch_id');
+  const row = getProductRowForWorkspace(db, pid, bid || DEFAULT_BRANCH_ID);
+  if (!row) return;
+  const pb = String(row.branch_id ?? '').trim();
+
+  let total;
+  if (isGlobalCoilCatalogProductId(pid)) {
+    total = Math.round(
+      Number(
+        db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(pid)?.s
+      ) || 0
+    );
   } else if (hasB && bid) {
-    sumRow = db
-      .prepare(
-        `SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '' OR branch_id = ?)`
-      )
-      .get(productID, bid);
+    total = Math.round(
+      Number(
+        db
+          .prepare(
+            `SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ? AND branch_id = ?`
+          )
+          .get(pid, bid)?.s
+      ) || 0
+    );
   } else {
-    sumRow = db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(productID);
+    total = Math.round(
+      Number(
+        db.prepare(`SELECT COALESCE(SUM(qty_remaining), 0) AS s FROM coil_lots WHERE product_id = ?`).get(pid)?.s
+      ) || 0
+    );
   }
-  const total = Math.round(Number(sumRow?.s) || 0);
-  const hasPb = pragmaHasColumn(db, 'products', 'branch_id');
-  if (productIsGlobalCatalog || !hasPb) {
-    db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(total, productID);
-    return;
-  }
-  if (hasPb && bid) {
-    const u1 = db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(total, productID, bid);
-    if (u1.changes === 0) {
-      db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(total, productID);
-    }
-  } else {
-    db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(total, productID);
-  }
+  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(total, pid, pb);
 }
 
 /**
@@ -2935,6 +2967,7 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
     qty: delta,
     detail: `${reasonCode}${note ? ` — ${note}` : ''}`,
     dateISO: dateISO || new Date().toISOString().slice(0, 10),
+    branchId: bid,
   });
   return { ok: true };
 }
@@ -2964,6 +2997,7 @@ export function transferToProduction(db, productID, qty, productionOrderId, date
     qty: q,
     ref: productionOrderId,
     dateISO: dateISO || new Date().toISOString().slice(0, 10),
+    branchId: wipBranch,
   });
   return { ok: true };
 }
@@ -3036,10 +3070,11 @@ export function receiveFinishedGoods(
 
   try {
     db.transaction(() => {
+      const fgBranch =
+        String(workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
       if (src) {
         const wq = Number(wqRaw);
-        const srcProd = db.prepare(`SELECT branch_id FROM products WHERE product_id = ?`).get(src);
-        const wipBranch = String(srcProd?.branch_id ?? '').trim();
+        const wipBranch = fgBranch;
         const wrow = db.prepare(`SELECT qty FROM wip_balances WHERE product_id = ? AND branch_id = ?`).get(
           src,
           wipBranch
@@ -3065,7 +3100,8 @@ export function receiveFinishedGoods(
       }
 
       if (!skipProductBump) {
-        db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(q, productID);
+        const bumped = bumpProductStockLevel(db, productID, fgBranch, q);
+        if (!bumped) throw new Error(`Finished goods product ${productID} not found for branch ${fgBranch}.`);
       }
 
       appendMovementTx(db, {
@@ -3434,6 +3470,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
       if (didMass) {
         const productID = String(row.product_id || '').trim();
         if (!productID) throw new Error('Coil product id missing.');
+        const stockBranch = coilStockBranchId(row, opts.workspaceBranchId);
 
         db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
           targetCurrent,
@@ -3443,7 +3480,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
         finalizeCoilLotStateTx(db, cn);
 
         if (massDelta > 0) {
-          db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(massDelta, productID);
+          bumpCoilLinkedProductStock(db, productID, stockBranch, massDelta);
           appendMovementTx(db, {
             type: 'COIL_RETURN',
             productID,
@@ -3454,11 +3491,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
           });
         } else {
           const rem = -massDelta;
-          db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(rem, productID);
-          const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-          if (!p || Number(p.stock_level) < -1e-6) {
-            throw new Error('Raw material product stock would go negative — check coil vs book stock.');
-          }
+          bumpCoilLinkedProductStock(db, productID, stockBranch, -rem);
           appendMovementTx(db, {
             type: 'COIL_SCRAP',
             productID,
@@ -3471,7 +3504,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
 
         const fr = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(cn);
         insertCoilControlEventTx(db, {
-          branchId: String(fr.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+          branchId: coilStockBranchId(fr, opts.workspaceBranchId),
           eventKind: massDelta > 0 ? 'adjust_add_kg' : 'adjust_remove_kg',
           coilNo: cn,
           productId: productID,
@@ -3583,6 +3616,7 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
 
   const productID = row.product_id;
   const newRem = qtyRem - kg;
+  const stockBranch = coilStockBranchId(row, workspaceBranchId);
 
   const runCore = () => {
     db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
@@ -3592,11 +3626,7 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
     );
     finalizeCoilLotStateTx(db, coilNo);
 
-    db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(kg, productID);
-    const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-    if (!p || Number(p.stock_level) < -1e-6) {
-      throw new Error('Raw material product stock would go negative — check coil vs book stock.');
-    }
+    bumpCoilLinkedProductStock(db, productID, stockBranch, -kg);
 
     appendMovementTx(db, {
       type: 'COIL_SCRAP',
@@ -3608,9 +3638,10 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
     });
 
     if (creditScrapInventory && scrapProductID) {
-      const sp = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(scrapProductID);
-      if (!sp) throw new Error(`Scrap product ${scrapProductID} not found.`);
-      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(kg, scrapProductID);
+      if (!getProductRowForWorkspace(db, scrapProductID, stockBranch)) {
+        throw new Error(`Scrap product ${scrapProductID} not found for branch ${stockBranch}.`);
+      }
+      bumpProductStockLevel(db, scrapProductID, stockBranch, kg);
       appendMovementTx(db, {
         type: 'SCRAP_INVENTORY',
         productID: scrapProductID,
@@ -3726,6 +3757,7 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
   const tailKg = qtyRem;
   const refDetail = cuttingListRef ? ` · CL ${cuttingListRef}` : '';
   const movementDetail = `${coilNo} roll finished — tail ${tailKg.toFixed(2)} kg removed from yard stock (profile)${refDetail}`;
+  const stockBranch = coilStockBranchId(row, workspaceBranchId);
 
   try {
     db.transaction(() => {
@@ -3734,11 +3766,7 @@ export function postCoilRollFinished(db, payload = {}, opts = {}) {
       ).run(coilNo);
       finalizeCoilLotStateTx(db, coilNo);
 
-      db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ?`).run(tailKg, productID);
-      const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-      if (!p || Number(p.stock_level) < -1e-6) {
-        throw new Error('Raw material product stock would go negative — check coil vs book stock.');
-      }
+      bumpCoilLinkedProductStock(db, productID, stockBranch, -tailKg);
 
       appendMovementTx(db, {
         type: 'COIL_CONSUMPTION',
@@ -3817,6 +3845,7 @@ export function returnCoilMaterialToStock(db, payload = {}, opts = {}) {
   const qtyRem = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
   const newRem = qtyRem + kg;
   const productID = row.product_id;
+  const stockBranch = coilStockBranchId(row, workspaceBranchId);
 
   try {
     db.transaction(() => {
@@ -3827,7 +3856,7 @@ export function returnCoilMaterialToStock(db, payload = {}, opts = {}) {
       );
       finalizeCoilLotStateTx(db, coilNo);
 
-      db.prepare(`UPDATE products SET stock_level = stock_level + ? WHERE product_id = ?`).run(kg, productID);
+      bumpCoilLinkedProductStock(db, productID, stockBranch, kg);
 
       appendMovementTx(db, {
         type: 'COIL_RETURN',
@@ -4633,6 +4662,17 @@ function firstTreasuryAccountId(db) {
   return r?.id ? Number(r.id) : 0;
 }
 
+function firstTreasuryAccountIdForBranch(db, branchId) {
+  const bid = String(branchId ?? '').trim();
+  if (bid) {
+    const r = db
+      .prepare(`SELECT id FROM treasury_accounts WHERE branch_id = ? ORDER BY id ASC LIMIT 1`)
+      .get(bid);
+    if (r?.id) return Number(r.id);
+  }
+  return firstTreasuryAccountId(db);
+}
+
 function postBankReconTreasuryVariance(db, params) {
   const {
     lineId,
@@ -4800,6 +4840,15 @@ export function updateBankReconciliationLine(db, lineId, payload, actor) {
   if (!id) return { ok: false, error: 'Line id is required.' };
   const row = db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Bank line not found.' };
+  if (payload?.workspaceBranchId != null) {
+    const branchGate = assertEntityBranchForWorkspaceWrite(
+      actor,
+      row.branch_id,
+      payload.workspaceBranchId,
+      Boolean(payload.workspaceViewAll)
+    );
+    if (!branchGate.ok) return { ok: false, error: branchGate.error };
+  }
 
   const systemMatch =
     payload.systemMatch !== undefined ? String(payload.systemMatch ?? '').trim() : row.system_match || '';
@@ -4933,7 +4982,9 @@ export function updateBankReconciliationLine(db, lineId, payload, actor) {
   const variancePct = (Math.abs(variance) / base) * 100;
 
   let treasuryId = treasuryOverride || primaryTreasuryAccountForReceipt(db, rc);
-  if (Math.abs(variance) >= 1 && !treasuryId) treasuryId = firstTreasuryAccountId(db);
+  if (Math.abs(variance) >= 1 && !treasuryId) {
+    treasuryId = firstTreasuryAccountIdForBranch(db, row.branch_id);
+  }
   if (Math.abs(variance) >= 1 && !treasuryId) {
     return {
       ok: false,
@@ -5030,11 +5081,20 @@ export function updateBankReconciliationLine(db, lineId, payload, actor) {
  * Manager / finance approver: post stored variance and mark line Matched.
  * @param {import('better-sqlite3').Database} db
  */
-export function approveBankReconciliationVariance(db, lineId, actor) {
+export function approveBankReconciliationVariance(db, lineId, actor, opts = {}) {
   const id = String(lineId ?? '').trim();
   if (!id) return { ok: false, error: 'Line id is required.' };
   const row = db.prepare(`SELECT * FROM bank_reconciliation_lines WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Bank line not found.' };
+  if (opts?.workspaceBranchId != null) {
+    const branchGate = assertEntityBranchForWorkspaceWrite(
+      actor,
+      row.branch_id,
+      opts.workspaceBranchId,
+      Boolean(opts.workspaceViewAll)
+    );
+    if (!branchGate.ok) return { ok: false, error: branchGate.error };
+  }
   if (String(row.status || '') !== 'PendingManager') {
     return { ok: false, error: 'This line is not awaiting manager clearance.' };
   }
@@ -5045,7 +5105,7 @@ export function approveBankReconciliationVariance(db, lineId, actor) {
   if (!rc) return { ok: false, error: 'Receipt id missing on bank line.' };
   const variance = roundMoney(row.variance_ngn);
   let tid = Number(row.treasury_account_id);
-  if (!tid && Math.abs(variance) >= 1) tid = firstTreasuryAccountId(db);
+  if (!tid && Math.abs(variance) >= 1) tid = firstTreasuryAccountIdForBranch(db, row.branch_id);
   if (!tid && Math.abs(variance) >= 1) {
     return { ok: false, error: 'Treasury account is not set and no default bank account exists.' };
   }
@@ -5855,10 +5915,10 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   const threshold = total * minPaidFrac - 1e-6;
   if (!forDraft && !managerOk && bookPaid < threshold) {
     const qKey = normalizeQuotRefDashKey(qref);
-    const receiptRows = listSalesReceipts(db, 'ALL').filter(
+    const receiptRows = listSalesReceipts(db, bid).filter(
       (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
     );
-    const ledgerRows = listLedgerEntries(db, 'ALL');
+    const ledgerRows = listLedgerEntries(db, bid);
     const enriched = enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerRows);
     const cashFromReceipts = enriched.reduce(
       (sum, r) => sum + Math.round(Number(r.cashReceivedNgn ?? r.amountNgn) || 0),
@@ -5913,7 +5973,7 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const customerID = String(payload.customerID ?? quote?.customer_id ?? '').trim();
   if (!customerID) return { ok: false, error: 'Select a linked quotation or customer.' };
   const customer =
-    db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(customerID) ||
+    db.prepare(`SELECT customer_id, name, branch_id FROM customers WHERE customer_id = ?`).get(customerID) ||
     null;
   if (!customer) return { ok: false, error: 'Customer not found.' };
   const qCheck = validateQuotationForCuttingList(db, quotationRef, null, { forDraft: isDraft });
@@ -5928,6 +5988,13 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   }
   const branchId =
     String(quote?.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
+  const custBranch = String(customer.branch_id ?? '').trim();
+  if (custBranch && custBranch !== branchId) {
+    return { ok: false, error: 'Customer belongs to another branch.' };
+  }
+  if (quote && String(quote.branch_id ?? '').trim() && String(quote.branch_id).trim() !== branchId) {
+    return { ok: false, error: 'Quotation belongs to another branch.' };
+  }
   const id = nextCuttingListHumanId(db, branchId);
   const dateISO = String(payload.dateISO ?? '').trim() || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
@@ -7480,6 +7547,20 @@ export function payPaymentRequest(db, requestID, payload) {
 export function payAccountsPayable(db, apId, payload) {
   const row = db.prepare(`SELECT * FROM accounts_payable WHERE ap_id = ?`).get(apId);
   if (!row) return { ok: false, error: 'Payable not found.' };
+  let poBranchId = null;
+  if (row.po_ref) {
+    const po = db.prepare(`SELECT po_id, branch_id FROM purchase_orders WHERE po_id = ?`).get(row.po_ref);
+    if (po) {
+      poBranchId = String(po.branch_id ?? '').trim() || null;
+      const gate = assertEntityBranchForWorkspaceWrite(
+        payload.actor,
+        po.branch_id,
+        payload.workspaceBranchId,
+        Boolean(payload.workspaceViewAll)
+      );
+      if (!gate.ok) return { ok: false, error: gate.error };
+    }
+  }
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Payment amount must be positive.' };
   const outstanding = effectiveOutstandingNgn(roundMoney(row.amount_ngn), roundMoney(row.paid_ngn));
@@ -7535,7 +7616,7 @@ export function payAccountsPayable(db, apId, payload) {
         sourceId: tm.id,
         poId: row.po_ref || '',
         apId,
-        branchId: payload.workspaceBranchId || null,
+        branchId: poBranchId || payload.workspaceBranchId || null,
         createdByUserId: payload.actor?.id ?? null,
         forceDebitCode: '2000',
         memo: payload.reference || row.invoice_ref || `AP payment ${apId}`,
@@ -7750,8 +7831,8 @@ export function payRefundEntry(db, refundId, payload) {
       }
       const cid = String(row.customer_id || '').trim();
       if (cid && payoutAmountNgn > 0) {
-        const advBal = advanceBalanceNgnForCustomerDb(db, cid);
-        const overBal = overpayCreditNgnForCustomerDb(db, cid);
+        const advBal = advanceBalanceNgnForCustomerDb(db, cid, wb);
+        const overBal = overpayCreditNgnForCustomerDb(db, cid, wb);
         const fromAdv = Math.min(payoutAmountNgn, Math.max(0, advBal));
         const fromOver = Math.min(Math.max(0, payoutAmountNgn - fromAdv), Math.max(0, overBal));
         const wb = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
@@ -7917,8 +7998,15 @@ function syncQuotationLineRows(db, quotationId, linesJson) {
 export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   if (!customerID) throw new Error('customerID is required.');
-  const cust = db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(customerID);
+  const cust = db.prepare(`SELECT customer_id, name, branch_id FROM customers WHERE customer_id = ?`).get(customerID);
   if (!cust) throw new Error('Customer not found.');
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const custBranch = String(cust.branch_id ?? '').trim();
+  if (custBranch && custBranch !== bid) {
+    throw new Error(
+      'Customer belongs to another branch. Switch workspace to that branch or select a customer registered here.'
+    );
+  }
 
   const linesJson = {
     products: payload.lines?.products ?? [],
@@ -7929,7 +8017,6 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);

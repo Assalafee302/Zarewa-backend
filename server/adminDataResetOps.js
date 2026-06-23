@@ -207,6 +207,11 @@ const BRANCH_SPECIAL_HANDLERS = {
     ).run(branchId, branchId);
   },
   stock_movements(db, branchId) {
+    const hasSmBranch = db.prepare(`PRAGMA table_info(stock_movements)`).all().some((c) => c.name === 'branch_id');
+    if (hasSmBranch) {
+      db.prepare(`DELETE FROM stock_movements WHERE branch_id = ?`).run(branchId);
+      return;
+    }
     db.prepare(
       `DELETE FROM stock_movements WHERE ref IN (SELECT po_id FROM purchase_orders WHERE branch_id = ?)`
     ).run(branchId);

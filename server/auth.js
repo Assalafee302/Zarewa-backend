@@ -1819,9 +1819,6 @@ function issuePasswordResetTokenForUserId(db, userId) {
     `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at_iso, expires_at_iso, used_at_iso)
      VALUES (?,?,?,?,?,NULL)`
   ).run(id, row.id, tokenHash, createdAtISO, expiresAtISO);
-  if (appUsersHasColumn(db, 'must_change_password')) {
-    db.prepare(`UPDATE app_users SET must_change_password = 1 WHERE id = ?`).run(row.id);
-  }
   return {
     token: plain,
     expiresAtISO,
@@ -1938,7 +1935,7 @@ export function completePasswordReset(db, identifier, token, newPassword) {
   })();
   storeRegisteredPassword(db, matchRow.user_id, newPassword);
 
-  return { ok: true };
+  return { ok: true, userId: String(matchRow.user_id || '') };
 }
 
 export function requireAuth(req, res, next) {

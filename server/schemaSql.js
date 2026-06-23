@@ -206,7 +206,8 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   detail TEXT,
   date_iso TEXT,
   unit_price_ngn INTEGER,
-  value_ngn INTEGER
+  value_ngn INTEGER,
+  branch_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS wip_balances (

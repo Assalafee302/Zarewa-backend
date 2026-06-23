@@ -211,7 +211,7 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
-  const tb = trialBalanceRows(db, b.start, b.end);
+  const tb = trialBalanceRows(db, b.start, b.end, { branchScope });
   let glBalanced = true;
   if (tb.ok && Array.isArray(tb.rows)) {
     let d = 0;

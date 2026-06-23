@@ -4,7 +4,7 @@
  */
 
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
-import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
+import { ACCOUNTING_OPENING_DATE_ISO, ACCOUNTING_OPENING_SOURCE_ID } from '../shared/lib/accountingCutover.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { ensureSupplierAdvanceGlAccount } from './ap2SupplierAdvanceGl.js';
@@ -17,6 +17,23 @@ import {
 } from './glOps.js';
 
 const OPENING_SOURCE_KIND = 'OPENING_BALANCE';
+
+export function openingBalanceSourceId(branchScope) {
+  const bid = String(branchScope ?? '').trim();
+  if (!bid || bid === 'ALL') return ACCOUNTING_OPENING_SOURCE_ID;
+  return `${ACCOUNTING_OPENING_SOURCE_ID}:${bid}`;
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} branchScope */
+export function isOpeningBalancePostedForBranch(db, branchScope) {
+  ensureArchitecturalGlAccounts(db);
+  const sid = openingBalanceSourceId(branchScope);
+  return Boolean(
+    db
+      .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = ? AND source_id = ? LIMIT 1`)
+      .get(OPENING_SOURCE_KIND, sid)
+  );
+}
 
 /** Supplemental COA for architecture v1 (idempotent). */
 export function ensureArchitecturalGlAccounts(db) {
@@ -293,14 +310,31 @@ export function postOpeningBalanceJournal(db, payload) {
   });
 }
 
-/** @param {import('better-sqlite3').Database} db */
-export function getOpeningBalanceStatus(db) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ */
+export function getOpeningBalanceStatus(db, branchScope) {
   ensureArchitecturalGlAccounts(db);
+  const scope = String(branchScope ?? '').trim();
+  if (scope && scope !== 'ALL') {
+    const posted = isOpeningBalancePostedForBranch(db, scope);
+    const sid = openingBalanceSourceId(scope);
+    const rows = posted
+      ? db
+          .prepare(
+            `SELECT id, entry_date_iso, memo, source_id, created_at_iso, branch_id
+             FROM gl_journal_entries WHERE source_kind = ? AND source_id = ? ORDER BY created_at_iso DESC LIMIT 5`
+          )
+          .all(OPENING_SOURCE_KIND, sid)
+      : [];
+    return { ok: true, posted, branchScope: scope, journals: rows };
+  }
   const rows = db
     .prepare(
-      `SELECT id, entry_date_iso, memo, source_id, created_at_iso
-       FROM gl_journal_entries WHERE source_kind = ? ORDER BY created_at_iso DESC LIMIT 5`
+      `SELECT id, entry_date_iso, memo, source_id, created_at_iso, branch_id
+       FROM gl_journal_entries WHERE source_kind = ? ORDER BY created_at_iso DESC LIMIT 20`
     )
     .all(OPENING_SOURCE_KIND);
-  return { ok: true, posted: rows.length > 0, journals: rows };
+  return { ok: true, posted: rows.length > 0, branchScope: 'ALL', journals: rows };
 }

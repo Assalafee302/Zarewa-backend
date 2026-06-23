@@ -5,13 +5,17 @@
 import {
   ACCOUNTING_OPENING_DATE_ISO,
   ACCOUNTING_OPENING_PERIOD_KEY,
-  ACCOUNTING_OPENING_SOURCE_ID,
 } from '../shared/lib/accountingCutover.js';
 import { buildCreditorsRegister, buildDebtorsRegister } from './accountingSubledgerOps.js';
 import { listFixedAssets } from './accountingPhase2Ops.js';
 import { buildStockRegisterForBranch } from './stockRegisterOps.js';
 import { listTreasuryAccounts } from './readModel.js';
-import { ensureTreasuryCashGlAccount, getOpeningBalanceStatus, postOpeningBalanceJournal } from './accountingPostingOps.js';
+import {
+  ensureTreasuryCashGlAccount,
+  isOpeningBalancePostedForBranch,
+  openingBalanceSourceId,
+  postOpeningBalanceJournal,
+} from './accountingPostingOps.js';
 import { computePayrollRunGlAmounts, payrollGlStatusForRun } from './payrollGlOps.js';
 import { listBranches } from './branches.js';
 import { tableExists } from './ap2ReceivedBasisOps.js';
@@ -616,8 +620,7 @@ export function buildOpeningPackReport(db, opts = {}) {
   const payrollPeriodKey = opts.payrollPeriodKey || inventoryPeriodKey;
   const capitalNgn = roundMoney(opts.capitalNgn ?? 0);
 
-  const openingStatus = getOpeningBalanceStatus(db);
-  if (openingStatus.posted) {
+  if (branchScope !== 'ALL' && isOpeningBalancePostedForBranch(db, branchScope)) {
     return {
       ok: true,
       alreadyPosted: true,
@@ -628,8 +631,8 @@ export function buildOpeningPackReport(db, opts = {}) {
       proposedJournal: { lines: [] },
       readinessScore: 100,
       blockers: [],
-      warnings: ['Opening balance journal already posted.'],
-      summary: 'Opening balance already posted to GL.',
+      warnings: [`Opening balance already posted for ${branchScope}.`],
+      summary: `Opening balance already posted for ${branchScope}.`,
     };
   }
 
@@ -710,14 +713,25 @@ export function buildOpeningPackReport(db, opts = {}) {
  * @param {{ branchScope?: string; capitalNgn?: number; inventoryPeriodKey?: string; createdByUserId?: string }} payload
  */
 export function postOpeningPackJournal(db, payload = {}) {
+  const branchScope = String(payload.branchScope || '').trim() || 'ALL';
+  if (!branchScope || branchScope === 'ALL') {
+    return {
+      ok: false,
+      error: 'Select a single branch workspace before posting opening balance.',
+    };
+  }
+  if (isOpeningBalancePostedForBranch(db, branchScope)) {
+    return { ok: true, duplicate: true, message: `Opening balance already posted for ${branchScope}.` };
+  }
+
   const report = buildOpeningPackReport(db, {
-    branchScope: payload.branchScope || 'ALL',
+    branchScope,
     capitalNgn: payload.capitalNgn,
     inventoryPeriodKey: payload.inventoryPeriodKey,
   });
 
   if (report.alreadyPosted) {
-    return { ok: true, duplicate: true, message: 'Opening balance already posted.' };
+    return { ok: true, duplicate: true, message: `Opening balance already posted for ${branchScope}.` };
   }
   if (report.blockers?.length) {
     return { ok: false, error: report.blockers.join(' ') };
@@ -728,10 +742,10 @@ export function postOpeningPackJournal(db, payload = {}) {
 
   return postOpeningBalanceJournal(db, {
     entryDateISO: ACCOUNTING_OPENING_DATE_ISO,
-    sourceId: ACCOUNTING_OPENING_SOURCE_ID,
-    branchId: payload.branchScope && payload.branchScope !== 'ALL' ? payload.branchScope : null,
+    sourceId: openingBalanceSourceId(branchScope),
+    branchId: branchScope,
     createdByUserId: payload.createdByUserId ?? null,
-    memo: `Opening balance pack ${ACCOUNTING_OPENING_DATE_ISO}`,
+    memo: `Opening balance pack ${ACCOUNTING_OPENING_DATE_ISO} · ${branchScope}`,
     lines: report.proposedJournal.lines,
   });
 }

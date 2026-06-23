@@ -161,3 +161,97 @@ export function assertProductIdInWorkspace(db, req, productID) {
   }
   return { ok: true };
 }
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} deliveryId
+ */
+export function assertDeliveryIdInWorkspace(db, req, deliveryId) {
+  const id = String(deliveryId ?? '').trim();
+  if (!id) return { ok: false, error: 'Delivery id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM deliveries WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Delivery not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+function resolveSalesReceiptBranchId(db, receiptRow) {
+  const ledgerId = String(receiptRow?.ledger_entry_id ?? '').trim();
+  if (ledgerId) {
+    const le = db.prepare(`SELECT branch_id FROM ledger_entries WHERE id = ?`).get(ledgerId);
+    const bid = String(le?.branch_id ?? '').trim();
+    if (bid) return bid;
+  }
+  const qref = String(receiptRow?.quotation_ref ?? '').trim();
+  if (qref) {
+    const q = db.prepare(`SELECT branch_id FROM quotations WHERE id = ?`).get(qref);
+    const bid = String(q?.branch_id ?? '').trim();
+    if (bid) return bid;
+  }
+  const cid = String(receiptRow?.customer_id ?? '').trim();
+  if (cid) {
+    const c = db.prepare(`SELECT branch_id FROM customers WHERE customer_id = ?`).get(cid);
+    const bid = String(c?.branch_id ?? '').trim();
+    if (bid) return bid;
+  }
+  return '';
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} receiptToken sales_receipts.id or ledger_entries.id
+ */
+export function assertSalesReceiptIdInWorkspace(db, req, receiptToken) {
+  const token = String(receiptToken ?? '').trim();
+  if (!token) return { ok: false, error: 'Receipt id is required.', status: 400 };
+  const row = db
+    .prepare(
+      `SELECT id, ledger_entry_id, quotation_ref, customer_id FROM sales_receipts
+       WHERE id = ? OR (ledger_entry_id IS NOT NULL AND ledger_entry_id = ?)`
+    )
+    .get(token, token);
+  if (!row) return { ok: false, error: 'Receipt not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    resolveSalesReceiptBranchId(db, row),
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} requestId
+ */
+export function assertPaymentRequestIdInWorkspace(db, req, requestId) {
+  const rid = String(requestId ?? '').trim();
+  if (!rid) return { ok: false, error: 'Payment request id is required.', status: 400 };
+  const row = db
+    .prepare(
+      `SELECT pr.request_id, e.branch_id AS expense_branch_id
+       FROM payment_requests pr
+       LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+       WHERE pr.request_id = ?`
+    )
+    .get(rid);
+  if (!row) return { ok: false, error: 'Payment request not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.expense_branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}

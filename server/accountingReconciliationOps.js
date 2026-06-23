@@ -15,6 +15,18 @@ function hasColumn(db, table, column) {
   }
 }
 
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} branchScope */
+function treasuryMovementBranchFilter(db, branchScope) {
+  if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')) {
+    return { joinSql: '', whereSql: '', args: [] };
+  }
+  return {
+    joinSql: ' JOIN treasury_accounts ta ON ta.id = m.treasury_account_id',
+    whereSql: ' AND ta.branch_id = ?',
+    args: [branchScope],
+  };
+}
+
 function pickGlRow(tb, code) {
   const r = (tb.rows || []).find((x) => x.accountCode === code);
   if (!r) return null;
@@ -36,7 +48,7 @@ export function getReconciliationPack(db, periodKey, branchScope = 'ALL') {
   const b = monthBounds(periodKey);
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
-  const tb = trialBalanceRows(db, b.start, b.end);
+  const tb = trialBalanceRows(db, b.start, b.end, { branchScope });
   if (!tb.ok) return tb;
 
   let salesReceiptsPostedNgn = 0;
@@ -73,15 +85,21 @@ export function getReconciliationPack(db, periodKey, branchScope = 'ALL') {
   }
 
   let treasuryCustomerInNgn = 0;
+  const tmBranch = treasuryMovementBranchFilter(db, branchScope);
   const rowTm = db
     .prepare(
       `SELECT COALESCE(SUM(m.amount_ngn), 0) AS s
-       FROM treasury_movements m
+       FROM treasury_movements m${tmBranch.joinSql}
        WHERE substr(m.posted_at_iso, 1, 10) >= ? AND substr(m.posted_at_iso, 1, 10) <= ?
-         AND m.type IN ('RECEIPT_IN', 'ADVANCE_IN')`
+         AND m.type IN ('RECEIPT_IN', 'ADVANCE_IN')${tmBranch.whereSql}`
     )
-    .get(b.start, b.end);
+    .get(b.start, b.end, ...tmBranch.args);
   treasuryCustomerInNgn = Math.round(Number(rowTm?.s) || 0);
+
+  const treasuryNote =
+    branchScope === 'ALL'
+      ? 'Treasury sums all branches via treasury_accounts join.'
+      : `Treasury sums branch ${branchScope} via treasury_accounts.branch_id.`;
 
   return {
     ok: true,
@@ -93,28 +111,29 @@ export function getReconciliationPack(db, periodKey, branchScope = 'ALL') {
     treasuryCustomerInNgn,
     glCash1000Month: pickGlRow(tb, '1000'),
     glAr1200Month: pickGlRow(tb, '1200'),
-    note:
-      'GL columns are month activity (debits − credits as net). Sub-ledgers respect branch scope where the table has branch_id; treasury movements are not branch-scoped in the schema yet.',
+    note: `GL columns are month activity (debits − credits as net). Sub-ledgers respect branch scope where the table has branch_id. ${treasuryNote}`,
   };
 }
 
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} periodKey
+ * @param {'ALL' | string} [branchScope]
  */
-export function getCashFlowPack(db, periodKey) {
+export function getCashFlowPack(db, periodKey, branchScope = 'ALL') {
   const b = monthBounds(periodKey);
   if (!b) return { ok: false, error: 'periodKey must be YYYY-MM.' };
 
+  const tmBranch = treasuryMovementBranchFilter(db, branchScope);
   const raw = db
     .prepare(
-      `SELECT type, COALESCE(SUM(amount_ngn), 0) AS totalNgn
-       FROM treasury_movements
-       WHERE substr(posted_at_iso, 1, 10) >= ? AND substr(posted_at_iso, 1, 10) <= ?
-       GROUP BY type
-       ORDER BY type`
+      `SELECT m.type, COALESCE(SUM(m.amount_ngn), 0) AS totalNgn
+       FROM treasury_movements m${tmBranch.joinSql}
+       WHERE substr(m.posted_at_iso, 1, 10) >= ? AND substr(m.posted_at_iso, 1, 10) <= ?${tmBranch.whereSql}
+       GROUP BY m.type
+       ORDER BY m.type`
     )
-    .all(b.start, b.end);
+    .all(b.start, b.end, ...tmBranch.args);
 
   const rows = (raw || []).map((r) => ({
     type: r.type,
@@ -126,9 +145,13 @@ export function getCashFlowPack(db, periodKey) {
     ok: true,
     periodKey: b.periodKey,
     range: { start: b.start, end: b.end },
+    branchScope,
     rows,
     netTreasuryMovementNgn: netNgn,
-    note: 'Sums treasury_movements.amount_ngn by type for the month (signed as stored).',
+    note:
+      branchScope === 'ALL'
+        ? 'Sums treasury_movements.amount_ngn by type for the month (all branches).'
+        : `Sums treasury_movements for branch ${branchScope} via treasury_accounts.branch_id.`,
   };
 }
 
@@ -166,7 +189,7 @@ export function buildReconciliationPackWarnings(pack, cashFlowSummary) {
       severity: 'warn',
       code: 'sales_receipts_vs_treasury',
       message:
-        'Confirmed sales receipts differ from treasury customer inflows (RECEIPT_IN + ADVANCE_IN). Treasury movements are not branch-scoped in the schema yet.',
+        'Confirmed sales receipts differ from treasury customer inflows (RECEIPT_IN + ADVANCE_IN) for the selected branch scope.',
       salesReceiptsPostedNgn: sales,
       treasuryCustomerInNgn: treasuryIn,
       differenceNgn: sales - treasuryIn,

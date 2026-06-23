@@ -91,6 +91,7 @@ import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
+import { listGlJournalsForWorkspaceSearch } from './glOps.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -284,6 +285,7 @@ export function buildBootstrap(db, opts = {}) {
     treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope) : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
+    glJournalSearchSlice: finOk ? listGlJournalsForWorkspaceSearch(db, branchScope, { limit: 800 }) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
     poTransportAwaitingTreasury:

@@ -751,7 +751,7 @@ function postIncidentStockEffects(db, row, opts) {
     if (!productId) throw new Error('Product is required for sellable return.');
     const delta = totalM > 0 ? totalM : 0;
     if (delta <= 0) throw new Error('Enter metres for sellable return.');
-    adjustProductStockTx(db, productId, delta);
+    adjustProductStockTx(db, productId, delta, String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
     appendStockMovementTx(db, {
       atISO: nowIso(),
       type: 'MATERIAL_INCIDENT_FG_RETURN',

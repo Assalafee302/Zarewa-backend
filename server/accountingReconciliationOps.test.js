@@ -107,5 +107,29 @@ describe.skipIf(!mysqlOk)('accountingReconciliationOps (database)', () => {
     const c = getCashFlowPack(db, '2026-02');
     expect(c.ok).toBe(true);
     expect(Array.isArray(c.rows)).toBe(true);
+    expect(c.branchScope).toBe('ALL');
+  });
+
+  it('getCashFlowPack filters treasury movements by branch via treasury_accounts', () => {
+    db.prepare(
+      `INSERT INTO treasury_accounts (name, bank_name, balance, type, acc_no, branch_id)
+       VALUES ('Kaduna Cash', 'GTBank', 0, 'Bank', 'KD1', 'BR-KD'),
+              ('Yola Cash', 'GTBank', 0, 'Bank', 'YL1', 'BR-YL')`
+    ).run();
+    const kdAcc = db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = 'KD1'`).get().id;
+    const ylAcc = db.prepare(`SELECT id FROM treasury_accounts WHERE acc_no = 'YL1'`).get().id;
+    const now = '2026-02-15T10:00:00.000Z';
+    db.prepare(
+      `INSERT INTO treasury_movements (posted_at_iso, type, treasury_account_id, amount_ngn, reference)
+       VALUES (?, 'RECEIPT_IN', ?, 100000, 'KD-RCP'),
+              (?, 'RECEIPT_IN', ?, 50000, 'YL-RCP')`
+    ).run(now, kdAcc, now, ylAcc);
+
+    const kd = getCashFlowPack(db, '2026-02', 'BR-KD');
+    const yl = getCashFlowPack(db, '2026-02', 'BR-YL');
+    expect(kd.ok).toBe(true);
+    expect(yl.ok).toBe(true);
+    expect(kd.netTreasuryMovementNgn).toBe(100_000);
+    expect(yl.netTreasuryMovementNgn).toBe(50_000);
   });
 });

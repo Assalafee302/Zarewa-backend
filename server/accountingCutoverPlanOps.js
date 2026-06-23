@@ -41,9 +41,9 @@ export function buildCutoverActionPlan(db, branchScope = 'ALL', opts = {}) {
   let unlinkedLegacy = 0;
   if (!opts.skipUnlinkedScan) {
     try {
-      const branchId = branchScope === 'ALL' ? null : branchScope;
-      const cred = buildCreditorsRegister(db, branchId);
-      const debt = buildDebtorsRegister(db, branchId);
+      const registerBranch = branchScope === 'ALL' ? 'ALL' : branchScope;
+      const cred = buildCreditorsRegister(db, { branchId: registerBranch });
+      const debt = buildDebtorsRegister(db, { branchId: registerBranch });
       unlinkedLegacy =
         Number(cred?.summary?.unlinkedLegacyCount ?? 0) + Number(debt?.summary?.unlinkedLegacyCount ?? 0);
     } catch {

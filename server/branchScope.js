@@ -65,6 +65,33 @@ export function assertSingleBranchWorkspaceForCreate(req) {
   return { ok: true };
 }
 
+/** Bulk replace / sync must target one workspace branch (same rules as create). */
+export function assertSingleBranchWorkspaceForBulkWrite(req) {
+  return assertSingleBranchWorkspaceForCreate(req);
+}
+
+/**
+ * Non-admin treasury bulk payloads may only touch accounts for the active workspace branch.
+ * @param {object | null | undefined} user
+ * @param {Array<{ branchId?: string; branch_id?: string; name?: string; id?: number | string }>} accounts
+ * @param {string | null | undefined} workspaceBranchId
+ */
+export function assertTreasuryAccountsBulkForWorkspace(user, accounts, workspaceBranchId) {
+  if (userHasPermission(user, '*')) return { ok: true };
+  const wb = String(workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID;
+  for (const a of accounts || []) {
+    const bid = String(a.branchId ?? a.branch_id ?? wb).trim() || DEFAULT_BRANCH_ID;
+    if (bid !== wb) {
+      const label = String(a.name || a.id || 'account').trim();
+      return {
+        ok: false,
+        error: `Treasury account “${label}” is tagged to ${bid}, not your workspace branch ${wb}.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * Prevent booking receipts/advances to the wrong branch when read scope is ALL (HQ rollup).
  * @param {{ branchId?: string; branch_id?: string } | null | undefined} customer from `getCustomer` / raw row

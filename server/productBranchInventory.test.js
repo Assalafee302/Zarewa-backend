@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import {
+  adjustProductStockForBranch,
   getProductRowForWorkspace,
   migrateProductsBranchCompositeInventory,
   productsTableHasBranchCompositePk,
@@ -52,5 +53,22 @@ describe('productBranchInventory', () => {
 
     const coil = getProductRowForWorkspace(db, 'COIL-ALU', 'BR-YL');
     expect(coil?.stock_level).toBe(1000);
+  });
+
+  it('adjustProductStockForBranch updates only the target branch row', () => {
+    const db = memDb();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
+       VALUES ('ACC-RIVET-PACK','Rivets',10,'pack',0,0,'{"inventoryModel":"consumable"}','BR-KD')`
+    ).run();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
+       VALUES ('ACC-RIVET-PACK','Rivets',20,'pack',0,0,'{"inventoryModel":"consumable"}','BR-YL')`
+    ).run();
+
+    adjustProductStockForBranch(db, 'ACC-RIVET-PACK', -3, 'BR-KD');
+
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-KD')?.stock_level).toBe(7);
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-YL')?.stock_level).toBe(20);
   });
 });

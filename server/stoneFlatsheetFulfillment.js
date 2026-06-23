@@ -9,6 +9,8 @@ import {
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { quotationLineUnitPriceNumber } from '../shared/lib/quotationLineNumericForRefund.js';
 import { ensureStoneFlatsheetProduct } from './stoneInventory.js';
+import { getProductRowForWorkspace } from './productBranchInventory.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
 
 /**
  * @param {unknown} linesJson
@@ -173,7 +175,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
   const plannedLines = [];
   const stoneFlatsheetStockWarnings = [];
   const EPS = 1e-6;
-  const branchId = String(jobRow?.branch_id ?? '').trim() || '';
+  const branchId = String(jobRow?.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
 
   for (const line of lines) {
     if (!line.colourLabel) {
@@ -219,7 +221,7 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
     } catch (e) {
       return { ok: false, error: String(e.message || e) };
     }
-    const p = db.prepare(`SELECT stock_level, name FROM products WHERE product_id = ?`).get(inventoryProductId);
+    const p = getProductRowForWorkspace(db, inventoryProductId, branchId);
     if (!p) {
       return {
         ok: false,

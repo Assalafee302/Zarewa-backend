@@ -1,6 +1,8 @@
 /**
  * Accessory lines on quotations: plan supplied qty at production completion, persist usage, drive stock/refunds.
  */
+import { getProductRowForWorkspace } from './productBranchInventory.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
 
 /**
  * @param {unknown} linesJson
@@ -206,6 +208,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
   const plannedLines = [];
   const accessoryStockWarnings = [];
   const EPS = 1e-6;
+  const branchId = String(jobRow?.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
 
   for (const line of accessoryLines) {
     const lineKey = line.quoteLineId || '';
@@ -227,7 +230,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
     }
     const inventoryProductId = resolveAccessoryInventoryProductId(db, lineKey, line.name);
     if (inventoryProductId) {
-      const p = db.prepare(`SELECT stock_level, name FROM products WHERE product_id = ?`).get(inventoryProductId);
+      const p = getProductRowForWorkspace(db, inventoryProductId, branchId);
       if (!p) {
         return {
           ok: false,

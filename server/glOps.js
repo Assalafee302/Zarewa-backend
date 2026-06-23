@@ -4,11 +4,17 @@
  */
 
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { branchPredicate } from './branchSql.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { nextGlJournalHumanId, nextGlJournalLineHumanId } from './humanId.js';
 import { resolveCustomerReceiptGlCreditAccount } from './ap1cReceiptGl.js';
 import { resolveReceiptReversalAccountFromMetaOrJournalLines } from './ap1cReversalRefundOps.js';
 import { recordReceiptPolicyMetaAfterCustomerReceiptGl } from './receiptPolicyMetaOps.js';
+
+function glJournalBranchFilter(db, branchScope, alias = 'j') {
+  const scope = String(branchScope ?? 'ALL').trim() || 'ALL';
+  return branchPredicate(db, 'gl_journal_entries', scope, alias);
+}
 
 export function ensureGlSchema(db) {
   db.exec(`
@@ -282,7 +288,7 @@ export function listGlAccounts(db) {
 
 /**
  * Trial balance: sum lines for journals with entry_date in [startDate, endDate] inclusive.
- * @param {{ costCenter?: string }} [opts] When costCenter is set, only journal lines with that cost center tag are included.
+ * @param {{ costCenter?: string; branchScope?: 'ALL' | string; branchId?: string }} [opts] When costCenter is set, only journal lines with that cost center tag are included.
  */
 export function trialBalanceRows(db, startDate, endDate, opts = {}) {
   ensureGlSchema(db);
@@ -293,8 +299,11 @@ export function trialBalanceRows(db, startDate, endDate, opts = {}) {
     return { ok: false, error: 'startDate and endDate must be YYYY-MM-DD.' };
   }
   const costCenter = String(opts?.costCenter || '').trim();
+  const branchScope = String(opts?.branchScope ?? opts?.branchId ?? 'ALL').trim() || 'ALL';
   const ccSql = costCenter ? ` AND TRIM(COALESCE(l.cost_center, '')) = ?` : '';
+  const bp = glJournalBranchFilter(db, branchScope, 'j');
   const params = costCenter ? [sd, ed, costCenter] : [sd, ed];
+  params.push(...bp.args);
   const rows = db
     .prepare(
       `SELECT a.code AS accountCode, a.name AS accountName, a.type AS accountType,
@@ -305,7 +314,7 @@ export function trialBalanceRows(db, startDate, endDate, opts = {}) {
          SELECT l.account_id, l.debit_ngn, l.credit_ngn
          FROM gl_journal_lines l
          INNER JOIN gl_journal_entries j ON j.id = l.journal_id
-         WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}
+         WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}${bp.sql}
        ) x ON x.account_id = a.id
        WHERE a.is_active = 1
        GROUP BY a.id
@@ -332,7 +341,7 @@ export function trialBalanceRows(db, startDate, endDate, opts = {}) {
     },
     { debitNgn: 0, creditNgn: 0 }
   );
-  return { ok: true, rows: detail, totals, startDate: sd, endDate: ed, costCenter: costCenter || null };
+  return { ok: true, rows: detail, totals, startDate: sd, endDate: ed, costCenter: costCenter || null, branchScope };
 }
 
 /** Dr Cash, Cr AR — posted when customer receipt hits treasury (idempotent on ledger entry id). */
@@ -770,26 +779,51 @@ export function tryPostBankDepositMergeDuplicateAdvanceGl(db, payload) {
   }
 }
 
-export function listGlJournalEntries(db, startDate, endDate) {
+/** Bounded GL journal rows for workspace search bootstrap / offline cache. */
+export function listGlJournalsForWorkspaceSearch(db, branchScope = 'ALL', opts = {}) {
+  seedDefaultGlAccounts(db);
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='gl_journal_entries'`).get()) {
+    return [];
+  }
+  const limit = Math.min(2000, Math.max(50, Number(opts?.limit) || 800));
+  const bp = glJournalBranchFilter(db, branchScope, 'j');
+  return db
+    .prepare(
+      `SELECT j.id, j.entry_date_iso, IFNULL(j.memo,'') AS memo, IFNULL(j.source_id,'') AS source_id
+       FROM gl_journal_entries j WHERE 1=1${bp.sql}
+       ORDER BY j.entry_date_iso DESC, j.id DESC LIMIT ?`
+    )
+    .all(...bp.args, limit)
+    .map((row) => ({
+      id: row.id,
+      entryDateISO: row.entry_date_iso,
+      memo: row.memo || '',
+      sourceId: row.source_id || '',
+    }));
+}
+
+export function listGlJournalEntries(db, startDate, endDate, opts = {}) {
   seedDefaultGlAccounts(db);
   const sd = String(startDate || '').slice(0, 10);
   const ed = String(endDate || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) {
     return { ok: false, error: 'startDate and endDate must be YYYY-MM-DD.' };
   }
+  const branchScope = String(opts?.branchScope ?? opts?.branchId ?? 'ALL').trim() || 'ALL';
+  const bp = glJournalBranchFilter(db, branchScope, 'j');
   const rows = db
     .prepare(
       `SELECT j.id AS journalId, j.entry_date_iso AS entryDateISO, j.period_key AS periodKey, j.memo,
-        j.source_kind AS sourceKind, j.source_id AS sourceId,
+        j.source_kind AS sourceKind, j.source_id AS sourceId, j.branch_id AS branchId,
         COALESCE(SUM(l.debit_ngn), 0) AS totalDebitNgn,
         COALESCE(SUM(l.credit_ngn), 0) AS totalCreditNgn
        FROM gl_journal_entries j
        LEFT JOIN gl_journal_lines l ON l.journal_id = j.id
-       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?
+       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${bp.sql}
        GROUP BY j.id
        ORDER BY j.entry_date_iso ASC, j.id ASC`
     )
-    .all(sd, ed);
+    .all(sd, ed, ...bp.args);
   const journals = rows.map((r) => ({
     journalId: r.journalId,
     entryDateISO: r.entryDateISO,
@@ -797,10 +831,11 @@ export function listGlJournalEntries(db, startDate, endDate) {
     memo: r.memo ?? '',
     sourceKind: r.sourceKind ?? '',
     sourceId: r.sourceId ?? '',
+    branchId: String(r.branchId ?? '').trim(),
     totalDebitNgn: Math.round(Number(r.totalDebitNgn) || 0),
     totalCreditNgn: Math.round(Number(r.totalCreditNgn) || 0),
   }));
-  return { ok: true, journals, startDate: sd, endDate: ed };
+  return { ok: true, journals, startDate: sd, endDate: ed, branchScope };
 }
 
 export function listGlJournalLinesForJournal(db, journalId) {
@@ -829,21 +864,24 @@ export function listGlActivityLines(db, startDate, endDate, opts = {}) {
     return { ok: false, error: 'startDate and endDate must be YYYY-MM-DD.' };
   }
   const costCenter = String(opts?.costCenter || '').trim();
+  const branchScope = String(opts?.branchScope ?? opts?.branchId ?? 'ALL').trim() || 'ALL';
   const ccSql = costCenter ? ` AND TRIM(COALESCE(l.cost_center, '')) = ?` : '';
+  const bp = glJournalBranchFilter(db, branchScope, 'j');
   const params = costCenter ? [sd, ed, costCenter] : [sd, ed];
+  params.push(...bp.args);
   const rows = db
     .prepare(
       `SELECT j.entry_date_iso AS entryDateISO, j.id AS journalId, j.memo AS journalMemo,
-        j.source_kind AS sourceKind, j.source_id AS sourceId,
+        j.source_kind AS sourceKind, j.source_id AS sourceId, j.branch_id AS branchId,
         a.code AS accountCode, a.name AS accountName,
         l.debit_ngn AS debitNgn, l.credit_ngn AS creditNgn, l.memo AS lineMemo,
         TRIM(COALESCE(l.cost_center, '')) AS costCenter
        FROM gl_journal_lines l
        JOIN gl_journal_entries j ON j.id = l.journal_id
        JOIN gl_accounts a ON a.id = l.account_id
-       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}
+       WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}${bp.sql}
        ORDER BY j.entry_date_iso, j.id, l.id`
     )
     .all(...params);
-  return { ok: true, lines: rows, startDate: sd, endDate: ed, costCenter: costCenter || null };
+  return { ok: true, lines: rows, startDate: sd, endDate: ed, costCenter: costCenter || null, branchScope };
 }

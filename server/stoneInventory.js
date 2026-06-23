@@ -4,6 +4,7 @@
 
 import { INVENTORY_MODEL, STONE_COATED_MATERIAL_TYPE_ID } from './inventoryConstants.js';
 import { normalizeStoneFlatsheetLengthM } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { getProductRowForWorkspace } from './productBranchInventory.js';
 
 function slugPart(s) {
   return String(s ?? '')
@@ -47,14 +48,26 @@ export function inventoryModelForMaterialTypeId(db, materialTypeId) {
   return row?.inventory_model != null ? String(row.inventory_model).trim() || null : null;
 }
 
+function productRowForLookup(db, productId, branchId) {
+  const pid = String(productId || '').trim();
+  if (!pid) return null;
+  const bid = String(branchId ?? '').trim();
+  if (bid) {
+    return (
+      getProductRowForWorkspace(db, pid, bid) ??
+      db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid)
+    );
+  }
+  return db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid);
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} productId
+ * @param {string} [branchId]
  */
-export function inventoryModelForProductId(db, productId) {
-  const pid = String(productId || '').trim();
-  if (!pid) return null;
-  const row = db.prepare(`SELECT dashboard_attrs_json FROM products WHERE product_id = ?`).get(pid);
+export function inventoryModelForProductId(db, productId, branchId) {
+  const row = productRowForLookup(db, productId, branchId);
   const attrs = parseProductDashboardAttrs(row);
   if (attrs.inventoryModel) return String(attrs.inventoryModel);
   return null;
@@ -71,10 +84,11 @@ export function isStoneMeterProductRow(productRow) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string} productId
+ * @param {string} [branchId]
  */
-export function isStoneMeterProductId(db, productId) {
-  const row = db.prepare(`SELECT * FROM products WHERE product_id = ?`).get(productId);
-  return isStoneMeterProductRow(row);
+export function isStoneMeterProductId(db, productId, branchId) {
+  return isStoneMeterProductRow(productRowForLookup(db, productId, branchId));
 }
 
 /**
@@ -91,14 +105,19 @@ export function isStoneFlatsheetProductRow(productRow) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} productId
+ * @param {string} [branchId]
  */
-export function isStoneFlatsheetProductId(db, productId) {
-  const row = db.prepare(`SELECT * FROM products WHERE product_id = ?`).get(productId);
-  return isStoneFlatsheetProductRow(row);
+export function isStoneFlatsheetProductId(db, productId, branchId) {
+  return isStoneFlatsheetProductRow(productRowForLookup(db, productId, branchId));
 }
 
-export function isStoneCoatedMetreProductId(db, productId) {
-  const row = db.prepare(`SELECT * FROM products WHERE product_id = ?`).get(productId);
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} productId
+ * @param {string} [branchId]
+ */
+export function isStoneCoatedMetreProductId(db, productId, branchId) {
+  const row = productRowForLookup(db, productId, branchId);
   if (!row) return false;
   const attrs = parseProductDashboardAttrs(row);
   if (attrs.stoneFlatsheet) return false;
@@ -223,9 +242,10 @@ export function isStoneMeterQuotationLinesJson(db, linesJson) {
 /**
  * Resolve stone raw product from quotation header spec.
  * @param {import('better-sqlite3').Database} db
- * @param {object} quotation — row with lines_json
+ * @param {object} quotation — row with lines_json, optional branch_id
+ * @param {string} [branchId] workspace / job branch (defaults quotation.branch_id or BR-KD)
  */
-export function resolveStoneRawProductIdForQuotation(db, quotation) {
+export function resolveStoneRawProductIdForQuotation(db, quotation, branchId) {
   if (!quotation?.lines_json) return null;
   let j = {};
   try {
@@ -238,5 +258,12 @@ export function resolveStoneRawProductIdForQuotation(db, quotation) {
   const colour = String(j.materialColor || '').trim();
   const gauge = String(j.materialGauge || '').trim();
   if (!design || !colour || !gauge) return null;
-  return ensureStoneProduct(db, { designLabel: design, colourLabel: colour, gaugeLabel: gauge });
+  const bid =
+    String(branchId ?? quotation?.branch_id ?? '').trim() || 'BR-KD';
+  return ensureStoneProduct(db, {
+    designLabel: design,
+    colourLabel: colour,
+    gaugeLabel: gauge,
+    branchId: bid,
+  });
 }

@@ -10,12 +10,18 @@ import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js
 import { migrateMergeDuplicateHrStaffOnBoot } from './hrStaffDuplicateCleanupMigrate.js';
 import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
+import { migrateStockMovementsBranchId } from './stockMovementOps.js';
 import { withMigrationLock } from './migrationLock.js';
 import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
+import {
+  SCHEMA_MIGRATION_FTS,
+  ensureWorkspaceSearchFtsSchema,
+  rebuildWorkspaceSearchFts,
+} from './workspaceSearchFts.js';
 
 const SCHEMA_MIGRATION_PO_LINE_TYPE = 'po-line-type-migrate-v4';
 const SCHEMA_MIGRATION_PROCUREMENT_KIND = 'procurement-order-kind-v2';
@@ -1181,6 +1187,7 @@ function runMigrationsUnlocked(db) {
   migratePricingPolicy2026(db);
   migrateLedgerPerformanceIndexes(db);
   migrateUserProfileAndPasswordReset(db);
+  migrateRepairMustChangePasswordLoop2026(db);
   migrateLoginSecurityPhase12(db);
   migrateOrganisationRoles2026(db);
   migrateHrStaffProfileColumns(db);
@@ -1203,6 +1210,7 @@ function runMigrationsUnlocked(db) {
   migrateProcurementOrderKind(db);
   migrateHrExcellence2026(db);
   migrateWorkspaceSearchIndexes(db);
+  migrateWorkspaceSearchFts2026(db);
   migrateInterBranchLoans(db);
   migrateOfficeDesk(db);
   migrateOfficeThreadFiling(db);
@@ -1214,6 +1222,7 @@ function runMigrationsUnlocked(db) {
   migrateIntegrationApiKeys(db);
   migrateInventoryCoilSnapshots(db);
   migrateStockRegister2026(db);
+  migrateStockMovementsBranchId(db);
   try {
     debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents start' });
     migrateMaterialIncidents(db);
@@ -2085,6 +2094,19 @@ function migrateWorkspaceSearchIndexes(db) {
   ensure('idx_ws_customer_refunds_branch', 'customer_refunds');
   ensure('idx_ws_products_branch', 'products');
   ensure('idx_ws_hr_staff_profiles_branch', 'hr_staff_profiles');
+}
+
+/** FTS5 workspace search index (rebuild once per migration id). */
+function migrateWorkspaceSearchFts2026(db) {
+  if (schemaMigrationDone(db, SCHEMA_MIGRATION_FTS)) return;
+  try {
+    ensureWorkspaceSearchFtsSchema(db);
+    const n = rebuildWorkspaceSearchFts(db);
+    console.info(`[migrate] workspace search FTS indexed ${n} documents`);
+  } catch (e) {
+    console.warn('[migrate] workspace search FTS rebuild skipped:', e?.message || e);
+  }
+  markSchemaMigrationDone(db, SCHEMA_MIGRATION_FTS);
 }
 
 /** Coil vs stone-metre vs accessory PO classification for dashboards. */
@@ -4413,6 +4435,29 @@ function migrateUserProfileAndPasswordReset(db) {
   }
   if (users.size && !users.has('must_change_password')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
+    const allowSeeded =
+      process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
+      process.env.ZAREWA_ALLOW_SEEDED_USERS === '1' ||
+      process.env.NODE_ENV === 'test';
+    if (!allowSeeded) {
+      const defaultUsernames = [
+        'admin',
+        'md',
+        'finance.manager',
+        'cashier',
+        'sales.manager',
+        'sales.staff',
+        'operations',
+        'ceo',
+        'viewer',
+      ];
+      const placeholders = defaultUsernames.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE app_users SET must_change_password = 1
+         WHERE lower(trim(username)) IN (${placeholders})
+           AND status = 'active'`
+      ).run(...defaultUsernames);
+    }
   }
   if (users.size && !users.has('registered_password')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN registered_password TEXT`);
@@ -4508,6 +4553,23 @@ function migrateUserProfileAndPasswordReset(db) {
   `);
 }
 
+/** One-time repair: onboarding-complete users should not be forced to change password again. */
+function migrateRepairMustChangePasswordLoop2026(db) {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('must_change_password') || !names.has('training_completed_at_iso')) return;
+    db.prepare(
+      `UPDATE app_users
+       SET must_change_password = 0
+       WHERE must_change_password = 1
+         AND trim(COALESCE(training_completed_at_iso, '')) != ''`
+    ).run();
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Phase 12 — account lockout columns, remove plaintext password display data. */
 function migrateLoginSecurityPhase12(db) {
   const tableCols = (name) => {
@@ -4532,30 +4594,6 @@ function migrateLoginSecurityPhase12(db) {
   }
   if (users.has('registered_password')) {
     db.prepare(`UPDATE app_users SET registered_password = NULL WHERE registered_password IS NOT NULL`).run();
-  }
-
-  const allowSeeded =
-    process.env.ZAREWA_ALLOW_SEEDED_USERS === 'true' ||
-    process.env.ZAREWA_ALLOW_SEEDED_USERS === '1' ||
-    process.env.NODE_ENV === 'test';
-  if (!allowSeeded && users.has('must_change_password')) {
-    const defaultUsernames = [
-      'admin',
-      'md',
-      'finance.manager',
-      'cashier',
-      'sales.manager',
-      'sales.staff',
-      'operations',
-      'ceo',
-      'viewer',
-    ];
-    const placeholders = defaultUsernames.map(() => '?').join(',');
-    db.prepare(
-      `UPDATE app_users SET must_change_password = 1
-       WHERE lower(trim(username)) IN (${placeholders})
-         AND status = 'active'`
-    ).run(...defaultUsernames);
   }
 }
 

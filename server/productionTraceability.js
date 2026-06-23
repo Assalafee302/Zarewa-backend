@@ -20,7 +20,6 @@ import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPri
 import { validateQuotationProductionPaymentGate } from './writeOps.js';
 import { getQuotation } from './readModel.js';
 import {
-  isStoneCoatedMetreProductId,
   isStoneMeterQuotationLinesJson,
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
@@ -30,6 +29,10 @@ import {
 } from '../shared/lib/coilSpecVersusProduct.js';
 import { quotationRequiresStoneMetreConsumption } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
+import {
+  adjustProductStockForBranch,
+  getProductRowForWorkspace,
+} from './productBranchInventory.js';
 import {
   procurementCatalogMaterialAlignedWithCoil,
   resolveCoilMaterialFamilyKey,
@@ -49,6 +52,7 @@ function roundWholeKg(n) {
 }
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
 import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
+import { insertStockMovementTx } from './stockMovementOps.js';
 import {
   persistProductionConversionVarianceReason,
   validateConversionVarianceReason,
@@ -84,8 +88,11 @@ function clampNonNegative(value) {
   return Math.max(0, Number(value) || 0);
 }
 
-function isAccessoryInventoryProductId(productID) {
-  return /^ACC-/i.test(String(productID || '').trim());
+/** Threshold (kg): UI shows “Roll finished” when closing is below this; checking it clears residual tail from coil stock on complete. Not required to complete if steel remains on the roll. */
+const COIL_TAIL_FINISH_MAX_KG = 85;
+
+function jobBranchId(job) {
+  return String(job?.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
 }
 
 function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
@@ -102,6 +109,7 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
   const plannedLines = [];
   const accessoryStockWarnings = [];
   const EPS = 1e-6;
+  const branchId = jobBranchId(jobRow);
 
   for (const line of accessoryLines) {
     const lineKey = line.quoteLineId || '';
@@ -124,7 +132,7 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
     }
     const inventoryProductId = resolveAccessoryInventoryProductId(db, lineKey, line.name);
     if (inventoryProductId) {
-      const p = db.prepare(`SELECT stock_level, name FROM products WHERE product_id = ?`).get(inventoryProductId);
+      const p = getProductRowForWorkspace(db, inventoryProductId, branchId);
       if (!p) {
         return { ok: false, error: `Accessory "${line.name}" maps to unknown stock product ${inventoryProductId}.` };
       }
@@ -147,9 +155,6 @@ function planAccessoryCorrectionExcludingJob(db, jobRow, jobId, payload = {}) {
   return { ok: true, plannedLines, accessoryStockWarnings };
 }
 
-/** Threshold (kg): UI shows “Roll finished” when closing is below this; checking it clears residual tail from coil stock on complete. Not required to complete if steel remains on the roll. */
-const COIL_TAIL_FINISH_MAX_KG = 85;
-
 function parseGaugeMm(value) {
   const match = String(value ?? '')
     .replace(/,/g, '.')
@@ -169,33 +174,21 @@ function toPercentVariance(actual, reference) {
 export function appendStockMovementTx(db, payload) {
   const id = nextId('MV');
   const atISO = normalizeIso(payload.atISO);
-  db.prepare(
-    `INSERT INTO stock_movements (id, at_iso, type, ref, product_id, qty, detail, date_iso, unit_price_ngn, value_ngn)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).run(
+  insertStockMovementTx(db, {
+    ...payload,
     id,
     atISO,
-    payload.type,
-    payload.ref ?? null,
-    payload.productID ?? null,
-    payload.qty ?? null,
-    payload.detail ?? null,
-    String(payload.dateISO ?? atISO).slice(0, 10),
-    payload.unitPriceNgn ?? null,
-    payload.valueNgn ?? null
-  );
+    productID: payload.productID,
+    dateISO: String(payload.dateISO ?? atISO).slice(0, 10),
+    branchId: payload.branchId ?? payload.stockBranch,
+  });
   return id;
 }
 
-export function adjustProductStockTx(db, productID, delta) {
+export function adjustProductStockTx(db, productID, delta, branchId) {
   if (!productID) return;
-  const row = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productID);
-  if (!row) return;
-  const raw = Number(row.stock_level) + Number(delta || 0);
-  const allowNegative =
-    isAccessoryInventoryProductId(productID) || isStoneCoatedMetreProductId(db, productID);
-  const next = allowNegative ? raw : clampNonNegative(raw);
-  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, productID);
+  const bid = String(branchId ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  adjustProductStockForBranch(db, productID, delta, bid);
 }
 
 function coilRow(db, coilNo) {
@@ -1473,7 +1466,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   }
   const stonePid =
     requiresStoneMetres && Math.abs(metres) >= 1e-9 && qRow
-      ? resolveStoneRawProductIdForQuotation(db, qRow)
+      ? resolveStoneRawProductIdForQuotation(db, qRow, jobBranchId(job))
       : null;
   if (requiresStoneMetres && Math.abs(metres) >= 1e-9 && !stonePid) {
     return {
@@ -1492,15 +1485,18 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       ...(accPlan.accessoryStockWarnings ?? []),
       ...(sfPlan.stoneFlatsheetStockWarnings ?? []),
     ];
+    const stockBranch = jobBranchId(job);
+    const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
     db.transaction(() => {
       if (stonePid && Math.abs(metres) >= 1e-9) {
-        adjustProductStockTx(db, stonePid, -metres);
+        adjustProductStockTx(db, stonePid, -metres, stockBranch);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'STONE_CONSUMPTION',
           ref: jobID,
           productID: stonePid,
           qty: -metres,
+          branchId: stockBranch,
           detail:
             metres < 0
               ? `${jobID} stone-coated return ${Math.abs(metres).toFixed(2)} m`
@@ -1508,13 +1504,14 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         });
       }
       if (job.product_id && metres > 0) {
-        adjustProductStockTx(db, job.product_id, metres);
+        adjustProductStockTx(db, job.product_id, metres, stockBranch);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'FINISHED_GOODS_RECEIPT',
           ref: jobID,
           productID: job.product_id,
           qty: metres,
+          branchId: stockBranch,
           detail: `${jobID} completed output (${job.product_name || job.product_id})`,
         });
       }
@@ -1533,7 +1530,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         qref,
         completedAtISO,
         accPlan.plannedLines,
-        adjustProductStockTx,
+        adjustStock,
         appendStockMovementTx
       );
       applyStoneFlatsheetCompletionTx(
@@ -1542,7 +1539,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
         qref,
         completedAtISO,
         sfPlan.plannedLines,
-        adjustProductStockTx,
+        adjustStock,
         appendStockMovementTx
       );
       appendAuditLog(db, {
@@ -1597,6 +1594,8 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
+    const stockBranch = jobBranchId(job);
+    const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
     db.transaction(() => {
       const accPlan = planAccessoryCompletion(db, job, payload);
       if (!accPlan.ok) throw new Error(accPlan.error);
@@ -1637,13 +1636,14 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       }
 
       if (job.product_id && metres > 0) {
-        adjustProductStockTx(db, job.product_id, metres);
+        adjustProductStockTx(db, job.product_id, metres, stockBranch);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'FINISHED_GOODS_RECEIPT',
           ref: jobID,
           productID: job.product_id,
           qty: metres,
+          branchId: stockBranch,
           detail: `${jobID} completed from offcut/accessories mode (${job.product_name || job.product_id})`,
         });
       }
@@ -1684,7 +1684,7 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
         String(job.quotation_ref ?? '').trim(),
         completedAtISO,
         accPlan.plannedLines,
-        adjustProductStockTx,
+        adjustStock,
         appendStockMovementTx
       );
       appendAuditLog(db, {
@@ -1776,6 +1776,8 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     }
     let totalCogsForGl = 0;
     let accessoryStockWarnings = [];
+    const stockBranch = jobBranchId(job);
+    const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
     db.transaction(() => {
       const accPlan = planAccessoryCompletion(db, job, payload);
       if (!accPlan.ok) throw new Error(accPlan.error);
@@ -1844,12 +1846,13 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           ref: jobID,
           productID: row.productID,
           qty: -row.consumedWeightKg,
+          branchId: stockBranch,
           detail: `${row.coilNo} consumed for ${row.metersProduced.toFixed(2)} m on ${jobID}`,
           unitPriceNgn: uc || null,
           valueNgn: cogsNgn,
         });
         /** Keep `products.stock_level` aligned with coil draw-down (GRN increases this SKU; completion must decrease). */
-        adjustProductStockTx(db, row.productID, -row.consumedWeightKg);
+        adjustProductStockTx(db, row.productID, -row.consumedWeightKg, stockBranch);
         const tailBookedKg = row.finishCoil ? qtyRemaining : 0;
         if (tailBookedKg > 1e-6) {
           db.prepare(
@@ -1857,13 +1860,14 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           ).run(row.coilNo);
           updateCoilDerivedStateTx(db, row.coilNo);
           const tailCogs = uc > 0 ? Math.round(tailBookedKg * uc) : null;
-          adjustProductStockTx(db, row.productID, -tailBookedKg);
+          adjustProductStockTx(db, row.productID, -tailBookedKg, stockBranch);
           appendStockMovementTx(db, {
             atISO: completedAtISO,
             type: 'COIL_CONSUMPTION',
             ref: jobID,
             productID: row.productID,
             qty: -tailBookedKg,
+            branchId: stockBranch,
             detail: `${row.coilNo} roll finished — tail ${tailBookedKg.toFixed(2)} kg removed from yard stock (${jobID})`,
             unitPriceNgn: uc || null,
             valueNgn: tailCogs,
@@ -1916,13 +1920,14 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
         );
       }
       if (job.product_id) {
-        adjustProductStockTx(db, job.product_id, outputMeters);
+        adjustProductStockTx(db, job.product_id, outputMeters, stockBranch);
         appendStockMovementTx(db, {
           atISO: completedAtISO,
           type: 'FINISHED_GOODS_RECEIPT',
           ref: jobID,
           productID: job.product_id,
           qty: outputMeters,
+          branchId: stockBranch,
           detail: `${jobID} completed output (${job.product_name || job.product_id})`,
         });
       }
@@ -2000,7 +2005,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
         String(job.quotation_ref ?? '').trim(),
         completedAtISO,
         accPlan.plannedLines,
-        adjustProductStockTx,
+        adjustStock,
         appendStockMovementTx
       );
       appendAuditLog(db, {
@@ -2275,7 +2280,8 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
   const atISO = normalizeIso(payload.atISO || payload.effectiveDateISO || nowIso());
   try {
     assertPeriodOpen(db, atISO, 'Adjustment date');
-    const prodRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productId);
+    const stockBranch = jobBranchId(job);
+    const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
     if (!prodRow) return { ok: false, error: 'Finished goods product not found.' };
     const current = Number(prodRow.stock_level) || 0;
     const next = current + delta;
@@ -2295,13 +2301,14 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
         id, job_id, branch_id, delta_finished_goods_m, note, at_iso, created_by_user_id, created_by_name
       ) VALUES (?,?,?,?,?,?,?,?)`
     ).run(id, jobId, branchId, delta, note, atISO, uid || null, name);
-    adjustProductStockTx(db, productId, delta);
+    adjustProductStockTx(db, productId, delta, stockBranch);
     appendStockMovementTx(db, {
       atISO,
       type: 'PRODUCTION_FG_ADJUSTMENT',
       ref: jobId,
       productID: productId,
       qty: delta,
+      branchId: stockBranch,
       detail: `FG adjustment ${jobId}: ${note.length > 100 ? `${note.slice(0, 97)}…` : note}`,
       dateISO: atISO,
     });
@@ -2319,13 +2326,15 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
   }
 }
 
-function undoSingleCompletedCoilLineTx(db, row, atISO, jobId) {
+function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
   const coilNo = String(row.coil_no ?? '').trim();
   const opening = safeNumber(row.opening_weight_kg);
   const consumed = safeNumber(row.consumed_weight_kg);
   const productId = String(row.product_id ?? '').trim();
   const coil = coilRow(db, coilNo);
   if (!coil) throw new Error(`Coil ${coilNo} not found.`);
+  const branch =
+    String(stockBranch ?? coil?.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const rem = clampNonNegative(
     coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
   );
@@ -2345,13 +2354,14 @@ function undoSingleCompletedCoilLineTx(db, row, atISO, jobId) {
     coilNo
   );
   updateCoilDerivedStateTx(db, coilNo);
-  if (productId) adjustProductStockTx(db, productId, consumed);
+  if (productId) adjustProductStockTx(db, productId, consumed, branch);
   appendStockMovementTx(db, {
     atISO,
     type: 'COIL_CONSUMPTION',
     ref: jobId,
     productID: productId || null,
     qty: consumed,
+    branchId: branch,
     detail: `Completion coil correction — restore ${consumed.toFixed(2)} kg to ${coilNo} (${jobId})`,
     dateISO: atISO,
     unitPriceNgn: uc || null,
@@ -2359,10 +2369,12 @@ function undoSingleCompletedCoilLineTx(db, row, atISO, jobId) {
   });
 }
 
-function applySingleCompletedCoilLineTx(db, jobId, line, atISO) {
+function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch) {
   const { coilNo, openingWeightKg, consumedWeightKg, metersProduced, productID } = line;
   const coil = coilRow(db, coilNo);
   if (!coil) throw new Error(`Coil ${coilNo} not found.`);
+  const branch =
+    String(stockBranch ?? coil?.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const qtyRemaining = clampNonNegative(
     safeNumber(coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received) -
       consumedWeightKg
@@ -2377,13 +2389,14 @@ function applySingleCompletedCoilLineTx(db, jobId, line, atISO) {
     `UPDATE coil_lots SET qty_remaining = ?, qty_reserved = ?, current_weight_kg = ?, landed_cost_ngn = ? WHERE coil_no = ?`
   ).run(qtyRemaining, qtyReserved, qtyRemaining, nextLanded, coilNo);
   updateCoilDerivedStateTx(db, coilNo);
-  if (productID) adjustProductStockTx(db, productID, -consumedWeightKg);
+  if (productID) adjustProductStockTx(db, productID, -consumedWeightKg, branch);
   appendStockMovementTx(db, {
     atISO,
     type: 'COIL_CONSUMPTION',
     ref: jobId,
     productID: productID || null,
     qty: -consumedWeightKg,
+    branchId: branch,
     detail: `${coilNo} consumed for ${metersProduced.toFixed(2)} m on ${jobId} (completion correction)`,
     dateISO: atISO,
     unitPriceNgn: uc || null,
@@ -2571,12 +2584,13 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
 
   try {
     assertPeriodOpen(db, atISO, 'Production coil correction date');
+    const stockBranch = jobBranchId(job);
     /** Outer transaction from handleWriteWithEditApproval — avoid nested db.transaction for MySQL SAVEPOINTs. */
     for (const r of existing) {
-      undoSingleCompletedCoilLineTx(db, r, atISO, jobId);
+      undoSingleCompletedCoilLineTx(db, r, atISO, jobId, stockBranch);
     }
     if (productId && Math.abs(deltaM) > 1e-6) {
-      const prodRow = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(productId);
+      const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
       const current = Number(prodRow?.stock_level) || 0;
       const next = current + deltaM;
       if (next < -0.0001) {
@@ -2584,13 +2598,14 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           `This correction would send finished goods ${productId} negative (${next.toFixed(2)} m on hand).`
         );
       }
-      adjustProductStockTx(db, productId, deltaM);
+      adjustProductStockTx(db, productId, deltaM, stockBranch);
       appendStockMovementTx(db, {
         atISO,
         type: 'PRODUCTION_FG_ADJUSTMENT',
         ref: jobId,
         productID: productId,
         qty: deltaM,
+        branchId: stockBranch,
         detail: `Coil completion correction ${jobId}: ${note.length > 120 ? `${note.slice(0, 117)}…` : note}`,
         dateISO: atISO,
       });
@@ -2673,7 +2688,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
           metersProduced: p.nextMeters,
           productID: p.newProductId,
         },
-        atISO
+        atISO,
+        stockBranch
       );
     }
 
@@ -2739,6 +2755,8 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
     if (!accPlan.ok) return accPlan;
 
     const runBody = () => {
+      const stockBranch = jobBranchId(job);
+      const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
       const quotationRef = String(job.quotation_ref ?? '').trim();
       const existing = db
         .prepare(
@@ -2751,19 +2769,20 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
         const pid = String(row.inventoryProductId || '').trim();
         const qty = safeNumber(row.suppliedQty);
         if (pid && qty > 0) {
-          adjustProductStockTx(db, pid, qty);
+          adjustProductStockTx(db, pid, qty, stockBranch);
           appendStockMovementTx(db, {
             atISO,
             type: 'ACCESSORY_ISSUE_ADJUSTMENT',
             ref: jobId,
             productID: pid,
             qty,
+            branchId: stockBranch,
             detail: `Accessory correction (restore) · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
             dateISO: atISO.slice(0, 10),
           });
         }
       }
-      applyAccessoryCompletionTx(db, jobId, quotationRef, atISO, accPlan.plannedLines, adjustProductStockTx, appendStockMovementTx);
+      applyAccessoryCompletionTx(db, jobId, quotationRef, atISO, accPlan.plannedLines, adjustStock, appendStockMovementTx);
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.completion_accessory_correct',
@@ -2820,6 +2839,8 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
     if (!sfPlan.ok) return sfPlan;
 
     const runBody = () => {
+      const stockBranch = jobBranchId(job);
+      const adjustStock = (db, pid, delta) => adjustProductStockTx(db, pid, delta, stockBranch);
       const quotationRef = String(job.quotation_ref ?? '').trim();
       const existing = db
         .prepare(
@@ -2834,13 +2855,14 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
         const pid = String(row.inventoryProductId || '').trim();
         const restore = safeNumber(row.suppliedM2) + safeNumber(row.deductionM2);
         if (pid && restore > 0) {
-          adjustProductStockTx(db, pid, restore);
+          adjustProductStockTx(db, pid, restore, stockBranch);
           appendStockMovementTx(db, {
             atISO,
             type: 'STONE_FLATSHEET_ISSUE_ADJUSTMENT',
             ref: jobId,
             productID: pid,
             qty: restore,
+            branchId: stockBranch,
             detail: `Stone flatsheet correction (restore) · ${String(row.name || '').trim()} · ${jobId} · ${quotationRef}`,
             dateISO: atISO.slice(0, 10),
           });
@@ -2852,7 +2874,7 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
         quotationRef,
         atISO,
         sfPlan.plannedLines,
-        adjustProductStockTx,
+        adjustStock,
         appendStockMovementTx
       );
       appendAuditLog(db, {

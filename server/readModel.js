@@ -44,6 +44,98 @@ export function branchWhere(db, table, scope) {
   return { sql: ` AND branch_id = ?`, args: [scope] };
 }
 
+const DIRECT_BRANCH_SKU_MOVEMENT_TYPES = [
+  'STORE_STONE_DIRECT',
+  'STORE_STONE_FLATSHEET_DIRECT',
+  'STORE_ACCESSORY_DIRECT',
+  'ADJUSTMENT',
+  'CUSTOMER_DELIVERY',
+  'ACCESSORY_ISSUE',
+  'ACCESSORY_ISSUE_ADJUSTMENT',
+  'STONE_CONSUMPTION',
+  'STONE_FLATSHEET_ISSUE',
+  'STONE_FLATSHEET_ISSUE_ADJUSTMENT',
+  'FINISHED_GOODS',
+  'FINISHED_GOODS_RECEIPT',
+  'PRODUCTION_FG_ADJUSTMENT',
+  'MATERIAL_INCIDENT_FG_RETURN',
+  'WIP_CONSUMED',
+  'TRANSFER_TO_PRODUCTION',
+];
+
+function mapStockMovementRow(row) {
+  return {
+    id: row.id,
+    atISO: row.at_iso,
+    type: row.type,
+    ref: row.ref,
+    productID: row.product_id,
+    qty: row.qty,
+    detail: row.detail,
+    dateISO: row.date_iso,
+    unitPriceNgn: row.unit_price_ngn,
+    valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
+    branchId: String(row.branch_id ?? '').trim(),
+  };
+}
+
+function stockMovementsBranchFilterLegacy(db, branchScope) {
+  const bid = String(branchScope || '').trim();
+  if (!bid || branchScope === 'ALL') return { sql: '', args: [] };
+
+  const bJob = branchWhere(db, 'production_jobs', branchScope);
+  const bPo = branchWhere(db, 'purchase_orders', branchScope);
+  const bQuo = branchWhere(db, 'quotations', branchScope);
+  const bDel = branchWhere(db, 'deliveries', branchScope);
+
+  const parts = [
+    `sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})`,
+    `sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})`,
+    `sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})`,
+    `sm.ref IN (SELECT id FROM deliveries WHERE 1=1${bDel.sql})`,
+  ];
+  const args = [...bJob.args, ...bPo.args, ...bQuo.args, ...bDel.args];
+
+  if (hasColumn(db, 'material_incidents', 'branch_id')) {
+    parts.push(`sm.ref IN (SELECT id FROM material_incidents WHERE branch_id = ?)`);
+    args.push(bid);
+  }
+  if (hasColumn(db, 'coil_lots', 'branch_id')) {
+    parts.push(`sm.ref IN (SELECT coil_no FROM coil_lots WHERE branch_id = ?)`);
+    args.push(bid);
+  }
+  if (hasColumn(db, 'products', 'branch_id')) {
+    const typeList = DIRECT_BRANCH_SKU_MOVEMENT_TYPES.map(() => '?').join(', ');
+    parts.push(
+      `(sm.type IN (${typeList}) AND sm.product_id IN (SELECT product_id FROM products WHERE branch_id = ?))`
+    );
+    args.push(...DIRECT_BRANCH_SKU_MOVEMENT_TYPES, bid);
+  }
+
+  return { sql: `(${parts.join(' OR ')})`, args };
+}
+
+/**
+ * SQL fragment restricting stock_movements to a workspace branch (alias `sm`).
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @returns {{ sql: string, args: unknown[] }}
+ */
+function stockMovementsBranchFilter(db, branchScope) {
+  const bid = String(branchScope || '').trim();
+  if (!bid || branchScope === 'ALL') return { sql: '', args: [] };
+
+  if (hasColumn(db, 'stock_movements', 'branch_id')) {
+    const legacy = stockMovementsBranchFilterLegacy(db, branchScope);
+    return {
+      sql: ` AND (TRIM(COALESCE(sm.branch_id,'')) = ? OR ((TRIM(COALESCE(sm.branch_id,'')) = '') AND ${legacy.sql}))`,
+      args: [bid, ...legacy.args],
+    };
+  }
+  const legacy = stockMovementsBranchFilterLegacy(db, branchScope);
+  return { sql: ` AND ${legacy.sql}`, args: legacy.args };
+}
+
 function parseCrmTagsJson(raw) {
   if (!raw) return [];
   try {
@@ -1383,41 +1475,15 @@ export function listStockMovements(db, branchScope = 'ALL') {
     return db
       .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC`)
       .all()
-      .map((row) => ({
-        id: row.id,
-        atISO: row.at_iso,
-        type: row.type,
-        ref: row.ref,
-        productID: row.product_id,
-        qty: row.qty,
-        detail: row.detail,
-        dateISO: row.date_iso,
-        unitPriceNgn: row.unit_price_ngn,
-        valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-      }));
+      .map(mapStockMovementRow);
   }
-  const bPo = branchWhere(db, 'purchase_orders', branchScope);
-  const bQuo = branchWhere(db, 'quotations', branchScope);
+  const bf = stockMovementsBranchFilter(db, branchScope);
   return db
     .prepare(
-      `SELECT sm.* FROM stock_movements sm
-       WHERE sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})
-          OR sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})
-       ORDER BY sm.at_iso DESC, sm.id DESC`
+      `SELECT sm.* FROM stock_movements sm WHERE 1=1${bf.sql} ORDER BY sm.at_iso DESC, sm.id DESC`
     )
-    .all(...bPo.args, ...bQuo.args)
-    .map((row) => ({
-      id: row.id,
-      atISO: row.at_iso,
-      type: row.type,
-      ref: row.ref,
-      productID: row.product_id,
-      qty: row.qty,
-      detail: row.detail,
-      dateISO: row.date_iso,
-      unitPriceNgn: row.unit_price_ngn,
-      valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-    }));
+    .all(...bf.args)
+    .map(mapStockMovementRow);
 }
 
 /**
@@ -1431,18 +1497,6 @@ export function listStockMovementsForBranchPeriod(db, branchScope = 'ALL', start
   const start = String(startDate || '').slice(0, 10);
   const end = String(endDate || '').slice(0, 10);
   if (!start || !end) return [];
-  const mapRow = (row) => ({
-    id: row.id,
-    atISO: row.at_iso,
-    type: row.type,
-    ref: row.ref,
-    productID: row.product_id,
-    qty: row.qty,
-    detail: row.detail,
-    dateISO: row.date_iso,
-    unitPriceNgn: row.unit_price_ngn,
-    valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-  });
   if (branchScope === 'ALL' || !branchScope) {
     return db
       .prepare(
@@ -1451,66 +1505,40 @@ export function listStockMovementsForBranchPeriod(db, branchScope = 'ALL', start
          ORDER BY date_iso ASC, at_iso ASC, id ASC`
       )
       .all(start, end)
-      .map(mapRow);
+      .map(mapStockMovementRow);
   }
-  const bJob = branchWhere(db, 'production_jobs', branchScope);
-  const bPo = branchWhere(db, 'purchase_orders', branchScope);
-  const bQuo = branchWhere(db, 'quotations', branchScope);
+  const bf = stockMovementsBranchFilter(db, branchScope);
   return db
     .prepare(
       `SELECT sm.* FROM stock_movements sm
-       WHERE sm.date_iso >= ? AND sm.date_iso <= ?
-         AND (
-           sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})
-           OR sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})
-           OR sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})
-         )
+       WHERE sm.date_iso >= ? AND sm.date_iso <= ?${bf.sql}
        ORDER BY sm.date_iso ASC, sm.at_iso ASC, sm.id ASC`
     )
-    .all(start, end, ...bJob.args, ...bPo.args, ...bQuo.args)
-    .map(mapRow);
+    .all(start, end, ...bf.args)
+    .map(mapStockMovementRow);
 }
 
 /** Branch-scoped movements with date_iso <= endDate (for opening balances). */
 export function listStockMovementsForBranchThrough(db, branchScope = 'ALL', endDate) {
   const end = String(endDate || '').slice(0, 10);
   if (!end) return [];
-  const mapRow = (row) => ({
-    id: row.id,
-    atISO: row.at_iso,
-    type: row.type,
-    ref: row.ref,
-    productID: row.product_id,
-    qty: row.qty,
-    detail: row.detail,
-    dateISO: row.date_iso,
-    unitPriceNgn: row.unit_price_ngn,
-    valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-  });
   if (branchScope === 'ALL' || !branchScope) {
     return db
       .prepare(
         `SELECT * FROM stock_movements WHERE date_iso <= ? ORDER BY date_iso ASC, at_iso ASC, id ASC`
       )
       .all(end)
-      .map(mapRow);
+      .map(mapStockMovementRow);
   }
-  const bJob = branchWhere(db, 'production_jobs', branchScope);
-  const bPo = branchWhere(db, 'purchase_orders', branchScope);
-  const bQuo = branchWhere(db, 'quotations', branchScope);
+  const bf = stockMovementsBranchFilter(db, branchScope);
   return db
     .prepare(
       `SELECT sm.* FROM stock_movements sm
-       WHERE sm.date_iso <= ?
-         AND (
-           sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})
-           OR sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})
-           OR sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})
-         )
+       WHERE sm.date_iso <= ?${bf.sql}
        ORDER BY sm.date_iso ASC, sm.at_iso ASC, sm.id ASC`
     )
-    .all(end, ...bJob.args, ...bPo.args, ...bQuo.args)
-    .map(mapRow);
+    .all(end, ...bf.args)
+    .map(mapStockMovementRow);
 }
 
 /**
@@ -1518,28 +1546,29 @@ export function listStockMovementsForBranchThrough(db, branchScope = 'ALL', endD
  * @param {import('better-sqlite3').Database} db
  * @param {string} productID
  * @param {number} [limit]
+ * @param {'ALL' | string} [branchScope]
  */
-export function listStockMovementsForProduct(db, productID, limit = 500) {
+export function listStockMovementsForProduct(db, productID, limit = 500, branchScope = 'ALL') {
   const pid = String(productID || '').trim();
   if (!pid) return [];
   const lim = Math.min(Math.max(Number(limit) || 500, 1), 2000);
+  const bf = stockMovementsBranchFilter(db, branchScope);
+  if (!bf.sql) {
+    return db
+      .prepare(
+        `SELECT * FROM stock_movements WHERE product_id = ? ORDER BY at_iso DESC, id DESC LIMIT ?`
+      )
+      .all(pid, lim)
+      .map(mapStockMovementRow);
+  }
   return db
     .prepare(
-      `SELECT * FROM stock_movements WHERE product_id = ? ORDER BY at_iso DESC, id DESC LIMIT ?`
+      `SELECT sm.* FROM stock_movements sm
+       WHERE sm.product_id = ?${bf.sql}
+       ORDER BY sm.at_iso DESC, sm.id DESC LIMIT ?`
     )
-    .all(pid, lim)
-    .map((row) => ({
-      id: row.id,
-      atISO: row.at_iso,
-      type: row.type,
-      ref: row.ref,
-      productID: row.product_id,
-      qty: row.qty,
-      detail: row.detail,
-      dateISO: row.date_iso,
-      unitPriceNgn: row.unit_price_ngn,
-      valueNgn: row.value_ngn != null ? Number(row.value_ngn) : null,
-    }));
+    .all(pid, ...bf.args, lim)
+    .map(mapStockMovementRow);
 }
 
 export function getWipByProduct(db, branchScope = 'ALL') {
@@ -1550,11 +1579,7 @@ export function getWipByProduct(db, branchScope = 'ALL') {
   } else if (branchScope === 'ALL' || !branchScope) {
     rows = db.prepare(`SELECT * FROM wip_balances`).all();
   } else {
-    rows = db
-      .prepare(
-        `SELECT * FROM wip_balances WHERE branch_id = ? OR branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = ''`
-      )
-      .all(branchScope);
+    rows = db.prepare(`SELECT * FROM wip_balances WHERE branch_id = ?`).all(branchScope);
   }
   const o = {};
   for (const r of rows) o[r.product_id] = r.qty;

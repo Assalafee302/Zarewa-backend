@@ -11,7 +11,7 @@ import {
 } from '../shared/lib/customerLedgerCore.js';
 import { quotationPaymentPolicySnapshot } from '../shared/lib/accountingPolicyV1.js';
 import { readFinanceFeatureFlags, accountingPolicyV1HealthCapabilities } from './financeFeatureFlags.js';
-import { ACCOUNTING_OPENING_DATE_ISO, ACCOUNTING_OPENING_SOURCE_ID } from '../shared/lib/accountingCutover.js';
+import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js';
 import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
@@ -163,17 +163,22 @@ import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
 import {
   assertCustomerLedgerPostingBranch,
   assertEntityBranchForWorkspaceWrite,
+  assertSingleBranchWorkspaceForBulkWrite,
   assertSingleBranchWorkspaceForCreate,
+  assertTreasuryAccountsBulkForWorkspace,
   resolveBootstrapBranchScope,
 } from './branchScope.js';
 import {
   assertCuttingListIdInWorkspace,
   assertCuttingListRowInWorkspace,
+  assertDeliveryIdInWorkspace,
+  assertPaymentRequestIdInWorkspace,
   assertProductIdInWorkspace,
   assertProductionJobIdInWorkspace,
   assertPurchaseOrderIdInWorkspace,
   assertQuotationIdInWorkspace,
   assertRefundIdInWorkspace,
+  assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
 import {
@@ -451,6 +456,11 @@ import {
   upsertMaterialPricingSheetRow,
 } from './materialPricingOps.js';
 import { workspaceQuickSearch } from './workspaceSearchOps.js';
+import {
+  logWorkspaceSearchMiss,
+  rebuildWorkspaceSearchFts,
+  workspaceSearchFtsReady,
+} from './workspaceSearchFts.js';
 import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct } from './stoneInventory.js';
@@ -530,6 +540,7 @@ import {
 import { getAccountingStatementsPack } from './accountingStatementsOps.js';
 import {
   getOpeningBalanceStatus,
+  openingBalanceSourceId,
   postOpeningBalanceJournal,
   ensureArchitecturalGlAccounts,
 } from './accountingPostingOps.js';
@@ -595,6 +606,15 @@ function bootstrapPollCacheKey(req, { branchScope, mode, includeControls, includ
     includeControls ? '1' : '0',
     includeUsers ? '1' : '0',
   ].join(':');
+}
+
+function clearBootstrapPollCacheForUser(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  const prefix = `${uid}:`;
+  for (const key of bootstrapPollCache.keys()) {
+    if (key.startsWith(prefix)) bootstrapPollCache.delete(key);
+  }
 }
 
 function respondBootstrap(res, payload, ifNoneMatch) {
@@ -3113,6 +3133,7 @@ export function registerHttpApi(app, db) {
       if (!result.ok) {
         return res.status(400).json(result);
       }
+      if (result.userId) clearBootstrapPollCacheForUser(result.userId);
       appendAuditLog(db, {
         actor: { id: null, displayName: 'Password reset', username: String(identifier || '').trim() },
         action: 'session.password_reset_complete',
@@ -3216,6 +3237,7 @@ export function registerHttpApi(app, db) {
     try {
       const r = changePassword(db, req.user.id, req.body?.currentPassword, req.body?.newPassword);
       if (!r.ok) return res.status(400).json(r);
+      clearBootstrapPollCacheForUser(req.user.id);
       appendAuditLog(db, {
         actor: req.user,
         action: 'session.change_password',
@@ -3651,6 +3673,7 @@ export function registerHttpApi(app, db) {
       if (!password) return res.status(400).json({ ok: false, error: 'Password is required.' });
       const r = adminSetUserPassword(db, req.user, id, password);
       if (!r.ok) return res.status(400).json(r);
+      clearBootstrapPollCacheForUser(id);
       appendAuditLog(db, {
         actor: req.user,
         action: 'user.set_password',
@@ -4011,7 +4034,8 @@ export function registerHttpApi(app, db) {
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
     const costCenter = String(req.query.costCenter || '').trim();
-    const r = trialBalanceRows(db, startDate, endDate, { costCenter });
+    const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+    const r = trialBalanceRows(db, startDate, endDate, { costCenter, branchScope });
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
@@ -4022,7 +4046,8 @@ export function registerHttpApi(app, db) {
     }
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
-    const r = listGlJournalEntries(db, startDate, endDate);
+    const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+    const r = listGlJournalEntries(db, startDate, endDate, { branchScope });
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
@@ -4043,7 +4068,8 @@ export function registerHttpApi(app, db) {
     const startDate = String(req.query.startDate || '').slice(0, 10);
     const endDate = String(req.query.endDate || '').slice(0, 10);
     const costCenter = String(req.query.costCenter || '').trim();
-    const r = listGlActivityLines(db, startDate, endDate, { costCenter });
+    const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+    const r = listGlActivityLines(db, startDate, endDate, { costCenter, branchScope });
     if (!r.ok) return res.status(400).json(r);
     res.json(r);
   });
@@ -4085,7 +4111,7 @@ export function registerHttpApi(app, db) {
       if (!pack.ok) {
         return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
       }
-      const cashFlowSummary = getCashFlowPack(db, periodKey);
+      const cashFlowSummary = getCashFlowPack(db, periodKey, branchScope);
       if (!cashFlowSummary.ok) {
         return res.status(400).json({ ok: false, error: 'Invalid period. Use YYYY-MM.' });
       }
@@ -4131,7 +4157,8 @@ export function registerHttpApi(app, db) {
     }
     try {
       ensureArchitecturalGlAccounts(db);
-      return res.json(getOpeningBalanceStatus(db));
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      return res.json(getOpeningBalanceStatus(db, branchScope));
     } catch (e) {
       console.error('[opening-balance-status]', e);
       return res.status(500).json({ ok: false, error: 'Could not load opening balance status.' });
@@ -4150,10 +4177,11 @@ export function registerHttpApi(app, db) {
     }
     try {
       const body = req.body || {};
+      const branchId = String(body.branchId || req.workspaceBranchId || '').trim() || null;
       const result = postOpeningBalanceJournal(db, {
         entryDateISO: body.entryDateISO || ACCOUNTING_OPENING_DATE_ISO,
-        sourceId: body.sourceId || ACCOUNTING_OPENING_SOURCE_ID,
-        branchId: body.branchId || req.workspaceBranchId || null,
+        sourceId: body.sourceId || openingBalanceSourceId(branchId),
+        branchId,
         createdByUserId: req.user?.id,
         memo: body.memo || 'Opening balance cutover',
         lines: body.lines || [],
@@ -5371,6 +5399,8 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
         return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'sales_receipt', rid, (stripped) => {
           const confirmed = Boolean(stripped?.confirmed);
           return write.patchSalesReceiptBankConfirmation(db, rid, confirmed, req.user);
@@ -5408,6 +5438,8 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const rid = String(req.params.receiptId || '');
+        const rg = assertSalesReceiptIdInWorkspace(db, req, rid);
+        if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
         return handlePatchWithEditApproval(
           res,
           db,
@@ -5497,21 +5529,39 @@ export function registerHttpApi(app, db) {
   );
 
   /**
-   * Permission-aware quick search (SQL LIMIT per category): CRM, sales docs, procurement, ops,
-   * refunds, product SKUs.
+   * Permission-aware quick search (FTS5 when indexed, SQL fallback): CRM, sales, procurement, ops, finance.
    */
   app.get('/api/workspace/search', requireAuth, (req, res) => {
     try {
       const raw = String(req.query.q ?? '').trim();
       const limit = Math.min(40, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
+      const ctx = String(req.query.ctx ?? '').trim();
       if (raw.length < 2) {
-        return res.json({ ok: true, results: [] });
+        return res.json({ ok: true, results: [], indexReady: workspaceSearchFtsReady(db) });
       }
-      const results = workspaceQuickSearch(db, req, raw, limit);
-      return res.json({ ok: true, results });
+      const results = workspaceQuickSearch(db, req, raw, limit, { contextPath: ctx });
+      if (!results.length) {
+        logWorkspaceSearchMiss(db, {
+          query: raw,
+          contextPath: ctx,
+          userId: req.user?.id,
+          branchId: req.workspaceBranchId,
+        });
+      }
+      return res.json({ ok: true, results, indexReady: workspaceSearchFtsReady(db) });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Search failed' });
+    }
+  });
+
+  app.post('/api/workspace/search/rebuild', requireAuth, requirePermission('settings.view'), (req, res) => {
+    try {
+      const n = rebuildWorkspaceSearchFts(db);
+      return res.json({ ok: true, indexed: n });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not rebuild workspace search index.' });
     }
   });
 
@@ -5936,6 +5986,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/customers', requirePermission('customers.manage'), (req, res) => {
     try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const body = req.body || {};
       const linkedStaffUserId = String(body.linkedStaffUserId || body.staffUserId || '').trim();
       const id = write.insertCustomer(db, body, req.workspaceBranchId || DEFAULT_BRANCH_ID);
@@ -6158,6 +6210,8 @@ export function registerHttpApi(app, db) {
     requirePermission(['sales.manage', 'operations.manage', 'quotations.manage']),
     (req, res) => {
     try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const r = write.insertCuttingList(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       if (!r.ok) return res.status(400).json(r);
       const cuttingList = getCuttingList(db, r.id);
@@ -6507,6 +6561,8 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/deliveries/:id/payment-release-check', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
     try {
+      const dg = assertDeliveryIdInWorkspace(db, req, req.params.id);
+      if (!dg.ok) return res.status(dg.status).json({ ok: false, error: dg.error });
       const gate = evaluateDeliveryPaymentRelease(db, {
         deliveryId: req.params.id,
         actor: req.user,
@@ -6522,6 +6578,11 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      const clId = String(req.body?.cuttingListId ?? '').trim();
+      if (clId) {
+        const clg = assertCuttingListIdInWorkspace(db, req, clId);
+        if (!clg.ok) return res.status(clg.status).json({ ok: false, error: clg.error });
+      }
       const r = write.insertDelivery(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -6532,6 +6593,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/deliveries/:id/confirm', requirePermission('deliveries.manage'), (req, res) => {
     try {
+      const dg = assertDeliveryIdInWorkspace(db, req, req.params.id);
+      if (!dg.ok) return res.status(dg.status).json({ ok: false, error: dg.error });
       const r = write.confirmDelivery(db, req.params.id, req.body || {}, { actor: req.user });
       if (!r.ok) {
         const status = r.code === 'DELIVERY_PAYMENT_GATE_BLOCKED' ? 403 : 400;
@@ -6816,7 +6879,8 @@ export function registerHttpApi(app, db) {
   app.get('/api/inventory/product-movements/:productId', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
     try {
       const lim = req.query?.limit != null ? Number(req.query.limit) : 500;
-      const rows = listStockMovementsForProduct(db, req.params.productId, lim);
+      const branchScope = resolveBootstrapBranchScope(req);
+      const rows = listStockMovementsForProduct(db, req.params.productId, lim, branchScope);
       res.json({ ok: true, movements: rows });
     } catch (e) {
       console.error(e);
@@ -7557,6 +7621,11 @@ export function registerHttpApi(app, db) {
 
   app.put('/api/treasury/accounts', requirePermission('treasury.manage'), (req, res) => {
     try {
+      const bulkGate = assertSingleBranchWorkspaceForBulkWrite(req);
+      if (!bulkGate.ok) return res.status(403).json({ ok: false, error: bulkGate.error });
+      const accounts = Array.isArray(req.body?.accounts) ? req.body.accounts : [];
+      const branchGate = assertTreasuryAccountsBulkForWorkspace(req.user, accounts, req.workspaceBranchId);
+      if (!branchGate.ok) return res.status(403).json({ ok: false, error: branchGate.error });
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'treasury_accounts', 'bulk', (stripped) => {
         const reason = String(stripped?.reason ?? '').trim();
         if (!reason) return { ok: false, error: 'Reason is required for bulk treasury updates.' };
@@ -7598,6 +7667,7 @@ export function registerHttpApi(app, db) {
           ...(req.body || {}),
           branchId: String(req.body?.branchId || req.workspaceBranchId || '').trim() || undefined,
           workspaceBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
         },
         req.user
       );
@@ -7748,6 +7818,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/expenses', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
       const r = write.insertExpenseEntry(
         db,
         {
@@ -8331,6 +8403,11 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/accounts-payable/:apId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
+      const apRow = db.prepare(`SELECT po_ref FROM accounts_payable WHERE ap_id = ?`).get(req.params.apId);
+      if (apRow?.po_ref) {
+        const poGate = assertPurchaseOrderIdInWorkspace(db, req, apRow.po_ref);
+        if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
+      }
       const r = write.payAccountsPayable(db, req.params.apId, {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -8439,6 +8516,8 @@ export function registerHttpApi(app, db) {
         res.status(404).json({ ok: false, error: 'Payment request not found.' });
         return;
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       res.json({ ok: true, request });
     } catch (e) {
       console.error(e);
@@ -8828,6 +8907,14 @@ export function registerHttpApi(app, db) {
 
   app.put('/api/finance/core', requirePermission('settings.manage'), (req, res) => {
     try {
+      if (!userHasPermission(req.user, '*')) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Bulk finance data replace requires administrator access.',
+        });
+      }
+      const bulkGate = assertSingleBranchWorkspaceForBulkWrite(req);
+      if (!bulkGate.ok) return res.status(403).json({ ok: false, error: bulkGate.error });
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'finance_core', 'bulk', (stripped) => {
         const reason = String(stripped?.reason ?? '').trim();
         if (!reason) return { ok: false, error: 'Reason is required for bulk finance updates.' };
@@ -9188,7 +9275,11 @@ export function registerHttpApi(app, db) {
     try {
       const lid = req.params.lineId;
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'bank_reconciliation_line', lid, (stripped) => {
-        const r = write.updateBankReconciliationLine(db, lid, stripped || {}, req.user);
+        const r = write.updateBankReconciliationLine(db, lid, {
+          ...(stripped || {}),
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        }, req.user);
         if (r.ok) {
           try {
             const row = db.prepare(`SELECT branch_id FROM bank_reconciliation_lines WHERE id = ?`).get(lid);
@@ -9212,7 +9303,20 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const lid = String(req.params.lineId || '').trim();
-        const r = write.approveBankReconciliationVariance(db, lid, req.user);
+        const row = db.prepare(`SELECT branch_id FROM bank_reconciliation_lines WHERE id = ?`).get(lid);
+        if (row) {
+          const gate = assertEntityBranchForWorkspaceWrite(
+            req.user,
+            row.branch_id,
+            req.workspaceBranchId,
+            Boolean(req.workspaceViewAll)
+          );
+          if (!gate.ok) return res.status(403).json({ ok: false, error: gate.error });
+        }
+        const r = write.approveBankReconciliationVariance(db, lid, req.user, {
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
         if (r.ok) {
           try {
             const row = db.prepare(`SELECT branch_id FROM bank_reconciliation_lines WHERE id = ?`).get(lid);
@@ -9671,6 +9775,8 @@ export function registerHttpApi(app, db) {
   app.post('/api/quotations/:id/revive', requirePermission('quotations.manage'), (req, res) => {
     try {
       const qid = req.params.id;
+      const qGate = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       if (!getQuotation(db, qid)) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
@@ -9694,6 +9800,8 @@ export function registerHttpApi(app, db) {
     ]),
     (req, res) => {
       try {
+        const qGate = assertQuotationIdInWorkspace(db, req, req.params.id);
+        if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
         const r = write.syncQuotationPaidFromLedger(db, req.params.id);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -9728,6 +9836,8 @@ export function registerHttpApi(app, db) {
     ]),
     (req, res) => {
       try {
+        const qGate = assertQuotationIdInWorkspace(db, req, req.params.id);
+        if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
         const r = write.reconcileSalesReceiptMirrorsForQuotation(db, req.params.id);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -9739,7 +9849,8 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/advance-deposits', requirePermission(LEDGER_RELATED_PERMS), (req, res) => {
     try {
-      res.json({ ok: true, advances: listAdvanceInEvents(db) });
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json({ ok: true, advances: listAdvanceInEvents(db, branchScope) });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to list advance deposits' });
@@ -9971,6 +10082,8 @@ export function registerHttpApi(app, db) {
       if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
       const qt = getQuotation(db, quotationRef);
       if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      const qGate = assertQuotationIdInWorkspace(db, req, quotationRef);
+      if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       if (qt.customerID !== customerID) {
         return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
       }
@@ -10065,6 +10178,8 @@ export function registerHttpApi(app, db) {
       if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
       const qt = getQuotation(db, quotationId);
       if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      const qGate = assertQuotationIdInWorkspace(db, req, quotationId);
+      if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
       if (qt.customerID !== customerID) {
         return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
       }
@@ -10342,6 +10457,8 @@ export function registerHttpApi(app, db) {
           error: 'Only Admin, MD, or Branch Manager can delete payments.',
         });
       }
+      const rg = assertSalesReceiptIdInWorkspace(db, req, req.params.id);
+      if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
       const r = write.deleteSalesReceiptIfAllowed(db, req.params.id);
       if (r.ok) {
         appendAuditLog(db, {
@@ -10375,6 +10492,8 @@ export function registerHttpApi(app, db) {
             error: 'Only Admin, MD, or Branch Manager can delete cutting lists.',
           });
         }
+        const clg = assertCuttingListIdInWorkspace(db, req, req.params.id);
+        if (!clg.ok) return res.status(clg.status).json({ ok: false, error: clg.error });
         const r = write.deleteCuttingListIfAllowed(db, req.params.id);
         if (r.ok) {
           appendAuditLog(db, {

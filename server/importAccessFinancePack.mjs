@@ -136,12 +136,15 @@ function openDb(opts, dryRun) {
 }
 
 function ensureLegacyCoilProduct(db, branchId) {
-  const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get('PRD-LEGACY-COIL');
+  const bid = String(branchId ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const exists = db
+    .prepare(`SELECT 1 FROM products WHERE product_id = ? AND branch_id = ?`)
+    .get('PRD-LEGACY-COIL', bid);
   if (exists) return;
   db.prepare(
     `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  ).run('PRD-LEGACY-COIL', 'Imported coil stock (legacy)', 0, 'kg', 0, 0, '', '', '', '{}', branchId);
+  ).run('PRD-LEGACY-COIL', 'Imported coil stock (legacy)', 0, 'kg', 0, 0, '', '', '', '{}', bid);
 }
 
 /**

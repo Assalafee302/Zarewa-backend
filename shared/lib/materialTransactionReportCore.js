@@ -1121,7 +1121,15 @@ export function buildMaterialTransactionReport(input = {}) {
 
   const quoteById = new Map((quotations || []).map((q) => [String(q.id ?? '').trim(), q]));
   const coilByNo = new Map((coilLots || []).map((c) => [String(c.coilNo ?? '').trim(), c]));
-  const productById = new Map((products || []).map((p) => [String(p.productID ?? '').trim(), p]));
+  const productById = new Map();
+  for (const p of products || []) {
+    const pid = String(p.productID ?? '').trim();
+    if (!pid) continue;
+    const prev = productById.get(pid);
+    const bid = String(p.branchId ?? p.branch_id ?? '').trim();
+    const prevBid = prev ? String(prev.branchId ?? prev.branch_id ?? '').trim() : '';
+    if (!prev || (!prevBid && bid)) productById.set(pid, p);
+  }
   const jobById = new Map((productionJobs || []).map((j) => [String(j.jobID ?? j.job_id ?? '').trim(), normalizeJobRow(j)]));
 
   const coilsByJob = new Map();

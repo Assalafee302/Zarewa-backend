@@ -6,7 +6,19 @@
 import { listFixedAssets } from './accountingPhase2Ops.js';
 import { monthBounds } from './accountingStatementsOps.js';
 import { assertPeriodOpen } from './controlOps.js';
-import { postBalancedJournal } from './glOps.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
+import { postBalancedJournalTx } from './glOps.js';
+
+function groupDepreciationRowsByBranch(rows) {
+  /** @type {Map<string, typeof rows>} */
+  const byBranch = new Map();
+  for (const row of rows || []) {
+    const bid = String(row.branchId ?? '').trim() || DEFAULT_BRANCH_ID;
+    if (!byBranch.has(bid)) byBranch.set(bid, []);
+    byBranch.get(bid).push(row);
+  }
+  return byBranch;
+}
 
 function activeInMonth(asset, periodKey) {
   const b = monthBounds(periodKey);
@@ -48,7 +60,7 @@ export function previewDepreciationRun(db, periodKey, branchScope = 'ALL') {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {string} workspaceBranchId Branch tag on journal header (optional)
+ * @param {string} workspaceBranchId Branch tag on journal header when scope is single-branch (legacy; scope wins)
  */
 export function postDepreciationRun(db, periodKey, branchScope, user, workspaceBranchId) {
   const pre = previewDepreciationRun(db, periodKey, branchScope);
@@ -62,32 +74,75 @@ export function postDepreciationRun(db, periodKey, branchScope, user, workspaceB
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
-  const sourceId = `${b.periodKey}:${branchScope || 'ALL'}`;
-  const lines = (pre.rows || []).map((row) => ({
-    accountCode: '6100',
-    debitNgn: row.amountNgn,
-    memo: `${row.name || 'Asset'} (${row.assetId})`,
-  }));
-  lines.push({
-    accountCode: '1398',
-    creditNgn: pre.totalDepreciationNgn,
-    memo: b.periodKey,
-  });
-  const r = postBalancedJournal(db, {
-    entryDateISO: b.end,
-    memo: `Monthly depreciation ${b.periodKey}`,
-    sourceKind: 'DEPRECIATION_RUN',
-    sourceId,
-    branchId: workspaceBranchId || null,
-    createdByUserId: user?.id,
-    lines,
-  });
-  if (!r.ok) return r;
+
+  const scope = String(branchScope || 'ALL').trim() || 'ALL';
+  const branchBatches =
+    scope !== 'ALL'
+      ? [[scope, pre.rows || []]]
+      : [...groupDepreciationRowsByBranch(pre.rows).entries()];
+
+  const journalIds = [];
+  let postedTotal = 0;
+  let anyDuplicate = false;
+
+  const postBatch = (bid, rows) => {
+    const branchId = String(bid || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+    const batchRows = (rows || []).filter((r) => Math.round(Number(r.amountNgn) || 0) > 0);
+    if (!batchRows.length) return;
+    const batchTotal = batchRows.reduce((s, r) => s + Math.round(Number(r.amountNgn) || 0), 0);
+    if (batchTotal <= 0) return;
+    const sourceId = `${b.periodKey}:${branchId}`;
+    const lines = batchRows.map((row) => ({
+      accountCode: '6100',
+      debitNgn: row.amountNgn,
+      memo: `${row.name || 'Asset'} (${row.assetId})`,
+    }));
+    lines.push({
+      accountCode: '1398',
+      creditNgn: batchTotal,
+      memo: b.periodKey,
+    });
+    const r = postBalancedJournalTx(db, {
+      entryDateISO: b.end,
+      memo: `Monthly depreciation ${b.periodKey} · ${branchId}`,
+      sourceKind: 'DEPRECIATION_RUN',
+      sourceId,
+      branchId,
+      createdByUserId: user?.id,
+      lines,
+    });
+    if (!r.ok) throw new Error(r.error || 'Depreciation GL posting failed.');
+    if (r.duplicate) anyDuplicate = true;
+    else if (r.journalId) journalIds.push(r.journalId);
+    postedTotal += batchTotal;
+  };
+
+  try {
+    db.transaction(() => {
+      for (const [bid, rows] of branchBatches) {
+        postBatch(bid, rows);
+      }
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
+  if (!journalIds.length && anyDuplicate) {
+    return {
+      ok: true,
+      duplicate: true,
+      totalDepreciationNgn: pre.totalDepreciationNgn,
+      periodKey: pre.periodKey,
+      branchScope: pre.branchScope,
+    };
+  }
+
   return {
     ok: true,
-    journalId: r.journalId,
-    duplicate: Boolean(r.duplicate),
-    totalDepreciationNgn: pre.totalDepreciationNgn,
+    journalId: journalIds[0] || null,
+    journalIds,
+    duplicate: anyDuplicate && journalIds.length === 0,
+    totalDepreciationNgn: postedTotal || pre.totalDepreciationNgn,
     periodKey: pre.periodKey,
     branchScope: pre.branchScope,
   };

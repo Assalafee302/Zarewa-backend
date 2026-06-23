@@ -59,10 +59,11 @@ export function assessControlVariance(registerNgn, glNgn, thresholdPct = DEFAULT
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} endISO
+ * @param {'ALL' | string} [branchScope]
  */
-function glBalanceMap(db, endISO) {
+function glBalanceMap(db, endISO, branchScope = 'ALL') {
   const startISO = ACCOUNTING_OPENING_DATE_ISO.slice(0, 10);
-  const tb = trialBalanceRows(db, startISO, endISO);
+  const tb = trialBalanceRows(db, startISO, endISO, { branchScope });
   if (!tb.ok || !Array.isArray(tb.rows)) return { ok: false, error: tb.error || 'Trial balance unavailable.' };
   /** @type {Record<string, { debitNgn: number; creditNgn: number; netNgn: number }>} */
   const map = {};
@@ -144,7 +145,7 @@ export function buildControlTieOutReport(db, opts) {
   const thresholdPct =
     Number(opts.thresholdPct) > 0 ? Number(opts.thresholdPct) : defaultControlTieOutThresholdPct();
 
-  const gl = glBalanceMap(db, b.end);
+  const gl = glBalanceMap(db, b.end, branchScope);
   if (!gl.ok) return { ok: false, error: gl.error };
 
   const sources = [

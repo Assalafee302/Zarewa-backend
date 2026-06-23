@@ -47,6 +47,8 @@ import XLSX from 'xlsx';
 import { runMigrations } from './migrate.js';
 import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import { adjustProductStockForBranch } from './productBranchInventory.js';
+import { insertStockMovementTx } from './stockMovementOps.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -294,10 +296,10 @@ function pickLegacyCoilNo(db, branchId, quotationRef, jobDateIso, kgNeeded, row,
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ jobId: string, coilNo: string, consumedRaw: number, meters: number, completedAtIso: string, simRemain: Map<string, number> }} ctx
+ * @param {{ jobId: string, coilNo: string, consumedRaw: number, meters: number, completedAtIso: string, simRemain: Map<string, number>, branchId?: string }} ctx
  */
 function applyLegacyProductionCoilLink(db, ctx) {
-  const { jobId, coilNo, consumedRaw, meters, completedAtIso, simRemain } = ctx;
+  const { jobId, coilNo, consumedRaw, meters, completedAtIso, simRemain, branchId: ctxBranchId } = ctx;
   if (!coilNo || !jobId) return { linked: false };
   if (db.prepare(`SELECT 1 FROM production_job_coils WHERE job_id = ?`).get(jobId)) return { linked: false };
   const coil = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(coilNo);
@@ -359,28 +361,24 @@ function applyLegacyProductionCoilLink(db, ctx) {
   }
 
   const mvId = `MV-LIMP-${String(jobId).replace(/[^a-z0-9-]/gi, '').slice(0, 36)}`;
-  db.prepare(
-    `INSERT OR IGNORE INTO stock_movements (id, at_iso, type, ref, product_id, qty, detail, date_iso, unit_price_ngn, value_ngn)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    mvId,
-    atIso,
-    'COIL_CONSUMPTION',
-    jobId,
-    coil.product_id || 'PRD-LEGACY-COIL',
-    -consumed,
-    `${coilNo} consumed for ${m.toFixed(2)} m on ${jobId} (import)`,
-    atIso.slice(0, 10),
-    uc || null,
-    cogs
-  );
+  const stockBranch =
+    String(ctxBranchId ?? coil.branch_id ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  insertStockMovementTx(db, {
+    id: mvId,
+    atISO: atIso,
+    type: 'COIL_CONSUMPTION',
+    ref: jobId,
+    productID: coil.product_id || 'PRD-LEGACY-COIL',
+    qty: -consumed,
+    detail: `${coilNo} consumed for ${m.toFixed(2)} m on ${jobId} (import)`,
+    dateISO: atIso.slice(0, 10),
+    unitPriceNgn: uc || null,
+    valueNgn: cogs,
+    branchId: stockBranch,
+  });
 
   const prodId = coil.product_id || 'PRD-LEGACY-COIL';
-  const p = db.prepare(`SELECT stock_level FROM products WHERE product_id = ?`).get(prodId);
-  if (p) {
-    const next = Math.max(0, Number(p.stock_level) - consumed);
-    db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ?`).run(next, prodId);
-  }
+  adjustProductStockForBranch(db, prodId, -consumed, stockBranch);
 
   simRemain.set(coilNo, qr);
   return { linked: true };
@@ -911,12 +909,15 @@ function openDb(opts, dryRun) {
 }
 
 function ensureLegacyCoilProduct(db, branchId) {
-  const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get('PRD-LEGACY-COIL');
+  const bid = String(branchId ?? DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const exists = db
+    .prepare(`SELECT 1 FROM products WHERE product_id = ? AND branch_id = ?`)
+    .get('PRD-LEGACY-COIL', bid);
   if (exists) return;
   db.prepare(
     `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  ).run('PRD-LEGACY-COIL', 'Imported coil stock (legacy)', 0, 'kg', 0, 0, '', '', '', '{}', branchId);
+  ).run('PRD-LEGACY-COIL', 'Imported coil stock (legacy)', 0, 'kg', 0, 0, '', '', '', '{}', bid);
 }
 
 /**
@@ -1614,6 +1615,7 @@ function runImport(db, plan, branchId) {
         meters,
         completedAtIso: dateIso,
         simRemain: simCoilRemain,
+        branchId,
       });
     }
   }

@@ -6,6 +6,9 @@ import {
   completeUserTraining,
   createAppUserRecord,
   publicUserFromRow,
+  requestPasswordReset,
+  issuePasswordResetForAdmin,
+  completePasswordReset,
 } from './auth.js';
 
 function mysqlAvailable() {
@@ -57,5 +60,29 @@ describe.skipIf(!mysqlAvailable())('user onboarding', () => {
     const tr = completeUserTraining(db, r.userId);
     expect(tr.ok).toBe(true);
     expect(tr.user?.trainingCompleted).toBe(true);
+  });
+
+  it('does not re-flag mustChangePassword when issuing another reset code after password reset', () => {
+    const r = createAppUserRecord(db, {
+      username: `onboard.${Date.now()}.c`,
+      displayName: 'Reset Loop Test',
+      password: 'TempPass@999!',
+      roleKey: 'sales_staff',
+    });
+    const issued = issuePasswordResetForAdmin(db, r.userId);
+    expect(issued.ok).toBe(true);
+    const reset = completePasswordReset(
+      db,
+      issued.identifier,
+      issued.resetToken,
+      'NewSecure@999!'
+    );
+    expect(reset.ok).toBe(true);
+    let row = db.prepare(`SELECT must_change_password FROM app_users WHERE id = ?`).get(r.userId);
+    expect(Number(row.must_change_password)).toBe(0);
+
+    requestPasswordReset(db, issued.identifier);
+    row = db.prepare(`SELECT must_change_password FROM app_users WHERE id = ?`).get(r.userId);
+    expect(Number(row.must_change_password)).toBe(0);
   });
 });

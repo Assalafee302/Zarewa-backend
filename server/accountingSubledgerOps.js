@@ -6,10 +6,15 @@
 import {
   advanceBalanceFromEntries,
   overpayCreditBalanceFromEntries,
+  quotationHasCompletedProduction,
   receivableDueOnQuotationFromEntries,
   firstProductionDateISO,
 } from '../shared/lib/customerLedgerCore.js';
-import { meetsCustomerTradeReceivableRegisterFloor } from '../shared/lib/accountingRegisterConstants.js';
+import {
+  meetsAccountingRegisterCaptureFloor,
+  meetsCustomerTradeReceivableRegisterFloor,
+  MIN_ACCOUNTING_REGISTER_LINE_NGN,
+} from '../shared/lib/accountingRegisterConstants.js';
 import { quotationPaymentPolicyPhase } from '../shared/lib/accountingPolicyV1.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
@@ -29,6 +34,7 @@ import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import {
   branchWhere,
   listAccountsPayable,
+  listCuttingLists,
   listCustomers,
   listLedgerEntries,
   listProductionJobs,
@@ -113,7 +119,34 @@ function sumRefundCommitmentNgnForQuotation(db, quotationRef) {
   return sum;
 }
 
-function buildPreProductionCustomerDepositItems(db, branchScope) {
+/** Cancelled / closed-without-output — refund workflow only, not deposit register. */
+function quotationIsCommerciallyDeadForDeposit(q, productionJobs) {
+  const ref = String(q?.id || '').trim();
+  if (!ref) return false;
+  if (quotationHasCompletedProduction(ref, productionJobs)) return false;
+  return quotationProductionClosedForRefund(q, productionJobs);
+}
+
+/** Registered cutting list + Planned or Running job (Operations production line). */
+function quotationIsOnProductionLine(db, quotationRef, productionJobs, branchScope) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return false;
+  const hasRegisteredCl = listCuttingLists(db, branchScope).some(
+    (cl) => String(cl.quotationRef || '').trim() === ref && cl.productionRegistered
+  );
+  if (!hasRegisteredCl) return false;
+  return (productionJobs || []).some((j) => {
+    if (String(j?.quotationRef || '').trim() !== ref) return false;
+    const st = String(j?.status || '').trim();
+    return st === 'Planned' || st === 'Running';
+  });
+}
+
+/**
+ * Paid quote deposits before production earns revenue — split by pipeline segment.
+ * @param {{ onProductionLine: boolean }} segment
+ */
+function buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine }) {
   const quotations = listQuotations(db, branchScope);
   const productionJobs = listProductionJobs(db, branchScope);
   const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
@@ -122,7 +155,10 @@ function buildPreProductionCustomerDepositItems(db, branchScope) {
     if (quotationRefundsBlocked(q)) continue;
     if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
     if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
+    if (quotationIsCommerciallyDeadForDeposit(q, productionJobs)) continue;
     if (quotationHasUnclearedReceipts(db, q.id)) continue;
+    const onLine = quotationIsOnProductionLine(db, q.id, productionJobs, branchScope);
+    if (onLine !== onProductionLine) continue;
     const cash = quotationPaymentCashBreakdown(db, q.id);
     if (cash.cashInNgn <= 0) continue;
     const quoteTotal = roundMoney(q.totalNgn);
@@ -131,10 +167,11 @@ function buildPreProductionCustomerDepositItems(db, branchScope) {
     const amountNgn = Math.max(0, depositBase - reserved);
     if (amountNgn <= 0) continue;
     const cid = String(q.customerID || '').trim();
+    const segmentKey = onProductionLine ? 'online' : 'backlog';
     items.push(
       withEntity(
         {
-          id: `${q.id}-preprod-deposit`,
+          id: `${q.id}-${segmentKey}-deposit`,
           partyName: customers.get(cid)?.name || q.customer || cid || 'Customer',
           partyRef: cid,
           branchId: q.branchId || '',
@@ -142,8 +179,11 @@ function buildPreProductionCustomerDepositItems(db, branchScope) {
           reference: q.id,
           quotationRef: q.id,
           asAtDateIso: String(q.dateISO || '').slice(0, 10) || null,
-          detail: 'Customer deposit — paid quotation before production completes (Policy v1)',
+          detail: onProductionLine
+            ? 'Deposit — paid quotation on production line, not yet produced'
+            : 'Deposit — paid quotation not yet on production line (no CL or not registered)',
           policyPhase: 'pre_production',
+          depositSegment: onProductionLine ? 'on_production_line' : 'paid_backlog',
         },
         'customer',
         cid
@@ -155,7 +195,6 @@ function buildPreProductionCustomerDepositItems(db, branchScope) {
 
 function buildCustomerRefundCommitmentItems(db, branchScope) {
   const refunds = listRefunds(db, branchScope);
-  const productionJobs = listProductionJobs(db, branchScope);
   const quotations = new Map(listQuotations(db, branchScope).map((q) => [q.id, q]));
   const items = [];
   for (const r of refunds) {
@@ -164,7 +203,6 @@ function buildCustomerRefundCommitmentItems(db, branchScope) {
     if (!qref) continue;
     const q = quotations.get(qref);
     if (!q || quotationRefundsBlocked(q)) continue;
-    if (!quotationProductionClosedForRefund(q, productionJobs)) continue;
     const st = String(r.status || '').trim();
     if (st === 'Pending') {
       const amountNgn = roundMoney(r.amountNgn);
@@ -239,14 +277,15 @@ function poSupplierIdMap(db) {
 }
 
 function section(id, title, description, items) {
-  const subtotalNgn = sumSection(items);
+  const visible = items.filter((i) => meetsAccountingRegisterCaptureFloor(i.amountNgn));
+  const subtotalNgn = sumSection(visible);
   return {
     id,
     title,
     description,
-    count: items.length,
+    count: visible.length,
     subtotalNgn,
-    items: items.slice(0, 200),
+    items: visible.slice(0, 200),
   };
 }
 
@@ -983,6 +1022,7 @@ export function buildCreditorsRegister(db, opts = {}) {
       'Amounts owed to Zarewa — staff loans, customer balances, supplier prepayments, inter-branch, external loans, and inherited credits.',
     branchScope: branchScope === 'ALL' ? null : branchScope,
     generatedAtISO: new Date().toISOString(),
+    minRegisterLineNgn: MIN_ACCOUNTING_REGISTER_LINE_NGN,
     summary: {
       totalNgn,
       staffLoansNgn: sumSection('staff_loans'),
@@ -998,7 +1038,7 @@ export function buildCreditorsRegister(db, opts = {}) {
     sections,
     notes: [
       'Customer receivables include only quotations with completed production.',
-      'Customer trade receivable rows below ₦1,000 are omitted from this register (small-balance materiality).',
+      `Register lines below ₦${MIN_ACCOUNTING_REGISTER_LINE_NGN.toLocaleString()} are omitted (materiality floor).`,
       'Use “Add legacy line” for balances from before go-live that are not in live transactions.',
       'Non-staff borrowers (directors, contractors) — add category External loan; collect via register settlement.',
       'Staff loan outstanding uses HR obligation ledger; verify against payroll deductions.',
@@ -1296,11 +1336,6 @@ export function buildDebtorsRegister(db, opts = {}) {
     console.error('[accounting-register] debtor legacy lines failed:', err);
   }
 
-  const overpayItems = safeRegisterItems('debtors.overpayment_credits', () =>
-    buildOverpaymentCreditItems(db, branchScope)
-  );
-  const significantOverpay = overpayItems.filter((i) => i.isSignificant);
-
   const sections = [
     section(
       'supplier_payables',
@@ -1315,26 +1350,28 @@ export function buildDebtorsRegister(db, opts = {}) {
       safeRegisterItems('debtors.customer_deposits', () => buildCustomerDepositItems(db, branchScope))
     ),
     section(
-      'pre_production_deposits',
-      'Pre-production customer deposits',
-      'Cleared payments on quotations before production completes — customer deposit liability (Policy v1). Excludes permanently blocked quotations.',
-      safeRegisterItems('debtors.pre_production_deposits', () =>
-        buildPreProductionCustomerDepositItems(db, branchScope)
+      'deposit_on_production_line',
+      'Deposits — on production line',
+      'Paid quotations on the shop floor (registered cutting list, Planned/Running) — not yet produced. Excludes cancelled jobs and blocked quotations.',
+      safeRegisterItems('debtors.deposit_on_production_line', () =>
+        buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine: true })
+      )
+    ),
+    section(
+      'deposit_paid_backlog',
+      'Deposits — paid, not on line',
+      'Paid quotations with no registered cutting list or not yet pushed to production — deposit until earned. Excludes cancelled jobs and blocked quotations.',
+      safeRegisterItems('debtors.deposit_paid_backlog', () =>
+        buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine: false })
       )
     ),
     section(
       'customer_refund_commitments',
-      'Customer refund commitments',
-      'Pending or approved refunds on closed production — treasury payout may still be outstanding. Excludes permanently blocked quotations.',
+      'Customer refunds payable',
+      'Pending or approved refunds not yet paid from treasury — includes overpayment, cancellation, and unproduced categories. Excludes paid, rejected, and blocked quotations.',
       safeRegisterItems('debtors.customer_refund_commitments', () =>
         buildCustomerRefundCommitmentItems(db, branchScope)
       )
-    ),
-    section(
-      'overpayment_credits',
-      'Overpayment & refundable credits',
-      `Economic overpayment (cash in minus quote total), capped by ledger pool — significant ≥ ₦${SIGNIFICANT_OVERPAY_NGN.toLocaleString()}.`,
-      overpayItems
     ),
     section(
       'unallocated_receipts',
@@ -1366,6 +1403,8 @@ export function buildDebtorsRegister(db, opts = {}) {
 
   const legacySection = sections.find((s) => s.id === 'legacy_inherited');
   const sectionSubtotal = (id) => sections.find((s) => s.id === id)?.subtotalNgn ?? 0;
+  const depositOnLineNgn = sectionSubtotal('deposit_on_production_line');
+  const depositBacklogNgn = sectionSubtotal('deposit_paid_backlog');
   const totalNgn = sections.reduce((s, sec) => s + sec.subtotalNgn, 0);
   const pendingFinanceClearance = (() => {
     try {
@@ -1379,19 +1418,21 @@ export function buildDebtorsRegister(db, opts = {}) {
     ok: true,
     label: 'Debtors register',
     description:
-      'Amounts Zarewa owes or must refund — supplier AP, customer deposits, overpayments, unallocated receipts, bank suspense, inter-branch, and inherited balances.',
+      'Amounts Zarewa owes or must refund — supplier AP, customer deposits, refund payables, unallocated receipts, bank suspense, inter-branch, and inherited balances.',
     branchScope: branchScope === 'ALL' ? null : branchScope,
     generatedAtISO: new Date().toISOString(),
-    significantOverpayThresholdNgn: SIGNIFICANT_OVERPAY_NGN,
+    minRegisterLineNgn: MIN_ACCOUNTING_REGISTER_LINE_NGN,
     summary: {
       totalNgn,
       supplierPayablesNgn: sectionSubtotal('supplier_payables'),
       customerDepositsNgn: sectionSubtotal('customer_deposits'),
-      preProductionDepositsNgn: sectionSubtotal('pre_production_deposits'),
+      depositOnProductionLineNgn: depositOnLineNgn,
+      depositPaidBacklogNgn: depositBacklogNgn,
+      /** Sum of quote-linked pre-production deposits (on line + backlog). */
+      preProductionDepositsNgn: depositOnLineNgn + depositBacklogNgn,
       customerRefundCommitmentsNgn: sectionSubtotal('customer_refund_commitments'),
-      overpaymentCreditsNgn: sectionSubtotal('overpayment_credits'),
-      significantOverpaymentCount: significantOverpay.length,
-      significantOverpaymentNgn: sumSection(significantOverpay),
+      /** @deprecated Overpayments are captured via refund payables only. */
+      overpaymentCreditsNgn: 0,
       unallocatedReceiptsNgn: sectionSubtotal('unallocated_receipts'),
       bankDepositSuspenseNgn: sectionSubtotal('bank_deposit_suspense'),
       interBranchPayableNgn: sectionSubtotal('inter_branch_payable'),
@@ -1405,11 +1446,12 @@ export function buildDebtorsRegister(db, opts = {}) {
       pendingFinanceClearance,
     },
     notes: [
+      `Lines below ₦${MIN_ACCOUNTING_REGISTER_LINE_NGN.toLocaleString()} are omitted from register totals.`,
       'Record pre-system overpayments (e.g. April project ₦8M) under “Add legacy line” on this tab.',
-      'Pre-production deposits are cleared quote payments before production completes — not the same as treasury “Record pay” (use that for approved refund payout).',
-      'Refund commitments include pending and approved unpaid refunds on closed jobs; permanently blocked quotations are excluded from this register.',
-      'Overpayment credits use economic excess (cash in minus quote total) on finance-cleared quotes only, capped by the ledger pool — same basis as refund preview.',
-      'When detail shows a higher ledger pool than the amount, finance may reverse stale OVERPAY_ADVANCE rows.',
+      'Cancelled jobs with customer payment belong in refunds payable when a refund is Pending/Approved — not in deposit sections.',
+      'Overpayment is handled through the refund workflow only (no separate overpayment register section).',
+      'Refund payables include Pending and Approved unpaid amounts; Paid, Rejected, and blocked quotations are excluded.',
+      'Deposits on the production line align with Operations (registered cutting list + Planned/Running job).',
       'Unallocated receipts and unlinked bank deposits are suspense items until matched — not trade payables.',
       'Receipts pending finance clearance are listed separately; they are not part of this register total.',
     ],

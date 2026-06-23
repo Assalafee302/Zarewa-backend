@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { buildDebtorsRegister } from './accountingSubledgerOps.js';
+import { MIN_ACCOUNTING_REGISTER_LINE_NGN } from '../shared/lib/accountingRegisterConstants.js';
 
 function mysqlAvailable() {
   try {
@@ -22,7 +23,7 @@ function insertTestCustomer(db, customerId = 'CUS-1') {
   );
 }
 
-describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitments', () => {
+describe.skipIf(!mysqlOk)('debtors deposits and refund payables register', () => {
   let db;
 
   beforeEach(() => {
@@ -33,11 +34,13 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
     db?.close();
   });
 
-  it('lists cleared pre-production quote payments as customer deposits', () => {
+  it('lists on-line deposit when cutting list is registered and job is Planned', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
       VALUES ('QT-PRE-1', 'CUS-1', 'Test Customer', 500000, 500000, 'Paid', 'Approved', '{}', '2026-05-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO cutting_lists (id, customer_id, customer_name, quotation_ref, date_iso, branch_id, production_registered, status)
+      VALUES ('CL-PRE-1', 'CUS-1', 'Test Customer', 'QT-PRE-1', '2026-05-01', '${DEFAULT_BRANCH_ID}', 1, 'Approved');
       INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
         finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
       VALUES ('SR-PRE-1', 'CUS-1', 'Test Customer', 'QT-PRE-1', 500000, 'Posted', '2026-05-01', '${DEFAULT_BRANCH_ID}',
@@ -47,13 +50,52 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
     `);
 
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'pre_production_deposits');
-    expect(section?.count).toBe(1);
-    expect(section?.subtotalNgn).toBe(500_000);
-    expect(section?.items[0].quotationRef).toBe('QT-PRE-1');
+    const onLine = reg.sections.find((s) => s.id === 'deposit_on_production_line');
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(onLine?.count).toBe(1);
+    expect(onLine?.subtotalNgn).toBe(500_000);
+    expect(onLine?.items[0].quotationRef).toBe('QT-PRE-1');
+    expect(backlog?.count).toBe(0);
   });
 
-  it('lists approved unpaid refunds on closed production as commitments', () => {
+  it('lists backlog deposit when paid but not on production line', () => {
+    insertTestCustomer(db);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-BACK-1', 'CUS-1', 'Test Customer', 500000, 500000, 'Paid', 'Approved', '{}', '2026-05-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
+        finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
+      VALUES ('SR-BACK-1', 'CUS-1', 'Test Customer', 'QT-BACK-1', 500000, 'Posted', '2026-05-01', '${DEFAULT_BRANCH_ID}',
+        '2026-05-01T10:00:00.000Z', 500000);
+    `);
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(backlog?.count).toBe(1);
+    expect(backlog?.items[0].quotationRef).toBe('QT-BACK-1');
+  });
+
+  it('excludes cancelled-not-produced paid quotes from deposit sections', () => {
+    insertTestCustomer(db);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-CAN-1', 'CUS-1', 'Test Customer', 500000, 500000, 'Paid', 'Approved', '{}', '2026-05-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
+        finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
+      VALUES ('SR-CAN-1', 'CUS-1', 'Test Customer', 'QT-CAN-1', 500000, 'Posted', '2026-05-01', '${DEFAULT_BRANCH_ID}',
+        '2026-05-01T10:00:00.000Z', 500000);
+      INSERT INTO production_jobs (job_id, quotation_ref, status, planned_meters, actual_meters, branch_id, created_at_iso)
+      VALUES ('JOB-CAN-1', 'QT-CAN-1', 'Cancelled', 100, 0, '${DEFAULT_BRANCH_ID}', '2026-05-02T10:00:00.000Z');
+    `);
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const onLine = reg.sections.find((s) => s.id === 'deposit_on_production_line');
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(onLine?.count).toBe(0);
+    expect(backlog?.count).toBe(0);
+  });
+
+  it('lists approved unpaid refunds as refund payables', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
@@ -78,7 +120,7 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
     expect(item?.refundStatus).toBe('Approved');
   });
 
-  it('excludes refund commitments when an open production job still exists', () => {
+  it('includes approved refunds even when an open production job exists', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
@@ -93,16 +135,36 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
         approval_date, approved_by, branch_id
       ) VALUES (
         'RF-OPEN-1', 'CUS-1', 'Test Customer', 'QT-OPEN-1', '—', '["Adjustment"]',
-        'Should not show', 50000, 50000, 0, 'Approved', 'Sales', '2026-04-03', '2026-04-04', 'BM', '${DEFAULT_BRANCH_ID}'
+        'Partial refund', 50000, 50000, 0, 'Approved', 'Sales', '2026-04-03', '2026-04-04', 'BM', '${DEFAULT_BRANCH_ID}'
       );
     `);
 
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
     const section = reg.sections.find((s) => s.id === 'customer_refund_commitments');
-    expect(section?.items.some((i) => i.id === 'RF-OPEN-1')).toBe(false);
+    expect(section?.items.some((i) => i.id === 'RF-OPEN-1')).toBe(true);
   });
 
-  it('excludes staff purchase credit quotations from pre-production deposits', () => {
+  it('excludes paid refunds from refund payables', () => {
+    insertTestCustomer(db);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-PAID-RF', 'CUS-1', 'Test Customer', 500000, 500000, 'Paid', 'Finished', '{}', '2026-04-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,
+        amount_ngn, approved_amount_ngn, paid_amount_ngn, status, requested_by, requested_at_iso,
+        approval_date, approved_by, branch_id, paid_at_iso
+      ) VALUES (
+        'RF-PAID-1', 'CUS-1', 'Test Customer', 'QT-PAID-RF', '—', '["Overpayment"]',
+        'Paid out', 50000, 50000, 50000, 'Paid', 'Sales', '2026-04-03', '2026-04-04', 'BM', '${DEFAULT_BRANCH_ID}', '2026-04-05'
+      );
+    `);
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const section = reg.sections.find((s) => s.id === 'customer_refund_commitments');
+    expect(section?.items.some((i) => i.id === 'RF-PAID-1')).toBe(false);
+  });
+
+  it('excludes staff purchase credit quotations from deposit sections', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO app_users (id, username, display_name, password_hash, role_key, created_at_iso)
@@ -128,11 +190,13 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
     `);
 
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'pre_production_deposits');
-    expect(section?.items.some((i) => i.quotationRef === 'QT-SPC-1')).toBe(false);
+    const onLine = reg.sections.find((s) => s.id === 'deposit_on_production_line');
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(onLine?.items.some((i) => i.quotationRef === 'QT-SPC-1')).toBe(false);
+    expect(backlog?.items.some((i) => i.quotationRef === 'QT-SPC-1')).toBe(false);
   });
 
-  it('excludes blocked quotations from pre-production deposits and refund commitments', () => {
+  it('excludes blocked quotations from deposits and refund payables', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id,
@@ -156,9 +220,28 @@ describe.skipIf(!mysqlOk)('debtors pre-production deposits and refund commitment
     `);
 
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const pre = reg.sections.find((s) => s.id === 'pre_production_deposits');
+    const onLine = reg.sections.find((s) => s.id === 'deposit_on_production_line');
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
     const commits = reg.sections.find((s) => s.id === 'customer_refund_commitments');
-    expect(pre?.items.some((i) => i.quotationRef === 'QT-BLOCK-1')).toBe(false);
+    expect(onLine?.items.some((i) => i.quotationRef === 'QT-BLOCK-1')).toBe(false);
+    expect(backlog?.items.some((i) => i.quotationRef === 'QT-BLOCK-1')).toBe(false);
     expect(commits?.items.some((i) => i.id === 'RF-BLOCK-1')).toBe(false);
+  });
+
+  it(`omits register lines below ₦${MIN_ACCOUNTING_REGISTER_LINE_NGN}`, () => {
+    insertTestCustomer(db);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-SMALL', 'CUS-1', 'Test Customer', 1000, 1000, 'Paid', 'Approved', '{}', '2026-05-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
+        finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
+      VALUES ('SR-SMALL', 'CUS-1', 'Test Customer', 'QT-SMALL', 1000, 'Posted', '2026-05-01', '${DEFAULT_BRANCH_ID}',
+        '2026-05-01T10:00:00.000Z', 1000);
+    `);
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    expect(reg.minRegisterLineNgn).toBe(1500);
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(backlog?.count).toBe(0);
   });
 });

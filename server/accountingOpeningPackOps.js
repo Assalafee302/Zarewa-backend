@@ -138,9 +138,13 @@ function rollupCreditorsSources(db, branchScope) {
 function rollupDebtorsSources(db, branchScope) {
   const reg = buildDebtorsRegister(db, { branchId: branchScope === 'ALL' ? null : branchScope });
   const depositAmount =
-    sectionTotal(reg, 'customer_deposits') + sectionTotal(reg, 'pre_production_deposits');
+    sectionTotal(reg, 'customer_deposits') +
+    sectionTotal(reg, 'deposit_on_production_line') +
+    sectionTotal(reg, 'deposit_paid_backlog');
   const depositRows =
-    sectionCount(reg, 'customer_deposits') + sectionCount(reg, 'pre_production_deposits');
+    sectionCount(reg, 'customer_deposits') +
+    sectionCount(reg, 'deposit_on_production_line') +
+    sectionCount(reg, 'deposit_paid_backlog');
   const suspenseAmount =
     sectionTotal(reg, 'bank_deposit_suspense') + sectionTotal(reg, 'unallocated_receipts');
   const suspenseRows =

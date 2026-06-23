@@ -23,7 +23,7 @@ function insertTestCustomer(db, customerId = 'CUS-1') {
   );
 }
 
-describe.skipIf(!mysqlOk)('debtors overpayment credits (economic cap)', () => {
+describe.skipIf(!mysqlOk)('debtors overpayment via refund payables (economic cap helper)', () => {
   let db;
 
   beforeEach(() => {
@@ -57,36 +57,32 @@ describe.skipIf(!mysqlOk)('debtors overpayment credits (economic cap)', () => {
     expect(econ.amountNgn).toBe(15_860);
 
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'overpayment_credits');
-    expect(section?.count).toBe(1);
-    expect(section?.subtotalNgn).toBe(15_860);
-    expect(section?.items[0].amountNgn).toBe(15_860);
-    expect(section?.items[0].ledgerPoolNgn).toBe(596_260);
+    expect(reg.sections.some((s) => s.id === 'overpayment_credits')).toBe(false);
   });
 
-  it('shows legitimate split-till overpayment unchanged', () => {
+  it('shows approved overpayment refund in refund payables section', () => {
     insertTestCustomer(db);
     db.exec(`
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
-      VALUES ('QT-KD-26-0200', 'CUS-1', 'Test Customer', 2679600, 2679600, 'Paid', 'Finished', '{}', '2026-05-14', '${DEFAULT_BRANCH_ID}');
+      VALUES ('QT-OP', 'CUS-1', 'Test Customer', 500000, 600000, 'Paid', 'Finished', '{}', '2026-05-14', '${DEFAULT_BRANCH_ID}');
       INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
         finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
-      VALUES ('SR-1', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 2679600, 'Posted', '2026-05-14', '${DEFAULT_BRANCH_ID}',
-        '2026-05-14T18:00:00.000Z', 4100000);
-      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, payment_method, bank_reference, note, branch_id)
-      VALUES
-        ('LE-R', 'RECEIPT', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 2679600, '2026-05-14T12:00:00.000Z', 'Bank', 'REF1', 'Settlement', '${DEFAULT_BRANCH_ID}'),
-        ('LE-O', 'OVERPAY_ADVANCE', 'CUS-1', 'Test Customer', 'QT-KD-26-0200', 1420400, '2026-05-14T12:00:00.000Z', 'Bank', 'REF1', 'Overpayment vs remaining balance on QT-KD-26-0200 → customer credit', '${DEFAULT_BRANCH_ID}');
+      VALUES ('SR-OP', 'CUS-1', 'Test Customer', 'QT-OP', 600000, 'Posted', '2026-05-14', '${DEFAULT_BRANCH_ID}',
+        '2026-05-14T18:00:00.000Z', 600000);
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, product, reason_category, reason,
+        amount_ngn, approved_amount_ngn, paid_amount_ngn, status, requested_by, requested_at_iso,
+        approval_date, approved_by, branch_id
+      ) VALUES (
+        'RF-OP-1', 'CUS-1', 'Test Customer', 'QT-OP', '—', '["Overpayment"]',
+        'Overpay refund', 100000, 100000, 0, 'Approved', 'Sales', '2026-05-14', '2026-05-15', 'BM', '${DEFAULT_BRANCH_ID}'
+      );
     `);
 
-    const ledger = listLedgerEntries(db, DEFAULT_BRANCH_ID);
-    const econ = refundableOverpayCreditNgnForCustomer(db, ledger, 'CUS-1', DEFAULT_BRANCH_ID);
-    expect(econ.ledgerPoolNgn).toBe(1_420_400);
-    expect(econ.amountNgn).toBe(1_420_400);
-
     const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'overpayment_credits');
-    expect(section?.subtotalNgn).toBe(1_420_400);
+    const section = reg.sections.find((s) => s.id === 'customer_refund_commitments');
+    expect(section?.count).toBe(1);
+    expect(section?.subtotalNgn).toBe(100_000);
   });
 
   it('omits customer when ledger pool exists but economic excess is zero', () => {
@@ -109,32 +105,5 @@ describe.skipIf(!mysqlOk)('debtors overpayment credits (economic cap)', () => {
     expect(econ.ledgerPoolNgn).toBe(1_420_400);
     expect(econ.economicExcessNgn).toBe(0);
     expect(econ.amountNgn).toBe(0);
-
-    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'overpayment_credits');
-    expect(section?.count).toBe(0);
-    expect(section?.subtotalNgn).toBe(0);
-  });
-
-  it('excludes uncleared quote cash from economic overpayment excess', () => {
-    insertTestCustomer(db);
-    db.exec(`
-      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
-      VALUES ('QT-UNCLEARED', 'CUS-1', 'Test Customer', 500000, 600000, 'Paid', 'Finished', '{}', '2026-05-14', '${DEFAULT_BRANCH_ID}');
-      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id)
-      VALUES ('SR-UNCLEARED', 'CUS-1', 'Test Customer', 'QT-UNCLEARED', 600000, 'Pending clearance', '2026-05-14', '${DEFAULT_BRANCH_ID}');
-      INSERT INTO ledger_entries (id, type, customer_id, quotation_ref, amount_ngn, at_iso, note, branch_id)
-      VALUES ('LE-O-UNC', 'OVERPAY_ADVANCE', 'CUS-1', 'QT-UNCLEARED', 100000, '2026-05-14T12:00:00.000Z', 'Overpayment vs remaining balance on QT-UNCLEARED → advance', '${DEFAULT_BRANCH_ID}');
-    `);
-
-    const ledger = listLedgerEntries(db, DEFAULT_BRANCH_ID);
-    const econ = refundableOverpayCreditNgnForCustomer(db, ledger, 'CUS-1', DEFAULT_BRANCH_ID);
-    expect(econ.ledgerPoolNgn).toBe(100_000);
-    expect(econ.economicExcessNgn).toBe(0);
-    expect(econ.amountNgn).toBe(0);
-
-    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
-    const section = reg.sections.find((s) => s.id === 'overpayment_credits');
-    expect(section?.count).toBe(0);
   });
 });

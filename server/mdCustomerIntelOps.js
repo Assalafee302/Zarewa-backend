@@ -1,10 +1,18 @@
 /**
  * MD customer intelligence — ranked customers with health segments.
  */
+import {
+  advanceBalanceFromEntries,
+  ledgerAttributedPaidNgnForQuotation,
+  ledgerReceiptTotalFromEntries,
+} from '../shared/lib/customerLedgerCore.js';
 import { topCustomersByNetPayments } from '../shared/lib/businessIntelligence.js';
 import { topCustomersByDebt } from './execDashboardOps.js';
 import {
+  branchWhere,
+  getCustomer,
   listLedgerEntries,
+  listLedgerEntriesForCustomer,
   listProductionJobs,
   listQuotations,
   listRefunds,
@@ -134,5 +142,61 @@ export function buildMdCustomerIntelPack(db, opts) {
     summary,
     champion,
     customers,
+  };
+}
+
+/**
+ * Lightweight customer brief for MD slide-over (per-customer SQL, no branch-wide scans).
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} customerId
+ * @param {string} [branchScope]
+ */
+export function buildExecCustomerBrief(db, customerId, branchScope = 'ALL') {
+  const id = String(customerId || '').trim();
+  if (!id) return { ok: false, error: 'customerId required' };
+
+  const customer = getCustomer(db, id, branchScope);
+  if (!customer) return { ok: false, error: 'Customer not found' };
+
+  const entries = listLedgerEntriesForCustomer(db, id, branchScope);
+  const advanceNgn = advanceBalanceFromEntries(entries, id);
+  const receiptTotalNgn = ledgerReceiptTotalFromEntries(entries, id);
+
+  const bq = branchWhere(db, 'quotations', branchScope);
+  const quotationRows = db
+    .prepare(
+      `SELECT id, total_ngn, paid_ngn, status, date_iso FROM quotations
+       WHERE customer_id = ?${bq.sql} ORDER BY date_iso DESC, id DESC LIMIT 15`
+    )
+    .all(id, ...bq.args);
+
+  const outstandingByQuotation = quotationRows.map((q) => {
+    const totalNgn = Math.round(Number(q.total_ngn) || 0);
+    const ledgerPaid = ledgerAttributedPaidNgnForQuotation(entries, q.id);
+    const paidNgn = ledgerPaid > 0 ? ledgerPaid : Math.round(Number(q.paid_ngn) || 0);
+    return {
+      quotationId: q.id,
+      totalNgn,
+      paidNgn,
+      amountDueNgn: Math.max(0, totalNgn - paidNgn),
+      status: q.status,
+      dateISO: q.date_iso,
+    };
+  });
+
+  return {
+    ok: true,
+    customerId: id,
+    advanceNgn,
+    receiptTotalNgn,
+    outstandingByQuotation,
+    entries: entries.slice(0, 12).map((e) => ({
+      id: e.id,
+      type: e.type,
+      amountNgn: e.amountNgn,
+      atISO: e.atISO,
+      reference: e.quotationRef || e.bankReference || '',
+    })),
   };
 }

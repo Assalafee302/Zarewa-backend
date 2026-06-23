@@ -327,7 +327,7 @@ import { registerHrApi } from './hrApi.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
-import { buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
+import { buildExecCustomerBrief, buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
 import { buildMdTracePack } from './mdTraceOps.js';
 import {
   getExecReservePolicyResponse,
@@ -4955,6 +4955,21 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load MD customer intelligence.' });
+    }
+  });
+
+  app.get('/api/exec/customers/:customerId/brief', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const result = buildExecCustomerBrief(db, req.params.customerId, branchScope);
+      if (!result.ok) {
+        const status = result.error === 'Customer not found' ? 404 : 400;
+        return res.status(status).json(result);
+      }
+      res.json(result);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load customer brief.' });
     }
   });
 

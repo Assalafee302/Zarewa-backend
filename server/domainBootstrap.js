@@ -47,6 +47,9 @@ import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
+import { buildCreditorsRegister, buildDebtorsRegister } from './accountingSubledgerOps.js';
+import { listFixedAssets } from './accountingPhase2Ops.js';
+import { userMayViewAccountingSubledger } from './financeDeskAccess.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { userHasPermission } from './auth.js';
 import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
@@ -205,6 +208,42 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
 }
 
 /**
+ * Precomputed accounting registers — same payloads as /api/accounting/* for instant desk tables.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object | null} user
+ * @param {'ALL' | string} branchScope
+ */
+function buildAccountingRegisterSnapshotFields(db, user, branchScope) {
+  if (!userMayViewAccountingSubledger(user)) {
+    return {
+      accountingCreditors: null,
+      accountingDebtors: null,
+      accountingAssets: null,
+    };
+  }
+  const registerOpts = { branchId: branchScope === 'ALL' ? 'ALL' : branchScope };
+  let accountingCreditors = null;
+  let accountingDebtors = null;
+  let accountingAssets = null;
+  try {
+    accountingCreditors = buildCreditorsRegister(db, registerOpts);
+  } catch (e) {
+    console.error('[domainBootstrap] accountingCreditors', e);
+  }
+  try {
+    accountingDebtors = buildDebtorsRegister(db, registerOpts);
+  } catch (e) {
+    console.error('[domainBootstrap] accountingDebtors', e);
+  }
+  try {
+    accountingAssets = listFixedAssets(db, branchScope);
+  } catch (e) {
+    console.error('[domainBootstrap] accountingAssets', e);
+  }
+  return { accountingCreditors, accountingDebtors, accountingAssets };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {{ user?: object | null; branchScope?: 'ALL' | string }} opts
  */
@@ -220,9 +259,11 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       userHasPermission(user, 'finance.post') ||
       userHasPermission(user, 'reports.view'));
   const orgLimits = user ? getOrgGovernanceLimits(db) : null;
+  const accountingRegisters = buildAccountingRegisterSnapshotFields(db, user, branchScope);
   return {
     ok: true,
     domain: 'finance',
+    ...accountingRegisters,
     ledgerEntries: ledgerOk ? ledgerRows : [],
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],

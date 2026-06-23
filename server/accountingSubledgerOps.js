@@ -34,7 +34,6 @@ import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import {
   branchWhere,
   listAccountsPayable,
-  listCuttingLists,
   listCustomers,
   listLedgerEntries,
   listProductionJobs,
@@ -127,19 +126,97 @@ function quotationIsCommerciallyDeadForDeposit(q, productionJobs) {
   return quotationProductionClosedForRefund(q, productionJobs);
 }
 
+/** Quotation refs with a production-registered cutting list (lightweight — no line hydration). */
+function registeredCuttingListQuotationRefSet(db, branchScope) {
+  const b = branchWhere(db, 'cutting_lists', branchScope);
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT quotation_ref AS quotation_ref
+       FROM cutting_lists
+       WHERE production_registered = 1
+         AND quotation_ref IS NOT NULL
+         AND TRIM(quotation_ref) != ''${b.sql}`
+    )
+    .all(...b.args);
+  return new Set(rows.map((r) => String(r.quotation_ref || '').trim()).filter(Boolean));
+}
+
+/** Quotation refs with a Planned or Running production job. */
+function activeProductionLineJobRefSet(productionJobs) {
+  return new Set(
+    (productionJobs || [])
+      .filter((j) => {
+        const st = String(j?.status || '').trim();
+        return st === 'Planned' || st === 'Running';
+      })
+      .map((j) => String(j?.quotationRef || '').trim())
+      .filter(Boolean)
+  );
+}
+
 /** Registered cutting list + Planned or Running job (Operations production line). */
-function quotationIsOnProductionLine(db, quotationRef, productionJobs, branchScope) {
+function quotationIsOnProductionLine(quotationRef, registeredClRefs, activeJobRefs) {
   const ref = String(quotationRef || '').trim();
   if (!ref) return false;
-  const hasRegisteredCl = listCuttingLists(db, branchScope).some(
-    (cl) => String(cl.quotationRef || '').trim() === ref && cl.productionRegistered
+  return registeredClRefs.has(ref) && activeJobRefs.has(ref);
+}
+
+function buildCustomerDepositQuoteItemRow(db, q, customers, onProductionLine) {
+  const cid = String(q.customerID || '').trim();
+  const segmentKey = onProductionLine ? 'online' : 'backlog';
+  const cash = quotationPaymentCashBreakdown(db, q.id);
+  if (cash.cashInNgn <= 0) return null;
+  const quoteTotal = roundMoney(q.totalNgn);
+  const depositBase = quoteTotal > 0 ? Math.min(cash.cashInNgn, quoteTotal) : cash.cashInNgn;
+  const reserved = sumRefundCommitmentNgnForQuotation(db, q.id);
+  const amountNgn = Math.max(0, depositBase - reserved);
+  if (amountNgn <= 0) return null;
+  return withEntity(
+    {
+      id: `${q.id}-${segmentKey}-deposit`,
+      partyName: customers.get(cid)?.name || q.customer || cid || 'Customer',
+      partyRef: cid,
+      branchId: q.branchId || '',
+      amountNgn,
+      reference: q.id,
+      quotationRef: q.id,
+      asAtDateIso: String(q.dateISO || '').slice(0, 10) || null,
+      detail: onProductionLine
+        ? 'Deposit — paid quotation on production line, not yet produced'
+        : 'Deposit — paid quotation not yet on production line (no CL or not registered)',
+      policyPhase: 'pre_production',
+      depositSegment: onProductionLine ? 'on_production_line' : 'paid_backlog',
+    },
+    'customer',
+    cid
   );
-  if (!hasRegisteredCl) return false;
-  return (productionJobs || []).some((j) => {
-    if (String(j?.quotationRef || '').trim() !== ref) return false;
-    const st = String(j?.status || '').trim();
-    return st === 'Planned' || st === 'Running';
-  });
+}
+
+/**
+ * Paid quote deposits before production earns revenue — on-line vs backlog in one pass.
+ * @returns {{ onLine: object[]; backlog: object[] }}
+ */
+function buildCustomerDepositQuoteItemSegments(db, branchScope) {
+  const quotations = listQuotations(db, branchScope);
+  const productionJobs = listProductionJobs(db, branchScope);
+  const registeredClRefs = registeredCuttingListQuotationRefSet(db, branchScope);
+  const activeJobRefs = activeProductionLineJobRefSet(productionJobs);
+  const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
+  const onLine = [];
+  const backlog = [];
+  for (const q of quotations) {
+    if (quotationRefundsBlocked(q)) continue;
+    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
+    if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
+    if (quotationIsCommerciallyDeadForDeposit(q, productionJobs)) continue;
+    if (quotationHasUnclearedReceipts(db, q.id)) continue;
+    const onProductionLine = quotationIsOnProductionLine(q.id, registeredClRefs, activeJobRefs);
+    const row = buildCustomerDepositQuoteItemRow(db, q, customers, onProductionLine);
+    if (!row) continue;
+    (onProductionLine ? onLine : backlog).push(row);
+  }
+  const sortDesc = (a, b) => b.amountNgn - a.amountNgn;
+  return { onLine: onLine.sort(sortDesc), backlog: backlog.sort(sortDesc) };
 }
 
 /**
@@ -147,50 +224,8 @@ function quotationIsOnProductionLine(db, quotationRef, productionJobs, branchSco
  * @param {{ onProductionLine: boolean }} segment
  */
 function buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine }) {
-  const quotations = listQuotations(db, branchScope);
-  const productionJobs = listProductionJobs(db, branchScope);
-  const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
-  const items = [];
-  for (const q of quotations) {
-    if (quotationRefundsBlocked(q)) continue;
-    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
-    if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
-    if (quotationIsCommerciallyDeadForDeposit(q, productionJobs)) continue;
-    if (quotationHasUnclearedReceipts(db, q.id)) continue;
-    const onLine = quotationIsOnProductionLine(db, q.id, productionJobs, branchScope);
-    if (onLine !== onProductionLine) continue;
-    const cash = quotationPaymentCashBreakdown(db, q.id);
-    if (cash.cashInNgn <= 0) continue;
-    const quoteTotal = roundMoney(q.totalNgn);
-    const depositBase = quoteTotal > 0 ? Math.min(cash.cashInNgn, quoteTotal) : cash.cashInNgn;
-    const reserved = sumRefundCommitmentNgnForQuotation(db, q.id);
-    const amountNgn = Math.max(0, depositBase - reserved);
-    if (amountNgn <= 0) continue;
-    const cid = String(q.customerID || '').trim();
-    const segmentKey = onProductionLine ? 'online' : 'backlog';
-    items.push(
-      withEntity(
-        {
-          id: `${q.id}-${segmentKey}-deposit`,
-          partyName: customers.get(cid)?.name || q.customer || cid || 'Customer',
-          partyRef: cid,
-          branchId: q.branchId || '',
-          amountNgn,
-          reference: q.id,
-          quotationRef: q.id,
-          asAtDateIso: String(q.dateISO || '').slice(0, 10) || null,
-          detail: onProductionLine
-            ? 'Deposit — paid quotation on production line, not yet produced'
-            : 'Deposit — paid quotation not yet on production line (no CL or not registered)',
-          policyPhase: 'pre_production',
-          depositSegment: onProductionLine ? 'on_production_line' : 'paid_backlog',
-        },
-        'customer',
-        cid
-      )
-    );
-  }
-  return items.sort((a, b) => b.amountNgn - a.amountNgn);
+  const segments = buildCustomerDepositQuoteItemSegments(db, branchScope);
+  return onProductionLine ? segments.onLine : segments.backlog;
 }
 
 function buildCustomerRefundCommitmentItems(db, branchScope) {
@@ -1336,6 +1371,15 @@ export function buildDebtorsRegister(db, opts = {}) {
     console.error('[accounting-register] debtor legacy lines failed:', err);
   }
 
+  const depositQuoteSegments = (() => {
+    try {
+      return buildCustomerDepositQuoteItemSegments(db, branchScope);
+    } catch (err) {
+      console.error('[accounting-register] debtors.deposit_quote_segments failed:', err);
+      return { onLine: [], backlog: [] };
+    }
+  })();
+
   const sections = [
     section(
       'supplier_payables',
@@ -1353,17 +1397,13 @@ export function buildDebtorsRegister(db, opts = {}) {
       'deposit_on_production_line',
       'Deposits — on production line',
       'Paid quotations on the shop floor (registered cutting list, Planned/Running) — not yet produced. Excludes cancelled jobs and blocked quotations.',
-      safeRegisterItems('debtors.deposit_on_production_line', () =>
-        buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine: true })
-      )
+      depositQuoteSegments.onLine
     ),
     section(
       'deposit_paid_backlog',
       'Deposits — paid, not on line',
       'Paid quotations with no registered cutting list or not yet pushed to production — deposit until earned. Excludes cancelled jobs and blocked quotations.',
-      safeRegisterItems('debtors.deposit_paid_backlog', () =>
-        buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine: false })
-      )
+      depositQuoteSegments.backlog
     ),
     section(
       'customer_refund_commitments',

@@ -13,6 +13,7 @@ const MD_ONLY_KINDS = new Set([
   'payroll',
   'inter_branch_loan',
   'stock_register',
+  'staff_purchase_credit',
 ]);
 
 const DEFAULT_EXPENSE_MD_THRESHOLD_NGN = 200_000;

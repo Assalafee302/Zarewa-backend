@@ -21,8 +21,10 @@ import {
 import {
   annotateExecWorkTrayApprovalTiers,
   sortExecWorkTrayByApprovalTier,
+  summarizeExecWorkTrayApprovalTiers,
 } from '../shared/lib/execApprovalTier.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
+import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
@@ -506,7 +508,21 @@ function canActOnWorkItemKind(user, kind) {
   if (k === 'edit_approvals') return userHasPermission(user, 'audit.view') || userHasPermission(user, 'quotations.manage');
   if (k === 'payroll') return userHasPermission(user, 'hr.payroll.md_approve');
   if (k === 'inter_branch_loan') return userHasPermission(user, 'inter_branch_loan.md_approve');
-  if (k === 'stock_register') return userHasPermission(user, 'sales.manage') || userHasPermission(user, 'quotations.manage');
+  if (k === 'staff_purchase_credit') {
+    const rk = String(user?.roleKey || '').toLowerCase();
+    return rk === 'md' || rk === 'admin' || userHasPermission(user, '*');
+  }
+  if (k === 'stock_register') {
+    const rk = String(user?.roleKey || '').toLowerCase();
+    return (
+      rk === 'md' ||
+      rk === 'admin' ||
+      rk === 'ceo' ||
+      rk === 'chairman' ||
+      userHasPermission(user, 'sales.manage') ||
+      userHasPermission(user, 'quotations.manage')
+    );
+  }
   if (k === 'price_exception') return userHasPermission(user, 'md.price_exception.approve');
   if (k === 'conversions') return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'production.manage');
   if (k === 'office_memo' || k === 'work_item') return userHasPermission(user, 'office.use');
@@ -520,9 +536,10 @@ function workItemRoute(kind, row = {}) {
   if (k === 'payments') return '/manager';
   if (k === 'material') return '/operations/material-exceptions';
   if (k === 'edit_approvals') return '/manager';
-  if (k === 'payroll') return '/hr/executive';
-  if (k === 'inter_branch_loan') return '/accounting';
-  if (k === 'stock_register') return '/operations';
+  if (k === 'payroll') return '/exec?tab=decide';
+  if (k === 'inter_branch_loan') return '/exec?tab=decide';
+  if (k === 'stock_register') return '/exec?tab=decide';
+  if (k === 'staff_purchase_credit') return '/exec?tab=decide';
   if (k === 'price_exception') return '/exec';
   if (k === 'conversions') return '/exec';
   if (k === 'office_memo' || k === 'work_item') return '/office';
@@ -566,6 +583,11 @@ function mapAttentionToWorkTray(db, attention, user, readOnly) {
         cuttingListId: String(it.cuttingListId || it.row?.id || '').trim(),
         materialIncidentId: String(it.row?.id || '').trim(),
         editApprovalId: String(it.row?.id || '').trim(),
+        accountId: String(it.accountId || it.row?.id || '').trim(),
+        payrollRunId: String(it.row?.id || it.row?.run_id || '').trim(),
+        loanId: String(it.loanId || it.row?.loan_id || '').trim(),
+        periodKey: String(it.row?.periodKey || it.row?.period_key || '').trim(),
+        branchIdForRegister: String(it.branchId || it.row?.branch_id || branchId || '').trim(),
         reasons: Array.isArray(it.reasons) ? it.reasons : [],
         subtitle: String(it.subtitle || '').trim(),
         row: it.row || {},
@@ -606,7 +628,13 @@ function listExecutiveExtras(db, branchScope) {
         requestedBy: 'HR',
         ageLabel: daysSinceLabel(r.created_at_iso),
         status: 'MD sign-off required',
-        route: '/hr/executive',
+        route: '/exec?tab=decide',
+        reviewContext: {
+          payrollRunId: r.id,
+          reasons: ['Payroll MD sign-off required before lock'],
+          subtitle: r.period_yyyymm || '',
+          row: r,
+        },
       });
     }
   } catch {
@@ -634,7 +662,13 @@ function listExecutiveExtras(db, branchScope) {
         requestedBy: 'Treasury',
         ageLabel: daysSinceLabel(r.created_at_iso),
         status: String(r.status || 'Pending'),
-        route: '/accounting',
+        route: '/exec?tab=decide',
+        reviewContext: {
+          loanId: r.loan_id,
+          reasons: ['Inter-branch loan requires MD approval'],
+          subtitle: `${branchName(db, r.lender_branch_id)} → ${branchName(db, r.borrower_branch_id)}`,
+          row: r,
+        },
       });
     }
   } catch {
@@ -703,7 +737,14 @@ function listExecutiveExtras(db, branchScope) {
           requestedBy: 'Procurement',
           ageLabel: '—',
           status: 'MD approval on register',
-          route: '/operations',
+          route: '/exec?tab=decide',
+          reviewContext: {
+            branchIdForRegister: bid,
+            periodKey,
+            reasons: ['Month-end stock register awaiting MD approval'],
+            subtitle: branchName(db, bid),
+            row: { ...row, branch_id: bid, periodKey },
+          },
         });
       }
     }
@@ -840,6 +881,7 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
       ageLabel: daysSinceLabel(t.updatedAtIso),
       status: String(t.status || 'open'),
       route: '/office',
+      reviewContext: { threadId: t.id, subject: t.subject || '' },
       summaryOnly: false,
       canAct: !readOnly && userHasPermission(user, 'office.use'),
     });
@@ -1607,6 +1649,28 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
 
   const reservePolicy = buildReservePolicyReadiness(db);
 
+  const workTrayTierSummary = summarizeExecWorkTrayApprovalTiers(workTrayItems);
+  const priceExceptionCount = workTrayItems.filter(
+    (it) => String(it.kind || '').toLowerCase() === 'price_exception'
+  ).length;
+  const targetNairaRow = (targets?.rows || []).find((r) => r.metricKey === 'naira_sales');
+  const targetMetreRow = (targets?.rows || []).find((r) => r.metricKey === 'production_metres');
+  const cockpitPulses = buildMdCockpitPulses(db, {
+    branchScope,
+    treasuryCashNgn,
+    outstandingReceivablesNgn: sales.outstandingReceivablesNgn,
+    inventoryValueNgn,
+    producedRevenueNgn: sales.producedRevenueNgn || sales.quotedNgn,
+    targetRevenueNgn: targetNairaRow?.target ?? null,
+    completedMetres: targetMetreRow?.actual ?? 0,
+    targetMetres: targetMetreRow?.target ?? null,
+    priceExceptionCount,
+    payrollDraftsAwaitingMd: scopedCounts.payrollDraftsAwaitingMd?.count ?? 0,
+    workTrayItems,
+    biPack,
+  });
+  const championCustomer = buildChampionCustomerSnippet(topCustomersByPayments);
+
   return {
     ok: true,
     generatedAtISO: new Date().toISOString(),
@@ -1643,12 +1707,18 @@ export function buildExecutiveDashboard(db, user, opts = {}) {
       items: workTrayItems.slice(0, 80),
       summary: {
         total: workTrayItems.length,
+        mdOnly: workTrayTierSummary.mdOnly,
+        shared: workTrayTierSummary.shared,
         byKind: workTrayItems.reduce((acc, it) => {
           acc[it.kind] = (acc[it.kind] || 0) + 1;
           return acc;
         }, {}),
       },
       readOnlyForActor: readOnlyExecutiveView,
+    },
+    cockpit: {
+      pulses: cockpitPulses,
+      championCustomer: championCustomer.champion,
     },
     executiveCounts: scopedCounts,
     sales: {

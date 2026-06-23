@@ -16,6 +16,9 @@ describe('execApprovalTier', () => {
       EXEC_APPROVAL_TIER_MD_ONLY
     );
     expect(classifyExecWorkTrayApprovalTier({ kind: 'payroll' }).tier).toBe(EXEC_APPROVAL_TIER_MD_ONLY);
+    expect(classifyExecWorkTrayApprovalTier({ kind: 'staff_purchase_credit' }).tier).toBe(
+      EXEC_APPROVAL_TIER_MD_ONLY
+    );
   });
 
   it('splits refunds by threshold', () => {

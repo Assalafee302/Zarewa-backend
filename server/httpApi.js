@@ -326,12 +326,15 @@ import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { registerHrApi } from './hrApi.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
-import { buildExecutiveDashboard, resolveExecDashboardBranchScope } from './execDashboardOps.js';
+import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
+import { buildMdCustomerIntelPack } from './mdCustomerIntelOps.js';
+import { buildMdTracePack } from './mdTraceOps.js';
 import {
   getExecReservePolicyResponse,
   RESERVE_POLICY_MANAGE_PERMISSION,
   setExecReservePolicy,
 } from './execReservePolicyOps.js';
+import { getMdReviewNote, saveMdReviewNote } from './execReviewNoteOps.js';
 import { enrichQuotationAuditPayload, listManagerPoAudit } from './mdJourneyOps.js';
 import { buildExecutiveDailyPack, buildExecutiveWeeklyPack } from './mdReportPacks.js';
 import { OFFICE_OPERATION_TEMPLATES } from '../shared/officeComposeTemplates.js';
@@ -4789,9 +4792,24 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/stock-register/workflow', requireAuth, requirePermission([...stockRegisterStorePerms, ...stockRegisterManagerPerms, ...stockRegisterProcurementPerms]), (req, res) => {
+  app.post('/api/stock-register/workflow', requireAuth, (req, res) => {
     try {
       const action = String(req.body?.action || '').trim();
+      const rk = String(req.user?.roleKey || '').trim().toLowerCase();
+      const mdApproveAction = action === 'md_approve';
+      const executiveMd =
+        mdApproveAction && ['md', 'admin', 'ceo', 'chairman'].includes(rk);
+      if (!executiveMd) {
+        const allowed = [
+          ...stockRegisterStorePerms,
+          ...stockRegisterManagerPerms,
+          ...stockRegisterProcurementPerms,
+        ];
+        const hasPerm = allowed.some((p) => userHasPermission(req.user, p));
+        if (!hasPerm) {
+          return res.status(403).json({ ok: false, error: 'Forbidden.' });
+        }
+      }
       const periodKey = String(req.body?.periodKey || '').trim();
       const branchScope = resolveBootstrapBranchScope(req);
       if (!action || !periodKey || branchScope === 'ALL') {
@@ -4915,6 +4933,96 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
+    }
+  });
+
+  app.get('/api/exec/customers', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const period = resolveExecDashboardPeriod({
+        periodKey: req.query.periodKey,
+        startISO: req.query.startISO,
+        endISO: req.query.endISO,
+      });
+      res.json(
+        buildMdCustomerIntelPack(db, {
+          branchScope,
+          startISO: period.startISO,
+          endISO: period.endISO,
+          limit: req.query.limit,
+        })
+      );
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load MD customer intelligence.' });
+    }
+  });
+
+  app.get('/api/exec/trace', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const branchScope = resolveExecDashboardBranchScope(req.user, req, req.query.branchId);
+      const dateISO = String(req.query.date || req.query.dateISO || new Date().toISOString().slice(0, 10)).slice(
+        0,
+        10
+      );
+      const shuffle = String(req.query.shuffle || '').trim() === '1';
+      const shuffleNonce = shuffle ? String(Date.now()) : '';
+      if (shuffle) {
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'md.trace.shuffle',
+          entityKind: 'md_trace',
+          entityId: dateISO,
+          note: `branchScope=${branchScope}`,
+        });
+      }
+      res.json(
+        buildMdTracePack(db, {
+          branchScope,
+          dateISO,
+          shuffleNonce,
+        })
+      );
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load MD trace samples.' });
+    }
+  });
+
+  app.get('/api/exec/review-note', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const monthKey =
+        String(req.query.monthKey || req.query.month || '').trim().slice(0, 7) ||
+        new Date().toISOString().slice(0, 7);
+      res.json(getMdReviewNote(db, monthKey));
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not load review note.' });
+    }
+  });
+
+  app.put('/api/exec/review-note', requirePermission('exec.dashboard.view'), (req, res) => {
+    try {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      if (rk !== 'md' && rk !== 'admin' && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({ ok: false, error: 'Only MD may save chairman review notes.' });
+      }
+      const monthKey =
+        String(req.body?.monthKey || req.query?.monthKey || '').trim().slice(0, 7) ||
+        new Date().toISOString().slice(0, 7);
+      const result = saveMdReviewNote(db, req.user, monthKey, req.body?.narrative ?? '');
+      if (!result.ok) return res.status(400).json(result);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'md.review_note.put',
+        entityKind: 'md_review_note',
+        entityId: monthKey,
+        note: `Chairman review narrative updated for ${monthKey}`,
+      });
+      return res.json(result);
+    } catch (e) {
+      console.error(e);
+      return res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
 

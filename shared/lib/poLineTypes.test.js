@@ -57,6 +57,17 @@ describe('poLineTypes', () => {
       }).ok
     ).toBe(true);
     expect(poLineOpenQtyForReceiving({ lineType: 'service', qtyOrdered: 1, qtyReceived: 0 })).toBe(0);
+    expect(
+      validatePoLine({
+        lineType: 'coil_meter',
+        productID: 'COIL-ALU',
+        qtyOrdered: 60.8,
+        metersOffered: 60.8,
+        color: 'Traffic Black',
+        gauge: '0.40mm',
+        unitPriceNgn: 1200,
+      }).ok
+    ).toBe(true);
   });
 
   it('derives procurement kind including mixed', () => {

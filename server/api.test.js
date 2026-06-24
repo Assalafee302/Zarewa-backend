@@ -1304,6 +1304,43 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(row.lines[0].qtyOrdered).toBe(8);
   });
 
+  it('POST /api/purchase-orders accepts decimal metre roll order (60.8 m)', async () => {
+    const create = await agent.post('/api/suppliers').send({ name: 'Metre PO Supplier', city: 'Lagos' });
+    const sid = create.body.supplierID;
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sid,
+      supplierName: 'Metre PO Supplier',
+      orderDateISO: '2026-06-24',
+      expectedDeliveryISO: '',
+      status: 'Pending',
+      lines: [
+        {
+          lineKey: 'L1',
+          lineType: 'coil_meter',
+          productID: 'COIL-ALU',
+          productName: 'Aluminium coil',
+          color: 'Traffic Black',
+          gauge: '0.40mm',
+          metersOffered: 60.8,
+          conversionKgPerM: null,
+          unitPricePerKgNgn: null,
+          unitPriceNgn: 1200,
+          qtyOrdered: 60.8,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    expect(po.body.ok).toBe(true);
+    const boot = await agent.get('/api/bootstrap');
+    const row = boot.body.purchaseOrders.find((x) => x.poID === po.body.poID);
+    expect(row).toBeTruthy();
+    expect(row.lines.length).toBe(1);
+    expect(row.lines[0].qtyOrdered).toBeCloseTo(60.8, 3);
+    expect(row.lines[0].metersOffered).toBeCloseTo(60.8, 3);
+    expect(row.lines[0].lineType).toBe('coil_meter');
+  });
+
   it('DELETE /api/suppliers/:id fails when POs exist', async () => {
     const boot = await agent.get('/api/bootstrap');
     const sid = boot.body.purchaseOrders[0]?.supplierID;

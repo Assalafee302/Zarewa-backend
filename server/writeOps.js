@@ -68,6 +68,7 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
 }
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
+import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
 import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';

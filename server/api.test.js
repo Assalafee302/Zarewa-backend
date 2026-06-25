@@ -821,6 +821,26 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(row.c).toBe(1);
   });
 
+  it('POST /api/ledger/advance rejects duplicate amount without override', async () => {
+    const body = {
+      customerID: 'CUS-001',
+      amountNgn: 44_000,
+      paymentMethod: 'Transfer',
+      dateISO: '2026-03-28',
+    };
+    const first = await agent.post('/api/ledger/advance').send(body);
+    expect(first.status).toBe(201);
+    const dup = await agent.post('/api/ledger/advance').send(body);
+    expect(dup.status).toBe(409);
+    expect(dup.body.code).toBe('POSSIBLE_DUPLICATE_ADVANCE');
+    const count = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM ledger_entries WHERE type = 'ADVANCE_IN' AND customer_id = ? AND amount_ngn = ?`
+      )
+      .get('CUS-001', 44_000);
+    expect(count.c).toBe(1);
+  });
+
   it('POST /api/ledger/advance then summary shows advance', async () => {
     const before = await agent.get('/api/bootstrap');
     const treasuryAccountId = before.body.treasuryAccounts[0].id;

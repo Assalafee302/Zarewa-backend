@@ -743,6 +743,42 @@ function effectiveReceiptBankReference(body) {
   return '';
 }
 
+function recentAdvanceDuplicateSignals(db, { customerID, amountNgn, bankReference, dateISO }) {
+  const amount = Math.round(Number(amountNgn) || 0);
+  if (!(customerID && amount > 0)) return [];
+  const rows = db
+    .prepare(
+      `SELECT le.id, le.amount_ngn, le.at_iso, le.bank_reference
+       FROM ledger_entries le
+       WHERE le.type = 'ADVANCE_IN' AND le.customer_id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM ledger_entries rev
+           WHERE rev.type = 'ADVANCE_REVERSAL'
+             AND (rev.bank_reference = 'REVERSAL_OF:' || le.id OR rev.note LIKE '%' || le.id || '%')
+         )
+       ORDER BY le.at_iso DESC
+       LIMIT 40`
+    )
+    .all(customerID);
+  const signals = receiptDuplicateSignalsFromLedgerRows(rows, { amountNgn, bankReference });
+  const day = String(dateISO || '').slice(0, 10);
+  if (day && !signals.some((s) => s.code === 'DUPLICATE_AMOUNT')) {
+    for (const row of rows) {
+      const rowAmount = Math.round(Number(row.amount_ngn) || 0);
+      const rowDay = String(row.at_iso || '').slice(0, 10);
+      if (rowAmount === amount && rowDay === day) {
+        signals.push({
+          code: 'DUPLICATE_AMOUNT_SAME_DAY',
+          message: `An advance for ₦${amount.toLocaleString('en-NG')} was already posted on ${day} (${row.id}).`,
+          advanceId: row.id,
+        });
+        break;
+      }
+    }
+  }
+  return signals;
+}
+
 function recentReceiptDuplicateSignals(db, { customerID, quotationId, amountNgn, bankReference, dateISO }) {
   const amount = Math.round(Number(amountNgn) || 0);
   if (!(customerID && quotationId && amount > 0)) return [];
@@ -9916,6 +9952,32 @@ export function registerHttpApi(app, db) {
         });
       }
 
+      const {
+        forceDuplicatePost,
+        duplicateOverrideReason,
+      } = req.body || {};
+      const duplicateSignals = recentAdvanceDuplicateSignals(db, {
+        customerID,
+        amountNgn,
+        bankReference,
+        dateISO,
+      });
+      if (duplicateSignals.length > 0 && !forceDuplicatePost) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Possible duplicate advance detected.',
+          code: 'POSSIBLE_DUPLICATE_ADVANCE',
+          duplicateSignals,
+        });
+      }
+      if (duplicateSignals.length > 0 && forceDuplicatePost && !String(duplicateOverrideReason || '').trim()) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Duplicate override reason is required when forcing a duplicate-like advance.',
+          code: 'DUPLICATE_OVERRIDE_REASON_REQUIRED',
+        });
+      }
+
       const plan = planAdvanceIn({
         customerID,
         customerName: customerName || cust.name,
@@ -10651,8 +10713,16 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  app.post('/api/ledger/reverse-advance', requirePermission('finance.reverse'), (req, res) => {
+  app.post('/api/ledger/reverse-advance', requirePermission('receipts.post'), (req, res) => {
     try {
+      const rk = String(req.user?.roleKey || '').toLowerCase();
+      const salesPrivileged = ['admin', 'md', 'sales_manager', 'branch_manager'].includes(rk);
+      if (!userHasPermission(req.user, 'finance.reverse') && !salesPrivileged) {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only finance staff or Admin / MD / Branch Manager can reverse advance deposits.',
+        });
+      }
       const { entryId, note } = req.body || {};
       if (!entryId) return res.status(400).json({ ok: false, error: 'entryId is required' });
       const r = write.reverseAdvanceEntry(db, String(entryId), String(note ?? '').trim(), req.user);

@@ -371,6 +371,7 @@ import {
   listProductionJobCoils,
   listCoilProductionHolders,
   reconcileCoilReservationFromProductionJobs,
+  recalculateProductionJobCoilStock,
   previewProductionConversion,
   saveProductionCoilRunLogDraft,
   returnProductionJobToPlanned,
@@ -6409,6 +6410,7 @@ export function registerHttpApi(app, db) {
       const r = saveProductionJobAllocations(db, jobId, req.body?.allocations || [], {
         actor: req.user,
         append: Boolean(req.body?.append),
+        workspaceBranchId: req.workspaceBranchId,
       });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -6541,6 +6543,7 @@ export function registerHttpApi(app, db) {
       const r = saveProductionJobAllocations(db, req.params.jobId, req.body?.allocations || [], {
         actor: req.user,
         append: Boolean(req.body?.append),
+        workspaceBranchId: req.workspaceBranchId,
       });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -6553,7 +6556,26 @@ export function registerHttpApi(app, db) {
     try {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-      const r = saveProductionCoilRunLogDraft(db, req.params.jobId, req.body || {}, { actor: req.user });
+      const r = saveProductionCoilRunLogDraft(db, req.params.jobId, req.body || {}, {
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/production-jobs/:jobId/recalculate-stock', requirePermission('production.manage'), (req, res) => {
+    try {
+      const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      const r = recalculateProductionJobCoilStock(db, req.params.jobId, {
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        extraCoilNos: Array.isArray(req.body?.extraCoilNos) ? req.body.extraCoilNos : [],
+      });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);

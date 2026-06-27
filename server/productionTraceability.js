@@ -17,7 +17,7 @@ import {
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
-import { validateQuotationProductionPaymentGate } from './writeOps.js';
+import { validateQuotationProductionPaymentGate, recalculateCoilLotBook } from './writeOps.js';
 import { getQuotation } from './readModel.js';
 import {
   isStoneMeterQuotationLinesJson,
@@ -782,7 +782,12 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
           },
         });
       })();
-      return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID) };
+      const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+        extraCoilNos: normalized.map((line) => line.coilNo),
+        workspaceBranchId: opts.workspaceBranchId,
+        actor: opts.actor,
+      });
+      return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID), stockRecalc };
     } catch (error) {
       return { ok: false, error: String(error.message || error) };
     }
@@ -897,7 +902,12 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
         },
       });
     })();
-    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID) };
+    const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+      extraCoilNos: [...oldReservedByCoil.keys(), ...newReservedByCoil.keys()],
+      workspaceBranchId: opts.workspaceBranchId,
+      actor: opts.actor,
+    });
+    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID), stockRecalc };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }
@@ -1432,7 +1442,11 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
         },
       });
     })();
-    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID) };
+    const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+      workspaceBranchId: opts.workspaceBranchId,
+      actor: opts.actor,
+    });
+    return { ok: true, allocations: listProductionJobCoilsForJob(db, jobID), stockRecalc };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }
@@ -2042,6 +2056,10 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       });
       if (!glRec.ok) throw new Error(glRec.error || 'Production recognition GL failed.');
     })();
+    const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+      workspaceBranchId: stockBranch,
+      actor: opts.actor,
+    });
     return {
       ok: true,
       actualMeters: outputMeters,
@@ -2049,6 +2067,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       alertState: aggregatedAlertState,
       managerReviewRequired,
       accessoryStockWarnings,
+      stockRecalc,
     };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
@@ -2404,6 +2423,75 @@ function applySingleCompletedCoilLineTx(db, jobId, line, atISO, stockBranch) {
   });
 }
 
+/**
+ * Re-normalize coil on-hand, reserved kg, raw product roll-up, and planned/running reservations
+ * for every coil tied to a production job (plus optional extra coils from a correction swap).
+ */
+export function recalculateProductionJobCoilStock(db, jobID, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+
+  const coilNos = new Set(
+    listJobCoilsForJob(db, jobId)
+      .map((r) => String(r.coil_no ?? '').trim())
+      .filter(Boolean)
+  );
+  for (const cn of opts.extraCoilNos || []) {
+    const t = String(cn ?? '').trim();
+    if (t) coilNos.add(t);
+  }
+  if (!coilNos.size) {
+    return { ok: true, jobID: jobId, coils: [], unchanged: true };
+  }
+
+  const coils = [];
+  const errors = [];
+  for (const coilNo of coilNos) {
+    const recalc = recalculateCoilLotBook(db, coilNo, {
+      workspaceBranchId: opts.workspaceBranchId,
+    });
+    if (!recalc.ok) {
+      errors.push({ coilNo, step: 'book', error: recalc.error });
+      continue;
+    }
+    const reservation = reconcileCoilReservationFromProductionJobs(db, coilNo, {
+      workspaceBranchId: opts.workspaceBranchId,
+      actor: opts.actor,
+    });
+    if (!reservation.ok) {
+      errors.push({ coilNo, step: 'reservation', error: reservation.error });
+      continue;
+    }
+    coils.push({ coilNo, recalc, reservation });
+  }
+
+  if (!coils.length && errors.length) {
+    return { ok: false, error: errors[0].error, errors };
+  }
+
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'production.recalculate_stock',
+    entityKind: 'production_job',
+    entityId: jobId,
+    note: `Stock recalculated for ${coils.length} coil(s) on ${jobId}`,
+    details: {
+      coilNos: coils.map((c) => c.coilNo),
+      errors: errors.length ? errors : undefined,
+    },
+  });
+
+  return {
+    ok: true,
+    jobID: jobId,
+    coils,
+    errors: errors.length ? errors : undefined,
+    recalculatedCount: coils.length,
+  };
+}
+
 function productionJobHasFinishCoilTailInMovements(db, jobId) {
   const r = db
     .prepare(
@@ -2444,6 +2532,7 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   if (!lines.length) return { ok: false, error: 'Send corrected readings for each coil line.' };
 
   const existing = listJobCoilsForJob(db, jobId);
+  const oldCoilNos = existing.map((r) => String(r.coil_no ?? '').trim()).filter(Boolean);
   const byAid = new Map(existing.map((r) => [String(r.id ?? '').trim(), r]));
 
   const parsed = [];
@@ -2718,11 +2807,17 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
         })),
       },
     });
+    const stockRecalc = recalculateProductionJobCoilStock(db, jobId, {
+      extraCoilNos: [...oldCoilNos, ...parsed.map((p) => p.nextCoil)],
+      workspaceBranchId: stockBranch,
+      actor: opts.actor,
+    });
     return {
       ok: true,
       allocations: listProductionJobCoilsForJob(db, jobId),
       actualMeters: newTotalM + newOff,
       actualWeightKg: newTotalKg,
+      stockRecalc,
     };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

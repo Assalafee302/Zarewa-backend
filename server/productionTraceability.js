@@ -3010,10 +3010,17 @@ export function listCoilProductionHolders(db, coilNo) {
       `SELECT pjc.id, pjc.job_id, pjc.coil_no, pjc.opening_weight_kg, pjc.closing_weight_kg,
         pjc.consumed_weight_kg, pjc.meters_produced, pjc.allocation_status, pjc.allocated_at_iso,
         pj.status AS job_status, pj.cutting_list_id, pj.quotation_ref,
-        cl.customer AS cutting_list_customer
+        cl.customer AS cutting_list_customer,
+        pcc.alert_state AS conversion_alert_state
        FROM production_job_coils pjc
        INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id
        LEFT JOIN cutting_lists cl ON cl.id = pj.cutting_list_id
+       LEFT JOIN production_conversion_checks pcc ON pcc.id = (
+         SELECT id FROM production_conversion_checks
+         WHERE job_id = pjc.job_id AND coil_no = pjc.coil_no
+         ORDER BY checked_at_iso DESC, id DESC
+         LIMIT 1
+       )
        WHERE pjc.coil_no = ?
        ORDER BY pjc.allocated_at_iso DESC, pjc.sequence_no ASC, pjc.id ASC`
     )
@@ -3032,7 +3039,104 @@ export function listCoilProductionHolders(db, coilNo) {
     cuttingListId: row.cutting_list_id ?? '',
     quotationRef: row.quotation_ref ?? '',
     customer: row.cutting_list_customer ?? '',
+    conversionAlertState: row.conversion_alert_state ?? '',
   }));
+}
+
+function holderBookedKgUsed(h) {
+  const consumed = clampNonNegative(h?.consumedWeightKg);
+  if (consumed > 0) return consumed;
+  const opening = safeNumber(h?.openingWeightKg);
+  const closing = safeNumber(h?.closingWeightKg);
+  if (opening > 0 && closing >= 0 && opening >= closing) return opening - closing;
+  return 0;
+}
+
+/** Sum job consumption vs coil book used for coil profile reconciliation. */
+export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return null;
+  const coil = coilRow(db, cn);
+  if (!coil) return null;
+  const rows = holders ?? listCoilProductionHolders(db, cn);
+  const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
+  const onHand = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+  const bookUsedKg = Math.max(0, received - onHand);
+  let jobsConsumedKgSum = 0;
+  let openingClosingKgSum = 0;
+  for (const h of rows) {
+    jobsConsumedKgSum += holderBookedKgUsed(h);
+    const opening = safeNumber(h.openingWeightKg);
+    const closing = safeNumber(h.closingWeightKg);
+    if (opening > 0 && closing >= 0 && opening >= closing) {
+      openingClosingKgSum += opening - closing;
+    }
+  }
+  return {
+    bookUsedKg,
+    jobsConsumedKgSum,
+    openingClosingKgSum,
+    reconciliationGapKg: jobsConsumedKgSum - bookUsedKg,
+    openingClosingGapKg: openingClosingKgSum - bookUsedKg,
+  };
+}
+
+/**
+ * Recalculate coil book + reservations for every production job that allocated this coil.
+ */
+export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return { ok: false, error: 'Coil number is required.' };
+  const coil = coilRow(db, cn);
+  if (!coil) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
+  if (!br.ok) return br;
+
+  const jobIds = [
+    ...new Set(
+      listCoilProductionHolders(db, cn)
+        .map((h) => String(h.jobID || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const jobResults = [];
+  const errors = [];
+  for (const jobId of jobIds) {
+    const r = recalculateProductionJobCoilStock(db, jobId, opts);
+    if (!r.ok) errors.push({ jobID: jobId, error: r.error });
+    else jobResults.push(r);
+  }
+
+  const bookRecalc = recalculateCoilLotBook(db, cn, { workspaceBranchId: opts.workspaceBranchId });
+  if (!bookRecalc.ok) {
+    return { ok: false, error: bookRecalc.error, jobResults, errors };
+  }
+  const reservation = reconcileCoilReservationFromProductionJobs(db, cn, opts);
+  if (!reservation.ok) {
+    return { ok: false, error: reservation.error, jobResults, errors };
+  }
+
+  const summary = summarizeCoilProductionHoldersBook(db, cn);
+
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'production.recalculate_coil_stock',
+    entityKind: 'coil_lot',
+    entityId: cn,
+    note: `Production stock recalculated for ${jobIds.length} job(s) on ${cn}`,
+    details: { jobIds, summary, errors: errors.length ? errors : undefined },
+  });
+
+  return {
+    ok: true,
+    coilNo: cn,
+    recalculatedJobCount: jobResults.length,
+    jobResults,
+    bookRecalc,
+    reservation,
+    summary,
+    errors: errors.length ? errors : undefined,
+  };
 }
 
 /** Sum of opening_weight_kg on Planned + Running jobs for one coil. */

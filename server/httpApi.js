@@ -370,6 +370,8 @@ import {
   listProductionJobCoilsForJob,
   listProductionJobCoils,
   listCoilProductionHolders,
+  summarizeCoilProductionHoldersBook,
+  recalculateAllCoilProductionJobStock,
   reconcileCoilReservationFromProductionJobs,
   recalculateProductionJobCoilStock,
   previewProductionConversion,
@@ -7273,6 +7275,7 @@ export function registerHttpApi(app, db) {
       const br = write.assertCoilInWorkspaceBranch(coil, req.workspaceBranchId);
       if (!br.ok) return res.status(403).json({ ok: false, error: br.error });
       const holders = listCoilProductionHolders(db, coilNo);
+      const bookSummary = summarizeCoilProductionHoldersBook(db, coilNo, holders);
       const expectedReserved = holders
         .filter((h) => h.jobStatus === 'Planned' || h.jobStatus === 'Running')
         .reduce((s, h) => s + (Number(h.openingWeightKg) || 0), 0);
@@ -7283,6 +7286,11 @@ export function registerHttpApi(app, db) {
         bookedReservedKg: bookedReserved,
         expectedReservedKg: expectedReserved,
         orphanReservedKg: Math.max(0, bookedReserved - expectedReserved),
+        bookUsedKg: bookSummary?.bookUsedKg ?? null,
+        jobsConsumedKgSum: bookSummary?.jobsConsumedKgSum ?? null,
+        openingClosingKgSum: bookSummary?.openingClosingKgSum ?? null,
+        reconciliationGapKg: bookSummary?.reconciliationGapKg ?? null,
+        openingClosingGapKg: bookSummary?.openingClosingGapKg ?? null,
         holders,
       });
     } catch (e) {
@@ -7295,6 +7303,20 @@ export function registerHttpApi(app, db) {
     try {
       const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
       const r = reconcileCoilReservationFromProductionJobs(db, coilNo, {
+        workspaceBranchId: req.workspaceBranchId,
+        actor: req.user,
+      });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/coil-lots/:coilNo/recalculate-production-stock', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = recalculateAllCoilProductionJobStock(db, coilNo, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
       });

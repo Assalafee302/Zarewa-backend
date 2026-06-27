@@ -6,7 +6,13 @@ import {
   isBranchManagerApprovalAuthority,
   isExecutiveRoleKey,
 } from '../shared/workspaceGovernance.js';
-import { coilProducedMetersFromProductionJobs, jobActualMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
+import {
+  coilProducedMetersFromProductionJobs,
+  jobActualMetersFromProductionJobs,
+  producedMetersForUnproducedRefund,
+} from '../shared/lib/refundCoilProducedMeters.js';
+import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
+import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
@@ -16,6 +22,7 @@ const SUBMIT_ACTION_BY_CODE = {
   multi_category_overlap: 'acknowledge',
   multi_category_overlap_same_request: 'block',
   suggest_unproduced_meterage: 'info',
+  unproduced_with_full_production: 'block',
 };
 
 function parseReasonCategories(raw) {
@@ -63,7 +70,9 @@ function sumJobMeters(db, jobs, quote = null) {
   }
   const coilActual = coilProducedMetersFromProductionJobs(db, terminalJobs);
   const completedActual = jobActualMetersFromProductionJobs(jobs);
-  const effectiveProduced = isStoneMeterQuote ? completedActual : coilActual;
+  const effectiveProduced = producedMetersForUnproducedRefund(db, jobs, {
+    isStoneMeterQuote,
+  });
   return { planned, actual, coilActual, effectiveProduced, isStoneMeterQuote, hasCompleted, hasCancelled };
 }
 
@@ -191,6 +200,28 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
+  const fulfillment = buildRefundProductionFulfillmentSummary(db, quote, jobs, {
+    isStoneMeterQuote: sumJobMeters(db, jobs, quote).isStoneMeterQuote,
+  });
+
+  if (selected.has('unproduced meterage') && fulfillment.fullyProducedRoofing) {
+    const offcutNote =
+      fulfillment.offcutFgMeters > 0.001
+        ? ` (${fulfillment.offcutFgMeters.toFixed(2)} m from offcut/accessories)`
+        : '';
+    const coilNote =
+      fulfillment.coilProducedMeters > 0.001
+        ? ` (${fulfillment.coilProducedMeters.toFixed(2)} m from coil)`
+        : '';
+    issues.push({
+      code: 'unproduced_with_full_production',
+      severity: 'error',
+      title: 'No unproduced roofing metres',
+      message: `Quotation is for ${fulfillment.quotedMeters.toFixed(2)} m roofing; production records ${fulfillment.producedMetersForUnproduced.toFixed(2)} m finished output${offcutNote || coilNote || ''}. Unproduced meterage refund is not applicable.`,
+      productionFulfillment: fulfillment,
+    });
+  }
+
   if (hasCancelled && !hasCompleted && effectiveProduced <= 0 && !refundCats.has('unproduced meterage')) {
     issues.push({
       code: 'suggest_unproduced_meterage',
@@ -210,11 +241,8 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
 export function suggestRefundCategoriesFromProduction(db, quotationRef) {
   const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
   const suggested = [];
-  const { planned, actual, coilActual, effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(
-    db,
-    jobs,
-    quote
-  );
+  const { effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(db, jobs, quote);
+  const quotedMeters = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
   const total = Math.round(Number(quote?.total_ngn) || 0);
   const paid = Math.round(Number(quote?.paid_ngn) || 0);
 
@@ -229,13 +257,12 @@ export function suggestRefundCategoriesFromProduction(db, quotationRef) {
     suggested.push('Overpayment');
   }
 
-  if (hasCancelled && effectiveProduced <= 0 && !refundedCats.has('unproduced meterage')) {
-    suggested.push('Unproduced meterage');
-  } else if (
-    hasCompleted &&
-    planned > 0 &&
-    effectiveProduced < planned * 0.98 &&
-    !refundedCats.has('unproduced meterage')
+  const unproducedMetres = Math.max(0, quotedMeters - effectiveProduced);
+  if (
+    quotedMeters > 0 &&
+    unproducedMetres > 0.02 &&
+    !refundedCats.has('unproduced meterage') &&
+    (hasCancelled || hasCompleted)
   ) {
     suggested.push('Unproduced meterage');
   }

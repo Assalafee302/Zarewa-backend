@@ -231,6 +231,44 @@ export function listProductionJobCoilsForJob(db, jobID) {
   return listJobCoilsForJob(db, jobID).map(mapProductionJobCoilRow);
 }
 
+/**
+ * Bootstrap trims productionJobCoils globally (recency cap). Ensure every job that
+ * appears in the partial slice — or is Planned/Running — still carries its full coil set.
+ */
+export function repairProductionJobCoilIntegrity(db, productionJobs, partialCoils) {
+  const coils = Array.isArray(partialCoils) ? [...partialCoils] : [];
+  if (!db) return coils;
+  const seen = new Set(coils.map((c) => c.id).filter((id) => id != null && id !== ''));
+  const partialCountByJob = new Map();
+  for (const c of coils) {
+    const jid = String(c.jobID ?? c.job_id ?? '').trim();
+    if (!jid) continue;
+    partialCountByJob.set(jid, (partialCountByJob.get(jid) || 0) + 1);
+  }
+  const jobIdsToCheck = new Set(partialCountByJob.keys());
+  for (const j of productionJobs || []) {
+    const st = String(j.status ?? '').trim().toLowerCase();
+    if (st !== 'planned' && st !== 'running') continue;
+    const jid = String(j.jobID ?? j.job_id ?? '').trim();
+    if (jid) jobIdsToCheck.add(jid);
+  }
+  if (!jobIdsToCheck.size) return coils;
+  const ids = [...jobIdsToCheck];
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM production_job_coils WHERE job_id IN (${ph}) ORDER BY job_id ASC, sequence_no ASC, id ASC`
+    )
+    .all(...ids);
+  for (const row of rows) {
+    const mapped = mapProductionJobCoilRow(row);
+    if (mapped.id != null && mapped.id !== '' && seen.has(mapped.id)) continue;
+    coils.push(mapped);
+    if (mapped.id != null && mapped.id !== '') seen.add(mapped.id);
+  }
+  return coils;
+}
+
 function productionJobRow(db, jobID) {
   return db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(jobID);
 }

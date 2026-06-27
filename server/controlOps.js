@@ -29,6 +29,7 @@ import {
 } from '../shared/refundConstants.js';
 import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
+import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -1815,6 +1816,17 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           error: 'Unproduced meterage refunds are not allowed after material has been delivered for this quotation.',
         };
       }
+      if (requestedCats.includes('Unproduced meterage')) {
+        const previewBlock = previewRefundRequest(db, { quotationRef });
+        const pf = previewBlock.preview?.productionFulfillment;
+        if (pf?.fullyProducedRoofing) {
+          return {
+            ok: false,
+            code: 'UNPRODUCED_NOT_APPLICABLE',
+            error: `Unproduced meterage refund is not allowed: ${pf.quotedMeters.toFixed(2)} m was quoted and ${pf.producedMetersForUnproduced.toFixed(2)} m was produced${pf.offcutFgMeters > 0.001 ? ` (${pf.offcutFgMeters.toFixed(2)} m from offcut/accessories)` : ''}.`,
+          };
+        }
+      }
 
       const commissionRefundSum = calcLinesRaw
         .filter((l) => String(l.category || '').trim() === 'Customer commission')
@@ -2527,10 +2539,10 @@ export function previewRefundRequest(db, payload) {
       : producedMetersForUnproducedRefund(db, productionJobs, {
           isStoneMeterQuote: stoneMeterQuoteForUnproduced,
         });
-
-  const derivedPricePerMeter =
-    quotedRoofingSheetAmountPerMeter(quote?.lines_json) ?? quotedAmountPerMeter(quote?.lines_json);
-  const pricePerMeter = positiveNumber(payload.pricePerMeterNgn) || derivedPricePerMeter;
+  const productionFulfillment = buildRefundProductionFulfillmentSummary(db, quote, productionJobs, {
+    isStoneMeterQuote: stoneMeterQuoteForUnproduced,
+    quotedMeters,
+  });
 
   const suggestedLines = [];
   const materialDelivered = quotationRef ? quotationHasCompletedDelivery(db, quotationRef) : false;
@@ -2542,6 +2554,25 @@ export function previewRefundRequest(db, payload) {
       'Material has been marked delivered for this quotation; order cancellation and unproduced-meterage refunds are not allowed.'
     );
   }
+  if (productionFulfillment.fullyProducedRoofing && !hasCancelledProductionJob) {
+    if (!blockedRefundCategories.includes('Unproduced meterage')) {
+      blockedRefundCategories.push('Unproduced meterage');
+    }
+    const srcParts = [];
+    if (productionFulfillment.coilProducedMeters > 0.001) {
+      srcParts.push(`${productionFulfillment.coilProducedMeters.toFixed(2)} m from coil`);
+    }
+    if (productionFulfillment.offcutFgMeters > 0.001) {
+      srcParts.push(`${productionFulfillment.offcutFgMeters.toFixed(2)} m from offcut/accessories`);
+    }
+    warnings.push(
+      `Quoted ${productionFulfillment.quotedMeters.toFixed(2)} m roofing is fully produced (${productionFulfillment.producedMetersForUnproduced.toFixed(2)} m output${srcParts.length ? `: ${srcParts.join(', ')}` : ''}) — unproduced meterage refund does not apply.`
+    );
+  }
+
+  const derivedPricePerMeter =
+    quotedRoofingSheetAmountPerMeter(quote?.lines_json) ?? quotedAmountPerMeter(quote?.lines_json);
+  const pricePerMeter = positiveNumber(payload.pricePerMeterNgn) || derivedPricePerMeter;
 
   if (quotationRef) {
     const substitutionPreviewWarningCodes = new Set([
@@ -2620,11 +2651,12 @@ export function previewRefundRequest(db, payload) {
 
   if (
     !stoneMeterQuoteForUnproduced &&
-    actualMeters > coilProducedMeters + 0.001
+    coilProducedMeters > 0 &&
+    producedMetersForUnproduced > coilProducedMeters + 0.001
   ) {
-    const offcutOnlyM = roundMoney(actualMeters - coilProducedMeters);
+    const offcutFgM = roundMoney(producedMetersForUnproduced - coilProducedMeters);
     warnings.push(
-      `${offcutOnlyM.toFixed(2)} m was completed from offcut/accessories only — only coil-produced metres (${coilProducedMeters.toFixed(2)} m) count toward unproduced-meterage refunds.`
+      `${offcutFgM.toFixed(2)} m of finished output was from offcut/accessories in addition to ${coilProducedMeters.toFixed(2)} m from coil — both count toward unproduced-meterage refund math.`
     );
   }
 
@@ -3144,6 +3176,7 @@ export function previewRefundRequest(db, payload) {
       coilProducedMeters,
       producedMetersForUnproduced,
       stoneMeterQuote: stoneMeterQuoteForUnproduced,
+      productionFulfillment,
       pricePerMeterNgn: pricePerMeter ? Math.round(pricePerMeter) : null,
       pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
@@ -3428,6 +3461,19 @@ export function getEligibleRefundQuotations(db) {
       ? preview.preview.eligibleRefundCategories.map((x) => String(x || '').trim()).filter(Boolean)
       : [];
     const suggestedPreviewAmountNgn = Math.round(Number(preview.preview?.suggestedAmountNgn) || 0);
+    const productionFulfillment = preview.preview?.productionFulfillment;
+    const overpayExcess = Math.round(Number(preview.preview?.overpaymentExcessNgn) || 0);
+    const autoSuggestedPositive = (preview.preview?.suggestedLines || []).some(
+      (l) => roundMoney(l.amountNgn) > 0
+    );
+    if (
+      productionFulfillment?.fullyProducedRoofing &&
+      overpayExcess <= 0 &&
+      !autoSuggestedPositive &&
+      suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
+    ) {
+      continue;
+    }
     const pickRow = {
       ...row,
       eligible_refund_categories: categories,

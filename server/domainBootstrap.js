@@ -41,7 +41,7 @@ import {
 import { listPriceListItems } from './pricingOps.js';
 import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
 import { listInTransitLoads } from './inTransitOps.js';
-import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
+import { listProductionConversionChecks, listProductionJobCoils, repairProductionJobCoilIntegrity } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
@@ -174,15 +174,23 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     branchId:
       branchScope === 'ALL' ? DEFAULT_BRANCH_ID : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
   };
+  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope) : [];
+  const productionJobCoilsList = prodRollupOk
+    ? repairProductionJobCoilIntegrity(
+        db,
+        productionJobsList,
+        listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS })
+      )
+    : [];
   return {
     ok: true,
     domain: 'operations',
     cuttingLists: opsOk ? listCuttingLists(db, branchScope) : [],
-    productionJobs: prodRollupOk ? listProductionJobs(db, branchScope) : [],
+    productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
     productionMetrics,
-    productionJobCoils: prodRollupOk ? listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
+    productionJobCoils: productionJobCoilsList,
     productionConversionChecks: prodRollupOk
       ? listProductionConversionChecks(db, branchScope, { limit: MAX_PROD_ROWS })
       : [],

@@ -49,7 +49,7 @@ import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationP
 import { listInTransitLoads } from './inTransitOps.js';
 import { shouldShowPoInTransit } from '../shared/lib/inTransitVisibility.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
-import { listProductionConversionChecks, listProductionJobCoils } from './productionTraceability.js';
+import { listProductionConversionChecks, listProductionJobCoils, repairProductionJobCoilIntegrity } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
@@ -237,6 +237,14 @@ export function buildBootstrap(db, opts = {}) {
     : emptyOperationsInventoryAttention();
   const refunds = refundsOk ? listRefunds(db, branchScope) : [];
   const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
+  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope) : [];
+  const productionJobCoilsList = prodRollupOk
+    ? repairProductionJobCoilIntegrity(
+        db,
+        productionJobsList,
+        listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS })
+      )
+    : [];
 
   return {
     ok: true,
@@ -267,11 +275,11 @@ export function buildBootstrap(db, opts = {}) {
       ? enrichSalesReceiptRowsWithCashFromLedger(listSalesReceipts(db, branchScope), ledgerRows)
       : [],
     cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope) : [],
-    productionJobs: prodRollupOk ? listProductionJobs(db, branchScope) : [],
+    productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
     productionMetrics,
-    productionJobCoils: prodRollupOk ? listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
+    productionJobCoils: productionJobCoilsList,
     productionConversionChecks: prodRollupOk ? listProductionConversionChecks(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
     productionCompletionAdjustments: prodRollupOk ? listProductionCompletionAdjustments(db, branchScope) : [],
     operationsInventoryAttention,

@@ -66,6 +66,18 @@ describe('refundCoilProducedMeters', () => {
     const db = memDbWithCoils([]);
     const jobs = [{ job_id: 'PRO-ST', status: 'Completed', actual_meters: 28, planned_meters: 40 }];
     expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: true })).toBe(28);
-    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: false })).toBe(0);
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: false })).toBe(28);
+  });
+
+  it('producedMetersForUnproducedRefund counts offcut-only completed output', () => {
+    const db = memDbWithCoils([]);
+    const jobs = [{ job_id: 'PRO-OFF', status: 'Completed', actual_meters: 1, offcut_inventory_meters: 1 }];
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: false })).toBe(1);
+  });
+
+  it('producedMetersForUnproducedRefund uses max of coil and actual per job', () => {
+    const db = memDbWithCoils([{ job_id: 'PRO-MIX', meters_produced: 5 }]);
+    const jobs = [{ job_id: 'PRO-MIX', status: 'Completed', actual_meters: 7 }];
+    expect(producedMetersForUnproducedRefund(db, jobs)).toBe(7);
   });
 });

@@ -150,6 +150,7 @@ import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
 import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
 import { buildAp1cReclassPreview, postAp1cReclassBatch } from './ap1cReclassOps.js';
+import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
 import { getProductionJobIntel } from './productionJobIntelOps.js';
@@ -466,7 +467,7 @@ import {
 } from './workspaceSearchFts.js';
 import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
-import { ensureStoneFlatsheetProduct, ensureStoneProduct } from './stoneInventory.js';
+import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
 import {
   allocateBankDepositTx,
@@ -8178,7 +8179,33 @@ export function registerHttpApi(app, db) {
         ...refundProductionAlignmentWarnings(db, quotationRef),
       ];
       const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
-      res.json({ ok: true, receipts, cuttingLists, summary, dataQualityIssues, productionSuggestedCategories });
+      const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef);
+      const productionJobs = db
+        .prepare(
+          `SELECT * FROM production_jobs WHERE quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')`
+        )
+        .all(quotationRef);
+      let stoneMeterQuote = false;
+      try {
+        stoneMeterQuote = quote?.lines_json
+          ? isStoneMeterQuotationLinesJson(db, JSON.parse(String(quote.lines_json)))
+          : false;
+      } catch {
+        stoneMeterQuote = false;
+      }
+      const productionFulfillment = buildRefundProductionFulfillmentSummary(db, quote, productionJobs, {
+        isStoneMeterQuote: stoneMeterQuote,
+      });
+      res.json({
+        ok: true,
+        receipts,
+        cuttingLists,
+        summary,
+        dataQualityIssues,
+        productionSuggestedCategories,
+        productionFulfillment,
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load refund intelligence' });

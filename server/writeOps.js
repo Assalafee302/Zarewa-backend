@@ -7837,11 +7837,11 @@ export function payRefundEntry(db, refundId, payload) {
       }
       const cid = String(row.customer_id || '').trim();
       if (cid && payoutAmountNgn > 0) {
+        const wb = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
         const advBal = advanceBalanceNgnForCustomerDb(db, cid, wb);
         const overBal = overpayCreditNgnForCustomerDb(db, cid, wb);
         const fromAdv = Math.min(payoutAmountNgn, Math.max(0, advBal));
         const fromOver = Math.min(Math.max(0, payoutAmountNgn - fromAdv), Math.max(0, overBal));
-        const wb = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
         const rows = [];
         if (fromAdv > 0) {
           rows.push({

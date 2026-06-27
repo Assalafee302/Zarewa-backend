@@ -16,11 +16,19 @@ describe('refundProductionAlignment', () => {
         quotations: [],
         production_jobs: [],
         customer_refunds: [],
+        production_job_coils: [],
       },
       prepare(sql) {
         const s = String(sql);
         return {
-          get(ref) {
+          get(ref, jobId) {
+            if (s.includes('FROM production_job_coils') && s.includes('SUM')) {
+              const jid = String(jobId ?? ref ?? '').trim();
+              const sum = db.data.production_job_coils
+                .filter((c) => String(c.job_id || '').trim() === jid)
+                .reduce((acc, c) => acc + (Number(c.meters_produced) || 0), 0);
+              return { s: sum };
+            }
             if (s.includes('FROM quotations')) {
               return db.data.quotations.find((q) => q.id === ref) || undefined;
             }
@@ -52,16 +60,34 @@ describe('refundProductionAlignment', () => {
     expect(suggestRefundCategoriesFromProduction(db, 'Q1')).toContain('Unproduced meterage');
   });
 
-  it('warns on cancellation with completed production', () => {
+  it('warns on cancellation with completed coil production', () => {
     const db = memDb();
     db.data.production_jobs.push({
+      job_id: 'J1',
       quotation_ref: 'Q1',
       status: 'Completed',
       planned_meters: 100,
       actual_meters: 80,
     });
+    db.data.production_job_coils.push({
+      job_id: 'J1',
+      meters_produced: 80,
+    });
     const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
     expect(issues.some((i) => i.code === 'cancellation_with_production')).toBe(true);
+  });
+
+  it('does not warn on cancellation when only offcut output was recorded', () => {
+    const db = memDb();
+    db.data.production_jobs.push({
+      job_id: 'J-OFF',
+      quotation_ref: 'Q1',
+      status: 'Completed',
+      planned_meters: 100,
+      actual_meters: 100,
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
+    expect(issues.some((i) => i.code === 'cancellation_with_production')).toBe(false);
   });
 
   it('flags multi-category overlap across prior and current refunds', () => {
@@ -98,13 +124,18 @@ describe('refundProductionAlignment', () => {
     expect(issues.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
   });
 
-  it('blocks cancellation with production unless BM override note', () => {
+  it('blocks cancellation with coil production unless BM override note', () => {
     const db = memDb();
     db.data.production_jobs.push({
+      job_id: 'J2',
       quotation_ref: 'Q1',
       status: 'Completed',
       planned_meters: 100,
       actual_meters: 100,
+    });
+    db.data.production_job_coils.push({
+      job_id: 'J2',
+      meters_produced: 100,
     });
     const blocked = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
       actor: { roleKey: 'sales' },
@@ -120,13 +151,18 @@ describe('refundProductionAlignment', () => {
     expect(overridden.overrideUsed).toBe(true);
   });
 
-  it('requires acknowledgement for partial production cancellation', () => {
+  it('requires acknowledgement for partial coil production cancellation', () => {
     const db = memDb();
     db.data.production_jobs.push({
+      job_id: 'J3',
       quotation_ref: 'Q1',
       status: 'Completed',
       planned_meters: 100,
       actual_meters: 50,
+    });
+    db.data.production_job_coils.push({
+      job_id: 'J3',
+      meters_produced: 50,
     });
     const needAck = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
       actor: { roleKey: 'branch_manager' },

@@ -36,6 +36,7 @@ import {
 } from '../shared/lib/poLineTypes.js';
 import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVisibility.js';
 import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
@@ -8018,6 +8019,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
+  assertQuotationMaterialHeaderRequired(linesJson);
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -8211,6 +8213,15 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
 
+  const materialHeaderTouched =
+    payload.lines != null ||
+    payload.materialGauge !== undefined ||
+    payload.materialColor !== undefined ||
+    payload.materialDesign !== undefined ||
+    payload.materialTypeId !== undefined;
+  if (materialHeaderTouched) {
+    assertQuotationMaterialHeaderRequired(linesJson);
+  }
   assertQuotationMaterialRules(db, linesJson);
 
   if (payload.lines) {

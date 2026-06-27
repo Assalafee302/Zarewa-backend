@@ -6,6 +6,7 @@ import {
   isBranchManagerApprovalAuthority,
   isExecutiveRoleKey,
 } from '../shared/workspaceGovernance.js';
+import { coilProducedMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
 const SUBMIT_ACTION_BY_CODE = {
@@ -36,19 +37,22 @@ function normCat(c) {
     .toLowerCase();
 }
 
-function sumJobMeters(jobs) {
+function sumJobMeters(db, jobs) {
   let planned = 0;
   let actual = 0;
   let hasCompleted = false;
   let hasCancelled = false;
+  const terminalJobs = [];
   for (const j of jobs) {
     const st = String(j.status || '').trim().toLowerCase();
     if (st === 'completed') hasCompleted = true;
     if (st === 'cancelled') hasCancelled = true;
     planned += Number(j.planned_meters) || 0;
     actual += Number(j.actual_meters) || 0;
+    if (st === 'completed' || st === 'cancelled') terminalJobs.push(j);
   }
-  return { planned, actual, hasCompleted, hasCancelled };
+  const coilActual = coilProducedMetersFromProductionJobs(db, terminalJobs);
+  return { planned, actual, coilActual, hasCompleted, hasCancelled };
 }
 
 /**
@@ -95,11 +99,11 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
   }
   for (const c of selected) refundCats.add(c);
 
-  const { planned, actual, hasCompleted, hasCancelled } = sumJobMeters(jobs);
+  const { planned, actual, coilActual, hasCompleted, hasCancelled } = sumJobMeters(db, jobs);
   const partialProduction =
-    hasCompleted && planned > 0 && actual > 0 && actual < planned * 0.98;
+    hasCompleted && planned > 0 && coilActual > 0 && coilActual < planned * 0.98;
 
-  if (selected.has('order cancellation') && hasCompleted && actual > 0) {
+  if (selected.has('order cancellation') && hasCompleted && coilActual > 0) {
     issues.push({
       code: 'cancellation_with_production',
       severity: 'warning',
@@ -114,7 +118,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
       code: 'partial_production_cancellation',
       severity: 'warning',
       title: 'Partial production',
-      message: `Jobs produced ${Math.round(actual)} m of ${Math.round(planned)} m planned — cancellation may over-refund.`,
+      message: `Jobs produced ${Math.round(coilActual)} m from coil of ${Math.round(planned)} m planned — cancellation may over-refund.`,
     });
   }
 
@@ -171,7 +175,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
-  if (hasCancelled && !hasCompleted && actual <= 0 && !refundCats.has('unproduced meterage')) {
+  if (hasCancelled && !hasCompleted && coilActual <= 0 && !refundCats.has('unproduced meterage')) {
     issues.push({
       code: 'suggest_unproduced_meterage',
       severity: 'info',
@@ -190,7 +194,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
 export function suggestRefundCategoriesFromProduction(db, quotationRef) {
   const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
   const suggested = [];
-  const { planned, actual, hasCompleted, hasCancelled } = sumJobMeters(jobs);
+  const { planned, actual, coilActual, hasCompleted, hasCancelled } = sumJobMeters(db, jobs);
   const total = Math.round(Number(quote?.total_ngn) || 0);
   const paid = Math.round(Number(quote?.paid_ngn) || 0);
 
@@ -205,13 +209,13 @@ export function suggestRefundCategoriesFromProduction(db, quotationRef) {
     suggested.push('Overpayment');
   }
 
-  if (hasCancelled && actual <= 0 && !refundedCats.has('unproduced meterage')) {
+  if (hasCancelled && coilActual <= 0 && !refundedCats.has('unproduced meterage')) {
     suggested.push('Unproduced meterage');
-  } else if (hasCompleted && planned > 0 && actual < planned * 0.98 && !refundedCats.has('unproduced meterage')) {
+  } else if (hasCompleted && planned > 0 && coilActual < planned * 0.98 && !refundedCats.has('unproduced meterage')) {
     suggested.push('Unproduced meterage');
   }
 
-  if (hasCancelled && !hasCompleted && actual <= 0 && !refundedCats.has('order cancellation')) {
+  if (hasCancelled && !hasCompleted && coilActual <= 0 && !refundedCats.has('order cancellation')) {
     /* lower priority than unproduced */
   }
 

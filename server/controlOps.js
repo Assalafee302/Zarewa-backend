@@ -28,6 +28,7 @@ import {
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import { coilProducedMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -2501,12 +2502,18 @@ export function previewRefundRequest(db, payload) {
   // Quoted vs Actual Produced (optional payload overrides for tools/tests)
   const quotedMetersFromQuote = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
   const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
+  const coilProducedMetersFromJobs = coilProducedMetersFromProductionJobs(db, productionJobs);
   const quotedMetersOverride = positiveNumber(payload.quotedMeters);
   const actualMetersOverride = positiveNumber(payload.actualMeters);
+  const coilProducedMetersOverride = positiveNumber(payload.coilProducedMeters);
   const quotedMeters =
     quotedMetersOverride != null ? Math.max(0, roundMoney(quotedMetersOverride)) : quotedMetersFromQuote;
   const actualMeters =
     actualMetersOverride != null ? Math.max(0, roundMoney(actualMetersOverride)) : actualMetersFromJobs;
+  const coilProducedMeters =
+    coilProducedMetersOverride != null
+      ? Math.max(0, roundMoney(coilProducedMetersOverride))
+      : coilProducedMetersFromJobs;
 
   const derivedPricePerMeter =
     quotedRoofingSheetAmountPerMeter(quote?.lines_json) ?? quotedAmountPerMeter(quote?.lines_json);
@@ -2584,7 +2591,7 @@ export function previewRefundRequest(db, payload) {
 
   // 2. Quoted vs produced shortfall (not the same as order cancellation — see eligible categories)
   if (quotedMeters > 0 && pricePerMeter) {
-    const unproducedPotential = Math.max(0, quotedMeters - actualMeters);
+    const unproducedPotential = Math.max(0, quotedMeters - coilProducedMeters);
     if (
       unproducedPotential > 0 &&
       !refundedCategories.has('Unproduced meterage') &&
@@ -2596,6 +2603,13 @@ export function previewRefundRequest(db, payload) {
         category: 'Unproduced meterage',
       });
     }
+  }
+
+  if (actualMeters > coilProducedMeters + 0.001) {
+    const offcutOnlyM = roundMoney(actualMeters - coilProducedMeters);
+    warnings.push(
+      `${offcutOnlyM.toFixed(2)} m was completed from offcut/accessories only — only coil-produced metres (${coilProducedMeters.toFixed(2)} m) count toward unproduced-meterage refunds.`
+    );
   }
 
   // 3. Service refunds — transport / installation / other quoted services (bending, labour, etc.)
@@ -3111,6 +3125,7 @@ export function previewRefundRequest(db, payload) {
       refundHardCapNgn,
       quotedMeters,
       actualMeters,
+      coilProducedMeters,
       pricePerMeterNgn: pricePerMeter ? Math.round(pricePerMeter) : null,
       pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),

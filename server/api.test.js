@@ -1431,6 +1431,9 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     });
     expect(link.status).toBe(200);
     let boot = await agent.get('/api/bootstrap');
+    expect(
+      (boot.body.poTransportAwaitingTreasury || []).some((r) => r.poID === poId && r.outstandingNgn > 0)
+    ).toBe(true);
     let row = boot.body.purchaseOrders.find((p) => p.poID === poId);
     expect(row.status).toBe('On loading');
 

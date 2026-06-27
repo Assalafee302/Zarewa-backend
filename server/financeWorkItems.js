@@ -5,6 +5,7 @@ import {
   FINANCE_WORK_ITEM_SOURCE_KINDS,
 } from './financeWorkItemConstants.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
+import { poTransportQuotedFeeNgn } from '../shared/lib/poTransportFee.js';
 import { sumTransportPaymentsForPo } from './writeOps.js';
 import { findPersistedWorkItemBySource, upsertWorkItemBySource, workRegistryTablesReady, createWorkItem } from './workItems.js';
 
@@ -79,7 +80,7 @@ export function syncFinancePoTransportWorkItem(db, poID, actor, opts = {}) {
   if (!workRegistryTablesReady(db)) return { ok: true, noop: true };
   const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(poID);
   if (!row) return { ok: false };
-  const total = Number(row.transport_amount_ngn) || 0;
+  const total = poTransportQuotedFeeNgn(row);
   const paid = sumTransportPaymentsForPo(db, poID);
   const bid = String(row.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   const officeKey = 'finance';

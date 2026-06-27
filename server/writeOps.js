@@ -1571,6 +1571,10 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
         recordedAmount = amtFromPayload;
       }
 
+      if (recordedAmount <= 0 && advanceNgn > 0) {
+        recordedAmount = advanceNgn;
+      }
+
       if (advanceNgn <= 0 && recordedAmount > 0) advanceNgn = recordedAmount;
 
       let nextStatus = statusNorm === 'in transit' ? 'In Transit' : 'On loading';

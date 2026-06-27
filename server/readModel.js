@@ -4,6 +4,10 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import {
+  poTransportQuotedFeeNgn,
+  PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
+} from '../shared/lib/poTransportFee.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { approvedRefundsAwaitingPayment } from '../shared/lib/refundsStore.js';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
@@ -1050,24 +1054,30 @@ export function listPurchaseOrders(db, branchScope = 'ALL') {
  */
 export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'purchase_orders', branchScope);
+  const statusIn = PO_TRANSPORT_TREASURY_PAYABLE_STATUSES.map((s) => `'${s}'`).join(', ');
   const rows = db
     .prepare(
       `SELECT po_id, supplier_name, branch_id, status, procurement_kind,
               transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
-              transport_amount_ngn, transport_paid_ngn
+              transport_amount_ngn, transport_advance_ngn, transport_paid_ngn
        FROM purchase_orders
-       WHERE LOWER(TRIM(COALESCE(status, ''))) IN ('approved', 'on loading', 'in transit')
+       WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${statusIn})
          AND TRIM(COALESCE(transport_agent_id, '')) != ''
-         AND COALESCE(transport_amount_ngn, 0) > COALESCE(transport_paid_ngn, 0)
+         AND (
+           COALESCE(transport_amount_ngn, 0) > 0
+           OR COALESCE(transport_advance_ngn, 0) > 0
+         )
          ${b.sql}
        ORDER BY order_date_iso DESC, po_id DESC`
     )
     .all(...b.args);
-  return rows.map((row) => {
-    const total = Number(row.transport_amount_ngn) || 0;
+  const out = [];
+  for (const row of rows) {
+    const total = poTransportQuotedFeeNgn(row);
     const paid = Number(row.transport_paid_ngn) || 0;
     const outstandingNgn = effectiveOutstandingNgn(total, paid);
-    return {
+    if (outstandingNgn <= 0) continue;
+    out.push({
       poID: row.po_id,
       supplierName: row.supplier_name ?? '',
       branchId: row.branch_id ?? '',
@@ -1077,10 +1087,12 @@ export function listPoTransportAwaitingTreasury(db, branchScope = 'ALL') {
       transportReference: row.transport_reference ?? '',
       transportFinanceAdvice: row.transport_finance_advice ?? '',
       transportAmountNgn: total,
+      transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
       transportPaidNgn: paid,
       outstandingNgn,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /**
@@ -1094,12 +1106,15 @@ export function listPoTransportMissingLink(db, branchScope = 'ALL') {
     .prepare(
       `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
               transport_agent_id, transport_agent_name, transport_reference, transport_amount_ngn,
-              transport_paid_ngn, supplier_paid_ngn
+              transport_advance_ngn, transport_paid_ngn, supplier_paid_ngn
        FROM purchase_orders
        WHERE LOWER(TRIM(COALESCE(status, ''))) IN ('approved', 'on loading', 'in transit')
          AND (
            TRIM(COALESCE(transport_agent_id, '')) = ''
-           OR COALESCE(transport_amount_ngn, 0) <= 0
+           OR (
+             COALESCE(transport_amount_ngn, 0) <= 0
+             AND COALESCE(transport_advance_ngn, 0) <= 0
+           )
          )
          ${b.sql}
        ORDER BY order_date_iso DESC, po_id DESC`
@@ -1107,7 +1122,7 @@ export function listPoTransportMissingLink(db, branchScope = 'ALL') {
     .all(...b.args);
   return rows.map((row) => {
     const hasAgent = Boolean(String(row.transport_agent_id ?? '').trim());
-    const fee = Number(row.transport_amount_ngn) || 0;
+    const fee = poTransportQuotedFeeNgn(row);
     let gapKind = 'agent_and_fee';
     if (hasAgent && fee <= 0) gapKind = 'fee';
     else if (!hasAgent && fee > 0) gapKind = 'agent';
@@ -1141,12 +1156,15 @@ export function listPoTransportCatchUp(db, branchScope = 'ALL') {
     .prepare(
       `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
               transport_agent_id, transport_agent_name, transport_reference, transport_amount_ngn,
-              transport_paid_ngn, supplier_paid_ngn
+              transport_advance_ngn, transport_paid_ngn, supplier_paid_ngn
        FROM purchase_orders
        WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${PO_TRANSPORT_CATCHUP_STATUSES})
          AND (
            TRIM(COALESCE(transport_agent_id, '')) = ''
-           OR COALESCE(transport_amount_ngn, 0) <= 0
+           OR (
+             COALESCE(transport_amount_ngn, 0) <= 0
+             AND COALESCE(transport_advance_ngn, 0) <= 0
+           )
          )
          ${b.sql}
        ORDER BY order_date_iso DESC, po_id DESC`
@@ -1157,11 +1175,14 @@ export function listPoTransportCatchUp(db, branchScope = 'ALL') {
     .prepare(
       `SELECT po_id, supplier_name, branch_id, status, procurement_kind, order_date_iso,
               transport_agent_id, transport_agent_name, transport_reference, transport_finance_advice,
-              transport_amount_ngn, transport_paid_ngn, supplier_paid_ngn
+              transport_amount_ngn, transport_advance_ngn, transport_paid_ngn, supplier_paid_ngn
        FROM purchase_orders
        WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${PO_TRANSPORT_CATCHUP_STATUSES})
          AND TRIM(COALESCE(transport_agent_id, '')) != ''
-         AND COALESCE(transport_amount_ngn, 0) > COALESCE(transport_paid_ngn, 0)
+         AND (
+           COALESCE(transport_amount_ngn, 0) > 0
+           OR COALESCE(transport_advance_ngn, 0) > 0
+         )
          ${b.sql}
        ORDER BY order_date_iso DESC, po_id DESC`
     )
@@ -1169,7 +1190,7 @@ export function listPoTransportCatchUp(db, branchScope = 'ALL') {
 
   const missing = missingRows.map((row) => {
     const hasAgent = Boolean(String(row.transport_agent_id ?? '').trim());
-    const fee = Number(row.transport_amount_ngn) || 0;
+    const fee = poTransportQuotedFeeNgn(row);
     let gapKind = 'agent_and_fee';
     if (hasAgent && fee <= 0) gapKind = 'fee';
     else if (!hasAgent && fee > 0) gapKind = 'agent';
@@ -1196,8 +1217,10 @@ export function listPoTransportCatchUp(db, branchScope = 'ALL') {
   const awaiting = awaitingRows
     .filter((row) => !missingIds.has(row.po_id))
     .map((row) => {
-      const total = Number(row.transport_amount_ngn) || 0;
+      const total = poTransportQuotedFeeNgn(row);
       const paid = Number(row.transport_paid_ngn) || 0;
+      const outstandingNgn = effectiveOutstandingNgn(total, paid);
+      if (outstandingNgn <= 0) return null;
       return {
         poID: row.po_id,
         supplierName: row.supplier_name ?? '',
@@ -1216,7 +1239,8 @@ export function listPoTransportCatchUp(db, branchScope = 'ALL') {
         action: 'post_treasury',
         actionLabel: 'Finance payout',
       };
-    });
+    })
+    .filter(Boolean);
 
   return [...missing, ...awaiting];
 }

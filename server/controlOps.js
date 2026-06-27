@@ -28,7 +28,7 @@ import {
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { coilProducedMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
+import { coilProducedMetersFromProductionJobs, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -2503,6 +2503,13 @@ export function previewRefundRequest(db, payload) {
   const quotedMetersFromQuote = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
   const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
   const coilProducedMetersFromJobs = coilProducedMetersFromProductionJobs(db, productionJobs);
+  let linesPayloadForUnproduced = {};
+  try {
+    linesPayloadForUnproduced = JSON.parse(String(quote?.lines_json || '{}'));
+  } catch {
+    linesPayloadForUnproduced = {};
+  }
+  const stoneMeterQuoteForUnproduced = isStoneMeterQuotationLinesJson(db, linesPayloadForUnproduced);
   const quotedMetersOverride = positiveNumber(payload.quotedMeters);
   const actualMetersOverride = positiveNumber(payload.actualMeters);
   const coilProducedMetersOverride = positiveNumber(payload.coilProducedMeters);
@@ -2514,6 +2521,12 @@ export function previewRefundRequest(db, payload) {
     coilProducedMetersOverride != null
       ? Math.max(0, roundMoney(coilProducedMetersOverride))
       : coilProducedMetersFromJobs;
+  const producedMetersForUnproduced =
+    coilProducedMetersOverride != null
+      ? Math.max(0, roundMoney(coilProducedMetersOverride))
+      : producedMetersForUnproducedRefund(db, productionJobs, {
+          isStoneMeterQuote: stoneMeterQuoteForUnproduced,
+        });
 
   const derivedPricePerMeter =
     quotedRoofingSheetAmountPerMeter(quote?.lines_json) ?? quotedAmountPerMeter(quote?.lines_json);
@@ -2591,7 +2604,7 @@ export function previewRefundRequest(db, payload) {
 
   // 2. Quoted vs produced shortfall (not the same as order cancellation — see eligible categories)
   if (quotedMeters > 0 && pricePerMeter) {
-    const unproducedPotential = Math.max(0, quotedMeters - coilProducedMeters);
+    const unproducedPotential = Math.max(0, quotedMeters - producedMetersForUnproduced);
     if (
       unproducedPotential > 0 &&
       !refundedCategories.has('Unproduced meterage') &&
@@ -2605,7 +2618,10 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
-  if (actualMeters > coilProducedMeters + 0.001) {
+  if (
+    !stoneMeterQuoteForUnproduced &&
+    actualMeters > coilProducedMeters + 0.001
+  ) {
     const offcutOnlyM = roundMoney(actualMeters - coilProducedMeters);
     warnings.push(
       `${offcutOnlyM.toFixed(2)} m was completed from offcut/accessories only — only coil-produced metres (${coilProducedMeters.toFixed(2)} m) count toward unproduced-meterage refunds.`
@@ -3126,6 +3142,8 @@ export function previewRefundRequest(db, payload) {
       quotedMeters,
       actualMeters,
       coilProducedMeters,
+      producedMetersForUnproduced,
+      stoneMeterQuote: stoneMeterQuoteForUnproduced,
       pricePerMeterNgn: pricePerMeter ? Math.round(pricePerMeter) : null,
       pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),

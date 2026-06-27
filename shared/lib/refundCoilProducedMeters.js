@@ -18,3 +18,27 @@ export function coilProducedMetersFromProductionJobs(db, productionJobs) {
   }
   return sum;
 }
+
+/** Completed job actual_meters (stone-coated / non-coil production). */
+export function jobActualMetersFromProductionJobs(productionJobs) {
+  if (!Array.isArray(productionJobs) || productionJobs.length === 0) return 0;
+  let sum = 0;
+  for (const j of productionJobs) {
+    const st = String(j.status ?? '').trim().toLowerCase();
+    if (st !== 'completed') continue;
+    sum += Number(j.actual_meters ?? j.actualMeters) || 0;
+  }
+  return sum;
+}
+
+/**
+ * Metres that reduce unproduced-meterage refund potential.
+ * Coil roofing: coil allocation metres only (offcut-only FG excluded).
+ * Stone meter quotes: completed job actual metres (no coil rows on stone jobs).
+ */
+export function producedMetersForUnproducedRefund(db, productionJobs, opts = {}) {
+  if (opts.isStoneMeterQuote) {
+    return jobActualMetersFromProductionJobs(productionJobs);
+  }
+  return coilProducedMetersFromProductionJobs(db, productionJobs);
+}

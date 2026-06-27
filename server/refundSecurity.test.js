@@ -330,6 +330,45 @@ describe('Refund Security & Substitution Logic', () => {
     expect(preview.body.preview.suggestedAmountNgn).toBe(100000);
   });
 
+  it('stone-coated partial production uses job actual metres for unproduced refund (not coil rows)', async () => {
+    const linesJson = JSON.stringify({
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.20mm',
+      materialColor: 'Black patch white',
+      materialDesign: 'Single',
+      products: [{ name: 'Roofing Sheet', qty: 40, unitPrice: 4800 }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
+       VALUES ('QT-RFS-STONE-28','CUS-001','Muhammad Bakari',192000,196000,'Paid','Finished',?)`
+    ).run(linesJson);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-RFS-STONE','CUS-001','Muhammad Bakari','QT-RFS-STONE-28',196000,'Confirmed','2026-06-27')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, planned_meters, actual_meters, status, created_at_iso)
+       VALUES ('PRO-RFS-STONE','QT-RFS-STONE-28',40,28,'Completed','2026-06-27T10:00:00Z')`
+    ).run();
+
+    const agent = request.agent(app);
+    await loginAs(agent);
+
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-STONE-28' });
+    expect(preview.status).toBe(200);
+    expect(preview.body.preview.stoneMeterQuote).toBe(true);
+    expect(preview.body.preview.producedMetersForUnproduced).toBe(28);
+    expect(preview.body.preview.coilProducedMeters).toBe(0);
+    const unpr = preview.body.preview.suggestedLines.find((l) => l.category === 'Unproduced meterage');
+    expect(unpr).toBeDefined();
+    expect(unpr.amountNgn).toBe(Math.round(12 * 4800));
+    const overpay = preview.body.preview.suggestedLines.find((l) => l.category === 'Overpayment');
+    expect(overpay).toBeDefined();
+    expect(overpay.amountNgn).toBe(4000);
+  });
+
   it('suggests substitution credit from per-metre delta × produced metres', async () => {
     const agent = request.agent(app);
     await loginAs(agent);

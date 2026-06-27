@@ -6,7 +6,8 @@ import {
   isBranchManagerApprovalAuthority,
   isExecutiveRoleKey,
 } from '../shared/workspaceGovernance.js';
-import { coilProducedMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
+import { coilProducedMetersFromProductionJobs, jobActualMetersFromProductionJobs } from '../shared/lib/refundCoilProducedMeters.js';
+import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
 const SUBMIT_ACTION_BY_CODE = {
@@ -37,7 +38,7 @@ function normCat(c) {
     .toLowerCase();
 }
 
-function sumJobMeters(db, jobs) {
+function sumJobMeters(db, jobs, quote = null) {
   let planned = 0;
   let actual = 0;
   let hasCompleted = false;
@@ -51,8 +52,19 @@ function sumJobMeters(db, jobs) {
     actual += Number(j.actual_meters) || 0;
     if (st === 'completed' || st === 'cancelled') terminalJobs.push(j);
   }
+  let isStoneMeterQuote = false;
+  if (quote?.lines_json) {
+    try {
+      const j = JSON.parse(String(quote.lines_json));
+      isStoneMeterQuote = isStoneMeterQuotationLinesJson(db, j);
+    } catch {
+      isStoneMeterQuote = false;
+    }
+  }
   const coilActual = coilProducedMetersFromProductionJobs(db, terminalJobs);
-  return { planned, actual, coilActual, hasCompleted, hasCancelled };
+  const completedActual = jobActualMetersFromProductionJobs(jobs);
+  const effectiveProduced = isStoneMeterQuote ? completedActual : coilActual;
+  return { planned, actual, coilActual, effectiveProduced, isStoneMeterQuote, hasCompleted, hasCancelled };
 }
 
 /**
@@ -86,7 +98,7 @@ export function loadQuotationProductionContext(db, quotationRef) {
  * @param {string[] | string | null | undefined} [selectedCategories]
  */
 export function refundProductionAlignmentWarnings(db, quotationRef, selectedCategories = []) {
-  const { jobs, refunds } = loadQuotationProductionContext(db, quotationRef);
+  const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
   const issues = [];
   const selected = new Set(
     (Array.isArray(selectedCategories) ? selectedCategories : parseReasonCategories(selectedCategories)).map(normCat)
@@ -99,11 +111,15 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
   }
   for (const c of selected) refundCats.add(c);
 
-  const { planned, actual, coilActual, hasCompleted, hasCancelled } = sumJobMeters(db, jobs);
+  const { planned, actual, coilActual, effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(
+    db,
+    jobs,
+    quote
+  );
   const partialProduction =
-    hasCompleted && planned > 0 && coilActual > 0 && coilActual < planned * 0.98;
+    hasCompleted && planned > 0 && effectiveProduced > 0 && effectiveProduced < planned * 0.98;
 
-  if (selected.has('order cancellation') && hasCompleted && coilActual > 0) {
+  if (selected.has('order cancellation') && hasCompleted && effectiveProduced > 0) {
     issues.push({
       code: 'cancellation_with_production',
       severity: 'warning',
@@ -118,7 +134,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
       code: 'partial_production_cancellation',
       severity: 'warning',
       title: 'Partial production',
-      message: `Jobs produced ${Math.round(coilActual)} m from coil of ${Math.round(planned)} m planned — cancellation may over-refund.`,
+      message: `Jobs produced ${Math.round(effectiveProduced)} m of ${Math.round(planned)} m planned — cancellation may over-refund.`,
     });
   }
 
@@ -175,7 +191,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
-  if (hasCancelled && !hasCompleted && coilActual <= 0 && !refundCats.has('unproduced meterage')) {
+  if (hasCancelled && !hasCompleted && effectiveProduced <= 0 && !refundCats.has('unproduced meterage')) {
     issues.push({
       code: 'suggest_unproduced_meterage',
       severity: 'info',
@@ -194,7 +210,11 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
 export function suggestRefundCategoriesFromProduction(db, quotationRef) {
   const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
   const suggested = [];
-  const { planned, actual, coilActual, hasCompleted, hasCancelled } = sumJobMeters(db, jobs);
+  const { planned, actual, coilActual, effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(
+    db,
+    jobs,
+    quote
+  );
   const total = Math.round(Number(quote?.total_ngn) || 0);
   const paid = Math.round(Number(quote?.paid_ngn) || 0);
 
@@ -209,13 +229,18 @@ export function suggestRefundCategoriesFromProduction(db, quotationRef) {
     suggested.push('Overpayment');
   }
 
-  if (hasCancelled && coilActual <= 0 && !refundedCats.has('unproduced meterage')) {
+  if (hasCancelled && effectiveProduced <= 0 && !refundedCats.has('unproduced meterage')) {
     suggested.push('Unproduced meterage');
-  } else if (hasCompleted && planned > 0 && coilActual < planned * 0.98 && !refundedCats.has('unproduced meterage')) {
+  } else if (
+    hasCompleted &&
+    planned > 0 &&
+    effectiveProduced < planned * 0.98 &&
+    !refundedCats.has('unproduced meterage')
+  ) {
     suggested.push('Unproduced meterage');
   }
 
-  if (hasCancelled && !hasCompleted && coilActual <= 0 && !refundedCats.has('order cancellation')) {
+  if (hasCancelled && !hasCompleted && effectiveProduced <= 0 && !refundedCats.has('order cancellation')) {
     /* lower priority than unproduced */
   }
 

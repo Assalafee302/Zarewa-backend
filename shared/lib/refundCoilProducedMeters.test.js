@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { coilProducedMetersFromProductionJobs } from './refundCoilProducedMeters.js';
+import {
+  coilProducedMetersFromProductionJobs,
+  jobActualMetersFromProductionJobs,
+  producedMetersForUnproducedRefund,
+} from './refundCoilProducedMeters.js';
 
 function memDbWithCoils(coilRows = []) {
   return {
@@ -46,5 +50,22 @@ describe('refundCoilProducedMeters', () => {
         { job_id: 'PRO-OFF', actual_meters: 100, offcut_inventory_meters: 100 },
       ])
     ).toBe(0);
+  });
+
+  it('jobActualMetersFromProductionJobs sums completed job actual metres only', () => {
+    expect(
+      jobActualMetersFromProductionJobs([
+        { status: 'Completed', actual_meters: 28 },
+        { status: 'Planned', actual_meters: 40 },
+        { status: 'Cancelled', actual_meters: 5 },
+      ])
+    ).toBe(28);
+  });
+
+  it('producedMetersForUnproducedRefund uses job actuals on stone meter quotes', () => {
+    const db = memDbWithCoils([]);
+    const jobs = [{ job_id: 'PRO-ST', status: 'Completed', actual_meters: 28, planned_meters: 40 }];
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: true })).toBe(28);
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: false })).toBe(0);
   });
 });

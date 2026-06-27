@@ -14,6 +14,10 @@ import {
   applyStoneFlatsheetCompletionTx,
   planStoneFlatsheetFulfillment,
 } from './stoneFlatsheetFulfillment.js';
+import {
+  jobEffectiveOutputMetres,
+  validateProductionEditAgainstPaidRefunds,
+} from './refundPaidProductionEditGate.js';
 import { tryPostProductionRecognitionGlTx } from './productionRecognitionGl.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
@@ -1488,6 +1492,16 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       error: 'Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).',
     };
   }
+  const accPlanPre = planAccessoryCompletion(db, job, payload);
+  if (!accPlanPre.ok) return accPlanPre;
+  const sfPlanPre = planStoneFlatsheetFulfillment(db, job, payload, {});
+  if (!sfPlanPre.ok) return sfPlanPre;
+  const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+    proposedJobOutputMetres: Math.max(0, metres),
+    plannedAccessoryLines: accPlanPre.plannedLines,
+    plannedStoneFlatsheetLines: sfPlanPre.plannedLines,
+  });
+  if (!paidRefundGate.ok) return paidRefundGate;
   let totalCogsForGl = 0;
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
@@ -1777,6 +1791,16 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       };
     }
     const outputMeters = totalMeters + offInv;
+    const accPlanPre = planAccessoryCompletion(db, job, payload);
+    if (!accPlanPre.ok) return accPlanPre;
+    const sfPlanPre = planStoneFlatsheetFulfillment(db, job, payload, {});
+    if (!sfPlanPre.ok) return sfPlanPre;
+    const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+      proposedJobOutputMetres: outputMeters,
+      plannedAccessoryLines: accPlanPre.plannedLines,
+      plannedStoneFlatsheetLines: sfPlanPre.plannedLines,
+    });
+    if (!paidRefundGate.ok) return paidRefundGate;
     const plannedM = Number(job.planned_meters) || 0;
     if (plannedM > 0 && outputMeters > plannedM + 0.001) {
       const remark = String(payload?.meterOverrunRemark ?? '').trim();
@@ -2299,6 +2323,13 @@ export function applyProductionCompletionAdjustment(db, jobID, payload = {}, opt
   const atISO = normalizeIso(payload.atISO || payload.effectiveDateISO || nowIso());
   try {
     assertPeriodOpen(db, atISO, 'Adjustment date');
+    if (delta > 0) {
+      const effective = jobEffectiveOutputMetres(db, jobId);
+      const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+        proposedJobOutputMetres: effective + delta,
+      });
+      if (!paidRefundGate.ok) return paidRefundGate;
+    }
     const stockBranch = jobBranchId(job);
     const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
     if (!prodRow) return { ok: false, error: 'Finished goods product not found.' };
@@ -2654,6 +2685,10 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
       : oldOff;
   const newTotalKg = parsed.reduce((s, p) => s + p.nextConsumed, 0);
   const deltaM = newTotalM - oldTotalM + (newOff - oldOff);
+  const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+    proposedJobOutputMetres: newTotalM + newOff,
+  });
+  if (!paidRefundGate.ok) return paidRefundGate;
   const productId = String(job.product_id ?? '').trim();
   const atISO = normalizeIso(payload.atISO || nowIso());
 
@@ -2848,6 +2883,10 @@ export function applyCompletedProductionAccessoryCorrections(db, jobID, payload 
     assertPeriodOpen(db, atISO, 'Production accessory correction date');
     const accPlan = planAccessoryCorrectionExcludingJob(db, job, jobId, payload);
     if (!accPlan.ok) return accPlan;
+    const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+      plannedAccessoryLines: accPlan.plannedLines,
+    });
+    if (!paidRefundGate.ok) return paidRefundGate;
 
     const runBody = () => {
       const stockBranch = jobBranchId(job);
@@ -2932,6 +2971,10 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
     assertPeriodOpen(db, atISO, 'Production stone flatsheet correction date');
     const sfPlan = planStoneFlatsheetCorrectionExcludingJob(db, job, jobId, payload);
     if (!sfPlan.ok) return sfPlan;
+    const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+      plannedStoneFlatsheetLines: sfPlan.plannedLines,
+    });
+    if (!paidRefundGate.ok) return paidRefundGate;
 
     const runBody = () => {
       const stockBranch = jobBranchId(job);

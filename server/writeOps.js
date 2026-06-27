@@ -1423,13 +1423,14 @@ function normalizePoTransitStatus(status) {
 }
 
 const PO_TRANSIT_SOURCE_STATUSES = new Set(['approved', 'on loading']);
-const PO_TRANSIT_PAYABLE_STATUSES = new Set(['approved', 'on loading', 'in transit']);
+const PO_TRANSIT_PAYABLE_STATUSES = new Set(['approved', 'on loading', 'in transit', 'received']);
 
 function formatPoStatusLabel(status) {
   const normalized = normalizePoTransitStatus(status);
   if (normalized === 'on loading') return 'On loading';
   if (normalized === 'in transit') return 'In Transit';
   if (normalized === 'approved') return 'Approved';
+  if (normalized === 'received') return 'Received';
   return String(status ?? '').trim() || 'Unknown';
 }
 
@@ -1521,13 +1522,20 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
   const transportFeeNgn = Number(row.transport_amount_ngn) || 0;
   const allowLateLinkOnInTransit =
     statusNorm === 'in transit' && (!hasTransportAgent || transportFeeNgn <= 0);
-  if (!PO_TRANSIT_SOURCE_STATUSES.has(statusNorm) && !allowLateLinkOnInTransit) {
+  const allowLateLinkOnReceived =
+    statusNorm === 'received' && (!hasTransportAgent || transportFeeNgn <= 0);
+  if (
+    !PO_TRANSIT_SOURCE_STATUSES.has(statusNorm) &&
+    !allowLateLinkOnInTransit &&
+    !allowLateLinkOnReceived
+  ) {
     return {
       ok: false,
       error: poStatusGateError('Transport linking', row.status, [
         'approved',
         'on loading',
         'in transit (no haulier or fee yet)',
+        'received (no haulier or fee yet)',
       ]),
     };
   }
@@ -1577,8 +1585,13 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
 
       if (advanceNgn <= 0 && recordedAmount > 0) advanceNgn = recordedAmount;
 
-      let nextStatus = statusNorm === 'in transit' ? 'In Transit' : 'On loading';
-      if (!wantsTreasury && recordedAmount <= 0 && statusNorm !== 'in transit') {
+      let nextStatus =
+        statusNorm === 'received'
+          ? 'Received'
+          : statusNorm === 'in transit'
+            ? 'In Transit'
+            : 'On loading';
+      if (!wantsTreasury && recordedAmount <= 0 && statusNorm !== 'in transit' && statusNorm !== 'received') {
         nextStatus = 'In Transit';
       }
 
@@ -1599,7 +1612,7 @@ export function linkTransport(db, poID, transportAgentId, transportAgentName, op
          WHERE po_id = ? AND (
            status IN ('Approved', 'On loading')
            OR (
-             status = 'In Transit'
+             status IN ('In Transit', 'Received')
              AND (COALESCE(transport_agent_id, '') = '' OR COALESCE(transport_amount_ngn, 0) <= 0)
            )
          )`
@@ -1708,7 +1721,12 @@ export function postPurchaseOrderTransport(db, poID, opts = {}) {
   if (!PO_TRANSIT_PAYABLE_STATUSES.has(normalizePoTransitStatus(row.status))) {
     return {
       ok: false,
-      error: poStatusGateError('Transport payment', row.status, ['approved', 'on loading', 'in transit']),
+      error: poStatusGateError('Transport payment', row.status, [
+        'approved',
+        'on loading',
+        'in transit',
+        'received',
+      ]),
     };
   }
   if (!String(row.transport_agent_id ?? '').trim()) {

@@ -3091,7 +3091,7 @@ export function listCoilProductionHolders(db, coilNo) {
       `SELECT pjc.id, pjc.job_id, pjc.coil_no, pjc.opening_weight_kg, pjc.closing_weight_kg,
         pjc.consumed_weight_kg, pjc.meters_produced, pjc.allocation_status, pjc.allocated_at_iso,
         pj.status AS job_status, pj.cutting_list_id, pj.quotation_ref,
-        cl.customer AS cutting_list_customer,
+        cl.customer_name AS cutting_list_customer,
         pcc.alert_state AS conversion_alert_state
        FROM production_job_coils pjc
        INNER JOIN production_jobs pj ON pj.job_id = pjc.job_id

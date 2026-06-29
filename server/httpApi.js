@@ -371,6 +371,7 @@ import {
   listProductionJobCoilsForJob,
   listProductionJobCoils,
   listCoilProductionHolders,
+  listCoilProductionBookReconciliationIssues,
   summarizeCoilProductionHoldersBook,
   recalculateAllCoilProductionJobStock,
   reconcileCoilReservationFromProductionJobs,
@@ -7262,6 +7263,27 @@ export function registerHttpApi(app, db) {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.get('/api/coil-lots/book-reconciliation-issues', requirePermission(coilMaterialPerms), (req, res) => {
+    try {
+      const minGapKg = Number(req.query.minGapKg);
+      const issues = listCoilProductionBookReconciliationIssues(db, {
+        workspaceBranchId: req.workspaceBranchId,
+        minGapKg: Number.isFinite(minGapKg) ? minGapKg : 0.05,
+        coilNoLike: String(req.query.search ?? req.query.coilNoLike ?? '').trim(),
+        includeOrphanReservation: req.query.includeOrphanReservation !== '0',
+      });
+      res.json({
+        ok: true,
+        count: issues.length,
+        minGapKg: Number.isFinite(minGapKg) ? minGapKg : 0.05,
+        issues,
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

@@ -3326,6 +3326,85 @@ export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
 }
 
 /**
+ * Find coils where summed job consumption ≠ coil book used (and optional orphan reserved kg).
+ * @param {{ workspaceBranchId?: string; minGapKg?: number; coilNoLike?: string; includeOrphanReservation?: boolean }} [opts]
+ */
+export function listCoilProductionBookReconciliationIssues(db, opts = {}) {
+  const minGapKg = Math.max(0, safeNumber(opts.minGapKg, 0.05));
+  const branchId = String(opts.workspaceBranchId ?? opts.branchId ?? '').trim();
+  const coilLike = String(opts.coilNoLike ?? opts.search ?? '').trim();
+  const includeOrphan = opts.includeOrphanReservation !== false;
+
+  const args = [];
+  let sql = `SELECT DISTINCT pjc.coil_no AS coil_no
+    FROM production_job_coils pjc
+    INNER JOIN coil_lots cl ON cl.coil_no = pjc.coil_no`;
+  const where = [];
+  if (branchId) {
+    where.push('cl.branch_id = ?');
+    args.push(branchId);
+  }
+  if (coilLike) {
+    where.push('pjc.coil_no LIKE ?');
+    args.push(`%${coilLike}%`);
+  }
+  if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
+  sql += ' ORDER BY pjc.coil_no';
+
+  const coilNos = db.prepare(sql).all(...args).map((r) => String(r.coil_no ?? '').trim()).filter(Boolean);
+
+  const issues = [];
+  for (const cn of coilNos) {
+    const coil = coilRow(db, cn);
+    if (!coil) continue;
+    if (branchId) {
+      const br = assertCoilInWorkspaceBranch(coil, branchId);
+      if (!br.ok) continue;
+    }
+    const holders = listCoilProductionHolders(db, cn);
+    if (!holders.length) continue;
+    const summary = summarizeCoilProductionHoldersBook(db, cn, holders);
+    if (!summary) continue;
+    const gap = safeNumber(summary.reconciliationGapKg);
+    const expectedReserved = expectedCoilReservedKgFromJobs(db, cn);
+    const bookedReserved = clampNonNegative(coil.qty_reserved);
+    const orphanReservedKg = Math.max(0, bookedReserved - expectedReserved);
+    const hasGap = Math.abs(gap) > minGapKg;
+    const hasOrphan = includeOrphan && orphanReservedKg > minGapKg;
+    if (!hasGap && !hasOrphan) continue;
+
+    const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
+    const onHand = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+    issues.push({
+      coilNo: cn,
+      branchId: coil.branch_id ?? null,
+      colour: coil.colour ?? '',
+      gaugeLabel: coil.gauge_label ?? '',
+      receivedKg: received,
+      onHandKg: onHand,
+      bookUsedKg: summary.bookUsedKg,
+      jobsConsumedKgSum: summary.jobsConsumedKgSum,
+      reconciliationGapKg: gap,
+      openingClosingGapKg: summary.openingClosingGapKg,
+      orphanReservedKg,
+      bookedReservedKg: bookedReserved,
+      expectedReservedKg: expectedReserved,
+      jobLinkCount: holders.length,
+      hasConsumptionGap: hasGap,
+      hasOrphanReservation: hasOrphan,
+    });
+  }
+
+  issues.sort((a, b) => {
+    const ga = Math.abs(safeNumber(a.reconciliationGapKg));
+    const gb = Math.abs(safeNumber(b.reconciliationGapKg));
+    if (gb !== ga) return gb - ga;
+    return String(a.coilNo).localeCompare(String(b.coilNo));
+  });
+  return issues;
+}
+
+/**
  * Recalculate coil book + reservations for every production job that allocated this coil.
  */
 export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {

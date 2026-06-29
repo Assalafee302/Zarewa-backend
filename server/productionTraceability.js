@@ -2518,11 +2518,11 @@ export function recalculateProductionJobCoilStock(db, jobID, opts = {}) {
   const coils = [];
   const errors = [];
   for (const coilNo of coilNos) {
-    const recalc = recalculateCoilLotBook(db, coilNo, {
+    const bookReconcile = reconcileCoilBookFromProductionHolders(db, coilNo, {
       workspaceBranchId: opts.workspaceBranchId,
     });
-    if (!recalc.ok) {
-      errors.push({ coilNo, step: 'book', error: recalc.error });
+    if (!bookReconcile.ok) {
+      errors.push({ coilNo, step: 'book', error: bookReconcile.error });
       continue;
     }
     const reservation = reconcileCoilReservationFromProductionJobs(db, coilNo, {
@@ -2533,7 +2533,7 @@ export function recalculateProductionJobCoilStock(db, jobID, opts = {}) {
       errors.push({ coilNo, step: 'reservation', error: reservation.error });
       continue;
     }
-    coils.push({ coilNo, recalc, reservation });
+    coils.push({ coilNo, bookReconcile, reservation });
   }
 
   if (!coils.length && errors.length) {
@@ -3133,6 +3133,169 @@ function holderBookedKgUsed(h) {
   return 0;
 }
 
+/** Kg split off this parent into child coil lots (reduces parent on-hand, not in job consumed sum). */
+function coilSplitOutKgFromChildren(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return 0;
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(COALESCE(weight_kg, qty_received, 0)), 0) AS kg
+       FROM coil_lots WHERE parent_coil_no = ?`
+    )
+    .get(cn);
+  return clampNonNegative(row?.kg);
+}
+
+/**
+ * Net kg change on this coil from scrap, returns, finish-roll tail, and master-data adjust
+ * (not counted in production_job_coils consumed sum).
+ */
+function coilAncillaryKgNetDelta(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return 0;
+  let net = 0;
+  const scrapReturn = db
+    .prepare(
+      `SELECT qty, detail FROM stock_movements WHERE ref = ? AND type IN ('COIL_SCRAP', 'COIL_RETURN')`
+    )
+    .all(cn);
+  for (const m of scrapReturn) {
+    if (String(m.detail || '').includes('Production book reconcile')) continue;
+    net += safeNumber(m.qty);
+  }
+  const finishRoll = db
+    .prepare(
+      `SELECT qty FROM stock_movements
+       WHERE type = 'COIL_CONSUMPTION' AND detail LIKE '%roll finished%' AND detail LIKE ?`
+    )
+    .all(`%${cn}%`);
+  for (const m of finishRoll) net += safeNumber(m.qty);
+  return net;
+}
+
+/** Align production_job_coils.consumed_weight_kg with opening − closing for rows on one coil. */
+function syncProductionJobCoilConsumedWeightsForCoil(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return { updatedLineCount: 0, touchedJobIds: [] };
+  const rows = db
+    .prepare(
+      `SELECT id, job_id, opening_weight_kg, closing_weight_kg, consumed_weight_kg, meters_produced
+       FROM production_job_coils WHERE coil_no = ?`
+    )
+    .all(cn);
+  const upd = db.prepare(
+    `UPDATE production_job_coils
+     SET consumed_weight_kg = ?, actual_conversion_kg_per_m = ?
+     WHERE id = ?`
+  );
+  const touchedJobs = new Set();
+  let updatedLineCount = 0;
+  for (const r of rows) {
+    const opening = safeNumber(r.opening_weight_kg);
+    const closing = safeNumber(r.closing_weight_kg);
+    if (opening <= 0 || closing < 0 || closing > opening + 1e-6) continue;
+    const nextConsumed = opening - closing;
+    const prevConsumed = safeNumber(r.consumed_weight_kg);
+    if (Math.abs(prevConsumed - nextConsumed) <= 0.0001) continue;
+    const meters = safeNumber(r.meters_produced);
+    const conv = meters > 0 ? nextConsumed / meters : null;
+    upd.run(nextConsumed, conv, r.id);
+    touchedJobs.add(String(r.job_id ?? '').trim());
+    updatedLineCount += 1;
+  }
+  for (const jobId of touchedJobs) {
+    if (!jobId) continue;
+    const sum = db
+      .prepare(`SELECT COALESCE(SUM(consumed_weight_kg), 0) AS kg FROM production_job_coils WHERE job_id = ?`)
+      .get(jobId);
+    db.prepare(`UPDATE production_jobs SET actual_weight_kg = ? WHERE job_id = ?`).run(
+      clampNonNegative(sum?.kg),
+      jobId
+    );
+  }
+  return { updatedLineCount, touchedJobIds: [...touchedJobs] };
+}
+
+/**
+ * Rebuild coil on-hand (kg used / remaining) from GRN received, summed job consumption,
+ * coil splits, and non-production scrap/return/finish-roll movements.
+ */
+export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return { ok: false, error: 'Coil number is required.' };
+  const coil = coilRow(db, cn);
+  if (!coil) return { ok: false, error: 'Coil not found.' };
+  const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
+  if (!br.ok) return br;
+
+  const syncResult = syncProductionJobCoilConsumedWeightsForCoil(db, cn);
+  const holders = listCoilProductionHolders(db, cn);
+  const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
+  let jobsConsumedKg = 0;
+  for (const h of holders) {
+    jobsConsumedKg += holderBookedKgUsed(h);
+  }
+  const splitOutKg = coilSplitOutKgFromChildren(db, cn);
+  const ancillaryNetKg = coilAncillaryKgNetDelta(db, cn);
+  const expectedOnHand = clampNonNegative(received - jobsConsumedKg - splitOutKg + ancillaryNetKg);
+  const beforeOnHand = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+  const delta = expectedOnHand - beforeOnHand;
+
+  if (Math.abs(delta) <= 0.05) {
+    updateCoilDerivedStateTx(db, cn);
+    const bookRecalc = recalculateCoilLotBook(db, cn, { workspaceBranchId: opts.workspaceBranchId });
+    if (!bookRecalc.ok) return bookRecalc;
+    return {
+      ok: true,
+      coilNo: cn,
+      unchanged: true,
+      beforeOnHandKg: beforeOnHand,
+      afterOnHandKg: beforeOnHand,
+      onHandDeltaKg: 0,
+      bookUsedKgBefore: Math.max(0, received - beforeOnHand),
+      bookUsedKgAfter: Math.max(0, received - beforeOnHand),
+      jobsConsumedKgSum: jobsConsumedKg,
+      splitOutKg,
+      ancillaryNetKg,
+      syncResult,
+      bookRecalc,
+    };
+  }
+
+  const qtyRes = clampNonNegative(coil.qty_reserved);
+  if (expectedOnHand + 1e-6 < qtyRes) {
+    return {
+      ok: false,
+      error: `Reconciled on-hand would be ${expectedOnHand.toFixed(2)} kg, below reserved ${qtyRes.toFixed(2)} kg. Complete, cancel, or release active jobs first.`,
+    };
+  }
+
+  db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
+    expectedOnHand,
+    expectedOnHand,
+    cn
+  );
+  updateCoilDerivedStateTx(db, cn);
+  const bookRecalc = recalculateCoilLotBook(db, cn, { workspaceBranchId: opts.workspaceBranchId });
+  if (!bookRecalc.ok) return bookRecalc;
+
+  return {
+    ok: true,
+    coilNo: cn,
+    unchanged: false,
+    beforeOnHandKg: beforeOnHand,
+    afterOnHandKg: expectedOnHand,
+    onHandDeltaKg: delta,
+    bookUsedKgBefore: Math.max(0, received - beforeOnHand),
+    bookUsedKgAfter: Math.max(0, received - expectedOnHand),
+    jobsConsumedKgSum: jobsConsumedKg,
+    splitOutKg,
+    ancillaryNetKg,
+    syncResult,
+    bookRecalc,
+  };
+}
+
 /** Sum job consumption vs coil book used for coil profile reconciliation. */
 export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
   const cn = String(coilNo ?? '').trim();
@@ -3188,13 +3351,13 @@ export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
     else jobResults.push(r);
   }
 
-  const bookRecalc = recalculateCoilLotBook(db, cn, { workspaceBranchId: opts.workspaceBranchId });
-  if (!bookRecalc.ok) {
-    return { ok: false, error: bookRecalc.error, jobResults, errors };
+  const bookReconcile = reconcileCoilBookFromProductionHolders(db, cn, opts);
+  if (!bookReconcile.ok) {
+    return { ok: false, error: bookReconcile.error, jobResults, errors };
   }
   const reservation = reconcileCoilReservationFromProductionJobs(db, cn, opts);
   if (!reservation.ok) {
-    return { ok: false, error: reservation.error, jobResults, errors };
+    return { ok: false, error: reservation.error, jobResults, errors, bookReconcile };
   }
 
   const summary = summarizeCoilProductionHoldersBook(db, cn);
@@ -3205,7 +3368,12 @@ export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
     entityKind: 'coil_lot',
     entityId: cn,
     note: `Production stock recalculated for ${jobIds.length} job(s) on ${cn}`,
-    details: { jobIds, summary, errors: errors.length ? errors : undefined },
+    details: {
+      jobIds,
+      summary,
+      bookReconcile,
+      errors: errors.length ? errors : undefined,
+    },
   });
 
   return {
@@ -3213,7 +3381,7 @@ export function recalculateAllCoilProductionJobStock(db, coilNo, opts = {}) {
     coilNo: cn,
     recalculatedJobCount: jobResults.length,
     jobResults,
-    bookRecalc,
+    bookReconcile,
     reservation,
     summary,
     errors: errors.length ? errors : undefined,

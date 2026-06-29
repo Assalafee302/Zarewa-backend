@@ -1,6 +1,16 @@
 const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
-const MIGRATION_LOCK_WAIT_SEC =
-  Number(process.env.ZAREWA_MIGRATION_LOCK_WAIT_SEC || 120) || 120;
+
+/** Remote / production boots can take 15+ minutes; keep tests fast-fail at 120s. */
+export function defaultMigrationLockWaitSec() {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') return 120;
+  return 1200;
+}
+
+function migrationLockWaitSec() {
+  const fromEnv = Number(process.env.ZAREWA_MIGRATION_LOCK_WAIT_SEC);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return defaultMigrationLockWaitSec();
+}
 
 function isDeadlockError(err) {
   const errno = /** @type {{ errno?: number }} */ (err).errno;
@@ -36,11 +46,12 @@ export function withDeadlockRetry(fn, opts = {}) {
 export function withMigrationLock(db, fn) {
   let acquired = false;
   try {
-    const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(MIGRATION_LOCK_NAME, MIGRATION_LOCK_WAIT_SEC);
+    const waitSec = migrationLockWaitSec();
+    const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(MIGRATION_LOCK_NAME, waitSec);
     acquired = Number(row?.got) === 1;
     if (!acquired) {
       throw new Error(
-        `Could not acquire migration lock "${MIGRATION_LOCK_NAME}" within ${MIGRATION_LOCK_WAIT_SEC}s. ` +
+        `Could not acquire migration lock "${MIGRATION_LOCK_NAME}" within ${waitSec}s. ` +
           'Another Zarewa process may be migrating the same database — wait and retry, or stop duplicate instances.'
       );
     }

@@ -67,9 +67,11 @@ try {
   app = express();
   app.disable('x-powered-by');
   const bootFixHint =
-    lastBootPhase === 'migrations_failed' && /Atomics\.wait/i.test(errMsg)
-      ? 'Boot migrations timed out talking to MySQL. Redeploy the latest backend, ensure only one API instance migrates at once, and set ZAREWA_MYSQL_SYNC_TIMEOUT_MS=900000 if the database is large. Run: npm run mysql:smoke'
-      : 'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke';
+    lastBootPhase === 'migrations_failed' && /Could not acquire migration lock/i.test(errMsg)
+      ? 'Another API instance is migrating this database (boot can take 15+ min on remote MySQL). Stop duplicate instances, wait for the first boot to finish, or set ZAREWA_MIGRATION_LOCK_WAIT_SEC=1200. Run: npm run mysql:smoke'
+      : lastBootPhase === 'migrations_failed' && /Atomics\.wait/i.test(errMsg)
+        ? 'Boot migrations timed out talking to MySQL. Redeploy the latest backend, ensure only one API instance migrates at once, and set ZAREWA_MYSQL_SYNC_TIMEOUT_MS=900000 if the database is large. Run: npm run mysql:smoke'
+        : 'Start MySQL so host:port accepts TCP connections, create the database if missing, and match ZAREWA_MYSQL_USER / ZAREWA_MYSQL_PASSWORD in .env. Run: npm run mysql:smoke';
   const degradedProbeJson = () => ({
     ok: false,
     service: 'zarewa-api',

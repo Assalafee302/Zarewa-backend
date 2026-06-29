@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withDeadlockRetry, withMigrationLock } from './migrationLock.js';
+import { withDeadlockRetry, withMigrationLock, defaultMigrationLockWaitSec } from './migrationLock.js';
 
 describe('migrationLock', () => {
+  it('defaultMigrationLockWaitSec is 120s under test', () => {
+    expect(defaultMigrationLockWaitSec()).toBe(120);
+  });
   it('withDeadlockRetry succeeds after a deadlock', () => {
     const fn = vi
       .fn()

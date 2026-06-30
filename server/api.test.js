@@ -2714,6 +2714,52 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(String(bad.body.error || '')).toMatch(/positive number of metres|offcut|coil/i);
   });
 
+  it('offcut-only completion posts actual_meters from offcutInventoryMeters when output field is omitted', async () => {
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 20 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 20,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({ allocations: [] });
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+
+    const prev = await agent
+      .post(`/api/production-jobs/${encodeURIComponent(jobId)}/conversion-preview`)
+      .send({ completeMode: 'offcut', offcutInventoryMeters: 18 });
+    expect(prev.status).toBe(200);
+    expect(prev.body.totalMeters).toBeCloseTo(18, 3);
+    expect(prev.body.totalOutputMeters).toBeCloseTo(18, 3);
+
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29T16:00:00.000Z',
+      completeMode: 'offcut',
+      offcutInventoryMeters: 18,
+    });
+    expect(complete.status).toBe(200);
+    expect(complete.body.actualMeters).toBeCloseTo(18, 3);
+
+    const boot = await agent.get('/api/bootstrap');
+    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.actualMeters).toBeCloseTo(18, 3);
+    expect(pj?.offcutInventoryMeters).toBeCloseTo(18, 3);
+  });
+
   it('requires meterOverrunRemark when coil plus offcutInventoryMeters exceeds planned metres', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const cutting = await agent.post('/api/cutting-lists').send({

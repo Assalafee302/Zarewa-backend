@@ -332,6 +332,24 @@ function offcutInventoryMetersFromPayload(payload) {
   return clampNonNegative(safeNumber(payload?.offcutInventoryMeters ?? payload?.offcut_inventory_meters, 0));
 }
 
+/** Resolve FG output metres and offcut stock metres for offcut-only completion (preview + post). */
+function resolveOffcutCompletionMetres(payload = {}) {
+  let metres = offcutMetersFromPayload(payload);
+  let offInv = offcutInventoryMetersFromPayload(payload);
+  const offcutSupplyRaw = payload.offcutSupply ?? payload.offcutIssues ?? payload.offcut_supply;
+  const offcutSupplyList = Array.isArray(offcutSupplyRaw) ? offcutSupplyRaw : [];
+  if (offcutSupplyList.length > 0) {
+    const supplySum = offcutSupplyList.reduce((s, row) => s + (Number(row.meters) || 0), 0);
+    if (supplySum > 0) {
+      if (offInv <= 0) offInv = supplySum;
+      if (metres <= 0) metres = supplySum;
+    }
+  }
+  if (metres <= 0 && offInv > 0) metres = offInv;
+  if (offInv <= 0 && metres > 0) offInv = metres;
+  return { metres, offInv, offcutSupplyList };
+}
+
 function updateCoilDerivedStateTx(db, coilNo) {
   const row = coilRow(db, coilNo);
   if (!row) return;
@@ -1242,7 +1260,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     completionModeFromPayload(payload) === 'offcut' ||
     (jobRow && quotationIsAccessoriesOnlyForJob(db, jobRow))
   ) {
-    const metres = offcutMetersFromPayload(payload);
+    const { metres, offInv } = resolveOffcutCompletionMetres(payload);
     if (metres < 0) {
       return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
     }
@@ -1255,6 +1273,8 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       aggregatedAlertState: 'OK',
       managerReviewRequired: false,
       totalMeters: metres,
+      totalOutputMeters: metres,
+      offcutInventoryMeters: offInv,
       totalWeightKg: 0,
       accessoryPlan: acc.plannedLines,
       accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
@@ -1642,21 +1662,13 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
 
 function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   const completedAtISO = normalizeIso(payload.completedAtISO || payload.endDateISO || nowIso());
-  let metres = offcutMetersFromPayload(payload);
-  let offInv = offcutInventoryMetersFromPayload(payload);
-  const offcutSupplyRaw = payload.offcutSupply ?? payload.offcutIssues ?? payload.offcut_supply;
-  const offcutSupplyList = Array.isArray(offcutSupplyRaw) ? offcutSupplyRaw : [];
-  if (offcutSupplyList.length > 0) {
-    const supplySum = offcutSupplyList.reduce((s, row) => s + (Number(row.meters) || 0), 0);
-    if (supplySum > 0) {
-      if (offInv <= 0) offInv = supplySum;
-      if (metres <= 0) metres = supplySum;
-    }
-  }
+  const resolved = resolveOffcutCompletionMetres(payload);
+  let metres = resolved.metres;
+  let offInv = resolved.offInv;
+  const offcutSupplyList = resolved.offcutSupplyList;
   if (!Number.isFinite(metres) || metres < 0) {
     return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
   }
-  if (offInv <= 0 && metres > 0) offInv = metres;
   let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');

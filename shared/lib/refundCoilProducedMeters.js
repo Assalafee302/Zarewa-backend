@@ -52,7 +52,9 @@ export function jobOutputMetresForUnproducedRefund(db, job) {
   const jid = String(job?.job_id ?? job?.jobID ?? '').trim();
   const coilM = coilMetersForJob(db, jid);
   const actualM = Number(job?.actual_meters ?? job?.actualMeters) || 0;
-  return Math.max(coilM, actualM);
+  const offcutInv = Number(job?.offcut_inventory_meters ?? job?.offcutInventoryMeters) || 0;
+  if (coilM > 0.001) return Math.max(actualM, coilM + offcutInv);
+  return Math.max(actualM, offcutInv);
 }
 
 /**

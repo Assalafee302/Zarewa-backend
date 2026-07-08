@@ -94,6 +94,7 @@ import {
   listCoilLots,
 } from './readModel.js';
 import { RECEIPT_CLEARANCE_RESET_CONFIRM_PHRASE } from '../shared/lib/receiptClearance.js';
+import { advanceInRemainingNgnByIdFromEntries } from '../shared/lib/customerLedgerCore.js';
 import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
@@ -5671,6 +5672,13 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
     .get(reversalMarker(entryId), `%${entryId}%`);
   if (existing) return { ok: false, error: 'Advance already reversed.' };
 
+  const branchScope = target.branch_id ? String(target.branch_id) : 'ALL';
+  const remainingById = advanceInRemainingNgnByIdFromEntries(listLedgerEntries(db, branchScope));
+  const remainingNgn = Math.round(Number(remainingById.get(String(entryId))) || 0);
+  if (remainingNgn <= 0) {
+    return { ok: false, error: 'No unused balance remains on this advance (fully applied or already reversed).' };
+  }
+
   const reversalNote = note || `Reverse advance ${entryId}`;
   const reversalDateISO = new Date().toISOString().slice(0, 10);
   try {
@@ -5684,7 +5692,7 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
             type: target.type === 'OVERPAY_ADVANCE' ? 'OVERPAY_REVERSAL' : 'ADVANCE_REVERSAL',
             customerID: target.customer_id,
             customerName: target.customer_name,
-            amountNgn: target.amount_ngn,
+            amountNgn: remainingNgn,
             quotationRef: target.quotation_ref || '',
             paymentMethod: target.payment_method,
             bankReference: reversalMarker(entryId),
@@ -5707,7 +5715,7 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
         const glAdvRev = tryPostCustomerAdvanceReversalGl(db, {
           originalAdvanceLedgerId: entryId,
           reversalLedgerId: reversal?.id,
-          amountNgn: target.amount_ngn,
+          amountNgn: remainingNgn,
           entryDateISO: reversalDateISO,
           branchId: target.branch_id || null,
           createdByUserId: actor?.id ?? null,

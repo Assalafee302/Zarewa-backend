@@ -1,6 +1,7 @@
 import {
   companionOverpayNgnByReceiptId,
   firstProductionDateISO,
+  pendingAdvanceDepositRowsFromEntries,
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
@@ -1709,27 +1710,20 @@ export function enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerEntr
   });
 }
 
-/** Advance deposits (ADVANCE_IN) mirrored at post time — query-friendly; balances still from ledger math. */
+/** Advance deposits with unused balance (ledger FIFO), not raw ADVANCE_IN mirror rows. */
 export function listAdvanceInEvents(db, branchScope = 'ALL') {
-  const b = branchWhere(db, 'ledger_entries', branchScope);
-  return db
-    .prepare(
-      `SELECT a.* FROM advance_in_events a
-       INNER JOIN ledger_entries le ON le.id = a.ledger_entry_id
-       WHERE 1=1${b.sql.replace(/\bbranch_id\b/g, 'le.branch_id')}
-       ORDER BY a.at_iso DESC, a.ledger_entry_id DESC`
-    )
-    .all(...b.args)
-    .map((row) => ({
-      ledgerEntryId: row.ledger_entry_id,
-      customerID: row.customer_id,
-      customerName: row.customer_name,
-      amountNgn: row.amount_ngn,
-      atISO: row.at_iso,
-      paymentMethod: row.payment_method,
-      bankReference: row.bank_reference,
-      purpose: row.purpose,
-    }));
+  const entries = listLedgerEntries(db, branchScope);
+  return pendingAdvanceDepositRowsFromEntries(entries).map((row) => ({
+    ledgerEntryId: row.id,
+    customerID: row.customerID,
+    customerName: row.customerName,
+    amountNgn: row.remainingNgn,
+    originalAmountNgn: row.originalAmountNgn,
+    atISO: row.atISO,
+    paymentMethod: row.paymentMethod,
+    bankReference: row.bankReference,
+    purpose: row.purpose,
+  }));
 }
 
 export function listCuttingLists(db, branchScope = 'ALL') {

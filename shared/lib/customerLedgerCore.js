@@ -407,3 +407,108 @@ export function receiptResultFromSavedRows(savedEntries) {
   }
   return { receipt: null, overpay: null };
 }
+
+/** Parse `REVERSAL_OF:<ledgerEntryId>` from reversal row metadata. */
+export function reversalTargetIdFromLedgerRef(raw) {
+  const m = String(raw ?? '').match(/REVERSAL_OF:([A-Za-z0-9-]+)/);
+  return m ? m[1] : '';
+}
+
+/** ADVANCE_IN ids that have an ADVANCE_REVERSAL row. */
+export function reversedAdvanceInEntryIdsFromEntries(entries) {
+  const ids = new Set();
+  for (const e of entries || []) {
+    if (e.type !== 'ADVANCE_REVERSAL') continue;
+    const tid = reversalTargetIdFromLedgerRef(e.bankReference || e.note);
+    if (tid) ids.add(String(tid));
+  }
+  return ids;
+}
+
+/**
+ * Remaining unused balance per ADVANCE_IN row (FIFO against customer ADVANCE_APPLIED + REFUND_ADVANCE).
+ * @param {Array<{ id: string, customerID?: string, type: string, amountNgn?: number, atISO?: string }>} entries
+ * @returns {Map<string, number>}
+ */
+export function advanceInRemainingNgnByIdFromEntries(entries) {
+  const all = Array.isArray(entries) ? entries : [];
+  const reversed = reversedAdvanceInEntryIdsFromEntries(all);
+  /** @type {Map<string, Array<{ id: string, amountNgn: number, atISO?: string }>>} */
+  const advancesByCustomer = new Map();
+
+  for (const e of all) {
+    if (e.type !== 'ADVANCE_IN') continue;
+    const id = String(e.id || '').trim();
+    if (!id || reversed.has(id)) continue;
+    const cid = String(e.customerID || '').trim();
+    if (!cid) continue;
+    if (!advancesByCustomer.has(cid)) advancesByCustomer.set(cid, []);
+    advancesByCustomer.get(cid).push({
+      id,
+      amountNgn: Math.round(Number(e.amountNgn) || 0),
+      atISO: e.atISO,
+    });
+  }
+
+  /** @type {Map<string, number>} */
+  const remaining = new Map();
+  for (const [cid, advList] of advancesByCustomer) {
+    advList.sort((a, b) => {
+      const d = String(a.atISO || '').localeCompare(String(b.atISO || ''));
+      return d !== 0 ? d : String(a.id).localeCompare(String(b.id));
+    });
+    for (const row of advList) {
+      remaining.set(row.id, row.amountNgn);
+    }
+
+    let pool = 0;
+    for (const e of all) {
+      if (String(e.customerID || '').trim() !== cid) continue;
+      const n = Math.round(Number(e.amountNgn) || 0);
+      if (e.type === 'ADVANCE_APPLIED' || e.type === 'REFUND_ADVANCE') pool += n;
+    }
+
+    for (const row of advList) {
+      if (pool <= 0) break;
+      const cur = remaining.get(row.id) || 0;
+      const take = Math.min(cur, pool);
+      remaining.set(row.id, cur - take);
+      pool -= take;
+    }
+  }
+
+  return remaining;
+}
+
+/**
+ * ADVANCE_IN rows still available to link (unused balance > 0), newest first.
+ * Each row includes `originalAmountNgn` and `remainingNgn`; `amountNgn` is set to remaining for display.
+ * @param {object[]} entries
+ * @param {{ dismissedIds?: Set<string>|string[] }} [opts]
+ */
+export function pendingAdvanceDepositRowsFromEntries(entries, opts = {}) {
+  const dismissed =
+    opts.dismissedIds instanceof Set
+      ? opts.dismissedIds
+      : new Set((opts.dismissedIds || []).map(String));
+  const remainingById = advanceInRemainingNgnByIdFromEntries(entries);
+  const out = [];
+
+  for (const e of entries || []) {
+    if (e.type !== 'ADVANCE_IN') continue;
+    const id = String(e.id || '').trim();
+    if (!id || dismissed.has(id)) continue;
+    const remainingNgn = remainingById.get(id);
+    if (remainingNgn == null || remainingNgn <= 0) continue;
+    const originalAmountNgn = Math.round(Number(e.amountNgn) || 0);
+    out.push({
+      ...e,
+      originalAmountNgn,
+      remainingNgn,
+      amountNgn: remainingNgn,
+    });
+  }
+
+  out.sort((a, b) => String(b.atISO || '').localeCompare(String(a.atISO || '')));
+  return out;
+}

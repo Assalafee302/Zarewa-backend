@@ -688,6 +688,32 @@ function runMigrationsUnlocked(db) {
   if (!productionJobs.has('planned_flatsheet_m')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN planned_flatsheet_m REAL NOT NULL DEFAULT 0`);
   }
+  if (productionJobs.has('planned_roof_m')) {
+    try {
+      db.exec(`
+        UPDATE production_jobs pj
+        SET
+          planned_roof_m = COALESCE((
+            SELECT ROUND(SUM(CASE WHEN line_type = 'Roof' THEN total_m ELSE 0 END), 2)
+            FROM cutting_list_lines WHERE cutting_list_id = pj.cutting_list_id
+          ), 0),
+          planned_cladding_m = COALESCE((
+            SELECT ROUND(SUM(CASE WHEN line_type = 'Cladding' THEN total_m ELSE 0 END), 2)
+            FROM cutting_list_lines WHERE cutting_list_id = pj.cutting_list_id
+          ), 0),
+          planned_flatsheet_m = COALESCE((
+            SELECT ROUND(SUM(CASE WHEN line_type = 'Flatsheet' THEN total_m ELSE 0 END), 2)
+            FROM cutting_list_lines WHERE cutting_list_id = pj.cutting_list_id
+          ), 0)
+        WHERE TRIM(COALESCE(pj.cutting_list_id, '')) != ''
+          AND (COALESCE(pj.planned_roof_m, 0) = 0
+            AND COALESCE(pj.planned_cladding_m, 0) = 0
+            AND COALESCE(pj.planned_flatsheet_m, 0) = 0)
+      `);
+    } catch {
+      /* best-effort backfill for legacy jobs */
+    }
+  }
 
   const pjc = tableCols('production_job_coils');
   if (pjc.size > 0 && !pjc.has('spec_mismatch')) {

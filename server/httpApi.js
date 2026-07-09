@@ -218,6 +218,7 @@ import {
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   refundCuttingListQuotationMetreIssues,
+  dedupeRefundDataQualityIssues,
   getEligibleRefundQuotations,
   quotationMeetsRefundEligibility,
   reviewQuotation,
@@ -8280,12 +8281,12 @@ export function registerHttpApi(app, db) {
       }
       const branchScope = resolveBootstrapBranchScope(req);
       const { receipts, cuttingLists, summary } = getRefundIntelligenceForQuotation(db, quotationRef, branchScope);
-      const dataQualityIssues = [
+      const dataQualityIssues = dedupeRefundDataQualityIssues([
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
         ...refundProductionAlignmentWarnings(db, quotationRef),
-      ];
+      ]);
       const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
       const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef);
       const productionJobs = db

@@ -33,7 +33,7 @@ import {
   validateQuotationLineIntegrity,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
-import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
+import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -291,15 +291,25 @@ export function validateBundledTransportInstallCrossRequest(
 }
 
 /**
- * Strict production alignment at payout — no manager override path.
+ * Production alignment at payout — honour stored submit/approval acks; only re-block on hard blockers.
+ * @param {object | null | undefined} [refundRow] customer_refunds row (for production_alignment_ack_json)
  */
-export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reasonCategories) {
+export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reasonCategories, refundRow = null) {
   const issues = enrichProductionAlignmentIssuesForSubmit(
     refundProductionAlignmentWarnings(db, quotationRef, reasonCategories)
   );
+  const storedAlign = parseStoredProductionAlignmentAck(refundRow?.production_alignment_ack_json);
+  const ackSet = new Set((storedAlign?.acknowledgedCodes || []).map((c) => String(c).trim()).filter(Boolean));
+  const overrideOk =
+    Boolean(storedAlign?.overrideUsed) && String(storedAlign?.overrideNote || '').trim().length >= 10;
+
   const fatal = issues.filter((i) => {
     const action = String(i.submitAction || '').trim();
-    return action === 'block' || action === 'acknowledge';
+    const code = String(i.code || '').trim();
+    if (action === 'acknowledge') return !ackSet.has(code);
+    if (action !== 'block') return false;
+    if (code === 'multi_category_overlap' || code === 'multi_category_overlap_same_request') return true;
+    return !overrideOk;
   });
   if (!fatal.length) return { ok: true, issues };
   const first = fatal[0];
@@ -432,7 +442,10 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   if (!lineArithmetic.ok) return lineArithmetic;
 
   if (phase === 'pay') {
-    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories);
+    const refundRow = refundId
+      ? db.prepare(`SELECT production_alignment_ack_json FROM customer_refunds WHERE refund_id = ?`).get(refundId)
+      : null;
+    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, refundRow);
     if (!alignPay.ok) return alignPay;
   }
 
@@ -1129,7 +1142,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
 export { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 
 /** Drop duplicate refund data-quality rows (CL consumption is merged from two sources). */
-function dedupeRefundDataQualityIssues(issues) {
+export function dedupeRefundDataQualityIssues(issues) {
   const seen = new Set();
   return (issues || []).filter((iss) => {
     const code = String(iss?.code || '').trim();
@@ -3031,10 +3044,6 @@ export function previewRefundRequest(db, payload) {
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
   const pricingAsAtIso = quotationPricingAsAtIso(quote);
 
-  // Quoted vs Actual Produced (optional payload overrides for tools/tests)
-  const quotedMetersFromQuote = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
-  const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
-  const coilProducedMetersFromJobs = coilProducedMetersFromProductionJobs(db, productionJobs);
   let linesPayloadForUnproduced = {};
   try {
     linesPayloadForUnproduced = JSON.parse(String(quote?.lines_json || '{}'));
@@ -3042,6 +3051,13 @@ export function previewRefundRequest(db, payload) {
     linesPayloadForUnproduced = {};
   }
   const stoneMeterQuoteForUnproduced = isStoneMeterQuotationLinesJson(db, linesPayloadForUnproduced);
+
+  // Quoted vs Actual Produced (optional payload overrides for tools/tests)
+  const quotedMetersFromQuote = stoneMeterQuoteForUnproduced
+    ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+    : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
+  const actualMetersFromJobs = productionJobs.reduce((sum, j) => sum + (Number(j.actual_meters) || 0), 0);
+  const coilProducedMetersFromJobs = coilProducedMetersFromProductionJobs(db, productionJobs);
   const quotedMetersOverride = positiveNumber(payload.quotedMeters);
   const actualMetersOverride = positiveNumber(payload.actualMeters);
   const coilProducedMetersOverride = positiveNumber(payload.coilProducedMeters);

@@ -26,6 +26,9 @@ const SUBMIT_ACTION_BY_CODE = {
   unproduced_with_full_production: 'block',
   trim_blank_cl_soft_warning: 'acknowledge',
   trim_blank_cl_missing: 'block',
+  cutting_list_quotation_metre_mismatch: 'block',
+  cutting_list_no_quoted_roofing_metres: 'block',
+  cutting_list_missing_for_quotation: 'block',
 };
 
 /** Blockers that cannot be overridden with a manager note (double-count / cross-refund). */

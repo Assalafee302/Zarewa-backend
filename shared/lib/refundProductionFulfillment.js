@@ -1,4 +1,4 @@
-import { quotedRoofingSheetMetresFromLines } from './refundQuotationMetres.js';
+import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from './refundQuotationMetres.js';
 import {
   coilProducedMetersFromProductionJobs,
   jobActualMetersFromProductionJobs,
@@ -18,7 +18,9 @@ export function buildRefundProductionFulfillmentSummary(db, quote, productionJob
   const quotedMeters =
     opts.quotedMeters != null && Number.isFinite(Number(opts.quotedMeters))
       ? Math.max(0, Number(opts.quotedMeters))
-      : quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
+      : stoneMeterQuote
+        ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+        : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
   const jobs = Array.isArray(productionJobs) ? productionJobs : [];
   const coilProducedMeters = coilProducedMetersFromProductionJobs(db, jobs);
   const jobActualMeters = jobActualMetersFromProductionJobs(jobs);

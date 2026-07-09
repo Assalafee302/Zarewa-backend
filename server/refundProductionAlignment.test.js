@@ -17,6 +17,8 @@ describe('refundProductionAlignment', () => {
         production_jobs: [],
         customer_refunds: [],
         production_job_coils: [],
+        cutting_lists: [],
+        cutting_list_lines: [],
       },
       prepare(sql) {
         const s = String(sql);
@@ -40,6 +42,13 @@ describe('refundProductionAlignment', () => {
             }
             if (s.includes('FROM customer_refunds')) {
               return db.data.customer_refunds.filter((r) => r.quotation_ref === ref);
+            }
+            if (s.includes('FROM cutting_lists')) {
+              return db.data.cutting_lists.filter((cl) => cl.quotation_ref === ref);
+            }
+            if (s.includes('FROM cutting_list_lines')) {
+              const clId = ref;
+              return db.data.cutting_list_lines.filter((line) => line.cutting_list_id === clId);
             }
             return [];
           },
@@ -239,6 +248,32 @@ describe('refundProductionAlignment', () => {
     expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'branch_manager' })).toBe(true);
     expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'sales' })).toBe(false);
     expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'md' })).toBe(true);
+  });
+
+  it('blocks refund submit when cutting list total mismatches quotation consumption', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-CL',
+      lines_json: JSON.stringify({
+        products: [
+          { name: 'Roofing Sheet', qty: '100' },
+          { name: 'Ridge Cap', qty: '3', girthMm: 400 },
+        ],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL1', quotation_ref: 'Q-CL' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL1',
+      sheets: 50,
+      length_m: 2,
+      total_m: 100,
+      line_type: 'Roof',
+    });
+    const blocked = validateRefundProductionAlignmentAtSubmit(db, 'Q-CL', ['Unproduced meterage'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.blockedCode).toBe('cutting_list_quotation_metre_mismatch');
   });
 
   it('parses stored alignment ack and merges at approval', () => {

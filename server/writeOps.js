@@ -5778,6 +5778,21 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };
+  const qj = parseQuotationLinesJsonForStone(db, quotationRef);
+  const stone = Boolean(qj && isStoneMeterQuotationLinesJson(db, qj));
+  if (!stone) {
+    const trimBlank = validateCuttingListTrimBlankForProduction({
+      quotationLinesJson: qrow.lines_json,
+      cuttingListLines: lines,
+    });
+    if (!trimBlank.ok) {
+      return {
+        ok: false,
+        error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
+        code: trimBlank.code || 'cutting_list_trim_blank_missing',
+      };
+    }
+  }
   return { ok: true };
 }
 
@@ -6439,18 +6454,22 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     if (quotationRef) {
       const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
       if (qrow) {
-        const trimBlank = validateCuttingListTrimBlankForProduction({
-          quotationLinesJson: qrow.lines_json,
-          cuttingListLines: mapped,
-        });
-        if (!trimBlank.ok) {
-          return {
-            ...trimBlank,
-            error:
-              trimBlank.message ||
-              trimBlank.error ||
-              'Cutting list flatsheet section must include trim blank metres before production.',
-          };
+        const qj = parseQuotationLinesJsonForStone(db, quotationRef);
+        const stone = Boolean(qj && isStoneMeterQuotationLinesJson(db, qj));
+        if (!stone) {
+          const trimBlank = validateCuttingListTrimBlankForProduction({
+            quotationLinesJson: qrow.lines_json,
+            cuttingListLines: mapped,
+          });
+          if (!trimBlank.ok) {
+            return {
+              ...trimBlank,
+              error:
+                trimBlank.message ||
+                trimBlank.error ||
+                'Cutting list flatsheet section must include trim blank metres before production.',
+            };
+          }
         }
       }
     }

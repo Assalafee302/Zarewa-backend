@@ -3,6 +3,38 @@
  */
 import { assessCuttingListQuotationConsumption } from '../shared/lib/cuttingListBlankConsumption.js';
 import { cuttingListTotalMetresFromLines } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
+import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
+
+function quotationHasPositiveProductLines(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      payload = {};
+    }
+  }
+  const products = payload?.products;
+  if (!Array.isArray(products)) return false;
+  return products.some((line) => {
+    const qty = Number(String(line?.qty ?? '').replace(/,/g, '')) || 0;
+    const name = String(line?.name ?? '').trim();
+    return name && qty > 0;
+  });
+}
+
+function quotationIsAccessoriesOnlyForConsumption(db, quotationRef) {
+  const ref = String(quotationRef ?? '').trim();
+  if (!ref) return false;
+  let row;
+  try {
+    row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
+  } catch {
+    return false;
+  }
+  if (!row) return false;
+  return parseQuotationAccessoryLines(row.lines_json).length > 0 && !quotationHasPositiveProductLines(row.lines_json);
+}
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -50,10 +82,12 @@ export function assessQuotationCuttingListConsumptionForRef(db, quotationRef) {
     return null;
   }
   if (!quote) return null;
+  const accessoriesOnly = quotationIsAccessoriesOnlyForConsumption(db, ref);
   const cuttingListLines = cuttingListLineRowsForQuotationRef(db, ref);
   return assessCuttingListQuotationConsumption({
     quotationLinesJson: quote?.lines_json ?? '',
     cuttingListLines,
+    accessoriesOnly,
   });
 }
 

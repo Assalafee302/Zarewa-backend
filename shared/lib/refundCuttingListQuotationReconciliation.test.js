@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assessCuttingListQuotationMetreVariance,
   cuttingListRoofMetresFromLines,
+  cuttingListTotalMetresFromLines,
   validateCuttingListQuotedRoofingAlignment,
 } from './refundCuttingListQuotationReconciliation.js';
 
@@ -42,16 +43,36 @@ describe('refundCuttingListQuotationReconciliation', () => {
   it('blocks save when roof metres exist but quotation has none', () => {
     const r = validateCuttingListQuotedRoofingAlignment({
       quotedRoofingMetres: 0,
-      cuttingRoofMetres: 40,
+      cuttingListMetres: 40,
     });
     expect(r.ok).toBe(false);
     expect(r.code).toBe('cutting_list_no_quoted_roofing_metres');
   });
 
+  it('passes when list total matches quote even if roof section is short', () => {
+    const total = cuttingListTotalMetresFromLines([
+      { lineType: 'Roof', sheets: 30, lengthM: 4.466666 },
+      { lineType: 'Flatsheet', sheets: 1, lengthM: 0.5 },
+    ]);
+    const r = validateCuttingListQuotedRoofingAlignment({
+      quotedRoofingMetres: 134.5,
+      cuttingListMetres: total,
+    });
+    expect(r.ok).toBe(true);
+  });
+
   it('passes when roof metres match quoted roofing within tolerance', () => {
     const r = validateCuttingListQuotedRoofingAlignment({
       quotedRoofingMetres: 100,
-      cuttingRoofMetres: 100.3,
+      cuttingListMetres: 100.3,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('passes at exact 0.5 m tolerance boundary', () => {
+    const r = validateCuttingListQuotedRoofingAlignment({
+      quotedRoofingMetres: 134.5,
+      cuttingListMetres: 134.0,
     });
     expect(r.ok).toBe(true);
   });

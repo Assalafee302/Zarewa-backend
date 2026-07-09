@@ -45,7 +45,7 @@ import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
 import {
-  cuttingListRoofMetresFromLines,
+  cuttingListTotalMetresFromLines,
   validateCuttingListQuotedRoofingAlignment,
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
@@ -5772,10 +5772,10 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
   const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
   const quoted = quotedRoofingSheetMetresFromLines(qrow.lines_json);
-  const cuttingRoof = cuttingListRoofMetresFromLines(lines);
+  const cuttingTotal = cuttingListTotalMetresFromLines(lines);
   const check = validateCuttingListQuotedRoofingAlignment({
     quotedRoofingMetres: quoted,
-    cuttingRoofMetres: cuttingRoof,
+    cuttingListMetres: cuttingTotal,
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };

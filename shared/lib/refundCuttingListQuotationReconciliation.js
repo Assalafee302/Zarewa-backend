@@ -4,50 +4,71 @@
 
 export const CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M = 0.5;
 
-/** Sum roof line metres from normalized cutting-list rows (ignores cladding / flatsheet). */
-export function cuttingListRoofMetresFromLines(lines) {
+export function roundCuttingListMetres2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function cuttingListLineMetres(line) {
+  const tm = Number(line?.totalM ?? line?.total_m);
+  if (Number.isFinite(tm) && tm > 0) return tm;
+  const sheets = Number(line?.sheets) || 0;
+  const lengthM = Number(line?.lengthM ?? line?.length_m) || 0;
+  if (sheets > 0 && lengthM > 0) return Number((sheets * lengthM).toFixed(2));
+  return 0;
+}
+
+/**
+ * Sum metres on cutting-list rows (all sections by default), matching server line rounding.
+ * @param {object[]} lines
+ * @param {{ lineTypes?: string[] | null }} [opts]
+ */
+export function cuttingListTotalMetresFromLines(lines, { lineTypes = null } = {}) {
   if (!Array.isArray(lines)) return 0;
-  return lines.reduce((sum, line) => {
+  const allow = lineTypes ? new Set(lineTypes) : null;
+  const sum = lines.reduce((acc, line) => {
     const type = String(line?.lineType ?? line?.line_type ?? 'Roof').trim();
-    if (type !== 'Roof') return sum;
-    const tm = Number(line?.totalM ?? line?.total_m);
-    if (Number.isFinite(tm) && tm > 0) return sum + tm;
-    const sheets = Number(line?.sheets) || 0;
-    const lengthM = Number(line?.lengthM ?? line?.length_m) || 0;
-    if (sheets > 0 && lengthM > 0) return sum + Number((sheets * lengthM).toFixed(2));
-    return sum;
+    if (allow && !allow.has(type)) return acc;
+    return acc + cuttingListLineMetres(line);
   }, 0);
+  return roundCuttingListMetres2(sum);
+}
+
+/** Sum roof line metres only (production / stone run-plan). */
+export function cuttingListRoofMetresFromLines(lines) {
+  return cuttingListTotalMetresFromLines(lines, { lineTypes: ['Roof'] });
 }
 
 /**
  * Save-time gate: roof metres on the cutting list must match quoted roofing sheet metres.
  * @param {{
  *   quotedRoofingMetres: number,
- *   cuttingRoofMetres: number,
+ *   cuttingListMetres?: number,
+ *   cuttingRoofMetres?: number,
  *   accessoriesOnly?: boolean,
  *   toleranceM?: number,
  * }} p
  */
 export function validateCuttingListQuotedRoofingAlignment({
   quotedRoofingMetres,
+  cuttingListMetres,
   cuttingRoofMetres,
   accessoriesOnly = false,
   toleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
 }) {
   if (accessoriesOnly) {
-    return { ok: true, quotedMetres: 0, cuttingRoofMetres: 0, deltaMetres: 0 };
+    return { ok: true, quotedMetres: 0, cuttingListMetres: 0, deltaMetres: 0 };
   }
-  const quoted = Number(quotedRoofingMetres) || 0;
-  const cutting = Number(cuttingRoofMetres) || 0;
+  const quoted = roundCuttingListMetres2(quotedRoofingMetres);
+  const cutting = roundCuttingListMetres2(cuttingListMetres ?? cuttingRoofMetres ?? 0);
   if (quoted <= 0 && cutting > 0) {
     return {
       ok: false,
       code: 'cutting_list_no_quoted_roofing_metres',
       quotedMetres: quoted,
-      cuttingRoofMetres: cutting,
+      cuttingListMetres: cutting,
       deltaMetres: cutting,
       message:
-        'Quotation has no roofing sheet metres on file, but this cutting list has roof lines. Open the quotation, select the product line, and enter metres there first.',
+        'Quotation has no roofing sheet metres on file, but this cutting list has metre lines. Open the quotation, select the product line, and enter metres there first.',
     };
   }
   const assessment = assessCuttingListQuotationMetreVariance({
@@ -60,15 +81,15 @@ export function validateCuttingListQuotedRoofingAlignment({
       ok: false,
       code: assessment.code,
       quotedMetres: assessment.quotedMetres,
-      cuttingRoofMetres: assessment.cuttingListMetresSum,
+      cuttingListMetres: assessment.cuttingListMetresSum,
       deltaMetres: assessment.deltaMetres,
-      message: `Roof metres on this cutting list (${cutting.toFixed(2)} m) do not match quoted roofing sheet metres (${quoted.toFixed(2)} m) — difference ${assessment.deltaMetres.toFixed(2)} m. Align the list with the quotation before saving.`,
+      message: `Cutting list total (${cutting.toFixed(2)} m) does not match quoted roofing sheet metres (${quoted.toFixed(2)} m) — difference ${assessment.deltaMetres.toFixed(2)} m. Adjust lines so the list total matches the quotation.`,
     };
   }
   return {
     ok: true,
     quotedMetres: quoted,
-    cuttingRoofMetres: cutting,
+    cuttingListMetres: cutting,
     deltaMetres: assessment.deltaMetres ?? 0,
   };
 }
@@ -85,13 +106,14 @@ export function assessCuttingListQuotationMetreVariance({
   cuttingListMetresSum,
   toleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
 }) {
-  const quoted = Number(quotedRoofingMetres) || 0;
-  const cutting = Number(cuttingListMetresSum) || 0;
+  const quoted = roundCuttingListMetres2(quotedRoofingMetres);
+  const cutting = roundCuttingListMetres2(cuttingListMetresSum);
   if (quoted <= 0 || cutting <= 0) {
     return { ok: true, quotedMetres: quoted, cuttingListMetresSum: cutting, deltaMetres: 0 };
   }
   const delta = Math.abs(quoted - cutting);
-  if (delta <= Math.max(0, Number(toleranceM) || 0)) {
+  const tol = Math.max(0, Number(toleranceM) || 0);
+  if (delta <= tol + 1e-6) {
     return { ok: true, quotedMetres: quoted, cuttingListMetresSum: cutting, deltaMetres: delta };
   }
   return {

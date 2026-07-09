@@ -30,6 +30,7 @@ import {
   coilProducedMetersFromProductionJobs,
   producedMetersForUnproducedRefund,
 } from '../shared/lib/refundCoilProducedMeters.js';
+import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
@@ -636,6 +637,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
       jobCoils: [],
       refunds: [],
       totals: {
+        quotedRoofingMetres: 0,
         cuttingListMetersSum: 0,
         completedProductionMetersSum: 0,
         productionJobsMetersSum: 0,
@@ -759,6 +761,9 @@ export function listManagerQuotationAudit(db, quotationRef) {
     .filter((j) => String(j.status || '').toLowerCase() === 'completed')
     .reduce((s, j) => s + (Number(j.actual_meters) || 0), 0);
   const allJobMeters = productionLogs.reduce((s, j) => s + (Number(j.actual_meters) || 0), 0);
+  const quotedRoofingMetres = quotedRoofingSheetMetresFromLines(
+    db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qid)?.lines_json ?? ''
+  );
 
   return {
     ok: true,
@@ -790,6 +795,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
     jobCoils,
     refunds,
     totals: {
+      quotedRoofingMetres,
       cuttingListMetersSum: cuttingListMetersSum,
       completedProductionMetersSum: completedMeters,
       productionJobsMetersSum: allJobMeters,

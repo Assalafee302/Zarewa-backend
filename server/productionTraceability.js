@@ -1,6 +1,7 @@
 import { actorName } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { recordRefundIntegrityDriftAfterProductionChange } from './quotationRecalcOrchestrator.js';
 import {
   applyAccessoryCompletionTx,
   buildAccessorySuppliedLookup,
@@ -42,6 +43,20 @@ import {
   resolveCoilMaterialFamilyKey,
 } from '../shared/lib/coilMaterialFamily.js';
 import { listMasterData } from './masterData.js';
+function notifyRefundIntegrityDriftIfNeeded(db, quotationRef, actor, trigger, jobId = '') {
+  const qref = String(quotationRef || '').trim();
+  if (!qref) return;
+  try {
+    recordRefundIntegrityDriftAfterProductionChange(db, qref, {
+      actor,
+      trigger,
+      jobId: jobId || undefined,
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
 function coilProductionBlocked(db, coilNo) {
   const cn = String(coilNo || '').trim();
   if (!cn) return false;
@@ -1664,6 +1679,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       });
       if (!glRec.ok) throw new Error(glRec.error || 'Production recognition GL failed.');
     })();
+    notifyRefundIntegrityDriftIfNeeded(db, qref, opts.actor, 'production.complete.stone', jobID);
     return {
       ok: true,
       actualMeters: metres,
@@ -1806,6 +1822,7 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
       });
       if (!glRec.ok) throw new Error(glRec.error || 'Production recognition GL failed.');
     })();
+    notifyRefundIntegrityDriftIfNeeded(db, job.quotation_ref, opts.actor, 'production.complete.offcut', jobID);
     return {
       ok: true,
       actualMeters: metres,
@@ -2156,6 +2173,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       workspaceBranchId: stockBranch,
       actor: opts.actor,
     });
+    notifyRefundIntegrityDriftIfNeeded(db, job.quotation_ref, opts.actor, 'production.complete.coil', jobID);
     return {
       ok: true,
       actualMeters: outputMeters,

@@ -215,6 +215,7 @@ import {
   buildRefundEconomicFloorSummary,
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
+  refundCuttingListQuotationMetreIssues,
   getEligibleRefundQuotations,
   quotationMeetsRefundEligibility,
   reviewQuotation,
@@ -8262,6 +8263,7 @@ export function registerHttpApi(app, db) {
       const dataQualityIssues = [
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
+        ...refundCuttingListQuotationMetreIssues(db, quotationRef),
         ...refundProductionAlignmentWarnings(db, quotationRef),
       ];
       const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);

@@ -1,6 +1,7 @@
 /**
  * Quotation-scoped financial integrity recalculation — receipts, paid balance, refund caps.
  */
+import { appendAuditLog } from './controlOps.js';
 import { reconcileSalesReceiptMirrorsForQuotation } from './writeOps.js';
 import { previewRefundRequest } from './controlOps.js';
 
@@ -115,4 +116,39 @@ export function recalculateQuotationIntegrity(db, quotationRef, opts = {}) {
     recalculatedAtISO: new Date().toISOString(),
     actorUserId: opts.actor?.id ?? null,
   };
+}
+
+/**
+ * After production or register changes, audit when open refunds exceed the live economic floor.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} quotationRef
+ * @param {{ actor?: object, trigger?: string, jobId?: string }} [opts]
+ */
+export function recordRefundIntegrityDriftAfterProductionChange(db, quotationRef, opts = {}) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return { ok: true, drift: false, staleRefundWarnings: [] };
+
+  const assessment = assessQuotationRefundIntegrity(db, ref);
+  const stale = assessment.staleRefundWarnings || [];
+  if (!stale.length) {
+    return { ok: true, drift: false, staleRefundWarnings: [] };
+  }
+
+  const trigger = String(opts.trigger || 'production_change').trim() || 'production_change';
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'refund.integrity_drift',
+    entityKind: 'quotation',
+    entityId: ref,
+    note: `${stale.length} open refund(s) exceed the economic floor after ${trigger}. Recalculate integrity before approve or payout.`,
+    details: {
+      trigger,
+      jobId: opts.jobId ? String(opts.jobId) : null,
+      staleRefundWarnings: stale,
+      economicFloor: assessment.economicFloor ?? null,
+      recalculatedAtISO: new Date().toISOString(),
+    },
+  });
+
+  return { ok: true, drift: true, staleRefundWarnings: stale };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertQuotationProductionNotBlockedByRefund,
   parseRefundCalculationLinesFromRow,
+  validateBundledTransportInstallCrossRequest,
   validateRefundFinancialGuards,
   validateRefundProductionAlignmentAtPayout,
   quotationHasNonRejectedOrderCancellationRefund,
@@ -44,6 +45,14 @@ function mockDb(data) {
           }
           if (s.includes('FROM production_jobs')) {
             return data.production_jobs.filter((j) => j.quotation_ref === args[0]);
+          }
+          if (s.includes('FROM customer_refunds') && s.includes('calculation_lines_json')) {
+            const ref = args[0];
+            return data.customer_refunds.filter(
+              (r) =>
+                r.quotation_ref === ref &&
+                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase())
+            );
           }
           if (s.includes('FROM customer_refunds') && s.includes('NOT IN')) {
             return data.customer_refunds.filter((r) => r.quotation_ref === args[0]);
@@ -100,5 +109,38 @@ describe('refundFinancialGuards', () => {
     });
     const r = validateRefundProductionAlignmentAtPayout(db, 'Q1', ['Order cancellation']);
     expect(r.ok).toBe(false);
+  });
+
+  it('validateBundledTransportInstallCrossRequest blocks split claims across refunds', () => {
+    const quote = {
+      id: 'Q1',
+      lines_json: JSON.stringify({
+        services: [{ name: 'Transport and Installation', qty: 1, unitPrice: 100_000 }],
+      }),
+    };
+    const db = mockDb({
+      quotations: [quote],
+      customer_refunds: [
+        {
+          quotation_ref: 'Q1',
+          refund_id: 'R1',
+          status: 'Approved',
+          calculation_lines_json: JSON.stringify([
+            { category: 'Transport issue', amountNgn: 100_000, include: true },
+          ]),
+        },
+      ],
+      production_jobs: [],
+    });
+    const blocked = validateBundledTransportInstallCrossRequest(
+      db,
+      'Q1',
+      quote,
+      ['Installation issue'],
+      [{ category: 'Installation issue', amountNgn: 50_000, include: true }],
+      null
+    );
+    expect(blocked.ok).toBe(false);
+    expect(blocked.code).toBe('BUNDLED_SERVICE_CROSS_REFUND');
   });
 });

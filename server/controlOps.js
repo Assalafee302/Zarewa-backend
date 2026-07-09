@@ -27,7 +27,10 @@ import {
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
-import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import {
+  isStoneFlatsheetQuotationLine,
+  validateQuotationLineIntegrity,
+} from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
@@ -173,6 +176,117 @@ export function assertQuotationProductionNotBlockedByRefund(db, quotationRef) {
   };
 }
 
+function sumRefundCalculationLinesForCategoriesNgn(lines, categories) {
+  const set = new Set((categories || []).map((c) => String(c || '').trim()).filter(Boolean));
+  if (!set.size) return 0;
+  return sumIncludedRefundCalculationLinesNgn(
+    (Array.isArray(lines) ? lines : []).filter((l) => {
+      if (l?.include === false) return false;
+      const cat = String(l?.category || '').trim();
+      if (set.has(cat)) return true;
+      const applies = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
+      return applies.some((c) => set.has(String(c || '').trim()));
+    })
+  );
+}
+
+function bundledTransportInstallServiceCapNgn(db, quotationRef, quote) {
+  const quoteLines = collectQuotationServices(db, quotationRef, quote);
+  for (const s of quoteLines) {
+    const nl = serviceNameLower(s);
+    if (!matchesTransportService(nl) || !matchesInstallationService(nl)) continue;
+    const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(s);
+    const amt = roundMoney(qty * unitPrice);
+    if (amt > 0) return amt;
+  }
+  return 0;
+}
+
+/**
+ * Bundled transport+installation service lines must not be double-refunded across separate requests.
+ */
+export function validateBundledTransportInstallCrossRequest(
+  db,
+  quotationRef,
+  quote,
+  requestedCategories,
+  calculationLines,
+  excludeRefundId = null
+) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return { ok: true };
+
+  const bundledCap = bundledTransportInstallServiceCapNgn(db, ref, quote);
+  if (bundledCap <= 0) return { ok: true };
+
+  const requested = Array.isArray(requestedCategories) ? requestedCategories : [];
+  const touchesBundled = requested.some(
+    (c) => c === 'Transport issue' || c === 'Installation issue'
+  );
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  const newTransport = sumRefundCalculationLinesForCategoriesNgn(lines, ['Transport issue']);
+  const newInstall = sumRefundCalculationLinesForCategoriesNgn(lines, ['Installation issue']);
+  if (!touchesBundled && newTransport <= 0 && newInstall <= 0) return { ok: true };
+
+  const sameRequestBundledSplit = lines.some((l) => {
+    const applies = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
+    return applies.includes('Transport issue') && applies.includes('Installation issue');
+  });
+
+  const existingRows = db
+    .prepare(
+      `SELECT refund_id, calculation_lines_json FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')${
+           excludeRefundId ? ' AND refund_id != ?' : ''
+         }`
+    )
+    .all(...(excludeRefundId ? [ref, excludeRefundId] : [ref]));
+
+  let existingTransport = 0;
+  let existingInstall = 0;
+  for (const row of existingRows) {
+    const stored = parseRefundCalculationLinesFromRow(row, null);
+    existingTransport += sumRefundCalculationLinesForCategoriesNgn(stored, ['Transport issue']);
+    existingInstall += sumRefundCalculationLinesForCategoriesNgn(stored, ['Installation issue']);
+  }
+
+  if (!sameRequestBundledSplit) {
+    if (existingTransport > 0 && (newInstall > 0 || requested.includes('Installation issue'))) {
+      return {
+        ok: false,
+        code: 'BUNDLED_SERVICE_CROSS_REFUND',
+        error:
+          'This quotation bundles transport and installation on one service line. A transport refund already exists — refund installation on the same request (split the bundled line) or reject the duplicate claim.',
+      };
+    }
+    if (existingInstall > 0 && (newTransport > 0 || requested.includes('Transport issue'))) {
+      return {
+        ok: false,
+        code: 'BUNDLED_SERVICE_CROSS_REFUND',
+        error:
+          'This quotation bundles transport and installation on one service line. An installation refund already exists — refund transport on the same request (split the bundled line) or reject the duplicate claim.',
+      };
+    }
+  }
+
+  const combined =
+    existingTransport + existingInstall + newTransport + newInstall;
+  if (combined > bundledCap + REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+    return {
+      ok: false,
+      code: 'BUNDLED_SERVICE_CAP_EXCEEDED',
+      error: `Transport and installation refunds (₦${combined.toLocaleString(
+        'en-NG'
+      )}) cannot exceed the bundled service line on this quotation (₦${bundledCap.toLocaleString(
+        'en-NG'
+      )}).`,
+    };
+  }
+
+  return { ok: true };
+}
+
 /**
  * Strict production alignment at payout — no manager override path.
  */
@@ -285,6 +399,17 @@ export function validateRefundFinancialGuards(db, opts = {}) {
     economicFloor,
   });
   const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
+
+  const quoteRow = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(ref);
+  const bundledCheck = validateBundledTransportInstallCrossRequest(
+    db,
+    ref,
+    quoteRow,
+    reasonCategories,
+    lines,
+    refundId
+  );
+  if (!bundledCheck.ok) return bundledCheck;
 
   const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);
   if (!overlapCheck.ok) return overlapCheck;
@@ -2030,6 +2155,22 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         };
       }
 
+      const quoteIntegrityRow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
+      let quoteLinesJson = {};
+      try {
+        quoteLinesJson = JSON.parse(String(quoteIntegrityRow?.lines_json || '{}'));
+      } catch {
+        quoteLinesJson = {};
+      }
+      const lineIntegrity = validateQuotationLineIntegrity(quoteLinesJson);
+      if (!lineIntegrity.ok) {
+        return {
+          ok: false,
+          code: lineIntegrity.code || 'QUOTATION_LINE_INTEGRITY',
+          error: `${lineIntegrity.error} Fix the quotation in Sales before requesting a refund, or run Settings → Governance → Quotation line integrity audit.`,
+        };
+      }
+
       const existingRefunds = db.prepare(
         `SELECT reason_category FROM customer_refunds
          WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`
@@ -2097,6 +2238,17 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           error: 'Customer commission is selected but no calculation line carries a positive amount for that category.',
         };
       }
+
+      const quoteRowForBundled = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef);
+      const bundledSubmit = validateBundledTransportInstallCrossRequest(
+        db,
+        quotationRef,
+        quoteRowForBundled,
+        requestedCats,
+        calcLinesRaw,
+        null
+      );
+      if (!bundledSubmit.ok) return bundledSubmit;
 
       const elig = quotationMeetsRefundEligibility(db, quotationRef);
       if (!elig.ok) return elig;

@@ -23,6 +23,53 @@ export function parseUnproducedMetresLabel(label) {
   return { metres, pricePerMeterNgn };
 }
 
+export function formatUnproducedMetresLabel(metres, pricePerMeterNgn) {
+  const m = Number(metres);
+  const ppm = roundRefundLineMoney(pricePerMeterNgn);
+  if (!Number.isFinite(m) || m <= 0 || ppm <= 0) return '';
+  const metresText = Number.isInteger(m) ? String(m) : m.toFixed(2);
+  return `Unproduced metres (${metresText}m @ ₦${ppm.toLocaleString('en-NG')})`;
+}
+
+/**
+ * When an approver sets a lower approved amount but lines still sum to the original request,
+ * scale included line amounts proportionally and rebuild formula labels where applicable.
+ */
+export function scaleRefundCalculationLinesToApprovedAmount(lines, targetNgn) {
+  const target = roundRefundLineMoney(targetNgn);
+  if (!Array.isArray(lines) || target <= 0) return lines;
+  const includedIndices = [];
+  let sum = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i]?.include === false) continue;
+    const n = Number(String(lines[i]?.amountNgn ?? lines[i]?.amount_ngn ?? '').replace(/,/g, ''));
+    if (!Number.isNaN(n) && n > 0) {
+      includedIndices.push(i);
+      sum += roundRefundLineMoney(n);
+    }
+  }
+  if (includedIndices.length === 0 || sum <= 0) return lines;
+  if (Math.abs(sum - target) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN) return lines;
+
+  const scale = target / sum;
+  const next = lines.map((l) => ({ ...l }));
+  let allocated = 0;
+  for (let j = 0; j < includedIndices.length; j += 1) {
+    const i = includedIndices[j];
+    const raw = Number(String(lines[i]?.amountNgn ?? lines[i]?.amount_ngn ?? '').replace(/,/g, ''));
+    const isLast = j === includedIndices.length - 1;
+    const amt = isLast ? target - allocated : roundRefundLineMoney(raw * scale);
+    const parsed = parseUnproducedMetresLabel(lines[i]?.label);
+    const label =
+      parsed != null
+        ? formatUnproducedMetresLabel(amt / parsed.pricePerMeterNgn, parsed.pricePerMeterNgn)
+        : lines[i]?.label;
+    next[i] = { ...next[i], amountNgn: amt, ...(label ? { label } : {}) };
+    allocated += amt;
+  }
+  return next;
+}
+
 /**
  * When the label encodes a formula, return the implied line amount (NGN).
  * @param {string} label

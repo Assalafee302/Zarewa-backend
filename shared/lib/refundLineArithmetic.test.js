@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   auditRefundCalculationLineArithmetic,
   expectedAmountFromRefundLineLabel,
+  formatUnproducedMetresLabel,
+  scaleRefundCalculationLinesToApprovedAmount,
   validateRefundCalculationLineArithmetic,
 } from './refundLineArithmetic.js';
 
@@ -41,5 +43,21 @@ describe('refundLineArithmetic', () => {
         { label: 'Goodwill adjustment', category: 'Other', amountNgn: 5000 },
       ])
     ).toEqual([]);
+  });
+
+  it('scaleRefundCalculationLinesToApprovedAmount rebuilds unproduced metres label', () => {
+    const scaled = scaleRefundCalculationLinesToApprovedAmount(
+      [
+        {
+          label: 'Unproduced metres (10m @ ₦3,900)',
+          category: 'Unproduced meterage',
+          amountNgn: 39_000,
+        },
+      ],
+      19_500
+    );
+    expect(scaled[0].amountNgn).toBe(19_500);
+    expect(scaled[0].label).toBe(formatUnproducedMetresLabel(5, 3900));
+    expect(expectedAmountFromRefundLineLabel(scaled[0].label, 'Unproduced meterage')).toBe(19_500);
   });
 });

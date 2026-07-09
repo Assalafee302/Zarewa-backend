@@ -1128,6 +1128,20 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
 
 export { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 
+/** Drop duplicate refund data-quality rows (CL consumption is merged from two sources). */
+function dedupeRefundDataQualityIssues(issues) {
+  const seen = new Set();
+  return (issues || []).filter((iss) => {
+    const code = String(iss?.code || '').trim();
+    const message = String(iss?.message || '').trim();
+    const key = code ? `${code}|${message}` : message;
+    if (!key) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
  * Quoted roofing gauge vs **allocated coil gauge** — workbook floor (material sheet) or list ₦/m must resolve when they differ.
  * @returns {{ code: string; message: string; jobId?: string; productId?: string }[]}
@@ -3648,12 +3662,12 @@ export function previewRefundRequest(db, payload) {
       warningsSubstitutionRelated: warnings.filter(
         (w) => /substitution/i.test(w) || /gauge/i.test(w) || /list ₦\/m/i.test(w)
       ),
-      dataQualityIssues: [
+      dataQualityIssues: dedupeRefundDataQualityIssues([
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
         ...refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory),
-      ],
+      ]),
     };
   }
 

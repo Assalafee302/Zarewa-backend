@@ -72,4 +72,13 @@ describe('cuttingListBlankConsumption', () => {
     expect(block.ok).toBe(false);
     expect(block.code).toBe('cutting_list_trim_blank_missing');
   });
+
+  it('flags when quotation expects coil consumption but no cutting list metres exist', () => {
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: { products: [{ name: 'Roofing Sheet', qty: 100 }] },
+      cuttingListLines: [],
+    });
+    expect(assessment.ok).toBe(false);
+    expect(assessment.code).toBe('cutting_list_missing_for_quotation');
+  });
 });

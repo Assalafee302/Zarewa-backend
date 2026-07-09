@@ -67,6 +67,13 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
   if (!assessment) return [];
   const cuttingListMetresSum = assessment.cuttingListTotalM ?? 0;
   const issues = [];
+  const totalMismatchCodes = new Set([
+    'cutting_list_quotation_metre_mismatch',
+    'cutting_list_no_quoted_roofing_metres',
+    'cutting_list_missing_for_quotation',
+  ]);
+  const totalAlreadyBlocked = !assessment.ok && totalMismatchCodes.has(String(assessment.code || '').trim());
+
   if (!assessment.ok && assessment.message) {
     issues.push({
       code: assessment.code || 'cutting_list_quotation_metre_mismatch',
@@ -81,6 +88,7 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
     });
   }
   for (const warning of assessment.warnings || []) {
+    if (totalAlreadyBlocked && String(warning).includes('Flatsheet section')) continue;
     issues.push({
       code: 'trim_blank_cl_soft_warning',
       severity: 'warning',
@@ -90,7 +98,7 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
       trimBlankGapM: assessment.trimBlankGapM,
     });
   }
-  if (assessment.trimBlankProductionBlocked) {
+  if (assessment.trimBlankProductionBlocked && !totalAlreadyBlocked) {
     issues.push({
       code: 'trim_blank_cl_missing',
       severity: 'error',

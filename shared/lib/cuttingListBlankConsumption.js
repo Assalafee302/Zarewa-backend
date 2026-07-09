@@ -240,6 +240,24 @@ export function assessCuttingListQuotationConsumption({
     };
   }
 
+  if (expectedTotalM > 0 && cuttingListTotalM <= 0) {
+    return {
+      ok: false,
+      code: 'cutting_list_missing_for_quotation',
+      warnings,
+      quotedSheetPoolM,
+      quotedTrimBlankM,
+      expectedTotalM,
+      cuttingListTotalM,
+      clFlatsheetM,
+      trimBlankGapM,
+      trimBlankProductionBlocked,
+      deltaMetres: expectedTotalM,
+      message:
+        'Quotation expects coil consumption on a cutting list, but no cutting list metres are recorded for this quote.',
+    };
+  }
+
   const deltaMetres = roundCuttingListMetres2(Math.abs(expectedTotalM - cuttingListTotalM));
   const tol = Math.max(0, Number(sheetToleranceM) || 0);
   if (expectedTotalM > 0 && cuttingListTotalM > 0 && deltaMetres > tol + 1e-6) {

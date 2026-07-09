@@ -12,6 +12,7 @@ import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 import { migrateStockMovementsBranchId } from './stockMovementOps.js';
 import { withMigrationLock } from './migrationLock.js';
+import { migrateRepairCoilProductionBookDrift2026 } from './coilProductionBookMigrate.js';
 import { seedZarewaOrgStandard } from './hrOrgSeed.js';
 import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
@@ -1243,6 +1244,11 @@ function runMigrationsUnlocked(db) {
   migrateStaffObligationPause2026(db);
   migrateHrStaffDirectoryViews2026(db);
   migratePayrollPeriodUnique2026(db);
+  try {
+    migrateRepairCoilProductionBookDrift2026(db);
+  } catch (e) {
+    console.warn('[migrate] coil production book repair skipped:', e?.message || e);
+  }
   migrateAiKnowledgeCenter(db);
   migrateAiIntelligenceRouter(db);
   migrateAiAutomationEngine(db);

@@ -214,8 +214,8 @@ function mapProductionJobCoilRow(row) {
     productID: row.product_id ?? '',
     colour: row.colour ?? '',
     gaugeLabel: row.gauge_label ?? '',
-    openingWeightKg: safeNumber(row.opening_weight_kg),
-    closingWeightKg: safeNumber(row.closing_weight_kg),
+    openingWeightKg: roundWholeKg(safeNumber(row.opening_weight_kg)),
+    closingWeightKg: roundWholeKg(safeNumber(row.closing_weight_kg)),
     consumedWeightKg: safeNumber(row.consumed_weight_kg),
     metersProduced: safeNumber(row.meters_produced),
     actualConversionKgPerM: positiveNumberOrNull(row.actual_conversion_kg_per_m),
@@ -366,7 +366,8 @@ function updateCoilDerivedStateTx(db, coilNo) {
 
 function normalizeAllocationInput(payload, index) {
   const coilNo = String(payload?.coilNo ?? '').trim();
-  const openingWeightKg = positiveNumberOrNull(payload?.openingWeightKg);
+  const openingRaw = positiveNumberOrNull(payload?.openingWeightKg);
+  const openingWeightKg = openingRaw != null ? roundWholeKg(openingRaw) : null;
   if (!coilNo) throw new Error(`Allocation line ${index + 1} is missing a coil number.`);
   if (!openingWeightKg) throw new Error(`Allocation line ${index + 1} must have a reserved opening weight.`);
   return {
@@ -1106,14 +1107,16 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
       const hasOpenInPayload =
         Object.prototype.hasOwnProperty.call(submitted, 'openingWeightKg') ||
         Object.prototype.hasOwnProperty.call(submitted, 'opening_weight_kg');
-      const openingWeightKg = hasOpenInPayload
-        ? safeNumber(submitted.openingWeightKg ?? submitted.opening_weight_kg)
-        : safeNumber(allocation.opening_weight_kg);
+      const openingWeightKg = roundWholeKg(
+        hasOpenInPayload
+          ? safeNumber(submitted.openingWeightKg ?? submitted.opening_weight_kg)
+          : safeNumber(allocation.opening_weight_kg)
+      );
       const hasCoilInPayload = Object.prototype.hasOwnProperty.call(submitted, 'coilNo');
       const coilNoForRow = hasCoilInPayload
         ? String(submitted.coilNo ?? submitted.coil_no ?? '').trim()
         : coilKey;
-      const closingWeightKg = safeNumber(submitted.closingWeightKg);
+      const closingWeightKg = roundWholeKg(safeNumber(submitted.closingWeightKg));
       const metersProduced = safeNumber(submitted.metersProduced);
       const finishCoil = Boolean(submitted.finishCoil ?? submitted.finish_coil);
       const rowLabel = coilNoForRow || coilKey || allocation.coil_no;
@@ -1181,8 +1184,8 @@ export function computeCompletionConversionRows(db, jobID, payload = {}, opts = 
         if (!cn) continue;
         if (aid && existingById.has(aid)) continue;
         if (!aid && conversionRows.some((r) => String(r.coilNo ?? '').trim() === cn)) continue;
-        const openingWeightKg = safeNumber(line.openingWeightKg ?? line.opening_weight_kg);
-        const closingWeightKg = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
+        const openingWeightKg = roundWholeKg(safeNumber(line.openingWeightKg ?? line.opening_weight_kg));
+        const closingWeightKg = roundWholeKg(safeNumber(line.closingWeightKg ?? line.closing_weight_kg));
         const metersProduced = safeNumber(line.metersProduced ?? line.meters_produced);
         const finishCoil = Boolean(line.finishCoil ?? line.finish_coil);
         if (openingWeightKg <= 0 || closingWeightKg < 0 || closingWeightKg > openingWeightKg + 0.0001) {
@@ -1379,13 +1382,15 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
     if (hasCoilInPayload && !nextCoil) {
       return { ok: false, error: 'Each run log line must have a coil number when coil is sent in the payload.' };
     }
-    const nextOpening = hasOpenInPayload
-      ? safeNumber(line.openingWeightKg ?? line.opening_weight_kg)
-      : safeNumber(row.opening_weight_kg);
+    const nextOpening = roundWholeKg(
+      hasOpenInPayload
+        ? safeNumber(line.openingWeightKg ?? line.opening_weight_kg)
+        : safeNumber(row.opening_weight_kg)
+    );
     if (nextOpening <= 0) {
       return { ok: false, error: `Opening kg must be greater than 0 (line ${aid}).` };
     }
-    const closing = safeNumber(line.closingWeightKg ?? line.closing_weight_kg);
+    const closing = roundWholeKg(safeNumber(line.closingWeightKg ?? line.closing_weight_kg));
     const meters = safeNumber(line.metersProduced ?? line.meters_produced);
     if (closing < 0 || closing > nextOpening + 0.0001) {
       return {
@@ -3194,7 +3199,7 @@ function coilAncillaryKgNetDelta(db, coilNo) {
 }
 
 /** Align production_job_coils.consumed_weight_kg with opening − closing for rows on one coil. */
-function syncProductionJobCoilConsumedWeightsForCoil(db, coilNo) {
+export function syncProductionJobCoilConsumedWeightsForCoil(db, coilNo) {
   const cn = String(coilNo ?? '').trim();
   if (!cn) return { updatedLineCount: 0, touchedJobIds: [] };
   const rows = db
@@ -3326,6 +3331,8 @@ export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
   const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
   const onHand = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
   const bookUsedKg = Math.max(0, received - onHand);
+  const splitOutKg = coilSplitOutKgFromChildren(db, cn);
+  const ancillaryNetKg = coilAncillaryKgNetDelta(db, cn);
   let jobsConsumedKgSum = 0;
   let openingClosingKgSum = 0;
   for (const h of rows) {
@@ -3336,12 +3343,21 @@ export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
       openingClosingKgSum += opening - closing;
     }
   }
+  /** Book used attributable to job rows (excludes finish-roll tail, scrap, returns counted in ancillary). */
+  const bookUsedFromJobsKg = Math.max(0, bookUsedKg + ancillaryNetKg - splitOutKg);
+  const reconciliationGapKg = jobsConsumedKgSum - bookUsedFromJobsKg;
+  const openingClosingGapKg = openingClosingKgSum - bookUsedFromJobsKg;
   return {
     bookUsedKg,
+    onHandKg: onHand,
+    receivedKg: received,
     jobsConsumedKgSum,
     openingClosingKgSum,
-    reconciliationGapKg: jobsConsumedKgSum - bookUsedKg,
-    openingClosingGapKg: openingClosingKgSum - bookUsedKg,
+    bookUsedFromJobsKg,
+    ancillaryNetKg,
+    splitOutKg,
+    reconciliationGapKg,
+    openingClosingGapKg,
   };
 }
 
@@ -3383,7 +3399,8 @@ export function listCoilProductionBookReconciliationIssues(db, opts = {}) {
     }
     const holders = listCoilProductionHolders(db, cn);
     if (!holders.length) continue;
-    const summary = summarizeCoilProductionHoldersBook(db, cn, holders);
+    syncProductionJobCoilConsumedWeightsForCoil(db, cn);
+    const summary = summarizeCoilProductionHoldersBook(db, cn, listCoilProductionHolders(db, cn));
     if (!summary) continue;
     const gap = safeNumber(summary.reconciliationGapKg);
     const expectedReserved = expectedCoilReservedKgFromJobs(db, cn);

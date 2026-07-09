@@ -390,6 +390,7 @@ import {
   recalculateAllCoilProductionJobStock,
   reconcileCoilReservationFromProductionJobs,
   recalculateProductionJobCoilStock,
+  syncProductionJobCoilConsumedWeightsForCoil,
   previewProductionConversion,
   saveProductionCoilRunLogDraft,
   returnProductionJobToPlanned,
@@ -7278,6 +7279,10 @@ export function registerHttpApi(app, db) {
         { ...req.body, coilNo },
         { workspaceBranchId: req.workspaceBranchId, actor: req.user }
       );
+      if (r.ok) {
+        const sync = syncProductionJobCoilConsumedWeightsForCoil(db, coilNo);
+        r.consumedWeightSync = sync;
+      }
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -7335,25 +7340,42 @@ export function registerHttpApi(app, db) {
   app.get('/api/coil-lots/:coilNo/production-holders', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
-      const coil = db.prepare(`SELECT coil_no, branch_id, qty_reserved FROM coil_lots WHERE coil_no = ?`).get(coilNo);
+      const coil = db
+        .prepare(
+          `SELECT coil_no, branch_id, qty_reserved, qty_remaining, current_weight_kg, weight_kg, qty_received, current_status
+           FROM coil_lots WHERE coil_no = ?`
+        )
+        .get(coilNo);
       if (!coil) return res.status(404).json({ ok: false, error: 'Coil not found.' });
       const br = write.assertCoilInWorkspaceBranch(coil, req.workspaceBranchId);
       if (!br.ok) return res.status(403).json({ ok: false, error: br.error });
-      const holders = listCoilProductionHolders(db, coilNo);
+
+      const syncResult = syncProductionJobCoilConsumedWeightsForCoil(db, coilNo);
+      let holders = listCoilProductionHolders(db, coilNo);
       const bookSummary = summarizeCoilProductionHoldersBook(db, coilNo, holders);
       const expectedReserved = holders
         .filter((h) => h.jobStatus === 'Planned' || h.jobStatus === 'Running')
         .reduce((s, h) => s + (Number(h.openingWeightKg) || 0), 0);
       const bookedReserved = Math.max(0, Number(coil.qty_reserved) || 0);
+      const receivedKg = Math.max(0, Number(coil.weight_kg ?? coil.qty_received) || 0);
+      const onHandKg = Math.max(0, Number(coil.qty_remaining ?? coil.current_weight_kg) || 0);
+      const bookUsedKg = bookSummary?.bookUsedKg ?? Math.max(0, receivedKg - onHandKg);
       res.json({
         ok: true,
         coilNo,
+        receivedKg,
+        onHandKg,
+        bookUsedKg,
+        freeKg: Math.max(0, onHandKg - bookedReserved),
+        currentStatus: coil.current_status ?? 'Available',
         bookedReservedKg: bookedReserved,
         expectedReservedKg: expectedReserved,
         orphanReservedKg: Math.max(0, bookedReserved - expectedReserved),
-        bookUsedKg: bookSummary?.bookUsedKg ?? null,
+        consumedWeightSync: syncResult,
         jobsConsumedKgSum: bookSummary?.jobsConsumedKgSum ?? null,
         openingClosingKgSum: bookSummary?.openingClosingKgSum ?? null,
+        bookUsedFromJobsKg: bookSummary?.bookUsedFromJobsKg ?? null,
+        ancillaryNetKg: bookSummary?.ancillaryNetKg ?? null,
         reconciliationGapKg: bookSummary?.reconciliationGapKg ?? null,
         openingClosingGapKg: bookSummary?.openingClosingGapKg ?? null,
         holders,

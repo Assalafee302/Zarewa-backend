@@ -102,8 +102,10 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
+import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
+import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn } from './ap2ReceivedBasisOps.js';
 import {
   deliveryGateShouldBlockMutation,
@@ -6364,6 +6366,10 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     };
   }
   const quotationRef = String(payload.quotationRef ?? cuttingList?.quotation_ref ?? '').trim();
+  if (quotationRef) {
+    const prodBlock = assertQuotationProductionNotBlockedByRefund(db, quotationRef);
+    if (!prodBlock.ok) return prodBlock;
+  }
   const customerID = String(payload.customerID ?? cuttingList?.customer_id ?? '').trim();
   const customerName = String(payload.customerName ?? cuttingList?.customer_name ?? '').trim();
   const productID = String(payload.productID ?? cuttingList?.product_id ?? '').trim();
@@ -7785,6 +7791,28 @@ export function payRefundEntry(db, refundId, payload) {
   const hasPerm = (p) => userHasPermission(payload.actor, p);
   const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
+
+  if (qrefPay) {
+    const approvedForGuard = roundMoney(row.approved_amount_ngn || row.amount_ngn);
+    const payoutLines = parseRefundCalculationLinesFromRow(row, null);
+    const payoutCategories = resolveRefundReasonCategoriesForDecision(
+      row,
+      {},
+      normalizeRefundReasonCategoriesForApi
+    );
+    const payoutGuard = validateRefundFinancialGuards(db, {
+      quotationRef: qrefPay,
+      refundId: refundId,
+      amountNgn: approvedForGuard,
+      calculationLines: payoutLines,
+      reasonCategories: payoutCategories,
+      actor: payload.actor,
+      hasPermission: hasPerm,
+      phase: 'pay',
+    });
+    if (!payoutGuard.ok) return payoutGuard;
+  }
+
   try {
     for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
       assertPeriodOpen(db, day, 'Refund payout date');

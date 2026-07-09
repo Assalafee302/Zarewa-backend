@@ -1,6 +1,6 @@
 import { actorName } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import {
   applyAccessoryCompletionTx,
   buildAccessorySuppliedLookup,
@@ -985,6 +985,10 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   const qref = String(job.quotation_ref || '').trim();
   if (qref) {
+    const refundProdBlock = assertQuotationProductionNotBlockedByRefund(db, qref);
+    if (!refundProdBlock.ok) return refundProdBlock;
+  }
+  if (qref) {
     const quote = db
       .prepare(
         `SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
@@ -1818,6 +1822,11 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
 export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
+  const qrefComplete = String(job.quotation_ref || '').trim();
+  if (qrefComplete) {
+    const refundProdBlock = assertQuotationProductionNotBlockedByRefund(db, qrefComplete);
+    if (!refundProdBlock.ok) return refundProdBlock;
+  }
   if (String(job.status ?? '') === 'Cancelled') {
     return { ok: false, error: 'This production job was cancelled.' };
   }

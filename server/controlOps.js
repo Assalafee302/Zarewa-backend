@@ -65,6 +65,7 @@ import {
 import {
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
+  isExecutiveRoleKey,
 } from '../shared/workspaceGovernance.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
@@ -133,6 +134,181 @@ export function sumIncludedRefundCalculationLinesNgn(lines) {
     s += refundLineAmountNgnFromPayload(l);
   }
   return roundMoney(s);
+}
+
+/** Parse calculation lines from approve payload or stored refund row. */
+export function parseRefundCalculationLinesFromRow(row, payloadLines) {
+  if (Array.isArray(payloadLines) && payloadLines.length > 0) {
+    return payloadLines;
+  }
+  try {
+    const parsed = JSON.parse(String(row?.calculation_lines_json || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function actorMayBypassIncompleteRefundFloor(actor, hasPermission) {
+  if (typeof hasPermission === 'function' && hasPermission('*')) return true;
+  const rk = String(actor?.roleKey ?? actor?.role_key ?? actor?.role ?? '')
+    .trim()
+    .toLowerCase();
+  if (rk === 'admin') return true;
+  return isExecutiveRoleKey(rk);
+}
+
+/**
+ * Active order-cancellation refund blocks new production on the quotation.
+ */
+export function assertQuotationProductionNotBlockedByRefund(db, quotationRef) {
+  if (!quotationHasNonRejectedOrderCancellationRefund(db, quotationRef)) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    code: 'ORDER_CANCELLATION_REFUND_BLOCKS_PRODUCTION',
+    error:
+      'An active order-cancellation refund exists on this quotation. Resolve or reject that refund before registering or completing production.',
+  };
+}
+
+/**
+ * Strict production alignment at payout — no manager override path.
+ */
+export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reasonCategories) {
+  const issues = enrichProductionAlignmentIssuesForSubmit(
+    refundProductionAlignmentWarnings(db, quotationRef, reasonCategories)
+  );
+  const fatal = issues.filter((i) => {
+    const action = String(i.submitAction || '').trim();
+    return action === 'block' || action === 'acknowledge';
+  });
+  if (!fatal.length) return { ok: true, issues };
+  const first = fatal[0];
+  return {
+    ok: false,
+    code: 'REFUND_PRODUCTION_ALIGNMENT_PAYOUT',
+    error:
+      first.message ||
+      first.title ||
+      'Refund no longer aligns with current production. Reject or adjust the refund before payout.',
+    issues: fatal,
+  };
+}
+
+/**
+ * Shared financial guards for refund approve and payout (live preview caps, economic floor, stale detection).
+ */
+export function validateRefundFinancialGuards(db, opts = {}) {
+  const {
+    quotationRef,
+    refundId = null,
+    amountNgn,
+    calculationLines = [],
+    reasonCategories = [],
+    actor = null,
+    hasPermission = () => false,
+    phase = 'approve',
+  } = opts;
+
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return { ok: true };
+
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  if (!lines.length) {
+    return {
+      ok: false,
+      code: 'REFUND_BREAKDOWN_REQUIRED',
+      error:
+        phase === 'pay'
+          ? 'Refund payout requires calculation breakdown lines on file. Re-approve with a valid breakdown.'
+          : 'Refund approval requires calculation breakdown lines. Open Sales to edit the breakdown.',
+    };
+  }
+
+  const amt = roundMoney(amountNgn);
+  if (amt <= 0) return { ok: false, error: 'Refund amount must be positive.' };
+
+  const preview = previewRefundRequest(db, { quotationRef: ref });
+  if (!preview.ok) return preview;
+
+  const economicFloor = preview.preview?.economicFloor ?? null;
+  const producedM = Number(economicFloor?.producedOutputMeters || 0);
+
+  if (economicFloor?.incompleteFloorPricing && producedM > 0.001) {
+    if (!actorMayBypassIncompleteRefundFloor(actor, hasPermission)) {
+      return {
+        ok: false,
+        code: 'REFUND_INCOMPLETE_FLOOR_PRICING',
+        error: `Workbook floor ₦/m could not be resolved for ${producedM.toFixed(
+          2
+        )} m produced. Resolve material workbook pricing or escalate to MD/CEO before ${
+          phase === 'pay' ? 'payout' : 'approval'
+        }.`,
+      };
+    }
+  }
+
+  if (
+    economicFloor?.maxDefensibleRefundNgn != null &&
+    amt > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+  ) {
+    return {
+      ok: false,
+      code: 'REFUND_STALE_ECONOMIC_FLOOR',
+      error: `Refund amount (₦${amt.toLocaleString(
+        'en-NG'
+      )}) exceeds the current economic floor cap (₦${Number(
+        economicFloor.maxDefensibleRefundNgn
+      ).toLocaleString('en-NG')}) after ${producedM.toFixed(
+        2
+      )} m produced. Production may have changed — recalculate integrity and adjust the refund.`,
+    };
+  }
+
+  const totalRefundedExcluding = roundMoney(
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
+         WHERE quotation_ref = ?
+           AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')${
+             refundId ? ' AND refund_id != ?' : ''
+           }`
+      )
+      .get(...(refundId ? [ref, refundId] : [ref]))?.s ?? 0
+  );
+
+  const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
+    cashInNgn: quotationCashInNgn(db, ref),
+    totalRefundedNgn: totalRefundedExcluding,
+    economicFloor,
+  });
+  const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
+
+  const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);
+  if (!overlapCheck.ok) return overlapCheck;
+
+  const capCheck = validateRefundCategorySuggestedCapsNgn({
+    calculationLines: lines,
+    categorySuggestedMaxNgn: livePreviewCaps,
+    derivedCategoryMaxNgn,
+    toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+  });
+  if (!capCheck.ok) return capCheck;
+
+  const lineArithmetic = validateRefundCalculationLineArithmetic(
+    lines,
+    REFUND_AMOUNT_LINE_TOLERANCE_NGN
+  );
+  if (!lineArithmetic.ok) return lineArithmetic;
+
+  if (phase === 'pay') {
+    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories);
+    if (!alignPay.ok) return alignPay;
+  }
+
+  return { ok: true, preview, economicFloor };
 }
 
 function nowIso() {
@@ -2117,74 +2293,45 @@ export function decideRefundRequest(db, refundID, payload, actor) {
     }
   }
   if (status === 'Approved') {
-    const decideCalcLines = Array.isArray(payload.calculationLines) ? payload.calculationLines : null;
-    if (decideCalcLines && decideCalcLines.length > 0) {
-      const lineSumApprove = sumIncludedRefundCalculationLinesNgn(decideCalcLines);
-      if (Math.abs(lineSumApprove - approvedAmountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
-        return {
-          ok: false,
-          error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
-            'en-NG'
-          )}) must match the sum of included breakdown lines (₦${lineSumApprove.toLocaleString(
-            'en-NG'
-          )}).`,
-        };
-      }
-      let storedSuggestedLines = [];
-      try {
-        const parsed = JSON.parse(String(row.suggested_lines_json || '[]'));
-        storedSuggestedLines = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        storedSuggestedLines = [];
-      }
-      const categorySuggestedMaxNgn = buildRefundCategorySuggestedMaxNgn(storedSuggestedLines);
-      const approvalPreview = qrefApprove
-        ? previewRefundRequest(db, { quotationRef: qrefApprove })
-        : { ok: false, preview: null };
-      const derivedCategoryMaxNgn = qrefApprove
-        ? buildDerivedRefundCategoryCapsNgn({
-            cashInNgn: quotationCashInNgn(db, qrefApprove),
-            totalRefundedNgn: roundMoney(
-              db
-                .prepare(
-                  `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-               WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled') AND refund_id != ?`
-                )
-                .get(qrefApprove, refundID)?.s ?? 0
-            ),
-            economicFloor: approvalPreview.preview?.economicFloor ?? null,
-          })
-        : {};
-      const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(decideCalcLines);
-      if (!overlapCheck.ok) return overlapCheck;
-      const capCheck = validateRefundCategorySuggestedCapsNgn({
-        calculationLines: decideCalcLines,
-        categorySuggestedMaxNgn,
-        derivedCategoryMaxNgn,
-        toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+    const linesForGuard = parseRefundCalculationLinesFromRow(
+      row,
+      Array.isArray(payload.calculationLines) ? payload.calculationLines : null
+    );
+    if (!linesForGuard.length) {
+      return {
+        ok: false,
+        code: 'REFUND_BREAKDOWN_REQUIRED',
+        error: 'Refund approval requires calculation breakdown lines. Open Sales to edit the breakdown.',
+      };
+    }
+    const lineSumApprove = sumIncludedRefundCalculationLinesNgn(linesForGuard);
+    if (Math.abs(lineSumApprove - approvedAmountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+      return {
+        ok: false,
+        error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
+          'en-NG'
+        )}) must match the sum of included breakdown lines (₦${lineSumApprove.toLocaleString(
+          'en-NG'
+        )}).`,
+      };
+    }
+    const decisionCats = resolveRefundReasonCategoriesForDecision(
+      row,
+      payload,
+      normalizeRefundReasonCategoriesForApi
+    );
+    if (qrefApprove) {
+      const financial = validateRefundFinancialGuards(db, {
+        quotationRef: qrefApprove,
+        refundId: refundID,
+        amountNgn: approvedAmountNgn,
+        calculationLines: linesForGuard,
+        reasonCategories: decisionCats,
+        actor,
+        hasPermission: (p) => userHasPermission(actor, p),
+        phase: 'approve',
       });
-      if (!capCheck.ok) return capCheck;
-      const economicFloor = approvalPreview.preview?.economicFloor;
-      if (
-        economicFloor?.maxDefensibleRefundNgn != null &&
-        Number(economicFloor.floorDeliveredValueNgn) > 0 &&
-        approvedAmountNgn >
-          Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
-      ) {
-        return {
-          ok: false,
-          error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
-            'en-NG'
-          )}) exceeds the economic floor cap (₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString(
-            'en-NG'
-          )}) after ${Number(economicFloor.producedOutputMeters || 0).toFixed(2)} m produced at workbook minimum ₦/m.`,
-        };
-      }
-      const lineArithmetic = validateRefundCalculationLineArithmetic(
-        decideCalcLines,
-        REFUND_AMOUNT_LINE_TOLERANCE_NGN
-      );
-      if (!lineArithmetic.ok) return lineArithmetic;
+      if (!financial.ok) return financial;
     }
   }
   const requestedAmountNgn = roundMoney(row.amount_ngn);

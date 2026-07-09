@@ -23,6 +23,24 @@ function quotationHasPositiveProductLines(linesJson) {
   });
 }
 
+function quotationHasPositiveServices(linesJson) {
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      payload = {};
+    }
+  }
+  const arr = payload?.services;
+  if (!Array.isArray(arr)) return false;
+  return arr.some((row) => {
+    const name = String(row?.name ?? '').trim();
+    const qty = Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
+    return name && qty > 0;
+  });
+}
+
 function quotationIsAccessoriesOnlyForConsumption(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return false;
@@ -33,7 +51,10 @@ function quotationIsAccessoriesOnlyForConsumption(db, quotationRef) {
     return false;
   }
   if (!row) return false;
-  return parseQuotationAccessoryLines(row.lines_json).length > 0 && !quotationHasPositiveProductLines(row.lines_json);
+  const hasNonProductLines =
+    parseQuotationAccessoryLines(row.lines_json).length > 0 ||
+    quotationHasPositiveServices(row.lines_json);
+  return hasNonProductLines && !quotationHasPositiveProductLines(row.lines_json);
 }
 
 /**

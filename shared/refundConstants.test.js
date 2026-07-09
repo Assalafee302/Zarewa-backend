@@ -17,6 +17,7 @@ describe('refundConstants', () => {
     expect(normalizeRefundReasonCategoriesForApi('Substitution pricing')).toEqual(['Substitution Difference']);
     expect(normalizeRefundReasonCategoriesForApi('Agent commission')).toEqual(['Customer commission']);
     expect(normalizeRefundReasonCategoriesForApi('Adjustment')).toEqual(['Other']);
+    expect(normalizeRefundReasonCategoriesForApi('["Unproduced meterage"]')).toEqual(['Unproduced meterage']);
   });
 
   it('dedupes categories case-insensitively', () => {

@@ -93,6 +93,7 @@ import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
+import { rowListOpts } from './listQueryOpts.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -144,6 +145,7 @@ function safeExpenseCategoryBranchCoachAlert(db, opts) {
  *   branchScope?: 'ALL' | string;
  *   skipSideEffects?: boolean;
  *   skipWorkItemSync?: boolean;
+ *   listLimits?: Record<string, number | undefined>;
  * }} [opts]
  */
 export function buildBootstrap(db, opts = {}) {
@@ -201,7 +203,11 @@ export function buildBootstrap(db, opts = {}) {
     return Object.keys(o).length ? o : null;
   })();
   const orgGovernanceLimitsSnapshot = user ? getOrgGovernanceLimits(db) : null;
-  const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope, { limit: MAX_LEDGER_ROWS }) : [];
+  const ledgerRowLimit =
+    opts.listLimits?.ledgerEntries != null
+      ? Math.max(1, Number(opts.listLimits.ledgerEntries) || MAX_LEDGER_ROWS)
+      : MAX_LEDGER_ROWS;
+  const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope, { limit: ledgerRowLimit }) : [];
 
   if (!skipSideEffects) {
     const inlineQuoteMaintenance =
@@ -238,7 +244,9 @@ export function buildBootstrap(db, opts = {}) {
     : emptyOperationsInventoryAttention();
   const refunds = refundsOk ? listRefunds(db, branchScope) : [];
   const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
-  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope) : [];
+  const productionJobsList = prodRollupOk
+    ? listProductionJobs(db, branchScope, rowListOpts(opts, 'productionJobs'))
+    : [];
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
         db,
@@ -255,7 +263,7 @@ export function buildBootstrap(db, opts = {}) {
     branchScope,
     customers: salesOk ? listCustomers(db, branchScope) : [],
     quotations: salesOk
-      ? listQuotations(db, branchScope)
+      ? listQuotations(db, branchScope, rowListOpts(opts, 'quotations'))
       : prodRollupOk
         ? listQuotationsForProductionContext(db, branchScope)
         : [],
@@ -264,12 +272,12 @@ export function buildBootstrap(db, opts = {}) {
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope) : [],
+    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, rowListOpts(opts, 'purchaseOrders')) : [],
     coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
-    movements: coilMovOk ? listStockMovements(db, branchScope) : [],
+    movements: coilMovOk ? listStockMovements(db, branchScope, rowListOpts(opts, 'movements')) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     deliveries: opsOk ? listDeliveries(db, branchScope) : [],
     receipts: salesOk
@@ -493,25 +501,36 @@ export function repairDashboardReceivablePurchaseOrders(full, partial) {
  */
 export function buildDashboardBootstrap(db, opts = {}) {
   const limit = Math.min(5000, Math.max(200, Number(opts.limit) || 600));
-  const full = buildBootstrap(db, opts);
+  const full = buildBootstrap(db, {
+    ...opts,
+    skipSideEffects: true,
+    skipWorkItemSync: true,
+    listLimits: {
+      quotations: limit,
+      purchaseOrders: limit,
+      movements: limit,
+      productionJobs: limit,
+      ledgerEntries: Math.min(limit, 300),
+    },
+  });
   const partial = {
     ...full,
-    // Heavy arrays trimmed for dashboard charts/KPIs
+    // Heavy arrays trimmed for dashboard charts/KPIs (SQL limits applied above where supported).
     customers: take(full.customers, limit),
-    quotations: take(full.quotations, limit),
+    quotations: full.quotations,
     receipts: take(full.receipts, limit),
     cuttingLists: take(full.cuttingLists, limit),
-    purchaseOrders: take(full.purchaseOrders, limit),
+    purchaseOrders: full.purchaseOrders,
     deliveries: take(full.deliveries, limit),
     refunds: take(full.refunds, limit),
     expenses: take(full.expenses, limit),
     paymentRequests: take(full.paymentRequests, limit),
     treasuryMovements: take(full.treasuryMovements, limit),
-    movements: take(full.movements, limit),
+    movements: full.movements,
     /** Full coil register — trimming hides coils (e.g. CL-26-2043) from Stock Management. */
     coilLots: full.coilLots ?? [],
     coilControlEvents: take(full.coilControlEvents ?? [], limit),
-    productionJobs: take(full.productionJobs, limit),
+    productionJobs: full.productionJobs,
     productionJobCoils: take(full.productionJobCoils, limit),
     productionConversionChecks: take(full.productionConversionChecks, limit),
     productionCompletionAdjustments: take(full.productionCompletionAdjustments, limit),
@@ -522,8 +541,7 @@ export function buildDashboardBootstrap(db, opts = {}) {
     maintenancePlans: take(full.maintenancePlans, Math.min(limit, 120)),
     maintenanceWorkOrders: take(full.maintenanceWorkOrders, Math.min(limit, 120)),
     hrPerformanceReviews: take(full.hrPerformanceReviews, Math.min(limit, 120)),
-    // Ledger entries can be extremely large; dashboard doesn't need the full list.
-    ledgerEntries: take(full.ledgerEntries, Math.min(limit, 300)),
+    ledgerEntries: full.ledgerEntries,
   };
   repairDashboardProductionJoins(full, partial);
   repairDashboardReceivablePurchaseOrders(full, partial);

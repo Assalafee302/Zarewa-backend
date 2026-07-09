@@ -76,7 +76,24 @@ const KNOWN = new Set(REFUND_REASON_CATEGORY_VALUES.map((s) => s.toLowerCase()))
  * @returns {string[]}
  */
 export function normalizeRefundReasonCategoriesForApi(input) {
-  const raw = Array.isArray(input) ? input : input != null && input !== '' ? [input] : [];
+  let raw;
+  if (Array.isArray(input)) {
+    raw = input;
+  } else if (input != null && input !== '') {
+    const s = String(input).trim();
+    if (s.startsWith('[')) {
+      try {
+        const v = JSON.parse(s);
+        raw = Array.isArray(v) ? v : [input];
+      } catch {
+        raw = [input];
+      }
+    } else {
+      raw = [input];
+    }
+  } else {
+    raw = [];
+  }
   const out = [];
   const seen = new Set();
   for (const item of raw) {

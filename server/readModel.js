@@ -37,14 +37,27 @@ import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 /** @param {import('better-sqlite3').Database} db */
 
+/** @type {Map<string, boolean>} */
+const columnExistsCache = new Map();
+
 function hasColumn(db, table, column) {
+  const key = `${table}:${column}`;
+  if (columnExistsCache.has(key)) return columnExistsCache.get(key);
   try {
-    return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    columnExistsCache.set(key, exists);
+    return exists;
   } catch {
+    columnExistsCache.set(key, false);
     return false;
   }
+}
+
+export function clearReadModelSchemaCache() {
+  columnExistsCache.clear();
 }
 
 /** @param {'ALL' | string} scope */
@@ -370,16 +383,17 @@ function enrichQuotationsWithLineTableBatch(db, mapped, branchScope = 'ALL') {
   const needsLines = mapped.filter((m) => !m.quotationLines);
   if (!needsLines.length) return mapped;
 
-  const b = branchWhere(db, 'quotations', branchScope);
-  const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'q.branch_id') : '';
+  const ids = needsLines.map((m) => String(m.id || '').trim()).filter(Boolean);
+  if (!ids.length) return mapped;
+
+  const placeholders = ids.map(() => '?').join(',');
   const lineRows = db
     .prepare(
-      `SELECT ql.* FROM quotation_lines ql
-       INNER JOIN quotations q ON q.id = ql.quotation_id
-       WHERE 1=1${branchSql}
-       ORDER BY ql.quotation_id, ql.sort_order`
+      `SELECT * FROM quotation_lines
+       WHERE quotation_id IN (${placeholders})
+       ORDER BY quotation_id, sort_order`
     )
-    .all(...b.args);
+    .all(...ids);
 
   /** @type {Map<string, object[]>} */
   const linesByQuotationId = new Map();
@@ -400,12 +414,12 @@ function enrichQuotationsWithLineTableBatch(db, mapped, branchScope = 'ALL') {
   });
 }
 
-export function listQuotations(db, branchScope = 'ALL') {
+export function listQuotations(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'quotations', branchScope);
-  const mapped = db
-    .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
-    .all(...b.args)
-    .map((row) => mapQuotationRow(db, row));
+  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const mapped = db.prepare(sql).all(...args).map((row) => mapQuotationRow(db, row));
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
 }
 
@@ -1007,21 +1021,45 @@ export function listProducts(db, branchScope = 'ALL') {
     });
 }
 
-export function listPurchaseOrders(db, branchScope = 'ALL') {
+function purchaseOrderLinesByPoIds(db, poIds) {
+  /** @type {Map<string, object[]>} */
+  const byPoId = new Map();
+  if (!poIds.length) return byPoId;
+  const placeholders = poIds.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM purchase_order_lines WHERE po_id IN (${placeholders}) ORDER BY po_id, line_key`
+    )
+    .all(...poIds);
+  for (const row of rows) {
+    const poId = String(row.po_id || '').trim();
+    if (!poId) continue;
+    if (!byPoId.has(poId)) byPoId.set(poId, []);
+    byPoId.get(poId).push(row);
+  }
+  return byPoId;
+}
+
+export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'purchase_orders', branchScope);
-  const pos = db
-    .prepare(`SELECT * FROM purchase_orders WHERE 1=1${b.sql} ORDER BY order_date_iso DESC`)
-    .all(...b.args);
-  const lineStmt = db.prepare(`SELECT * FROM purchase_order_lines WHERE po_id = ? ORDER BY line_key`);
+  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const pos = db.prepare(sql).all(...args);
+  const linesByPoId = purchaseOrderLinesByPoIds(
+    db,
+    pos.map((row) => row.po_id)
+  );
+  const statusStmt = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`);
   return pos.map((row) => {
-    const rawLines = lineStmt.all(row.po_id);
+    const rawLines = linesByPoId.get(String(row.po_id || '').trim()) || [];
     if (
       RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status)) &&
       poLinesFullyReceived(rawLines, mapPoLineFromDb)
     ) {
       reconcilePoReceiptStatusIfComplete(db, row.po_id);
     }
-    const refreshedPo = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(row.po_id);
+    const refreshedPo = statusStmt.get(row.po_id);
     const effectiveStatus = refreshedPo?.status ?? row.status;
     return {
       poID: row.po_id,
@@ -1512,19 +1550,23 @@ export function listInventoryCoilSnapshots(db, asAtISO, branchScope = 'ALL') {
     }));
 }
 
-export function listStockMovements(db, branchScope = 'ALL') {
+export function listStockMovements(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
+  const limitSql = sqlLimitClause(limit);
   if (branchScope === 'ALL' || !branchScope) {
+    const args = limit > 0 ? [limit] : [];
     return db
-      .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC`)
-      .all()
+      .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC${limitSql}`)
+      .all(...args)
       .map(mapStockMovementRow);
   }
   const bf = stockMovementsBranchFilter(db, branchScope);
+  const args = limit > 0 ? [...bf.args, limit] : bf.args;
   return db
     .prepare(
-      `SELECT sm.* FROM stock_movements sm WHERE 1=1${bf.sql} ORDER BY sm.at_iso DESC, sm.id DESC`
+      `SELECT sm.* FROM stock_movements sm WHERE 1=1${bf.sql} ORDER BY sm.at_iso DESC, sm.id DESC${limitSql}`
     )
-    .all(...bf.args)
+    .all(...args)
     .map(mapStockMovementRow);
 }
 
@@ -1777,12 +1819,15 @@ function fgAdjustmentTotalsByJobId(db, branchScope) {
   return m;
 }
 
-export function listProductionJobs(db, branchScope = 'ALL') {
+export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
   const b = branchWhere(db, 'production_jobs', branchScope);
+  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   return db
-    .prepare(`SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC`)
-    .all(...b.args)
+    .prepare(sql)
+    .all(...args)
     .map((row) => {
       const baseActual = Number(row.actual_meters) || 0;
       const fgAdj = adjByJob.get(row.job_id) || 0;

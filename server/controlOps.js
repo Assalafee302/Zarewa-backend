@@ -143,13 +143,50 @@ export function sumIncludedRefundCalculationLinesNgn(lines) {
 }
 
 /** Parse calculation lines from approve payload or stored refund row. */
+function normalizeRefundCalculationLineForStorage(line) {
+  const label = String(line?.label ?? '').trim();
+  const amountNgn = roundMoney(line?.amountNgn ?? line?.amount_ngn);
+  if (!label || amountNgn <= 0) return null;
+  const out = { label, amountNgn };
+  const category = String(line?.category ?? '').trim();
+  if (category) out.category = category;
+  if (line?.include === false) out.include = false;
+  else if (line?.include === true) out.include = true;
+  const applies = line?.appliesToCategories;
+  if (Array.isArray(applies) && applies.length) {
+    out.appliesToCategories = applies.map((c) => String(c).trim()).filter(Boolean);
+  }
+  return out;
+}
+
+function enrichRefundCalculationLinesWithReasonCategories(lines, reasonCategoryRaw) {
+  const list = Array.isArray(lines) ? lines : [];
+  if (!list.length) return list;
+  if (list.some((l) => String(l?.category || '').trim())) return list;
+  const cats = normalizeRefundReasonCategoriesForApi(reasonCategoryRaw);
+  if (cats.length === 1 && list.length === 1) {
+    return [{ ...list[0], category: cats[0], include: list[0]?.include !== false }];
+  }
+  if (cats.length === list.length) {
+    return list.map((line, i) => ({
+      ...line,
+      category: cats[i],
+      include: line?.include !== false,
+    }));
+  }
+  return list;
+}
+
 export function parseRefundCalculationLinesFromRow(row, payloadLines) {
   if (Array.isArray(payloadLines) && payloadLines.length > 0) {
-    return payloadLines;
+    return payloadLines
+      .map((line) => normalizeRefundCalculationLineForStorage(line))
+      .filter(Boolean);
   }
   try {
     const parsed = JSON.parse(String(row?.calculation_lines_json || '[]'));
-    return Array.isArray(parsed) ? parsed : [];
+    const lines = Array.isArray(parsed) ? parsed : [];
+    return enrichRefundCalculationLinesWithReasonCategories(lines, row?.reason_category);
   } catch {
     return [];
   }
@@ -503,19 +540,6 @@ function productLineIsTrimSheetNotRoofingMetres(line) {
 /** Stone flatsheet lines are m² / sheet pricing — never coil roofing metres for unproduced-metre preview. */
 function productLineIsStoneFlatsheetNotRoofingMetres(line) {
   return isStoneFlatsheetQuotationLine(line?.name);
-}
-
-function quotedRoofingSheetMetresFromLines(linesJson) {
-  let payload = linesJson;
-  if (typeof payload === 'string') {
-    payload = parseJsonValue(payload);
-  }
-  const rows = payload?.products;
-  if (!Array.isArray(rows)) return 0;
-  return rows.reduce((sum, line) => {
-    if (productLineIsTrimSheetNotRoofingMetres(line) || productLineIsStoneFlatsheetNotRoofingMetres(line)) return sum;
-    return sum + quotationLineQtyNumber(line);
-  }, 0);
 }
 
 /** Blended ₦/m from **roofing sheet** product lines only (excludes eaves angle, ridge, gutter, etc.). */
@@ -2684,11 +2708,8 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       let calculationLinesJson = null;
       if (status === 'Approved' && Array.isArray(calcLinesRaw) && calcLinesRaw.length > 0) {
         const normalized = calcLinesRaw
-          .map((line) => ({
-            label: String(line?.label ?? '').trim(),
-            amountNgn: roundMoney(line?.amountNgn),
-          }))
-          .filter((line) => line.label && line.amountNgn > 0);
+          .map((line) => normalizeRefundCalculationLineForStorage(line))
+          .filter(Boolean);
         if (normalized.length) calculationLinesJson = JSON.stringify(normalized);
       }
       const calcNotes =
@@ -2699,11 +2720,8 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       let suggestedLinesJson = null;
       if (status === 'Approved' && Array.isArray(suggestedRaw) && suggestedRaw.length > 0) {
         const normalized = suggestedRaw
-          .map((line) => ({
-            label: String(line?.label ?? '').trim(),
-            amountNgn: roundMoney(line?.amountNgn),
-          }))
-          .filter((line) => line.label && line.amountNgn > 0);
+          .map((line) => normalizeRefundCalculationLineForStorage(line))
+          .filter(Boolean);
         if (normalized.length) suggestedLinesJson = JSON.stringify(normalized);
       }
       if (calculationLinesJson != null || calcNotes != null || suggestedLinesJson != null) {

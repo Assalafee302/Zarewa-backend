@@ -49,6 +49,7 @@ import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlD
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { adjustProductStockForBranch } from './productBranchInventory.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
+import { cuttingListTotalMetresFromLines } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1509,10 +1510,11 @@ function runImport(db, plan, branchId) {
   const insJob = db.prepare(`
     INSERT INTO production_jobs (
       job_id, cutting_list_id, quotation_ref, customer_id, customer_name, product_id, product_name,
-      planned_meters, planned_sheets, machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
+      planned_meters, planned_sheets, planned_roof_m, planned_cladding_m, planned_flatsheet_m,
+      machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
       status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
       conversion_alert_state, manager_review_required, branch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     AS ex
     ON DUPLICATE KEY UPDATE
       cutting_list_id = ex.cutting_list_id,
@@ -1523,6 +1525,9 @@ function runImport(db, plan, branchId) {
       product_name = ex.product_name,
       planned_meters = ex.planned_meters,
       planned_sheets = ex.planned_sheets,
+      planned_roof_m = ex.planned_roof_m,
+      planned_cladding_m = ex.planned_cladding_m,
+      planned_flatsheet_m = ex.planned_flatsheet_m,
       machine_name = ex.machine_name,
       operator_name = ex.operator_name,
       start_date_iso = ex.start_date_iso,
@@ -1563,6 +1568,14 @@ function runImport(db, plan, branchId) {
     const meters = floatVal(row.meters ?? row.Meters);
     const kg = floatVal(row['KG used'] ?? row.kgUsed ?? row.KG);
     const dateIso = isoDate(row.Date ?? row.date);
+    const clLines = db
+      .prepare(
+        `SELECT line_type, total_m FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`
+      )
+      .all(clid);
+    const plannedRoofM = cuttingListTotalMetresFromLines(clLines, { lineTypes: ['Roof'] });
+    const plannedCladdingM = cuttingListTotalMetresFromLines(clLines, { lineTypes: ['Cladding'] });
+    const plannedFlatsheetM = cuttingListTotalMetresFromLines(clLines, { lineTypes: ['Flatsheet'] });
     insJob.run(
       jobId,
       clid,
@@ -1573,6 +1586,9 @@ function runImport(db, plan, branchId) {
       clRow.product_name,
       meters || clRow.total_meters || 0,
       clRow.sheets_to_cut || 0,
+      plannedRoofM,
+      plannedCladdingM,
+      plannedFlatsheetM,
       'Legacy import',
       (() => {
         const r = row['OP Remark'] ?? row.opRemark;

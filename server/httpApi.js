@@ -3875,6 +3875,22 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get(
+    '/api/admin/quotations/line-integrity-audit',
+    requirePermission(['finance.approve', 'refunds.approve', 'quotations.manage', 'settings.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 5000);
+        const r = auditQuotationLineIntegrity(db, branchScope, { limit, onlyInvalid: true });
+        res.json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not run quotation line integrity audit.' });
+      }
+    }
+  );
+
   app.post('/api/admin/data-reset', requireAuth, (req, res) => {
     try {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {

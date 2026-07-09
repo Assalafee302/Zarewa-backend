@@ -81,4 +81,22 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.ok).toBe(false);
     expect(assessment.code).toBe('cutting_list_missing_for_quotation');
   });
+
+  it('skips coil trim blank gates for stone metre quotes', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 80 },
+        { name: 'Ridge Cap', qty: 6, girthMm: 400 },
+      ],
+    };
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [{ lineType: 'Roof', sheets: 80, lengthM: 1 }],
+      stoneMeterQuote: true,
+    });
+    expect(assessment.quotedTrimBlankM).toBe(0);
+    expect(assessment.expectedTotalM).toBe(80);
+    expect(assessment.trimBlankProductionBlocked).toBe(false);
+    expect(assessment.warnings.some((w) => w.includes('Stone-coated quote'))).toBe(true);
+  });
 });

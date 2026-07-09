@@ -131,6 +131,35 @@ export function resolveTrimGirthMmForLine(line) {
   return defaultGirthMmForTrimProduct(line?.name);
 }
 
+/** Sum finished trim metres quoted on the quotation (priced per finished metre). */
+export function quotedTrimFinishedMetresFromProducts(linesJson) {
+  return roundCuttingListMetres2(
+    parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
+      if (sheetPoolKindForLine(line) !== 'trim') return sum;
+      return sum + quotationLineQtyNumber(line);
+    }, 0)
+  );
+}
+
+/** Blended ₦/m across trim lines (weighted by finished metres). */
+export function trimLinesBlendedPricePerMeterFromProducts(linesJson) {
+  let metres = 0;
+  let amount = 0;
+  for (const line of parseQuotationLinesPayload(linesJson)) {
+    if (sheetPoolKindForLine(line) !== 'trim') continue;
+    const m = quotationLineQtyNumber(line);
+    if (m <= 0) continue;
+    const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
+    const lineTotal =
+      Number(line?.lineTotalNgn ?? line?.totalNgn ?? line?.amountNgn ?? 0) || Math.round(m * unit);
+    if (lineTotal <= 0) continue;
+    metres += m;
+    amount += lineTotal;
+  }
+  if (metres <= 0 || amount <= 0) return null;
+  return Math.round(amount / metres);
+}
+
 /** Sum blank metres required on CL flatsheet for quoted trim lines. */
 export function quotedTrimBlankMetresFromProducts(linesJson) {
   return roundCuttingListMetres2(
@@ -168,6 +197,7 @@ export function cuttingListFlatsheetMetresFromLines(lines) {
  *   cuttingListLines?: object[],
  *   cuttingListMetres?: number,
  *   accessoriesOnly?: boolean,
+ *   stoneMeterQuote?: boolean,
  *   sheetToleranceM?: number,
  *   trimBlankSoftToleranceM?: number,
  *   trimBlankHardToleranceM?: number,
@@ -178,6 +208,7 @@ export function assessCuttingListQuotationConsumption({
   cuttingListLines,
   cuttingListMetres,
   accessoriesOnly = false,
+  stoneMeterQuote = false,
   sheetToleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
   trimBlankSoftToleranceM = TRIM_BLANK_SOFT_TOLERANCE_M,
   trimBlankHardToleranceM = TRIM_BLANK_HARD_TOLERANCE_M,
@@ -198,29 +229,36 @@ export function assessCuttingListQuotationConsumption({
   }
 
   const quotedSheetPoolM = roundCuttingListMetres2(quotedCuttingListSheetPoolMetresFromProducts(quotationLinesJson));
-  const quotedTrimBlankM = quotedTrimBlankMetresFromProducts(quotationLinesJson);
+  const quotedTrimBlankM = stoneMeterQuote
+    ? 0
+    : roundCuttingListMetres2(quotedTrimBlankMetresFromProducts(quotationLinesJson));
   const expectedTotalM = roundCuttingListMetres2(quotedSheetPoolM + quotedTrimBlankM);
   const cuttingListTotalM = roundCuttingListMetres2(
     cuttingListMetres ?? cuttingListTotalMetresFromLines(cuttingListLines ?? [])
   );
   const clFlatsheetM = roundCuttingListMetres2(cuttingListFlatsheetMetresFromLines(cuttingListLines ?? []));
   const trimBlankGapM = roundCuttingListMetres2(Math.max(0, quotedTrimBlankM - clFlatsheetM));
-  const missingGirth = quotationTrimLinesMissingGirth(quotationLinesJson);
+  const missingGirth = stoneMeterQuote ? [] : quotationTrimLinesMissingGirth(quotationLinesJson);
 
   const warnings = [];
+  if (stoneMeterQuote && quotedTrimFinishedMetresFromProducts(quotationLinesJson) > 0) {
+    warnings.push(
+      'Stone-coated quote: trim lines are priced on finished metres and draw stone metre stock — do not add coil trim blank under Flatsheet.'
+    );
+  }
   if (missingGirth.length) {
     warnings.push(
       `Set strip width (mm) on trim lines: ${missingGirth.join(', ')}. Default is 400 mm (150 mm for eaves).`
     );
   }
-  if (quotedTrimBlankM > 0 && trimBlankGapM > trimBlankSoftToleranceM + 1e-6) {
+  if (!stoneMeterQuote && quotedTrimBlankM > 0 && trimBlankGapM > trimBlankSoftToleranceM + 1e-6) {
     warnings.push(
       `Flatsheet section (${clFlatsheetM.toFixed(2)} m) is short of trim blank consumption (${quotedTrimBlankM.toFixed(2)} m) by ${trimBlankGapM.toFixed(2)} m. Add trim blank lines under Flatsheet.`
     );
   }
 
   const trimBlankProductionBlocked =
-    quotedTrimBlankM > 0 && trimBlankGapM > trimBlankHardToleranceM + 1e-6;
+    !stoneMeterQuote && quotedTrimBlankM > 0 && trimBlankGapM > trimBlankHardToleranceM + 1e-6;
 
   if (quotedSheetPoolM <= 0 && cuttingListTotalM > 0) {
     return {

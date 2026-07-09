@@ -12,6 +12,14 @@ import { listPriceListItemsAsOf, floorPricePerMeterForGaugeDesignAsOf } from './
 export { quotationPricingAsAtIso, listPriceListItemsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { quotationTrimWorkbookFloorViolations } from '../shared/lib/materialWorkbookTrimPrice.js';
+import { isQuotationTrimProductLine } from '../shared/lib/cuttingListBlankConsumption.js';
+import {
+  listMaterialPricingRowsForSnapshot,
+  materialKeyFromMaterialTypeId,
+} from './materialWorkbookQuotationPrice.js';
+import { listMaterialPricingRowsAsOf } from './pricingAsOf.js';
+import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { userHasPermission } from './auth.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 
@@ -280,6 +288,27 @@ export function quotationPriceViolations(db, quoteRow) {
       });
     }
   });
+  const hasTrimLines = products.some((line) => isQuotationTrimProductLine(line?.name));
+  if (hasTrimLines && canReadMaterialPricingSheetRows(db)) {
+    const materialKey = materialKeyFromMaterialTypeId(db, headerMaterialTypeId);
+    if (materialKey && headerGauge && branchId) {
+      const pricingRows = pricingAsAtIso
+        ? listMaterialPricingRowsAsOf(db, branchId, pricingAsAtIso)
+        : listMaterialPricingRowsForSnapshot(db, branchId);
+      const ridgeAddOns = getPricingPolicyBundle(db).ridgeAddOns || [];
+      violations.push(
+        ...quotationTrimWorkbookFloorViolations({
+          products,
+          materialKey,
+          gaugeLabel: headerGauge,
+          branchId,
+          designLabel: headerDesign,
+          materialPricingRows: pricingRows,
+          ridgeAddOns,
+        })
+      );
+    }
+  }
   return { violations, hasFloorRows: true };
 }
 

@@ -3,7 +3,19 @@ import { createDatabase } from './db.js';
 import { insertCuttingList, updateCuttingList } from './writeOps.js';
 import { getCuttingList } from './readModel.js';
 
-describe('cutting list draft finalize', () => {
+function mysqlAvailable() {
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const mysqlOk = mysqlAvailable();
+
+describe.skipIf(!mysqlOk)('cutting list draft finalize', () => {
   let db;
 
   afterEach(() => {

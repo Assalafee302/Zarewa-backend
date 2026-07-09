@@ -6454,6 +6454,8 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
   if (quotationRef) {
     const prodBlock = assertQuotationProductionNotBlockedByRefund(db, quotationRef);
     if (!prodBlock.ok) return prodBlock;
+    const payGate = validateQuotationProductionPaymentGate(db, quotationRef);
+    if (!payGate.ok) return payGate;
   }
   const customerID = String(payload.customerID ?? cuttingList?.customer_id ?? '').trim();
   const customerName = String(payload.customerName ?? cuttingList?.customer_name ?? '').trim();

@@ -34,6 +34,12 @@ import {
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import {
+  quotedCuttingListSheetPoolMetresFromProducts,
+  quotedTrimFinishedMetresFromProducts,
+  trimLinesBlendedPricePerMeterFromProducts,
+} from '../shared/lib/cuttingListBlankConsumption.js';
+import { roundCuttingListMetres2 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
@@ -3201,6 +3207,34 @@ export function previewRefundRequest(db, payload) {
       suggestedLines.push({
         label: `Unproduced metres (${unproducedPotential.toFixed(2)}m @ ₦${Math.round(pricePerMeter).toLocaleString()})`,
         amountNgn: Math.round(unproducedPotential * pricePerMeter),
+        category: 'Unproduced meterage',
+      });
+    }
+  }
+
+  const quotedTrimFinishedM = quotedTrimFinishedMetresFromProducts(quote?.lines_json ?? '');
+  const trimPricePerMeter = trimLinesBlendedPricePerMeterFromProducts(quote?.lines_json ?? '');
+  if (
+    quotedTrimFinishedM > 0.001 &&
+    trimPricePerMeter > 0 &&
+    !refundedCategories.has('Unproduced meterage') &&
+    !materialDelivered
+  ) {
+    const poolQuoted = stoneMeterQuoteForUnproduced
+      ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+      : quotedCuttingListSheetPoolMetresFromProducts(quote?.lines_json ?? '');
+    let trimUnproducedM = quotedTrimFinishedM;
+    if (poolQuoted > 0.001) {
+      const sheetShortfall = Math.max(0, poolQuoted - producedMetersForUnproduced);
+      const ratio = Math.min(1, sheetShortfall / poolQuoted);
+      trimUnproducedM = roundCuttingListMetres2(quotedTrimFinishedM * ratio);
+    } else if (producedMetersForUnproduced > 0.001) {
+      trimUnproducedM = 0;
+    }
+    if (trimUnproducedM > 0.001) {
+      suggestedLines.push({
+        label: `Unproduced trim metres (${trimUnproducedM.toFixed(2)} m finished @ ₦${Math.round(trimPricePerMeter).toLocaleString()})`,
+        amountNgn: Math.round(trimUnproducedM * trimPricePerMeter),
         category: 'Unproduced meterage',
       });
     }

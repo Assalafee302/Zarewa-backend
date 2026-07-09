@@ -4,6 +4,7 @@
 import { assessCuttingListQuotationConsumption } from '../shared/lib/cuttingListBlankConsumption.js';
 import { cuttingListTotalMetresFromLines } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
+import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 function quotationHasPositiveProductLines(linesJson) {
   let payload = linesJson;
@@ -104,11 +105,13 @@ export function assessQuotationCuttingListConsumptionForRef(db, quotationRef) {
   }
   if (!quote) return null;
   const accessoriesOnly = quotationIsAccessoriesOnlyForConsumption(db, ref);
+  const stoneMeterQuote = isStoneMeterQuotationLinesJson(db, quote?.lines_json ?? '');
   const cuttingListLines = cuttingListLineRowsForQuotationRef(db, ref);
   return assessCuttingListQuotationConsumption({
     quotationLinesJson: quote?.lines_json ?? '',
     cuttingListLines,
     accessoriesOnly,
+    stoneMeterQuote,
   });
 }
 

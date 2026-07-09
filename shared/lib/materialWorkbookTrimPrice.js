@@ -10,6 +10,11 @@ import {
   resolveMaterialWorkbookPriceFromRows,
   roundPublishedPriceNgn,
 } from './materialWorkbookQuotationPrice.js';
+import {
+  isQuotationTrimProductLine,
+  resolveTrimGirthMmForLine,
+} from './cuttingListBlankConsumption.js';
+import { quotationLineQtyNumber } from './quotationLineNumericForRefund.js';
 
 /**
  * @param {Array<{ girthMm?: number | string; materialFamily?: string; addOnNgn?: number; listAddOnNgn?: number | null }>} ridgeAddOns
@@ -101,4 +106,69 @@ export function resolveTrimListPricePerMeterFromWorkbook(ctx) {
   const ridgeRow = ridgeMatchedAddOnRow(ctx.ridgeAddOns, ctx.materialKey, girth);
   const addOn = ridgeRow ? customerRidgeListAddOnNgn(ridgeRow) : 0;
   return roundPublishedPriceNgn(listBase / segments + addOn);
+}
+
+/**
+ * Below-floor violations for trim / flashing lines priced from the material workbook.
+ * @param {{
+ *   products?: object[],
+ *   materialKey?: string,
+ *   gaugeLabel?: string,
+ *   branchId?: string,
+ *   designLabel?: string,
+ *   materialPricingRows?: object[],
+ *   ridgeAddOns?: object[],
+ * }} ctx
+ */
+export function quotationTrimWorkbookFloorViolations(ctx) {
+  const products = Array.isArray(ctx?.products) ? ctx.products : [];
+  const materialKey = String(ctx?.materialKey ?? '').trim();
+  const gaugeLabel = String(ctx?.gaugeLabel ?? '').trim();
+  const branchId = String(ctx?.branchId ?? '').trim();
+  const designLabel = String(ctx?.designLabel ?? '').trim();
+  const materialPricingRows = Array.isArray(ctx?.materialPricingRows) ? ctx.materialPricingRows : [];
+  const ridgeAddOns = ctx?.ridgeAddOns;
+  if (!materialKey || !gaugeLabel || !branchId || !materialPricingRows.length) return [];
+
+  const violations = [];
+  products.forEach((line, idx) => {
+    if (!isQuotationTrimProductLine(line?.name)) return;
+    const meters = quotationLineQtyNumber(line);
+    if (meters <= 0) return;
+    const girthMm = resolveTrimGirthMmForLine(line);
+    const floor = resolveTrimListPricePerMeterFromWorkbook({
+      materialPricingRows,
+      ridgeAddOns,
+      materialKey,
+      gaugeLabel,
+      branchId,
+      designLabel,
+      girthMm,
+    });
+    if (floor <= 0) return;
+
+    const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
+    let effectivePerMeter = unit;
+    if (effectivePerMeter <= 0 && meters > 0) {
+      const total = Number(line?.lineTotalNgn ?? line?.totalNgn ?? line?.amountNgn ?? 0) || 0;
+      if (total > 0) effectivePerMeter = total / meters;
+    }
+    if (effectivePerMeter <= 0) return;
+    if (effectivePerMeter + 0.0001 < floor) {
+      violations.push({
+        code: 'below_floor',
+        lineCategory: 'products',
+        lineIndex: idx,
+        lineName: String(line?.name ?? '').trim(),
+        gauge: gaugeLabel,
+        design: designLabel || `girth ${girthMm}mm`,
+        girthMm,
+        quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
+        floorPerMeter: floor,
+        recommendedPerMeter: floor,
+        trimWorkbook: true,
+      });
+    }
+  });
+  return violations;
 }

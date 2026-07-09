@@ -316,7 +316,7 @@ export function validateCuttingListTrimBlankForProduction({
   }
   return {
     ok: false,
-    code: 'cutting_list_trim_blank_missing',
+    code: 'trim_blank_cl_missing',
     warnings: assessment.warnings,
     quotedTrimBlankM: assessment.quotedTrimBlankM,
     clFlatsheetM: assessment.clFlatsheetM,

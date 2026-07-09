@@ -38,6 +38,7 @@ import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVi
 import {
   assertQuotationLineIntegrity,
   assertQuotationMaterialRules,
+  quotationRequiresStoneMetreConsumption,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
@@ -5772,14 +5773,17 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
   if (!qref) return { ok: true };
   const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
+  const qj = parseQuotationLinesJsonForStone(db, quotationRef);
+  const stone = Boolean(qj && isStoneMeterQuotationLinesJson(db, qj));
+  if (stone && !quotationRequiresStoneMetreConsumption(qrow.lines_json)) {
+    return { ok: true };
+  }
   const check = validateCuttingListQuotedRoofingAlignment({
     quotationLinesJson: qrow.lines_json,
     cuttingListLines: lines,
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };
-  const qj = parseQuotationLinesJsonForStone(db, quotationRef);
-  const stone = Boolean(qj && isStoneMeterQuotationLinesJson(db, qj));
   if (!stone) {
     const trimBlank = validateCuttingListTrimBlankForProduction({
       quotationLinesJson: qrow.lines_json,
@@ -5789,7 +5793,7 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
       return {
         ok: false,
         error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
-        code: trimBlank.code || 'cutting_list_trim_blank_missing',
+        code: trimBlank.code || 'trim_blank_cl_missing',
       };
     }
   }
@@ -6452,6 +6456,11 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
       lineType: row.line_type || 'Roof',
     }));
     if (quotationRef) {
+      const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
+      const align = assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, mapped, {
+        accessoriesOnly,
+      });
+      if (!align.ok) return align;
       const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
       if (qrow) {
         const qj = parseQuotationLinesJsonForStone(db, quotationRef);
@@ -6492,51 +6501,58 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
   const jobID =
     String(payload.jobID ?? '').trim() || nextProductionJobHumanId(db, branchId);
 
-  db.transaction(() => {
-    db.prepare(
-      `INSERT INTO production_jobs (
-        job_id, cutting_list_id, quotation_ref, customer_id, customer_name, product_id, product_name,
-        planned_meters, planned_sheets, planned_roof_m, planned_cladding_m, planned_flatsheet_m,
-        machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
-        status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
-        conversion_alert_state, manager_review_required, branch_id, offcut_inventory_meters
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(
-      jobID,
-      cuttingListId || null,
-      quotationRef || null,
-      customerID || null,
-      customerName || null,
-      productID || null,
-      productName || null,
-      plannedMeters,
-      plannedSheets,
-      plannedRoofM,
-      plannedCladdingM,
-      plannedFlatsheetM,
-      machineName || null,
-      operatorName || null,
-      startDateISO || null,
-      endDateISO || null,
-      materialsNote || null,
-      status,
-      createdAtISO,
-      null,
-      0,
-      0,
-      'Pending',
-      0,
-      branchId,
-      0
-    );
-    if (cuttingListId) {
+  try {
+    db.transaction(() => {
       db.prepare(
-        `UPDATE cutting_lists
-         SET production_registered = 1, production_register_ref = ?, status = ?
-         WHERE id = ?`
-      ).run(jobID, 'Waiting', cuttingListId);
-    }
-  })();
+        `INSERT INTO production_jobs (
+          job_id, cutting_list_id, quotation_ref, customer_id, customer_name, product_id, product_name,
+          planned_meters, planned_sheets, planned_roof_m, planned_cladding_m, planned_flatsheet_m,
+          machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
+          status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
+          conversion_alert_state, manager_review_required, branch_id, offcut_inventory_meters
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        jobID,
+        cuttingListId || null,
+        quotationRef || null,
+        customerID || null,
+        customerName || null,
+        productID || null,
+        productName || null,
+        plannedMeters,
+        plannedSheets,
+        plannedRoofM,
+        plannedCladdingM,
+        plannedFlatsheetM,
+        machineName || null,
+        operatorName || null,
+        startDateISO || null,
+        endDateISO || null,
+        materialsNote || null,
+        status,
+        createdAtISO,
+        null,
+        0,
+        0,
+        'Pending',
+        0,
+        branchId,
+        0
+      );
+      if (cuttingListId) {
+        const marked = db.prepare(
+          `UPDATE cutting_lists
+           SET production_registered = 1, production_register_ref = ?, status = ?
+           WHERE id = ? AND production_registered = 0`
+        ).run(jobID, 'Waiting', cuttingListId);
+        if (!marked?.changes) {
+          throw new Error('Production is already registered for this cutting list.');
+        }
+      }
+    })();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 
   return { ok: true, jobID };
 }

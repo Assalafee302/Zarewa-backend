@@ -2,7 +2,8 @@ import {
   aggregatePaidShortfallsFromRefunds,
   maxProducedMetresAfterPaidUnproducedRefund,
 } from '../shared/lib/refundPaidProductionCaps.js';
-import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import {
   normAccessoryNameKey,
   parseQuotationAccessoryLines,
@@ -87,7 +88,17 @@ export function validateProducedMetresEditAgainstPaidRefunds(db, quotationRef, j
   if (caps.unproducedMetres <= 0) return { ok: true };
 
   const quote = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
-  const quotedMetres = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
+  let stoneMeterQuote = false;
+  try {
+    stoneMeterQuote = quote?.lines_json
+      ? isStoneMeterQuotationLinesJson(db, JSON.parse(String(quote.lines_json)))
+      : false;
+  } catch {
+    stoneMeterQuote = false;
+  }
+  const quotedMetres = stoneMeterQuote
+    ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+    : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
   const maxMetres = maxProducedMetresAfterPaidUnproducedRefund(quotedMetres, caps.unproducedMetres);
   if (maxMetres == null) return { ok: true };
 

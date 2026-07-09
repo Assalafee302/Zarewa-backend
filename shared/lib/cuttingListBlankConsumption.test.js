@@ -70,7 +70,7 @@ describe('cuttingListBlankConsumption', () => {
       cuttingListLines: [{ lineType: 'Roof', sheets: 101, lengthM: 1 }],
     });
     expect(block.ok).toBe(false);
-    expect(block.code).toBe('cutting_list_trim_blank_missing');
+    expect(block.code).toBe('trim_blank_cl_missing');
   });
 
   it('flags when quotation expects coil consumption but no cutting list metres exist', () => {

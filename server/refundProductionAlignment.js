@@ -12,7 +12,7 @@ import {
   producedMetersForUnproducedRefund,
 } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
-import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
@@ -26,6 +26,7 @@ const SUBMIT_ACTION_BY_CODE = {
   unproduced_with_full_production: 'block',
   trim_blank_cl_soft_warning: 'acknowledge',
   trim_blank_cl_missing: 'block',
+  cutting_list_trim_blank_missing: 'block',
   cutting_list_quotation_metre_mismatch: 'block',
   cutting_list_no_quoted_roofing_metres: 'block',
   cutting_list_missing_for_quotation: 'block',
@@ -273,7 +274,17 @@ export function suggestRefundCategoriesFromProduction(db, quotationRef) {
   const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
   const suggested = [];
   const { effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(db, jobs, quote);
-  const quotedMeters = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
+  let stoneMeterQuote = false;
+  try {
+    stoneMeterQuote = quote?.lines_json
+      ? isStoneMeterQuotationLinesJson(db, JSON.parse(String(quote.lines_json)))
+      : false;
+  } catch {
+    stoneMeterQuote = false;
+  }
+  const quotedMeters = stoneMeterQuote
+    ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+    : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
   const total = Math.round(Number(quote?.total_ngn) || 0);
   const paid = Math.round(Number(quote?.paid_ngn) || 0);
 

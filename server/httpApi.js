@@ -6443,7 +6443,7 @@ export function registerHttpApi(app, db) {
         );
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, clId);
-        res.status(201).json({ ok: true, cuttingList });
+        res.status(201).json({ ok: true, jobID: r.jobID, cuttingList });
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });

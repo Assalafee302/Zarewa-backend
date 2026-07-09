@@ -2,6 +2,8 @@
  * Cross-check quoted roofing metres vs cutting list totals for refund safety.
  */
 
+import { assessCuttingListQuotationConsumption } from './cuttingListBlankConsumption.js';
+
 export const CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M = 0.5;
 
 export function roundCuttingListMetres2(n) {
@@ -39,9 +41,11 @@ export function cuttingListRoofMetresFromLines(lines) {
 }
 
 /**
- * Save-time gate: roof metres on the cutting list must match quoted roofing sheet metres.
+ * Save-time gate: cutting list coil consumption must match the quotation.
  * @param {{
- *   quotedRoofingMetres: number,
+ *   quotedRoofingMetres?: number,
+ *   quotationLinesJson?: unknown,
+ *   cuttingListLines?: object[],
  *   cuttingListMetres?: number,
  *   cuttingRoofMetres?: number,
  *   accessoriesOnly?: boolean,
@@ -50,11 +54,34 @@ export function cuttingListRoofMetresFromLines(lines) {
  */
 export function validateCuttingListQuotedRoofingAlignment({
   quotedRoofingMetres,
+  quotationLinesJson,
+  cuttingListLines,
   cuttingListMetres,
   cuttingRoofMetres,
   accessoriesOnly = false,
   toleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
 }) {
+  if (quotationLinesJson != null) {
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson,
+      cuttingListLines,
+      cuttingListMetres,
+      accessoriesOnly,
+      sheetToleranceM: toleranceM,
+    });
+    return {
+      ok: assessment.ok,
+      code: assessment.code,
+      quotedMetres: assessment.expectedTotalM ?? 0,
+      quotedSheetPoolM: assessment.quotedSheetPoolM ?? 0,
+      quotedTrimBlankM: assessment.quotedTrimBlankM ?? 0,
+      cuttingListMetres: assessment.cuttingListTotalM ?? 0,
+      deltaMetres: assessment.deltaMetres ?? 0,
+      warnings: assessment.warnings ?? [],
+      message: assessment.message,
+    };
+  }
+
   if (accessoriesOnly) {
     return { ok: true, quotedMetres: 0, cuttingListMetres: 0, deltaMetres: 0 };
   }

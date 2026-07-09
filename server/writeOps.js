@@ -48,7 +48,7 @@ import {
   cuttingListTotalMetresFromLines,
   validateCuttingListQuotedRoofingAlignment,
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
-import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { validateCuttingListTrimBlankForProduction } from '../shared/lib/cuttingListBlankConsumption.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import {
@@ -5771,11 +5771,9 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
   if (!qref) return { ok: true };
   const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
-  const quoted = quotedRoofingSheetMetresFromLines(qrow.lines_json);
-  const cuttingTotal = cuttingListTotalMetresFromLines(lines);
   const check = validateCuttingListQuotedRoofingAlignment({
-    quotedRoofingMetres: quoted,
-    cuttingListMetres: cuttingTotal,
+    quotationLinesJson: qrow.lines_json,
+    cuttingListLines: lines,
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };
@@ -6424,6 +6422,16 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
       totalM: Number(row.total_m) || 0,
       lineType: row.line_type || 'Roof',
     }));
+    if (quotationRef) {
+      const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(quotationRef);
+      if (qrow) {
+        const trimBlank = validateCuttingListTrimBlankForProduction({
+          quotationLinesJson: qrow.lines_json,
+          cuttingListLines: mapped,
+        });
+        if (!trimBlank.ok) return trimBlank;
+      }
+    }
     const p = productionPlannedTotalsForCuttingList(db, quotationRef, mapped);
     plannedMeters = p.plannedMeters;
     plannedSheets = p.plannedSheets;

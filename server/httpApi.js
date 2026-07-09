@@ -153,6 +153,7 @@ import { buildAp1cReclassPreview, postAp1cReclassBatch } from './ap1cReclassOps.
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
+import { buildFraudIndicatorsReport } from './fraudIndicatorsOps.js';
 import { getProductionJobIntel } from './productionJobIntelOps.js';
 import { buildQuotationLifecycleTimeline } from './quotationLifecycleTimelineOps.js';
 import {
@@ -200,6 +201,7 @@ import {
 } from './branches.js';
 import {
   appendAuditLog,
+  verifyAuditLogChain,
   assertPeriodOpen,
   cancelApprovedPaymentRequestBeforePay,
   cancelApprovedRefundBeforePay,
@@ -4538,6 +4540,23 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load production status report.' });
+    }
+  });
+
+  /** Annex D §D.7: automated fraud indicator exceptions (repeat refunds, ghost payroll, stale receipts, Others spend). */
+  app.get('/api/reports/fraud-indicators', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = buildFraudIndicatorsReport(db, {
+        branchScope,
+        days: Number(req.query.days) || undefined,
+        othersThresholdPct: Number(req.query.othersThresholdPct) || undefined,
+        staleReceiptDays: Number(req.query.staleReceiptDays) || undefined,
+      });
+      res.json({ ok: true, ...report });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build fraud indicators report.' });
     }
   });
 
@@ -9229,9 +9248,22 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/audit/export.ndjson', requirePermission('audit.view'), (_req, res) => {
+  /**
+   * Annex D §D.5.4: full export is admin-only (`audit.export` is not in any role bundle;
+   * only `admin` (`*`) or an explicit custom grant passes). The export itself is audited
+   * so downloading the trail always leaves a trace.
+   */
+  app.get('/api/audit/export.ndjson', requirePermission('audit.export'), (req, res) => {
     try {
       const rows = listAuditLogNdjsonRows(db);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'audit.export',
+        entityKind: 'audit_log',
+        entityId: 'export.ndjson',
+        note: `Full audit log export (${rows.length} rows)`,
+        details: { rowCount: rows.length },
+      });
       const body = `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`;
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="zarewa-audit-export.ndjson"');
@@ -9239,6 +9271,16 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not export audit log' });
+    }
+  });
+
+  /** Annex D §D.5: tamper-evidence check — recomputes the audit log hash chain. */
+  app.get('/api/audit/verify-chain', requirePermission('audit.view'), (_req, res) => {
+    try {
+      res.json({ ok: true, ...verifyAuditLogChain(db) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not verify audit log chain' });
     }
   });
 

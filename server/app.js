@@ -8,6 +8,7 @@ import { registerHttpApi } from './httpApi.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
 import { scheduleWorkspaceMaintenance } from './workspaceMaintenance.js';
+import { auditControlFlagsOnBoot } from './controlFlagAudit.js';
 
 /** Browser `Origin` has no path; env entries sometimes include a trailing `/`. */
 function normalizeCorsOrigin(raw) {
@@ -26,6 +27,8 @@ function normalizeCorsOrigin(raw) {
  * @param {import('better-sqlite3').Database} db
  */
 export function createApp(db) {
+  // Annex D configuration control: record control-critical env flags in the audit log.
+  auditControlFlagsOnBoot(db);
   const app = express();
   app.use(
     compression({

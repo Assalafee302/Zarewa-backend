@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
@@ -1295,14 +1296,39 @@ export function periodKeyFromDate(dateISO) {
   return `${year}-${month || '01'}`;
 }
 
+/**
+ * Annex D: tamper-evident audit log (hash chain).
+ * Each row stores `prev_hash` (the previous row's `row_hash`) and its own
+ * `row_hash` = sha256 over the row's audit fields + prev_hash. Editing or
+ * deleting any historic row breaks recomputation in `verifyAuditLogChain`.
+ * All chain logic is best-effort: a hashing problem must never block the
+ * underlying business write, so failures degrade to an unhashed row.
+ */
+const AUDIT_HASH_READY = new WeakSet();
+
+function ensureAuditHashColumns(db) {
+  if (AUDIT_HASH_READY.has(db)) return true;
+  try {
+    const cols = db.prepare(`PRAGMA table_info(audit_log)`).all().map((c) => c.name);
+    if (!cols.includes('prev_hash')) db.exec(`ALTER TABLE audit_log ADD COLUMN prev_hash TEXT`);
+    if (!cols.includes('row_hash')) db.exec(`ALTER TABLE audit_log ADD COLUMN row_hash TEXT`);
+    AUDIT_HASH_READY.add(db);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function computeAuditRowHash(fields, prevHash) {
+  return createHash('sha256')
+    .update(JSON.stringify([...fields, prevHash ?? null]))
+    .digest('hex');
+}
+
 export function appendAuditLog(db, payload) {
   const id = nextAuditLogHumanId(db);
   const occurredAtISO = payload.occurredAtISO || nowIso();
-  db.prepare(
-    `INSERT INTO audit_log (
-      id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note, details_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).run(
+  const fields = [
     id,
     occurredAtISO,
     actorId(payload.actor),
@@ -1312,9 +1338,76 @@ export function appendAuditLog(db, payload) {
     payload.entityId ?? null,
     payload.status ?? 'success',
     payload.note ?? '',
-    payload.details ? JSON.stringify(payload.details) : null
-  );
+    payload.details ? JSON.stringify(payload.details) : null,
+  ];
+  if (ensureAuditHashColumns(db)) {
+    try {
+      const prev = db.prepare(`SELECT row_hash FROM audit_log ORDER BY rowid DESC LIMIT 1`).get();
+      const prevHash = prev?.row_hash ?? null;
+      const rowHash = computeAuditRowHash(fields, prevHash);
+      db.prepare(
+        `INSERT INTO audit_log (
+          id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note, details_json, prev_hash, row_hash
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(...fields, prevHash, rowHash);
+      return id;
+    } catch {
+      // fall through to unhashed insert below
+    }
+  }
+  db.prepare(
+    `INSERT INTO audit_log (
+      id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note, details_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).run(...fields);
   return id;
+}
+
+/**
+ * Recompute the audit hash chain. Rows written before the feature (row_hash NULL)
+ * are counted as `unhashed` and skipped; the chain is verified from the first
+ * hashed row onward.
+ * @returns {{ chainOk: boolean, checked: number, unhashed: number, brokenAtId: string|null }}
+ */
+export function verifyAuditLogChain(db) {
+  if (!ensureAuditHashColumns(db)) {
+    return { chainOk: false, checked: 0, unhashed: 0, brokenAtId: null, error: 'Hash columns unavailable' };
+  }
+  const rows = db
+    .prepare(
+      `SELECT id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note, details_json, prev_hash, row_hash
+       FROM audit_log ORDER BY rowid ASC`
+    )
+    .all();
+  let checked = 0;
+  let unhashed = 0;
+  let lastHash = null;
+  for (const r of rows) {
+    if (r.row_hash == null) {
+      unhashed += 1;
+      continue;
+    }
+    const fields = [
+      r.id,
+      r.occurred_at_iso,
+      r.actor_user_id,
+      r.actor_name,
+      r.action,
+      r.entity_kind,
+      r.entity_id,
+      r.status,
+      r.note,
+      r.details_json,
+    ];
+    const linkOk = checked === 0 ? true : (r.prev_hash ?? null) === lastHash;
+    const recomputed = computeAuditRowHash(fields, r.prev_hash ?? null);
+    if (!linkOk || recomputed !== r.row_hash) {
+      return { chainOk: false, checked, unhashed, brokenAtId: r.id };
+    }
+    lastHash = r.row_hash;
+    checked += 1;
+  }
+  return { chainOk: true, checked, unhashed, brokenAtId: null };
 }
 
 export function recordApprovalAction(db, payload) {

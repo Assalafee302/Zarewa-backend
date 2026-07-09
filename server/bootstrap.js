@@ -46,6 +46,7 @@ import {
 import { listMasterData } from './masterData.js';
 import { listPriceListItems } from './pricingOps.js';
 import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
+import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { shouldShowPoInTransit } from '../shared/lib/inTransitVisibility.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
@@ -289,6 +290,8 @@ export function buildBootstrap(db, opts = {}) {
     priceListItems: salesOk ? listPriceListItems(db) : [],
     /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
+    /** Ridge / flashing strip add-ons for trim auto-pricing on quotations. */
+    pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
     treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope) : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],

@@ -76,4 +76,18 @@ describe('refundCuttingListQuotationReconciliation', () => {
     });
     expect(r.ok).toBe(true);
   });
+
+  it('uses quotation products payload when lines object is provided', () => {
+    const r = validateCuttingListQuotedRoofingAlignment({
+      quotationLinesJson: {
+        products: [{ name: 'Roofing Sheet', qty: 100 }, { name: 'Ridge Cap', qty: 3, girthMm: 400 }],
+      },
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 50, lengthM: 2 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: 1 },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.quotedTrimBlankM).toBe(1);
+  });
 });

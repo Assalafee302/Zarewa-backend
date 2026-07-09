@@ -40,6 +40,7 @@ import {
 } from './readModel.js';
 import { listPriceListItems } from './pricingOps.js';
 import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
+import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { listProductionConversionChecks, listProductionJobCoils, repairProductionJobCoilIntegrity } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
@@ -143,6 +144,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     cuttingLists: salesOk ? listCuttingLists(db, branchScope) : [],
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
+    pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     salesAvailableStock: availableStock,
     customerDashboard,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],

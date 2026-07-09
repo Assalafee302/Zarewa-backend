@@ -6,6 +6,20 @@ import { assessCuttingListQuotationConsumption } from './cuttingListBlankConsump
 
 export const CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M = 0.5;
 
+/** @param {unknown} linesJson */
+export function hasQuotationProductsPayload(linesJson) {
+  if (linesJson == null || linesJson === '') return false;
+  let payload = linesJson;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload || '{}');
+    } catch {
+      return false;
+    }
+  }
+  return Array.isArray(payload?.products);
+}
+
 export function roundCuttingListMetres2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
@@ -61,7 +75,7 @@ export function validateCuttingListQuotedRoofingAlignment({
   accessoriesOnly = false,
   toleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
 }) {
-  if (quotationLinesJson != null) {
+  if (hasQuotationProductsPayload(quotationLinesJson)) {
     const assessment = assessCuttingListQuotationConsumption({
       quotationLinesJson,
       cuttingListLines,

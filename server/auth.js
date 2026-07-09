@@ -167,7 +167,7 @@ export function normalizeRoleKey(roleKey) {
 export const ROLE_DEFINITIONS = {
   admin: {
     label: 'Administrator',
-    permissions: ['*', 'settings.view', 'settings.manage'],
+    permissions: ['*', 'settings.view', 'settings.manage', 'ai.knowledge.view', 'ai.knowledge.manage', 'ai.query.access', 'ai.proposals.view', 'ai.proposals.manage'],
   },
   md: {
     label: 'Managing Director',

@@ -6,13 +6,22 @@
 import { userHasPermission } from './auth.js';
 import { hrMasterDataTablesReady, listHrDepartments } from './hrMasterData.js';
 
+/** Branch managers see all branch staff in My team — not only line-manager-linked reports. */
+export function isBranchManagerHrScopeRole(roleKey) {
+  const rk = String(roleKey || '').trim().toLowerCase();
+  return rk === 'sales_manager' || rk === 'branch_manager';
+}
+
 /**
  * @param {object} user
  * @param {string} [requestedScope]
  */
 export function resolveHrScopeMode(user, requestedScope = '') {
   const req = String(requestedScope || '').trim().toLowerCase();
-  if (req === 'team' && userHasPermission(user, 'hr.team.view')) return 'team';
+  const branchManagerTeam = isBranchManagerHrScopeRole(user?.roleKey);
+  if (req === 'team' && userHasPermission(user, 'hr.team.view')) {
+    return branchManagerTeam ? 'branch' : 'team';
+  }
   if (req === 'department' && (userHasPermission(user, 'hr.team.view') || userHasPermission(user, 'hr.staff.manage'))) {
     return 'department';
   }
@@ -24,7 +33,9 @@ export function resolveHrScopeMode(user, requestedScope = '') {
   ) {
     return 'org';
   }
-  if (userHasPermission(user, 'hr.team.view')) return 'team';
+  if (userHasPermission(user, 'hr.team.view')) {
+    return branchManagerTeam ? 'branch' : 'team';
+  }
   return 'branch';
 }
 

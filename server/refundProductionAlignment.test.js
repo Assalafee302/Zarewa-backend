@@ -140,9 +140,25 @@ describe('refundProductionAlignment', () => {
     const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
     const overlap = issues.find((i) => i.code === 'multi_category_overlap');
     expect(overlap).toBeTruthy();
-    expect(String(overlap.message)).toMatch(/Prior refund/i);
+    expect(String(overlap.message)).toMatch(/Prior refund|overlaps/i);
     expect(overlap.priorRefundCategories).toEqual(['Overpayment']);
     expect(overlap.currentRequestCategories).toEqual(['Order cancellation']);
+  });
+
+  it('blocks cross-request Overpayment then Order cancellation without override', () => {
+    const db = memDb();
+    db.data.customer_refunds.push({
+      quotation_ref: 'Q1',
+      reason_category: 'Overpayment',
+      status: 'Paid',
+    });
+    const blocked = validateRefundProductionAlignmentAtSubmit(db, 'Q1', ['Order cancellation'], {
+      actor: { roleKey: 'branch_manager' },
+      overrideNote: 'Trying to override cross-refund overlap anyway.',
+    });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.blockedCode).toBe('multi_category_overlap');
+    expect(blocked.requiresOverride).toBe(false);
   });
 
   it('blocks same-request Overpayment plus Order cancellation', () => {

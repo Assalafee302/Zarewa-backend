@@ -212,6 +212,7 @@ import {
   insertRefundRequest,
   lockAccountingPeriod,
   previewRefundRequest,
+  buildRefundEconomicFloorSummary,
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   getEligibleRefundQuotations,
@@ -241,6 +242,7 @@ import {
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
   getEditApproval,
+  getEditApprovalDetail,
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
   handleWriteWithEditApproval,
@@ -330,6 +332,18 @@ import {
 } from './interBranchOfficeOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { registerHrApi } from './hrApi.js';
+import { registerAiKnowledgeCenterRoutes } from './aiKnowledgeCenter/index.js';
+import { registerAiIntelligenceRouterRoutes } from './aiIntelligenceRouter/index.js';
+import {
+  registerUnifiedAiRoutes,
+  runUnifiedHelpChat,
+  enrichExpenseSuggest,
+} from './aiUnificationLayer/index.js';
+import {
+  registerAiAutomationRoutes,
+  processExpenseAutomationHook,
+} from './aiAutomationEngine/index.js';
+import { registerAiProviderRoutes } from './aiProviders/index.js';
 import { registerPublicCareersApi } from './hrRecruiting.js';
 import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildExecutiveDashboard, resolveExecDashboardBranchScope, resolveExecDashboardPeriod } from './execDashboardOps.js';
@@ -441,6 +455,9 @@ import {
   salesDashboardDemandMix,
   salesDashboardAlerts,
 } from './readModel.js';
+import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import { recalculateQuotationIntegrity, listStaleOpenRefundsForQuotation } from './quotationRecalcOrchestrator.js';
+import { auditQuotationLineIntegrity } from './quotationLineIntegrityAudit.js';
 import {
   approveMdPriceExceptionForQuotation,
   approveBranchManagerPriceExceptionForQuotation,
@@ -568,7 +585,6 @@ import {
 } from './inTransitOps.js';
 import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.js';
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
-import { runHelpChat } from './helpAgent.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildBusinessIntelligenceXlsx } from './businessIntelligenceExport.js';
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
@@ -589,6 +605,10 @@ const ledgerPostBuckets = new Map();
 const bankFinanceImportBuckets = new Map();
 const aiChatBuckets = new Map();
 const helpChatBuckets = new Map();
+const aiKnowledgeBuckets = new Map();
+const aiRouterBuckets = new Map();
+const aiUnifiedBuckets = new Map();
+const aiAutomationBuckets = new Map();
 const workItemSyncLastAt = new Map();
 const WORK_ITEM_SYNC_DEBOUNCE_MS = 30_000;
 /** @type {Map<string, { payload: object; etag: string; expires: number }>} */
@@ -1797,8 +1817,7 @@ export function registerHttpApi(app, db) {
         const safePageContext = sanitizeZarePageContext(
           pageContext && typeof pageContext === 'object' ? pageContext : {}
         );
-        const result = await runHelpChat({
-          db,
+        const result = await runUnifiedHelpChat(db, {
           message: msg,
           messages,
           pathname: typeof pathname === 'string' ? pathname : '',
@@ -1966,12 +1985,14 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/edit-approvals/request', requireAuth, (req, res) => {
     try {
-      const { entityKind, entityId } = req.body || {};
+      const { entityKind, entityId, changeSummary, changeDetails } = req.body || {};
       const r = createEditApprovalRequest(db, {
         entityKind,
         entityId,
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         actor: req.user,
+        changeSummary,
+        changeDetails,
       });
       res.status(r.ok ? 200 : r.code === 'EDIT_APPROVAL_ALREADY_PENDING' ? 409 : 400).json(r);
     } catch (e) {
@@ -1992,7 +2013,7 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/edit-approvals/:id', requireAuth, (req, res) => {
     try {
-      const row = getEditApproval(db, req.params.id);
+      const row = getEditApprovalDetail(db, req.params.id);
       if (!row) return res.status(404).json({ ok: false, error: 'Not found.' });
       const uid = String(req.user?.id || '').trim();
       if (row.requestedByUserId !== uid && !userCanApproveEditMutations(req.user)) {
@@ -3458,6 +3479,11 @@ export function registerHttpApi(app, db) {
   app.use('/api', requireAuth, requireActivePassword);
 
   registerHrApi(app, db);
+  registerAiKnowledgeCenterRoutes(app, db, aiKnowledgeBuckets);
+  registerAiIntelligenceRouterRoutes(app, db, aiRouterBuckets);
+  registerUnifiedAiRoutes(app, db, aiUnifiedBuckets);
+  registerAiAutomationRoutes(app, db, aiAutomationBuckets);
+  registerAiProviderRoutes(app);
 
   app.get('/api/workspace/revision', (req, res) => {
     try {
@@ -8219,6 +8245,18 @@ export function registerHttpApi(app, db) {
       const productionFulfillment = buildRefundProductionFulfillmentSummary(db, quote, productionJobs, {
         isStoneMeterQuote: stoneMeterQuote,
       });
+      const cashBreakdown = quotationPaymentCashBreakdown(db, quotationRef);
+      const el = quotationMeetsRefundEligibility(db, quotationRef);
+      const economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
+        cashInNgn: cashBreakdown.cashInNgn,
+        priorRefundedNgn: el.ok ? el.totalRefundedNgn : 0,
+        pricingAsAtIso: quote?.date_iso ?? null,
+      });
+      const staleRefundWarnings = listStaleOpenRefundsForQuotation(
+        db,
+        quotationRef,
+        economicFloor?.maxDefensibleRefundNgn
+      );
       res.json({
         ok: true,
         receipts,
@@ -8227,6 +8265,8 @@ export function registerHttpApi(app, db) {
         dataQualityIssues,
         productionSuggestedCategories,
         productionFulfillment,
+        economicFloor,
+        staleRefundWarnings,
       });
     } catch (e) {
       console.error(e);
@@ -8575,7 +8615,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/expense-categories/suggest', requireAuth, (req, res) => {
+  app.post('/api/expense-categories/suggest', requireAuth, async (req, res) => {
     try {
       const body = req.body || {};
       const suggestion = suggestExpenseCategoryForActor(
@@ -8584,11 +8624,14 @@ export function registerHttpApi(app, db) {
           body: body.body,
           description: body.description,
           reference: body.reference,
+          amountNgn: body.amountNgn ?? body.amount,
         },
         req.user,
         (p) => userHasPermission(req.user, p)
       );
-      res.json(suggestion);
+      const enriched = await enrichExpenseSuggest(db, req.user, body, suggestion);
+      const withAutomation = await processExpenseAutomationHook(db, req.user, body, enriched);
+      res.json(withAutomation);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -9972,6 +10015,23 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/quotations/:id/recalculate-integrity',
+    requirePermission(['finance.approve', 'refunds.approve', 'quotations.manage']),
+    (req, res) => {
+      try {
+        const qid = String(req.params.id ?? '').trim();
+        const qGate = assertQuotationIdInWorkspace(db, req, qid);
+        if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
+        const r = recalculateQuotationIntegrity(db, qid, { actor: req.user });
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not recalculate quotation integrity.' });
       }
     }
   );

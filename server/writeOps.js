@@ -35,7 +35,10 @@ import {
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
 import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVisibility.js';
-import { assertQuotationMaterialRules } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import {
+  assertQuotationLineIntegrity,
+  assertQuotationMaterialRules,
+} from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
@@ -5784,6 +5787,26 @@ function normalizeCuttingListLines(lines, { allowPartial = false } = {}) {
   return out;
 }
 
+/** Finalized cutting lists must use line-sum metres; reject client header overrides that disagree. */
+function resolveCuttingListTotalMeters({ accessoriesOnly, isDraft, lineSumMeters, payloadTotalMeters }) {
+  if (accessoriesOnly) return { totalMeters: 0 };
+  const sum = roundMoney(lineSumMeters);
+  if (!isDraft && payloadTotalMeters !== undefined && payloadTotalMeters !== null && payloadTotalMeters !== '') {
+    const client = Number(payloadTotalMeters) || 0;
+    if (Math.abs(client - sum) > 0.02) {
+      return {
+        error: `Total metres (${client.toFixed(2)} m) does not match cutting lines (${sum.toFixed(2)} m). Refresh the list and save again.`,
+      };
+    }
+  }
+  return {
+    totalMeters:
+      !isDraft || payloadTotalMeters === undefined || payloadTotalMeters === null || payloadTotalMeters === ''
+        ? sum
+        : Number(payloadTotalMeters) || sum,
+  };
+}
+
 function parseQuotationLinesJsonForStone(db, quotationRef) {
   const qref = String(quotationRef ?? '').trim();
   if (!qref || !db) return null;
@@ -6030,9 +6053,15 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const id = nextCuttingListHumanId(db, branchId);
   const dateISO = String(payload.dateISO ?? '').trim() || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
-  const totalMeters = Number(
-    payload.totalMeters ?? lines.reduce((sum, line) => sum + line.totalM, 0)
-  );
+  const lineSumMeters = lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);
+  const totalMetersResolved = resolveCuttingListTotalMeters({
+    accessoriesOnly,
+    isDraft,
+    lineSumMeters,
+    payloadTotalMeters: payload.totalMeters,
+  });
+  if (totalMetersResolved.error) return { ok: false, error: totalMetersResolved.error };
+  const totalMeters = totalMetersResolved.totalMeters;
   const sheetsToCut = Number(
     payload.sheetsToCut ?? lines.reduce((sum, line) => sum + line.sheets, 0)
   );
@@ -6181,10 +6210,15 @@ export function updateCuttingList(db, cuttingListId, payload) {
     }
   }
   const dateISO = payload.dateISO ?? existing.date_iso;
-  const totalMeters =
-    payload.totalMeters !== undefined
-      ? Number(payload.totalMeters) || 0
-      : lines.reduce((sum, line) => sum + line.totalM, 0);
+  const lineSumMeters = lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);
+  const totalMetersResolved = resolveCuttingListTotalMeters({
+    accessoriesOnly,
+    isDraft: existingIsDraft && !finalize,
+    lineSumMeters,
+    payloadTotalMeters: payload.totalMeters,
+  });
+  if (totalMetersResolved.error) return { ok: false, error: totalMetersResolved.error };
+  const totalMeters = totalMetersResolved.totalMeters;
   const sheetsToCut =
     payload.sheetsToCut !== undefined
       ? Number(payload.sheetsToCut) || 0
@@ -8050,6 +8084,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
   assertQuotationMaterialHeaderRequired(linesJson);
+  assertQuotationLineIntegrity(linesJson);
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -8251,6 +8286,9 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     payload.materialTypeId !== undefined;
   if (materialHeaderTouched) {
     assertQuotationMaterialHeaderRequired(linesJson);
+  }
+  if (payload.lines != null) {
+    assertQuotationLineIntegrity(linesJson);
   }
   assertQuotationMaterialRules(db, linesJson);
 

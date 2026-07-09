@@ -5,6 +5,8 @@ import {
   handlePatchWithEditApprovalQuotation,
   consumeEditApprovalInTransaction,
   createEditApprovalRequest,
+  buildEditApprovalRecordContext,
+  getEditApprovalDetail,
   receiptFinanceSettlementRequiresEditApproval,
   expenseOutflowCorrectionRequiresEditApproval,
   salesReceiptReconciliationIsFinalized,
@@ -338,5 +340,87 @@ describe('editApproval (no MySQL)', () => {
     expect(r.ok).toBe(false);
     expect(r.code).toBe('EDIT_APPROVAL_ALREADY_PENDING');
     expect(r.existingApprovalId).toBe(pendingId);
+  });
+
+  it('buildEditApprovalRecordContext returns quotation snapshot fields', () => {
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('FROM quotations WHERE')) {
+          return {
+            get: () => ({
+              id: 'Q-100',
+              customer_name: 'Acme Ltd',
+              status: 'Cleared',
+              total_ngn: 500000,
+              paid_ngn: 250000,
+              project_name: 'Roof A',
+              date_iso: '2026-07-01',
+            }),
+          };
+        }
+        return { get: () => null };
+      },
+    };
+    const ctx = buildEditApprovalRecordContext(db, 'quotation', 'Q-100');
+    expect(ctx.entityLabel).toBe('Quotation');
+    expect(ctx.headline).toContain('Acme Ltd');
+    expect(ctx.fields.some((f) => f.label === 'Total' && f.value.includes('500'))).toBe(true);
+  });
+
+  it('getEditApprovalDetail merges approval row with record context', () => {
+    const row = {
+      id: '123456',
+      entity_kind: 'quotation',
+      entity_id: 'Q-1',
+      branch_id: 'BR-KD',
+      requested_by_user_id: 'u1',
+      requested_by_display: 'Alice',
+      requested_at_iso: '2026-07-01T10:00:00.000Z',
+      approved_by_user_id: '',
+      approved_by_display: '',
+      approved_at_iso: '',
+      used_at_iso: '',
+      expires_at_iso: '',
+      status: 'pending',
+      change_summary: 'Update customer phone',
+      change_details_json: JSON.stringify([{ label: 'Phone', from: '0801', to: '0802' }]),
+    };
+    const db = {
+      exec: vi.fn(),
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('PRAGMA table_info')) {
+          return {
+            all: () => [
+              { name: 'id' },
+              { name: 'change_summary' },
+              { name: 'change_details_json' },
+            ],
+          };
+        }
+        if (s.includes('edit_approval_tokens WHERE id')) {
+          return { get: () => row };
+        }
+        if (s.includes('FROM quotations WHERE')) {
+          return {
+            get: () => ({
+              id: 'Q-1',
+              customer_name: 'Bob',
+              status: 'Draft',
+              total_ngn: 0,
+              paid_ngn: 0,
+              project_name: '',
+              date_iso: '2026-07-01',
+            }),
+          };
+        }
+        return { get: () => null };
+      },
+    };
+    const detail = getEditApprovalDetail(db, '123456');
+    expect(detail?.changeSummary).toBe('Update customer phone');
+    expect(detail?.changeDetails).toHaveLength(1);
+    expect(detail?.recordContext?.headline).toContain('Bob');
   });
 });

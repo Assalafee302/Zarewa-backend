@@ -1243,11 +1243,133 @@ function runMigrationsUnlocked(db) {
   migrateStaffObligationPause2026(db);
   migrateHrStaffDirectoryViews2026(db);
   migratePayrollPeriodUnique2026(db);
+  migrateAiKnowledgeCenter(db);
+  migrateAiIntelligenceRouter(db);
+  migrateAiAutomationEngine(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
     console.warn('[migrate] seedZarewaOrgStandard skipped:', e?.message || e);
   }
+}
+
+/** AI Knowledge Center — centralized knowledge store for future Zare AI improvements. */
+function migrateAiKnowledgeCenter(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS aic_knowledge_records (
+      id TEXT PRIMARY KEY,
+      knowledge_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'general',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      module TEXT NOT NULL DEFAULT 'general',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      content_json TEXT NOT NULL DEFAULT '{}',
+      body_text TEXT NOT NULL DEFAULT '',
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active',
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_type ON aic_knowledge_records(knowledge_type);
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_status ON aic_knowledge_records(status);
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_module ON aic_knowledge_records(module);
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_category ON aic_knowledge_records(category);
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_updated ON aic_knowledge_records(updated_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS aic_knowledge_versions (
+      id TEXT PRIMARY KEY,
+      record_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      change_note TEXT,
+      changed_by_user_id TEXT,
+      changed_by_name TEXT,
+      changed_at_iso TEXT NOT NULL,
+      FOREIGN KEY (record_id) REFERENCES aic_knowledge_records(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aic_knowledge_versions_record
+      ON aic_knowledge_versions(record_id, version DESC);
+
+    CREATE TABLE IF NOT EXISTS aic_knowledge_embeddings (
+      record_id TEXT PRIMARY KEY,
+      embedding_model TEXT,
+      embedding_json TEXT,
+      dimensions INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      indexed_at_iso TEXT,
+      error_message TEXT,
+      FOREIGN KEY (record_id) REFERENCES aic_knowledge_records(id) ON DELETE CASCADE
+    );
+  `);
+  const embCols = new Set(
+    db.prepare(`PRAGMA table_info(aic_knowledge_embeddings)`).all().map((c) => c.name)
+  );
+  if (!embCols.has('content_hash')) {
+    db.exec(`ALTER TABLE aic_knowledge_embeddings ADD COLUMN content_hash TEXT`);
+  }
+}
+
+/** AI Intelligence Router — query analytics log. */
+function migrateAiIntelligenceRouter(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_router_query_log (
+      id TEXT PRIMARY KEY,
+      occurred_at_iso TEXT NOT NULL,
+      user_id TEXT,
+      query_text TEXT NOT NULL,
+      intent TEXT NOT NULL,
+      route_used TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      confidence REAL,
+      intent_confidence REAL,
+      search_confidence REAL,
+      result_count INTEGER NOT NULL DEFAULT 0,
+      fallback_used INTEGER NOT NULL DEFAULT 0,
+      module TEXT,
+      response_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_router_log_time ON ai_router_query_log(occurred_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_router_log_intent ON ai_router_query_log(intent, occurred_at_iso DESC);
+  `);
+}
+
+/** AI Automation Engine — structured action proposals (Phase 5). */
+function migrateAiAutomationEngine(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_action_proposals (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      confidence_score REAL,
+      risk_level TEXT NOT NULL DEFAULT 'low',
+      required_approval_level TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      linked_entity_type TEXT,
+      linked_entity_id TEXT,
+      created_by TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      approved_by TEXT,
+      approved_at_iso TEXT,
+      rejected_by TEXT,
+      rejected_at_iso TEXT,
+      rejection_reason TEXT,
+      executed_at_iso TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_proposals_status ON ai_action_proposals(status, created_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_proposals_type ON ai_action_proposals(type, created_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_proposals_creator ON ai_action_proposals(created_by, created_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_proposals_linked ON ai_action_proposals(linked_entity_type, linked_entity_id);
+  `);
 }
 
 /** Read-only integration API keys (Bearer auth for automation). */

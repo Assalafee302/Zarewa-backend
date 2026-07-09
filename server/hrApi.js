@@ -375,6 +375,8 @@ import {
   saveLetterReferenceConfig,
   submitLetter,
 } from './hrLetterWorkflowOps.js';
+import { enrichHrLetterAssist } from './aiUnificationLayer/index.js';
+import { processHrLetterAutomationHook } from './aiAutomationEngine/index.js';
 import {
   addDisciplineCaseEvidence,
   addDisciplineCaseWitness,
@@ -3451,6 +3453,18 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not list employment letters.' });
+    }
+  });
+
+  app.post('/api/hr/employment-letters/ai-suggest', requireHrAny('hr.letters.generate', 'hr.staff.manage'), async (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const base = await enrichHrLetterAssist(db, req.user, req.body || {});
+      const r = await processHrLetterAutomationHook(db, req.user, req.body || {}, base);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not generate letter suggestions.' });
     }
   });
 

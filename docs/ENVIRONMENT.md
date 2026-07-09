@@ -27,6 +27,18 @@ Use these when deploying or running automated tests. There is no committed `.env
 | `ZAREWA_AI_POLISH_MODEL` | Optional. Model for memo polish (`/api/help/memo-assist`, `/api/office/ai/polish-memo`). Alias: `ZAREWA_AI_MEMO_MODEL`. |
 | `ZAREWA_AI_HELP_MAX_TOKENS` | Optional. Max tokens for Zare LLM replies (default **2000**, max 4096). |
 | `ZAREWA_AI_EMBEDDING_MODEL` | Optional. Embedding model for help RAG (`text-embedding-3-small` default). |
+| `ai.knowledge.view` | Permission for **AI Knowledge Center** read access (also granted via `settings.manage` or `audit.view`). |
+| `ai.knowledge.manage` | Permission to create, update, and archive knowledge center records (also via `settings.manage`). |
+| `ai.query.access` | Permission to use **AI Intelligence Router** (`POST /api/ai-router/query`). |
+| `ZARE_AI_UNIFIED_MODE` | When `1` or `true`, enables the **Phase 4 unified AI orchestration layer** (Router → Knowledge Center → Help fallback). When unset or `false`, all AI paths behave exactly as before Phase 4. See [`AI_UNIFICATION_LAYER.md`](AI_UNIFICATION_LAYER.md). |
+| `ZARE_AI_AUTOMATION_MODE` | When `1` or `true`, enables **Phase 5 AI automation proposals** (`ai_action_proposals`). Proposals require human approve/reject; no auto-execution of payments, postings, or HR issuance. See [`AI_AUTOMATION_ENGINE.md`](AI_AUTOMATION_ENGINE.md). |
+| `ZARE_AI_HUGGINGFACE_ENABLED` | When `1` or `true`, enables **Hugging Face** as a secondary AI provider in the multi-provider layer. Requires `HUGGINGFACE_API_KEY` (or `HF_TOKEN` / `ZARE_AI_HF_API_KEY`). See [`AI_PROVIDER_LAYER.md`](AI_PROVIDER_LAYER.md). |
+| `HUGGINGFACE_API_KEY` / `HF_TOKEN` / `ZARE_AI_HF_API_KEY` | Hugging Face Inference API token (server-side only). |
+| `ZARE_AI_HF_BASE_URL` | Optional Hugging Face inference base URL (default `https://api-inference.huggingface.co`). Set for self-hosted HF with `ZARE_AI_HF_SELF_HOSTED=true`. |
+| `ZARE_AI_HF_SELF_HOSTED` | When `true`, use OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings` on `ZARE_AI_HF_BASE_URL`. |
+| `ZARE_AI_OPENAI_DAILY_TOKEN_LIMIT` | Optional daily OpenAI token budget (default **500000**). When exceeded, routing prefers Hugging Face. |
+| `ai.proposals.view` | Permission to list and read AI action proposals. |
+| `ai.proposals.manage` | Permission to create, approve, and reject AI action proposals. |
 | `ZAREWA_CSP` | Optional. Overrides the `Content-Security-Policy` header for all HTTP responses (default policy is set in `server/app.js`). |
 | `ZAREWA_LEDGER_POST_MAX` | Optional. Max authenticated **ledger money POSTs** (receipt, advance, apply-advance, refund-advance) per user per rolling window. Default `45`; clamped 1–50000. |
 | `ZAREWA_LEDGER_POST_WINDOW_MS` | Optional. Rolling window for the ledger POST limiter in milliseconds. Default `60000` (one minute); clamped 5000–3600000. |

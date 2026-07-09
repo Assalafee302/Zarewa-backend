@@ -11,6 +11,8 @@ import {
   quotationRequiresStoneMetreConsumption,
   resolveStoneFlatsheetLengthM,
   validateQuotationMaterialRules,
+  validateQuotationLineIntegrity,
+  quotationLineQtyPriceEnabled,
 } from './stoneCoatedQuotationPolicy.js';
 
 /** Minimal db stub matching better-sqlite3 prepare().get/.all API used by the policy. */
@@ -299,5 +301,45 @@ describe('applyStoneMeterMaterialChangeCleanup', () => {
     });
     expect(r.products.length).toBe(0);
     expect(r.removedProducts).toContain('Coil');
+  });
+});
+
+describe('validateQuotationLineIntegrity', () => {
+  it('rejects qty or price without product name', () => {
+    const r = validateQuotationLineIntegrity({
+      products: [{ name: '', qty: '50', unitPrice: '1000' }],
+      accessories: [],
+      services: [],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('QUOTATION_LINE_INTEGRITY');
+  });
+
+  it('rejects stone flatsheet with qty but no length', () => {
+    const r = validateQuotationLineIntegrity({
+      products: [{ name: 'Stone flatsheet', qty: '24', unitPrice: '5000' }],
+      accessories: [],
+      services: [],
+    });
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/length/i);
+  });
+
+  it('allows valid stone flatsheet line', () => {
+    const r = validateQuotationLineIntegrity({
+      products: [{ name: 'Stone flatsheet 2', qty: '24', unitPrice: '5000', stoneFlatsheetLengthM: 2 }],
+      accessories: [],
+      services: [],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('quotationLineQtyPriceEnabled gates stone length', () => {
+    expect(
+      quotationLineQtyPriceEnabled({ name: 'Stone flatsheet', stoneFlatsheetLengthM: '' }, { requireStoneLength: true })
+    ).toBe(false);
+    expect(
+      quotationLineQtyPriceEnabled({ name: 'Stone flatsheet 2', stoneFlatsheetLengthM: 2 }, { requireStoneLength: true })
+    ).toBe(true);
   });
 });

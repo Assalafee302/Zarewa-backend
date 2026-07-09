@@ -26,6 +26,10 @@ import { listBranches } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import {
+  coilProducedMetersFromProductionJobs,
+  producedMetersForUnproducedRefund,
+} from '../shared/lib/refundCoilProducedMeters.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
@@ -2007,7 +2011,24 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
   const jobs = listProductionJobs(db, branchScope).filter(
     (j) => String(j.quotationRef || '').trim() === ref
   );
-  const producedMeters = jobs.reduce(
+  const quoteRow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
+  let stoneMeterQuote = false;
+  try {
+    stoneMeterQuote = quoteRow?.lines_json
+      ? isStoneMeterQuotationLinesJson(db, JSON.parse(String(quoteRow.lines_json)))
+      : false;
+  } catch {
+    stoneMeterQuote = false;
+  }
+  const terminalJobs = jobs.filter((j) => {
+    const st = String(j.status ?? '').trim().toLowerCase();
+    return st === 'completed' || st === 'cancelled';
+  });
+  const producedMetersForUnproduced = producedMetersForUnproducedRefund(db, terminalJobs, {
+    isStoneMeterQuote: stoneMeterQuote,
+  });
+  const coilProducedMeters = coilProducedMetersFromProductionJobs(db, terminalJobs);
+  const producedMetersLegacy = jobs.reduce(
     (sum, j) => sum + (Number(j.effectiveOutputMeters ?? j.actualMeters) || 0),
     0
   );
@@ -2017,7 +2038,12 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
     receipts,
     cuttingLists,
     summary: {
-      producedMeters,
+      /** Aligned with refund preview — eligible produced metres for unproduced math. */
+      producedMeters: producedMetersForUnproduced,
+      producedMetersForUnproduced,
+      coilProducedMeters,
+      /** Legacy sum of effective/actual across all jobs (display only). */
+      producedMetersLegacy,
       accessoriesSummary: { lines: accLines },
       stoneFlatsheetSummary,
       overpayAdvanceNgn: cash.netOverpayLedgerNgn,

@@ -19,11 +19,17 @@ import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 const SUBMIT_ACTION_BY_CODE = {
   cancellation_with_production: 'block',
   partial_production_cancellation: 'acknowledge',
-  multi_category_overlap: 'acknowledge',
+  multi_category_overlap: 'block',
   multi_category_overlap_same_request: 'block',
   suggest_unproduced_meterage: 'info',
   unproduced_with_full_production: 'block',
 };
+
+/** Blockers that cannot be overridden with a manager note (double-count / cross-refund). */
+const NON_OVERRIDABLE_ALIGNMENT_BLOCK_CODES = new Set([
+  'multi_category_overlap',
+  'multi_category_overlap_same_request',
+]);
 
 function parseReasonCategories(raw) {
   if (raw == null || raw === '') return [];
@@ -183,6 +189,9 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     if (sameRequestOverpayAndCancel) {
       message =
         'This refund request combines Overpayment with Order cancellation on the same breakdown — these double-count cash received. Remove one category or split into separate refund requests.';
+    } else if (crossRefundOverlap) {
+      message =
+        'A prior refund on this quotation overlaps with this request (Overpayment vs Order cancellation / Unproduced meterage). Resolve or reject the prior refund before submitting a conflicting category.';
     } else if (priorCategories.length && currentCategories.length) {
       message = `Prior refund(s) on this quote (${priorCategories.join(', ')}) overlap with this request (${currentCategories.join(', ')}). Overpayment must not be double-counted with Order cancellation or Unproduced meterage on the same quotation.`;
     } else if (priorCategories.length > 1) {
@@ -190,7 +199,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     }
     issues.push({
       code: sameRequestOverpayAndCancel ? 'multi_category_overlap_same_request' : 'multi_category_overlap',
-      severity: sameRequestOverpayAndCancel ? 'error' : 'warning',
+      severity: 'error',
       title: 'Multi-category overlap',
       message,
       priorRefundCategories: priorCategories,
@@ -316,6 +325,16 @@ export function validateRefundProductionAlignmentAtSubmit(db, quotationRef, sele
   const needAck = issues.filter((i) => i.submitAction === 'acknowledge');
 
   for (const block of blocks) {
+    if (NON_OVERRIDABLE_ALIGNMENT_BLOCK_CODES.has(String(block.code || '').trim())) {
+      return {
+        ok: false,
+        code: 'PRODUCTION_ALIGNMENT_BLOCKED',
+        error: block.message || block.title || 'Refund category conflicts with prior refunds on this quotation.',
+        issues,
+        blockedCode: block.code,
+        requiresOverride: false,
+      };
+    }
     if (mayOverride && override.length >= 10) continue;
     return {
       ok: false,

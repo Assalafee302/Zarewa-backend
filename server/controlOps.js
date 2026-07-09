@@ -28,7 +28,7 @@ import {
   REFUND_REASON_CATEGORY_VALUES,
 } from '../shared/refundConstants.js';
 import { isStoneFlatsheetQuotationLine } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { coilProducedMetersFromProductionJobs, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
+import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
@@ -91,6 +91,10 @@ import {
   validateRefundCategorySuggestedCapsNgn,
   validateRefundSameRequestOverlapCategoriesNgn,
 } from '../shared/lib/refundQuotationMoney.js';
+import {
+  buildDerivedRefundCategoryCapsNgn,
+  mergeRefundCategoryCapsNgn,
+} from '../shared/lib/refundCategoryDerivedCaps.js';
 import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
@@ -750,6 +754,72 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId, asAtIso);
   if (minAcross != null && minAcross > 0) return minAcross;
   return null;
+}
+
+/**
+ * Minimum economic value delivered at workbook floor ₦/m — sanity check for refund requests.
+ * @returns {{
+ *   producedOutputMeters: number,
+ *   floorDeliveredValueNgn: number,
+ *   maxDefensibleRefundNgn: number,
+ *   priorRefundedNgn: number,
+ *   cashInNgn: number,
+ *   incompleteFloorPricing: boolean,
+ *   jobRows: { jobId: string, outputMeters: number, floorPpmNgn: number | null, floorValueNgn: number }[],
+ * }}
+ */
+export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts = {}) {
+  const cashInNgn = roundMoney(opts.cashInNgn ?? 0);
+  const priorRefundedNgn = roundMoney(opts.priorRefundedNgn ?? 0);
+  const pricingAsAtIso = opts.pricingAsAtIso ?? null;
+  const overrideSubPpm = positiveNumber(opts.substitutePricePerMeterNgn);
+  const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+  const linesJson = quote?.lines_json ?? '';
+
+  const jobRows = [];
+  let floorDeliveredValueNgn = 0;
+  let incompleteFloorPricing = false;
+
+  for (const j of productionJobs || []) {
+    const st = String(j?.status ?? '').trim().toLowerCase();
+    if (st !== 'completed') continue;
+    const outputM = jobOutputMetresForUnproducedRefund(db, j);
+    if (outputM <= 0) continue;
+    const floorPpm = listWorkbookPpmForJobAllocatedCoil(
+      db,
+      j,
+      branchId,
+      quotedGd,
+      overrideSubPpm,
+      linesJson,
+      pricingAsAtIso
+    );
+    const floorPpmNgn = floorPpm != null && floorPpm > 0 ? Math.round(floorPpm) : null;
+    if (floorPpmNgn == null) incompleteFloorPricing = true;
+    const floorValueNgn = floorPpmNgn != null ? roundMoney(outputM * floorPpmNgn) : 0;
+    floorDeliveredValueNgn += floorValueNgn;
+    jobRows.push({
+      jobId: String(j.job_id ?? j.jobID ?? '').trim(),
+      outputMeters: roundMoney(outputM),
+      floorPpmNgn,
+      floorValueNgn,
+    });
+  }
+
+  floorDeliveredValueNgn = roundMoney(floorDeliveredValueNgn);
+  const maxDefensibleRefundNgn = Math.max(0, roundMoney(cashInNgn - floorDeliveredValueNgn - priorRefundedNgn));
+  const producedOutputMeters = roundMoney(jobRows.reduce((s, r) => s + (Number(r.outputMeters) || 0), 0));
+
+  return {
+    producedOutputMeters,
+    floorDeliveredValueNgn,
+    maxDefensibleRefundNgn,
+    priorRefundedNgn,
+    cashInNgn,
+    incompleteFloorPricing,
+    jobRows,
+  };
 }
 
 /**
@@ -1868,12 +1938,18 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       const categorySuggestedMaxNgn = previewForCaps.ok
         ? buildRefundCategorySuggestedMaxNgn(previewForCaps.preview?.suggestedLines)
         : {};
+      const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
+        cashInNgn: elig.cashInNgn,
+        totalRefundedNgn: elig.totalRefundedNgn,
+        economicFloor: previewForCaps.preview?.economicFloor ?? null,
+      });
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,
         quoteTotalNgn: elig.quoteTotalNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
         calculationLines: calcLinesRaw,
         categorySuggestedMaxNgn,
+        derivedCategoryMaxNgn,
         toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
       });
       if (!lineValidation.ok) return lineValidation;
@@ -2062,14 +2138,48 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         storedSuggestedLines = [];
       }
       const categorySuggestedMaxNgn = buildRefundCategorySuggestedMaxNgn(storedSuggestedLines);
+      const approvalPreview = qrefApprove
+        ? previewRefundRequest(db, { quotationRef: qrefApprove })
+        : { ok: false, preview: null };
+      const derivedCategoryMaxNgn = qrefApprove
+        ? buildDerivedRefundCategoryCapsNgn({
+            cashInNgn: quotationCashInNgn(db, qrefApprove),
+            totalRefundedNgn: roundMoney(
+              db
+                .prepare(
+                  `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
+               WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled') AND refund_id != ?`
+                )
+                .get(qrefApprove, refundID)?.s ?? 0
+            ),
+            economicFloor: approvalPreview.preview?.economicFloor ?? null,
+          })
+        : {};
       const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(decideCalcLines);
       if (!overlapCheck.ok) return overlapCheck;
       const capCheck = validateRefundCategorySuggestedCapsNgn({
         calculationLines: decideCalcLines,
         categorySuggestedMaxNgn,
+        derivedCategoryMaxNgn,
         toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
       });
       if (!capCheck.ok) return capCheck;
+      const economicFloor = approvalPreview.preview?.economicFloor;
+      if (
+        economicFloor?.maxDefensibleRefundNgn != null &&
+        Number(economicFloor.floorDeliveredValueNgn) > 0 &&
+        approvedAmountNgn >
+          Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+      ) {
+        return {
+          ok: false,
+          error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
+            'en-NG'
+          )}) exceeds the economic floor cap (₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString(
+            'en-NG'
+          )}) after ${Number(economicFloor.producedOutputMeters || 0).toFixed(2)} m produced at workbook minimum ₦/m.`,
+        };
+      }
       const lineArithmetic = validateRefundCalculationLineArithmetic(
         decideCalcLines,
         REFUND_AMOUNT_LINE_TOLERANCE_NGN
@@ -3157,6 +3267,65 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
+  let economicFloor = null;
+  if (quotationRef && quote) {
+    const elForFloor = quotationMeetsRefundEligibility(db, quotationRef);
+    economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
+      cashInNgn,
+      priorRefundedNgn: elForFloor.ok ? elForFloor.totalRefundedNgn : 0,
+      pricingAsAtIso,
+      substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
+    });
+    if (economicFloor.incompleteFloorPricing) {
+      warnings.push(
+        'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — verify manually before approving large refunds.'
+      );
+    }
+    if (
+      economicFloor.floorDeliveredValueNgn > 0 &&
+      suggestedAmountNgn > economicFloor.maxDefensibleRefundNgn + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+    ) {
+      warnings.push(
+        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${economicFloor.maxDefensibleRefundNgn.toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).`
+      );
+    }
+  }
+
+  let derivedCategoryMaxNgn = {};
+  if (quotationRef && quote && economicFloor) {
+    const elForDerived = quotationMeetsRefundEligibility(db, quotationRef);
+    derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
+      cashInNgn,
+      totalRefundedNgn: elForDerived.ok ? elForDerived.totalRefundedNgn : 0,
+      economicFloor,
+    });
+  }
+  const effectiveCategorySuggestedMaxNgn = mergeRefundCategoryCapsNgn(
+    categorySuggestedMaxNgn,
+    derivedCategoryMaxNgn
+  );
+
+  let finalSuggestedLines = [...cappedSuggestedLines];
+  const orderCancelDerivedCap = roundMoney(effectiveCategorySuggestedMaxNgn['Order cancellation'] || 0);
+  if (
+    hasCancelledProductionJob &&
+    !refundedCategories.has('Order cancellation') &&
+    orderCancelDerivedCap > 0 &&
+    !finalSuggestedLines.some(
+      (l) => String(l.category || '').trim() === 'Order cancellation' && roundMoney(l.amountNgn) > 0
+    )
+  ) {
+    finalSuggestedLines.push({
+      label: 'Order cancellation (capped after economic floor)',
+      amountNgn: orderCancelDerivedCap,
+      category: 'Order cancellation',
+    });
+  }
+  const finalSuggestedAmountNgn = finalSuggestedLines.reduce(
+    (sum, line) => sum + roundMoney(line.amountNgn),
+    0
+  );
+
   return {
     ok: true,
     preview: {
@@ -3181,15 +3350,17 @@ export function previewRefundRequest(db, payload) {
       pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
       substitutionPerMeterBreakdown,
-      suggestedAmountNgn,
-      suggestedLines: cappedSuggestedLines,
-      categorySuggestedMaxNgn,
+      suggestedAmountNgn: finalSuggestedAmountNgn,
+      suggestedLines: finalSuggestedLines,
+      categorySuggestedMaxNgn: effectiveCategorySuggestedMaxNgn,
+      derivedCategoryMaxNgn,
       warnings,
       alreadyRefundedCategories: Array.from(refundedCategories),
       blockedRefundCategories,
       eligibleRefundCategories,
       productionSuggestedCategories,
       productionAlignmentIssues: alignmentIssues,
+      economicFloor,
       ...(substitutionDiagnosis ? { substitutionDiagnosis } : {}),
     },
   };

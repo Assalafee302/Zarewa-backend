@@ -348,7 +348,8 @@ export async function runAiChat(opts) {
  */
 export async function runOfficeMemoPolish(opts) {
   const cfg = readAiAssistConfig();
-  if (!cfg.enabled) {
+  const hfEnabled = /^(1|true|yes|on)$/i.test(String(process.env.ZARE_AI_HUGGINGFACE_ENABLED || ''));
+  if (!cfg.enabled && !hfEnabled) {
     const err = new Error('AI assistant is not configured.');
     err.code = 'AI_DISABLED';
     throw err;
@@ -381,6 +382,23 @@ export async function runOfficeMemoPolish(opts) {
     '',
     `BODY:\n${body || '(none)'}`,
   ].join('\n');
+
+  if (String(process.env.ZARE_AI_HUGGINGFACE_ENABLED || '').match(/^(1|true|yes|on)$/i)) {
+    try {
+      const { routeAIRequest } = await import('./aiProviders/aiProviderRouter.js');
+      const routed = await routeAIRequest({
+        taskType: 'memo_polish',
+        prompt: user,
+        context: { systemPrompt: system },
+        options: { maxTokens: 1200, temperature: 0.35 },
+      });
+      if (routed?.content?.trim()) {
+        return parseMemoPolishJson(routed.content, subject, body);
+      }
+    } catch (e) {
+      console.warn('[ai-provider] memo polish via provider layer failed', e?.message || e);
+    }
+  }
 
   const reqPayload = {
     model: cfg.polishModel || cfg.model,

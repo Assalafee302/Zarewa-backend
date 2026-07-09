@@ -7,6 +7,8 @@
  * - Total refund cannot exceed cash received on this quotation minus refunds already on file.
  */
 
+import { REFUND_DERIVED_CAP_CATEGORIES, mergeRefundCategoryCapsNgn } from './refundCategoryDerivedCaps.js';
+
 export function roundRefundMoney(value) {
   return Math.round(Number(value) || 0);
 }
@@ -104,19 +106,34 @@ export function buildRefundCategorySuggestedMaxNgn(suggestedLines) {
  * @param {{
  *   calculationLines: Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[] }>,
  *   categorySuggestedMaxNgn?: Record<string, number>,
+ *   derivedCategoryMaxNgn?: Record<string, number>,
  *   toleranceNgn?: number,
  * }} p
  */
 export function validateRefundCategorySuggestedCapsNgn({
   calculationLines,
   categorySuggestedMaxNgn,
+  derivedCategoryMaxNgn,
   toleranceNgn = 1,
 }) {
-  const caps = categorySuggestedMaxNgn || {};
+  const caps = mergeRefundCategoryCapsNgn(categorySuggestedMaxNgn, derivedCategoryMaxNgn);
   const sums = sumRefundCalculationLinesByCategoryNgn(calculationLines);
   for (const [cat, sum] of Object.entries(sums)) {
     const cap = roundRefundMoney(caps[cat]);
-    if (cap <= 0) continue;
+    if (cap <= 0) {
+      if (REFUND_DERIVED_CAP_CATEGORIES.has(cat) && sum > toleranceNgn) {
+        return {
+          ok: false,
+          error: `${cat} refund (₦${sum.toLocaleString(
+            'en-NG'
+          )}) cannot be approved without a system-derived cap — refresh refund preview or recalculate quotation integrity.`,
+          category: cat,
+          sumNgn: sum,
+          maxNgn: 0,
+        };
+      }
+      continue;
+    }
     if (sum > cap + toleranceNgn) {
       return {
         ok: false,
@@ -188,6 +205,7 @@ export function validateRefundCalculationLinesNgn({
   totalRefundedNgn,
   calculationLines,
   categorySuggestedMaxNgn,
+  derivedCategoryMaxNgn,
   toleranceNgn = 1,
 }) {
   const lines = Array.isArray(calculationLines) ? calculationLines : [];
@@ -203,6 +221,7 @@ export function validateRefundCalculationLinesNgn({
   const categoryCapCheck = validateRefundCategorySuggestedCapsNgn({
     calculationLines: lines,
     categorySuggestedMaxNgn,
+    derivedCategoryMaxNgn,
     toleranceNgn,
   });
   if (!categoryCapCheck.ok) return categoryCapCheck;

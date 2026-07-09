@@ -4,6 +4,8 @@
 import { runMemoAssist } from '../shared/lib/memoAssist.js';
 import { appendAuditLog } from './controlOps.js';
 import { readAiAssistConfig, runMemoAssistPolish } from './aiAssist.js';
+import { enrichMemoAssist } from './aiUnificationLayer/index.js';
+import { processMemoAutomationHook } from './aiAutomationEngine/index.js';
 
 const LLM_POLISH_ACTIONS = new Set(['improve', 'make_formal', 'make_shorter', 'fix_grammar']);
 
@@ -79,5 +81,7 @@ export async function handleMemoAssist(db, user, body = {}) {
     }
   }
 
-  return { ok: true, ...result };
+  const enriched = await enrichMemoAssist(db, user, body, result);
+  const withAutomation = await processMemoAutomationHook(db, user, body, enriched);
+  return { ok: true, ...withAutomation };
 }

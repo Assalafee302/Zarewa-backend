@@ -4,6 +4,44 @@
  */
 import { editMutationRequiresSecondApproval, userCanApproveEditMutations } from './auth.js';
 import { appendAuditLog } from './controlOps.js';
+import { hasColumn } from './ap2ReceivedBasisOps.js';
+
+function formatNgnContext(n) {
+  const v = Math.round(Number(n) || 0);
+  return `₦${v.toLocaleString('en-NG')}`;
+}
+
+function editApprovalTableHasColumn(db, col) {
+  return hasColumn(db, 'edit_approval_tokens', col);
+}
+
+function normalizeChangeDetailsInput(raw) {
+  if (raw == null) return [];
+  let arr = raw;
+  if (typeof raw === 'string') {
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const row of arr) {
+    if (!row || typeof row !== 'object') continue;
+    const label = String(row.label ?? row.field ?? row.key ?? '').trim();
+    if (!label) continue;
+    const from = row.from != null ? String(row.from) : row.before != null ? String(row.before) : '';
+    const to = row.to != null ? String(row.to) : row.after != null ? String(row.after) : '';
+    out.push({ label, from, to });
+  }
+  return out;
+}
+
+function serializeChangeDetails(details) {
+  const rows = normalizeChangeDetailsInput(details);
+  return rows.length ? JSON.stringify(rows) : '';
+}
 
 export function ensureEditApprovalTable(db) {
   db.exec(`
@@ -24,6 +62,14 @@ export function ensureEditApprovalTable(db) {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_edit_approval_status ON edit_approval_tokens (status, requested_at_iso)`);
+  if (editApprovalTableHasColumn(db, 'id')) {
+    if (!editApprovalTableHasColumn(db, 'change_summary')) {
+      db.exec(`ALTER TABLE edit_approval_tokens ADD COLUMN change_summary TEXT`);
+    }
+    if (!editApprovalTableHasColumn(db, 'change_details_json')) {
+      db.exec(`ALTER TABLE edit_approval_tokens ADD COLUMN change_details_json TEXT`);
+    }
+  }
 }
 
 /**
@@ -43,6 +89,7 @@ function newApprovalId(db) {
 
 function mapApprovalRow(row) {
   if (!row) return null;
+  const changeDetails = normalizeChangeDetailsInput(row.change_details_json);
   return {
     id: row.id,
     entityKind: row.entity_kind,
@@ -57,19 +104,170 @@ function mapApprovalRow(row) {
     usedAtISO: row.used_at_iso ?? '',
     expiresAtISO: row.expires_at_iso ?? '',
     status: row.status,
+    changeSummary: String(row.change_summary || '').trim(),
+    changeDetails,
   };
+}
+
+/**
+ * Snapshot of the target record so approvers can see what is being edited.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function buildEditApprovalRecordContext(db, entityKind, entityId) {
+  const ek = String(entityKind || '').trim().toLowerCase();
+  const eid = String(entityId || '').trim();
+  if (!ek || !eid) {
+    return { entityLabel: '', headline: '', fields: [] };
+  }
+
+  const field = (label, value) => ({ label, value: value == null || value === '' ? '—' : String(value) });
+
+  if (ek === 'quotation') {
+    const q = db
+      .prepare(
+        `SELECT id, customer_name, status, total_ngn, paid_ngn, project_name, date_iso
+         FROM quotations WHERE id = ?`
+      )
+      .get(eid);
+    if (!q) return { entityLabel: 'Quotation', headline: eid, fields: [field('Reference', eid)] };
+    return {
+      entityLabel: 'Quotation',
+      headline: `${q.customer_name || '—'} · ${q.id}`,
+      fields: [
+        field('Customer', q.customer_name),
+        field('Status', q.status),
+        field('Total', formatNgnContext(q.total_ngn)),
+        field('Paid', formatNgnContext(q.paid_ngn)),
+        field('Project', q.project_name),
+        field('Date', String(q.date_iso || '').slice(0, 10)),
+      ],
+    };
+  }
+
+  if (ek === 'purchase_order') {
+    const po = db
+      .prepare(
+        `SELECT po_id, supplier_name, status, order_date_iso, expected_delivery_iso, total_ngn
+         FROM purchase_orders WHERE po_id = ?`
+      )
+      .get(eid);
+    if (!po) return { entityLabel: 'Purchase order', headline: eid, fields: [field('PO', eid)] };
+    return {
+      entityLabel: 'Purchase order',
+      headline: `${po.supplier_name || '—'} · ${po.po_id}`,
+      fields: [
+        field('Supplier', po.supplier_name),
+        field('Status', po.status),
+        field('Order date', String(po.order_date_iso || '').slice(0, 10)),
+        field('Expected delivery', String(po.expected_delivery_iso || '').slice(0, 10)),
+        field('Total', formatNgnContext(po.total_ngn)),
+      ],
+    };
+  }
+
+  if (ek === 'production_job') {
+    const job = db
+      .prepare(
+        `SELECT job_id, quotation_ref, customer_name, product_name, status, actual_meters
+         FROM production_jobs WHERE job_id = ?`
+      )
+      .get(eid);
+    if (!job) return { entityLabel: 'Production job', headline: eid, fields: [field('Job', eid)] };
+    return {
+      entityLabel: 'Production job',
+      headline: `${job.quotation_ref || '—'} · ${job.job_id}`,
+      fields: [
+        field('Quotation', job.quotation_ref),
+        field('Customer', job.customer_name),
+        field('Product', job.product_name),
+        field('Status', job.status),
+        field('Actual metres', job.actual_meters),
+      ],
+    };
+  }
+
+  if (ek === 'cutting_list') {
+    const cl = db
+      .prepare(`SELECT id, quotation_ref, customer_name, status, date_iso FROM cutting_lists WHERE id = ?`)
+      .get(eid);
+    if (!cl) return { entityLabel: 'Cutting list', headline: eid, fields: [field('Cutting list', eid)] };
+    return {
+      entityLabel: 'Cutting list',
+      headline: `${cl.quotation_ref || '—'} · ${cl.id}`,
+      fields: [
+        field('Quotation', cl.quotation_ref),
+        field('Customer', cl.customer_name),
+        field('Status', cl.status),
+        field('Date', String(cl.date_iso || '').slice(0, 10)),
+      ],
+    };
+  }
+
+  if (ek === 'sales_receipt') {
+    const rec = db
+      .prepare(
+        `SELECT id, customer_name, quotation_ref, amount_ngn, status, date_iso, payment_method
+         FROM sales_receipts WHERE id = ?`
+      )
+      .get(eid);
+    if (!rec) return { entityLabel: 'Sales receipt', headline: eid, fields: [field('Receipt', eid)] };
+    return {
+      entityLabel: 'Sales receipt',
+      headline: `${rec.customer_name || '—'} · ${rec.id}`,
+      fields: [
+        field('Customer', rec.customer_name),
+        field('Quotation', rec.quotation_ref),
+        field('Amount', formatNgnContext(rec.amount_ngn)),
+        field('Status', rec.status),
+        field('Payment method', rec.payment_method),
+        field('Date', String(rec.date_iso || '').slice(0, 10)),
+      ],
+    };
+  }
+
+  if (ek === 'user') {
+    const u = db.prepare(`SELECT id, username, display_name, role_key FROM users WHERE id = ?`).get(eid);
+    if (!u) return { entityLabel: 'User account', headline: eid, fields: [field('User', eid)] };
+    return {
+      entityLabel: 'User account',
+      headline: u.display_name || u.username || eid,
+      fields: [
+        field('Display name', u.display_name || u.username),
+        field('Username', u.username),
+        field('Role', u.role_key),
+      ],
+    };
+  }
+
+  const label = ek.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return { entityLabel: label, headline: eid, fields: [field('Record ID', eid)] };
 }
 
 /**
  * @param {import('better-sqlite3').Database} db
  */
-export function createEditApprovalRequest(db, { entityKind, entityId, branchId = '', actor }) {
+export function getEditApprovalDetail(db, approvalId) {
+  const approval = getEditApproval(db, approvalId);
+  if (!approval) return null;
+  const recordContext = buildEditApprovalRecordContext(db, approval.entityKind, approval.entityId);
+  return { ...approval, recordContext };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ */
+export function createEditApprovalRequest(
+  db,
+  { entityKind, entityId, branchId = '', actor, changeSummary = '', changeDetails = null }
+) {
   ensureEditApprovalTable(db);
   const ek = String(entityKind || '').trim();
   const eid = String(entityId || '').trim();
   if (!ek || !eid) return { ok: false, error: 'entityKind and entityId are required.' };
   const bid = String(branchId || '').trim();
   const uid = String(actor?.id ?? '').trim();
+  const summary = String(changeSummary || '').trim();
+  const detailsJson = serializeChangeDetails(changeDetails);
   const existing = db
     .prepare(
       `SELECT id FROM edit_approval_tokens
@@ -78,6 +276,14 @@ export function createEditApprovalRequest(db, { entityKind, entityId, branchId =
     )
     .get(ek, eid, bid, uid);
   if (existing?.id) {
+    if (summary || detailsJson) {
+      db.prepare(
+        `UPDATE edit_approval_tokens
+         SET change_summary = COALESCE(NULLIF(?, ''), change_summary),
+             change_details_json = COALESCE(NULLIF(?, ''), change_details_json)
+         WHERE id = ? AND status = 'pending'`
+      ).run(summary, detailsJson, String(existing.id));
+    }
     return {
       ok: false,
       code: 'EDIT_APPROVAL_ALREADY_PENDING',
@@ -92,9 +298,9 @@ export function createEditApprovalRequest(db, { entityKind, entityId, branchId =
   db.prepare(
     `INSERT INTO edit_approval_tokens (
       id, entity_kind, entity_id, branch_id, requested_by_user_id, requested_by_display,
-      requested_at_iso, status
-    ) VALUES (?,?,?,?,?,?,?,'pending')`
-  ).run(id, ek, eid, bid, uid, disp, now);
+      requested_at_iso, status, change_summary, change_details_json
+    ) VALUES (?,?,?,?,?,?,?,'pending',?,?)`
+  ).run(id, ek, eid, bid, uid, disp, now, summary, detailsJson);
   appendAuditLog(db, {
     actor,
     action: 'edit_approval.requested',

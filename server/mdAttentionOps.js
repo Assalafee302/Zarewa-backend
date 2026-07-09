@@ -195,7 +195,9 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       quotationRef: ek === 'quotation' ? eid : '',
       poId: ek === 'purchase_order' ? eid : '',
       title: `${ek} ${eid}`.trim(),
-      subtitle: `Edit by ${e.requestedByDisplay || e.requestedByUserId || 'user'}`,
+      subtitle: [e.changeSummary, `Edit by ${e.requestedByDisplay || e.requestedByUserId || 'user'}`]
+        .filter(Boolean)
+        .join(' · '),
       amountNgn: null,
       atIso: e.requestedAtISO,
       branchId: e.branchId || '',

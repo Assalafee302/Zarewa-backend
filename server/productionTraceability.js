@@ -1417,6 +1417,14 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
   if (!parsed.length) {
     return { ok: false, error: 'Nothing to save — add readings for at least one coil line.' };
   }
+  const totalMetersSaved = parsed.reduce((s, p) => s + Math.max(0, p.meters), 0);
+  if (totalMetersSaved <= 0) {
+    return {
+      ok: false,
+      error:
+        'Metres produced must be greater than zero before saving. Use Cancel job if nothing was produced.',
+    };
+  }
 
   const coilsAfter = [];
   for (const r of existing) {

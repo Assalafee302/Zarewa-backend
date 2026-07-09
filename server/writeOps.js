@@ -46,6 +46,7 @@ import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPri
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
 import {
   cuttingListTotalMetresFromLines,
+  roundCuttingListMetres2,
   validateCuttingListQuotedRoofingAlignment,
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { validateCuttingListTrimBlankForProduction } from '../shared/lib/cuttingListBlankConsumption.js';
@@ -5812,9 +5813,9 @@ function normalizeCuttingListLines(lines, { allowPartial = false } = {}) {
 /** Finalized cutting lists must use line-sum metres; reject client header overrides that disagree. */
 function resolveCuttingListTotalMeters({ accessoriesOnly, isDraft, lineSumMeters, payloadTotalMeters }) {
   if (accessoriesOnly) return { totalMeters: 0 };
-  const sum = roundMoney(lineSumMeters);
+  const sum = roundCuttingListMetres2(lineSumMeters);
   if (!isDraft && payloadTotalMeters !== undefined && payloadTotalMeters !== null && payloadTotalMeters !== '') {
-    const client = Number(payloadTotalMeters) || 0;
+    const client = roundCuttingListMetres2(payloadTotalMeters);
     if (Math.abs(client - sum) > 0.02) {
       return {
         error: `Total metres (${client.toFixed(2)} m) does not match cutting lines (${sum.toFixed(2)} m). Refresh the list and save again.`,
@@ -5825,7 +5826,7 @@ function resolveCuttingListTotalMeters({ accessoriesOnly, isDraft, lineSumMeters
     totalMeters:
       !isDraft || payloadTotalMeters === undefined || payloadTotalMeters === null || payloadTotalMeters === ''
         ? sum
-        : Number(payloadTotalMeters) || sum,
+        : roundCuttingListMetres2(payloadTotalMeters) || sum,
   };
 }
 
@@ -5847,29 +5848,34 @@ function parseQuotationLinesJsonForStone(db, quotationRef) {
  */
 function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
   const list = Array.isArray(lines) ? lines : [];
+  const plannedRoofM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Roof'] });
+  const plannedCladdingM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Cladding'] });
+  const plannedFlatsheetM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Flatsheet'] });
+  const breakdownTotalM = roundCuttingListMetres2(plannedRoofM + plannedCladdingM + plannedFlatsheetM);
   const qj = parseQuotationLinesJsonForStone(db, quotationRef);
   const stone = Boolean(db && qj && isStoneMeterQuotationLinesJson(db, qj));
-  if (!stone) {
+  if (stone) {
+    let plannedSheets = 0;
+    for (const line of list) {
+      const lt = String(line.lineType ?? line.line_type ?? 'Roof').trim();
+      if (lt !== 'Roof') continue;
+      plannedSheets += Number(line.sheets) || 0;
+    }
     return {
-      plannedMeters: list.reduce((s, line) => s + (Number(line.totalM) || 0), 0),
-      plannedSheets: list.reduce((s, line) => s + (Number(line.sheets) || 0), 0),
+      plannedMeters: plannedRoofM,
+      plannedSheets,
+      plannedRoofM,
+      plannedCladdingM,
+      plannedFlatsheetM,
     };
   }
-  let plannedMeters = 0;
-  let plannedSheets = 0;
-  for (const line of list) {
-    const lt = String(line.lineType ?? line.line_type ?? 'Roof').trim();
-    if (lt !== 'Roof') continue;
-    const sheets = Number(line.sheets) || 0;
-    const len = Number(line.lengthM ?? line.length_m) || 0;
-    const tm = Number(line.totalM);
-    const addM = Number.isFinite(tm) && tm > 0 ? tm : sheets > 0 && len > 0 ? Number((sheets * len).toFixed(4)) : 0;
-    if (addM > 0) {
-      plannedMeters += addM;
-      plannedSheets += sheets;
-    }
-  }
-  return { plannedMeters, plannedSheets };
+  return {
+    plannedMeters: breakdownTotalM,
+    plannedSheets: list.reduce((s, line) => s + (Number(line.sheets) || 0), 0),
+    plannedRoofM,
+    plannedCladdingM,
+    plannedFlatsheetM,
+  };
 }
 
 function quotationHasPositiveProductLines(linesJson) {
@@ -6329,7 +6335,9 @@ export function updateCuttingList(db, cuttingListId, payload) {
         db.prepare(
           `UPDATE production_jobs SET
              quotation_ref = ?, customer_id = ?, customer_name = ?,
-             planned_meters = ?, planned_sheets = ?, product_id = ?, product_name = ?
+             planned_meters = ?, planned_sheets = ?,
+             planned_roof_m = ?, planned_cladding_m = ?, planned_flatsheet_m = ?,
+             product_id = ?, product_name = ?
            WHERE job_id = ?`
         ).run(
           quotationRef || null,
@@ -6337,6 +6345,9 @@ export function updateCuttingList(db, cuttingListId, payload) {
           customer.name,
           planTotals.plannedMeters,
           planTotals.plannedSheets,
+          planTotals.plannedRoofM,
+          planTotals.plannedCladdingM,
+          planTotals.plannedFlatsheetM,
           productID || null,
           productName || null,
           jobRow.job_id
@@ -6410,6 +6421,9 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
   const productName = String(payload.productName ?? cuttingList?.product_name ?? '').trim();
   let plannedMeters = Number(payload.plannedMeters ?? cuttingList?.total_meters ?? 0) || 0;
   let plannedSheets = Number(payload.plannedSheets ?? cuttingList?.sheets_to_cut ?? 0) || 0;
+  let plannedRoofM = 0;
+  let plannedCladdingM = 0;
+  let plannedFlatsheetM = 0;
   if (cuttingListId && cuttingList) {
     const lineRows = db
       .prepare(
@@ -6429,12 +6443,23 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
           quotationLinesJson: qrow.lines_json,
           cuttingListLines: mapped,
         });
-        if (!trimBlank.ok) return trimBlank;
+        if (!trimBlank.ok) {
+          return {
+            ...trimBlank,
+            error:
+              trimBlank.message ||
+              trimBlank.error ||
+              'Cutting list flatsheet section must include trim blank metres before production.',
+          };
+        }
       }
     }
     const p = productionPlannedTotalsForCuttingList(db, quotationRef, mapped);
     plannedMeters = p.plannedMeters;
     plannedSheets = p.plannedSheets;
+    plannedRoofM = p.plannedRoofM;
+    plannedCladdingM = p.plannedCladdingM;
+    plannedFlatsheetM = p.plannedFlatsheetM;
   }
   const machineName = String(payload.machineName ?? cuttingList?.machine_name ?? '').trim();
   const startDateISO = String(payload.startDateISO ?? '').trim();
@@ -6452,10 +6477,11 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     db.prepare(
       `INSERT INTO production_jobs (
         job_id, cutting_list_id, quotation_ref, customer_id, customer_name, product_id, product_name,
-        planned_meters, planned_sheets, machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
+        planned_meters, planned_sheets, planned_roof_m, planned_cladding_m, planned_flatsheet_m,
+        machine_name, operator_name, start_date_iso, end_date_iso, materials_note,
         status, created_at_iso, completed_at_iso, actual_meters, actual_weight_kg,
         conversion_alert_state, manager_review_required, branch_id, offcut_inventory_meters
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       jobID,
       cuttingListId || null,
@@ -6466,6 +6492,9 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
       productName || null,
       plannedMeters,
       plannedSheets,
+      plannedRoofM,
+      plannedCladdingM,
+      plannedFlatsheetM,
       machineName || null,
       operatorName || null,
       startDateISO || null,

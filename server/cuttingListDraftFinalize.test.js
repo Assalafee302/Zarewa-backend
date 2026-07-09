@@ -60,6 +60,27 @@ describe('cutting list draft finalize', () => {
     expect(getCuttingList(db, draft.id)?.status).toBe('Waiting');
   });
 
+  it('updateCuttingList finalize accepts fractional total metres', () => {
+    db = createDatabase(':memory:');
+    const draft = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      draft: true,
+      lines: [{ sheets: 3, lengthM: 4.5, lineType: 'Roof' }],
+    });
+    expect(draft.ok).toBe(true);
+
+    const finalized = updateCuttingList(db, draft.id, {
+      finalize: true,
+      lines: [{ sheets: 3, lengthM: 4.5, lineType: 'Roof' }],
+      totalMeters: 13.5,
+    });
+    expect(finalized.ok).toBe(true);
+    expect(getCuttingList(db, draft.id)?.totalMeters).toBe(13.5);
+  });
+
   it('rejects finalize when roof metres exceed quoted roofing metres', () => {
     db = createDatabase(':memory:');
     const draft = insertCuttingList(db, {

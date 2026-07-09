@@ -13,6 +13,7 @@ import {
 } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
@@ -23,6 +24,8 @@ const SUBMIT_ACTION_BY_CODE = {
   multi_category_overlap_same_request: 'block',
   suggest_unproduced_meterage: 'info',
   unproduced_with_full_production: 'block',
+  trim_blank_cl_soft_warning: 'acknowledge',
+  trim_blank_cl_missing: 'block',
 };
 
 /** Blockers that cannot be overridden with a manager note (double-count / cross-refund). */
@@ -237,6 +240,22 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
       severity: 'info',
       title: 'Suggested category',
       message: 'Cancelled jobs with no output typically map to Unproduced meterage rather than Overpayment.',
+    });
+  }
+
+  for (const clIssue of refundCuttingListQuotationMetreIssues(db, quotationRef)) {
+    const code = String(clIssue.code || '').trim();
+    issues.push({
+      code,
+      severity: clIssue.severity === 'warning' ? 'warning' : 'error',
+      title:
+        code === 'trim_blank_cl_soft_warning'
+          ? 'Trim blank note'
+          : code === 'trim_blank_cl_missing'
+            ? 'Trim blank missing on cutting list'
+            : 'Cutting list vs quotation',
+      message: clIssue.message,
+      ...clIssue,
     });
   }
 

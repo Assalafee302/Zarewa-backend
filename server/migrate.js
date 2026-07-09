@@ -679,6 +679,15 @@ function runMigrationsUnlocked(db) {
   if (!productionJobs.has('offcut_inventory_meters')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN offcut_inventory_meters REAL NOT NULL DEFAULT 0`);
   }
+  if (!productionJobs.has('planned_roof_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN planned_roof_m REAL NOT NULL DEFAULT 0`);
+  }
+  if (!productionJobs.has('planned_cladding_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN planned_cladding_m REAL NOT NULL DEFAULT 0`);
+  }
+  if (!productionJobs.has('planned_flatsheet_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN planned_flatsheet_m REAL NOT NULL DEFAULT 0`);
+  }
 
   const pjc = tableCols('production_job_coils');
   if (pjc.size > 0 && !pjc.has('spec_mismatch')) {
@@ -948,6 +957,9 @@ function runMigrationsUnlocked(db) {
       product_name TEXT,
       planned_meters REAL DEFAULT 0,
       planned_sheets REAL DEFAULT 0,
+      planned_roof_m REAL NOT NULL DEFAULT 0,
+      planned_cladding_m REAL NOT NULL DEFAULT 0,
+      planned_flatsheet_m REAL NOT NULL DEFAULT 0,
       machine_name TEXT,
       start_date_iso TEXT,
       end_date_iso TEXT,

@@ -31,6 +31,7 @@ import {
   producedMetersForUnproducedRefund,
 } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { assessQuotationCuttingListConsumptionForRef } from './cuttingListQuotationConsumptionOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
@@ -764,6 +765,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
   const quotedRoofingMetres = quotedRoofingSheetMetresFromLines(
     db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qid)?.lines_json ?? ''
   );
+  const clConsumption = assessQuotationCuttingListConsumptionForRef(db, qid);
 
   return {
     ok: true,
@@ -796,7 +798,12 @@ export function listManagerQuotationAudit(db, quotationRef) {
     refunds,
     totals: {
       quotedRoofingMetres,
-      cuttingListMetersSum: cuttingListMetersSum,
+      quotedSheetPoolM: clConsumption?.quotedSheetPoolM ?? quotedRoofingMetres,
+      quotedTrimBlankM: clConsumption?.quotedTrimBlankM ?? 0,
+      expectedCoilConsumptionM: clConsumption?.expectedTotalM ?? quotedRoofingMetres,
+      clFlatsheetM: clConsumption?.clFlatsheetM ?? 0,
+      trimBlankGapM: clConsumption?.trimBlankGapM ?? 0,
+      cuttingListMetersSum: clConsumption?.cuttingListTotalM ?? cuttingListMetersSum,
       completedProductionMetersSum: completedMeters,
       productionJobsMetersSum: allJobMeters,
     },
@@ -1789,6 +1796,9 @@ export function listProductionJobs(db, branchScope = 'ALL') {
         productName: row.product_name ?? '',
         plannedMeters: Number(row.planned_meters) || 0,
         plannedSheets: Number(row.planned_sheets) || 0,
+        plannedRoofM: Number(row.planned_roof_m) || 0,
+        plannedCladdingM: Number(row.planned_cladding_m) || 0,
+        plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
         machineName: row.machine_name ?? '',
         startDateISO: row.start_date_iso ?? '',
         endDateISO: row.end_date_iso ?? '',

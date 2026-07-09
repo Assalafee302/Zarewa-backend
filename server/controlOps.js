@@ -101,6 +101,7 @@ import {
   mergeRefundCategoryCapsNgn,
 } from '../shared/lib/refundCategoryDerivedCaps.js';
 import { assessCuttingListQuotationMetreVariance } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
+import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
@@ -1125,43 +1126,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   };
 }
 
-/**
- * Quoted roofing metres vs cutting list totals — refund data quality.
- * @returns {{ code: string; message: string; quotedMetres?: number; cuttingListMetresSum?: number; deltaMetres?: number }[]}
- */
-export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
-  const ref = String(quotationRef ?? '').trim();
-  if (!ref) return [];
-  let quote;
-  try {
-    quote = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
-  } catch {
-    return [];
-  }
-  if (!quote) return [];
-  const quotedMetres = quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '');
-  let cuttingLists = [];
-  try {
-    cuttingLists = db.prepare(`SELECT total_meters FROM cutting_lists WHERE quotation_ref = ?`).all(ref);
-  } catch {
-    return [];
-  }
-  const cuttingListMetresSum = cuttingLists.reduce((s, cl) => s + (Number(cl.total_meters) || 0), 0);
-  const assessment = assessCuttingListQuotationMetreVariance({
-    quotedRoofingMetres: quotedMetres,
-    cuttingListMetresSum,
-  });
-  if (assessment.ok) return [];
-  return [
-    {
-      code: assessment.code,
-      message: assessment.message,
-      quotedMetres: assessment.quotedMetres,
-      cuttingListMetresSum: assessment.cuttingListMetresSum,
-      deltaMetres: assessment.deltaMetres,
-    },
-  ];
-}
+export { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 
 /**
  * Quoted roofing gauge vs **allocated coil gauge** — workbook floor (material sheet) or list ₦/m must resolve when they differ.

@@ -3558,7 +3558,8 @@ export function registerHttpApi(app, db) {
             })
           : buildBootstrap(db, bootstrapOpts);
       const ifNoneMatch = String(req.headers['if-none-match'] || '');
-      if (skipSideEffects) {
+      const useShortLivedBootstrapCache = skipSideEffects || mode === 'dashboard';
+      if (useShortLivedBootstrapCache) {
         const cacheKey = bootstrapPollCacheKey(req, {
           branchScope,
           mode,

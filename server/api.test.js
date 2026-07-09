@@ -1671,6 +1671,33 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(cl.productionEditLocked).toBe(false);
   });
 
+  it('POST /api/cutting-lists finalizes an existing draft when saving without draft flag', async () => {
+    const draft = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-006',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      draft: true,
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+    });
+    expect(draft.status).toBe(201);
+    const draftId = draft.body.id || draft.body.cuttingList?.id;
+    expect(draft.body.cuttingList?.status).toBe('Draft');
+
+    const finalized = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-006',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+      totalMeters: 10,
+    });
+    expect(finalized.status).toBe(201);
+    expect(finalized.body.id).toBe(draftId);
+    expect(finalized.body.cuttingList?.status).toBe('Waiting');
+    expect(finalized.body.cuttingList?.totalMeters).toBe(10);
+  });
+
 
 
   it('POST /api/expenses and /api/treasury/transfer post treasury movements', async () => {

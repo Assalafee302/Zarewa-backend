@@ -44,6 +44,11 @@ import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
+import {
+  cuttingListRoofMetresFromLines,
+  validateCuttingListQuotedRoofingAlignment,
+} from '../shared/lib/refundCuttingListQuotationReconciliation.js';
+import { quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import {
@@ -5760,6 +5765,23 @@ function isCuttingListDraftStatus(status) {
   return String(status ?? '').trim() === CUTTING_LIST_DRAFT_STATUS;
 }
 
+function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines, { accessoriesOnly = false } = {}) {
+  if (accessoriesOnly) return { ok: true };
+  const qref = String(quotationRef ?? '').trim();
+  if (!qref) return { ok: true };
+  const qrow = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(qref);
+  if (!qrow) return { ok: false, error: 'Quotation not found.' };
+  const quoted = quotedRoofingSheetMetresFromLines(qrow.lines_json);
+  const cuttingRoof = cuttingListRoofMetresFromLines(lines);
+  const check = validateCuttingListQuotedRoofingAlignment({
+    quotedRoofingMetres: quoted,
+    cuttingRoofMetres: cuttingRoof,
+    accessoriesOnly,
+  });
+  if (!check.ok) return { ok: false, error: check.message, code: check.code };
+  return { ok: true };
+}
+
 function normalizeCuttingListLines(lines, { allowPartial = false } = {}) {
   const out = [];
   let order = 0;
@@ -6002,8 +6024,10 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
         .get(qref, excludeCuttingListId)
     : db.prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
   if (!skipDuplicateCheck && existing?.id) {
-    if (forDraft && isCuttingListDraftStatus(existing.status)) {
-      return { ok: true, existingDraftId: existing.id };
+    if (isCuttingListDraftStatus(existing.status)) {
+      if (forDraft) return { ok: true, existingDraftId: existing.id };
+      // Final save while a draft is still on file — upgrade that draft instead of rejecting.
+      return { ok: true, existingDraftId: existing.id, finalizeExistingDraft: true };
     }
     const br = String(existing.branch_id || '').trim() || DEFAULT_BRANCH_ID;
     return {
@@ -6038,10 +6062,17 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   if (isDraft && qCheck.existingDraftId) {
     return updateCuttingList(db, qCheck.existingDraftId, { ...payload, autosave: true });
   }
+  if (!isDraft && qCheck.finalizeExistingDraft && qCheck.existingDraftId) {
+    return updateCuttingList(db, qCheck.existingDraftId, { ...payload, finalize: true });
+  }
   const lines = normalizeCuttingListLines(payload.lines, { allowPartial: isDraft });
   const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
   if (!isDraft && !lines.length && !accessoriesOnly) {
     return { ok: false, error: 'Add at least one valid cutting line.' };
+  }
+  if (!isDraft) {
+    const metreAlign = assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines, { accessoriesOnly });
+    if (!metreAlign.ok) return metreAlign;
   }
   const branchId =
     String(quote?.branch_id || '').trim() || String(branchFallback || DEFAULT_BRANCH_ID).trim();
@@ -6210,6 +6241,11 @@ export function updateCuttingList(db, cuttingListId, payload) {
     if (!lines.length && !accessoriesOnly) {
       return { ok: false, error: 'Add at least one valid cutting line before saving the list.' };
     }
+  }
+  const shouldValidateQuotationMetres = !isAutosave && (finalize || !existingIsDraft);
+  if (shouldValidateQuotationMetres) {
+    const metreAlign = assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines, { accessoriesOnly });
+    if (!metreAlign.ok) return metreAlign;
   }
   const dateISO = payload.dateISO ?? existing.date_iso;
   const lineSumMeters = lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);

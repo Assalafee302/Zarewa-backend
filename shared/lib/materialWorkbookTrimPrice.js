@@ -156,7 +156,9 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
     if (effectivePerMeter <= 0) return;
     if (effectivePerMeter + 0.0001 < floor) {
       violations.push({
+        // Keep below_floor for gate compatibility; basis is published trim list (+ ridge), not workbook floor.
         code: 'below_floor',
+        priceBasis: 'published_list_plus_ridge',
         lineCategory: 'products',
         lineIndex: idx,
         lineName: String(line?.name ?? '').trim(),
@@ -164,9 +166,12 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
         design: designLabel || `girth ${girthMm}mm`,
         girthMm,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
+        // floorPerMeter kept for compat; minimumPerMeter is the list-derived minimum.
         floorPerMeter: floor,
+        minimumPerMeter: floor,
         recommendedPerMeter: floor,
         trimWorkbook: true,
+        message: 'Below trim list price',
       });
     }
   });

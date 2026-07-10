@@ -15,9 +15,10 @@ export const REFUND_DERIVED_CAP_CATEGORIES = new Set(['Order cancellation', 'Oth
  *   cashInNgn: number,
  *   totalRefundedNgn?: number,
  *   economicFloor?: {
- *     maxDefensibleRefundNgn?: number,
+ *     maxDefensibleRefundNgn?: number | null,
  *     floorDeliveredValueNgn?: number,
  *     producedOutputMeters?: number,
+ *     incompleteFloorPricing?: boolean,
  *   } | null,
  * }} p
  * @returns {Record<string, number>}
@@ -28,10 +29,14 @@ export function buildDerivedRefundCategoryCapsNgn({ cashInNgn, totalRefundedNgn 
   const hardCap = Math.max(0, cashIn - refunded);
   const produced = Number(economicFloor?.producedOutputMeters) || 0;
   const floorValue = roundCapMoney(economicFloor?.floorDeliveredValueNgn ?? 0);
-  const maxDefensible =
-    economicFloor?.maxDefensibleRefundNgn != null
-      ? roundCapMoney(economicFloor.maxDefensibleRefundNgn)
-      : hardCap;
+  const hasFiniteMax =
+    economicFloor?.maxDefensibleRefundNgn != null &&
+    Number.isFinite(Number(economicFloor.maxDefensibleRefundNgn));
+  // Finite economic floor caps category totals. When incomplete (null maxDefensible),
+  // fall back to cash hard cap — create/approve still refuse incomplete unless MD/admin bypass.
+  const maxDefensible = hasFiniteMax
+    ? roundCapMoney(economicFloor.maxDefensibleRefundNgn)
+    : hardCap;
 
   const cancelCap =
     produced > 0.001 || floorValue > 0 ? Math.max(0, maxDefensible) : Math.max(0, hardCap);

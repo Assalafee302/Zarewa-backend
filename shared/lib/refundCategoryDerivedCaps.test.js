@@ -52,4 +52,19 @@ describe('refundCategoryDerivedCaps', () => {
     expect(check.ok).toBe(false);
     expect(check.category).toBe('Other');
   });
+
+  it('uses cash hard cap when economic floor maxDefensible is null (incomplete)', () => {
+    const caps = buildDerivedRefundCategoryCapsNgn({
+      cashInNgn: 1_000_000,
+      totalRefundedNgn: 0,
+      economicFloor: {
+        producedOutputMeters: 80,
+        floorDeliveredValueNgn: 0,
+        maxDefensibleRefundNgn: null,
+        incompleteFloorPricing: true,
+      },
+    });
+    expect(caps['Order cancellation']).toBe(1_000_000);
+    expect(caps.Other).toBe(1_000_000);
+  });
 });

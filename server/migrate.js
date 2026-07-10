@@ -382,6 +382,9 @@ function runMigrationsUnlocked(db) {
   if (!q.has('price_exception_md_confirmed_by_user_id')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_confirmed_by_user_id TEXT`);
   }
+  if (!q.has('md_price_exception_snapshot_json')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN md_price_exception_snapshot_json TEXT`);
+  }
   if (q.has('md_price_exception_approved_at_iso') && q.has('bm_price_exception_approved_at_iso')) {
     db.exec(`
       UPDATE quotations
@@ -5443,6 +5446,8 @@ function migrateMaterialPricingWorkbook(db) {
       UNIQUE(material_key, gauge_mm, branch_id, design_key)
     );
     CREATE INDEX IF NOT EXISTS idx_mps_mat_branch ON material_pricing_sheet_rows(material_key, branch_id);
+    CREATE INDEX IF NOT EXISTS idx_mps_mat_branch_gauge_design
+      ON material_pricing_sheet_rows(material_key, branch_id, gauge_mm, design_key);
     CREATE TABLE IF NOT EXISTS material_pricing_sheet_events (
       id TEXT PRIMARY KEY,
       row_id TEXT NOT NULL,
@@ -5456,7 +5461,23 @@ function migrateMaterialPricingWorkbook(db) {
       action TEXT NOT NULL DEFAULT 'upsert'
     );
     CREATE INDEX IF NOT EXISTS idx_mpse_material_time ON material_pricing_sheet_events(material_key, changed_at_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_mpse_mat_gauge_branch_design_time
+      ON material_pricing_sheet_events(material_key, gauge_mm, branch_id, design_key, changed_at_iso);
   `);
+  try {
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()) {
+      const coilCols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
+      if (coilCols.some((c) => c.name === 'branch_id')) {
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_coil_lots_product_branch ON coil_lots(product_id, branch_id)`);
+      } else {
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_coil_lots_product_received ON coil_lots(product_id, received_at_iso)`
+        );
+      }
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     const cols = db.prepare(`PRAGMA table_info(material_pricing_sheet_rows)`).all();
     if (cols.length && !cols.some((c) => c.name === 'commission_ngn_per_m')) {

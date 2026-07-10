@@ -157,7 +157,7 @@ export function buildCustomerPriceBookHtml(db, asAtIso) {
   <h2>Notes</h2>
   <ul class="muted">
     <li>Prices subject to change; quotations subject to material availability.</li>
-    <li>Below-list quotations require Managing Director price exception before production.</li>
+    <li>Quotations below the workbook <strong>floor</strong> (minimum ₦/m) require Managing Director price exception before production. Selling below list but at/above floor is allowed.</li>
   </ul>
 </body>
 </html>`;

@@ -1013,11 +1013,12 @@ function expandedDesignKeysForWorkbook(db, designLabelRaw) {
 /**
  * Workbook **floor** ₦/m (material pricing `minimum_price_per_m_ngn`) for steel actually used:
  * **allocated coil gauge** + design/colour, then published list from `price_list_items` if no sheet row.
- * Returns null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
+ * @returns {{ ppm: number, source: 'override' | 'workbook_floor' | 'price_list' } | null}
+ *   null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
 function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '', asAtIso) {
   const ov = positiveNumber(overrideSubPpm);
-  if (ov != null && ov > 0) return ov;
+  if (ov != null && ov > 0) return { ppm: ov, source: 'override' };
   const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
   if (!coilGauge) return null;
 
@@ -1029,16 +1030,18 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
     const dKey = dKeyRaw != null ? normKeyPriceList(dKeyRaw) : '';
     if (materialKey && gaugeMmKey) {
       const f = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, dKey, sheetBranch, asAtIso);
-      if (f != null && f > 0) return f;
+      if (f != null && f > 0) return { ppm: f, source: 'workbook_floor' };
     }
     if (!dKey) return null;
-    return listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId, asAtIso);
+    const list = listPricePerMeterFromGaugeDesign(db, coilGauge, dKey, branchId, asAtIso);
+    if (list != null && list > 0) return { ppm: list, source: 'price_list' };
+    return null;
   };
 
   for (const dRaw of quotedDesignCandidatesForSubstitution(linesJson, quotedGd)) {
     for (const dKey of expandedDesignKeysForWorkbook(db, dRaw)) {
       const v = tryFloorThenList(dKey);
-      if (v != null && v > 0) return v;
+      if (v != null && v.ppm > 0) return v;
     }
   }
 
@@ -1067,7 +1070,7 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
       if (designFromProduct) {
         for (const dKey of expandedDesignKeysForWorkbook(db, designFromProduct)) {
           const v = tryFloorThenList(dKey);
-          if (v != null && v > 0) return v;
+          if (v != null && v.ppm > 0) return v;
         }
       }
     }
@@ -1087,7 +1090,7 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
     if (col) {
       for (const dKey of expandedDesignKeysForWorkbook(db, col)) {
         const viaLot = tryFloorThenList(dKey);
-        if (viaLot != null && viaLot > 0) return viaLot;
+        if (viaLot != null && viaLot.ppm > 0) return viaLot;
       }
     }
   } catch {
@@ -1095,25 +1098,35 @@ function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrid
   }
   if (materialKey && gaugeMmKey) {
     const blank = floorPricePerMeterFromMaterialPricingSheet(db, materialKey, gaugeMmKey, '', sheetBranch, asAtIso);
-    if (blank != null && blank > 0) return blank;
+    if (blank != null && blank > 0) return { ppm: blank, source: 'workbook_floor' };
     const floorMin = floorPricePerMeterMinForGaugeAcrossDesignsMaterial(db, materialKey, gaugeMmKey, sheetBranch, asAtIso);
-    if (floorMin != null && floorMin > 0) return floorMin;
+    if (floorMin != null && floorMin > 0) return { ppm: floorMin, source: 'workbook_floor' };
   }
   const minAcross = listPricePerMeterMinForGaugeAcrossDesigns(db, coilGauge, branchId, asAtIso);
-  if (minAcross != null && minAcross > 0) return minAcross;
+  if (minAcross != null && minAcross > 0) return { ppm: minAcross, source: 'price_list' };
   return null;
+}
+
+/** @param {{ ppm: number, source: string } | null | undefined} lookup */
+function ppmValueFromWorkbookLookup(lookup) {
+  const n = lookup?.ppm;
+  return n != null && n > 0 ? n : null;
 }
 
 /**
  * Minimum economic value delivered at workbook floor ₦/m — sanity check for refund requests.
+ * When any completed job has metres but no resolvable ₦/m, `incompleteFloorPricing` is true and
+ * `maxDefensibleRefundNgn` is null (missing ppm must not inflate the free-cash cap).
  * @returns {{
  *   producedOutputMeters: number,
  *   floorDeliveredValueNgn: number,
- *   maxDefensibleRefundNgn: number,
+ *   maxDefensibleRefundNgn: number | null,
  *   priorRefundedNgn: number,
  *   cashInNgn: number,
  *   incompleteFloorPricing: boolean,
- *   jobRows: { jobId: string, outputMeters: number, floorPpmNgn: number | null, floorValueNgn: number }[],
+ *   usedPriceListFallback: boolean,
+ *   ppmSourceByJob: Record<string, string>,
+ *   jobRows: { jobId: string, outputMeters: number, floorPpmNgn: number | null, floorValueNgn: number, ppmSource: string | null }[],
  * }}
  */
 export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts = {}) {
@@ -1126,15 +1139,17 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   const linesJson = quote?.lines_json ?? '';
 
   const jobRows = [];
+  const ppmSourceByJob = {};
   let floorDeliveredValueNgn = 0;
   let incompleteFloorPricing = false;
+  let usedPriceListFallback = false;
 
   for (const j of productionJobs || []) {
     const st = String(j?.status ?? '').trim().toLowerCase();
     if (st !== 'completed') continue;
     const outputM = jobOutputMetresForUnproducedRefund(db, j);
     if (outputM <= 0) continue;
-    const floorPpm = listWorkbookPpmForJobAllocatedCoil(
+    const lookup = listWorkbookPpmForJobAllocatedCoil(
       db,
       j,
       branchId,
@@ -1143,20 +1158,28 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
       linesJson,
       pricingAsAtIso
     );
-    const floorPpmNgn = floorPpm != null && floorPpm > 0 ? Math.round(floorPpm) : null;
+    const floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
+    const ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
+    const jobId = String(j.job_id ?? j.jobID ?? '').trim();
+    if (ppmSource) ppmSourceByJob[jobId] = ppmSource;
+    if (ppmSource === 'price_list') usedPriceListFallback = true;
     if (floorPpmNgn == null) incompleteFloorPricing = true;
     const floorValueNgn = floorPpmNgn != null ? roundMoney(outputM * floorPpmNgn) : 0;
     floorDeliveredValueNgn += floorValueNgn;
     jobRows.push({
-      jobId: String(j.job_id ?? j.jobID ?? '').trim(),
+      jobId,
       outputMeters: roundMoney(outputM),
       floorPpmNgn,
       floorValueNgn,
+      ppmSource,
     });
   }
 
   floorDeliveredValueNgn = roundMoney(floorDeliveredValueNgn);
-  const maxDefensibleRefundNgn = Math.max(0, roundMoney(cashInNgn - floorDeliveredValueNgn - priorRefundedNgn));
+  // Incomplete ppm must not treat unpriced metres as free cash (would inflate the cap).
+  const maxDefensibleRefundNgn = incompleteFloorPricing
+    ? null
+    : Math.max(0, roundMoney(cashInNgn - floorDeliveredValueNgn - priorRefundedNgn));
   const producedOutputMeters = roundMoney(jobRows.reduce((s, r) => s + (Number(r.outputMeters) || 0), 0));
 
   return {
@@ -1166,6 +1189,8 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     priorRefundedNgn,
     cashInNgn,
     incompleteFloorPricing,
+    usedPriceListFallback,
+    ppmSourceByJob,
     jobRows,
   };
 }
@@ -1249,7 +1274,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
         continue;
       }
       if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
-      const ppm = listWorkbookPpmForJobAllocatedCoil(
+      const lookup = listWorkbookPpmForJobAllocatedCoil(
         db,
         j,
         branchId,
@@ -1258,6 +1283,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
         quote?.lines_json ?? '',
         pricingAsAtIso
       );
+      const ppm = ppmValueFromWorkbookLookup(lookup);
       if (ppm == null || ppm <= 0) {
         const pid = String(j.product_id ?? '').trim();
         issues.push({
@@ -2418,13 +2444,45 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         quotationRef,
         includeCustomerCommission: requestedCats.includes('Customer commission'),
       });
+      const economicFloorAtCreate = previewForCaps.ok ? previewForCaps.preview?.economicFloor ?? null : null;
+      const producedAtCreate = Number(economicFloorAtCreate?.producedOutputMeters || 0);
+      if (economicFloorAtCreate?.incompleteFloorPricing && producedAtCreate > 0.001) {
+        if (!actorMayBypassIncompleteRefundFloor(actor, (p) => userHasPermission(actor, p))) {
+          return {
+            ok: false,
+            code: 'REFUND_INCOMPLETE_FLOOR_PRICING',
+            error: `Workbook floor ₦/m could not be resolved for ${producedAtCreate.toFixed(
+              2
+            )} m produced. Resolve material workbook pricing or escalate to MD/CEO before creating this refund.`,
+          };
+        }
+      }
+      const maxDefensibleAtCreate = economicFloorAtCreate?.maxDefensibleRefundNgn;
+      if (
+        maxDefensibleAtCreate != null &&
+        Number.isFinite(Number(maxDefensibleAtCreate)) &&
+        amountNgn > Number(maxDefensibleAtCreate) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+      ) {
+        return {
+          ok: false,
+          code: 'REFUND_EXCEEDS_ECONOMIC_FLOOR',
+          error: `Refund amount (₦${amountNgn.toLocaleString(
+            'en-NG'
+          )}) exceeds the economic floor cap (₦${Number(maxDefensibleAtCreate).toLocaleString(
+            'en-NG'
+          )}) after ${producedAtCreate.toFixed(
+            2
+          )} m produced at workbook minimum ₦/m (cash in minus floor delivered value, after prior refunds).`,
+          maxDefensibleRefundNgn: Number(maxDefensibleAtCreate),
+        };
+      }
       const categorySuggestedMaxNgn = previewForCaps.ok
         ? buildRefundCategorySuggestedMaxNgn(previewForCaps.preview?.suggestedLines)
         : {};
       const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
         cashInNgn: elig.cashInNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
-        economicFloor: previewForCaps.preview?.economicFloor ?? null,
+        economicFloor: economicFloorAtCreate,
       });
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,
@@ -2920,7 +2978,7 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
       outcome =
         'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
     } else {
-      const ppm = listWorkbookPpmForJobAllocatedCoil(
+      const lookup = listWorkbookPpmForJobAllocatedCoil(
         db,
         j,
         branchId,
@@ -2929,6 +2987,7 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
         quote?.lines_json ?? '',
         pricingAsAtIso
       );
+      const ppm = ppmValueFromWorkbookLookup(lookup);
       producedPpm = ppm;
       if (ppm == null || ppm <= 0) {
         outcome =
@@ -3000,7 +3059,7 @@ export function previewRefundRequest(db, payload) {
     })
   ) {
     warnings.push(
-      'Below-floor pricing was approved by the branch manager. The Managing Director must confirm that exception after production before any customer refund.'
+      'Below-floor pricing was approved by the Managing Director or an administrator. The Managing Director must confirm that exception after production before any customer refund.'
     );
   }
 
@@ -3380,12 +3439,14 @@ export function previewRefundRequest(db, payload) {
     const ctxJob =
       productionJobs.find((jj) => (Number(jj.actual_meters) || 0) > 0) || productionJobs[0] || null;
     const mkQuotedCtx = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
+    let quotedFloorPpm = null;
     let quotedListPpm = null;
     if (quotedGd) {
-      quotedListPpm =
+      quotedFloorPpm =
         mkQuotedCtx != null
           ? workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch, pricingAsAtIso)
           : null;
+      quotedListPpm = quotedFloorPpm;
       if (quotedListPpm == null || quotedListPpm <= 0) {
         quotedListPpm = listPricePerMeterFromGaugeDesign(db, quotedGd.gauge, quotedGd.design, branchId, pricingAsAtIso);
       }
@@ -3426,11 +3487,7 @@ export function previewRefundRequest(db, payload) {
 
       anyGaugeVsCoilCase = true;
 
-      if (!pricePerMeter) {
-        continue;
-      }
-
-      const producedPpm = listWorkbookPpmForJobAllocatedCoil(
+      const producedLookup = listWorkbookPpmForJobAllocatedCoil(
         db,
         j,
         branchId,
@@ -3439,45 +3496,67 @@ export function previewRefundRequest(db, payload) {
         quote?.lines_json ?? '',
         pricingAsAtIso
       );
+      const producedPpm = ppmValueFromWorkbookLookup(producedLookup);
       if (producedPpm == null || producedPpm <= 0) {
         missingListPriceLabels.push(jobLabel);
         continue;
       }
 
-      const deltaPpm = pricePerMeter - producedPpm;
-      if (deltaPpm <= 0) {
+      // Floor-to-floor when both workbook floors exist; else customer blended ₦/m vs coil floor/list.
+      let creditPpm;
+      let quotedPricePerMeterNgn;
+      if (quotedFloorPpm != null && quotedFloorPpm > 0 && producedPpm > 0) {
+        creditPpm = Math.max(0, quotedFloorPpm - producedPpm);
+        quotedPricePerMeterNgn = Math.round(quotedFloorPpm);
+      } else if (pricePerMeter) {
+        creditPpm = Math.max(0, pricePerMeter - producedPpm);
+        quotedPricePerMeterNgn = Math.round(pricePerMeter);
+      } else {
+        continue;
+      }
+
+      if (creditPpm <= 0) {
         noPositiveDelta = true;
         continue;
       }
 
-      const credit = roundMoney(deltaPpm * m);
+      const credit = roundMoney(creditPpm * m);
       totalCredit += credit;
       substitutionPerMeterBreakdown.push({
         jobId: j.job_id,
         productName: String(j.product_name || '').trim(),
         meters: m,
-        quotedPricePerMeterNgn: Math.round(pricePerMeter),
+        quotedPricePerMeterNgn,
         producedListPricePerMeterNgn: producedPpm,
         quotedGaugeDesignLabel:
           quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
         quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
-        deltaPerMeterNgn: Math.round(deltaPpm),
+        quotedFloorPricePerMeterNgn: quotedFloorPpm != null && quotedFloorPpm > 0 ? Math.round(quotedFloorPpm) : null,
+        deltaPerMeterNgn: Math.round(creditPpm),
         creditNgn: credit,
         quotedGaugeForComparison: quotedGaugeRaw,
         coilGaugeFromAllocations: coilGauge,
+        creditBasis:
+          quotedFloorPpm != null && quotedFloorPpm > 0 ? 'floor_to_floor' : 'blended_to_coil_floor',
       });
     }
 
     if (anyGaugeVsCoilCase || missingCoilGaugeLabels.length > 0) {
       const fmtN = (n) => `₦${Math.round(n).toLocaleString('en-NG')}`;
+      const hasFloorToFloor = substitutionPerMeterBreakdown.some((b) => b.creditBasis === 'floor_to_floor');
+      const canPrice =
+        Boolean(pricePerMeter) || (quotedFloorPpm != null && quotedFloorPpm > 0);
       let label;
       if (substitutionPerMeterBreakdown.length > 0) {
         const parts = substitutionPerMeterBreakdown.map(
           (b) =>
             `${b.meters.toFixed(2)}m × ${fmtN(b.deltaPerMeterNgn)}/m (quote ${b.quotedGaugeForComparison || 'gauge'} vs coil ${b.coilGaugeFromAllocations || '—'}; ${String(b.productName || 'job').trim()})`
         );
-        label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fmtN(pricePerMeter)}/m minus workbook floor coil rate × metres): ${parts.join('; ')}`;
-      } else if (!pricePerMeter) {
+        const fromRate = hasFloorToFloor
+          ? `${fmtN(quotedFloorPpm)}/m quoted workbook floor`
+          : `${fmtN(pricePerMeter)}/m blended quote`;
+        label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fromRate} minus workbook floor coil rate × metres): ${parts.join('; ')}`;
+      } else if (!canPrice) {
         label =
           'Gauge on quotation differs from allocated coil gauge — add product lines with qty and unitPrice to derive quoted ₦/m, or enter credit manually';
       } else if (missingCoilGaugeLabels.length > 0) {
@@ -3491,9 +3570,9 @@ export function previewRefundRequest(db, payload) {
         amountNgn: totalCredit,
         category: 'Substitution Difference',
       });
-      if (!pricePerMeter) {
+      if (!canPrice) {
         warnings.push(
-          'Substitution: cannot compute per-metre delta without a quotation blended ₦/m (product lines with qty and unitPrice), or pass pricePerMeterNgn in preview.'
+          'Substitution: cannot compute per-metre delta without a quotation blended ₦/m (product lines with qty and unitPrice) or quoted workbook floor, or pass pricePerMeterNgn in preview.'
         );
       } else if (missingCoilGaugeLabels.length > 0 && !overrideSubPpm) {
         const uniq = [...new Set(missingCoilGaugeLabels)];
@@ -3506,9 +3585,9 @@ export function previewRefundRequest(db, payload) {
           `Substitution: could not resolve workbook ₦/m for coil on: ${uniq.join(', ')}. Add material_pricing_sheet_rows (minimum ₦/m) for the branch and coil gauge, or price_list_items where gauge_key matches the coil gauge and design_key matches quotation/FG/coil colour (or pass substitutePricePerMeterNgn when calling preview).`
         );
       }
-      if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && pricePerMeter && !missingListPriceLabels.length) {
+      if (noPositiveDelta && substitutionPerMeterBreakdown.length === 0 && canPrice && !missingListPriceLabels.length) {
         warnings.push(
-          'Substitution: workbook floor or list rate for the coil is not below the quotation blended ₦/m — per-metre delta credit is zero.'
+          'Substitution: workbook floor or list rate for the coil is not below the quoted floor/blended ₦/m — per-metre delta credit is zero.'
         );
       }
     }
@@ -3764,15 +3843,21 @@ export function previewRefundRequest(db, payload) {
     });
     if (economicFloor.incompleteFloorPricing) {
       warnings.push(
-        'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — verify manually before approving large refunds.'
+        'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — create/approve is blocked unless MD/admin overrides. Missing rates must not inflate the max defensible refund.'
+      );
+    }
+    if (economicFloor.usedPriceListFallback) {
+      warnings.push(
+        'Economic floor check: some rates from published list (workbook floor missing).'
       );
     }
     if (
-      economicFloor.floorDeliveredValueNgn > 0 &&
-      suggestedAmountNgn > economicFloor.maxDefensibleRefundNgn + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+      economicFloor.maxDefensibleRefundNgn != null &&
+      Number.isFinite(Number(economicFloor.maxDefensibleRefundNgn)) &&
+      suggestedAmountNgn > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
     ) {
       warnings.push(
-        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${economicFloor.maxDefensibleRefundNgn.toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).`
+        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).`
       );
     }
   }

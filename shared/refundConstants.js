@@ -8,6 +8,7 @@ export const REFUND_PREVIEW_VERSION = 10;
  * Refund quotation picker:
  * - remaining refundable must be at least this (₦), and
  * - automatic preview suggested total must be at least this (₦).
+ * Not the material workbook floor and not the refund economic floor.
  */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
 

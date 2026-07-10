@@ -21,9 +21,8 @@ export {
 
 export function canReadMaterialPricingSheetRows(db) {
   try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()
-    );
+    db.prepare(`SELECT 1 FROM material_pricing_sheet_rows LIMIT 1`).get();
+    return true;
   } catch {
     return false;
   }
@@ -104,12 +103,50 @@ function expandedDesignKeys(db, designLabelRaw) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ * @param {string} materialKey
+ * @param {string} gaugeMm
+ */
+export function listMaterialPricingRowsForQuotationLookup(db, branchId, materialKey, gaugeMm) {
+  if (!canReadMaterialPricingSheetRows(db)) return [];
+  const bid = String(branchId || '').trim();
+  const mk = normKey(materialKey);
+  const g = String(gaugeMm || '').trim();
+  if (!bid || !mk || !g) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, material_key, gauge_mm, branch_id, design_key,
+              minimum_price_per_m_ngn, commission_ngn_per_m
+       FROM material_pricing_sheet_rows
+       WHERE branch_id = ? AND material_key = ? AND TRIM(gauge_mm) = TRIM(?)
+       ORDER BY design_key ASC`
+    )
+    .all(bid, mk, g);
+  return rows.map((r) => {
+    const floor = Math.round(Number(r.minimum_price_per_m_ngn) || 0);
+    const commission = Math.max(0, Number(r.commission_ngn_per_m) || 0);
+    return {
+      id: r.id,
+      materialKey: r.material_key,
+      gaugeMm: r.gauge_mm,
+      branchId: r.branch_id,
+      designKey: r.design_key ?? '',
+      minimumPricePerMeterNgn: floor,
+      commissionNgnPerM: commission,
+      publishedListPriceNgn: publishedListPriceFromWorkbook(floor, commission),
+    };
+  });
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
  * @param {{
  *   materialTypeId?: string;
  *   materialKey?: string;
  *   gaugeLabel?: string;
  *   designLabel?: string;
  *   branchId?: string;
+ *   asAtIso?: string;
  * }} ctx
  */
 export function resolveMaterialWorkbookPriceForQuotation(db, ctx) {
@@ -125,8 +162,10 @@ export function resolveMaterialWorkbookPriceForQuotation(db, ctx) {
   const designKeys = expandedDesignKeys(db, ctx.designLabel);
   const asAt = ctx.asAtIso != null && String(ctx.asAtIso).trim() ? String(ctx.asAtIso).trim().slice(0, 10) : null;
   const rows = asAt
-    ? listMaterialPricingRowsAsOf(db, bid, asAt)
-    : listMaterialPricingRowsForSnapshot(db, bid);
+    ? listMaterialPricingRowsAsOf(db, bid, asAt).filter(
+        (r) => normKey(r.materialKey) === mk && String(r.gaugeMm || '').trim() === g
+      )
+    : listMaterialPricingRowsForQuotationLookup(db, bid, mk, g);
   return resolveMaterialWorkbookPriceFromRows(rows, {
     materialKey: mk,
     gaugeMm: g,

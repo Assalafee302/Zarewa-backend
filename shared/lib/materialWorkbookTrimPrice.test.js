@@ -54,6 +54,10 @@ describe('materialWorkbookTrimPrice', () => {
     });
     expect(violations).toHaveLength(1);
     expect(violations[0].trimWorkbook).toBe(true);
+    expect(violations[0].code).toBe('below_floor');
+    expect(violations[0].priceBasis).toBe('published_list_plus_ridge');
+    expect(violations[0].minimumPerMeter).toBe(violations[0].floorPerMeter);
     expect(violations[0].floorPerMeter).toBeGreaterThan(500);
+    expect(violations[0].message).toMatch(/trim list/i);
   });
 });

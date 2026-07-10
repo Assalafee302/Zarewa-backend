@@ -18,9 +18,8 @@ function canReadPriceListItems(db) {
 
 function canReadMaterialPricingSheetRows(db) {
   try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()
-    );
+    db.prepare(`SELECT 1 FROM material_pricing_sheet_rows LIMIT 1`).get();
+    return true;
   } catch {
     return false;
   }

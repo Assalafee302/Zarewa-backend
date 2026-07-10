@@ -121,7 +121,7 @@ const OPERATIONAL_TOPICS = [
     module: 'sales',
     action: 'handle below-floor pricing on a quotation',
     title: 'Below-floor pricing exception',
-    answer: 'Below-floor quotes need branch manager approval before production; MD may confirm before refund.',
+    answer: 'Below-floor quotes need Managing Director or administrator approval before production; MD may confirm before refund.',
     steps: [
       'See pricing exception panel on the quotation.',
       'Branch manager approves exception when eligible.',

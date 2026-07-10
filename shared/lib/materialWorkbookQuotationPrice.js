@@ -105,6 +105,8 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   );
   if (!pool.length) return null;
 
+  // Exact design match only (no fuzzy includes). Prefer exact key, else blank design row.
+  // Never fall back to min floor across unrelated designs.
   let best = null;
   let bestScore = -1;
   for (const r of pool) {
@@ -116,12 +118,12 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
     if (designKeys.length) {
       if (designKeys.some((dk) => dk && rd === dk)) score = 20;
       else if (!rd) score = 8;
-      else if (designKeys.some((dk) => dk && (rd.includes(dk) || dk.includes(rd)))) score = 12;
       else continue;
     } else if (!rd) {
       score = 10;
     } else {
-      score = 5;
+      // Design unset on quote: only blank workbook rows are eligible.
+      continue;
     }
 
     if (score > bestScore) {
@@ -131,18 +133,10 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   }
 
   if (!best) {
-    const blank = pool.find((r) => !normPricingKey(r.designKey) && Math.round(Number(r.minimumPricePerMeterNgn) || 0) > 0);
+    const blank = pool.find(
+      (r) => !normPricingKey(r.designKey) && Math.round(Number(r.minimumPricePerMeterNgn) || 0) > 0
+    );
     best = blank || null;
-  }
-  if (!best) {
-    let minFloor = 0;
-    for (const r of pool) {
-      const f = Math.round(Number(r.minimumPricePerMeterNgn) || 0);
-      if (f > 0 && (minFloor === 0 || f < minFloor)) {
-        minFloor = f;
-        best = r;
-      }
-    }
   }
   if (!best) return null;
 

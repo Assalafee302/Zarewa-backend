@@ -1,223 +1,45 @@
 import crypto from 'node:crypto';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
+import {
+  MATERIAL_PRICING_STANDARD_GAUGES_MM,
+  productIdForMaterialKey,
+  theoreticalStandardKgPerM,
+  catalogStandardKgPerM,
+  catalogStandardKgPerMByGauge,
+  isoDateDaysAgo,
+  purchaseAvgConversionKgPerMByGauge,
+  gaugeHistoryAvgConversionKgPerMByGauge,
+  purchaseConversionMetaByGauge,
+  gaugeHistoryConversionMetaByGauge,
+  averageOfThreeConversions,
+  avgMapFromMeta,
+  resolveCoilConversionsForGauge,
+  resolveCoilConversionsForAllGauges,
+} from './materialPricingConversionResolve.js';
+import { suggestedPricePerMeterNgn } from '../shared/lib/suggestedPricePerMeter.js';
 import { appendAuditLog } from './controlOps.js';
-import { upsertPriceListItem } from './pricingOps.js';
+import { upsertPriceListItem, defaultPriceListEffectiveFromIso } from './pricingOps.js';
 import { listMaterialPricingRowsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
 
 export { roundConv2 } from '../shared/lib/conversionKgPerM.js';
-
-/** @type {readonly string[]} */
-export const MATERIAL_PRICING_STANDARD_GAUGES_MM = [
-  '0.18',
-  '0.20',
-  '0.22',
-  '0.24',
-  '0.28',
-  '0.30',
-  '0.40',
-  '0.45',
-  '0.50',
-  '0.55',
-  '0.70',
-];
-
-const STRIP_WIDTH_M = 1.2;
-const DENSITY_ALU = 2.7 * 1000;
-const DENSITY_ALUZINC = 7.8 * 1000;
-
-/** @param {string} materialKey */
-export function productIdForMaterialKey(materialKey) {
-  const k = String(materialKey || '').trim().toLowerCase();
-  if (k === 'alu') return 'COIL-ALU';
-  if (k === 'aluzinc') return 'PRD-102';
-  return '';
-}
-
-/**
- * @param {string} materialKey
- * @param {number} gaugeMm
- */
-export function theoreticalStandardKgPerM(materialKey, gaugeMm) {
-  const k = String(materialKey || '').trim().toLowerCase();
-  const rho = k === 'alu' ? DENSITY_ALU : k === 'aluzinc' ? DENSITY_ALUZINC : null;
-  if (rho == null || !Number.isFinite(gaugeMm) || gaugeMm <= 0) return null;
-  return rho * STRIP_WIDTH_M * (gaugeMm / 1000);
-}
-
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} productId
- * @param {string} gaugeMm
- * @returns {number | null}
- */
-export function catalogStandardKgPerM(db, productId, gaugeMm) {
-  if (!productId || !gaugeMm) return null;
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='procurement_catalog'`).get()) {
-    return null;
-  }
-  const rows = db
-    .prepare(
-      `SELECT conversion_kg_per_m FROM procurement_catalog
-       WHERE product_id = ? AND TRIM(gauge) = TRIM(?) AND conversion_kg_per_m > 0`
-    )
-    .all(productId, String(gaugeMm).trim());
-  if (!rows.length) return null;
-  const sum = rows.reduce((s, r) => s + (Number(r.conversion_kg_per_m) || 0), 0);
-  const v = sum / rows.length;
-  return v > 0 ? v : null;
-}
-
-function isoDateDaysAgo(days) {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - Math.max(1, Math.round(Number(days) || 30)));
-  return d.toISOString().slice(0, 10);
-}
-
-/** Match productionTraceability gauge parsing for workbook hints. */
-function parseGaugeMmFromLabel(value) {
-  const match = String(value ?? '')
-    .replace(/,/g, '.')
-    .match(/(\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const next = Number(match[1]);
-  return Number.isFinite(next) && next > 0 ? next : null;
-}
-
-/** Map a thickness in mm to a standard workbook gauge key, or null. */
-function standardGaugeKeyForMm(mm) {
-  if (!Number.isFinite(mm) || mm <= 0) return null;
-  for (const g of MATERIAL_PRICING_STANDARD_GAUGES_MM) {
-    if (Math.abs(parseFloat(g, 10) - mm) < 1e-4) return g;
-  }
-  return null;
-}
-
-/**
- * Mean supplier kg/m on received coils for this product, grouped by standard gauge key.
- * Optionally restricted to lots received on/after `sinceIso` (YYYY-MM-DD).
- * @param {import('better-sqlite3').Database} db
- * @param {string} productId
- * @param {string | null} sinceIso
- * @returns {Record<string, number>}
- */
-export function purchaseAvgConversionKgPerMByGauge(db, productId, sinceIso = null) {
-  const out = {};
-  const pid = String(productId || '').trim();
-  if (!pid) return out;
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()) return out;
-  const since = sinceIso && String(sinceIso).trim().length >= 10 ? String(sinceIso).trim().slice(0, 10) : null;
-  const rows = since
-    ? db
-        .prepare(
-          `SELECT gauge_label, supplier_conversion_kg_per_m FROM coil_lots
-           WHERE product_id = ?
-             AND supplier_conversion_kg_per_m IS NOT NULL
-             AND supplier_conversion_kg_per_m > 0
-             AND received_at_iso IS NOT NULL
-             AND SUBSTR(received_at_iso, 1, 10) >= ?`
-        )
-        .all(pid, since)
-    : db
-        .prepare(
-          `SELECT gauge_label, supplier_conversion_kg_per_m FROM coil_lots
-           WHERE product_id = ?
-             AND supplier_conversion_kg_per_m IS NOT NULL
-             AND supplier_conversion_kg_per_m > 0`
-        )
-        .all(pid);
-  /** @type {Record<string, number[]>} */
-  const buckets = {};
-  for (const r of rows) {
-    const mm = parseGaugeMmFromLabel(r.gauge_label);
-    const key = standardGaugeKeyForMm(mm);
-    if (!key) continue;
-    const v = Number(r.supplier_conversion_kg_per_m);
-    if (!Number.isFinite(v) || v <= 0) continue;
-    if (!buckets[key]) buckets[key] = [];
-    buckets[key].push(v);
-  }
-  for (const g of Object.keys(buckets)) {
-    const vals = buckets[g];
-    if (!vals.length) continue;
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    if (Number.isFinite(avg) && avg > 0) out[g] = avg;
-  }
-  return out;
-}
-
-/**
- * Mean posted actual kg/m from production conversion checks for this product’s coils, by standard gauge key.
- * @param {import('better-sqlite3').Database} db
- * @param {string} productId
- * @param {string | null} sinceIso — if set, only checks with checked_at_iso on/after this date (YYYY-MM-DD).
- * @returns {Record<string, number>}
- */
-export function gaugeHistoryAvgConversionKgPerMByGauge(db, productId, sinceIso = null) {
-  const out = {};
-  const pid = String(productId || '').trim();
-  if (!pid) return out;
-  if (
-    !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_conversion_checks'`).get() ||
-    !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()
-  ) {
-    return out;
-  }
-  const since = sinceIso && String(sinceIso).trim().length >= 10 ? String(sinceIso).trim().slice(0, 10) : null;
-  const rows = since
-    ? db
-        .prepare(
-          `SELECT c.gauge_label, c.actual_conversion_kg_per_m
-           FROM production_conversion_checks c
-           INNER JOIN coil_lots cl ON cl.coil_no = c.coil_no
-           WHERE cl.product_id = ?
-             AND c.actual_conversion_kg_per_m IS NOT NULL
-             AND c.actual_conversion_kg_per_m > 0
-             AND c.checked_at_iso IS NOT NULL
-             AND SUBSTR(c.checked_at_iso, 1, 10) >= ?`
-        )
-        .all(pid, since)
-    : db
-        .prepare(
-          `SELECT c.gauge_label, c.actual_conversion_kg_per_m
-           FROM production_conversion_checks c
-           INNER JOIN coil_lots cl ON cl.coil_no = c.coil_no
-           WHERE cl.product_id = ?
-             AND c.actual_conversion_kg_per_m IS NOT NULL
-             AND c.actual_conversion_kg_per_m > 0`
-        )
-        .all(pid);
-  /** @type {Record<string, number[]>} */
-  const buckets = {};
-  for (const r of rows) {
-    const mm = parseGaugeMmFromLabel(r.gauge_label);
-    const key = standardGaugeKeyForMm(mm);
-    if (!key) continue;
-    const v = Number(r.actual_conversion_kg_per_m);
-    if (!Number.isFinite(v) || v <= 0) continue;
-    if (!buckets[key]) buckets[key] = [];
-    buckets[key].push(v);
-  }
-  for (const g of Object.keys(buckets)) {
-    const vals = buckets[g];
-    if (!vals.length) continue;
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    if (Number.isFinite(avg) && avg > 0) out[g] = avg;
-  }
-  return out;
-}
-
-/**
- * @param {number | null | undefined} a
- * @param {number | null | undefined} b
- * @param {number | null | undefined} c
- * @returns {number | null}
- */
-export function averageOfThreeConversions(a, b, c) {
-  const vals = [a, b, c].filter((x) => x != null && Number.isFinite(Number(x)) && Number(x) > 0).map(Number);
-  if (!vals.length) return null;
-  return vals.reduce((s, x) => s + x, 0) / vals.length;
-}
+export { suggestedPricePerMeterNgn } from '../shared/lib/suggestedPricePerMeter.js';
+export {
+  MATERIAL_PRICING_STANDARD_GAUGES_MM,
+  productIdForMaterialKey,
+  theoreticalStandardKgPerM,
+  catalogStandardKgPerM,
+  catalogStandardKgPerMByGauge,
+  purchaseAvgConversionKgPerMByGauge,
+  gaugeHistoryAvgConversionKgPerMByGauge,
+  purchaseConversionMetaByGauge,
+  gaugeHistoryConversionMetaByGauge,
+  averageOfThreeConversions,
+  avgMapFromMeta,
+  resolveCoilConversionsForGauge,
+  resolveCoilConversionsForAllGauges,
+  usedConfidenceFromMeta,
+} from './materialPricingConversionResolve.js';
 
 /**
  * Weighted average landed unit cost (₦/kg) from coil GRNs in the last `days`, branch-scoped.
@@ -364,50 +186,6 @@ export function purchaseUnitPriceMapByProductPrefix(db, branchId, productIdLike,
   return map;
 }
 
-/**
- * Data-driven kg/m conversions (2 dp): std = theory/catalog, ref = purchases (30d), hist = production checks (30d), usedSuggested = avg.
- */
-export function resolveCoilConversionsForGauge(db, materialKey, gaugeMm) {
-  const mk = normKey(materialKey);
-  if (mk === 'stone-coated') {
-    return { std: null, ref: null, hist: null, usedSuggested: null };
-  }
-  const pid = productIdForMaterialKey(mk);
-  if (!pid) return { std: null, ref: null, hist: null, usedSuggested: null };
-  const since = isoDateDaysAgo(30);
-  const mm = parseFloat(String(gaugeMm));
-  const th = theoreticalStandardKgPerM(mk, mm);
-  const cat = catalogStandardKgPerM(db, pid, String(gaugeMm).trim());
-  const stdRaw = th ?? cat ?? null;
-  const purchaseMap = purchaseAvgConversionKgPerMByGauge(db, pid, since);
-  const refRaw = purchaseMap[String(gaugeMm).trim()] ?? null;
-  const histMap = gaugeHistoryAvgConversionKgPerMByGauge(db, pid, since);
-  const histRaw = histMap[String(gaugeMm).trim()] ?? null;
-  const std = roundConv2(stdRaw);
-  const ref = roundConv2(refRaw);
-  const hist = roundConv2(histRaw);
-  const usedRaw = averageOfThreeConversions(std, ref, hist);
-  const usedSuggested = roundConv2(usedRaw);
-  return { std, ref, hist, usedSuggested };
-}
-
-/**
- * @param {number | null | undefined} convUsed
- * @param {number | null | undefined} costPerKg
- * @param {number | null | undefined} overheadPerM
- * @param {number | null | undefined} profitPerM
- * @returns {number | null}
- */
-export function suggestedPricePerMeterNgn(convUsed, costPerKg, overheadPerM, profitPerM) {
-  const u = Number(convUsed);
-  const ck = Number(costPerKg);
-  const oh = Number(overheadPerM) || 0;
-  const pr = Number(profitPerM) || 0;
-  if (!Number.isFinite(u) || u <= 0 || !Number.isFinite(ck) || ck < 0) return null;
-  const base = u * ck;
-  return Math.round(base + oh + pr);
-}
-
 function normKey(s) {
   return String(s ?? '')
     .trim()
@@ -458,6 +236,24 @@ function mapRow(row) {
   };
 }
 
+/** Compact audit payload — enough for change log UI without full mapped rows. */
+function compactPricingEventDiff(before, after) {
+  return {
+    beforeMin: before?.minimumPricePerMeterNgn ?? null,
+    afterMin: after?.minimumPricePerMeterNgn ?? null,
+    beforeUsed: before?.conversionUsedKgPerM ?? null,
+    afterUsed: after?.conversionUsedKgPerM ?? null,
+    beforeList: before?.publishedListPriceNgn ?? null,
+    afterList: after?.publishedListPriceNgn ?? null,
+    beforeCost: before?.costPerKgNgn ?? null,
+    afterCost: after?.costPerKgNgn ?? null,
+    beforeCommission: before?.commissionNgnPerM ?? null,
+    afterCommission: after?.commissionNgnPerM ?? null,
+    beforeSync: before?.syncMinimumToPriceList ?? null,
+    afterSync: after?.syncMinimumToPriceList ?? null,
+  };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} materialKey
@@ -475,41 +271,16 @@ export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
   const gaugeList = isStone ? [...STONE_COATED_GAUGES] : [...MATERIAL_PRICING_STANDARD_GAUGES_MM];
   const pid = productIdForMaterialKey(mk);
   const since = isoDateDaysAgo(30);
-  const purchaseAvgConversionByGauge =
-    pid && !isStone ? purchaseAvgConversionKgPerMByGauge(db, pid, since) : {};
-  const gaugeHistoryAvgConversionByGauge =
-    pid && !isStone ? gaugeHistoryAvgConversionKgPerMByGauge(db, pid, since) : {};
+  const purchaseMetaByGauge =
+    pid && !isStone ? purchaseConversionMetaByGauge(db, pid, since, bid) : {};
+  const historyMetaByGauge =
+    pid && !isStone ? gaugeHistoryConversionMetaByGauge(db, pid, since, bid) : {};
+  const purchaseAvgConversionByGauge = !isStone ? avgMapFromMeta(purchaseMetaByGauge) : {};
+  const gaugeHistoryAvgConversionByGauge = !isStone ? avgMapFromMeta(historyMetaByGauge) : {};
+  const catalogByGauge = pid && !isStone ? catalogStandardKgPerMByGauge(db, pid) : {};
   const recommendedCostPerKgNgn =
     pid && !isStone ? purchaseWeightedAvgCostPerKgLastDays(db, pid, bid, 30) : null;
 
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
-    /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; usedSuggested: number | null; used: number | null }>} */
-    const resolvedByGaugeEmpty = {};
-    for (const g of gaugeList) {
-      if (isStone) {
-        resolvedByGaugeEmpty[g] = { std: null, ref: null, hist: null, usedSuggested: null, used: null };
-      } else {
-        const base = resolveCoilConversionsForGauge(db, mk, g);
-        const us = base.usedSuggested;
-        resolvedByGaugeEmpty[g] = { ...base, used: us };
-      }
-    }
-    return {
-      ok: true,
-      materialKey: mk,
-      branchId: bid,
-      gauges: gaugeList,
-      theoreticalStandardByGauge: {},
-      catalogHintByGauge: {},
-      purchaseAvgConversionByGauge,
-      gaugeHistoryAvgConversionByGauge,
-      recommendedCostPerKgNgn,
-      isStoneCoatedWorkbook: isStone,
-      purchaseCostLookbackDays: 30,
-      resolvedByGauge: resolvedByGaugeEmpty,
-      rows: [],
-    };
-  }
   const theoreticalStandardByGauge = {};
   const catalogHintByGauge = {};
   if (!isStone) {
@@ -517,10 +288,61 @@ export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
       const mm = parseFloat(g, 10);
       const t = theoreticalStandardKgPerM(mk, mm);
       if (t != null) theoreticalStandardByGauge[g] = roundConv2(t) ?? t;
-      const c = catalogStandardKgPerM(db, pid, g);
-      if (c != null) catalogHintByGauge[g] = roundConv2(c) ?? c;
+      const c = catalogByGauge[g];
+      if (c != null && Number(c) > 0) catalogHintByGauge[g] = roundConv2(c) ?? c;
     }
   }
+
+  const resolvedAll = !isStone
+    ? resolveCoilConversionsForAllGauges(db, mk, {
+        branchId: bid,
+        gauges: gaugeList,
+        purchaseMeta: purchaseMetaByGauge,
+        histMeta: historyMetaByGauge,
+        catalogByGauge,
+      })
+    : null;
+
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
+    /** @type {Record<string, object>} */
+    const resolvedByGaugeEmpty = {};
+    for (const g of gaugeList) {
+      if (isStone) {
+        resolvedByGaugeEmpty[g] = {
+          std: null,
+          ref: null,
+          hist: null,
+          usedSuggested: null,
+          used: null,
+          stdSource: null,
+          refMeta: { avg: null, n: 0, lastAtIso: null },
+          histMeta: { avg: null, n: 0, lastAtIso: null },
+          usedConfidence: 'none',
+        };
+      } else {
+        const base = resolvedAll[g];
+        resolvedByGaugeEmpty[g] = { ...base, used: base.usedSuggested };
+      }
+    }
+    return {
+      ok: true,
+      materialKey: mk,
+      branchId: bid,
+      gauges: gaugeList,
+      theoreticalStandardByGauge,
+      catalogHintByGauge,
+      purchaseAvgConversionByGauge,
+      gaugeHistoryAvgConversionByGauge,
+      purchaseMetaByGauge,
+      historyMetaByGauge,
+      recommendedCostPerKgNgn,
+      isStoneCoatedWorkbook: isStone,
+      purchaseCostLookbackDays: 30,
+      resolvedByGauge: resolvedByGaugeEmpty,
+      rows: [],
+    };
+  }
+
   const dbRows = (() => {
     const asAt =
       asAtIso != null && String(asAtIso).trim() ? normalizePricingAsAtIso(asAtIso) : null;
@@ -564,24 +386,39 @@ export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
       .map((r) => mapRow(r));
   })();
 
-  /** @type {Record<string, { std: number | null; ref: number | null; hist: number | null; usedSuggested: number | null; used: number | null }>} */
+  /** @type {Map<string, object>} */
+  const rowByBlankDesignGauge = new Map();
+  for (const r of dbRows) {
+    if (!String(r.designKey || '').trim()) {
+      rowByBlankDesignGauge.set(String(r.gaugeMm), r);
+    }
+  }
+
+  /** @type {Record<string, object>} */
   const resolvedByGauge = {};
   for (const g of gaugeList) {
     if (isStone) {
-      resolvedByGauge[g] = { std: null, ref: null, hist: null, usedSuggested: null, used: null };
+      resolvedByGauge[g] = {
+        std: null,
+        ref: null,
+        hist: null,
+        usedSuggested: null,
+        used: null,
+        stdSource: null,
+        refMeta: { avg: null, n: 0, lastAtIso: null },
+        histMeta: { avg: null, n: 0, lastAtIso: null },
+        usedConfidence: 'none',
+      };
       continue;
     }
-    const base = resolveCoilConversionsForGauge(db, mk, g);
-    const rowForGauge = dbRows.find((r) => r.gaugeMm === g && !String(r.designKey || '').trim());
+    const base = resolvedAll[g];
+    const rowForGauge = rowByBlankDesignGauge.get(g);
     const stored = rowForGauge?.conversionUsedKgPerM;
     const storedNum =
       stored != null && Number.isFinite(Number(stored)) && Number(stored) > 0 ? Number(stored) : null;
     const usedEff = storedNum != null ? roundConv2(storedNum) : base.usedSuggested;
     resolvedByGauge[g] = {
-      std: base.std,
-      ref: base.ref,
-      hist: base.hist,
-      usedSuggested: base.usedSuggested,
+      ...base,
       used: usedEff,
     };
   }
@@ -596,6 +433,8 @@ export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
     catalogHintByGauge,
     purchaseAvgConversionByGauge,
     gaugeHistoryAvgConversionByGauge,
+    purchaseMetaByGauge,
+    historyMetaByGauge,
     recommendedCostPerKgNgn,
     isStoneCoatedWorkbook: isStone,
     purchaseCostLookbackDays: 30,
@@ -606,10 +445,11 @@ export function listMaterialPricingSheet(db, materialKey, branchId, asAtIso) {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ materialKey?: string; limit?: number }} q
+ * @param {{ materialKey?: string; branchId?: string; limit?: number }} q
  */
 export function listMaterialPricingEvents(db, q) {
   const mk = normKey(q?.materialKey);
+  const bid = q?.branchId != null ? String(q.branchId).trim() : '';
   const limit = Math.min(200, Math.max(1, Math.round(Number(q?.limit) || 80)));
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_events'`).get()) {
     return { ok: true, events: [] };
@@ -617,27 +457,38 @@ export function listMaterialPricingEvents(db, q) {
   if (!mk || (mk !== 'alu' && mk !== 'aluzinc' && mk !== 'stone-coated')) {
     return { ok: false, error: 'materialKey must be alu, aluzinc, or stone-coated.' };
   }
-  const events = db
-    .prepare(
-      `SELECT id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
-       FROM material_pricing_sheet_events
-       WHERE material_key = ?
-       ORDER BY changed_at_iso DESC
-       LIMIT ?`
-    )
-    .all(mk, limit)
-    .map((row) => ({
-      id: row.id,
-      rowId: row.row_id,
-      materialKey: row.material_key,
-      gaugeMm: row.gauge_mm,
-      branchId: row.branch_id,
-      designKey: row.design_key ?? '',
-      payload: safeJson(row.payload_json),
-      changedAtIso: row.changed_at_iso,
-      changedByUserId: row.changed_by_user_id ?? null,
-      action: row.action ?? 'upsert',
-    }));
+  const events = (
+    bid
+      ? db
+          .prepare(
+            `SELECT id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
+             FROM material_pricing_sheet_events
+             WHERE material_key = ? AND branch_id = ?
+             ORDER BY changed_at_iso DESC
+             LIMIT ?`
+          )
+          .all(mk, bid, limit)
+      : db
+          .prepare(
+            `SELECT id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
+             FROM material_pricing_sheet_events
+             WHERE material_key = ?
+             ORDER BY changed_at_iso DESC
+             LIMIT ?`
+          )
+          .all(mk, limit)
+  ).map((row) => ({
+    id: row.id,
+    rowId: row.row_id,
+    materialKey: row.material_key,
+    gaugeMm: row.gauge_mm,
+    branchId: row.branch_id,
+    designKey: row.design_key ?? '',
+    payload: safeJson(row.payload_json),
+    changedAtIso: row.changed_at_iso,
+    changedByUserId: row.changed_by_user_id ?? null,
+    action: row.action ?? 'upsert',
+  }));
   return { ok: true, events };
 }
 
@@ -653,8 +504,9 @@ function safeJson(raw) {
  * @param {import('better-sqlite3').Database} db
  * @param {object} body
  * @param {object} actor
+ * @param {{ resolvedByGauge?: Record<string, object> }} [opts]
  */
-export function upsertMaterialPricingSheetRow(db, body, actor) {
+export function upsertMaterialPricingSheetRow(db, body, actor, opts = {}) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
     return { ok: false, error: 'Pricing workbook tables are not available.' };
   }
@@ -706,7 +558,10 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
     hist = null;
     used = null;
   } else {
-    const resolved = resolveCoilConversionsForGauge(db, materialKey, gaugeMm);
+    const resolved = resolveCoilConversionsForGauge(db, materialKey, gaugeMm, {
+      branchId,
+      resolvedByGauge: opts.resolvedByGauge,
+    });
     std = resolved.std;
     ref = resolved.ref;
     hist = resolved.hist;
@@ -736,7 +591,6 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
     syncDesignKeyStored = 'stone-coated';
   }
   syncDesignKeyStored = syncDesignKeyStored.slice(0, 120);
-  const listPriceForSync = roundPublishedPrice(minimum + commission);
 
   const now = new Date().toISOString();
   const before = existing ? mapRow(existing) : null;
@@ -815,7 +669,7 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
     gaugeMm,
     branchId,
     designKey,
-    JSON.stringify({ before, after }),
+    JSON.stringify(compactPricingEventDiff(before, after)),
     now,
     actor?.id ?? null,
     'upsert'
@@ -829,35 +683,68 @@ export function upsertMaterialPricingSheetRow(db, body, actor) {
     note: `${materialKey} · ${gaugeMm} mm · ${branchId}`,
   });
 
-  let priceListSync = null;
-  if (syncMinimumToPriceList && listPriceForSync > 0) {
-    let syncDesign = syncDesignKeyStored || normKey(body?.syncDesignKey ?? body?.priceListDesignKey ?? '');
-    if (materialKey === 'stone-coated') {
-      syncDesign = syncDesign || 'stone-coated';
+  // Draft save only — price list updates go through publishMaterialPricingSheet.
+  return { ok: true, id, row: after, priceListSync: null };
+}
+
+/**
+ * Bulk upsert workbook rows in one transaction; resolve conversions once per material/branch.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ materialKey?: string; branchId?: string; rows?: object[] }} body
+ * @param {object} actor
+ */
+export function upsertMaterialPricingSheetRowsBulk(db, body, actor) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
+    return { ok: false, error: 'Pricing workbook tables are not available.', saved: [], errors: [] };
+  }
+  const materialKey = normKey(body?.materialKey);
+  const branchId = String(body?.branchId ?? '').trim();
+  const rows = Array.isArray(body?.rows) ? body.rows : [];
+  if (!materialKey || (materialKey !== 'alu' && materialKey !== 'aluzinc' && materialKey !== 'stone-coated')) {
+    return { ok: false, error: 'materialKey must be alu, aluzinc, or stone-coated.', saved: [], errors: [] };
+  }
+  if (!branchId) return { ok: false, error: 'branchId is required.', saved: [], errors: [] };
+  if (!rows.length) return { ok: false, error: 'rows array is required.', saved: [], errors: [] };
+
+  const resolvedByGauge =
+    materialKey === 'stone-coated'
+      ? {}
+      : resolveCoilConversionsForAllGauges(db, materialKey, { branchId });
+
+  /** @type {object[]} */
+  const saved = [];
+  /** @type {{ index: number; error: string }[]} */
+  const errors = [];
+
+  const runAll = db.transaction(() => {
+    for (let i = 0; i < rows.length; i++) {
+      const rowBody = { ...(rows[i] || {}), materialKey, branchId };
+      const r = upsertMaterialPricingSheetRow(db, rowBody, actor, { resolvedByGauge });
+      if (r.ok) {
+        saved.push(r.row);
+      } else {
+        errors.push({ index: i, error: r.error || 'Save failed.' });
+      }
     }
-    if (!syncDesign) {
-      priceListSync = { ok: false, error: 'syncDesignKey is required to sync list price into the floor price list.' };
-    } else {
-      const plId = `PL-MPS-${String(id).replace(/^MPS-/i, '').slice(0, 16)}`;
-      const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
-      const pl = upsertPriceListItem(
-        db,
-        {
-          id: plId,
-          gaugeKey: gaugeMm,
-          designKey: syncDesign,
-          unitPricePerMeterNgn: listPriceForSync,
-          branchId,
-          notes: `Synced from material pricing (${materialKey}): floor + commission, published rounding.`,
-          materialTypeKey: mtKey,
-        },
-        actor
-      );
-      priceListSync = pl;
-    }
+  });
+
+  try {
+    runAll();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || 'Bulk upsert failed.',
+      saved: [],
+      errors: [{ index: -1, error: e?.message || 'Bulk upsert failed.' }],
+    };
   }
 
-  return { ok: true, id, row: after, priceListSync };
+  return {
+    ok: errors.length === 0,
+    saved,
+    errors,
+    error: errors.length ? `${errors.length} row(s) failed to save.` : undefined,
+  };
 }
 
 /**
@@ -873,7 +760,30 @@ export function deleteMaterialPricingSheetRow(db, rowId, actor) {
   if (!id) return { ok: false, error: 'Row id is required.' };
   const existing = db.prepare(`SELECT * FROM material_pricing_sheet_rows WHERE id = ?`).get(id);
   if (!existing) return { ok: false, error: 'Row not found.' };
+  const before = mapRow(existing);
+  const now = new Date().toISOString();
   db.prepare(`DELETE FROM material_pricing_sheet_rows WHERE id = ?`).run(id);
+
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_events'`).get()) {
+    const evId = `MPSE-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_events (
+        id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
+      ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      evId,
+      id,
+      existing.material_key,
+      existing.gauge_mm,
+      existing.branch_id,
+      existing.design_key ?? '',
+      JSON.stringify(compactPricingEventDiff(before, null)),
+      now,
+      actor?.id ?? null,
+      'delete'
+    );
+  }
+
   appendAuditLog(db, {
     actor,
     action: 'pricing.material_sheet_delete',
@@ -882,4 +792,112 @@ export function deleteMaterialPricingSheetRow(db, rowId, actor) {
     note: `${existing.material_key} · ${existing.gauge_mm} mm · ${existing.branch_id}`,
   });
   return { ok: true };
+}
+
+/**
+ * Explicit publish: upsert price_list_items for workbook rows marked syncMinimumToPriceList
+ * (or for explicit row ids). Does not change draft sheet economics.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ materialKey?: string; branchId?: string; rowIds?: string[]; effectiveFromIso?: string }} body
+ * @param {object} actor
+ */
+export function publishMaterialPricingSheet(db, body, actor) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()) {
+    return { ok: false, error: 'Pricing workbook tables are not available.' };
+  }
+  const materialKey = normKey(body?.materialKey);
+  const branchId = String(body?.branchId ?? '').trim();
+  if (!materialKey || (materialKey !== 'alu' && materialKey !== 'aluzinc' && materialKey !== 'stone-coated')) {
+    return { ok: false, error: 'materialKey must be alu, aluzinc, or stone-coated.' };
+  }
+  if (!branchId) return { ok: false, error: 'branchId is required.' };
+
+  const idList = Array.isArray(body?.rowIds)
+    ? body.rowIds.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+
+  let rows;
+  if (idList.length) {
+    const placeholders = idList.map(() => '?').join(',');
+    rows = db
+      .prepare(
+        `SELECT * FROM material_pricing_sheet_rows
+         WHERE material_key = ? AND branch_id = ? AND id IN (${placeholders})`
+      )
+      .all(materialKey, branchId, ...idList);
+  } else {
+    rows = db
+      .prepare(
+        `SELECT * FROM material_pricing_sheet_rows
+         WHERE material_key = ? AND branch_id = ? AND sync_minimum_to_price_list = 1`
+      )
+      .all(materialKey, branchId);
+  }
+
+  if (!rows.length) {
+    return { ok: false, error: 'No workbook rows selected for publish (tick Include in publish).' };
+  }
+
+  const published = [];
+  const errors = [];
+  for (const raw of rows) {
+    const row = mapRow(raw);
+    const listPrice = Number(row.publishedListPriceNgn) || 0;
+    if (listPrice <= 0) {
+      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'List price must be > 0.' });
+      continue;
+    }
+    let syncDesign = String(row.syncDesignKey || '').trim();
+    if (materialKey === 'stone-coated') syncDesign = syncDesign || 'stone-coated';
+    if (!syncDesign) {
+      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'syncDesignKey is required to publish.' });
+      continue;
+    }
+    const plId = `PL-MPS-${String(row.id).replace(/^MPS-/i, '').slice(0, 16)}`;
+    const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
+    const pl = upsertPriceListItem(
+      db,
+      {
+        id: plId,
+        gaugeKey: row.gaugeMm,
+        designKey: syncDesign,
+        unitPricePerMeterNgn: listPrice,
+        branchId,
+        // Local calendar day when body omits effectiveFromIso (same default as upsertPriceListItem).
+        effectiveFromIso:
+          String(body?.effectiveFromIso || '').trim().slice(0, 10) ||
+          defaultPriceListEffectiveFromIso(),
+        notes: `Published from material pricing workbook (${materialKey}): floor + commission.`,
+        materialTypeKey: mtKey,
+      },
+      actor
+    );
+    if (!pl?.ok) {
+      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: pl?.error || 'Price list upsert failed.' });
+      continue;
+    }
+    published.push({
+      rowId: row.id,
+      gaugeMm: row.gaugeMm,
+      designKey: syncDesign,
+      floorNgn: row.minimumPricePerMeterNgn,
+      listNgn: listPrice,
+      priceListId: pl.id || plId,
+    });
+  }
+
+  appendAuditLog(db, {
+    actor,
+    action: 'pricing.material_sheet_publish',
+    entityKind: 'material_pricing_sheet',
+    entityId: `${materialKey}:${branchId}`,
+    note: `Published ${published.length} row(s); ${errors.length} error(s)`,
+  });
+
+  return {
+    ok: errors.length === 0,
+    published,
+    errors,
+    error: errors.length ? `${errors.length} row(s) failed to publish.` : undefined,
+  };
 }

@@ -46,6 +46,50 @@ describe('materialWorkbookQuotationPrice', () => {
     expect(hit?.suggestedListPerMeter).toBe(4200);
   });
 
+  it('does not fall back to min floor across designs when design is unmatched', () => {
+    const hit = resolveMaterialWorkbookPriceFromRows(rows, {
+      materialKey: 'aluzinc',
+      gaugeMm: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: 'UnknownDesign',
+    });
+    expect(hit).toBeNull();
+  });
+
+  it('does not fuzzy-match design via includes', () => {
+    const hit = resolveMaterialWorkbookPriceFromRows(rows, {
+      materialKey: 'aluzinc',
+      gaugeMm: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: 'long',
+    });
+    expect(hit).toBeNull();
+  });
+
+  it('uses blank design row when design keys are empty', () => {
+    const withBlank = [
+      ...rows,
+      {
+        id: 'MPS-blank',
+        materialKey: 'aluzinc',
+        gaugeMm: '0.45',
+        branchId: 'BR-001',
+        designKey: '',
+        minimumPricePerMeterNgn: 3900,
+        commissionNgnPerM: 100,
+        publishedListPriceNgn: 4000,
+      },
+    ];
+    const hit = resolveMaterialWorkbookPriceFromRows(withBlank, {
+      materialKey: 'aluzinc',
+      gaugeMm: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: '',
+    });
+    expect(hit?.floorPerMeter).toBe(3900);
+    expect(hit?.rowId).toBe('MPS-blank');
+  });
+
   it('publishedListPriceFromWorkbook rounds floor + commission', () => {
     expect(publishedListPriceFromWorkbook(4010, 90)).toBe(4100);
   });

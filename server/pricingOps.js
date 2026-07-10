@@ -46,10 +46,14 @@ export function validatePriceListEffectiveIso(s) {
 }
 
 /**
- * Default effective date for new/changed rows when omitted (today UTC date label).
+ * Default effective date for new/changed rows when omitted (local calendar day).
+ * Avoids UTC midnight shifting the business date for WAT/etc.
  */
-export function defaultPriceListEffectiveFromIso() {
-  return new Date().toISOString().slice(0, 10);
+export function defaultPriceListEffectiveFromIso(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /**
@@ -517,7 +521,8 @@ export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
   }
   const row = db
     .prepare(
-      `SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
+      `SELECT id, lines_json, branch_id, date_iso,
+              md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
        FROM quotations WHERE id = ?`
     )
     .get(qid);
@@ -537,20 +542,38 @@ export function approveMdPriceExceptionForQuotation(db, quotationId, actor) {
     return { ok: false, error: 'Pricing workbook / list is empty; no exception needed.' };
   }
   const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE quotations SET
-      md_price_exception_approved_at_iso = ?,
-      md_price_exception_approved_by_user_id = ?,
-      price_exception_md_review_required = 1
-     WHERE id = ?`
-  ).run(now, actor?.id ?? null, qid);
+  const snapshotJson = JSON.stringify(violations);
+  const violationSummary = violations
+    .map(
+      (v) =>
+        `${v.lineCategory || 'line'}#${Number(v.lineIndex) + 1} quoted ${v.quotedPerMeter}/m < floor ${v.floorPerMeter}/m`
+    )
+    .join('; ');
+  try {
+    db.prepare(
+      `UPDATE quotations SET
+        md_price_exception_approved_at_iso = ?,
+        md_price_exception_approved_by_user_id = ?,
+        md_price_exception_snapshot_json = ?,
+        price_exception_md_review_required = 1
+       WHERE id = ?`
+    ).run(now, actor?.id ?? null, snapshotJson, qid);
+  } catch {
+    db.prepare(
+      `UPDATE quotations SET
+        md_price_exception_approved_at_iso = ?,
+        md_price_exception_approved_by_user_id = ?,
+        price_exception_md_review_required = 1
+       WHERE id = ?`
+    ).run(now, actor?.id ?? null, qid);
+  }
   appendAuditLog(db, {
     actor,
     action: 'quotation.md_price_exception_approve',
     entityKind: 'quotation',
     entityId: qid,
-    note: actorName(actor),
-    details: { violations },
+    note: `${actorName(actor)} — ${violations.length} below-floor line(s): ${violationSummary}`.slice(0, 500),
+    details: { violations, snapshotJson },
   });
   return { ok: true };
 }

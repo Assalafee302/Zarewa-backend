@@ -219,6 +219,7 @@ import {
   lockAccountingPeriod,
   previewRefundRequest,
   buildRefundEconomicFloorSummary,
+  quotationActiveRefundedTotalNgn,
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   refundCuttingListQuotationMetreIssues,
@@ -8394,6 +8395,8 @@ export function registerHttpApi(app, db) {
       if (!quotationRef) {
         return res.status(400).json({ ok: false, error: 'quotationRef is required' });
       }
+      const excludeRefundId =
+        String(req.query.excludeRefundId || req.query.refundId || '').trim() || null;
       const branchScope = resolveBootstrapBranchScope(req);
       const { receipts, cuttingLists, summary } = getRefundIntelligenceForQuotation(db, quotationRef, branchScope);
       const dataQualityIssues = dedupeRefundDataQualityIssues([
@@ -8422,16 +8425,16 @@ export function registerHttpApi(app, db) {
         isStoneMeterQuote: stoneMeterQuote,
       });
       const cashBreakdown = quotationPaymentCashBreakdown(db, quotationRef);
-      const el = quotationMeetsRefundEligibility(db, quotationRef);
+      const priorRefundedNgn = quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId);
       const economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
         cashInNgn: cashBreakdown.cashInNgn,
-        priorRefundedNgn: el.ok ? el.totalRefundedNgn : 0,
+        priorRefundedNgn,
         pricingAsAtIso: quotationPricingAsAtIso(quote),
       });
       const staleRefundWarnings = listStaleOpenRefundsForQuotation(
         db,
         quotationRef,
-        economicFloor?.maxDefensibleRefundNgn
+        economicFloor
       );
       res.json({
         ok: true,
@@ -8443,6 +8446,7 @@ export function registerHttpApi(app, db) {
         productionFulfillment,
         economicFloor,
         staleRefundWarnings,
+        excludeRefundId,
       });
     } catch (e) {
       console.error(e);
@@ -8478,6 +8482,7 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         acknowledgedCodes: body.productionAlignmentAcknowledgedCodes ?? body.productionAlignmentAcknowledged ?? [],
         overrideNote: body.productionAlignmentOverrideNote ?? body.productionAlignmentOverride ?? '',
+        excludeRefundId: body.excludeRefundId ?? body.refundId ?? null,
       });
       res.json(result);
     } catch (e) {
@@ -10262,7 +10267,10 @@ export function registerHttpApi(app, db) {
         const qid = String(req.params.id ?? '').trim();
         const qGate = assertQuotationIdInWorkspace(db, req, qid);
         if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
-        const r = recalculateQuotationIntegrity(db, qid, { actor: req.user });
+        const r = recalculateQuotationIntegrity(db, qid, {
+          actor: req.user,
+          excludeRefundId: String(req.body?.excludeRefundId || req.body?.refundId || '').trim() || null,
+        });
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error(e);

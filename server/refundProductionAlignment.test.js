@@ -36,12 +36,23 @@ describe('refundProductionAlignment', () => {
             }
             return undefined;
           },
-          all(ref) {
+          all(...args) {
+            const ref = args[0];
             if (s.includes('FROM production_jobs')) {
               return db.data.production_jobs.filter((j) => j.quotation_ref === ref);
             }
             if (s.includes('FROM customer_refunds')) {
-              return db.data.customer_refunds.filter((r) => r.quotation_ref === ref);
+              let rows = db.data.customer_refunds.filter((r) => r.quotation_ref === ref);
+              if (s.includes("NOT IN ('rejected', 'cancelled')")) {
+                rows = rows.filter(
+                  (r) => !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase())
+                );
+              }
+              if (s.includes('refund_id != ?') && args[1] != null) {
+                const exclude = String(args[1]);
+                rows = rows.filter((r) => String(r.refund_id) !== exclude);
+              }
+              return rows;
             }
             if (s.includes('FROM cutting_lists')) {
               return db.data.cutting_lists.filter((cl) => cl.quotation_ref === ref);
@@ -187,6 +198,29 @@ describe('refundProductionAlignment', () => {
     const db = memDb();
     const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Overpayment', 'Unproduced meterage']);
     expect(issues.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
+  });
+
+  it('does not self-flag Overpayment+Unproduced when the pending refund is excluded', () => {
+    const db = memDb();
+    db.data.customer_refunds.push({
+      refund_id: 'RF-SELF',
+      quotation_ref: 'Q1',
+      status: 'Pending',
+      reason_category: '["Overpayment","Unproduced meterage"]',
+    });
+    const withoutExclude = refundProductionAlignmentWarnings(db, 'Q1', [
+      'Overpayment',
+      'Unproduced meterage',
+    ]);
+    expect(withoutExclude.some((i) => i.code === 'multi_category_overlap')).toBe(true);
+
+    const withExclude = refundProductionAlignmentWarnings(
+      db,
+      'Q1',
+      ['Overpayment', 'Unproduced meterage'],
+      { excludeRefundId: 'RF-SELF' }
+    );
+    expect(withExclude.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
   });
 
   it('blocks cancellation with coil production unless BM override note', () => {

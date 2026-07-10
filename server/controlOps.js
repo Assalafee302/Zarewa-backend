@@ -369,6 +369,33 @@ export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reas
 }
 
 /**
+ * Sum of non-rejected / non-cancelled refund amounts on a quotation.
+ * Pass `excludeRefundId` when evaluating headroom for an existing request (approve / payout / integrity).
+ */
+export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId = null) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return 0;
+  const exclude = String(excludeRefundId || '').trim();
+  const row = exclude
+    ? db
+        .prepare(
+          `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+             AND refund_id != ?`
+        )
+        .get(ref, exclude)
+    : db
+        .prepare(
+          `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+        )
+        .get(ref);
+  return roundMoney(row?.s ?? 0);
+}
+
+/**
  * Shared financial guards for refund approve and payout (live preview caps, economic floor, stale detection).
  */
 export function validateRefundFinancialGuards(db, opts = {}) {
@@ -401,7 +428,11 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const amt = roundMoney(amountNgn);
   if (amt <= 0) return { ok: false, error: 'Refund amount must be positive.' };
 
-  const preview = previewRefundRequest(db, { quotationRef: ref });
+  const excludeId = String(refundId || '').trim() || null;
+  const preview = previewRefundRequest(db, {
+    quotationRef: ref,
+    excludeRefundId: excludeId,
+  });
   if (!preview.ok) return preview;
 
   const economicFloor = preview.preview?.economicFloor ?? null;
@@ -438,17 +469,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
     };
   }
 
-  const totalRefundedExcluding = roundMoney(
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-         WHERE quotation_ref = ?
-           AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')${
-             refundId ? ' AND refund_id != ?' : ''
-           }`
-      )
-      .get(...(refundId ? [ref, refundId] : [ref]))?.s ?? 0
-  );
+  const totalRefundedExcluding = quotationActiveRefundedTotalNgn(db, ref, excludeId);
 
   const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
     cashInNgn: quotationCashInNgn(db, ref),
@@ -2762,6 +2783,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       actor,
       acknowledgedCodes: mergedAck,
       overrideNote: effectiveOverride,
+      excludeRefundId: refundID,
     });
     if (!alignment.ok) return alignment;
     approvalAlignmentAckJson = mergeProductionAlignmentAckJson(storedAlign, alignment, 'approval');
@@ -3834,10 +3856,11 @@ export function previewRefundRequest(db, payload) {
 
   let economicFloor = null;
   if (quotationRef && quote) {
-    const elForFloor = quotationMeetsRefundEligibility(db, quotationRef);
+    const excludeRefundId = String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
+    const priorRefundedNgn = quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId);
     economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
       cashInNgn,
-      priorRefundedNgn: elForFloor.ok ? elForFloor.totalRefundedNgn : 0,
+      priorRefundedNgn,
       pricingAsAtIso,
       substitutePricePerMeterNgn: positiveNumber(payload.substitutePricePerMeterNgn),
     });
@@ -3864,10 +3887,10 @@ export function previewRefundRequest(db, payload) {
 
   let derivedCategoryMaxNgn = {};
   if (quotationRef && quote && economicFloor) {
-    const elForDerived = quotationMeetsRefundEligibility(db, quotationRef);
+    const excludeRefundId = String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
     derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
       cashInNgn,
-      totalRefundedNgn: elForDerived.ok ? elForDerived.totalRefundedNgn : 0,
+      totalRefundedNgn: quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId),
       economicFloor,
     });
   }
@@ -4033,13 +4056,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
   if (cashInNgn <= 0 && paidNgn <= 0) {
     return { ok: false, error: 'This quotation has no recorded payment toward a refund.' };
   }
-  const sumRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount_ngn), 0) AS s FROM customer_refunds
-       WHERE quotation_ref = ? AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
-    )
-    .get(ref);
-  const totalRefundedNgn = roundMoney(sumRow?.s ?? 0);
+  const totalRefundedNgn = quotationActiveRefundedTotalNgn(db, ref);
   const remainingNgn = quotationRefundHardCapNgn({
     cashInNgn,
     totalRefundedNgn,

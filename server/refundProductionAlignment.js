@@ -93,24 +93,36 @@ function sumJobMeters(db, jobs, quote = null) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationRef
  */
-export function loadQuotationProductionContext(db, quotationRef) {
+export function loadQuotationProductionContext(db, quotationRef, opts = {}) {
   const ref = String(quotationRef || '').trim();
   if (!ref) {
     return { jobs: [], refunds: [], quote: null };
   }
+  const excludeRefundId = String(opts.excludeRefundId || '').trim();
   const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(ref) || null;
   const jobs = db
     .prepare(`SELECT * FROM production_jobs WHERE quotation_ref = ? ORDER BY created_at_iso`)
     .all(ref);
-  const refunds = db
-    .prepare(
-      `SELECT refund_id, status, amount_ngn, reason_category, requested_at_iso
-       FROM customer_refunds
-       WHERE quotation_ref = ?
-         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
-       ORDER BY requested_at_iso`
-    )
-    .all(ref);
+  const refunds = excludeRefundId
+    ? db
+        .prepare(
+          `SELECT refund_id, status, amount_ngn, reason_category, requested_at_iso
+           FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+             AND refund_id != ?
+           ORDER BY requested_at_iso`
+        )
+        .all(ref, excludeRefundId)
+    : db
+        .prepare(
+          `SELECT refund_id, status, amount_ngn, reason_category, requested_at_iso
+           FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
+           ORDER BY requested_at_iso`
+        )
+        .all(ref);
   return { jobs, refunds, quote };
 }
 
@@ -118,9 +130,10 @@ export function loadQuotationProductionContext(db, quotationRef) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationRef
  * @param {string[] | string | null | undefined} [selectedCategories]
+ * @param {{ excludeRefundId?: string | null }} [opts]
  */
-export function refundProductionAlignmentWarnings(db, quotationRef, selectedCategories = []) {
-  const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef);
+export function refundProductionAlignmentWarnings(db, quotationRef, selectedCategories = [], opts = {}) {
+  const { jobs, refunds, quote } = loadQuotationProductionContext(db, quotationRef, opts);
   const issues = [];
   const selected = new Set(
     (Array.isArray(selectedCategories) ? selectedCategories : parseReasonCategories(selectedCategories)).map(normCat)
@@ -346,12 +359,13 @@ export function enrichProductionAlignmentIssuesForSubmit(issues) {
  * @param {string[] | string | null | undefined} selectedCategories
  * @param {{ actor?: object, acknowledgedCodes?: string[], overrideNote?: string }} [options]
  */
-export function validateRefundProductionAlignmentAtSubmit(db, quotationRef, selectedCategories, options = {}) {  const { actor, acknowledgedCodes = [], overrideNote = '' } = options;
+export function validateRefundProductionAlignmentAtSubmit(db, quotationRef, selectedCategories, options = {}) {
+  const { actor, acknowledgedCodes = [], overrideNote = '', excludeRefundId = null } = options;
   const ackSet = new Set((acknowledgedCodes || []).map((c) => String(c).trim()).filter(Boolean));
   const override = String(overrideNote || '').trim();
   const mayOverride = actorMayOverrideProductionAlignmentBlock(actor);
   const issues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, selectedCategories)
+    refundProductionAlignmentWarnings(db, quotationRef, selectedCategories, { excludeRefundId })
   );
 
   const blocks = issues.filter((i) => i.submitAction === 'block');

@@ -902,12 +902,50 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
   }
   try {
     const normalized = (allocations || []).map((line, index) => normalizeAllocationInput(line, index));
-    if (!normalized.length) return { ok: false, error: 'Add at least one coil allocation.' };
+    const existing = listJobCoilsForJob(db, jobID);
+    const oldReservedByCoil = new Map(existing.map((row) => [row.coil_no, safeNumber(row.opening_weight_kg)]));
+
+    /** Empty list clears every allocation and releases reserved kg so coils return to free stock. */
+    if (!normalized.length) {
+      db.transaction(() => {
+        for (const [coilNo, previousReserved] of oldReservedByCoil.entries()) {
+          const coil = coilRow(db, coilNo);
+          if (!coil) continue;
+          const qtyReserved = clampNonNegative(coil.qty_reserved);
+          db.prepare(`UPDATE coil_lots SET qty_reserved = ? WHERE coil_no = ?`).run(
+            clampNonNegative(qtyReserved - previousReserved),
+            coilNo
+          );
+          updateCoilDerivedStateTx(db, coilNo);
+        }
+        db.prepare(`DELETE FROM production_job_coils WHERE job_id = ?`).run(jobID);
+        refreshJobCoilSpecFlagsTx(db, jobID);
+        appendAuditLog(db, {
+          actor: opts.actor,
+          action: 'production.allocate_coils',
+          entityKind: 'production_job',
+          entityId: jobID,
+          note: 'All coil allocations cleared — reserved kg released',
+          details: {
+            jobID,
+            releasedCoils: [...oldReservedByCoil.entries()].map(([coilNo, openingWeightKg]) => ({
+              coilNo,
+              openingWeightKg,
+            })),
+          },
+        });
+      })();
+      const stockRecalc = recalculateProductionJobCoilStock(db, jobID, {
+        extraCoilNos: [...oldReservedByCoil.keys()],
+        workspaceBranchId: opts.workspaceBranchId,
+        actor: opts.actor,
+      });
+      return { ok: true, allocations: [], stockRecalc, cleared: true };
+    }
+
     const specBlock = validateSpecAcknowledgements(db, job, normalized);
     if (specBlock) return specBlock;
     validateUniqueCoils(normalized);
-    const existing = listJobCoilsForJob(db, jobID);
-    const oldReservedByCoil = new Map(existing.map((row) => [row.coil_no, safeNumber(row.opening_weight_kg)]));
     const newReservedByCoil = new Map(normalized.map((row) => [row.coilNo, row.openingWeightKg]));
     db.transaction(() => {
       for (const coilNo of new Set([...oldReservedByCoil.keys(), ...newReservedByCoil.keys()])) {

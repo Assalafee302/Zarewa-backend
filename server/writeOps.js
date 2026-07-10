@@ -3622,11 +3622,14 @@ export function recalculateCoilLotBook(db, coilNo, opts = {}) {
   const bid = String(row.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const productID = String(row.product_id || '').trim();
 
+  const runCore = () => {
+    finalizeCoilLotStateTx(db, cn);
+    if (productID) reconcileCoilProductStockFromLots(db, productID, bid);
+  };
+
   try {
-    db.transaction(() => {
-      finalizeCoilLotStateTx(db, cn);
-      if (productID) reconcileCoilProductStockFromLots(db, productID, bid);
-    })();
+    if (opts.skipInnerTransaction) runCore();
+    else db.transaction(runCore)();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

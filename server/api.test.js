@@ -2940,6 +2940,90 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(pj2.offcutInventoryMeters).toBeCloseTo(4, 3);
   });
 
+  it('completion-coil-corrections reverses finish-roll tail and can leave steel on the coil', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 50 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 50,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 500 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 0,
+          metersProduced: 50,
+          finishCoil: true,
+        },
+      ],
+      conversionVarianceReasonCode: 'wrong_coil',
+      conversionVarianceReasonText: 'Finish-roll correction test setup.',
+    });
+    if (complete.status !== 200) {
+      // eslint-disable-next-line no-console
+      console.error('complete failed', complete.status, complete.body);
+    }
+    expect(complete.status).toBe(200);
+
+    const bootAfterComplete = await agent.get('/api/bootstrap');
+    const lotAfterComplete = bootAfterComplete.body.coilLots.find((c) => c.coilNo === coilA);
+    const remAfterComplete = Number(lotAfterComplete.qtyRemaining ?? lotAfterComplete.currentWeightKg) || 0;
+
+    const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(list.status).toBe(200);
+    const line = list.body.allocations[0];
+    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+      reason: 'Roll finished was ticked by mistake — steel remains on the roll after yard check.',
+      readings: [
+        {
+          allocationId: line.id,
+          coilNo: line.coilNo,
+          openingWeightKg: line.openingWeightKg,
+          closingWeightKg: 0,
+          metersProduced: 50,
+          finishCoil: false,
+        },
+      ],
+    });
+    if (corr.status !== 200) {
+      // eslint-disable-next-line no-console
+      console.error('corr failed', corr.status, corr.body);
+    }
+    expect(corr.status).toBe(200);
+    expect(corr.body.ok).toBe(true);
+
+    const bootAfterCorr = await agent.get('/api/bootstrap');
+    const lotRestored = bootAfterCorr.body.coilLots.find((c) => c.coilNo === coilA);
+    const remAfterCorr = Number(lotRestored.qtyRemaining ?? lotRestored.currentWeightKg) || 0;
+    /** Without re-applying finish-roll, correction restores any cleared tail onto the coil book. */
+    expect(remAfterCorr).toBeGreaterThanOrEqual(remAfterComplete);
+    expect(remAfterCorr).toBeGreaterThanOrEqual(2500);
+  });
+
   it('coil split, scrap, and return-material update lots, lineage, and stock movements', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const d = '2026-03-29';

@@ -2521,19 +2521,24 @@ export function listCoilRequests(db, branchScope = 'ALL') {
     }));
 }
 
+function mapYardCoilRow(row) {
+  const weightKg = Number(row?.weight_kg);
+  return {
+    id: row.id,
+    colour: row.colour,
+    gaugeLabel: row.gauge_label,
+    materialType: row.material_type,
+    weightKg: Number.isFinite(weightKg) ? weightKg : null,
+    loc: row.loc,
+  };
+}
+
 export function listYardCoils(db, branchScope = 'ALL') {
   if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'coil_lots', 'branch_id')) {
     return db
       .prepare(`SELECT * FROM yard_coils ORDER BY id`)
       .all()
-      .map((row) => ({
-        id: row.id,
-        colour: row.colour,
-        gaugeLabel: row.gauge_label,
-        materialType: row.material_type,
-        weightKg: row.weight_kg,
-        loc: row.loc,
-      }));
+      .map(mapYardCoilRow);
   }
   const b = branchWhere(db, 'coil_lots', branchScope);
   return db
@@ -2543,14 +2548,7 @@ export function listYardCoils(db, branchScope = 'ALL') {
        ORDER BY y.id`
     )
     .all(...b.args)
-    .map((row) => ({
-      id: row.id,
-      colour: row.colour,
-      gaugeLabel: row.gauge_label,
-      materialType: row.material_type,
-      weightKg: row.weight_kg,
-      loc: row.loc,
-    }));
+    .map(mapYardCoilRow);
 }
 
 export function listProcurementCatalog(db) {

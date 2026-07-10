@@ -19,7 +19,9 @@ import {
   mergeWorkspaceSearchResults,
   applyContextBoostToByKind,
   scoreWorkspaceSearchMatch,
+  resolveTransactionSearchHit,
 } from '../shared/lib/workspaceSearchCore.js';
+import { userMayPerformManagerQuotationClearance } from '../shared/workspaceGovernance.js';
 import { searchCoilLots } from './readModel.js';
 import {
   allowedWorkspaceSearchFtsKinds,
@@ -30,6 +32,15 @@ import {
 /** @param {string} s */
 export function escapeSqlLikePattern(s) {
   return String(s || '').replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
+ * @param {import('../shared/lib/workspaceSearchCore.js').WorkspaceSearchHit[]} hits
+ * @param {object | null | undefined} user
+ */
+function decorateTransactionSearchHits(hits, user) {
+  const openManagerIntel = userMayPerformManagerQuotationClearance(user);
+  return (hits || []).map((hit) => resolveTransactionSearchHit(hit, { openManagerIntel }) || hit);
 }
 
 /**
@@ -125,10 +136,13 @@ function workspaceQuickSearchWithFts(db, req, rawQuery, limit, opts = {}) {
     byKind.work_item = workHits;
   }
 
-  return mergeWorkspaceSearchResults(applyContextBoostToByKind(byKind, opts.contextPath), {
-    totalCap: cap,
-    minPerKind: 2,
-  });
+  return decorateTransactionSearchHits(
+    mergeWorkspaceSearchResults(applyContextBoostToByKind(byKind, opts.contextPath), {
+      totalCap: cap,
+      minPerKind: 2,
+    }),
+    user
+  );
 }
 
 /**
@@ -226,7 +240,11 @@ function workspaceQuickSearchWithSql(db, req, rawQuery, limit, opts = {}) {
       label: row.id,
       sublabel: row.customer_name,
       path: '/sales',
-      state: { globalSearchQuery: row.id, focusSalesTab: 'receipts' },
+      state: {
+        globalSearchQuery: row.id,
+        focusSalesTab: 'receipts',
+        ...(row.quotation_ref ? { quotationRef: row.quotation_ref } : {}),
+      },
       _score: scoreWorkspaceSearchMatch(raw, [row.id, row.customer_name, row.customer_id, row.quotation_ref]),
     }));
   }
@@ -583,8 +601,11 @@ function workspaceQuickSearchWithSql(db, req, rawQuery, limit, opts = {}) {
     byKind.work_item = workHits;
   }
 
-  return mergeWorkspaceSearchResults(applyContextBoostToByKind(byKind, opts.contextPath), {
-    totalCap: cap,
-    minPerKind: 2,
-  });
+  return decorateTransactionSearchHits(
+    mergeWorkspaceSearchResults(applyContextBoostToByKind(byKind, opts.contextPath), {
+      totalCap: cap,
+      minPerKind: 2,
+    }),
+    user
+  );
 }

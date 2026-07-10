@@ -7,6 +7,7 @@ import {
   filterNavSearchCommands,
   applyContextBoostToByKind,
   resolveGlobalSearchEnterFallback,
+  resolveTransactionSearchHit,
   levenshteinDistance,
 } from './workspaceSearchCore.js';
 
@@ -41,6 +42,51 @@ describe('workspaceSearchCore', () => {
   it('resolveGlobalSearchEnterFallback routes PO references', () => {
     const fb = resolveGlobalSearchEnterFallback('PO-123');
     expect(fb?.path).toBe('/procurement');
+  });
+
+  it('resolveTransactionSearchHit opens manager intel for quotations', () => {
+    const hit = resolveTransactionSearchHit(
+      { kind: 'quotation', id: 'QT-9', label: 'QT-9', path: '/sales' },
+      { openManagerIntel: true }
+    );
+    expect(hit.path).toBe('/manager?quoteRef=QT-9');
+    expect(hit.state).toBeUndefined();
+  });
+
+  it('resolveTransactionSearchHit opens manager intel for refunds', () => {
+    const hit = resolveTransactionSearchHit(
+      { kind: 'refund', id: 'RF-1', label: 'RF-1', path: '/sales' },
+      { openManagerIntel: true }
+    );
+    expect(hit.path).toBe('/manager?refundId=RF-1');
+  });
+
+  it('resolveTransactionSearchHit opens parent quote intel for receipts', () => {
+    const hit = resolveTransactionSearchHit(
+      {
+        kind: 'receipt',
+        id: 'RCP-1',
+        label: 'RCP-1',
+        path: '/sales',
+        state: { quotationRef: 'QT-2' },
+      },
+      { openManagerIntel: true }
+    );
+    expect(hit.path).toBe('/manager?quoteRef=QT-2');
+  });
+
+  it('resolveTransactionSearchHit opens sales record without manager intel', () => {
+    const hit = resolveTransactionSearchHit(
+      { kind: 'quotation', id: 'QT-9', label: 'QT-9', path: '/sales' },
+      { openManagerIntel: false }
+    );
+    expect(hit.path).toBe('/sales');
+    expect(hit.state.openSalesRecord).toEqual({ type: 'quotation', id: 'QT-9' });
+  });
+
+  it('resolveGlobalSearchEnterFallback uses manager intel when requested', () => {
+    const fb = resolveGlobalSearchEnterFallback('QT-55', { openManagerIntel: true });
+    expect(fb?.path).toBe('/manager?quoteRef=QT-55');
   });
 
   it('scoreWorkspaceSearchMatch boosts digit fragments', () => {

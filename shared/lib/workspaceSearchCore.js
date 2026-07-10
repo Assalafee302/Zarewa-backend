@@ -403,22 +403,87 @@ export function filterNavSearchCommands(rawQuery, hasPermission, canAccessModule
 }
 
 /**
+ * Open a sales/transaction search hit as a full record (or manager clearance intel).
+ * Branch managers / clearance roles get the same full transaction popup as clear/approval.
+ *
+ * @param {WorkspaceSearchHit | null | undefined} hit
+ * @param {{ openManagerIntel?: boolean }} [opts]
+ * @returns {WorkspaceSearchHit | null | undefined}
+ */
+export function resolveTransactionSearchHit(hit, opts = {}) {
+  if (!hit || typeof hit !== 'object') return hit;
+  const kind = String(hit.kind || '');
+  const id = String(hit.id || '').trim();
+  if (!id || !['quotation', 'receipt', 'refund'].includes(kind)) return hit;
+
+  const openManagerIntel = Boolean(opts.openManagerIntel);
+  const quoteRef = String(hit.quotationRef || hit.state?.quotationRef || '').trim();
+
+  if (openManagerIntel) {
+    if (kind === 'quotation') {
+      return {
+        ...hit,
+        path: `/manager?quoteRef=${encodeURIComponent(id)}`,
+        state: undefined,
+      };
+    }
+    if (kind === 'refund') {
+      return {
+        ...hit,
+        path: `/manager?refundId=${encodeURIComponent(id)}`,
+        state: undefined,
+      };
+    }
+    if (kind === 'receipt' && quoteRef) {
+      return {
+        ...hit,
+        path: `/manager?quoteRef=${encodeURIComponent(quoteRef)}`,
+        state: undefined,
+      };
+    }
+  }
+
+  const type = kind === 'quotation' ? 'quotation' : kind === 'receipt' ? 'receipt' : 'refund';
+  const tab = kind === 'quotation' ? 'quotations' : kind === 'receipt' ? 'receipts' : 'refund';
+  return {
+    ...hit,
+    path: '/sales',
+    state: {
+      focusSalesTab: tab,
+      openSalesRecord: { type, id },
+      globalSearchQuery: id,
+      ...(quoteRef ? { quotationRef: quoteRef } : {}),
+    },
+  };
+}
+
+/**
  * When no dropdown hit is selected, map typed reference prefixes to a sensible route.
  * @param {string} rawQuery
- * @returns {{ path: string, state?: object } | null}
+ * @param {{ openManagerIntel?: boolean }} [opts]
+ * @returns {{ path: string, state?: object, kind?: string, id?: string } | null}
  */
-export function resolveGlobalSearchEnterFallback(rawQuery) {
+export function resolveGlobalSearchEnterFallback(rawQuery, opts = {}) {
   const q = String(rawQuery || '').trim();
   const lower = q.toLowerCase();
   if (!lower) return null;
   if (lower.startsWith('qt-') || lower.startsWith('q-')) {
-    return { path: '/sales', state: { globalSearchQuery: q, focusSalesTab: 'quotations' } };
+    return resolveTransactionSearchHit(
+      { kind: 'quotation', id: q, label: q, path: '/sales' },
+      opts
+    );
   }
   if (lower.startsWith('rcp-') || lower.startsWith('rcpt')) {
-    return { path: '/sales', state: { globalSearchQuery: q, focusSalesTab: 'receipts' } };
+    return resolveTransactionSearchHit(
+      { kind: 'receipt', id: q, label: q, path: '/sales' },
+      opts
+    );
   }
   if (lower.startsWith('rf-')) {
-    return { path: '/sales', state: { globalSearchQuery: q, focusSalesTab: 'refund' } };
+    return resolveTransactionSearchHit(
+      { kind: 'refund', id: q, label: q, path: '/sales' },
+      opts
+    );
   }
   if (lower.startsWith('po-')) {
     return { path: '/procurement', state: { focusTab: 'purchases', globalSearchQuery: q } };

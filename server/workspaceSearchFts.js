@@ -198,7 +198,11 @@ export function collectWorkspaceSearchIndexDocs(db) {
           row.id,
           row.customer_name,
           '/sales',
-          { globalSearchQuery: row.id, focusSalesTab: 'receipts' },
+          {
+            globalSearchQuery: row.id,
+            focusSalesTab: 'receipts',
+            ...(row.quotation_ref ? { quotationRef: row.quotation_ref } : {}),
+          },
           [row.id, row.customer_name, row.customer_id, row.quotation_ref]
         )
       );

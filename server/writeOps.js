@@ -12,6 +12,7 @@ import {
   tryPostCustomerRefundPayoutReversalGlTx,
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
+  tryPostCoilScrapJournal,
 } from './glOps.js';
 import {
   tryPostExpensePaymentGlTx,
@@ -2986,57 +2987,88 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
 export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO, branchId = DEFAULT_BRANCH_ID) {
   const q = Number(qty);
   if (Number.isNaN(q) || q <= 0) return { ok: false, error: 'Invalid quantity.' };
+  if (!String(reasonCode || '').trim()) return { ok: false, error: 'A reason code is required.' };
+  const day = String(dateISO || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false, error: 'A valid adjustment date is required.' };
+  try {
+    assertPeriodOpen(db, day, 'Stock adjustment date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
   const delta = type === 'Increase' ? q : -q;
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  const row = getProductRowForWorkspace(db, productID, bid);
-  if (!row) return { ok: false, error: 'Product not found for this branch.' };
-  const raw = Number(row.stock_level) + delta;
-  const next = Math.max(0, raw);
-  const pb = String(row.branch_id ?? '').trim();
-  db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
-    next,
-    productID,
-    pb
-  );
-  appendMovementTx(db, {
-    type: 'ADJUSTMENT',
-    productID,
-    qty: delta,
-    detail: `${reasonCode}${note ? ` — ${note}` : ''}`,
-    dateISO: dateISO || new Date().toISOString().slice(0, 10),
-    branchId: bid,
-  });
-  return { ok: true };
+  try {
+    db.transaction(() => {
+      const row = getProductRowForWorkspace(db, productID, bid);
+      if (!row) throw new Error('Product not found for this branch.');
+      const raw = Number(row.stock_level) + delta;
+      if (raw < -1e-9) {
+        throw new Error(
+          `Insufficient stock for this adjustment (on hand ${Number(row.stock_level) || 0}, change ${delta}).`
+        );
+      }
+      const next = raw;
+      const pb = String(row.branch_id ?? '').trim();
+      db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
+        next,
+        productID,
+        pb
+      );
+      appendMovementTx(db, {
+        type: 'ADJUSTMENT',
+        productID,
+        qty: delta,
+        detail: `${reasonCode}${note ? ` — ${note}` : ''}`,
+        dateISO: day,
+        branchId: bid,
+      });
+    })();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 }
 
 export function transferToProduction(db, productID, qty, productionOrderId, dateISO, branchId = DEFAULT_BRANCH_ID) {
   const q = Number(qty);
   if (Number.isNaN(q) || q <= 0) return { ok: false, error: 'Invalid quantity.' };
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
-  const p = getProductRowForWorkspace(db, productID, bid);
-  if (!p || p.stock_level < q) return { ok: false, error: 'Insufficient stock in store.' };
-  const wipBranch = isGlobalCoilCatalogProductId(productID)
-    ? bid
-    : String(p.branch_id ?? '').trim() || bid;
-  const pb = String(p.branch_id ?? '').trim();
-  db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ? AND branch_id = ?`).run(
-    q,
-    productID,
-    pb
-  );
-  db.prepare(
-    `INSERT INTO wip_balances (branch_id, product_id, qty) VALUES (?,?,?)
-     ON CONFLICT(branch_id, product_id) DO UPDATE SET qty = wip_balances.qty + excluded.qty`
-  ).run(wipBranch, productID, q);
-  appendMovementTx(db, {
-    type: 'TRANSFER_TO_PRODUCTION',
-    productID,
-    qty: q,
-    ref: productionOrderId,
-    dateISO: dateISO || new Date().toISOString().slice(0, 10),
-    branchId: wipBranch,
-  });
-  return { ok: true };
+  const day = String(dateISO || new Date().toISOString().slice(0, 10)).trim().slice(0, 10);
+  try {
+    assertPeriodOpen(db, day, 'Transfer to production date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  try {
+    db.transaction(() => {
+      const p = getProductRowForWorkspace(db, productID, bid);
+      if (!p || p.stock_level < q) throw new Error('Insufficient stock in store.');
+      const wipBranch = isGlobalCoilCatalogProductId(productID)
+        ? bid
+        : String(p.branch_id ?? '').trim() || bid;
+      const pb = String(p.branch_id ?? '').trim();
+      db.prepare(`UPDATE products SET stock_level = stock_level - ? WHERE product_id = ? AND branch_id = ?`).run(
+        q,
+        productID,
+        pb
+      );
+      db.prepare(
+        `INSERT INTO wip_balances (branch_id, product_id, qty) VALUES (?,?,?)
+         ON CONFLICT(branch_id, product_id) DO UPDATE SET qty = wip_balances.qty + excluded.qty`
+      ).run(wipBranch, productID, q);
+      appendMovementTx(db, {
+        type: 'TRANSFER_TO_PRODUCTION',
+        productID,
+        qty: q,
+        ref: productionOrderId,
+        dateISO: day,
+        branchId: wipBranch,
+      });
+    })();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 }
 
 export function receiveFinishedGoods(
@@ -3689,6 +3721,18 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
       });
     }
 
+    const unitCost = Number(row.unit_cost_ngn_per_kg) || 0;
+    const gl = tryPostCoilScrapJournal(db, {
+      entryDateISO: dateISO,
+      coilNo,
+      kg,
+      unitCostNgnPerKg: unitCost,
+      branchId: stockBranch,
+      createdByUserId: actorId(actor),
+      sourceId: `scrap:${coilNo}:${dateISO}:${kg.toFixed(3)}:${reason}`.slice(0, 120),
+    });
+    if (!gl.ok) throw new Error(gl.error || 'Scrap GL posting failed.');
+
     appendAuditLog(db, {
       actor,
       action: 'coil.scrap',
@@ -3696,7 +3740,14 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
       entityId: coilNo,
       status: 'success',
       note: `${kg} kg · ${reason}`,
-      details: { coilNo, kg, reason, scrapProductID: creditScrapInventory ? scrapProductID : null },
+      details: {
+        coilNo,
+        kg,
+        reason,
+        scrapProductID: creditScrapInventory ? scrapProductID : null,
+        glSkipped: Boolean(gl.skipped),
+        glJournalId: gl.journalId ?? null,
+      },
     });
 
     const metersLog = Number(payload.meters);
@@ -3740,7 +3791,7 @@ export function postCoilScrap(db, payload = {}, opts = {}) {
 }
 
 /** Max unreserved kg for profile “finish roll” — unusable spool/core tail only (matches manual close guard). */
-const COIL_PROFILE_FINISH_MAX_KG = 100;
+const COIL_PROFILE_FINISH_MAX_KG = 85;
 
 /**
  * Clear unusable spool/core tail from a near-finished coil (missed “Roll finished” at production complete).
@@ -6011,14 +6062,28 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
   const total = Number(qrow.total_ngn) || 0;
   if (total <= 0) return { ok: false, error: 'Quotation total must be greater than zero.' };
+  const priceRow = {
+    id: qref,
+    lines_json: qrow.lines_json,
+    branch_id: qrow.branch_id,
+    date_iso: qrow.date_iso,
+  };
+  const { violations, hasFloorRows } = quotationPriceViolations(db, priceRow);
+  // Draft and finalize both sync the MD review flag; draft must not skip silently.
+  try {
+    let linesJson = {};
+    try {
+      linesJson = JSON.parse(String(qrow.lines_json || '{}'));
+    } catch {
+      linesJson = {};
+    }
+    syncQuotationBelowFloorReviewFlag(db, qref, linesJson, qrow.branch_id, qrow.date_iso, {
+      clearApprovalOnViolations: false,
+    });
+  } catch {
+    /* non-blocking sync */
+  }
   if (!forDraft) {
-    const priceRow = {
-      id: qref,
-      lines_json: qrow.lines_json,
-      branch_id: qrow.branch_id,
-      date_iso: qrow.date_iso,
-    };
-    const { violations, hasFloorRows } = quotationPriceViolations(db, priceRow);
     const priceMapped = {
       mdPriceExceptionApprovedAtISO: qrow.md_price_exception_approved_at_iso,
       priceExceptionMdConfirmedAtISO: qrow.price_exception_md_confirmed_at_iso,
@@ -6033,6 +6098,9 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
       };
     }
   }
+  // Draft CL may proceed with below-floor lines; warnings attach below and review flag is synced above.
+  const draftFloorWarnings =
+    forDraft && hasFloorRows && violations.length > 0 ? violations : null;
   const managerOk = productionGateOverrideEffective(qrow);
   const bid = String(qrow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   let minPaidFrac = 0.7;
@@ -6072,7 +6140,13 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
     : db.prepare(`SELECT id, branch_id, status FROM cutting_lists WHERE quotation_ref = ?`).get(qref);
   if (!skipDuplicateCheck && existing?.id) {
     if (isCuttingListDraftStatus(existing.status)) {
-      if (forDraft) return { ok: true, existingDraftId: existing.id };
+      if (forDraft) {
+        return {
+          ok: true,
+          existingDraftId: existing.id,
+          ...(draftFloorWarnings ? { warnings: draftFloorWarnings } : {}),
+        };
+      }
       // Final save while a draft is still on file — upgrade that draft instead of rejecting.
       return { ok: true, existingDraftId: existing.id, finalizeExistingDraft: true };
     }
@@ -6082,7 +6156,10 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
       error: `This quotation already has cutting list ${existing.id} (branch ${br}). Open Sales → Cutting list and search that ID, or switch workspace branch if it was created elsewhere.`,
     };
   }
-  return { ok: true };
+  return {
+    ok: true,
+    ...(draftFloorWarnings ? { warnings: draftFloorWarnings } : {}),
+  };
 }
 
 /** Re-validate production payment gate when starting a job (cutting list may have been created earlier). */
@@ -8183,19 +8260,71 @@ function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dat
 
 /**
  * Keep below-floor review flag in sync when quotation lines change (non-blocking on save).
+ * Re-approval is required after any price/line edit that still leaves below-floor violations:
+ * whenever sync finds violations on a quotation update, clear MD approval columns so a prior
+ * exception cannot stick. Pass `{ clearApprovalOnViolations: false }` for read-side syncs
+ * (e.g. draft cutting list) that only need the review flag set.
  * @param {import('better-sqlite3').Database} db
  * @param {string | null | undefined} quotationId
  * @param {object} linesJson
  * @param {string} branchId
+ * @param {string | null | undefined} [dateIsoOverride]
+ * @param {{ clearApprovalOnViolations?: boolean }} [opts]
  */
-function syncQuotationBelowFloorReviewFlag(db, quotationId, linesJson, branchId, dateIsoOverride) {
+function syncQuotationBelowFloorReviewFlag(
+  db,
+  quotationId,
+  linesJson,
+  branchId,
+  dateIsoOverride,
+  opts = {}
+) {
+  const clearApprovalOnViolations = opts.clearApprovalOnViolations !== false;
   const snap = quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dateIsoOverride);
   const qid = String(quotationId || '').trim();
   if (qid) {
-    db.prepare(`UPDATE quotations SET price_exception_md_review_required = ? WHERE id = ?`).run(
-      snap.needsMdException ? 1 : 0,
-      qid
-    );
+    if (snap.needsMdException) {
+      if (clearApprovalOnViolations) {
+        // Force re-approve after line/price updates that still violate the floor.
+        try {
+          db.prepare(
+            `UPDATE quotations SET
+               price_exception_md_review_required = 1,
+               md_price_exception_approved_at_iso = NULL,
+               md_price_exception_approved_by_user_id = NULL,
+               md_price_exception_snapshot_json = NULL,
+               price_exception_md_confirmed_at_iso = NULL,
+               price_exception_md_confirmed_by_user_id = NULL
+             WHERE id = ?`
+          ).run(qid);
+        } catch {
+          db.prepare(
+            `UPDATE quotations SET
+               price_exception_md_review_required = 1,
+               md_price_exception_approved_at_iso = NULL,
+               md_price_exception_approved_by_user_id = NULL,
+               price_exception_md_confirmed_at_iso = NULL,
+               price_exception_md_confirmed_by_user_id = NULL
+             WHERE id = ?`
+          ).run(qid);
+        }
+      } else {
+        db.prepare(`UPDATE quotations SET price_exception_md_review_required = 1 WHERE id = ?`).run(qid);
+      }
+    } else if (clearApprovalOnViolations) {
+      try {
+        db.prepare(
+          `UPDATE quotations SET
+             price_exception_md_review_required = 0,
+             md_price_exception_snapshot_json = NULL
+           WHERE id = ?`
+        ).run(qid);
+      } catch {
+        db.prepare(`UPDATE quotations SET price_exception_md_review_required = 0 WHERE id = ?`).run(qid);
+      }
+    } else {
+      db.prepare(`UPDATE quotations SET price_exception_md_review_required = 0 WHERE id = ?`).run(qid);
+    }
   }
   return snap;
 }

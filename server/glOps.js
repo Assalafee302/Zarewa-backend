@@ -278,6 +278,34 @@ export function tryPostInventoryReceiptJournal(db, p) {
   }
 }
 
+/**
+ * Coil scrap / write-off: Dr COGS 5000 / Cr RM inventory 1300 for kg × unit cost.
+ * Skips when amount is 0 (missing unit cost) so physical scrap can still post.
+ */
+export function tryPostCoilScrapJournal(db, { entryDateISO, coilNo, kg, unitCostNgnPerKg, branchId, createdByUserId, sourceId }) {
+  const k = Number(kg) || 0;
+  const unit = Number(unitCostNgnPerKg) || 0;
+  const amt = Math.round(k * unit);
+  if (amt <= 0) return { ok: true, skipped: true, reason: 'no_unit_cost_or_zero' };
+  const sid = String(sourceId || '').trim() || `scrap-${coilNo}-${entryDateISO}-${Math.round(k * 100)}`;
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO,
+      memo: `Coil scrap ${coilNo} (${k} kg)`,
+      sourceKind: 'COIL_SCRAP_GL',
+      sourceId: sid,
+      branchId,
+      createdByUserId,
+      lines: [
+        { accountCode: '5000', debitNgn: amt, memo: coilNo },
+        { accountCode: '1300', creditNgn: amt, memo: coilNo },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 export function listGlAccounts(db) {
   ensureGlSchema(db);
   seedDefaultGlAccounts(db);

@@ -51,10 +51,18 @@ describe('operations_officer role aliases', () => {
   it('normalizes legacy storekeeper keys to operations_officer permissions', () => {
     const ops = permissionsForRole('operations_officer');
     expect(ops).toContain('production.manage');
-    expect(ops).toContain('production.release');
+    expect(ops).not.toContain('production.release');
+    expect(ops).not.toContain('material_incidents.approve');
     expect(ops).toContain('operations.manage');
+    expect(ops).toContain('material_incidents.create');
     expect(permissionsForRole('storekeeper')).toEqual(ops);
     expect(permissionsForRole('store_keeper')).toEqual(ops);
+  });
+
+  it('keeps production.release on branch manager, not store floor', () => {
+    const bm = permissionsForRole('sales_manager');
+    expect(bm).toContain('production.release');
+    expect(bm).toContain('material_incidents.approve');
   });
 
   it('includes HR self-service so floor staff can use My Profile', () => {

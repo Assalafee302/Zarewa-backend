@@ -552,8 +552,15 @@ export function patchCoilStockForm(db, coilNo, stockForm, opts = {}) {
   if (form !== 'coil' && form !== 'roll') {
     return { ok: false, error: 'stockForm must be coil or roll.' };
   }
-  const row = db.prepare(`SELECT coil_no FROM coil_lots WHERE coil_no = ?`).get(cn);
+  const row = db.prepare(`SELECT coil_no, branch_id FROM coil_lots WHERE coil_no = ?`).get(cn);
   if (!row) return { ok: false, error: 'Coil not found.' };
+  const ws = String(opts.workspaceBranchId || '').trim();
+  if (ws && ws !== 'ALL') {
+    const coilBranch = String(row.branch_id || '').trim();
+    if (coilBranch && coilBranch !== ws) {
+      return { ok: false, error: 'This coil belongs to another branch workspace.' };
+    }
+  }
   const cols = db.prepare(`PRAGMA table_info(coil_lots)`).all();
   if (!cols.some((c) => c.name === 'stock_form')) {
     return { ok: false, error: 'stock_form column missing; run migrations.' };
@@ -572,6 +579,10 @@ export function patchCoilStockForm(db, coilNo, stockForm, opts = {}) {
 export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustments, actor) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
+    return { ok: false, error: 'Only a branch manager or executive can save BM stock-register adjustments.' };
+  }
   const row = getPeriodRow(db, bid, pk);
   if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
   if (!['store_confirmed', 'printed', 'bm_approved'].includes(String(row.status))) {
@@ -593,6 +604,10 @@ export function saveStockRegisterBmAdjustments(db, branchId, periodKey, adjustme
 export function saveStockRegisterLineClearance(db, branchId, periodKey, lineClearance, actor) {
   const bid = String(branchId || '').trim();
   const pk = String(periodKey || '').trim();
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (!isBranchManagerApprovalAuthority(rk) && !isExecutiveRoleKey(rk)) {
+    return { ok: false, error: 'Only a branch manager or executive can save stock-register line clearance.' };
+  }
   const row = getPeriodRow(db, bid, pk);
   if (!row) return { ok: false, error: 'Register period not found. Print the register first.' };
   if (!['store_confirmed', 'printed', 'bm_approved'].includes(String(row.status))) {

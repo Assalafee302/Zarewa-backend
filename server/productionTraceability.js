@@ -805,6 +805,8 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
         for (const line of normalized) {
           const coil = coilRow(db, line.coilNo);
           if (!coil) throw new Error(`Coil ${line.coilNo} was not found.`);
+          const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
+          if (!br.ok) throw new Error(br.error || `Coil ${line.coilNo} is not in this branch.`);
           const nextReservedForJob = line.openingWeightKg;
           const qtyRemaining = clampNonNegative(
             coil.qty_remaining ?? coil.current_weight_kg ?? coil.weight_kg ?? coil.qty_received
@@ -911,6 +913,8 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
       for (const coilNo of new Set([...oldReservedByCoil.keys(), ...newReservedByCoil.keys()])) {
         const coil = coilRow(db, coilNo);
         if (!coil) throw new Error(`Coil ${coilNo} was not found.`);
+        const br = assertCoilInWorkspaceBranch(coil, opts.workspaceBranchId);
+        if (!br.ok) throw new Error(br.error || `Coil ${coilNo} is not in this branch.`);
         const previousReserved = oldReservedByCoil.get(coilNo) || 0;
         const nextReservedForJob = newReservedByCoil.get(coilNo) || 0;
         const delta = nextReservedForJob - previousReserved;
@@ -1006,11 +1010,13 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   if (qref) {
     const quote = db
       .prepare(
-        `SELECT id, lines_json, branch_id, md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
+        `SELECT id, lines_json, branch_id, date_iso,
+                md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
          FROM quotations WHERE id = ?`
       )
       .get(qref);
     if (quote) {
+      // Pass full quote (incl. date_iso) so floor checks use as-of quote date.
       const { violations, hasFloorRows } = quotationPriceViolations(db, quote);
       if (
         hasFloorRows &&

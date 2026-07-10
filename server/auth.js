@@ -142,14 +142,17 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
   'accounting.gl.view',
 ];
 
-/** Full Operations module: stock, production register (incl. stone-coated), deliveries, incidents. */
+/**
+ * Store / production floor: receive, run register, deliver, raise incidents.
+ * Does NOT include production.release (hold clear / manager review / post-complete corrections)
+ * or material_incidents.approve (BM write-offs / BM stock-register fields).
+ */
 export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
   'dashboard.view',
   'office.use',
   'operations.view',
   'operations.manage',
   'production.manage',
-  'production.release',
   'inventory.receive',
   'inventory.adjust',
   'deliveries.manage',
@@ -650,10 +653,10 @@ export const STORE_FLOOR_PERMISSION_KEYS = [
   'operations.view',
   'operations.manage',
   'production.manage',
-  'production.release',
   'inventory.receive',
   'inventory.adjust',
   'deliveries.manage',
+  'material_incidents.create',
 ];
 
 const STORE_FLOOR_DEPARTMENT_LABELS = new Set([
@@ -842,13 +845,13 @@ export function canUseAllBranchesRollup(user) {
 /** Only these roles may PATCH without a prior second-party approval token. */
 const EDIT_MUTATION_EXEMPT_ROLE_KEYS = new Set(['admin', 'md']);
 
-/** Who may approve another user's edit request (two-person control). */
+/** Who may approve another user's edit request (two-person control). Store peers cannot approve each other. */
 const EDIT_APPROVER_ROLE_KEYS = new Set([
   'admin',
   'md',
   'sales_manager',
   'finance_manager',
-  'operations_officer',
+  'branch_manager',
 ]);
 
 /** @param {object|null|undefined} user */
@@ -872,7 +875,6 @@ const COIL_LOT_MASTER_EDIT_ROLE_KEYS = new Set([
   'md',
   'sales_manager',
   'branch_manager',
-  'operations_officer',
 ]);
 
 /** @param {object|null|undefined} user */

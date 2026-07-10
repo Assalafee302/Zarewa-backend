@@ -477,6 +477,7 @@ import {
   quotationPriceViolations,
   upsertPriceListItem,
   normalizePricingAsAtIso,
+  quotationPricingAsAtIso,
 } from './pricingOps.js';
 import { getPricingPolicyBundle, patchPricingPolicyBundle } from './pricingPolicyOps.js';
 import { buildCustomerPriceBookHtml } from './customerPriceBook.js';
@@ -485,7 +486,9 @@ import {
   deleteMaterialPricingSheetRow,
   listMaterialPricingEvents,
   listMaterialPricingSheet,
+  publishMaterialPricingSheet,
   upsertMaterialPricingSheetRow,
+  upsertMaterialPricingSheetRowsBulk,
 } from './materialPricingOps.js';
 import { workspaceQuickSearch } from './workspaceSearchOps.js';
 import {
@@ -4894,8 +4897,10 @@ export function registerHttpApi(app, db) {
   });
 
   const stockRegisterReadPerms = ['reports.view', 'operations.manage', 'production.manage', 'inventory.adjust', 'procurement.manage'];
+  /** Store may print/confirm; managers may also print. */
   const stockRegisterStorePerms = ['operations.manage', 'production.manage', 'inventory.adjust'];
-  const stockRegisterManagerPerms = ['operations.manage', 'production.manage', 'sales_manager'];
+  /** BM / MD only — store has operations.manage but must not write BM register fields. */
+  const stockRegisterManagerPerms = ['material_incidents.approve', 'sales.manage'];
   const stockRegisterProcurementPerms = ['procurement.manage', 'operations.manage'];
 
   app.get('/api/stock-register', requirePermission(stockRegisterReadPerms), (req, res) => {
@@ -5072,6 +5077,7 @@ export function registerHttpApi(app, db) {
     try {
       const r = patchCoilStockForm(db, req.params.coilNo, req.body?.stockForm ?? req.body?.stock_form, {
         actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
       });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -5355,8 +5361,9 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const materialKey = String(req.query.materialKey || '').trim();
+        const branchId = String(req.query.branchId || '').trim() || undefined;
         const limit = req.query.limit;
-        const r = listMaterialPricingEvents(db, { materialKey, limit });
+        const r = listMaterialPricingEvents(db, { materialKey, branchId, limit });
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error(e);
@@ -5379,6 +5386,20 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.post(
+    '/api/pricing/material-sheet/rows/bulk',
+    requirePermission(['pricing.manage', 'md.price_exception.approve']),
+    (req, res) => {
+      try {
+        const r = upsertMaterialPricingSheetRowsBulk(db, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not save material pricing rows.' });
+      }
+    }
+  );
+
   app.delete(
     '/api/pricing/material-sheet/rows/:id',
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
@@ -5390,6 +5411,20 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not delete material pricing row.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/pricing/material-sheet/publish',
+    requirePermission('pricing.manage'),
+    (req, res) => {
+      try {
+        const r = publishMaterialPricingSheet(db, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not publish material pricing sheet.' });
       }
     }
   );
@@ -6103,7 +6138,7 @@ export function registerHttpApi(app, db) {
     res.status(r.ok ? 200 : 400).json(r);
   });
 
-  app.get('/api/inventory/snapshot', (req, res) => {
+  app.get('/api/inventory/snapshot', requireAuth, (req, res) => {
     try {
       const includeControls =
         userHasPermission(req.user, 'audit.view') || userHasPermission(req.user, 'period.manage');
@@ -6541,13 +6576,21 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/cutting-lists/:id/production/complete', requirePermission('production.manage'), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const wg = assertCuttingListIdInWorkspace(db, req, req.params.id);
       if (!wg.ok) return res.status(wg.status).json({ ok: false, error: wg.error });
       const jobId = resolveCuttingListProductionJob(db, req.params.id);
       if (!jobId) {
         return res.status(404).json({ ok: false, error: 'No production run for this cutting list.' });
       }
+      const existing = db.prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`).get(jobId);
+      if (String(existing?.status || '') === 'Completed') {
+        const payload = { ok: true, idempotent: true, jobId, status: 'Completed' };
+        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
+        return res.status(200).json(payload);
+      }
       const r = completeProductionJob(db, jobId, req.body || {}, { actor: req.user });
+      if (r.ok) storeIdempotentSuccess(db, req, 'production.complete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -6807,10 +6850,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  const managerReviewSignoffPerms = ['production.release', 'operations.manage', 'production.manage'];
+  const managerReviewSignoffPerms = ['production.release'];
   /** Who may post completion corrections (coil / accessories / stone flatsheet FG restatements). */
-  const productionCorrectionPerms = ['production.release', 'operations.manage', 'production.manage'];
-  const returnToPlannedPerms = ['production.release', 'operations.manage', 'production.manage'];
+  const productionCorrectionPerms = ['production.release'];
+  const returnToPlannedPerms = ['production.release'];
 
   app.post('/api/production-jobs/:jobId/return-to-planned', requirePermission(returnToPlannedPerms), (req, res) => {
     try {
@@ -7132,6 +7175,12 @@ export function registerHttpApi(app, db) {
     const { productID, type, qty, reasonCode, note, dateISO, acknowledgeCoilSkuDrift } = req.body || {};
     const pg = assertProductIdInWorkspace(db, req, productID);
     if (!pg.ok) return res.status(pg.status).json({ ok: false, error: pg.error });
+    if (!String(reasonCode || '').trim()) {
+      return res.status(400).json({ ok: false, error: 'A reason code is required for stock adjustments.' });
+    }
+    if (!String(dateISO || '').trim()) {
+      return res.status(400).json({ ok: false, error: 'Adjustment date is required.' });
+    }
     if (String(type) === 'Decrease' && productID && !acknowledgeCoilSkuDrift) {
       const n = write.countCoilLotsForProductInWorkspace(db, productID, req.workspaceBranchId);
       if (n > 0) {
@@ -7140,7 +7189,19 @@ export function registerHttpApi(app, db) {
           code: 'COIL_SKU_DRIFT',
           coilLotCount: n,
           error:
-            'This SKU has coil lots in your branch. Use Operations → Coil control (scrap, adjustments, returns) to change physical stock. To force a book-only decrease, resend with acknowledgeCoilSkuDrift: true.',
+            'This SKU has coil lots in your branch. Use Operations → Coil control (scrap, adjustments, returns) to change physical stock. To force a book-only decrease, a branch manager must resend with acknowledgeCoilSkuDrift: true.',
+        });
+      }
+    }
+    if (acknowledgeCoilSkuDrift) {
+      if (
+        !userHasPermission(req.user, 'material_incidents.approve') &&
+        !userHasPermission(req.user, '*')
+      ) {
+        return res.status(403).json({
+          ok: false,
+          code: 'COIL_SKU_DRIFT_FORBIDDEN',
+          error: 'Book-only coil SKU decreases require branch manager (or MD) approval.',
         });
       }
     }
@@ -7280,7 +7341,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/coil-control/ledger-adjustment', requirePermission(coilMaterialPerms), (req, res) => {
+  app.post('/api/coil-control/ledger-adjustment', requirePermission(['material_incidents.approve']), (req, res) => {
     try {
       const r = write.postCoilLedgerKgAdjustment(db, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
@@ -7490,7 +7551,6 @@ export function registerHttpApi(app, db) {
     'material_incidents.approve',
     'refunds.approve',
     'finance.approve',
-    'operations.manage',
   ];
   const materialIncidentReadPerms = [
     ...materialIncidentWritePerms,
@@ -8366,7 +8426,7 @@ export function registerHttpApi(app, db) {
       const economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
         cashInNgn: cashBreakdown.cashInNgn,
         priorRefundedNgn: el.ok ? el.totalRefundedNgn : 0,
-        pricingAsAtIso: quote?.date_iso ?? null,
+        pricingAsAtIso: quotationPricingAsAtIso(quote),
       });
       const staleRefundWarnings = listStaleOpenRefundsForQuotation(
         db,

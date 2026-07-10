@@ -75,6 +75,11 @@ export function adjustProductStockForBranch(db, productId, delta, branchId) {
   const pb = String(row.branch_id ?? '').trim();
   const raw = Number(row.stock_level) + Number(delta || 0);
   const allowNegative = productAllowsNegativeStock(pid, row);
+  if (!allowNegative && raw < -1e-9) {
+    throw new Error(
+      `Insufficient stock for ${pid} (on hand ${Number(row.stock_level) || 0}, change ${Number(delta) || 0}).`
+    );
+  }
   const next = allowNegative ? raw : Math.max(0, raw);
   db.prepare(`UPDATE products SET stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
     next,

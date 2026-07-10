@@ -82,7 +82,10 @@ export function requestShouldExtendSession(req) {
 
   if (path === '/api/bootstrap') {
     const poll = String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim();
-    if (poll === '1') return false;
+    if (poll === '1') {
+      const active = String(req.query?.active ?? '').trim();
+      return active === '1';
+    }
   }
 
   return false;
@@ -1961,7 +1964,11 @@ export function requireAuth(req, res, next) {
     const headerToken = String(req.headers['x-csrf-token'] || req.headers['X-CSRF-Token'] || '')
       .trim();
     if (!cookieToken || !headerToken || headerToken !== cookieToken) {
-      return res.status(403).json({ ok: false, error: 'Invalid CSRF token.', code: 'CSRF_INVALID' });
+      return res.status(403).json({
+        ok: false,
+        error: 'Your session expired. Please sign in again and retry.',
+        code: 'CSRF_INVALID',
+      });
     }
   }
   return next();

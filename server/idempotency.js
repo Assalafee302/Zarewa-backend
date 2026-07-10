@@ -120,3 +120,27 @@ export function storeIdempotentSuccess(db, req, scope, statusCode, body) {
   if (!key || !userId) return;
   tryStoreIdempotentResponse(db, { userId, scope, key, statusCode, body });
 }
+
+/**
+ * Wrap an async route handler with idempotency replay + success storage.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} scope
+ * @param {(req: import('express').Request, res: import('express').Response) => Promise<void>|void} handler
+ * @returns {(req: import('express').Request, res: import('express').Response) => Promise<void>}
+ */
+export function wrapIdempotentRoute(db, scope, handler) {
+  return async (req, res) => {
+    if (sendIdempotentReplayIfAny(db, req, res, scope)) return;
+    const originalJson = res.json.bind(res);
+    /** @type {{ statusCode: number; body: unknown } | null} */
+    let captured = null;
+    res.json = (body) => {
+      captured = { statusCode: res.statusCode || 200, body };
+      return originalJson(body);
+    };
+    await handler(req, res);
+    if (captured && captured.statusCode >= 200 && captured.statusCode < 300) {
+      storeIdempotentSuccess(db, req, scope, captured.statusCode, captured.body);
+    }
+  };
+}

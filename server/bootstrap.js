@@ -242,7 +242,17 @@ export function buildBootstrap(db, opts = {}) {
   const operationsInventoryAttention = productionOk
     ? computeOperationsInventoryAttention(db, branchScope)
     : emptyOperationsInventoryAttention();
-  const refunds = refundsOk ? listRefunds(db, branchScope) : [];
+  const DEFAULT_BOOTSTRAP_LIST_LIMIT = Math.min(
+    5000,
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_LIST_LIMIT) || 600)
+  );
+  const listLimit = (key) =>
+    opts.listLimits?.[key] != null
+      ? Math.max(1, Number(opts.listLimits[key]) || DEFAULT_BOOTSTRAP_LIST_LIMIT)
+      : DEFAULT_BOOTSTRAP_LIST_LIMIT;
+  const listOpts = (key) => ({ limit: listLimit(key) });
+  const poListOpts = { ...rowListOpts(opts, 'purchaseOrders'), skipSideEffects: skipSideEffects || true };
+  const refunds = refundsOk ? listRefunds(db, branchScope, listOpts('refunds')) : [];
   const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
   const productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, rowListOpts(opts, 'productionJobs'))
@@ -261,7 +271,7 @@ export function buildBootstrap(db, opts = {}) {
     permissions: [...(session.permissions || [])],
     workspaceBranches: listBranches(db),
     branchScope,
-    customers: salesOk ? listCustomers(db, branchScope) : [],
+    customers: salesOk ? listCustomers(db, branchScope, listOpts('customers')) : [],
     quotations: salesOk
       ? listQuotations(db, branchScope, rowListOpts(opts, 'quotations'))
       : prodRollupOk
@@ -272,18 +282,21 @@ export function buildBootstrap(db, opts = {}) {
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, rowListOpts(opts, 'purchaseOrders')) : [],
+    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, poListOpts) : [],
     coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
     movements: coilMovOk ? listStockMovements(db, branchScope, rowListOpts(opts, 'movements')) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
-    deliveries: opsOk ? listDeliveries(db, branchScope) : [],
+    deliveries: opsOk ? listDeliveries(db, branchScope, listOpts('deliveries')) : [],
     receipts: salesOk
-      ? enrichSalesReceiptRowsWithCashFromLedger(listSalesReceipts(db, branchScope), ledgerRows)
+      ? enrichSalesReceiptRowsWithCashFromLedger(
+          listSalesReceipts(db, branchScope, listOpts('receipts')),
+          ledgerRows
+        )
       : [],
-    cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope) : [],
+    cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, listOpts('cuttingLists')) : [],
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
@@ -301,9 +314,9 @@ export function buildBootstrap(db, opts = {}) {
     /** Ridge / flashing strip add-ons for trim auto-pricing on quotations. */
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
-    treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope) : [],
-    expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
-    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
+    treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope, listOpts('treasuryMovements')) : [],
+    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, listOpts('expenses')) : [],
+    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, listOpts('paymentRequests')) : [],
     glJournalSearchSlice: finOk ? listGlJournalsForWorkspaceSearch(db, branchScope, { limit: 800 }) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
@@ -400,6 +413,30 @@ export function buildBootstrap(db, opts = {}) {
           pathname: '/',
         })
       : null,
+    bootstrapMeta: {
+      listLimitsApplied: {
+        customers: listLimit('customers'),
+        deliveries: listLimit('deliveries'),
+        refunds: listLimit('refunds'),
+        receipts: listLimit('receipts'),
+        expenses: listLimit('expenses'),
+        paymentRequests: listLimit('paymentRequests'),
+        treasuryMovements: listLimit('treasuryMovements'),
+        cuttingLists: listLimit('cuttingLists'),
+        ledgerEntries: ledgerRowLimit,
+      },
+      truncated: {
+        customers: salesOk,
+        deliveries: opsOk,
+        refunds: refundsOk,
+        receipts: salesOk,
+        expenses: expensesSnapshotOk,
+        paymentRequests: payReqOk,
+        treasuryMovements: treasuryMovementsOk,
+        cuttingLists: opsOk || salesOk,
+        ledgerEntries: ledgerOk,
+      },
+    },
   };
 }
 
@@ -526,7 +563,7 @@ export function buildDashboardBootstrap(db, opts = {}) {
     expenses: take(full.expenses, limit),
     paymentRequests: take(full.paymentRequests, limit),
     treasuryMovements: take(full.treasuryMovements, limit),
-    movements: full.movements,
+    movements: take(full.movements, limit),
     /** Full coil register — trimming hides coils (e.g. CL-26-2043) from Stock Management. */
     coilLots: full.coilLots ?? [],
     coilControlEvents: take(full.coilControlEvents ?? [], limit),

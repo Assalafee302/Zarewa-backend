@@ -446,6 +446,12 @@ import {
 } from './hrRedaction.js';
 import { hrSensitiveTokenMiddleware, issueHrSensitiveToken, setHrSensitiveCookie, clearHrSensitiveCookie } from './hrSensitiveGate.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
+import { apiError } from './apiError.js';
+
+function hrApiFail(res, err, message, code = 'HR_REQUEST_FAILED') {
+  if (err) console.error(err);
+  return apiError(res, { status: 500, code, error: message });
+}
 
 function hrReady(res, db) {
   if (!db) {
@@ -672,8 +678,7 @@ export function registerHrApi(app, db) {
       const missing = listMissingHrPolicyAcceptances(db, uid, required);
       return res.json({ ok: true, required, missing, allAccepted: missing.length === 0 });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR policy requirements.' });
+            return hrApiFail(res, e, 'Could not load HR policy requirements.');
     }
   });
 
@@ -684,8 +689,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record policy acknowledgements.' });
+            return hrApiFail(res, e, 'Could not record policy acknowledgements.');
     }
   });
 
@@ -698,8 +702,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', 'attachment; filename="Zarewa-Guarantor-Form.txt"');
       return res.send(HR_GUARANTOR_FORM_TEMPLATE);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load guarantor form template.' });
+            return hrApiFail(res, e, 'Could not load guarantor form template.');
     }
   });
 
@@ -713,8 +716,7 @@ export function registerHrApi(app, db) {
         res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
         return res.send(Buffer.from(r.pdf));
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load staff registration template.' });
+                return hrApiFail(res, e, 'Could not load staff registration template.');
       }
     }
   );
@@ -726,8 +728,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record policy acknowledgement.' });
+            return hrApiFail(res, e, 'Could not record policy acknowledgement.');
     }
   });
 
@@ -746,8 +747,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json(getHrPolicyConfig(db));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR policy config.' });
+            return hrApiFail(res, e, 'Could not load HR policy config.');
     }
   }
   );
@@ -767,8 +767,7 @@ export function registerHrApi(app, db) {
         if (!hrReady(res, db)) return;
         return res.json({ ok: true, reference: getHrPolicyReference() });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load HR policy reference.' });
+                return hrApiFail(res, e, 'Could not load HR policy reference.');
       }
     }
   );
@@ -788,8 +787,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update HR policy config.' });
+            return hrApiFail(res, e, 'Could not update HR policy config.');
     }
   }
   );
@@ -804,8 +802,7 @@ export function registerHrApi(app, db) {
       setHrSensitiveCookie(res, r.token);
       return res.json({ ok: true, expiresAtIso: r.expiresAtIso, ttlSeconds: r.ttlSeconds });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not verify credentials.' });
+            return hrApiFail(res, e, 'Could not verify credentials.');
     }
   });
 
@@ -814,8 +811,7 @@ export function registerHrApi(app, db) {
       clearHrSensitiveCookie(res);
       return res.json({ ok: true });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not lock sensitive view.' });
+            return hrApiFail(res, e, 'Could not lock sensitive view.');
     }
   });
 
@@ -828,8 +824,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load school profile.' });
+            return hrApiFail(res, e, 'Could not load school profile.');
     }
   });
 
@@ -851,8 +846,7 @@ export function registerHrApi(app, db) {
       syncScholarshipDueReminders(db, req.user?.id, r.reminders || []);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load scholarship summary.' });
+            return hrApiFail(res, e, 'Could not load scholarship summary.');
     }
   });
 
@@ -869,8 +863,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'scholarship-statement.pdf'}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
+            return hrApiFail(res, e, 'Could not generate payment statement.');
     }
   });
 
@@ -891,8 +884,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(r.error?.includes('only for') ? 404 : 400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load household staff summary.' });
+            return hrApiFail(res, e, 'Could not load household staff summary.');
     }
   });
 
@@ -907,8 +899,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'household-staff-statement.pdf'}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
+            return hrApiFail(res, e, 'Could not generate payment statement.');
     }
   });
 
@@ -961,8 +952,7 @@ export function registerHrApi(app, db) {
         unreadNotifications,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load your HR profile.' });
+            return hrApiFail(res, e, 'Could not load your HR profile.');
     }
   });
 
@@ -979,8 +969,7 @@ export function registerHrApi(app, db) {
       const profile = staffFull ? redactStaffProfile(staffFull, ctx) : r.profile;
       return res.json({ ok: true, profile });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update your profile.' });
+            return hrApiFail(res, e, 'Could not update your profile.');
     }
   });
 
@@ -1002,8 +991,7 @@ export function registerHrApi(app, db) {
         hr: hr ? redactStaffProfile({ ...hr, userId: req.user?.id }, ctx) : null,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit your profile.' });
+            return hrApiFail(res, e, 'Could not submit your profile.');
     }
   });
 
@@ -1018,8 +1006,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load attendance summary.' });
+            return hrApiFail(res, e, 'Could not load attendance summary.');
     }
   });
 
@@ -1083,8 +1070,7 @@ export function registerHrApi(app, db) {
         profileWorkQueue,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR dashboard.' });
+            return hrApiFail(res, e, 'Could not load HR dashboard.');
     }
   });
 
@@ -1093,8 +1079,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...listHrProfileWorkQueue(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load profile work queue.' });
+            return hrApiFail(res, e, 'Could not load profile work queue.');
     }
   });
 
@@ -1112,8 +1097,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${key}-policy.txt"`);
       return res.send(`${reg.label} (v${reg.version})\n\n${content.summary || ''}\n\n${content.body || ''}`);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load policy document.' });
+            return hrApiFail(res, e, 'Could not load policy document.');
     }
   });
 
@@ -1122,8 +1106,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, summary: getHrInboxSummary(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR inbox.' });
+            return hrApiFail(res, e, 'Could not load HR inbox.');
     }
   });
 
@@ -1143,7 +1126,7 @@ export function registerHrApi(app, db) {
       return res.json({ ok: true, chart });
     } catch (e) {
       console.error('[hr/org-chart]', e);
-      return res.status(500).json({ ok: false, error: 'Could not load org chart.' });
+      return hrApiFail(res, e, 'Could not load org chart.');
     }
   });
 
@@ -1193,7 +1176,7 @@ export function registerHrApi(app, db) {
       return res.send(csv);
     } catch (e) {
       console.error('[hr/org-chart/export]', e);
-      return res.status(500).json({ ok: false, error: 'Could not export org chart.' });
+      return hrApiFail(res, e, 'Could not export org chart.');
     }
   });
 
@@ -1245,7 +1228,7 @@ export function registerHrApi(app, db) {
       });
     } catch (e) {
       console.error('[hr/staff/directory]', e);
-      return res.status(500).json({ ok: false, error: 'Could not load staff directory.' });
+      return hrApiFail(res, e, 'Could not load staff directory.');
     }
   });
 
@@ -1255,8 +1238,7 @@ export function registerHrApi(app, db) {
       const views = listHrStaffDirectoryViews(db, req.user?.id);
       return res.json({ ok: true, views });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load saved views.' });
+            return hrApiFail(res, e, 'Could not load saved views.');
     }
   });
 
@@ -1267,8 +1249,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save view.' });
+            return hrApiFail(res, e, 'Could not save view.');
     }
   });
 
@@ -1279,8 +1260,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete view.' });
+            return hrApiFail(res, e, 'Could not delete view.');
     }
   });
 
@@ -1314,12 +1294,8 @@ export function registerHrApi(app, db) {
       const ctx = hrRedactionContextFromReq(req);
       return res.json({ ok: true, staff: redactStaffList(staff, ctx) });
     } catch (e) {
-      console.error('[hr/staff/list]', e);
       const detail = String(e?.message || '').trim();
-      return res.status(500).json({
-        ok: false,
-        error: detail ? `Could not list staff: ${detail}` : 'Could not list staff.',
-      });
+      return hrApiFail(res, e, detail ? `Could not list staff: ${detail}` : 'Could not list staff.');
     }
   });
 
@@ -1364,8 +1340,7 @@ export function registerHrApi(app, db) {
         branchHistory: userCanViewOrgSensitiveHr(req.user) || isSelf ? branchHistory : [],
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load staff profile.' });
+            return hrApiFail(res, e, 'Could not load staff profile.');
     }
   });
 
@@ -1380,8 +1355,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'staff-registration.pdf'}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export staff registration form.' });
+            return hrApiFail(res, e, 'Could not export staff registration form.');
     }
   });
 
@@ -1397,8 +1371,7 @@ export function registerHrApi(app, db) {
       }
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not register staff.' });
+            return hrApiFail(res, e, 'Could not register staff.');
     }
   });
 
@@ -1410,8 +1383,7 @@ export function registerHrApi(app, db) {
       const events = listHrAuditEventsForStaff(db, userId, 60);
       return res.json({ ok: true, events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load audit trail.' });
+            return hrApiFail(res, e, 'Could not load audit trail.');
     }
   });
 
@@ -1426,8 +1398,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR audit log.' });
+            return hrApiFail(res, e, 'Could not load HR audit log.');
     }
   });
 
@@ -1442,8 +1413,7 @@ export function registerHrApi(app, db) {
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: req.params.userId });
       return res.json({ ok: true, profile: redactStaffProfile(r.profile, ctx) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update staff profile.' });
+            return hrApiFail(res, e, 'Could not update staff profile.');
     }
   });
 
@@ -1457,7 +1427,7 @@ export function registerHrApi(app, db) {
       return res.json(r);
     } catch (e) {
       console.error('[hr/staff/delete]', e);
-      return res.status(500).json({ ok: false, error: 'Could not delete staff account.' });
+      return hrApiFail(res, e, 'Could not delete staff account.');
     }
   });
 
@@ -1475,8 +1445,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Bulk staff update failed.' });
+            return hrApiFail(res, e, 'Bulk staff update failed.');
     }
   });
 
@@ -1488,8 +1457,7 @@ export function registerHrApi(app, db) {
       const summary = getHrStaffAppraisalSummary(db, userId);
       return res.json({ ok: true, ...summary });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load appraisal summary.' });
+            return hrApiFail(res, e, 'Could not load appraisal summary.');
     }
   });
 
@@ -1501,8 +1469,7 @@ export function registerHrApi(app, db) {
       const activity = getHrStaffActivitySummary(db, userId);
       return res.json({ ok: true, activity });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load activity summary.' });
+            return hrApiFail(res, e, 'Could not load activity summary.');
     }
   });
 
@@ -1515,8 +1482,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, profileVerifiedAtIso: r.profileVerifiedAtIso });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not verify profile.' });
+            return hrApiFail(res, e, 'Could not verify profile.');
     }
   });
 
@@ -1529,8 +1495,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not unlock profile.' });
+            return hrApiFail(res, e, 'Could not unlock profile.');
     }
   });
 
@@ -1543,8 +1508,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update probation.' });
+            return hrApiFail(res, e, 'Could not update probation.');
     }
   });
 
@@ -1555,8 +1519,7 @@ export function registerHrApi(app, db) {
       const transfers = listRecentBranchTransfers(db, scope);
       return res.json({ ok: true, transfers });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load branch transfers.' });
+            return hrApiFail(res, e, 'Could not load branch transfers.');
     }
   });
 
@@ -1567,8 +1530,7 @@ export function registerHrApi(app, db) {
       const events = listRecentDisciplinaryEvents(db, scope, { includeInactive: true });
       return res.json({ ok: true, events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load disciplinary events.' });
+            return hrApiFail(res, e, 'Could not load disciplinary events.');
     }
   });
 
@@ -1578,8 +1540,7 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       return res.json({ ok: true, dashboard: getDisciplineCaseDashboard(db, scope) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load discipline dashboard.' });
+            return hrApiFail(res, e, 'Could not load discipline dashboard.');
     }
   });
 
@@ -1597,8 +1558,7 @@ export function registerHrApi(app, db) {
       };
       return res.json({ ok: true, cases: listDisciplineCases(db, scope, filters) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load discipline cases.' });
+            return hrApiFail(res, e, 'Could not load discipline cases.');
     }
   });
 
@@ -1614,8 +1574,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, case: c });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load discipline case.' });
+            return hrApiFail(res, e, 'Could not load discipline case.');
     }
   });
 
@@ -1626,8 +1585,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create discipline case.' });
+            return hrApiFail(res, e, 'Could not create discipline case.');
     }
   });
 
@@ -1638,8 +1596,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update discipline case.' });
+            return hrApiFail(res, e, 'Could not update discipline case.');
     }
   });
 
@@ -1650,8 +1607,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not add case event.' });
+            return hrApiFail(res, e, 'Could not add case event.');
     }
   });
 
@@ -1662,8 +1618,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not add evidence.' });
+            return hrApiFail(res, e, 'Could not add evidence.');
     }
   });
 
@@ -1674,8 +1629,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not add witness.' });
+            return hrApiFail(res, e, 'Could not add witness.');
     }
   });
 
@@ -1686,8 +1640,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not file appeal.' });
+            return hrApiFail(res, e, 'Could not file appeal.');
     }
   });
 
@@ -1698,8 +1651,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+            return hrApiFail(res, e, 'Could not generate letter.');
     }
   });
 
@@ -1708,8 +1660,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getDisciplineCaseAudit(db, req.params.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load case audit.' });
+            return hrApiFail(res, e, 'Could not load case audit.');
     }
   });
 
@@ -1718,8 +1669,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, parties: listCaseResponsibility(db, req.params.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load responsibility map.' });
+            return hrApiFail(res, e, 'Could not load responsibility map.');
     }
   });
 
@@ -1736,8 +1686,7 @@ export function registerHrApi(app, db) {
       });
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save responsibility map.' });
+            return hrApiFail(res, e, 'Could not save responsibility map.');
     }
   });
 
@@ -1748,8 +1697,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not remove party.' });
+            return hrApiFail(res, e, 'Could not remove party.');
     }
   });
 
@@ -1759,8 +1707,7 @@ export function registerHrApi(app, db) {
       const gate = assertCaseClosureReady(db, req.params.id);
       return res.json({ ok: true, ...gate });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not check closure readiness.' });
+            return hrApiFail(res, e, 'Could not check closure readiness.');
     }
   });
 
@@ -1771,8 +1718,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not apply decision.' });
+            return hrApiFail(res, e, 'Could not apply decision.');
     }
   });
 
@@ -1789,8 +1735,7 @@ export function registerHrApi(app, db) {
       });
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create recovery schedules.' });
+            return hrApiFail(res, e, 'Could not create recovery schedules.');
     }
   });
 
@@ -1799,8 +1744,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, schedules: listRecoverySchedulesForCase(db, req.params.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load recovery schedules.' });
+            return hrApiFail(res, e, 'Could not load recovery schedules.');
     }
   });
 
@@ -1809,8 +1753,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, schedules: listRecoverySchedulesForUser(db, req.user?.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load recovery schedules.' });
+            return hrApiFail(res, e, 'Could not load recovery schedules.');
     }
   });
 
@@ -1829,8 +1772,7 @@ export function registerHrApi(app, db) {
       }
       return res.status(400).json({ ok: false, error: 'Unsupported action. Use action: cancel or settle.' });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update recovery schedule.' });
+            return hrApiFail(res, e, 'Could not update recovery schedule.');
     }
   });
 
@@ -1841,8 +1783,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create incident.' });
+            return hrApiFail(res, e, 'Could not create incident.');
     }
   });
 
@@ -1858,8 +1799,7 @@ export function registerHrApi(app, db) {
       });
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list incidents.' });
+            return hrApiFail(res, e, 'Could not list incidents.');
     }
   });
 
@@ -1870,8 +1810,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load incident.' });
+            return hrApiFail(res, e, 'Could not load incident.');
     }
   });
 
@@ -1882,8 +1821,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not build audit pack.' });
+            return hrApiFail(res, e, 'Could not build audit pack.');
     }
   });
 
@@ -1896,8 +1834,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export investigation PDF.' });
+            return hrApiFail(res, e, 'Could not export investigation PDF.');
     }
   });
 
@@ -1908,8 +1845,7 @@ export function registerHrApi(app, db) {
       const r = listPerformanceRecognitions(db, scope, { userId: req.query?.userId });
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list performance recognitions.' });
+            return hrApiFail(res, e, 'Could not list performance recognitions.');
     }
   });
 
@@ -1920,8 +1856,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record custody event.' });
+            return hrApiFail(res, e, 'Could not record custody event.');
     }
   });
 
@@ -1931,8 +1866,7 @@ export function registerHrApi(app, db) {
       const events = listAssetCustodyTimeline(db, req.params.assetId, req.query?.machineId);
       return res.json({ ok: true, events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load custody timeline.' });
+            return hrApiFail(res, e, 'Could not load custody timeline.');
     }
   });
 
@@ -1943,8 +1877,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record gate pass.' });
+            return hrApiFail(res, e, 'Could not record gate pass.');
     }
   });
 
@@ -1955,8 +1888,7 @@ export function registerHrApi(app, db) {
       const events = listGatePassEvents(db, scope.branchId, req.query?.passDateIso);
       return res.json({ ok: true, events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list gate pass events.' });
+            return hrApiFail(res, e, 'Could not list gate pass events.');
     }
   });
 
@@ -1968,8 +1900,7 @@ export function registerHrApi(app, db) {
       const blocks = staffDisciplinePayrollBlocks(db, userId);
       return res.json({ ok: true, ...blocks });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load discipline payroll blocks.' });
+            return hrApiFail(res, e, 'Could not load discipline payroll blocks.');
     }
   });
 
@@ -1994,8 +1925,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, history });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load salary history.' });
+            return hrApiFail(res, e, 'Could not load salary history.');
     }
   });
 
@@ -2009,8 +1939,7 @@ export function registerHrApi(app, db) {
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: userId });
       return res.json({ ok: true, profile: redactStaffProfile(r.profile, ctx) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not apply salary increment.' });
+            return hrApiFail(res, e, 'Could not apply salary increment.');
     }
   });
 
@@ -2032,8 +1961,7 @@ export function registerHrApi(app, db) {
       const documents = listHrStaffDocumentMeta(db, userId);
       return res.json({ ok: true, documents });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list documents.' });
+            return hrApiFail(res, e, 'Could not list documents.');
     }
   });
 
@@ -2053,8 +1981,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || 'document')}"`);
       return res.send(buf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not download document.' });
+            return hrApiFail(res, e, 'Could not download document.');
     }
   });
 
@@ -2070,8 +1997,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not upload document.' });
+            return hrApiFail(res, e, 'Could not upload document.');
     }
   });
 
@@ -2087,8 +2013,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete document.' });
+            return hrApiFail(res, e, 'Could not delete document.');
     }
   });
 
@@ -2101,8 +2026,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update document verification.' });
+            return hrApiFail(res, e, 'Could not update document verification.');
     }
   });
 
@@ -2118,8 +2042,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, user: r.user });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update passport photo.' });
+            return hrApiFail(res, e, 'Could not update passport photo.');
     }
   });
 
@@ -2141,8 +2064,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load lifecycle.' });
+            return hrApiFail(res, e, 'Could not load lifecycle.');
     }
   });
 
@@ -2164,8 +2086,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update task.' });
+            return hrApiFail(res, e, 'Could not update task.');
     }
   });
 
@@ -2178,8 +2099,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update separation.' });
+            return hrApiFail(res, e, 'Could not update separation.');
     }
   });
 
@@ -2197,8 +2117,7 @@ export function registerHrApi(app, db) {
       const unreadCount = countUnreadHrNotifications(db, userId);
       return res.json({ ok: true, notifications, unreadCount });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load notifications.' });
+            return hrApiFail(res, e, 'Could not load notifications.');
     }
   });
 
@@ -2209,8 +2128,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, unreadCount: countUnreadHrNotifications(db, req.user?.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update notification.' });
+            return hrApiFail(res, e, 'Could not update notification.');
     }
   });
 
@@ -2220,8 +2138,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, unreadCount: 0 });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update notifications.' });
+            return hrApiFail(res, e, 'Could not update notifications.');
     }
   });
 
@@ -2241,8 +2158,7 @@ export function registerHrApi(app, db) {
       });
       return res.status(201).json({ ok: true, events: r.events });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record disciplinary event.' });
+            return hrApiFail(res, e, 'Could not record disciplinary event.');
     }
   });
 
@@ -2293,8 +2209,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, requests });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list HR requests.' });
+            return hrApiFail(res, e, 'Could not list HR requests.');
     }
   });
 
@@ -2317,8 +2232,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create HR request.' });
+            return hrApiFail(res, e, 'Could not create HR request.');
     }
   });
 
@@ -2329,8 +2243,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit request.' });
+            return hrApiFail(res, e, 'Could not submit request.');
     }
   });
 
@@ -2344,8 +2257,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not complete HR review.' });
+            return hrApiFail(res, e, 'Could not complete HR review.');
     }
   });
 
@@ -2357,8 +2269,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not complete branch endorsement.' });
+            return hrApiFail(res, e, 'Could not complete branch endorsement.');
     }
   });
 
@@ -2370,8 +2281,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not complete GM HR review.' });
+            return hrApiFail(res, e, 'Could not complete GM HR review.');
     }
   });
 
@@ -2383,8 +2293,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not complete manager review.' });
+            return hrApiFail(res, e, 'Could not complete manager review.');
     }
   });
 
@@ -2395,8 +2304,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete request.' });
+            return hrApiFail(res, e, 'Could not delete request.');
     }
   });
 
@@ -2405,8 +2313,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, uploads: listHrAttendance(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list attendance uploads.' });
+            return hrApiFail(res, e, 'Could not list attendance uploads.');
     }
   });
 
@@ -2417,8 +2324,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not upload attendance.' });
+            return hrApiFail(res, e, 'Could not upload attendance.');
     }
   });
 
@@ -2430,8 +2336,7 @@ export function registerHrApi(app, db) {
       const r = getHrDailyRollCall(db, hrListScope(req), branchId, dayIso);
       return res.json({ ok: true, ...r });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load daily roll call.' });
+            return hrApiFail(res, e, 'Could not load daily roll call.');
     }
   });
 
@@ -2442,8 +2347,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save daily roll call.' });
+            return hrApiFail(res, e, 'Could not save daily roll call.');
     }
   });
 
@@ -2461,8 +2365,7 @@ export function registerHrApi(app, db) {
         const items = listHrAttendanceDeductionPreview(db, scope, periodYyyymm);
         return res.json({ ok: true, periodYyyymm, items });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load deduction preview.' });
+                return hrApiFail(res, e, 'Could not load deduction preview.');
       }
     }
   );
@@ -2487,8 +2390,7 @@ export function registerHrApi(app, db) {
         balances: listHrLeaveBalances(db, filter),
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load leave balances.' });
+            return hrApiFail(res, e, 'Could not load leave balances.');
     }
   });
 
@@ -2499,8 +2401,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not recompute leave balances.' });
+            return hrApiFail(res, e, 'Could not recompute leave balances.');
     }
   });
 
@@ -2511,8 +2412,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not adjust leave balance.' });
+            return hrApiFail(res, e, 'Could not adjust leave balance.');
     }
   });
 
@@ -2533,8 +2433,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, runs });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list payroll runs.' });
+            return hrApiFail(res, e, 'Could not list payroll runs.');
     }
   });
 
@@ -2545,8 +2444,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create payroll run.' });
+            return hrApiFail(res, e, 'Could not create payroll run.');
     }
   });
 
@@ -2558,8 +2456,7 @@ export function registerHrApi(app, db) {
         if (!hrReady(res, db)) return;
         return res.json({ ok: true, runs: listPayrollRunsForFinance(db) });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load finance payroll queue.' });
+                return hrApiFail(res, e, 'Could not load finance payroll queue.');
       }
     }
   );
@@ -2571,8 +2468,7 @@ export function registerHrApi(app, db) {
       if (!run) return res.status(404).json({ ok: false, error: 'Payroll run not found.' });
       return res.json({ ok: true, run });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payroll run.' });
+            return hrApiFail(res, e, 'Could not load payroll run.');
     }
   });
 
@@ -2583,8 +2479,7 @@ export function registerHrApi(app, db) {
       const lines = listPayrollLines(db, req.params.runId).map((l) => redactPayrollLine(l, ctx));
       return res.json({ ok: true, lines });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payroll lines.' });
+            return hrApiFail(res, e, 'Could not load payroll lines.');
     }
   });
 
@@ -2607,8 +2502,7 @@ export function registerHrApi(app, db) {
         }
         return res.json({ ok: true, totals, run });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load payroll totals.' });
+                return hrApiFail(res, e, 'Could not load payroll totals.');
       }
     }
   );
@@ -2622,8 +2516,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not recompute payroll.' });
+            return hrApiFail(res, e, 'Could not recompute payroll.');
     }
   });
 
@@ -2641,8 +2534,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update payroll run.' });
+            return hrApiFail(res, e, 'Could not update payroll run.');
     }
   });
 
@@ -2656,8 +2548,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve payroll.' });
+            return hrApiFail(res, e, 'Could not approve payroll.');
     }
   });
 
@@ -2671,8 +2562,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve payroll.' });
+            return hrApiFail(res, e, 'Could not approve payroll.');
     }
   });
 
@@ -2685,8 +2575,7 @@ export function registerHrApi(app, db) {
         const staff = listPayrollMissingBankStaff(db, req.params.runId);
         return res.json({ ok: true, staff, count: staff.length });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load missing bank accounts.' });
+                return hrApiFail(res, e, 'Could not load missing bank accounts.');
       }
     }
   );
@@ -2701,8 +2590,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not adjust payroll line.' });
+                return hrApiFail(res, e, 'Could not adjust payroll line.');
       }
     }
   );
@@ -2719,8 +2607,7 @@ export function registerHrApi(app, db) {
         res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'payroll-approval.pdf'}"`);
         return res.send(Buffer.from(r.pdf));
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Approval report export failed.' });
+                return hrApiFail(res, e, 'Approval report export failed.');
       }
     }
   );
@@ -2751,8 +2638,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || filename}"`);
       return res.send(r.csv);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Export failed.' });
+            return hrApiFail(res, e, 'Export failed.');
     }
   };
 
@@ -2786,8 +2672,7 @@ export function registerHrApi(app, db) {
       const periodHint = isSelf ? getHrPayslipPeriodHint(db, userId) : null;
       return res.json({ ok: true, payslips: slips, periodHint });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payslips.' });
+            return hrApiFail(res, e, 'Could not load payslips.');
     }
   });
 
@@ -2796,8 +2681,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, matrix: listHrSalaryMatrix(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load salary matrix.' });
+            return hrApiFail(res, e, 'Could not load salary matrix.');
     }
   });
 
@@ -2808,8 +2692,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save salary matrix row.' });
+            return hrApiFail(res, e, 'Could not save salary matrix row.');
     }
   });
 
@@ -2825,8 +2708,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete salary matrix row.' });
+            return hrApiFail(res, e, 'Could not delete salary matrix row.');
     }
   });
 
@@ -2845,8 +2727,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not look up salary matrix.' });
+            return hrApiFail(res, e, 'Could not look up salary matrix.');
     }
   });
 
@@ -2856,8 +2737,7 @@ export function registerHrApi(app, db) {
       const scope = hrListScope(req);
       return res.json({ ok: true, rows: listHrSalaryVarianceReport(db, scope) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load salary variance report.' });
+            return hrApiFail(res, e, 'Could not load salary variance report.');
     }
   });
 
@@ -2868,8 +2748,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ...r, catalog: getZarewaOrgCatalogMeta() });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not seed standard org catalog.' });
+            return hrApiFail(res, e, 'Could not seed standard org catalog.');
     }
   });
 
@@ -2885,8 +2764,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not seed demo multi-role profile.' });
+            return hrApiFail(res, e, 'Could not seed demo multi-role profile.');
     }
   });
 
@@ -2902,8 +2780,7 @@ export function registerHrApi(app, db) {
       const branchId = String(req.query.branchId || '').trim() || undefined;
       return res.json({ ok: true, officeKey, branchId: branchId || null, matches: findStaffCoveringOffice(db, { officeKey, branchId }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not resolve office coverage.' });
+            return hrApiFail(res, e, 'Could not resolve office coverage.');
     }
   });
 
@@ -2934,8 +2811,7 @@ export function registerHrApi(app, db) {
         }),
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load role hints.' });
+            return hrApiFail(res, e, 'Could not load role hints.');
     }
   });
 
@@ -2947,8 +2823,7 @@ export function registerHrApi(app, db) {
       const r = backfillLegacyPayAdditions(db, hrListScope(req), { dryRun, autoDocument });
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Legacy pay backfill failed.' });
+            return hrApiFail(res, e, 'Legacy pay backfill failed.');
     }
   });
 
@@ -2968,8 +2843,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Matrix revision apply failed.' });
+            return hrApiFail(res, e, 'Matrix revision apply failed.');
     }
   });
 
@@ -2985,8 +2859,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, periodYyyymm, contributions: listHrBranchPayrollContributions(db, periodYyyymm) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load branch contributions.' });
+            return hrApiFail(res, e, 'Could not load branch contributions.');
     }
   });
 
@@ -3000,8 +2873,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save branch contribution.' });
+            return hrApiFail(res, e, 'Could not save branch contribution.');
     }
   });
 
@@ -3038,8 +2910,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'payslip.pdf'}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'PDF export failed.' });
+            return hrApiFail(res, e, 'PDF export failed.');
     }
   });
 
@@ -3051,8 +2922,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, cycles: listHrAppraisalCycles(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load appraisal cycles.' });
+            return hrApiFail(res, e, 'Could not load appraisal cycles.');
     }
   });
 
@@ -3063,8 +2933,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create appraisal cycle.' });
+            return hrApiFail(res, e, 'Could not create appraisal cycle.');
     }
   });
 
@@ -3085,8 +2954,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, forms });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load appraisal forms.' });
+            return hrApiFail(res, e, 'Could not load appraisal forms.');
     }
   });
 
@@ -3097,8 +2965,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save appraisal form.' });
+            return hrApiFail(res, e, 'Could not save appraisal form.');
     }
   });
 
@@ -3118,8 +2985,7 @@ export function registerHrApi(app, db) {
       if (!staffScopeGate(req, res, userId)) return;
       return res.json({ ok: true, notes: listHrFeedbackNotes(db, userId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load feedback notes.' });
+            return hrApiFail(res, e, 'Could not load feedback notes.');
     }
   });
 
@@ -3130,8 +2996,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save feedback note.' });
+            return hrApiFail(res, e, 'Could not save feedback note.');
     }
   });
 
@@ -3141,8 +3006,7 @@ export function registerHrApi(app, db) {
       const status = String(req.query?.status || '').trim();
       return res.json({ ok: true, jobs: listHrJobPostings(db, { status }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load jobs.' });
+            return hrApiFail(res, e, 'Could not load jobs.');
     }
   });
 
@@ -3153,8 +3017,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create job.' });
+            return hrApiFail(res, e, 'Could not create job.');
     }
   });
 
@@ -3165,8 +3028,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update job.' });
+            return hrApiFail(res, e, 'Could not update job.');
     }
   });
 
@@ -3177,8 +3039,7 @@ export function registerHrApi(app, db) {
       if (!getHrJobPosting(db, jobId)) return res.status(404).json({ ok: false, error: 'Job not found.' });
       return res.json({ ok: true, applicants: listHrApplicants(db, jobId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load applicants.' });
+            return hrApiFail(res, e, 'Could not load applicants.');
     }
   });
 
@@ -3189,8 +3050,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not add applicant.' });
+            return hrApiFail(res, e, 'Could not add applicant.');
     }
   });
 
@@ -3201,8 +3061,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update applicant.' });
+            return hrApiFail(res, e, 'Could not update applicant.');
     }
   });
 
@@ -3213,8 +3072,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load prefill.' });
+            return hrApiFail(res, e, 'Could not load prefill.');
     }
   });
 
@@ -3229,8 +3087,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate offer letter.' });
+            return hrApiFail(res, e, 'Could not generate offer letter.');
     }
   });
 
@@ -3242,8 +3099,7 @@ export function registerHrApi(app, db) {
         ...getHrReportCatalog({ canViewExecutive: userCanViewExecutiveBenefits(req.user) }),
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load report catalog.' });
+            return hrApiFail(res, e, 'Could not load report catalog.');
     }
   });
 
@@ -3261,8 +3117,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Report preview failed.' });
+            return hrApiFail(res, e, 'Report preview failed.');
     }
   });
 
@@ -3299,8 +3154,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(r.body);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Export failed.' });
+            return hrApiFail(res, e, 'Export failed.');
     }
   });
 
@@ -3311,8 +3165,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load operational readiness.' });
+            return hrApiFail(res, e, 'Could not load operational readiness.');
     }
   });
 
@@ -3331,8 +3184,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, records: listHrTrainingRecords(db, userId || req.user?.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load training records.' });
+            return hrApiFail(res, e, 'Could not load training records.');
     }
   });
 
@@ -3343,8 +3195,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save training record.' });
+            return hrApiFail(res, e, 'Could not save training record.');
     }
   });
 
@@ -3355,8 +3206,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete training record.' });
+            return hrApiFail(res, e, 'Could not delete training record.');
     }
   });
 
@@ -3365,8 +3215,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, surveys: listHrEngagementSurveys(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load surveys.' });
+            return hrApiFail(res, e, 'Could not load surveys.');
     }
   });
 
@@ -3377,8 +3226,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create survey.' });
+            return hrApiFail(res, e, 'Could not create survey.');
     }
   });
 
@@ -3389,8 +3237,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update survey.' });
+            return hrApiFail(res, e, 'Could not update survey.');
     }
   });
 
@@ -3401,8 +3248,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load survey summary.' });
+            return hrApiFail(res, e, 'Could not load survey summary.');
     }
   });
 
@@ -3414,8 +3260,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, surveys: listOpenSurveysForUser(db, req.user?.id) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load surveys.' });
+            return hrApiFail(res, e, 'Could not load surveys.');
     }
   });
 
@@ -3429,8 +3274,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit response.' });
+            return hrApiFail(res, e, 'Could not submit response.');
     }
   });
 
@@ -3451,8 +3295,7 @@ export function registerHrApi(app, db) {
         : letters;
       return res.json({ ok: true, letters: filtered.length ? filtered : letters });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list employment letters.' });
+            return hrApiFail(res, e, 'Could not list employment letters.');
     }
   });
 
@@ -3463,8 +3306,7 @@ export function registerHrApi(app, db) {
       const r = await processHrLetterAutomationHook(db, req.user, req.body || {}, base);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate letter suggestions.' });
+            return hrApiFail(res, e, 'Could not generate letter suggestions.');
     }
   });
 
@@ -3476,8 +3318,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate letter.' });
+            return hrApiFail(res, e, 'Could not generate letter.');
     }
   });
 
@@ -3488,8 +3329,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit letter.' });
+            return hrApiFail(res, e, 'Could not submit letter.');
     }
   });
 
@@ -3500,8 +3340,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not review letter.' });
+            return hrApiFail(res, e, 'Could not review letter.');
     }
   });
 
@@ -3512,8 +3351,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not GM-review letter.' });
+            return hrApiFail(res, e, 'Could not GM-review letter.');
     }
   });
 
@@ -3524,8 +3362,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not MD-approve letter.' });
+            return hrApiFail(res, e, 'Could not MD-approve letter.');
     }
   });
 
@@ -3536,8 +3373,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not issue letter.' });
+            return hrApiFail(res, e, 'Could not issue letter.');
     }
   });
 
@@ -3548,8 +3384,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not reject letter.' });
+            return hrApiFail(res, e, 'Could not reject letter.');
     }
   });
 
@@ -3568,8 +3403,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `inline; filename="${r.filename}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not preview letter.' });
+            return hrApiFail(res, e, 'Could not preview letter.');
     }
   });
 
@@ -3589,8 +3423,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export letter PDF.' });
+            return hrApiFail(res, e, 'Could not export letter PDF.');
     }
   });
 
@@ -3610,8 +3443,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(r.body);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export letter Word document.' });
+            return hrApiFail(res, e, 'Could not export letter Word document.');
     }
   });
 
@@ -3622,8 +3454,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(r.code === 'LETTER_NOT_APPROVED' ? 403 : 400).json(r);
       return res.json({ ok: true });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record print.' });
+            return hrApiFail(res, e, 'Could not record print.');
     }
   });
 
@@ -3634,8 +3465,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate leave letter.' });
+            return hrApiFail(res, e, 'Could not generate leave letter.');
     }
   });
 
@@ -3646,8 +3476,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate loan agreement.' });
+            return hrApiFail(res, e, 'Could not generate loan agreement.');
     }
   });
 
@@ -3660,8 +3489,7 @@ export function registerHrApi(app, db) {
       const insights = listHrCompensationInsights(db, hrListScope(req), { canViewSensitiveHr: true });
       return res.json({ ok: true, insights });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load compensation insights.' });
+            return hrApiFail(res, e, 'Could not load compensation insights.');
     }
   });
 
@@ -3673,8 +3501,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, snapshot: salaryWelfareSnapshot(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load salary snapshot.' });
+            return hrApiFail(res, e, 'Could not load salary snapshot.');
     }
   });
 
@@ -3683,8 +3510,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, holidays: listHrPublicHolidays(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load holidays.' });
+            return hrApiFail(res, e, 'Could not load holidays.');
     }
   });
 
@@ -3695,8 +3521,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save holiday.' });
+            return hrApiFail(res, e, 'Could not save holiday.');
     }
   });
 
@@ -3707,8 +3532,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update loan.' });
+            return hrApiFail(res, e, 'Could not update loan.');
     }
   });
 
@@ -3724,8 +3548,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, beneficiaries: rows });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load beneficiaries.' });
+            return hrApiFail(res, e, 'Could not load beneficiaries.');
     }
   });
 
@@ -3736,8 +3559,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save beneficiary.' });
+            return hrApiFail(res, e, 'Could not save beneficiary.');
     }
   });
 
@@ -3747,8 +3569,7 @@ export function registerHrApi(app, db) {
       const periodYyyymm = String(req.query?.periodYyyymm || '').replace(/\D/g, '').slice(0, 6);
       return res.json({ ok: true, payments: listHrBenefitPayments(db, periodYyyymm) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load benefit payments.' });
+            return hrApiFail(res, e, 'Could not load benefit payments.');
     }
   });
 
@@ -3759,8 +3580,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record benefit payment.' });
+            return hrApiFail(res, e, 'Could not record benefit payment.');
     }
   });
 
@@ -3773,8 +3593,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, memos: listHrIncidentMemos(db, scope) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load incident memos.' });
+            return hrApiFail(res, e, 'Could not load incident memos.');
     }
   });
 
@@ -3785,8 +3604,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create incident memo.' });
+            return hrApiFail(res, e, 'Could not create incident memo.');
     }
   });
 
@@ -3797,8 +3615,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not escalate incident.' });
+            return hrApiFail(res, e, 'Could not escalate incident.');
     }
   });
 
@@ -3807,8 +3624,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, summary: getHrNotificationSummary(db, hrListScope(req), req.user) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR notification summary.' });
+            return hrApiFail(res, e, 'Could not load HR notification summary.');
     }
   });
 
@@ -3877,8 +3693,7 @@ export function registerHrApi(app, db) {
         documentsExpiring,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load team summary.' });
+            return hrApiFail(res, e, 'Could not load team summary.');
     }
   });
 
@@ -3889,8 +3704,7 @@ export function registerHrApi(app, db) {
       const canViewSensitive = userCanViewOrgSensitiveHr(req.user);
       return res.json({ ok: true, analytics: getHrAnalyticsDashboard(db, scope, { canViewSensitive }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR analytics.' });
+            return hrApiFail(res, e, 'Could not load HR analytics.');
     }
   });
 
@@ -3905,8 +3719,7 @@ export function registerHrApi(app, db) {
       if (!staffScopeGate(req, res, userId)) return;
       return res.json({ ok: true, schedule: getStaffLoanSchedule(db, userId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load loan schedule.' });
+            return hrApiFail(res, e, 'Could not load loan schedule.');
     }
   });
 
@@ -3915,8 +3728,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, issues: listLoanScheduleIssues(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load loan schedule issues.' });
+            return hrApiFail(res, e, 'Could not load loan schedule issues.');
     }
   });
 
@@ -3943,8 +3755,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, ledgerReady: true, accounts });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load obligation accounts.' });
+            return hrApiFail(res, e, 'Could not load obligation accounts.');
     }
   });
 
@@ -3963,8 +3774,7 @@ export function registerHrApi(app, db) {
       if (!isSelf && !staffScopeGate(req, res, detail.userId)) return;
       return res.json({ ok: true, account: detail });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load obligation account.' });
+            return hrApiFail(res, e, 'Could not load obligation account.');
     }
   });
 
@@ -3975,8 +3785,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not register legacy loan.' });
+            return hrApiFail(res, e, 'Could not register legacy loan.');
     }
   });
 
@@ -3987,8 +3796,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not backfill recovery obligations.' });
+            return hrApiFail(res, e, 'Could not backfill recovery obligations.');
     }
   });
 
@@ -4002,8 +3810,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record repayment.' });
+            return hrApiFail(res, e, 'Could not record repayment.');
     }
   });
 
@@ -4017,8 +3824,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(r.code === 'FORBIDDEN' ? 403 : 400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not update pause state.' });
+                return hrApiFail(res, e, 'Could not update pause state.');
       }
     }
   );
@@ -4033,8 +3839,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not maintain obligation account.' });
+                return hrApiFail(res, e, 'Could not maintain obligation account.');
       }
     }
   );
@@ -4049,8 +3854,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(r.code === 'FORBIDDEN' ? 403 : 400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not waive obligation balance.' });
+                return hrApiFail(res, e, 'Could not waive obligation balance.');
       }
     }
   );
@@ -4066,8 +3870,7 @@ export function registerHrApi(app, db) {
         const rows = listStaffRepayableObligationsForCashier(db, branchScope);
         return res.json({ ok: true, obligations: rows, ledgerReady: staffObligationTablesReady(db) });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load staff obligations due.' });
+                return hrApiFail(res, e, 'Could not load staff obligations due.');
       }
     }
   );
@@ -4087,8 +3890,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not record staff obligation payment.' });
+                return hrApiFail(res, e, 'Could not record staff obligation payment.');
       }
     }
   );
@@ -4104,8 +3906,7 @@ export function registerHrApi(app, db) {
         const rows = listStaffRecoveriesDueForCashier(db, branchScope);
         return res.json({ ok: true, recoveries: rows, ledgerReady: staffObligationTablesReady(db) });
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not load staff recoveries due.' });
+                return hrApiFail(res, e, 'Could not load staff recoveries due.');
       }
     }
   );
@@ -4124,8 +3925,7 @@ export function registerHrApi(app, db) {
         if (!r.ok) return res.status(400).json(r);
         return res.json(r);
       } catch (e) {
-        console.error(e);
-        return res.status(500).json({ ok: false, error: 'Could not record staff recovery payment.' });
+                return hrApiFail(res, e, 'Could not record staff recovery payment.');
       }
     }
   );
@@ -4146,8 +3946,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
       return res.send(built.pdf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate statement PDF.' });
+            return hrApiFail(res, e, 'Could not generate statement PDF.');
     }
   });
 
@@ -4167,8 +3966,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
       return res.send(built.pdf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate disbursement voucher.' });
+            return hrApiFail(res, e, 'Could not generate disbursement voucher.');
     }
   });
 
@@ -4188,8 +3986,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `inline; filename="${built.filename}"`);
       return res.send(built.pdf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate repayment receipt.' });
+            return hrApiFail(res, e, 'Could not generate repayment receipt.');
     }
   });
 
@@ -4231,8 +4028,7 @@ export function registerHrApi(app, db) {
         purchaseEligibility,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load money summary.' });
+            return hrApiFail(res, e, 'Could not load money summary.');
     }
   });
 
@@ -4245,8 +4041,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not link sales customer.' });
+            return hrApiFail(res, e, 'Could not link sales customer.');
     }
   });
 
@@ -4261,8 +4056,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load sales customer link stats.' });
+            return hrApiFail(res, e, 'Could not load sales customer link stats.');
     }
   });
 
@@ -4277,8 +4071,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Bulk link failed.' });
+            return hrApiFail(res, e, 'Bulk link failed.');
     }
   });
 
@@ -4287,8 +4080,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, departments: listHrDepartments(db, hrListScope(req), { includeInactive: req.query.all === '1' }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load departments.' });
+            return hrApiFail(res, e, 'Could not load departments.');
     }
   });
 
@@ -4300,8 +4092,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save department.' });
+            return hrApiFail(res, e, 'Could not save department.');
     }
   };
   app.put('/api/hr/departments', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDepartment);
@@ -4315,8 +4106,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not remove department.' });
+            return hrApiFail(res, e, 'Could not remove department.');
     }
   });
 
@@ -4328,8 +4118,7 @@ export function registerHrApi(app, db) {
         designations: listHrDesignations(db, { departmentId: req.query.departmentId, includeInactive: req.query.all === '1' }),
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load designations.' });
+            return hrApiFail(res, e, 'Could not load designations.');
     }
   });
 
@@ -4341,8 +4130,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save designation.' });
+            return hrApiFail(res, e, 'Could not save designation.');
     }
   };
   app.put('/api/hr/designations', requireHrAny('hr.settings.manage', 'hr.staff.manage'), putHrDesignation);
@@ -4356,8 +4144,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not remove designation.' });
+            return hrApiFail(res, e, 'Could not remove designation.');
     }
   });
 
@@ -4372,8 +4159,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not evaluate designation tenure eligibility.' });
+            return hrApiFail(res, e, 'Could not evaluate designation tenure eligibility.');
     }
   });
 
@@ -4391,8 +4177,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, tenure });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load tenure summary.' });
+            return hrApiFail(res, e, 'Could not load tenure summary.');
     }
   });
 
@@ -4408,8 +4193,7 @@ export function registerHrApi(app, db) {
       };
       return res.json({ ok: true, transfers: listHrTransferRequests(db, scope, filters), transferTypes: TRANSFER_TYPES });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load transfer requests.' });
+            return hrApiFail(res, e, 'Could not load transfer requests.');
     }
   });
 
@@ -4420,8 +4204,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create transfer request.' });
+            return hrApiFail(res, e, 'Could not create transfer request.');
     }
   });
 
@@ -4432,8 +4215,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update transfer request.' });
+            return hrApiFail(res, e, 'Could not update transfer request.');
     }
   });
 
@@ -4446,8 +4228,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, recommendations: listHrTransferRecommendations(db, scope) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load transfer recommendations.' });
+            return hrApiFail(res, e, 'Could not load transfer recommendations.');
     }
   });
 
@@ -4458,8 +4239,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create transfer recommendation.' });
+            return hrApiFail(res, e, 'Could not create transfer recommendation.');
     }
   });
 
@@ -4470,8 +4250,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update recommendation.' });
+            return hrApiFail(res, e, 'Could not update recommendation.');
     }
   });
 
@@ -4495,8 +4274,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, entries: listHrLeaveCalendar(db, scope, fromIso, toIso, calendarOpts) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load leave calendar.' });
+            return hrApiFail(res, e, 'Could not load leave calendar.');
     }
   });
 
@@ -4510,8 +4288,7 @@ export function registerHrApi(app, db) {
       );
       return res.json({ ok: true, loans });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load exceptional loan queue.' });
+            return hrApiFail(res, e, 'Could not load exceptional loan queue.');
     }
   });
 
@@ -4520,8 +4297,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, summary: getHrReportsSummary(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load HR reports.' });
+            return hrApiFail(res, e, 'Could not load HR reports.');
     }
   });
 
@@ -4540,8 +4316,7 @@ export function registerHrApi(app, db) {
       }
       return res.json({ ok: true, changes });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load salary changes.' });
+            return hrApiFail(res, e, 'Could not load salary changes.');
     }
   });
 
@@ -4550,42 +4325,41 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, runs: listDraftPayrollRunIds(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list draft payroll runs.' });
+            return hrApiFail(res, e, 'Could not list draft payroll runs.');
     }
   });
 
   // ── Chairman School Fees ──────────────────────────
   app.get('/api/hr/chairman/school-fees', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; return res.json({ok:true,fees:listChairmanSchoolFees(db)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load school fees.'});}
+    try { if(!hrReady(res,db)) return; return res.json({ok:true,fees:listChairmanSchoolFees(db)}); } catch(e){return hrApiFail(res,e,'Failed to load school fees.');}
   });
   app.post('/api/hr/chairman/school-fees', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to save school fee.'});}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to save school fee.');}
   });
   app.put('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update school fee.'});}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update school fee.');}
   });
   app.delete('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; deleteChairmanSchoolFee(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to delete.'});}
+    try { if(!hrReady(res,db)) return; deleteChairmanSchoolFee(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to delete.');}
   });
 
   // ── Chairman Expenses ────────────────────────────
   app.get('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; return res.json({ok:true,expenses:listChairmanExpenses(db,req.query.period||null)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load expenses.'});}
+    try { if(!hrReady(res,db)) return; return res.json({ok:true,expenses:listChairmanExpenses(db,req.query.period||null)}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to load expenses.');}
   });
   app.post('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to save expense.'});}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to save expense.');}
   });
   app.put('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update expense.'});}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update expense.');}
   });
   app.delete('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; deleteChairmanExpense(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to delete.'});}
+    try { if(!hrReady(res,db)) return; deleteChairmanExpense(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to delete.');}
   });
 
   // ── ID Cards ─────────────────────────────────────
   app.get('/api/hr/id-cards', (req,res) => {
-    try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to load ID card requests.'});}
+    try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to load ID card requests.');}
   });
   app.post('/api/hr/id-cards', (req,res) => {
     try {
@@ -4597,10 +4371,10 @@ export function registerHrApi(app, db) {
       const r=createHrIdCardRequest(db,req.user,body);
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
-    } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to create ID card request.'});}
+    } catch(e){console.error(e);return hrApiFail(res,e,'Failed to create ID card request.');}
   });
   app.patch('/api/hr/id-cards/:id', requireHrAny('hr.*','hr.staff.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){console.error(e);return res.status(500).json({ok:false,error:'Failed to update ID card request.'});}
+    try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update ID card request.');}
   });
 
   app.get('/api/hr/staff/:userId/severance-preview', requireHrAny('hr.*', 'hr.staff.manage'), (req, res) => {
@@ -4612,8 +4386,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not calculate severance.' });
+            return hrApiFail(res, e, 'Could not calculate severance.');
     }
   });
 
@@ -4624,8 +4397,7 @@ export function registerHrApi(app, db) {
       if (!staffScopeGate(req, res, userId)) return;
       return res.json({ ok: true, ...getStaffDisciplinaryQueryCount(db, userId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load disciplinary summary.' });
+            return hrApiFail(res, e, 'Could not load disciplinary summary.');
     }
   });
 
@@ -4635,8 +4407,7 @@ export function registerHrApi(app, db) {
       const flagged = detectThreeDayNoShows(db, req.query.branchId || null);
       return res.json({ ok: true, flagged });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not check no-show alerts.' });
+            return hrApiFail(res, e, 'Could not check no-show alerts.');
     }
   });
 
@@ -4648,21 +4419,21 @@ export function registerHrApi(app, db) {
       const trends = getAttendanceTrends(db, req.query.branchId || null, Number(req.query.months) || 6);
       const chronic = getChronicAbsentees(db, req.query.branchId || null, Number(req.query.threshold) || 5);
       return res.json({ ok: true, trends, chronicAbsentees: chronic });
-    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load attendance analytics.' }); }
+    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load attendance analytics.'); }
   });
 
   app.get('/api/hr/analytics/loan-portfolio', requireHrAny('hr.*', 'hr.loans.manage', 'hr.reports.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getLoanPortfolioAnalytics(db) });
-    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load loan portfolio.' }); }
+    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load loan portfolio.'); }
   });
 
   app.get('/api/hr/payroll-runs/:runId/variance-alerts', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getPayrollVarianceAlerts(db, req.params.runId, req.query.threshold) });
-    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not run variance check.' }); }
+    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not run variance check.'); }
   });
 
   app.get('/api/hr/payroll-runs/:runId/paye-alerts', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.view_sensitive'), (req, res) => {
@@ -4671,8 +4442,7 @@ export function registerHrApi(app, db) {
       const missing = getPayrollMissingPayeStaff(db, req.params.runId);
       return res.json({ ok: true, missing, count: missing.length });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load PAYE alerts.' });
+            return hrApiFail(res, e, 'Could not load PAYE alerts.');
     }
   });
 
@@ -4680,14 +4450,14 @@ export function registerHrApi(app, db) {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, trend: getStaffTurnoverTrend(db, Number(req.query.months) || 12) });
-    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load turnover trend.' }); }
+    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load turnover trend.'); }
   });
 
   app.get('/api/hr/analytics/headcount', requireHrAny('hr.*', 'hr.reports.view', 'hr.directory.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getHeadcountSummary(db) });
-    } catch (e) { console.error(e); return res.status(500).json({ ok: false, error: 'Could not load headcount.' }); }
+    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load headcount.'); }
   });
 
   // ── Phase 10: Bonus, Leave Carry-Over, Dashboard Alerts ───────────────────
@@ -4699,8 +4469,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not apply bonus.' });
+            return hrApiFail(res, e, 'Could not apply bonus.');
     }
   });
 
@@ -4711,8 +4480,7 @@ export function registerHrApi(app, db) {
       const r = runLeaveYearEndCarryOver(db, req.user, year);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not run year-end carry-over.' });
+            return hrApiFail(res, e, 'Could not run year-end carry-over.');
     }
   });
 
@@ -4751,8 +4519,7 @@ export function registerHrApi(app, db) {
         pendingTransfers: actionAlerts.pendingTransfers,
       });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load dashboard alerts.' });
+            return hrApiFail(res, e, 'Could not load dashboard alerts.');
     }
   });
 
@@ -4770,8 +4537,7 @@ export function registerHrApi(app, db) {
       };
       return res.json({ ok: true, reports: listHrAbsenceReports(db, scope, filters) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load absence reports.' });
+            return hrApiFail(res, e, 'Could not load absence reports.');
     }
   });
 
@@ -4780,8 +4546,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, alerts: getHrAbsenceAlerts(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load absence alerts.' });
+            return hrApiFail(res, e, 'Could not load absence alerts.');
     }
   });
 
@@ -4796,8 +4561,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not create absence report.' });
+            return hrApiFail(res, e, 'Could not create absence report.');
     }
   });
 
@@ -4808,8 +4572,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not review absence report.' });
+            return hrApiFail(res, e, 'Could not review absence report.');
     }
   });
 
@@ -4820,8 +4583,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not close absence report.' });
+            return hrApiFail(res, e, 'Could not close absence report.');
     }
   });
 
@@ -4832,8 +4594,7 @@ export function registerHrApi(app, db) {
       const filters = { userId: req.query.userId, status: req.query.status };
       return res.json({ ok: true, clearances: listHrExitClearance(db, hrListScope(req), filters) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load exit clearance.' });
+            return hrApiFail(res, e, 'Could not load exit clearance.');
     }
   });
 
@@ -4844,8 +4605,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not initiate exit clearance.' });
+            return hrApiFail(res, e, 'Could not initiate exit clearance.');
     }
   });
 
@@ -4856,8 +4616,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load exit clearance.' });
+            return hrApiFail(res, e, 'Could not load exit clearance.');
     }
   });
 
@@ -4868,8 +4627,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not add property item.' });
+            return hrApiFail(res, e, 'Could not add property item.');
     }
   });
 
@@ -4880,8 +4638,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update property item.' });
+            return hrApiFail(res, e, 'Could not update property item.');
     }
   });
 
@@ -4892,8 +4649,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not finance-clear exit.' });
+            return hrApiFail(res, e, 'Could not finance-clear exit.');
     }
   });
 
@@ -4904,8 +4660,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not admin-clear exit.' });
+            return hrApiFail(res, e, 'Could not admin-clear exit.');
     }
   });
 
@@ -4916,8 +4671,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not complete HR final clearance.' });
+            return hrApiFail(res, e, 'Could not complete HR final clearance.');
     }
   });
 
@@ -4930,8 +4684,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(r.pdf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export exit clearance PDF.' });
+            return hrApiFail(res, e, 'Could not export exit clearance PDF.');
     }
   });
 
@@ -4941,8 +4694,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, alerts: getTemporaryEmployeeAlerts(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load temporary employee alerts.' });
+            return hrApiFail(res, e, 'Could not load temporary employee alerts.');
     }
   });
 
@@ -4952,8 +4704,7 @@ export function registerHrApi(app, db) {
       const dueOnly = req.query.dueOnly === '1' || req.query.dueOnly === 'true';
       return res.json({ ok: true, rows: getPromotionDueReport(db, hrListScope(req), { dueOnly }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load promotion due report.' });
+            return hrApiFail(res, e, 'Could not load promotion due report.');
     }
   });
 
@@ -4965,8 +4716,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payroll reconciliation.' });
+            return hrApiFail(res, e, 'Could not load payroll reconciliation.');
     }
   });
 
@@ -4977,8 +4727,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not record bank export.' });
+            return hrApiFail(res, e, 'Could not record bank export.');
     }
   });
 
@@ -4989,8 +4738,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update payroll hold.' });
+            return hrApiFail(res, e, 'Could not update payroll hold.');
     }
   });
 
@@ -5003,8 +4751,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update salary hold.' });
+            return hrApiFail(res, e, 'Could not update salary hold.');
     }
   });
 
@@ -5013,8 +4760,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, requests: listPayrollBonusRequests(db, req.params.runId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load bonus requests.' });
+            return hrApiFail(res, e, 'Could not load bonus requests.');
     }
   });
 
@@ -5025,8 +4771,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not request bonus.' });
+            return hrApiFail(res, e, 'Could not request bonus.');
     }
   });
 
@@ -5037,8 +4782,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve bonus.' });
+            return hrApiFail(res, e, 'Could not approve bonus.');
     }
   });
 
@@ -5049,8 +4793,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not reject bonus.' });
+            return hrApiFail(res, e, 'Could not reject bonus.');
     }
   });
 
@@ -5062,8 +4805,7 @@ export function registerHrApi(app, db) {
       if (!staffScopeGate(req, res, userId)) return;
       return res.json({ ok: true, skills: listStaffSkills(db, userId) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load skills.' });
+            return hrApiFail(res, e, 'Could not load skills.');
     }
   });
 
@@ -5076,8 +4818,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save skill.' });
+            return hrApiFail(res, e, 'Could not save skill.');
     }
   });
 
@@ -5090,8 +4831,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(404).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load promotion readiness.' });
+            return hrApiFail(res, e, 'Could not load promotion readiness.');
     }
   });
 
@@ -5100,8 +4840,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, grievances: listGrievances(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load grievances.' });
+            return hrApiFail(res, e, 'Could not load grievances.');
     }
   });
 
@@ -5112,8 +4851,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit grievance.' });
+            return hrApiFail(res, e, 'Could not submit grievance.');
     }
   });
 
@@ -5124,8 +4862,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update grievance.' });
+            return hrApiFail(res, e, 'Could not update grievance.');
     }
   });
 
@@ -5135,8 +4872,7 @@ export function registerHrApi(app, db) {
       const interview = getExitInterview(db, req.params.id);
       return res.json({ ok: true, interview });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load exit interview.' });
+            return hrApiFail(res, e, 'Could not load exit interview.');
     }
   });
 
@@ -5147,8 +4883,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save exit interview.' });
+            return hrApiFail(res, e, 'Could not save exit interview.');
     }
   });
 
@@ -5159,8 +4894,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', 'attachment; filename="zarewa-staff-import-template.xlsx"');
       return res.send(buf);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not build template.' });
+            return hrApiFail(res, e, 'Could not build template.');
     }
   });
 
@@ -5175,8 +4909,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not preview import.' });
+            return hrApiFail(res, e, 'Could not preview import.');
     }
   });
 
@@ -5191,12 +4924,8 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error('[staff-import/commit]', e);
       const detail = String(e?.message || '').trim();
-      return res.status(500).json({
-        ok: false,
-        error: detail ? `Could not import staff: ${detail}` : 'Could not import staff.',
-      });
+      return hrApiFail(res, e, detail ? `Could not import staff: ${detail}` : 'Could not import staff.');
     }
   });
 
@@ -5205,8 +4934,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, runs: listBulkImportRuns(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not list import runs.' });
+            return hrApiFail(res, e, 'Could not list import runs.');
     }
   });
 
@@ -5218,7 +4946,7 @@ export function registerHrApi(app, db) {
       return res.json(report);
     } catch (e) {
       console.error('[staff-import/duplicates]', e);
-      return res.status(500).json({ ok: false, error: 'Could not scan for duplicate staff.' });
+      return hrApiFail(res, e, 'Could not scan for duplicate staff.');
     }
   });
 
@@ -5236,12 +4964,8 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error('[staff-import/duplicates/cleanup]', e);
       const detail = String(e?.message || '').trim();
-      return res.status(500).json({
-        ok: false,
-        error: detail ? `Could not clean duplicate staff: ${detail}` : 'Could not clean duplicate staff.',
-      });
+      return hrApiFail(res, e, detail ? `Could not clean duplicate staff: ${detail}` : 'Could not clean duplicate staff.');
     }
   });
 
@@ -5251,8 +4975,7 @@ export function registerHrApi(app, db) {
       const config = getLetterReferenceConfig(db);
       return res.json({ ok: true, config, previewNext: previewNextLetterReferences(db, req.query.letterKind || 'appointment', 5) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load letter reference settings.' });
+            return hrApiFail(res, e, 'Could not load letter reference settings.');
     }
   });
 
@@ -5263,8 +4986,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json({ ok: true, config: getLetterReferenceConfig(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save letter reference settings.' });
+            return hrApiFail(res, e, 'Could not save letter reference settings.');
     }
   });
 
@@ -5275,8 +4997,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not reset letter references.' });
+            return hrApiFail(res, e, 'Could not reset letter references.');
     }
   });
 
@@ -5290,8 +5011,7 @@ export function registerHrApi(app, db) {
       });
       return res.json({ ok: true, config, preview, sampleNextNumber, missingNumbers: listStaffWithoutEmployeeNo(db, hrListScope(req)) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load staff numbering settings.' });
+            return hrApiFail(res, e, 'Could not load staff numbering settings.');
     }
   });
 
@@ -5302,8 +5022,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save staff numbering settings.' });
+            return hrApiFail(res, e, 'Could not save staff numbering settings.');
     }
   });
 
@@ -5315,8 +5034,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not apply staff renumbering.' });
+            return hrApiFail(res, e, 'Could not apply staff renumbering.');
     }
   });
 
@@ -5341,8 +5059,7 @@ export function registerHrApi(app, db) {
       }));
       return res.json({ ok: true, cases });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load your discipline cases.' });
+            return hrApiFail(res, e, 'Could not load your discipline cases.');
     }
   });
 
@@ -5364,8 +5081,7 @@ export function registerHrApi(app, db) {
       });
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit response.' });
+            return hrApiFail(res, e, 'Could not submit response.');
     }
   });
 
@@ -5387,8 +5103,7 @@ export function registerHrApi(app, db) {
       });
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not file appeal.' });
+            return hrApiFail(res, e, 'Could not file appeal.');
     }
   });
 
@@ -5398,8 +5113,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, dashboard: getExecutiveBenefitsDashboard(db) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load executive dashboard.' });
+            return hrApiFail(res, e, 'Could not load executive dashboard.');
     }
   });
 
@@ -5409,8 +5123,7 @@ export function registerHrApi(app, db) {
       const linkedExecutive = String(req.query?.linkedExecutive || '').trim() || undefined;
       return res.json({ ok: true, ...getExecutiveFamilyDashboard(db, { linkedExecutive }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load family dashboard.' });
+            return hrApiFail(res, e, 'Could not load family dashboard.');
     }
   });
 
@@ -5420,8 +5133,7 @@ export function registerHrApi(app, db) {
       const assignedExecutive = String(req.query?.assignedExecutive || req.query?.linkedExecutive || '').trim() || undefined;
       return res.json({ ok: true, ...getExecutiveDomesticDashboard(db, { assignedExecutive }) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load household staff dashboard.' });
+            return hrApiFail(res, e, 'Could not load household staff dashboard.');
     }
   });
 
@@ -5430,8 +5142,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, beneficiaries: listExecutiveBeneficiaries(db, req.query || {}) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load beneficiaries.' });
+            return hrApiFail(res, e, 'Could not load beneficiaries.');
     }
   });
 
@@ -5442,8 +5153,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save beneficiary.' });
+            return hrApiFail(res, e, 'Could not save beneficiary.');
     }
   });
 
@@ -5454,8 +5164,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update beneficiary.' });
+            return hrApiFail(res, e, 'Could not update beneficiary.');
     }
   });
 
@@ -5464,8 +5173,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, fees: listExecutiveSchoolFees(db, req.query || {}) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load school fees.' });
+            return hrApiFail(res, e, 'Could not load school fees.');
     }
   });
 
@@ -5476,8 +5184,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save school fee.' });
+            return hrApiFail(res, e, 'Could not save school fee.');
     }
   });
 
@@ -5488,8 +5195,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update school fee.' });
+            return hrApiFail(res, e, 'Could not update school fee.');
     }
   });
 
@@ -5500,8 +5206,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not submit school fee.' });
+            return hrApiFail(res, e, 'Could not submit school fee.');
     }
   });
 
@@ -5510,8 +5215,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json(deleteExecutiveSchoolFee(db, req.user, req.params.id));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not delete school fee.' });
+            return hrApiFail(res, e, 'Could not delete school fee.');
     }
   });
 
@@ -5520,8 +5224,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, stipends: listExecutiveStipends(db, req.query || {}) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load stipends.' });
+            return hrApiFail(res, e, 'Could not load stipends.');
     }
   });
 
@@ -5532,8 +5235,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save stipend.' });
+            return hrApiFail(res, e, 'Could not save stipend.');
     }
   });
 
@@ -5544,8 +5246,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update stipend.' });
+            return hrApiFail(res, e, 'Could not update stipend.');
     }
   });
 
@@ -5554,8 +5255,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, staff: listDomesticStaffProfiles(db, req.query || {}) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load domestic staff.' });
+            return hrApiFail(res, e, 'Could not load domestic staff.');
     }
   });
 
@@ -5566,8 +5266,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not save domestic staff.' });
+            return hrApiFail(res, e, 'Could not save domestic staff.');
     }
   });
 
@@ -5578,8 +5277,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not update domestic staff.' });
+            return hrApiFail(res, e, 'Could not update domestic staff.');
     }
   });
 
@@ -5592,8 +5290,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename || 'household-staff-statement.pdf'}"`);
       return res.send(Buffer.from(r.pdf));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not generate payment statement.' });
+            return hrApiFail(res, e, 'Could not generate payment statement.');
     }
   });
 
@@ -5602,8 +5299,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, payments: listExecutivePayments(db, req.query || {}) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payments.' });
+            return hrApiFail(res, e, 'Could not load payments.');
     }
   });
 
@@ -5614,8 +5310,7 @@ export function registerHrApi(app, db) {
       if (!payment) return res.status(404).json({ ok: false, error: 'Payment not found.' });
       return res.json({ ok: true, payment });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not load payment.' });
+            return hrApiFail(res, e, 'Could not load payment.');
     }
   });
 
@@ -5626,8 +5321,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not approve payment.' });
+            return hrApiFail(res, e, 'Could not approve payment.');
     }
   });
 
@@ -5638,8 +5332,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not reject payment.' });
+            return hrApiFail(res, e, 'Could not reject payment.');
     }
   });
 
@@ -5650,8 +5343,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not mark payment paid.' });
+            return hrApiFail(res, e, 'Could not mark payment paid.');
     }
   });
 
@@ -5664,8 +5356,7 @@ export function registerHrApi(app, db) {
       res.setHeader('Content-Disposition', `attachment; filename="${r.filename}"`);
       return res.send(r.csv);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not export payments.' });
+            return hrApiFail(res, e, 'Could not export payments.');
     }
   });
 
@@ -5674,8 +5365,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, expenses: listChairmanExpensesMapped(db, req.query?.period || null) });
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Failed to load expenses.' });
+            return hrApiFail(res, e, 'Failed to load expenses.');
     }
   });
 
@@ -5686,8 +5376,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Failed to save expense.' });
+            return hrApiFail(res, e, 'Failed to save expense.');
     }
   });
 
@@ -5698,8 +5387,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Failed to update expense.' });
+            return hrApiFail(res, e, 'Failed to update expense.');
     }
   });
 
@@ -5708,8 +5396,7 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       return res.json(deleteChairmanExpenseMapped(db, req.params.id));
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Failed to delete expense.' });
+            return hrApiFail(res, e, 'Failed to delete expense.');
     }
   });
 
@@ -5726,8 +5413,7 @@ export function registerHrApi(app, db) {
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Report failed.' });
+            return hrApiFail(res, e, 'Report failed.');
     }
   });
 }

@@ -223,18 +223,18 @@ const STAFF_LINKED_CUSTOMER_SELECT = `
   LEFT JOIN hr_staff_profiles p ON trim(IFNULL(p.sales_customer_id, '')) = trim(c.customer_id)
   LEFT JOIN app_users u ON u.id = p.user_id`;
 
-export function listCustomers(db, branchScope = 'ALL') {
+export function listCustomers(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'customers', branchScope);
+  const limitSql = sqlLimitClause(limit);
   if (staffSalesCustomerJoinReady(db)) {
-    return db
-      .prepare(`${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')} ORDER BY c.name COLLATE NOCASE`)
-      .all(...b.args)
-      .map((row) => mapCustomerRow(row));
+    const sql = `${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')} ORDER BY c.name COLLATE NOCASE${limitSql}`;
+    const args = limit > 0 ? [...b.args, limit] : b.args;
+    return db.prepare(sql).all(...args).map((row) => mapCustomerRow(row));
   }
-  return db
-    .prepare(`SELECT * FROM customers WHERE 1=1${b.sql} ORDER BY name COLLATE NOCASE`)
-    .all(...b.args)
-    .map((row) => mapCustomerRow(row));
+  const sql = `SELECT * FROM customers WHERE 1=1${b.sql} ORDER BY name COLLATE NOCASE${limitSql}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  return db.prepare(sql).all(...args).map((row) => mapCustomerRow(row));
 }
 
 export function getCustomer(db, customerId, branchScope = 'ALL') {
@@ -825,17 +825,30 @@ export function listManagerQuotationAudit(db, quotationRef) {
 }
 
 function listDeliveryLinesForId(db, deliveryId) {
-  return db
-    .prepare(`SELECT * FROM delivery_lines WHERE delivery_id = ? ORDER BY sort_order`)
-    .all(deliveryId)
-    .map((row) => ({
+  return deliveryLinesByIds(db, [deliveryId]).get(deliveryId) || [];
+}
+
+function deliveryLinesByIds(db, deliveryIds) {
+  const ids = [...new Set(deliveryIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(`SELECT * FROM delivery_lines WHERE delivery_id IN (${ph}) ORDER BY delivery_id, sort_order`)
+    .all(...ids);
+  for (const row of rows) {
+    const id = row.delivery_id;
+    if (!map.has(id)) map.set(id, []);
+    map.get(id).push({
       lineNo: row.sort_order,
       productID: row.product_id,
       productName: row.product_name ?? row.product_id,
       qty: Number(row.qty) || 0,
       unit: row.unit || '',
       cuttingListLineNo: row.cutting_list_line_no ?? null,
-    }));
+    });
+  }
+  return map;
 }
 
 function listCuttingListLinesForId(db, cuttingListId) {
@@ -929,6 +942,19 @@ export function listLedgerEntriesForCustomer(db, customerId, branchScope = 'ALL'
       `SELECT * FROM ledger_entries WHERE customer_id = ?${b.sql} ORDER BY at_iso DESC, id DESC`
     )
     .all(customerId, ...b.args)
+    .map(mapLedgerRow);
+}
+
+/** Ledger rows scoped to one quotation — avoids whole-branch loads on detail views. */
+export function listLedgerEntriesForQuotation(db, quotationRef, branchScope = 'ALL') {
+  const qref = String(quotationRef || '').trim();
+  if (!qref) return [];
+  const b = branchWhere(db, 'ledger_entries', branchScope);
+  return db
+    .prepare(
+      `SELECT * FROM ledger_entries WHERE quotation_ref = ?${b.sql} ORDER BY at_iso DESC, id DESC`
+    )
+    .all(qref, ...b.args)
     .map(mapLedgerRow);
 }
 
@@ -1054,6 +1080,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   return pos.map((row) => {
     const rawLines = linesByPoId.get(String(row.po_id || '').trim()) || [];
     if (
+      !opts.skipSideEffects &&
       RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status)) &&
       poLinesFullyReceived(rawLines, mapPoLineFromDb)
     ) {
@@ -1670,13 +1697,18 @@ export function getWipByProduct(db, branchScope = 'ALL') {
   return o;
 }
 
-export function listDeliveries(db, branchScope = 'ALL') {
+export function listDeliveries(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'deliveries', branchScope);
-  return db
-    .prepare(`SELECT * FROM deliveries WHERE 1=1${b.sql} ORDER BY id DESC`)
-    .all(...b.args)
-    .map((row) => {
-      const lines = listDeliveryLinesForId(db, row.id);
+  const sql = `SELECT * FROM deliveries WHERE 1=1${b.sql} ORDER BY id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const rows = db.prepare(sql).all(...args);
+  const linesById = deliveryLinesByIds(
+    db,
+    rows.map((row) => row.id)
+  );
+  return rows.map((row) => {
+      const lines = linesById.get(row.id) || [];
       return {
         id: row.id,
         quotationRef: row.quotation_ref,
@@ -1701,8 +1733,11 @@ export function listDeliveries(db, branchScope = 'ALL') {
     });
 }
 
-export function listSalesReceipts(db, branchScope = 'ALL') {
+export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'sales_receipts', branchScope);
+  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   const userDisplayStmt = db.prepare(`SELECT display_name FROM app_users WHERE id = ? LIMIT 1`);
   const financeReconciliationSavedByDisplay = (userId) => {
     const uid = String(userId || '').trim();
@@ -1711,8 +1746,8 @@ export function listSalesReceipts(db, branchScope = 'ALL') {
     return String(row?.display_name || '').trim();
   };
   return db
-    .prepare(`SELECT * FROM sales_receipts WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC`)
-    .all(...b.args)
+    .prepare(sql)
+    .all(...args)
     .map((row) => ({
       id: row.id,
       customerID: row.customer_id,
@@ -1785,11 +1820,14 @@ export function listAdvanceInEvents(db, branchScope = 'ALL') {
   }));
 }
 
-export function listCuttingLists(db, branchScope = 'ALL') {
+export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'cutting_lists', branchScope);
+  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   return db
-    .prepare(`SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC`)
-    .all(...b.args)
+    .prepare(sql)
+    .all(...args)
     .map((row) => mapCuttingListRow(db, row));
 }
 
@@ -2119,28 +2157,52 @@ export function getRefundIntelligenceForQuotation(db, quotationRef, branchScope 
   };
 }
 
-export function listRefunds(db, branchScope = 'ALL') {
-  const payoutStmt = db.prepare(
-    `SELECT tm.*, ta.name AS account_name
-     FROM treasury_movements tm
-     LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
-     WHERE tm.source_kind = 'REFUND' AND tm.source_id = ?
-     ORDER BY tm.posted_at_iso ASC, tm.id ASC`
-  );
+function refundPayoutHistoryByIds(db, refundIds) {
+  const ids = [...new Set(refundIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT tm.*, ta.name AS account_name
+       FROM treasury_movements tm
+       LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE tm.source_kind = 'REFUND' AND tm.source_id IN (${ph})
+       ORDER BY tm.posted_at_iso ASC, tm.id ASC`
+    )
+    .all(...ids);
+  for (const movement of rows) {
+    const rid = movement.source_id;
+    if (!map.has(rid)) map.set(rid, []);
+    map.get(rid).push({
+      id: movement.id,
+      postedAtISO: movement.posted_at_iso,
+      treasuryAccountId: movement.treasury_account_id,
+      accountName: movement.account_name ?? '',
+      amountNgn: Math.abs(Number(movement.amount_ngn) || 0),
+      reference: movement.reference ?? '',
+      note: movement.note ?? '',
+    });
+  }
+  return map;
+}
+
+export function listRefunds(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
-  return db
-    .prepare(
-      `SELECT cr.*,
+  const sql = `SELECT cr.*,
               q.refunds_blocked_at_iso AS quotation_refunds_blocked_at_iso,
               q.refunds_blocked_reason AS quotation_refunds_blocked_reason
        FROM customer_refunds cr
        LEFT JOIN quotations q ON q.id = cr.quotation_ref
        WHERE 1=1${branchSql}
-       ORDER BY cr.requested_at_iso DESC`
-    )
-    .all(...b.args)
-    .map((row) => {
+       ORDER BY cr.requested_at_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const rows = db.prepare(sql).all(...args);
+  const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
+  const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
+  return rows.map((row) => {
       let calculationLines = [];
       let suggestedLines = [];
       try {
@@ -2165,15 +2227,7 @@ export function listRefunds(db, branchScope = 'ALL') {
         row.status === 'Approved' || row.status === 'Paid'
           ? approvedAmountNgn || Number(row.amount_ngn) || 0
           : approvedAmountNgn;
-      const payoutHistory = payoutStmt.all(row.refund_id).map((movement) => ({
-        id: movement.id,
-        postedAtISO: movement.posted_at_iso,
-        treasuryAccountId: movement.treasury_account_id,
-        accountName: movement.account_name ?? '',
-        amountNgn: Math.abs(Number(movement.amount_ngn) || 0),
-        reference: movement.reference ?? '',
-        note: movement.note ?? '',
-      }));
+      const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
       return {
         refundID: row.refund_id,
         customerID: row.customer_id,
@@ -2232,20 +2286,21 @@ export function listTreasuryAccounts(db, branchScope = 'ALL') {
     }));
 }
 
-export function listTreasuryMovements(db, branchScope = 'ALL') {
+export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const scopeSql =
     branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
       ? { sql: '', args: [] }
       : { sql: ` AND ta.branch_id = ?`, args: [branchScope] };
-  return db
-    .prepare(
-      `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no
+  const sql = `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
        WHERE 1=1${scopeSql.sql}
-       ORDER BY tm.posted_at_iso DESC, tm.id DESC`
-    )
-    .all(...scopeSql.args)
+       ORDER BY tm.posted_at_iso DESC, tm.id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...scopeSql.args, limit] : scopeSql.args;
+  return db
+    .prepare(sql)
+    .all(...args)
     .map((row) => ({
       id: row.id,
       postedAtISO: row.posted_at_iso,
@@ -2268,11 +2323,14 @@ export function listTreasuryMovements(db, branchScope = 'ALL') {
     }));
 }
 
-export function listExpenses(db, branchScope = 'ALL') {
+export function listExpenses(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'expenses', branchScope);
+  const sql = `SELECT * FROM expenses WHERE 1=1${b.sql} ORDER BY date DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   return db
-    .prepare(`SELECT * FROM expenses WHERE 1=1${b.sql} ORDER BY date DESC`)
-    .all(...b.args)
+    .prepare(sql)
+    .all(...args)
     .map((row) => ({
       expenseID: row.expense_id,
       expenseType: row.expense_type,
@@ -2285,22 +2343,23 @@ export function listExpenses(db, branchScope = 'ALL') {
     }));
 }
 
-export function listPaymentRequests(db, branchScope = 'ALL') {
+export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
   const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
   const scopeSql = useScope ? ` AND e.branch_id = ?` : '';
   const scopeArgs = useScope ? [branchScope] : [];
-  return db
-    .prepare(
-      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
+  const sql = `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
        LEFT JOIN hr_requests hr ON hr.id = e.reference
        LEFT JOIN app_users u ON u.id = hr.user_id
        WHERE 1=1${scopeSql}
-       ORDER BY pr.request_date DESC`
-    )
-    .all(...scopeArgs)
+       ORDER BY pr.request_date DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...scopeArgs, limit] : scopeArgs;
+  return db
+    .prepare(sql)
+    .all(...args)
     .map((row) => {
       const b64 = row.attachment_data_b64;
       const hasAttachment = Boolean(b64 && String(b64).length > 0);

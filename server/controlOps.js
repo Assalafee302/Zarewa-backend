@@ -40,6 +40,7 @@ import {
   trimLinesBlendedPricePerMeterFromProducts,
 } from '../shared/lib/cuttingListBlankConsumption.js';
 import { roundCuttingListMetres2 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
+import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,

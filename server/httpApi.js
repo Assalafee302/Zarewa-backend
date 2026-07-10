@@ -183,6 +183,10 @@ import {
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
+import { parseListQuery, sendPaginatedList, slicePage } from './listPagination.js';
+import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
+import { humanizeValidationMessage } from './validationLabels.js';
+import { permissionGuidanceMessage } from './permissionMessages.js';
 import {
   receiptDuplicateAcrossQuotationsSignals,
   receiptDuplicateSignalsFromLedgerRows,
@@ -412,6 +416,7 @@ import {
   getCuttingList,
   listLedgerEntries,
   listLedgerEntriesForCustomer,
+  listLedgerEntriesForQuotation,
   listSuppliers,
   listTransportAgents,
   listRefunds,
@@ -594,7 +599,7 @@ import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildBusinessIntelligenceXlsx } from './businessIntelligenceExport.js';
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
-import { sanitizeZarePageContext } from '../shared/lib/workspaceSanitize.js';
+import { sanitizeZarePageContext, sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { buildHelpPersonalizationFromSnapshot, computeMergedLearnedBoosts, insertHelpQueryLog, recordHelpQuerySignal } from './helpQueryOps.js';
 import { getRunaIntelligenceDashboard } from './helpIntelligenceAdmin.js';
 import { runHelpAnalyticsJob } from './helpAnalytics.js';
@@ -620,7 +625,7 @@ const WORK_ITEM_SYNC_DEBOUNCE_MS = 30_000;
 const bootstrapPollCache = new Map();
 const BOOTSTRAP_POLL_CACHE_MS = Math.max(
   1000,
-  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 3000)
+  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 1000)
 );
 
 function bootstrapPayloadEtag(payload) {
@@ -3592,6 +3597,36 @@ export function registerHttpApi(app, db) {
       const detail = String(e?.message || e || 'unknown').slice(0, 500);
       console.error('[bootstrap]', e);
       res.status(500).json({ ok: false, error: 'Bootstrap failed', detail });
+    }
+  });
+
+  app.get('/api/workspace/delta', requireAuth, (req, res) => {
+    try {
+      const since = String(req.query.since || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      const workScope = {
+        viewAll: branchScope === 'ALL',
+        branchId: branchScope === 'ALL' ? DEFAULT_BRANCH_ID : branchScope,
+      };
+      const workItems = sanitizeWorkItemsForClient(
+        listUnifiedWorkItems(db, workScope, req.user, { limit: 400 })
+      );
+      const filtered = since
+        ? workItems.filter((w) => String(w.updatedAtISO || w.createdAtISO || '') > since)
+        : workItems.slice(0, 40);
+      res.json({
+        ok: true,
+        since: since || null,
+        at: new Date().toISOString(),
+        workItems: filtered,
+        counts: {
+          workItems: workItems.length,
+          receipts: listSalesReceipts(db, branchScope, { limit: 5 }).length,
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      apiError(res, { status: 500, code: 'DELTA_FAILED', error: 'Could not load workspace updates.' });
     }
   });
 
@@ -6666,13 +6701,27 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/production-jobs/:jobId/complete', requirePermission('production.manage'), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
-      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      if (!jg.ok) return apiError(res, { status: jg.status, code: 'FORBIDDEN', error: jg.error });
+      const existing = db
+        .prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`)
+        .get(req.params.jobId);
+      if (String(existing?.status || '') === 'Completed') {
+        const payload = { ok: true, idempotent: true, jobId: req.params.jobId, status: 'Completed' };
+        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
+        return res.status(200).json(payload);
+      }
       const r = completeProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
+      if (r.ok) storeIdempotentSuccess(db, req, 'production.complete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
-      res.status(400).json({ ok: false, error: String(e.message || e) });
+      apiError(res, {
+        status: 400,
+        code: 'COMPLETE_FAILED',
+        error: safeErrorMessage(e, 'Production completion failed.'),
+      });
     }
   });
 
@@ -8007,8 +8056,9 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/expenses', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'expense.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
-      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const r = write.insertExpenseEntry(
         db,
         {
@@ -8019,10 +8069,15 @@ export function registerHttpApi(app, db) {
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
+      if (r.ok) storeIdempotentSuccess(db, req, 'expense.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
-      res.status(400).json({ ok: false, error: String(e.message || e) });
+      apiError(res, {
+        status: 400,
+        code: 'EXPENSE_CREATE_FAILED',
+        error: safeErrorMessage(e, 'Could not create expense.'),
+      });
     }
   });
 
@@ -8654,11 +8709,17 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.create')) return;
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
+      if (r.ok) storeIdempotentSuccess(db, req, 'payment_request.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
-      res.status(400).json({ ok: false, error: String(e.message || e) });
+      apiError(res, {
+        status: 400,
+        code: 'PAYMENT_REQUEST_FAILED',
+        error: safeErrorMessage(e, 'Could not create payment request.'),
+      });
     }
   });
 
@@ -9266,13 +9327,15 @@ export function registerHttpApi(app, db) {
         note: `Full audit log export (${rows.length} rows)`,
         details: { rowCount: rows.length },
       });
-      const body = `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`;
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="zarewa-audit-export.ndjson"');
-      res.send(body);
+      for (const row of rows) {
+        res.write(`${JSON.stringify(row)}\n`);
+      }
+      res.end();
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: 'Could not export audit log' });
+      apiError(res, { status: 500, code: 'EXPORT_FAILED', error: 'Could not export audit log.' });
     }
   });
 
@@ -9289,10 +9352,19 @@ export function registerHttpApi(app, db) {
   app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      res.json({ ok: true, customers: listCustomers(db, branchScope) });
+      const { limit, offset, unlimited } = parseListQuery(req);
+      const all = listCustomers(db, branchScope, unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false });
+      const items = slicePage(all, offset, limit);
+      return sendPaginatedList(res, {
+        items,
+        total: all.length,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'customers',
+      });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: 'Failed to load customers' });
+      apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load customers.' });
     }
   });
 
@@ -9830,19 +9902,24 @@ export function registerHttpApi(app, db) {
         userHasPermission(req.user, 'production.manage') &&
         quotationLinkedToProductionContext(db, qid, branchScope);
       if (!salesReader && !opsProductionReader) {
-        return res.status(403).json({ ok: false, error: 'Forbidden', code: 'FORBIDDEN' });
+        return apiForbidden(
+          res,
+          permissionGuidanceMessage(['sales.view', 'operations.view', 'production.manage'])
+        );
       }
       const row = getQuotation(db, qid);
-      if (!row) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+      if (!row) return apiError(res, { status: 404, code: 'NOT_FOUND', error: 'Quotation not found.' });
       const qg = assertQuotationIdInWorkspace(db, req, qid);
-      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
-      const allEntries = listLedgerEntries(db, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope);
+      if (!qg.ok) return apiError(res, { status: qg.status, code: 'FORBIDDEN', error: qg.error });
+      const quoteLedger = listLedgerEntriesForQuotation(db, qid, branchScope);
+      const productionJobs = listProductionJobs(db, branchScope).filter(
+        (j) => String(j.quotationRef || '').trim() === qid
+      );
       const policyFlags = readFinanceFeatureFlags();
       const paymentPolicy = quotationPaymentPolicySnapshot(row, productionJobs);
       const amountDueNgn = policyFlags.accountingPolicyV1Labels
         ? paymentPolicy.amountDueNgn
-        : amountDueOnQuotationFromEntries(allEntries, row);
+        : amountDueOnQuotationFromEntries(quoteLedger, row);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(req.params.id);
       const pv = quotationPriceViolations(db, rawPv);
       res.json({
@@ -9860,36 +9937,50 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/quotations', requirePermission('quotations.manage'), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'quotation.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
-      if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
+      if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
+      const duplicateWarnings = duplicateQuotationCreateSignals(db, {
+        customerID: req.body?.customerID,
+        totalNgn: req.body?.totalNgn,
+        dateISO: req.body?.dateISO,
+        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      });
+      if (duplicateWarnings.length && !req.body?.forceDuplicateCreate) {
+        return apiError(res, {
+          status: 409,
+          code: 'DUPLICATE_QUOTATION',
+          error: 'A similar quotation may already exist. Review before saving again.',
+          detail: duplicateWarnings,
+        });
+      }
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       syncQuotationStaffPurchaseFlag(db, id);
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
-      const duplicateWarnings = duplicateQuotationCreateSignals(db, {
-        customerID: quotation?.customerID ?? req.body?.customerID,
-        totalNgn: quotation?.totalNgn,
-        dateISO: quotation?.dateISO ?? req.body?.dateISO,
-        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
-      });
-      res.status(201).json({
+      const payload = {
         ok: true,
         quotationId: id,
         quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
-        duplicateWarnings: duplicateWarnings.length ? duplicateWarnings : undefined,
-      });
+      };
+      storeIdempotentSuccess(db, req, 'quotation.create', 201, payload);
+      res.status(201).json(payload);
     } catch (e) {
       console.error(e);
       if (e?.statusCode === 422 && e?.code) {
-        return res.status(422).json({
-          ok: false,
-          error: String(e.message || ''),
+        return apiError(res, {
+          status: 422,
           code: e.code,
-          details: e.details,
+          error: humanizeValidationMessage(String(e.message || '')),
+          detail: e.details,
         });
       }
-      res.status(400).json({ ok: false, error: String(e.message || e) });
+      apiError(res, {
+        status: 400,
+        code: 'QUOTATION_CREATE_FAILED',
+        error: safeErrorMessage(e, 'Could not create quotation.'),
+      });
     }
   });
 
@@ -10134,23 +10225,44 @@ export function registerHttpApi(app, db) {
     try {
       const customerId = req.query.customerId;
       const branchScope = resolveBootstrapBranchScope(req);
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
       const entries = customerId
         ? listLedgerEntriesForCustomer(db, String(customerId), branchScope)
-        : listLedgerEntries(db, branchScope);
-      res.json({ ok: true, entries });
+        : listLedgerEntries(
+            db,
+            branchScope,
+            unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false }
+          );
+      const page = slicePage(entries, offset, unlimited ? 0 : limit);
+      return sendPaginatedList(res, {
+        items: page,
+        total: entries.length,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'entries',
+      });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: 'Failed to load ledger' });
+      apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load ledger.' });
     }
   });
 
   app.get('/api/refunds', requirePermission(REFUNDS_VISIBLE_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      res.json({ ok: true, refunds: listRefunds(db, branchScope) });
+      const { limit, offset, unlimited } = parseListQuery(req);
+      const all = listRefunds(db, branchScope, unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false });
+      const items = slicePage(all, offset, limit);
+      return sendPaginatedList(res, {
+        items,
+        total: all.length,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'refunds',
+      });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: 'Failed to load refunds' });
+      apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load refunds.' });
     }
   });
 

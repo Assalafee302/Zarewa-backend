@@ -49,6 +49,8 @@ console.log(`  fraud risks: ${scenariosByRisk('fraud').length}`);
 console.log(`  financial_failure risks: ${scenariosByRisk('financial_failure').length}`);
 console.log(`  inventory_gap risks: ${scenariosByRisk('inventory_gap').length}`);
 
+run('node', ['scripts/test-db-reset.mjs'], 'Reset MySQL test databases');
+
 run(
   'npx',
   ['vitest', 'run', 'server/coreLifecycle100.test.js', ...VITEST_FLAGS],

@@ -11,7 +11,7 @@ import {
  * @param {import('better-sqlite3').Database} db
  * @param {object | null | undefined} quote
  * @param {Array<object>} productionJobs
- * @param {{ isStoneMeterQuote?: boolean, quotedMeters?: number | null }} [opts]
+ * @param {{ isStoneMeterQuote?: boolean, quotedMeters?: number | null, producedMetersForUnproduced?: number | null }} [opts]
  */
 export function buildRefundProductionFulfillmentSummary(db, quote, productionJobs, opts = {}) {
   const stoneMeterQuote = Boolean(opts.isStoneMeterQuote);
@@ -24,9 +24,12 @@ export function buildRefundProductionFulfillmentSummary(db, quote, productionJob
   const jobs = Array.isArray(productionJobs) ? productionJobs : [];
   const coilProducedMeters = coilProducedMetersFromProductionJobs(db, jobs);
   const jobActualMeters = jobActualMetersFromProductionJobs(jobs);
-  const producedMetersForUnproduced = producedMetersForUnproducedRefund(db, jobs, {
-    isStoneMeterQuote: stoneMeterQuote,
-  });
+  const producedMetersForUnproduced =
+    opts.producedMetersForUnproduced != null && Number.isFinite(Number(opts.producedMetersForUnproduced))
+      ? Math.max(0, Number(opts.producedMetersForUnproduced))
+      : producedMetersForUnproducedRefund(db, jobs, {
+          isStoneMeterQuote: stoneMeterQuote,
+        });
   const offcutFgMeters = Math.max(0, producedMetersForUnproduced - coilProducedMeters);
   const unproducedMetres = Math.max(0, quotedMeters - producedMetersForUnproduced);
   const fullyProducedRoofing = quotedMeters > 0 && unproducedMetres <= 0.001;

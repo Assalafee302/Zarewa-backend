@@ -2,13 +2,31 @@
  * Maps the 20 end-to-end transactional scenarios (customer → quote → payment → stock → finance)
  * to automated API checks. Each scenario is one test for clear failure attribution.
  */
-import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll, beforeEach } from 'vitest';
 import request from 'supertest';
+import { createConnection } from 'node:net';
 import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 
 const openDbs = [];
+let mysqlOk = false;
+/** @type {ReturnType<typeof createApp> | null} */
+let sharedApp = null;
+
+function probeMysqlPort(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: 3306 }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
 
 async function loginAs(agent, username = 'admin', password = 'Admin@123') {
   const res = await agent.post('/api/session/login').send({ username, password });
@@ -17,12 +35,10 @@ async function loginAs(agent, username = 'admin', password = 'Admin@123') {
 }
 
 async function adminSession() {
-  const db = createDatabase(':memory:');
-  openDbs.push(db);
-  const app = createApp(db);
-  const agent = request.agent(app);
+  if (!sharedApp) throw new Error('shared transactional session not initialized');
+  const agent = request.agent(sharedApp);
   await loginAs(agent);
-  return { app, agent };
+  return { app: sharedApp, agent };
 }
 
 function amountDueFor(summary, quotationId) {
@@ -79,6 +95,7 @@ async function postReceiptAndSync(agent, { customerID, quotationId, amountNgn, t
     customerID,
     quotationId,
     amountNgn,
+    confirmAmountNgn: amountNgn,
     paymentMethod: 'Cash',
     bankReference: uniqueRef,
     dateISO: '2026-03-29',
@@ -86,30 +103,32 @@ async function postReceiptAndSync(agent, { customerID, quotationId, amountNgn, t
     forceDuplicatePost: true,
     duplicateOverrideReason: 'Transactional scenario automated test',
   });
-  expect(rcpt.status).toBe(201);
+  expect(rcpt.status, `receipt post failed: ${JSON.stringify(rcpt.body)}`).toBe(201);
   const receiptId = rcpt.body.receipt?.id || rcpt.body.receiptId;
   expect(receiptId).toBeTruthy();
   const settle = await agent
     .patch(`/api/sales-receipts/${encodeURIComponent(receiptId)}/finance-settlement`)
     .send({ bankReceivedAmountNgn: amountNgn });
-  expect(settle.status).toBe(200);
+  expect(settle.status, `finance settlement failed: ${JSON.stringify(settle.body)}`).toBe(200);
   const sync = await agent.post(`/api/quotations/${encodeURIComponent(quotationId)}/sync-paid-from-ledger`).send({});
   expect(sync.status).toBe(200);
 }
 
 describe('Transactional scenarios (business checklist)', () => {
-  beforeEach(() => {
-    // These scenarios use fixed 2026 dates; freeze time so status derivations (e.g. Expired vs Pending)
-    // remain stable regardless of the real current date when tests run.
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-03-29T12:00:00.000Z'));
-  });
+  beforeAll(async () => {
+    mysqlOk = await probeMysqlPort();
+    if (!mysqlOk) return;
+    const db = createDatabase(':memory:');
+    openDbs.push(db);
+    sharedApp = createApp(db);
+  }, 300_000);
 
-  afterEach(() => {
-    vi.useRealTimers();
+  beforeEach((ctx) => {
+    if (!mysqlOk || !sharedApp) ctx.skip();
   });
 
   afterAll(() => {
+    sharedApp = null;
     for (const db of openDbs) db.close();
     openDbs.length = 0;
   });
@@ -262,7 +281,8 @@ describe('Transactional scenarios (business checklist)', () => {
       const { agent } = await adminSession();
       const snap = await agent.get('/api/bootstrap');
       const fg = snap.body.products.find((p) => p.productID === 'FG-101') || snap.body.products[0];
-      const raw = snap.body.products.find((p) => p.productID === 'COIL-ALU') || snap.body.products[0];
+      const raw = snap.body.products.find((p) => p.productID === 'COIL-ALU');
+      expect(raw).toBeTruthy();
 
       const sup = await agent.post('/api/suppliers').send({
         name: 'Scenario 5 Supplier',
@@ -381,6 +401,7 @@ describe('Transactional scenarios (business checklist)', () => {
       const { agent } = await adminSession();
       const snap = await agent.get('/api/bootstrap');
       const product = snap.body.products.find((p) => p.productID === 'COIL-ALU');
+      expect(product).toBeTruthy();
       const before = product.stockLevel;
       const sup = await agent.post('/api/suppliers').send({ name: 'GRN Supplier', city: 'Jos' });
       const po = await agent.post('/api/purchase-orders').send({
@@ -431,7 +452,7 @@ describe('Transactional scenarios (business checklist)', () => {
     async () => {
       const { agent } = await adminSession();
       const snap = await agent.get('/api/bootstrap');
-      const raw = snap.body.products.find((p) => p.productID === 'PRD-102');
+      const raw = snap.body.products.find((p) => p.productID === 'COIL-ALU');
       expect(raw).toBeTruthy();
       const beforeStock = raw.stockLevel;
       const res = await agent.post('/api/inventory/transfer-to-production').send({
@@ -455,14 +476,15 @@ describe('Transactional scenarios (business checklist)', () => {
     async () => {
       const { agent } = await adminSession();
       const snap0 = await agent.get('/api/bootstrap');
-      const raw = snap0.body.products.find((p) => p.productID === 'PRD-102');
+      const raw = snap0.body.products.find((p) => p.productID === 'COIL-ALU');
       expect(raw).toBeTruthy();
-      await agent.post('/api/inventory/transfer-to-production').send({
+      const tr = await agent.post('/api/inventory/transfer-to-production').send({
         productID: raw.productID,
         qty: 300,
         productionOrderId: 'TX-SCN-08-WIP',
         dateISO: '2026-03-29',
       });
+      expect(tr.status).toBe(200);
       const snap = await agent.get('/api/bootstrap');
       const fgBefore = snap.body.products.find((p) => p.productID === 'FG-101').stockLevel;
       const res = await agent.post('/api/inventory/finished-goods').send({

@@ -151,7 +151,7 @@ export function assertProductIdInWorkspace(db, req, productID) {
     return {
       ok: false,
       error: isGlobalCoilCatalogProductId(pid)
-        ? 'Product not found.'
+        ? 'Global coil catalog product is not stocked in this branch. Receive coil via GRN into branch inventory before transfers or production.'
         : 'Product not found for this branch. Open the correct branch workspace or receive stock here first.',
       status: 404,
     };

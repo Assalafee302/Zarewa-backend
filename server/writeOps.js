@@ -5974,6 +5974,28 @@ export function countCoilLotsForProductInWorkspace(db, productID, workspaceBranc
   return Number(row?.c) || 0;
 }
 
+/** Recorded cash toward a quotation from receipts + applied advances (never trust quotations.paid_ngn alone). */
+function quotationRecordedCashPaidNgn(db, quotationRef, branchId) {
+  const qKey = normalizeQuotRefDashKey(quotationRef);
+  const bid = String(branchId || '').trim() || DEFAULT_BRANCH_ID;
+  const receiptRows = listSalesReceipts(db, bid).filter(
+    (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
+  );
+  const ledgerRows = listLedgerEntries(db, bid);
+  const enriched = enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerRows);
+  const cashFromReceipts = enriched.reduce(
+    (sum, r) => sum + Math.round(Number(r.cashReceivedNgn ?? r.amountNgn) || 0),
+    0
+  );
+  const advanceApplied = ledgerRows.reduce((sum, e) => {
+    const t = String(e.type || '');
+    if (t !== 'ADVANCE_APPLIED' && t !== 'OVERPAY_APPLIED') return sum;
+    if (normalizeQuotRefDashKey(e.quotationRef) !== qKey) return sum;
+    return sum + Math.round(Number(e.amountNgn) || 0);
+  }, 0);
+  return cashFromReceipts + advanceApplied;
+}
+
 function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId, { forDraft = false, skipDuplicateCheck = false } = {}) {
   const qref = String(quotationRef ?? '').trim();
   if (!qref) return { ok: false, error: 'Link a quotation.' };
@@ -6012,20 +6034,6 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
     }
   }
   const managerOk = productionGateOverrideEffective(qrow);
-  const bookPaid = Number(qrow.paid_ngn) || 0;
-  if (
-    !forDraft &&
-    Boolean(qrow.manager_production_approved_at_iso) &&
-    !managerOk &&
-    !quotationHasRecordedPayment(bookPaid)
-  ) {
-    return {
-      ok: false,
-      code: 'ZERO_PAYMENT_MD_GATE_REQUIRED',
-      error:
-        'Zero payment requires Managing Director production approval. Branch Manager override is not sufficient.',
-    };
-  }
   const bid = String(qrow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
   let minPaidFrac = 0.7;
   try {
@@ -6036,31 +6044,26 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
     minPaidFrac = 0.7;
   }
   const threshold = total * minPaidFrac - 1e-6;
-  if (!forDraft && !managerOk && bookPaid < threshold) {
-    const qKey = normalizeQuotRefDashKey(qref);
-    const receiptRows = listSalesReceipts(db, bid).filter(
-      (r) => normalizeQuotRefDashKey(r.quotationRef) === qKey
-    );
-    const ledgerRows = listLedgerEntries(db, bid);
-    const enriched = enrichSalesReceiptRowsWithCashFromLedger(receiptRows, ledgerRows);
-    const cashFromReceipts = enriched.reduce(
-      (sum, r) => sum + Math.round(Number(r.cashReceivedNgn ?? r.amountNgn) || 0),
-      0
-    );
-    const advanceApplied = ledgerRows.reduce((sum, e) => {
-      const t = String(e.type || '');
-      if (t !== 'ADVANCE_APPLIED' && t !== 'OVERPAY_APPLIED') return sum;
-      if (normalizeQuotRefDashKey(e.quotationRef) !== qKey) return sum;
-      return sum + Math.round(Number(e.amountNgn) || 0);
-    }, 0);
-    const cashPaidTotal = cashFromReceipts + advanceApplied;
-    if (cashPaidTotal < threshold) {
-      const pct = Math.round(minPaidFrac * 100);
-      return {
-        ok: false,
-        error: `At least ${pct}% of the quotation must be paid (recorded receipts / applied advances on file) before creating a cutting list.`,
-      };
-    }
+  const cashPaidTotal = quotationRecordedCashPaidNgn(db, qref, bid);
+  if (
+    !forDraft &&
+    Boolean(qrow.manager_production_approved_at_iso) &&
+    !managerOk &&
+    !quotationHasRecordedPayment(cashPaidTotal)
+  ) {
+    return {
+      ok: false,
+      code: 'ZERO_PAYMENT_MD_GATE_REQUIRED',
+      error:
+        'Zero payment requires Managing Director production approval. Branch Manager override is not sufficient.',
+    };
+  }
+  if (!forDraft && !managerOk && cashPaidTotal < threshold) {
+    const pct = Math.round(minPaidFrac * 100);
+    return {
+      ok: false,
+      error: `At least ${pct}% of the quotation must be paid (recorded receipts / applied advances on file) before creating a cutting list.`,
+    };
   }
   const existing = excludeCuttingListId
     ? db
@@ -6791,7 +6794,7 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
         `SELECT expense_type, amount_ngn, date, category, payment_method, reference
          FROM expenses
          WHERE branch_id = ?
-         ORDER BY rowid DESC
+         ORDER BY date DESC, expense_id DESC
          LIMIT 1`
       )
       .get(bid);
@@ -8485,16 +8488,24 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   const dateLabel = shortDateFromIso(dateISO);
   const dueDateISO = payload.dueDateISO !== undefined ? payload.dueDateISO : existing.due_date_iso;
   const totalDisplay = `₦${(Number(totalNgn) || 0).toLocaleString('en-NG')}`;
-  const paidNgn =
-    payload.paidNgn != null ? Math.round(Number(payload.paidNgn) || 0) : existing.paid_ngn;
-  let paymentStatus = payload.paymentStatus ?? existing.payment_status;
-  if (payload.paidNgn != null || payload.lines) {
-    const t = Number(totalNgn) || 0;
-    const p = Number(paidNgn) || 0;
-    if (p <= 0) paymentStatus = 'Unpaid';
-    else if (t > 0 && p >= t) paymentStatus = 'Paid';
-    else paymentStatus = 'Partial';
+  if (payload.paidNgn != null) {
+    const err = new Error(
+      'Quotation paid amount is derived from recorded receipts and cannot be edited directly. Post a receipt against this quotation.'
+    );
+    err.code = 'PAID_NGN_READ_ONLY';
+    err.statusCode = 422;
+    throw err;
   }
+  if (payload.paymentStatus != null) {
+    const err = new Error(
+      'Quotation payment status is derived from recorded receipts and cannot be edited directly.'
+    );
+    err.code = 'PAYMENT_STATUS_READ_ONLY';
+    err.statusCode = 422;
+    throw err;
+  }
+  const paidNgn = existing.paid_ngn;
+  const paymentStatus = existing.payment_status;
   const status = payload.status ?? existing.status;
   const approvalDate = payload.approvalDate !== undefined ? payload.approvalDate : existing.approval_date;
   const customerFeedback =

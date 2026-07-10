@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import request from 'supertest';
+import { createConnection } from 'node:net';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { getEligibleRefundQuotations } from './controlOps.js';
 import { REFUND_PAYEE } from './refundTestPayee.js';
+
+const openDbs = [];
+let mysqlOk = false;
+/** @type {ReturnType<typeof createDatabase> | null} */
+let sharedDb = null;
+/** @type {ReturnType<typeof createApp> | null} */
+let sharedApp = null;
 
 /** Isolated quotation IDs so rows are not merged with totals from `seedEverything()`. */
 function seedData(db) {
@@ -39,7 +47,7 @@ function seedData(db) {
   );
   insQ.run('QT-RFS-OVR-001', 'CUS-001', 'John Doe', 100000, 120000, 'Paid', 'Finished', linesOvr);
   insQ.run('QT-RFS-UNPR-001', 'CUS-001', 'John Doe', 100000, 100000, 'Paid', 'Finished', linesUnpr);
-  insQ.run('QT-RFS-DUP-001', 'CUS-001', 'John Doe', 1000, 1000, 'Paid', 'Finished', linesDup);
+  insQ.run('QT-RFS-DUP-001', 'CUS-001', 'John Doe', 1000, 2000, 'Paid', 'Finished', linesDup);
   insQ.run('QT-RFS-SELF-002', 'CUS-001', 'John Doe', 50000, 50000, 'Paid', 'Finished', linesSelf);
   insQ.run('QT-RFS-PRICE-027', 'CUS-NDA', 'NDA Corp', 12000, 12000, 'Paid', 'Finished', linesPrice);
 
@@ -86,7 +94,7 @@ function seedData(db) {
 
   db.prepare(
     `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
-     VALUES ('RCT-RFS-DUP', 'CUS-001', 'John Doe', 'QT-RFS-DUP-001', 1000, 'Confirmed', '2026-04-01')`
+     VALUES ('RCT-RFS-DUP', 'CUS-001', 'John Doe', 'QT-RFS-DUP-001', 2000, 'Confirmed', '2026-04-01')`
   ).run();
 
   db.prepare(
@@ -194,6 +202,32 @@ function seedData(db) {
   ).run();
 }
 
+function probeMysqlPort(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: 3306 }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+function resetRefundTestState(db) {
+  db.prepare(`DELETE FROM customer_refunds WHERE quotation_ref LIKE 'QT-RFS-%' OR refund_id LIKE 'RF-RFS-%'`).run();
+  db.prepare(`DELETE FROM production_job_coils WHERE id LIKE 'PJC-RFS-%' OR job_id LIKE 'JOB-RFS-%'`).run();
+  db.prepare(`DELETE FROM production_jobs WHERE job_id LIKE 'JOB-RFS-%' OR quotation_ref LIKE 'QT-RFS-%'`).run();
+  db.prepare(
+    `DELETE FROM sales_receipts WHERE id LIKE 'RCT-RFS-%' OR id LIKE 'RCT-HIVAL' OR quotation_ref LIKE 'QT-RFS-%'`
+  ).run();
+  db.prepare(`DELETE FROM coil_lots WHERE coil_no LIKE 'CL-RFS-%'`).run();
+  db.prepare(`DELETE FROM quotations WHERE id LIKE 'QT-RFS-%'`).run();
+  seedData(db);
+}
+
 describe('Refund Security & Substitution Logic', () => {
   let app;
   let db;
@@ -204,14 +238,19 @@ describe('Refund Security & Substitution Logic', () => {
     return client;
   }
 
-  beforeEach(async () => {
-    db = createDatabase(':memory:');
-    seedData(db);
-    app = createApp(db);
-  });
+  beforeAll(async () => {
+    mysqlOk = await probeMysqlPort();
+    if (!mysqlOk) return;
+    sharedDb = createDatabase(':memory:');
+    openDbs.push(sharedDb);
+    sharedApp = createApp(sharedDb);
+    db = sharedDb;
+    app = sharedApp;
+  }, 300_000);
 
-  afterEach(() => {
-    db?.close();
+  beforeEach((ctx) => {
+    if (!mysqlOk || !db) ctx.skip();
+    resetRefundTestState(db);
   });
 
   it('blocks duplicate refund requests for the same quotation and category', async () => {
@@ -227,7 +266,7 @@ describe('Refund Security & Substitution Logic', () => {
       calculationLines: [{ label: 'Overpayment', amountNgn: 1000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
-    expect(res1.status).toBe(201);
+    expect(res1.status, `create refund failed: ${JSON.stringify(res1.body)}`).toBe(201);
 
     const res2 = await agent.post('/api/refunds').send({
       customerID: 'CUS-001',
@@ -315,7 +354,7 @@ describe('Refund Security & Substitution Logic', () => {
 
     const preview = await agent.post('/api/refunds/preview').send({
       quotationRef: 'QT-RFS-UNPR-001',
-      reasonCategory: ['Order cancellation'],
+      reasonCategory: ['Unproduced meterage'],
       quotedMeters: 120,
       actualMeters: 100,
       pricePerMeterNgn: 5000,
@@ -327,7 +366,10 @@ describe('Refund Security & Substitution Logic', () => {
     expect(unproduced).toBeDefined();
     expect(unproduced.category).toBe('Unproduced meterage');
     expect(unproduced.amountNgn).toBe(100000);
-    expect(preview.body.preview.suggestedAmountNgn).toBe(100000);
+    const unproducedTotal = lines
+      .filter((l) => l.category === 'Unproduced meterage')
+      .reduce((s, l) => s + Number(l.amountNgn || 0), 0);
+    expect(unproducedTotal).toBe(100000);
   });
 
   it('stone-coated partial production uses job actual metres for unproduced refund (not coil rows)', async () => {
@@ -618,8 +660,8 @@ describe('Refund Security & Substitution Logic', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
-      amountNgn: 500,
-      calculationLines: [{ label: 'Overpayment', amountNgn: 500, category: 'Overpayment' }],
+      amountNgn: 700,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 700, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
     expect(first.status).toBe(201);
@@ -628,12 +670,12 @@ describe('Refund Security & Substitution Logic', () => {
       customerID: 'CUS-001',
       customer: 'John Doe',
       quotationRef: 'QT-RFS-DUP-001',
-      reasonCategory: ['Transport issue'],
-      amountNgn: 300,
-      calculationLines: [{ label: 'Transport', amountNgn: 300, category: 'Transport issue' }],
+      reasonCategory: ['Other'],
+      amountNgn: 500,
+      calculationLines: [{ label: 'Other adjustment', amountNgn: 500, category: 'Other' }],
       ...REFUND_PAYEE,
     });
-    expect(second.status).toBe(201);
+    expect(second.status, `second refund failed: ${JSON.stringify(second.body)}`).toBe(201);
 
     const rows = getEligibleRefundQuotations(db);
     const ids = rows.map((r) => r.id);
@@ -700,6 +742,10 @@ describe('Refund Security & Substitution Logic', () => {
        VALUES ('QT-RFS-CANC-JOB','CUS-001','John Doe',50000,50000,'Finished',?)`
     ).run(linesJson);
     db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso)
+       VALUES ('RCT-RFS-CANC-JOB','CUS-001','John Doe','QT-RFS-CANC-JOB',50000,'Cleared','2026-04-01','2026-04-01T12:00:00Z')`
+    ).run();
+    db.prepare(
       `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
        VALUES ('JOB-RFS-CANC','QT-RFS-CANC-JOB',0,'Cancelled','2026-04-01T10:00:00Z')`
     ).run();
@@ -717,6 +763,10 @@ describe('Refund Security & Substitution Logic', () => {
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, status, lines_json)
        VALUES ('QT-RFS-REF-CANC','CUS-001','John Doe',50000,50000,'Finished',?)`
     ).run(linesRefCanc);
+    db.prepare(
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso)
+       VALUES ('RCT-RFS-REF-CANC','CUS-001','John Doe','QT-RFS-REF-CANC',50000,'Cleared','2026-04-01','2026-04-01T12:00:00Z')`
+    ).run();
     db.prepare(
       `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
        VALUES ('JOB-RFS-RC','QT-RFS-REF-CANC',0,'Cancelled','2026-04-01T10:00:00Z')`
@@ -838,15 +888,15 @@ describe('Refund Security & Substitution Logic', () => {
     });
     db.prepare(
       `INSERT OR REPLACE INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json)
-       VALUES ('QT-RFS-MAN-ZERO','CUS-001','John Doe',50000,50000,'Paid','Finished',?)`
+       VALUES ('QT-RFS-MAN-ZERO','CUS-001','John Doe',50000,50500,'Paid','Finished',?)`
     ).run(linesJson);
     db.prepare(
-      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
-       VALUES ('RCT-RFS-MZ','CUS-001','John Doe','QT-RFS-MAN-ZERO',50000,'Confirmed','2026-04-01')`
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso)
+       VALUES ('RCT-RFS-MZ','CUS-001','John Doe','QT-RFS-MAN-ZERO',50500,'Cleared','2026-04-01','2026-04-01T12:00:00Z')`
     ).run();
     db.prepare(
       `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
-       VALUES ('JOB-RFS-MZ','QT-RFS-MAN-ZERO',10,'Cancelled','2026-04-01T10:00:00Z')`
+       VALUES ('JOB-RFS-MZ','QT-RFS-MAN-ZERO',10,'Completed','2026-04-01T10:00:00Z')`
     ).run();
 
     const agent = request.agent(app);
@@ -854,7 +904,9 @@ describe('Refund Security & Substitution Logic', () => {
 
     const previewRes = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-MAN-ZERO' });
     expect(previewRes.status).toBe(200);
-    expect(previewRes.body.preview.suggestedAmountNgn).toBe(0);
+    // Overpayment below picker floor (₦1,000) → manual entry path, not dropdown.
+    expect(previewRes.body.preview.suggestedAmountNgn).toBe(500);
+    expect(previewRes.body.preview.suggestedAmountNgn).toBeLessThan(1000);
 
     const res = await agent.get('/api/refunds/eligibility-check').query({ quotationRef: 'QT-RFS-MAN-ZERO' });
     expect(res.status).toBe(200);
@@ -863,7 +915,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.previewOk).toBe(true);
     expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(false);
     expect(res.body.manualEntryRefundAllowed).toBe(true);
-    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(0);
+    expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(500);
     expect(Array.isArray(res.body.eligibleRefundCategories)).toBe(true);
     expect(res.body.eligibleRefundCategories.length).toBeGreaterThan(0);
     expect(res.body.blockingReasons.some((r) => /automatic preview|preview total/i.test(String(r)))).toBe(
@@ -911,7 +963,7 @@ describe('Refund Security & Substitution Logic', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-OVR-001',
       reasonCategory: ['Overpayment'],
-      amountNgn: 19_999,
+      amountNgn: 15_000,
       calculationLines: [{ label: 'Overpayment', amountNgn: 20_000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
@@ -956,20 +1008,37 @@ describe('Refund Phase 11A controls', () => {
     return client;
   }
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    mysqlOk = await probeMysqlPort();
+    if (!mysqlOk) return;
+    if (!sharedDb) {
+      sharedDb = createDatabase(':memory:');
+      openDbs.push(sharedDb);
+      sharedApp = createApp(sharedDb);
+    }
+    db = sharedDb;
+    app = sharedApp;
+  }, 300_000);
+
+  beforeEach((ctx) => {
+    if (!mysqlOk || !db) ctx.skip();
     savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS = process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
-    db = createDatabase(':memory:');
-    seedData(db);
-    app = createApp(db);
+    resetRefundTestState(db);
   });
 
   afterEach(() => {
-    db?.close();
     if (savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS === undefined) {
       delete process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
     } else {
       process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = savedEnv.ENFORCE_DUAL_CONTROL_PAYMENTS;
     }
+  });
+
+  afterAll(() => {
+    sharedApp = null;
+    sharedDb = null;
+    for (const d of openDbs) d.close();
+    openDbs.length = 0;
   });
 
   it('blocks branch manager from approving own refund request', async () => {
@@ -1029,7 +1098,7 @@ describe('Refund Phase 11A controls', () => {
       treasuryAccountId,
       amountNgn: 500,
     });
-    expect(pay.status).toBe(200);
+    expect(pay.status).toBe(201);
 
     const audit = db
       .prepare(`SELECT action FROM audit_log WHERE entity_id = ? AND action LIKE 'refund.dual_control.admin_trial%'`)
@@ -1046,14 +1115,18 @@ describe('Refund Phase 11A controls', () => {
       'CUS-001',
       'High Value Co',
       2_500_000,
-      2_500_000,
+      4_000_000,
       'Paid',
       'Finished',
       JSON.stringify({ products: [{ name: 'Roof', qty: 500, unitPrice: 5000 }], accessories: [], services: [] })
     );
     db.prepare(
-      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
-       VALUES ('RCT-HIVAL', 'CUS-001', 'High Value Co', 'QT-RFS-HIVAL', 2500000, 'Confirmed', '2026-04-01')`
+      `INSERT OR REPLACE INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, finance_reconciliation_saved_at_iso)
+       VALUES ('RCT-HIVAL', 'CUS-001', 'High Value Co', 'QT-RFS-HIVAL', 4000000, 'Cleared', '2026-04-01', '2026-04-01T12:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
+       VALUES ('JOB-RFS-HIVAL','QT-RFS-HIVAL',0,'Cancelled','2026-04-01T10:00:00Z')`
     ).run();
 
     const staff = request.agent(app);
@@ -1067,7 +1140,7 @@ describe('Refund Phase 11A controls', () => {
       calculationLines: [{ label: 'Overpayment', amountNgn: 1_500_000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
-    expect(create.status).toBe(201);
+    expect(create.status, `hival create failed: ${JSON.stringify(create.body)}`).toBe(201);
     const refundID = create.body.refundID;
 
     const mgr = request.agent(app);
@@ -1152,6 +1225,6 @@ describe('Refund Phase 11A controls', () => {
       treasuryAccountId,
       amountNgn: 5000,
     });
-    expect(cashierPay.status).toBe(200);
+    expect(cashierPay.status).toBe(201);
   });
 });

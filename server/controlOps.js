@@ -1365,7 +1365,7 @@ export function appendAuditLog(db, payload) {
   ];
   if (ensureAuditHashColumns(db)) {
     try {
-      const prev = db.prepare(`SELECT row_hash FROM audit_log ORDER BY rowid DESC LIMIT 1`).get();
+      const prev = db.prepare(`SELECT row_hash FROM audit_log ORDER BY occurred_at_iso DESC, id DESC LIMIT 1`).get();
       const prevHash = prev?.row_hash ?? null;
       const rowHash = computeAuditRowHash(fields, prevHash);
       db.prepare(
@@ -1399,7 +1399,7 @@ export function verifyAuditLogChain(db) {
   const rows = db
     .prepare(
       `SELECT id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note, details_json, prev_hash, row_hash
-       FROM audit_log ORDER BY rowid ASC`
+       FROM audit_log ORDER BY occurred_at_iso ASC, id ASC`
     )
     .all();
   let checked = 0;
@@ -3097,12 +3097,15 @@ export function previewRefundRequest(db, payload) {
   const producedMetersForUnproduced =
     coilProducedMetersOverride != null
       ? Math.max(0, roundMoney(coilProducedMetersOverride))
-      : producedMetersForUnproducedRefund(db, productionJobs, {
-          isStoneMeterQuote: stoneMeterQuoteForUnproduced,
-        });
+      : actualMetersOverride != null
+        ? Math.max(0, roundMoney(actualMetersOverride))
+        : producedMetersForUnproducedRefund(db, productionJobs, {
+            isStoneMeterQuote: stoneMeterQuoteForUnproduced,
+          });
   const productionFulfillment = buildRefundProductionFulfillmentSummary(db, quote, productionJobs, {
     isStoneMeterQuote: stoneMeterQuoteForUnproduced,
     quotedMeters,
+    producedMetersForUnproduced,
   });
 
   const suggestedLines = [];

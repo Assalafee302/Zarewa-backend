@@ -216,6 +216,7 @@ export function seedEverything(db) {
       for (const p of PRODUCTS_SEED) {
         const exists = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(p.productID);
         if (exists) continue;
+        const isGlobalCoil = p.productID === 'COIL-ALU' || p.productID === 'PRD-102';
         insP.run(
           p.productID,
           p.name,
@@ -227,7 +228,7 @@ export function seedEverything(db) {
           p.dashboardAttrs?.colour ?? null,
           p.dashboardAttrs?.materialType ?? null,
           JSON.stringify(p.dashboardAttrs ?? {}),
-          DEFAULT_BRANCH_ID
+          isGlobalCoil ? '' : DEFAULT_BRANCH_ID
         );
       }
       for (const { po, lines } of PURCHASE_ORDERS_SEED) {

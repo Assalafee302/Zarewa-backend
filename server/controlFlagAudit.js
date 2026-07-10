@@ -33,7 +33,7 @@ export function auditControlFlagsOnBoot(db) {
   try {
     const snapshot = readControlFlagSnapshot();
     const prev = db
-      .prepare(`SELECT details_json FROM audit_log WHERE action = 'config.control_flags' ORDER BY rowid DESC LIMIT 1`)
+      .prepare(`SELECT details_json FROM audit_log WHERE action = 'config.control_flags' ORDER BY occurred_at_iso DESC, id DESC LIMIT 1`)
       .get();
     let prevSnapshot = null;
     try {

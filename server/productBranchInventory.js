@@ -96,11 +96,18 @@ export function getProductRowForWorkspace(db, productId, workspaceBranchId) {
   const wb = String(workspaceBranchId || '').trim();
   if (!pid) return null;
   if (isGlobalCoilCatalogProductId(pid)) {
-    return db
+    const globalRow = db
       .prepare(
         `SELECT * FROM products WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '') LIMIT 1`
       )
       .get(pid);
+    if (globalRow) return globalRow;
+    // Legacy/seed rows may still carry a home branch_id on global coil SKUs.
+    if (wb) {
+      const branchRow = db.prepare(`SELECT * FROM products WHERE product_id = ? AND branch_id = ?`).get(pid, wb);
+      if (branchRow) return branchRow;
+    }
+    return db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid) || null;
   }
   if (!wb) {
     return getProductRowForWorkspace(db, pid, DEFAULT_BRANCH_ID);
@@ -201,6 +208,37 @@ function repairNonCoilProductBranchAssignment(db) {
       db.prepare(`UPDATE products SET branch_id = 'BR-KD' WHERE product_id = ? AND branch_id = ''`).run(
         row.product_id
       );
+    }
+  }
+  // Global coil SKUs must remain catalogue-scoped (empty branch_id), even when seed defaulted them to a home branch.
+  for (const pid of GLOBAL_COIL_PRODUCT_IDS) {
+    const branched = db
+      .prepare(
+        `SELECT product_id, branch_id, stock_level FROM products
+         WHERE product_id = ? AND TRIM(COALESCE(branch_id,'')) != ''`
+      )
+      .all(pid);
+    if (!branched.length) continue;
+    const globalExists = db
+      .prepare(
+        `SELECT 1 AS ok FROM products WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '') LIMIT 1`
+      )
+      .get(pid);
+    if (globalExists) {
+      for (const r of branched) {
+        db.prepare(`DELETE FROM products WHERE product_id = ? AND branch_id = ?`).run(pid, r.branch_id);
+      }
+      continue;
+    }
+    const keep = branched[0];
+    const stockSum = branched.reduce((s, r) => s + (Number(r.stock_level) || 0), 0);
+    db.prepare(`UPDATE products SET branch_id = '', stock_level = ? WHERE product_id = ? AND branch_id = ?`).run(
+      stockSum,
+      pid,
+      keep.branch_id
+    );
+    for (const r of branched.slice(1)) {
+      db.prepare(`DELETE FROM products WHERE product_id = ? AND branch_id = ?`).run(pid, r.branch_id);
     }
   }
 }

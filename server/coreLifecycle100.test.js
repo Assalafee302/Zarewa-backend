@@ -71,6 +71,7 @@ async function postFullReceipt(agent, quotationId, amountNgn, treasuryAccountId,
     customerID: 'CUS-001',
     quotationId,
     amountNgn,
+    confirmAmountNgn: amountNgn,
     paymentMethod: 'Cash',
     bankReference: uniqueRef,
     dateISO: '2026-03-29',
@@ -234,9 +235,13 @@ describe('Core Lifecycle 100 inline guards', () => {
         customerID: 'CUS-001',
         quotationId: quote.body.quotationId,
         amountNgn: underpay,
+        confirmAmountNgn: underpay,
         paymentMethod: 'Cash',
+        bankReference: `LC100-036-${Date.now()}`,
         dateISO: '2026-03-29',
-        paymentLines: [{ treasuryAccountId, amountNgn: underpay, reference: 'LC100-036-10pct' }],
+        paymentLines: [{ treasuryAccountId, amountNgn: underpay, reference: `LC100-036-${Date.now()}` }],
+        forceDuplicatePost: true,
+        duplicateOverrideReason: 'LC100 automated integration test',
       });
       expect(rcpt.status).toBe(201);
 
@@ -252,6 +257,49 @@ describe('Core Lifecycle 100 inline guards', () => {
       });
       expect(cutting.status).toBe(400);
       expect(String(cutting.body.error || '')).toMatch(/70%|at least/i);
+    }
+  );
+
+  it(
+    'LC100-089: manual paidNgn patch cannot unlock cutting list without recorded receipts',
+    { timeout: MYSQL_TIMEOUT },
+    async () => {
+      const snap = await agent.get('/api/bootstrap');
+      const fgProduct = snap.body.products.find((p) => p.productID === 'FG-101') || snap.body.products[0];
+
+      const quote = await agent.post('/api/quotations').send(
+        quotationPayload({
+          projectName: 'LC100-089 fake paid patch',
+          lines: {
+            products: [{ name: 'Roofing Sheet', qty: '50', unitPrice: '5000' }],
+            accessories: [],
+            services: [],
+          },
+        })
+      );
+      expect(quote.status).toBe(201);
+      const qid = quote.body.quotationId;
+      const total = quote.body.quotation.totalNgn;
+
+      const patch = await agent.patch(`/api/quotations/${encodeURIComponent(qid)}`).send({
+        paidNgn: total,
+        paymentStatus: 'Paid',
+      });
+      expect(patch.status).toBe(422);
+      expect(String(patch.body.code || patch.body.error || '')).toMatch(/PAID_NGN_READ_ONLY|cannot be edited/i);
+
+      const cutting = await agent.post('/api/cutting-lists').send({
+        quotationRef: qid,
+        customerID: 'CUS-001',
+        productID: fgProduct.productID,
+        productName: fgProduct.name,
+        dateISO: '2026-03-29',
+        machineName: 'Fraud gate test',
+        operatorName: 'Op',
+        lines: [{ sheets: 2, lengthM: 15 }],
+      });
+      expect(cutting.status).toBe(400);
+      expect(String(cutting.body.error || '')).toMatch(/70%|at least|paid/i);
     }
   );
 

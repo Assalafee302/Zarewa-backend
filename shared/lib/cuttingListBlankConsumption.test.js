@@ -93,7 +93,7 @@ describe('cuttingListBlankConsumption', () => {
       quotationLinesJson: lines,
       cuttingListLines: [
         { lineType: 'Roof', sheets: 80, lengthM: 1 },
-        { lineType: 'Flatsheet', sheets: 3, lengthM: 2 },
+        { lineType: 'StoneFlatsheet', sheets: 3, lengthM: 2 },
       ],
       stoneMeterQuote: true,
     });
@@ -102,6 +102,37 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.expectedTotalM).toBe(0);
     expect(assessment.trimBlankProductionBlocked).toBe(false);
     expect(assessment.code).toBe('stone_sf_cl_skip_coil_alignment');
+  });
+
+  it('stone roofing + sold SF uses StoneFlatsheet section without false coil mismatch', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 120 },
+        { name: 'Stone flatsheet 2', qty: 8 },
+      ],
+    };
+    const wrong = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 1, lengthM: 120 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: 8 },
+      ],
+      stoneMeterQuote: false,
+    });
+    expect(wrong.ok).toBe(false);
+    expect(wrong.code).toBe('cutting_list_quotation_metre_mismatch');
+
+    const right = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 1, lengthM: 120 },
+        { lineType: 'StoneFlatsheet', sheets: 8, lengthM: 2 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(right.ok).toBe(true);
+    expect(right.code).toBe('stone_sf_cl_skip_coil_alignment');
+    expect(right.clFlatsheetM).toBe(0);
   });
 
   it('stone quote with gutter requires flatsheet section to cover coil blank (SF sheets may be extra)', () => {
@@ -117,11 +148,13 @@ describe('cuttingListBlankConsumption', () => {
       cuttingListLines: [
         { lineType: 'Roof', sheets: 80, lengthM: 1 },
         { lineType: 'Flatsheet', sheets: 1, lengthM: gutterBlank },
+        { lineType: 'StoneFlatsheet', sheets: 4, lengthM: 2 },
       ],
       stoneMeterQuote: true,
     });
     expect(assessment.ok).toBe(true);
     expect(assessment.quotedTrimBlankM).toBe(gutterBlank);
     expect(assessment.expectedTotalM).toBe(gutterBlank);
+    expect(assessment.clFlatsheetM).toBe(gutterBlank);
   });
 });

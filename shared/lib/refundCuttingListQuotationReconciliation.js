@@ -63,6 +63,7 @@ export function cuttingListRoofMetresFromLines(lines) {
  *   cuttingListMetres?: number,
  *   cuttingRoofMetres?: number,
  *   accessoriesOnly?: boolean,
+ *   stoneMeterQuote?: boolean,
  *   toleranceM?: number,
  * }} p
  */
@@ -73,6 +74,7 @@ export function validateCuttingListQuotedRoofingAlignment({
   cuttingListMetres,
   cuttingRoofMetres,
   accessoriesOnly = false,
+  stoneMeterQuote = false,
   toleranceM = CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
 }) {
   if (hasQuotationProductsPayload(quotationLinesJson)) {
@@ -81,6 +83,7 @@ export function validateCuttingListQuotedRoofingAlignment({
       cuttingListLines,
       cuttingListMetres,
       accessoriesOnly,
+      stoneMeterQuote,
       sheetToleranceM: toleranceM,
     });
     return {

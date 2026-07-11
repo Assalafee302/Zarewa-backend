@@ -5894,7 +5894,7 @@ function formatMetersLabel(totalMeters) {
   })} m`;
 }
 
-const CUTTING_LIST_LINE_TYPES = new Set(['Roof', 'Flatsheet', 'Cladding']);
+const CUTTING_LIST_LINE_TYPES = new Set(['Roof', 'Flatsheet', 'Cladding', 'StoneFlatsheet']);
 const CUTTING_LIST_DRAFT_STATUS = 'Draft';
 
 function isCuttingListDraftStatus(status) {
@@ -6004,14 +6004,18 @@ function parseQuotationLinesJsonForStone(db, quotationRef) {
 
 /**
  * Planned metres/sheets for the production job: for stone_meter quotations, only roofing (`Roof`) lines
- * count toward the stone-coated metre run plan. Cladding and optional flat (`Flatsheet`) remain on the cutting list for print and coil-style UX but do not replace stone flatsheet m² on the quotation.
+ * count toward the stone-coated metre run plan. Coil Flatsheet and StoneFlatsheet stay on the cutting list
+ * for shop-floor instructions; StoneFlatsheet does not count as cladding coil metres.
  */
 function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
   const list = Array.isArray(lines) ? lines : [];
   const plannedRoofM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Roof'] });
   const plannedCladdingM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Cladding'] });
   const plannedFlatsheetM = cuttingListTotalMetresFromLines(list, { lineTypes: ['Flatsheet'] });
-  const breakdownTotalM = roundCuttingListMetres2(plannedRoofM + plannedCladdingM + plannedFlatsheetM);
+  const plannedStoneFlatsheetM = cuttingListTotalMetresFromLines(list, { lineTypes: ['StoneFlatsheet'] });
+  const breakdownTotalM = roundCuttingListMetres2(
+    plannedRoofM + plannedCladdingM + plannedFlatsheetM + plannedStoneFlatsheetM
+  );
   const qj = parseQuotationLinesJsonForStone(db, quotationRef);
   const stone = Boolean(db && qj && isStoneMeterQuotationLinesJson(db, qj));
   if (stone) {
@@ -6025,8 +6029,9 @@ function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
       plannedMeters: plannedRoofM,
       plannedSheets,
       plannedRoofM,
-      plannedCladdingM,
+      plannedCladdingM: 0,
       plannedFlatsheetM,
+      plannedStoneFlatsheetM,
     };
   }
   return {
@@ -6035,6 +6040,7 @@ function productionPlannedTotalsForCuttingList(db, quotationRef, lines) {
     plannedRoofM,
     plannedCladdingM,
     plannedFlatsheetM,
+    plannedStoneFlatsheetM: 0,
   };
 }
 

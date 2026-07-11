@@ -90,4 +90,22 @@ describe('refundCuttingListQuotationReconciliation', () => {
     expect(r.ok).toBe(true);
     expect(r.quotedTrimBlankM).toBe(1);
   });
+
+  it('forwards stoneMeterQuote so sold SF does not fail coil metre alignment', () => {
+    const r = validateCuttingListQuotedRoofingAlignment({
+      quotationLinesJson: {
+        products: [
+          { name: 'Roofing Sheet', qty: 120 },
+          { name: 'Stone flatsheet 2', qty: 8 },
+        ],
+      },
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 1, lengthM: 120 },
+        { lineType: 'StoneFlatsheet', sheets: 8, lengthM: 2 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe('stone_sf_cl_skip_coil_alignment');
+  });
 });

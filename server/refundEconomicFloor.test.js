@@ -47,7 +47,8 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
       coilMetersByJob: { 'JOB-INC': 8 },
       coilGaugeByJob: {},
     });
-    const quote = { lines_json: JSON.stringify({ products: [{ name: 'R', qty: 10, unitPrice: 5000 }] }), branch_id: 'BR-KD' };
+    // No unit prices → quoted selling fallback cannot resolve either.
+    const quote = { lines_json: JSON.stringify({ products: [{ name: 'R', qty: 10 }] }), branch_id: 'BR-KD' };
     const jobs = [{ job_id: 'JOB-INC', status: 'Completed', actual_meters: 8 }];
     const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
       cashInNgn: 50_000,
@@ -98,6 +99,26 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
     expect(summary.floorDeliveredValueNgn).toBe(35_000);
     expect(summary.maxDefensibleRefundNgn).toBe(65_000);
     expect(summary.ppmSourceByJob['JOB-MD']).toBe('md_approved_quoted_selling');
+  });
+
+  it('falls back to quoted selling ₦/m when workbook coil pricing is missing', () => {
+    const db = mockFloorDb({
+      coilMetersByJob: { 'JOB-STONE': 8 },
+      coilGaugeByJob: {},
+    });
+    const quote = {
+      lines_json: JSON.stringify({ products: [{ name: 'Roofing Sheet', qty: 10, unitPrice: 4900 }] }),
+      branch_id: 'BR-KD',
+    };
+    const jobs = [{ job_id: 'JOB-STONE', status: 'Completed', actual_meters: 8 }];
+    const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
+      cashInNgn: 100_000,
+      priorRefundedNgn: 0,
+    });
+    expect(summary.incompleteFloorPricing).toBe(false);
+    expect(summary.ppmSourceByJob['JOB-STONE']).toBe('quoted_selling_fallback');
+    expect(summary.floorDeliveredValueNgn).toBe(39_200);
+    expect(summary.maxDefensibleRefundNgn).toBe(60_800);
   });
 });
 
@@ -157,7 +178,7 @@ describe('insertRefundRequest economic floor (integration)', () => {
     ).run();
 
     const linesInc = JSON.stringify({
-      products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
+      products: [{ name: 'Roofing', qty: 10 }],
       accessories: [],
       services: [],
     });

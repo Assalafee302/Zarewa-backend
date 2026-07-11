@@ -408,6 +408,24 @@ function refundRequestIsOverpaymentOnly(categories) {
   return cats.every((c) => c.includes('overpay'));
 }
 
+/** True when included calculation lines are exclusively Overpayment. */
+function refundCalculationLinesAreOverpaymentOnly(lines) {
+  const included = (Array.isArray(lines) ? lines : []).filter((l) => {
+    if (l?.include === false) return false;
+    const amt = roundMoney(l?.amountNgn);
+    return amt > 0 && String(l?.label ?? l?.category ?? '').trim();
+  });
+  if (!included.length) return false;
+  return included.every((l) => {
+    const cat = String(l?.category || '').trim().toLowerCase();
+    if (cat.includes('overpay')) return true;
+    const applies = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
+    return (
+      applies.length > 0 && applies.every((c) => String(c || '').trim().toLowerCase().includes('overpay'))
+    );
+  });
+}
+
 /**
  * Shared financial guards for refund approve and payout (live preview caps, economic floor, stale detection).
  */
@@ -464,7 +482,9 @@ export function validateRefundFinancialGuards(db, opts = {}) {
 
   const economicFloor = preview.preview?.economicFloor ?? null;
   const producedM = Number(economicFloor?.producedOutputMeters || 0);
-  const overpaymentOnly = refundRequestIsOverpaymentOnly(reasonCategories);
+  const overpaymentOnly =
+    refundRequestIsOverpaymentOnly(reasonCategories) ||
+    refundCalculationLinesAreOverpaymentOnly(lines);
 
   // Overpayment is cash above quote total — not gated by workbook floor pricing of produced metres.
   if (!overpaymentOnly && economicFloor?.incompleteFloorPricing && producedM > 0.001) {
@@ -1228,6 +1248,12 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     );
     let floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
     let ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
+    // Stone / offcut FG jobs often have no allocated coil workbook row — use quoted selling ₦/m
+    // so incomplete pricing does not null the entire economic floor (and falsely block overpayment).
+    if (floorPpmNgn == null && quotedSellingPpmNgn != null) {
+      floorPpmNgn = quotedSellingPpmNgn;
+      ppmSource = 'quoted_selling_fallback';
+    }
     if (
       mdPriceExceptionHonoured &&
       quotedSellingPpmNgn != null &&
@@ -2534,7 +2560,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           payload.economicFloorOverrideNote ??
           ''
       ).trim();
-      const overpaymentOnlyAtCreate = refundRequestIsOverpaymentOnly(requestedCats);
+      const overpaymentOnlyAtCreate =
+        refundRequestIsOverpaymentOnly(requestedCats) ||
+        refundCalculationLinesAreOverpaymentOnly(calcLinesRaw);
       if (
         !overpaymentOnlyAtCreate &&
         economicFloorAtCreate?.incompleteFloorPricing &&
@@ -3982,7 +4010,7 @@ export function previewRefundRequest(db, payload) {
     });
     if (economicFloor.incompleteFloorPricing) {
       warnings.push(
-        'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — create/approve is blocked unless MD/admin overrides. Missing rates must not inflate the max defensible refund.'
+        'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — production-related refunds need MD/admin override or workbook pricing. Overpayment-only refunds are not blocked by this check.'
       );
     }
     if (economicFloor.honouredMdPriceException) {

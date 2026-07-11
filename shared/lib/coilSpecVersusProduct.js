@@ -1,5 +1,9 @@
 import { stockRowMatchesColourFilter } from './stockCheckMasterOptions.js';
-import { quotationHasCoilLine, quotationHasFlatSheetLine } from './stoneCoatedQuotationPolicy.js';
+import {
+  quotationHasCoilLine,
+  quotationHasFlatSheetLine,
+  quotationHasStoneCoilBackedProductLines,
+} from './stoneCoatedQuotationPolicy.js';
 
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
 export function firstGaugeNumber(value) {
@@ -120,15 +124,20 @@ function quotationProductsFromQuotation(quotation) {
   return Array.isArray(q) ? q : [];
 }
 
-/** Stone metre quotes expect coil matching only when Flat sheet and/or Coil lines are present (hybrid jobs). */
+/** Stone metre quotes expect coil matching only when Flat sheet, Gutter, and/or Coil lines are present (hybrid jobs). */
 export function quotationExpectsCoilAllocation(quotation) {
   const products = quotationProductsFromQuotation(quotation);
-  if (quotation?.stoneMeterQuote === true) {
-    return quotationHasFlatSheetLine(products) || quotationHasCoilLine(products);
-  }
   const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
-  if (mid === 'MAT-005') {
-    return quotationHasFlatSheetLine(products) || quotationHasCoilLine(products);
+  const stone =
+    quotation?.stoneMeterQuote === true ||
+    mid === 'MAT-005' ||
+    mid === 'stone-coated';
+  if (stone) {
+    return (
+      quotationHasStoneCoilBackedProductLines(products) ||
+      quotationHasFlatSheetLine(products) ||
+      quotationHasCoilLine(products)
+    );
   }
   return true;
 }

@@ -31,6 +31,7 @@ import {
 import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
+  quotationExpectsCoilAllocation,
 } from '../shared/lib/coilSpecVersusProduct.js';
 import { quotationRequiresStoneMetreConsumption } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
@@ -300,6 +301,37 @@ function jobIsStoneMeter(db, job) {
     return false;
   }
   return isStoneMeterQuotationLinesJson(db, j);
+}
+
+/** Quotation shape for shared coil-allocation policy (stone hybrid Flat sheet / gutter / Coil). */
+function jobQuotationForCoilPolicy(db, job) {
+  const ref = String(job?.quotation_ref ?? '').trim();
+  if (!ref) return null;
+  const row = db.prepare(`SELECT lines_json FROM quotations WHERE id = ?`).get(ref);
+  if (!row?.lines_json) return null;
+  let lines = {};
+  try {
+    lines = JSON.parse(String(row.lines_json));
+  } catch {
+    return null;
+  }
+  return {
+    stoneMeterQuote: isStoneMeterQuotationLinesJson(db, lines),
+    materialTypeId: lines.materialTypeId,
+    quotationLines: { products: Array.isArray(lines.products) ? lines.products : [] },
+  };
+}
+
+/** True when coils / offcut may be used (alu jobs, and stone + Flat sheet / gutter / Coil hybrid). */
+function jobExpectsCoilAllocation(db, job) {
+  if (!jobIsStoneMeter(db, job)) return true;
+  const q = jobQuotationForCoilPolicy(db, job);
+  if (!q) return false;
+  return quotationExpectsCoilAllocation(q);
+}
+
+function jobIsStoneCoilHybrid(db, job) {
+  return jobIsStoneMeter(db, job) && jobExpectsCoilAllocation(db, job);
 }
 
 function quotationHasPositiveProductLines(linesJson) {
@@ -871,7 +903,7 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
     }
   }
 
-  if (jobIsStoneMeter(db, job)) {
+  if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
     if (append) {
       return { ok: false, error: 'Stone-coated jobs cannot add coil allocations mid-run.' };
     }
@@ -1080,6 +1112,7 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   }
   const allocations = listJobCoilsForJob(db, jobID);
   const startMode = completionModeFromPayload(payload);
+  /* Pure alu needs coils (unless offcut start). Stone pure and stone hybrid may start without coils. */
   if (!allocations.length && !jobIsStoneMeter(db, job) && startMode !== 'offcut') {
     return { ok: false, error: 'Allocate at least one coil before starting production.' };
   }
@@ -1346,7 +1379,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
     };
   }
-  if (jobRow && jobIsStoneMeter(db, jobRow)) {
+  if (jobRow && jobIsStoneMeter(db, jobRow) && !jobExpectsCoilAllocation(db, jobRow)) {
     const acc = planAccessoryCompletion(db, jobRow, payload);
     if (!acc.ok) return { ok: false, error: acc.error };
     const sf = planStoneFlatsheetFulfillment(db, jobRow, payload, {});
@@ -1588,6 +1621,73 @@ export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
   }
+}
+
+/**
+ * Stone + Flat sheet hybrid: when completing via coil/offcut, also consume stone roofing metres and SF.
+ * Throws on validation/stock failure (call inside db.transaction).
+ */
+function applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, stockBranch, adjustStock) {
+  if (!jobIsStoneCoilHybrid(db, job)) return { stoneMetres: 0, stoneFlatsheetStockWarnings: [] };
+  const qref = String(job.quotation_ref ?? '').trim();
+  const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
+  let requiresStoneMetres = false;
+  if (qRow?.lines_json) {
+    try {
+      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json);
+    } catch {
+      requiresStoneMetres = false;
+    }
+  }
+  const metresRaw = safeNumber(
+    payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? 0
+  );
+  if (!Number.isFinite(metresRaw)) {
+    throw new Error('Stone metres consumed must be a number.');
+  }
+  const metres = requiresStoneMetres ? metresRaw : 0;
+  if (requiresStoneMetres && Math.abs(metres) < 1e-9) {
+    throw new Error(
+      'Enter stone metres consumed as a non-zero number (positive draws stock; negative returns metres to stock).'
+    );
+  }
+  const stonePid =
+    requiresStoneMetres && Math.abs(metres) >= 1e-9 && qRow
+      ? resolveStoneRawProductIdForQuotation(db, qRow, jobBranchId(job))
+      : null;
+  if (requiresStoneMetres && Math.abs(metres) >= 1e-9 && !stonePid) {
+    throw new Error('Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).');
+  }
+  if (stonePid && Math.abs(metres) >= 1e-9) {
+    adjustProductStockTx(db, stonePid, -metres, stockBranch);
+    appendStockMovementTx(db, {
+      atISO: completedAtISO,
+      type: 'STONE_CONSUMPTION',
+      ref: jobID,
+      productID: stonePid,
+      qty: -metres,
+      branchId: stockBranch,
+      detail:
+        metres < 0
+          ? `${jobID} stone-coated return ${Math.abs(metres).toFixed(2)} m`
+          : `${jobID} stone-coated ${metres.toFixed(2)} m`,
+    });
+  }
+  const sfPlan = planStoneFlatsheetFulfillment(db, job, payload, {});
+  if (!sfPlan.ok) throw new Error(sfPlan.error || 'Stone flatsheet plan failed.');
+  applyStoneFlatsheetCompletionTx(
+    db,
+    jobID,
+    qref,
+    completedAtISO,
+    sfPlan.plannedLines,
+    adjustStock,
+    appendStockMovementTx
+  );
+  return {
+    stoneMetres: metres,
+    stoneFlatsheetStockWarnings: sfPlan.stoneFlatsheetStockWarnings ?? [],
+  };
 }
 
 function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
@@ -1842,6 +1942,15 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
         adjustStock,
         appendStockMovementTx
       );
+      const hybridStoneOffcut = applyHybridStoneMetreAndSfTx(
+        db,
+        job,
+        jobID,
+        payload,
+        completedAtISO,
+        stockBranch,
+        adjustStock
+      );
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.complete_offcut',
@@ -1853,6 +1962,7 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
           releasedCoilLines: allocations.length,
           offcutInventoryMeters: offInv,
           offcutSupplyCount: offcutSupplyList.length,
+          stoneMetersConsumed: hybridStoneOffcut.stoneMetres || 0,
         },
       });
       const glRec = tryPostProductionRecognitionGlTx(db, {
@@ -1894,7 +2004,8 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
   if (jobIsStoneMeter(db, job) && quotationIsAccessoriesOnlyForJob(db, job)) {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
   }
-  if (jobIsStoneMeter(db, job)) {
+  /* Pure stone (no Flat sheet / gutter / Coil) — metre stock only. Hybrid falls through to coil/offcut. */
+  if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
     return completeProductionJobStone(db, job, jobID, payload, opts);
   }
   if (completionModeFromPayload(payload) === 'offcut') {
@@ -2179,6 +2290,21 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
         adjustStock,
         appendStockMovementTx
       );
+      const hybridStone = applyHybridStoneMetreAndSfTx(
+        db,
+        job,
+        jobID,
+        payload,
+        completedAtISO,
+        stockBranch,
+        adjustStock
+      );
+      if (hybridStone.stoneFlatsheetStockWarnings?.length) {
+        accessoryStockWarnings = [
+          ...accessoryStockWarnings,
+          ...hybridStone.stoneFlatsheetStockWarnings,
+        ];
+      }
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.complete',
@@ -2199,6 +2325,7 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           managerReviewRequired,
           conversionVarianceReasonCode: reasonCheck.code || null,
           conversionVarianceReasonText: reasonCheck.text || null,
+          stoneMetersConsumed: hybridStone.stoneMetres || 0,
         },
       });
 

@@ -8,8 +8,11 @@ import {
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
   quotationHasStoneMetreProductLines,
+  quotationRequiresStoneCoilCuttingListAlignment,
   quotationRequiresStoneMetreConsumption,
   resolveStoneFlatsheetLengthM,
+  stoneBargeboardMetresPerSheet,
+  stoneRidgeMetresPerSheet,
   validateQuotationMaterialRules,
   validateQuotationLineIntegrity,
   quotationLineQtyPriceEnabled,
@@ -79,13 +82,15 @@ function createPolicyTestDb(overrides = {}) {
 }
 
 describe('stoneCoatedQuotationPolicy — line rules', () => {
-  it('allows stone flatsheet 1.4 / 1.5 product names', () => {
+  it('allows stone flatsheet 1.4 / 2 product names and remaps legacy 1.5 to 1.4', () => {
     expect(productLineAllowedForStone('Stone flatsheet 1.4', false)).toBe(true);
     expect(productLineAllowedForStone('Stone flatsheet 1.5', false)).toBe(true);
+    expect(productLineAllowedForStone('Bargeboard', false)).toBe(true);
+    expect(productLineAllowedForStone('Cladding', false)).toBe(false);
     expect(isStoneFlatsheetQuotationLine('Stone flatsheet 1.5')).toBe(true);
     expect(isStoneFlatsheetQuotationLine('stoneflatsheet')).toBe(true);
     expect(isStoneFlatsheetQuotationLine('Cladding')).toBe(false);
-    expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 1.5', stoneFlatsheetLengthM: '' })).toBe(1.5);
+    expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet 1.5', stoneFlatsheetLengthM: '' })).toBe(1.4);
     expect(resolveStoneFlatsheetLengthM({ name: 'Stone flatsheet', stoneFlatsheetLengthM: 1.4 })).toBe(1.4);
   });
 
@@ -133,6 +138,25 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     expect(quotationRequiresStoneMetreConsumption(lines)).toBe(false);
   });
 
+  it('ridge/bargeboard alone do not require stone metre consumption (SF yield)', () => {
+    expect(
+      quotationRequiresStoneMetreConsumption({
+        products: [{ name: 'Ridge Cap', qty: '12' }],
+      })
+    ).toBe(false);
+    expect(
+      quotationRequiresStoneMetreConsumption({
+        products: [{ name: 'Bargeboard', qty: '8' }],
+      })
+    ).toBe(false);
+  });
+
+  it('gutter alone requires coil CL alignment but not stone metres', () => {
+    const lines = { products: [{ name: 'Gutter', qty: '20' }] };
+    expect(quotationRequiresStoneMetreConsumption(lines)).toBe(false);
+    expect(quotationRequiresStoneCoilCuttingListAlignment(lines)).toBe(true);
+  });
+
   it('roofing + stone flatsheet quotes still require stone metre consumption', () => {
     const lines = {
       products: [
@@ -142,6 +166,13 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     };
     expect(quotationHasStoneMetreProductLines(lines.products)).toBe(true);
     expect(quotationRequiresStoneMetreConsumption(lines)).toBe(true);
+  });
+
+  it('stone ridge yield: 2 m sheet → 6 m ridge; bargeboard → 4 m', () => {
+    expect(stoneRidgeMetresPerSheet(2)).toBe(6);
+    expect(stoneBargeboardMetresPerSheet(2)).toBe(4);
+    expect(stoneRidgeMetresPerSheet(1.4)).toBeCloseTo(4.2);
+    expect(stoneBargeboardMetresPerSheet(1.4)).toBeCloseTo(2.8);
   });
 
   it('allows stone accessories with pack suffix', () => {
@@ -173,7 +204,7 @@ describe('validateQuotationMaterialRules', () => {
       materialGauge: '0.45mm',
       materialColor: 'Black',
       materialDesign: 'Milano',
-      products: [{ name: 'Stone flatsheet 1.5', qty: '10' }],
+      products: [{ name: 'Stone flatsheet 1.4', qty: '10' }],
       accessories: [{ name: 'Stone nail' }],
     });
     expect(r.ok).toBe(true);

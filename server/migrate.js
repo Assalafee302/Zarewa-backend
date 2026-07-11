@@ -1246,6 +1246,7 @@ function runMigrationsUnlocked(db) {
   migrateMergeDuplicateSuppliersOnBoot(db);
   migrateMergeDuplicateHrStaffOnBoot(db);
   migrateStoneCoatedAndPricingArch(db);
+  migrateStoneFlatsheetLength15To14(db);
   migrateRoofingProfileCatalog2026(db);
   migrateEnsureQuotationMaterialTypes(db);
   migratePurchaseOrderLineType(db);
@@ -2395,7 +2396,7 @@ function migrateQuotationLineCatalog2026(db) {
     ['SQI-027', 'product', 'Cladding', 'm', 11, null],
     ['SQI-028', 'product', 'Flat sheet', 'm', 12, null],
     ['SQI-037', 'product', 'Stone flatsheet 1.4', 'm²', 13, null],
-    ['SQI-038', 'product', 'Stone flatsheet 1.5', 'm²', 14, null],
+    ['SQI-038', 'product', 'Stone flatsheet 1.4', 'm²', 14, null],
     ['SQI-039', 'product', 'Stone flatsheet 2', 'm²', 15, null],
     ['SQI-029', 'product', 'Offcut', 'm', 16, null],
     ['SQI-030', 'product', 'Wall eaves', 'm', 17, null],
@@ -2509,6 +2510,66 @@ function migrateCoilAluzincColours2026(db) {
       }
     }
   })();
+}
+
+/**
+ * Legacy stone flatsheet 1.5 m → 1.4 m (SKU merge + catalog rename).
+ * Stock on STONE-FS-*-1p5m is added into the matching *-1p4m SKU then the 1.5 SKU is zeroed.
+ */
+function migrateStoneFlatsheetLength15To14(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) return;
+  try {
+    const legacy = db
+      .prepare(
+        `SELECT product_id, branch_id, stock_level, name, colour, dashboard_attrs_json
+         FROM products WHERE product_id LIKE 'STONE-FS-%-1p5m'`
+      )
+      .all();
+    for (const row of legacy) {
+      const fromId = String(row.product_id || '');
+      const toId = fromId.replace(/-1p5m$/i, '-1p4m');
+      if (!toId || toId === fromId) continue;
+      const branchId = String(row.branch_id || 'BR-KD');
+      const stock = Number(row.stock_level) || 0;
+      const target = db
+        .prepare(`SELECT product_id, stock_level FROM products WHERE product_id = ? AND branch_id = ?`)
+        .get(toId, branchId);
+      if (target) {
+        db.prepare(`UPDATE products SET stock_level = COALESCE(stock_level, 0) + ? WHERE product_id = ? AND branch_id = ?`).run(
+          stock,
+          toId,
+          branchId
+        );
+        db.prepare(`UPDATE products SET stock_level = 0, name = REPLACE(name, '1.5 m', '1.4 m (merged)') WHERE product_id = ? AND branch_id = ?`).run(
+          fromId,
+          branchId
+        );
+      } else {
+        let dash = row.dashboard_attrs_json;
+        try {
+          const j = JSON.parse(String(dash || '{}'));
+          j.stoneFlatsheetLengthM = 1.4;
+          dash = JSON.stringify(j);
+        } catch {
+          /* keep */
+        }
+        db.prepare(
+          `UPDATE products SET product_id = ?, name = REPLACE(COALESCE(name,''), '1.5 m', '1.4 m'), dashboard_attrs_json = ? WHERE product_id = ? AND branch_id = ?`
+        ).run(toId, dash, fromId, branchId);
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+  if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) {
+    try {
+      db.prepare(
+        `UPDATE setup_quote_items SET name = 'Stone flatsheet 1.4' WHERE item_id = 'SQI-038' OR lower(trim(name)) = 'stone flatsheet 1.5'`
+      ).run();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Stone-coated routing, profile scoping, colours, accessory SKUs, extended price_list_items. */

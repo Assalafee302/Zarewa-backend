@@ -3,18 +3,26 @@
  */
 
 import {
+  isStoneBargeboardQuotationLine,
   isStoneFlatsheetQuotationLine,
+  isStoneRidgeQuotationLine,
   normQuoteItemKey,
+  normalizeStoneFlatsheetLengthM,
   resolveStoneFlatsheetLengthM,
+  stoneBargeboardMetresPerSheet,
+  stoneFlatsheetM2ToPcs,
+  stoneFlatsheetPcsToM2,
+  stoneFlatsheetSheetsForFinishedMetres,
+  stoneRidgeMetresPerSheet,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { quotationLineUnitPriceNumber } from '../shared/lib/quotationLineNumericForRefund.js';
+import { quotationLineQtyNumber, quotationLineUnitPriceNumber } from '../shared/lib/quotationLineNumericForRefund.js';
 import { ensureStoneFlatsheetProduct } from './stoneInventory.js';
 import { getProductRowForWorkspace } from './productBranchInventory.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
 /**
  * @param {unknown} linesJson
- * @returns {{ quoteLineId: string; name: string; orderedM2: number; lengthM: 1.4 | 1.5 | 2; colourLabel: string }[]}
+ * @returns {{ quoteLineId: string; name: string; orderedM2: number; lengthM: 1.4 | 2; colourLabel: string }[]}
  */
 export function parseQuotationStoneFlatsheetLines(linesJson) {
   let j = linesJson;
@@ -43,6 +51,47 @@ export function parseQuotationStoneFlatsheetLines(linesJson) {
       orderedM2,
       lengthM,
       colourLabel: headerColour,
+      demandKind: 'sold_sf',
+    });
+  }
+  return out;
+}
+
+/**
+ * Ridge / bargeboard finished-metre lines that require extra stone flatsheet sheets (yield).
+ * Length is chosen at production (`productionLengthM`); quote lines are finished metres only.
+ * @param {unknown} linesJson
+ * @returns {{ quoteLineId: string; name: string; orderedFinishedM: number; colourLabel: string; demandKind: 'ridge'|'bargeboard'; unitPriceNgn: number }[]}
+ */
+export function parseQuotationStoneSfYieldLines(linesJson) {
+  let j = linesJson;
+  if (typeof j === 'string') {
+    try {
+      j = JSON.parse(j || '{}');
+    } catch {
+      j = {};
+    }
+  }
+  if (!j || typeof j !== 'object') j = {};
+  const headerColour = String(j.materialColor || '').trim();
+  const products = Array.isArray(j.products) ? j.products : [];
+  const out = [];
+  for (const row of products) {
+    const name = String(row?.name ?? '').trim();
+    if (!name) continue;
+    const orderedFinishedM = quotationLineQtyNumber(row);
+    if (orderedFinishedM <= 0) continue;
+    let demandKind = null;
+    if (isStoneRidgeQuotationLine(name)) demandKind = 'ridge';
+    else if (isStoneBargeboardQuotationLine(name)) demandKind = 'bargeboard';
+    if (!demandKind) continue;
+    out.push({
+      quoteLineId: String(row?.id ?? '').trim(),
+      name,
+      orderedFinishedM,
+      colourLabel: headerColour,
+      demandKind,
+      unitPriceNgn: Math.round(quotationLineUnitPriceNumber(row)),
     });
   }
   return out;
@@ -162,12 +211,13 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
     return {
       ok: false,
       error:
-        'Stone flatsheet lines on this quotation are missing length (1.4 m, 1.5 m, or 2 m). Update the quotation before completing production.',
+        'Stone flatsheet lines on this quotation are missing length (1.4 m or 2 m). Update the quotation before completing production.',
     };
   }
 
   const lines = parseQuotationStoneFlatsheetLines(quote.lines_json);
-  if (!lines.length) {
+  const yieldLines = parseQuotationStoneSfYieldLines(quote.lines_json);
+  if (!lines.length && !yieldLines.length) {
     return { ok: true, plannedLines: [], stoneFlatsheetStockWarnings: [] };
   }
 
@@ -245,6 +295,100 @@ export function planStoneFlatsheetFulfillment(db, jobRow, payload = {}, opts = {
       suppliedM2,
       deductionM2,
       inventoryProductId,
+      demandKind: 'sold_sf',
+    });
+  }
+
+  const yieldPayloadRows = Array.isArray(payload.stoneFlatsheetSupplied)
+    ? payload.stoneFlatsheetSupplied
+    : [];
+
+  for (const line of yieldLines) {
+    if (!line.colourLabel) {
+      return {
+        ok: false,
+        error: 'Quotation header colour is required when ridge/bargeboard lines need stone flatsheet yield.',
+      };
+    }
+    const lineKey = line.quoteLineId || '';
+    const stableKey = lineKey || `name:${line.name}:yield`;
+    const hit = yieldPayloadRows.find(
+      (r) =>
+        String(r?.quoteLineId || r?.quote_line_id || '').trim() === stableKey ||
+        String(r?.quoteLineId || r?.quote_line_id || '').trim() === lineKey ||
+        (normQuoteItemKey(r?.name) === normQuoteItemKey(line.name) &&
+          (r?.demandKind === line.demandKind ||
+            r?.yieldKind === line.demandKind ||
+            isStoneRidgeQuotationLine(r?.name) === isStoneRidgeQuotationLine(line.name)))
+    );
+    const lengthM = normalizeStoneFlatsheetLengthM(hit?.lengthM ?? hit?.length_m);
+    if (lengthM == null) {
+      return {
+        ok: false,
+        error: `Select stone flatsheet length (1.4 m or 2 m) in production for "${line.name}" yield cutting.`,
+      };
+    }
+    const metresPerSheet =
+      line.demandKind === 'ridge'
+        ? stoneRidgeMetresPerSheet(lengthM)
+        : stoneBargeboardMetresPerSheet(lengthM);
+    if (!(metresPerSheet > 0)) {
+      return {
+        ok: false,
+        error: `Could not resolve stone flatsheet yield for "${line.name}" at length ${lengthM} m.`,
+      };
+    }
+    const sheetsExact = stoneFlatsheetSheetsForFinishedMetres(line.orderedFinishedM, metresPerSheet);
+    let sheetsUsed = Number(hit?.sheetsUsed ?? hit?.sheets_used ?? hit?.suppliedSheets);
+    if (!Number.isFinite(sheetsUsed) || sheetsUsed < 0) {
+      sheetsUsed = Math.ceil(sheetsExact - EPS);
+    }
+    const finishedCapacity = sheetsUsed * metresPerSheet;
+    const finishedUsed = Math.min(line.orderedFinishedM, finishedCapacity);
+    const offcutFinishedM = Math.max(0, finishedCapacity - finishedUsed);
+    /* One sheet draws lengthM m² from SF stock; offcut finished metres are recorded, not double-consumed. */
+    const suppliedM2 = stoneFlatsheetPcsToM2(sheetsUsed, lengthM);
+    const deductionM2 = 0;
+
+    let inventoryProductId;
+    try {
+      inventoryProductId = ensureStoneFlatsheetProduct(db, {
+        colourLabel: line.colourLabel,
+        lengthM,
+        branchId,
+      });
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
+    }
+    const p = getProductRowForWorkspace(db, inventoryProductId, branchId);
+    if (!p) {
+      return {
+        ok: false,
+        error: `Stone flatsheet yield for "${line.name}" maps to unknown stock product ${inventoryProductId}.`,
+      };
+    }
+    const totalUse = suppliedM2 + deductionM2;
+    const stock = Number(p.stock_level) || 0;
+    if (stock + EPS < totalUse) {
+      stoneFlatsheetStockWarnings.push(
+        `"${line.name}" yield (${lengthM} m × ${sheetsUsed} sheet(s)): ${totalUse.toFixed(
+          2
+        )} m² from stock but only ${stock.toFixed(2)} m² on hand — balance may go negative.`
+      );
+    }
+
+    plannedLines.push({
+      quoteLineId: stableKey,
+      name: line.name,
+      lengthM,
+      orderedM2: stoneFlatsheetPcsToM2(sheetsExact, lengthM),
+      suppliedM2,
+      deductionM2,
+      inventoryProductId,
+      demandKind: line.demandKind,
+      sheetsUsed,
+      finishedMetresUsed: finishedUsed,
+      offcutFinishedM,
     });
   }
 
@@ -294,13 +438,17 @@ export function applyStoneFlatsheetCompletionTx(
     const totalOut = (Number(line.suppliedM2) || 0) + (Number(line.deductionM2) || 0);
     if (line.inventoryProductId && totalOut > 0) {
       adjustProductStockTx(db, line.inventoryProductId, -totalOut);
+      const offcutNote =
+        Number(line.offcutFinishedM) > 0
+          ? ` · offcut ${Number(line.offcutFinishedM).toFixed(2)} m kept`
+          : '';
       appendStockMovementTx(db, {
         atISO: completedAtISO,
         type: 'STONE_FLATSHEET_ISSUE',
         ref: jobID,
         productID: line.inventoryProductId,
         qty: -totalOut,
-        detail: `${line.name} ${line.lengthM} m · supplied ${line.suppliedM2} m² · deduction ${line.deductionM2} m² · ${jobID} · ${quotationRef || ''}`,
+        detail: `${line.name} ${line.lengthM} m · supplied ${line.suppliedM2} m² · deduction ${line.deductionM2} m²${offcutNote} · ${jobID} · ${quotationRef || ''}`,
         dateISO: at,
       });
     }
@@ -308,13 +456,13 @@ export function applyStoneFlatsheetCompletionTx(
 }
 
 /**
- * Refund preview lines: quoted stone flatsheet m² minus supplied and deduction on completed/cancelled jobs.
+ * Refund preview lines: stone flatsheet shortfall in **pcs** (sold SF + ridge/barge yield).
  * Requires at least one persisted usage row for this quotation (avoids treating “not yet produced” as full shortfall).
  *
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationRef
  * @param {unknown} linesJson quotation `lines_json`
- * @returns {{ quoteLineId: string; name: string; lengthM: number; shortfallM2: number; unitPriceNgn: number; amountNgn: number }[]}
+ * @returns {{ quoteLineId: string; name: string; lengthM: number; shortfallPcs: number; shortfallM2: number; reason: string; unitPriceNgn: number; amountNgn: number }[]}
  */
 export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, linesJson) {
   const ref = String(quotationRef || '').trim();
@@ -330,7 +478,8 @@ export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, lines
   }
 
   const fromQuote = parseQuotationStoneFlatsheetLines(linesJson);
-  if (!fromQuote.length) return [];
+  const yieldQuote = parseQuotationStoneSfYieldLines(linesJson);
+  if (!fromQuote.length && !yieldQuote.length) return [];
 
   try {
     if (
@@ -384,11 +533,14 @@ export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, lines
     if (lid) {
       const byId = aggRows.find((r) => String(r.quote_line_id || '').trim() === lid);
       if (byId) return byId;
+      const byYield = aggRows.find((r) => String(r.quote_line_id || '').trim() === `${lid}` || String(r.quote_line_id || '').includes(lid));
+      if (byYield) return byYield;
     }
     const nk = normQuoteItemKey(line.name);
     const len = line.lengthM;
     return aggRows.find((r) => {
       if (normQuoteItemKey(r.name) !== nk) return false;
+      if (len == null) return true;
       return Math.abs(Number(r.length_m) - len) < 1e-3;
     });
   }
@@ -401,6 +553,8 @@ export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, lines
     const ordered = line.orderedM2;
     const shortM2 = Math.max(0, ordered - supplied - deduction);
     if (shortM2 <= 0) continue;
+    const shortPcs = stoneFlatsheetM2ToPcs(shortM2, line.lengthM);
+    if (shortPcs <= 0) continue;
     const lid = String(line.quoteLineId || '').trim();
     const raw =
       (lid && quoteProducts.find((p) => String(p?.id ?? '').trim() === lid)) ||
@@ -409,14 +563,46 @@ export function stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, lines
         return resolveStoneFlatsheetLengthM(p) === line.lengthM;
       });
     const unitR = Math.round(quotationLineUnitPriceNumber(raw));
+    /* Price list is per m²; amount stays m² × unit. Label expresses pcs. */
     const amountNgn = roundMoney(shortM2 * unitR);
     if (amountNgn <= 0) continue;
     out.push({
       quoteLineId: lid,
       name: line.name,
       lengthM: line.lengthM,
+      shortfallPcs: shortPcs,
       shortfallM2: shortM2,
+      reason: 'sold sheets',
       unitPriceNgn: unitR,
+      amountNgn,
+    });
+  }
+
+  for (const line of yieldQuote) {
+    const merged = matchAgg({ ...line, lengthM: null });
+    const suppliedM2 = Number(merged?.supplied_m2) || 0;
+    const lengthM = normalizeStoneFlatsheetLengthM(merged?.length_m) || 2;
+    const metresPerSheet =
+      line.demandKind === 'ridge'
+        ? stoneRidgeMetresPerSheet(lengthM)
+        : stoneBargeboardMetresPerSheet(lengthM);
+    const sheetsNeeded = stoneFlatsheetSheetsForFinishedMetres(line.orderedFinishedM, metresPerSheet);
+    const sheetsSupplied = stoneFlatsheetM2ToPcs(suppliedM2, lengthM);
+    const shortPcs = Math.max(0, sheetsNeeded - sheetsSupplied);
+    if (shortPcs <= 1e-6) continue;
+    const shortM2 = stoneFlatsheetPcsToM2(shortPcs, lengthM);
+    /* Value shortfall from unfinished ridge/barge metres (not SF m² price). */
+    const finishedShortM = Math.max(0, line.orderedFinishedM - sheetsSupplied * metresPerSheet);
+    const amountNgn = roundMoney(finishedShortM * (line.unitPriceNgn || 0));
+    if (amountNgn <= 0) continue;
+    out.push({
+      quoteLineId: String(line.quoteLineId || '').trim(),
+      name: line.name,
+      lengthM,
+      shortfallPcs: shortPcs,
+      shortfallM2: shortM2,
+      reason: line.demandKind === 'ridge' ? 'ridge yield' : 'bargeboard yield',
+      unitPriceNgn: line.unitPriceNgn || 0,
       amountNgn,
     });
   }

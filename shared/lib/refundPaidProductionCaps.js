@@ -28,9 +28,26 @@ export function parseAccessoryShortfallLabel(label) {
   return { name, qty };
 }
 
-/** @returns {{ name: string, lengthM: number, shortfallM2: number } | null} */
+/** @returns {{ name: string, lengthM: number, shortfallM2: number, shortfallPcs?: number } | null} */
 export function parseStoneFlatsheetShortfallLabel(label) {
   const text = String(label || '').trim();
+  /* pcs form: Stone flatsheet shortfall: sold sheets (2.00 × 2 m) — 4.00 m² */
+  const pcs = text.match(
+    /Stone flatsheet shortfall:\s*(.+?)\s*\(([\d.]+)\s*×\s*([\d.]+)\s*m\)\s*—\s*([\d.]+)\s*m²/i
+  );
+  if (pcs) {
+    const name = String(pcs[1] || '').trim();
+    const shortfallPcs = Number(pcs[2]);
+    const lengthM = Number(pcs[3]);
+    const shortfallM2 = Number(pcs[4]);
+    if (!name || !Number.isFinite(lengthM) || !Number.isFinite(shortfallM2) || shortfallM2 <= 0) return null;
+    return {
+      name,
+      lengthM,
+      shortfallM2,
+      shortfallPcs: Number.isFinite(shortfallPcs) ? shortfallPcs : undefined,
+    };
+  }
   const m = text.match(
     /Stone flatsheet shortfall:\s*(.+?)\s*\(([\d.]+)\s*m\)\s*—\s*([\d.]+)\s*m²/i
   );

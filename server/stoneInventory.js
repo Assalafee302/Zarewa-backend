@@ -168,14 +168,14 @@ export function ensureStoneProduct(db, spec) {
 }
 
 /**
- * Stable product_id for stone flatsheet (m² stock) by colour + length (1.4 m, 1.5 m, or 2 m).
+ * Stable product_id for stone flatsheet (m² stock) by colour + length (1.4 m or 2 m).
+ * Legacy 1.5 length is normalized to 1.4 before calling this.
  * @param {string} colourLabel
- * @param {1.4 | 1.5 | 2} lengthNormalized
+ * @param {1.4 | 2} lengthNormalized
  */
 export function stoneFlatsheetProductIdFromSpec(colourLabel, lengthNormalized) {
   const a = slugPart(colourLabel) || 'x';
-  const slug =
-    lengthNormalized === 1.4 ? '1p4m' : lengthNormalized === 1.5 ? '1p5m' : '2m';
+  const slug = lengthNormalized === 1.4 ? '1p4m' : '2m';
   return `STONE-FS-${a}-${slug}`;
 }
 
@@ -188,7 +188,7 @@ export function ensureStoneFlatsheetProduct(db, spec) {
   const colourLabel = String(spec.colourLabel || '').trim();
   const lengthM = normalizeStoneFlatsheetLengthM(spec.lengthM);
   if (!colourLabel || lengthM == null) {
-    throw new Error('Stone flatsheet requires colour and length (1.4 m, 1.5 m, or 2 m).');
+    throw new Error('Stone flatsheet requires colour and length (1.4 m or 2 m).');
   }
   const id = stoneFlatsheetProductIdFromSpec(colourLabel, lengthM);
   const branchId = String(spec.branchId ?? '').trim() || 'BR-KD';

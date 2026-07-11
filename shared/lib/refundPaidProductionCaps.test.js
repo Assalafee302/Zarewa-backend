@@ -45,5 +45,10 @@ describe('refundPaidProductionCaps', () => {
         'Stone flatsheet shortfall: Stone flatsheet (2 m) — 4.50 m² × ₦9,000'
       )
     ).toEqual({ name: 'Stone flatsheet', lengthM: 2, shortfallM2: 4.5 });
+    expect(
+      parseStoneFlatsheetShortfallLabel(
+        'Stone flatsheet shortfall: Ridge Cap (1.00 × 2 m) — 2.00 m²'
+      )
+    ).toEqual({ name: 'Ridge Cap', lengthM: 2, shortfallM2: 2, shortfallPcs: 1 });
   });
 });

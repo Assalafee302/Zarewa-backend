@@ -53,7 +53,7 @@ const MASTER_DATA_CONFIG = {
       { id: 'SQI-027', itemType: 'product', name: 'Cladding', unit: 'm', defaultUnitPriceNgn: 0, active: true, sortOrder: 11 },
       { id: 'SQI-028', itemType: 'product', name: 'Flat sheet', unit: 'm', defaultUnitPriceNgn: 0, active: true, sortOrder: 12 },
       { id: 'SQI-037', itemType: 'product', name: 'Stone flatsheet 1.4', unit: 'm²', defaultUnitPriceNgn: 0, active: true, sortOrder: 13 },
-      { id: 'SQI-038', itemType: 'product', name: 'Stone flatsheet 1.5', unit: 'm²', defaultUnitPriceNgn: 0, active: true, sortOrder: 14 },
+      { id: 'SQI-038', itemType: 'product', name: 'Stone flatsheet 1.4', unit: 'm²', defaultUnitPriceNgn: 0, active: true, sortOrder: 14 },
       { id: 'SQI-039', itemType: 'product', name: 'Stone flatsheet 2', unit: 'm²', defaultUnitPriceNgn: 0, active: true, sortOrder: 15 },
       { id: 'SQI-029', itemType: 'product', name: 'Offcut', unit: 'm', defaultUnitPriceNgn: 0, active: true, sortOrder: 16 },
       { id: 'SQI-030', itemType: 'product', name: 'Wall eaves', unit: 'm', defaultUnitPriceNgn: 0, active: true, sortOrder: 17 },

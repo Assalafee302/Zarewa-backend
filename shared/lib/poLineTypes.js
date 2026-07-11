@@ -216,7 +216,7 @@ export function validatePoLine(line) {
     }
     const len = Number(line?.metersOffered ?? line?.meters_offered);
     if (!Number.isFinite(len) || len <= 0) {
-      return { ok: false, error: 'Stone flatsheet lines need sheet length (1.4, 1.5, or 2 m).' };
+      return { ok: false, error: 'Stone flatsheet lines need sheet length (1.4 or 2 m).' };
     }
   }
 

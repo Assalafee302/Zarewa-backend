@@ -4,7 +4,13 @@
  */
 
 import { isMeterSheetProductLine } from './materialWorkbookQuotationPrice.js';
-import { isStoneFlatsheetQuotationLine } from './stoneCoatedQuotationPolicy.js';
+import {
+  isStoneBargeboardQuotationLine,
+  isStoneCoilBackedQuotationLine,
+  isStoneFlatsheetQuotationLine,
+  isStoneRidgeQuotationLine,
+  quotationRequiresStoneCoilCuttingListAlignment,
+} from './stoneCoatedQuotationPolicy.js';
 import { quotationLineQtyNumber } from './quotationLineNumericForRefund.js';
 import {
   CUTTING_LIST_QUOTATION_METRE_TOLERANCE_M,
@@ -114,10 +120,27 @@ function sheetPoolKindForLine(line) {
   return 'skip';
 }
 
+/**
+ * On stone quotes, coil sheet-pool is normal flatsheet only (roofing is stone metres).
+ * Coil trim blank is gutter only (ridge/bargeboard cut from stone flatsheet).
+ */
+function stoneCoilSheetPoolKindForLine(line) {
+  const name = line?.name;
+  const n = normQuoteProductLineName(name);
+  if (!n || SKIP_SHEET_POOL_NAMES.has(n)) return 'skip';
+  if (isStoneFlatsheetQuotationLine(name)) return 'skip';
+  if (isStoneRidgeQuotationLine(name) || isStoneBargeboardQuotationLine(name)) return 'skip';
+  if (n === 'gutter') return 'trim';
+  if (n === 'flat sheet' || n === 'flatsheet') return 'sheet_pool';
+  if (isStoneCoilBackedQuotationLine(name) && n === 'coil') return 'skip';
+  return 'skip';
+}
+
 /** Roofing / flat / cladding metres that map 1:1 to coil blank width (1200 mm). */
-export function quotedCuttingListSheetPoolMetresFromProducts(linesJson) {
+export function quotedCuttingListSheetPoolMetresFromProducts(linesJson, { stoneMeterQuote = false } = {}) {
   return parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
-    if (sheetPoolKindForLine(line) !== 'sheet_pool') return sum;
+    const kind = stoneMeterQuote ? stoneCoilSheetPoolKindForLine(line) : sheetPoolKindForLine(line);
+    if (kind !== 'sheet_pool') return sum;
     return sum + quotationLineQtyNumber(line);
   }, 0);
 }
@@ -132,21 +155,23 @@ export function resolveTrimGirthMmForLine(line) {
 }
 
 /** Sum finished trim metres quoted on the quotation (priced per finished metre). */
-export function quotedTrimFinishedMetresFromProducts(linesJson) {
+export function quotedTrimFinishedMetresFromProducts(linesJson, { stoneMeterQuote = false } = {}) {
   return roundCuttingListMetres2(
     parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
-      if (sheetPoolKindForLine(line) !== 'trim') return sum;
+      const kind = stoneMeterQuote ? stoneCoilSheetPoolKindForLine(line) : sheetPoolKindForLine(line);
+      if (kind !== 'trim') return sum;
       return sum + quotationLineQtyNumber(line);
     }, 0)
   );
 }
 
 /** Blended ₦/m across trim lines (weighted by finished metres). */
-export function trimLinesBlendedPricePerMeterFromProducts(linesJson) {
+export function trimLinesBlendedPricePerMeterFromProducts(linesJson, { stoneMeterQuote = false } = {}) {
   let metres = 0;
   let amount = 0;
   for (const line of parseQuotationLinesPayload(linesJson)) {
-    if (sheetPoolKindForLine(line) !== 'trim') continue;
+    const kind = stoneMeterQuote ? stoneCoilSheetPoolKindForLine(line) : sheetPoolKindForLine(line);
+    if (kind !== 'trim') continue;
     const m = quotationLineQtyNumber(line);
     if (m <= 0) continue;
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
@@ -161,10 +186,11 @@ export function trimLinesBlendedPricePerMeterFromProducts(linesJson) {
 }
 
 /** Sum blank metres required on CL flatsheet for quoted trim lines. */
-export function quotedTrimBlankMetresFromProducts(linesJson) {
+export function quotedTrimBlankMetresFromProducts(linesJson, { stoneMeterQuote = false } = {}) {
   return roundCuttingListMetres2(
     parseQuotationLinesPayload(linesJson).reduce((sum, line) => {
-      if (sheetPoolKindForLine(line) !== 'trim') return sum;
+      const kind = stoneMeterQuote ? stoneCoilSheetPoolKindForLine(line) : sheetPoolKindForLine(line);
+      if (kind !== 'trim') return sum;
       const finishedM = quotationLineQtyNumber(line);
       const girthMm = resolveTrimGirthMmForLine(line);
       return sum + finishedTrimMetresToBlankMetres(finishedM, girthMm);
@@ -173,9 +199,12 @@ export function quotedTrimBlankMetresFromProducts(linesJson) {
 }
 
 /** Trim lines on the quote that have finished metres but no usable width. */
-export function quotationTrimLinesMissingGirth(linesJson) {
+export function quotationTrimLinesMissingGirth(linesJson, { stoneMeterQuote = false } = {}) {
   return parseQuotationLinesPayload(linesJson)
-    .filter((line) => sheetPoolKindForLine(line) === 'trim')
+    .filter((line) => {
+      const kind = stoneMeterQuote ? stoneCoilSheetPoolKindForLine(line) : sheetPoolKindForLine(line);
+      return kind === 'trim';
+    })
     .filter((line) => {
       const finishedM = quotationLineQtyNumber(line);
       if (finishedM <= 0) return false;
@@ -228,22 +257,49 @@ export function assessCuttingListQuotationConsumption({
     };
   }
 
-  const quotedSheetPoolM = roundCuttingListMetres2(quotedCuttingListSheetPoolMetresFromProducts(quotationLinesJson));
-  const quotedTrimBlankM = stoneMeterQuote
-    ? 0
-    : roundCuttingListMetres2(quotedTrimBlankMetresFromProducts(quotationLinesJson));
+  const stoneOpts = { stoneMeterQuote: Boolean(stoneMeterQuote) };
+  const quotedSheetPoolM = roundCuttingListMetres2(
+    quotedCuttingListSheetPoolMetresFromProducts(quotationLinesJson, stoneOpts)
+  );
+  const quotedTrimBlankM = roundCuttingListMetres2(
+    quotedTrimBlankMetresFromProducts(quotationLinesJson, stoneOpts)
+  );
   const expectedTotalM = roundCuttingListMetres2(quotedSheetPoolM + quotedTrimBlankM);
   const cuttingListTotalM = roundCuttingListMetres2(
     cuttingListMetres ?? cuttingListTotalMetresFromLines(cuttingListLines ?? [])
   );
   const clFlatsheetM = roundCuttingListMetres2(cuttingListFlatsheetMetresFromLines(cuttingListLines ?? []));
   const trimBlankGapM = roundCuttingListMetres2(Math.max(0, quotedTrimBlankM - clFlatsheetM));
-  const missingGirth = stoneMeterQuote ? [] : quotationTrimLinesMissingGirth(quotationLinesJson);
+  const missingGirth = quotationTrimLinesMissingGirth(quotationLinesJson, stoneOpts);
 
   const warnings = [];
-  if (stoneMeterQuote && quotedTrimFinishedMetresFromProducts(quotationLinesJson) > 0) {
+
+  /* SF-only / ridge-barge-only stone quotes: CL may record SF sheet counts — skip coil metre gate. */
+  if (stoneMeterQuote && !quotationRequiresStoneCoilCuttingListAlignment(quotationLinesJson)) {
+    if (quotedTrimFinishedMetresFromProducts(quotationLinesJson, { stoneMeterQuote: false }) > 0) {
+      warnings.push(
+        'Stone-coated quote: ridge/bargeboard are cut from stone flatsheet (extra sheets) — do not add them as coil trim blank. Enter SF sheet counts on the cutting list; gutter/normal flatsheet (if any) go under Flatsheet metres.'
+      );
+    }
+    return {
+      ok: true,
+      warnings,
+      quotedSheetPoolM: 0,
+      quotedTrimBlankM: 0,
+      expectedTotalM: 0,
+      cuttingListTotalM,
+      clFlatsheetM,
+      trimBlankGapM: 0,
+      trimBlankProductionBlocked: false,
+      deltaMetres: 0,
+      code: 'stone_sf_cl_skip_coil_alignment',
+      message: '',
+    };
+  }
+
+  if (stoneMeterQuote && quotedTrimFinishedMetresFromProducts(quotationLinesJson, stoneOpts) > 0) {
     warnings.push(
-      'Stone-coated quote: trim lines are priced on finished metres and draw stone metre stock — do not add coil trim blank under Flatsheet.'
+      'Stone-coated quote: enter gutter (and normal flatsheet) metres under Flatsheet; enter stone flatsheet as sheet counts. Ridge/bargeboard are not coil trim blank.'
     );
   }
   if (missingGirth.length) {
@@ -251,16 +307,66 @@ export function assessCuttingListQuotationConsumption({
       `Set strip width (mm) on trim lines: ${missingGirth.join(', ')}. Default is 400 mm (150 mm for eaves).`
     );
   }
-  if (!stoneMeterQuote && quotedTrimBlankM > 0 && trimBlankGapM > trimBlankSoftToleranceM + 1e-6) {
+  if (quotedTrimBlankM > 0 && trimBlankGapM > trimBlankSoftToleranceM + 1e-6) {
     warnings.push(
       `Flatsheet section (${clFlatsheetM.toFixed(2)} m) is short of trim blank consumption (${quotedTrimBlankM.toFixed(2)} m) by ${trimBlankGapM.toFixed(2)} m. Add trim blank lines under Flatsheet.`
     );
   }
 
   const trimBlankProductionBlocked =
-    !stoneMeterQuote && quotedTrimBlankM > 0 && trimBlankGapM > trimBlankHardToleranceM + 1e-6;
+    quotedTrimBlankM > 0 && trimBlankGapM > trimBlankHardToleranceM + 1e-6;
 
-  if (quotedSheetPoolM <= 0 && cuttingListTotalM > 0) {
+  /* Stone + coil (gutter / normal flatsheet): flatsheet section must cover coil need; SF sheet counts may add extra. */
+  if (stoneMeterQuote && expectedTotalM > 0) {
+    const coilGapM = roundCuttingListMetres2(Math.max(0, expectedTotalM - clFlatsheetM));
+    if (clFlatsheetM <= 0) {
+      return {
+        ok: false,
+        code: 'cutting_list_missing_for_quotation',
+        warnings,
+        quotedSheetPoolM,
+        quotedTrimBlankM,
+        expectedTotalM,
+        cuttingListTotalM,
+        clFlatsheetM,
+        trimBlankGapM: coilGapM,
+        trimBlankProductionBlocked: true,
+        deltaMetres: expectedTotalM,
+        message:
+          'Stone-coated quote expects gutter/normal flatsheet metres under Flatsheet on the cutting list, but none are recorded.',
+      };
+    }
+    if (coilGapM > trimBlankHardToleranceM + 1e-6) {
+      return {
+        ok: false,
+        code: 'cutting_list_quotation_metre_mismatch',
+        warnings,
+        quotedSheetPoolM,
+        quotedTrimBlankM,
+        expectedTotalM,
+        cuttingListTotalM,
+        clFlatsheetM,
+        trimBlankGapM: coilGapM,
+        trimBlankProductionBlocked: true,
+        deltaMetres: coilGapM,
+        message: `Flatsheet section (${clFlatsheetM.toFixed(2)} m) is short of coil need for this stone quote (${expectedTotalM.toFixed(2)} m gutter/normal flatsheet). Add metres under Flatsheet (stone flatsheet sheet counts may be extra).`,
+      };
+    }
+    return {
+      ok: true,
+      warnings,
+      quotedSheetPoolM,
+      quotedTrimBlankM,
+      expectedTotalM,
+      cuttingListTotalM,
+      clFlatsheetM,
+      trimBlankGapM: coilGapM,
+      trimBlankProductionBlocked: false,
+      deltaMetres: coilGapM,
+    };
+  }
+
+  if (quotedSheetPoolM <= 0 && quotedTrimBlankM <= 0 && cuttingListTotalM > 0) {
     return {
       ok: false,
       code: 'cutting_list_no_quoted_roofing_metres',
@@ -327,7 +433,7 @@ export function assessCuttingListQuotationConsumption({
     clFlatsheetM,
     trimBlankGapM,
     trimBlankProductionBlocked,
-    deltaMetres,
+    deltaMetres: expectedTotalM > 0 ? deltaMetres : 0,
   };
 }
 

@@ -13,6 +13,7 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
   tryPostCoilScrapJournal,
+  tryPostInventoryVarianceJournal,
 } from './glOps.js';
 import {
   tryPostExpensePaymentGlTx,
@@ -39,7 +40,6 @@ import { mapPoLineFromDb, poLinesFullyReceived } from '../shared/lib/inTransitVi
 import {
   assertQuotationLineIntegrity,
   assertQuotationMaterialRules,
-  quotationRequiresStoneMetreConsumption,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
@@ -51,7 +51,10 @@ import {
   roundCuttingListMetres2,
   validateCuttingListQuotedRoofingAlignment,
 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
-import { validateCuttingListTrimBlankForProduction } from '../shared/lib/cuttingListBlankConsumption.js';
+import {
+  assessCuttingListQuotationConsumption,
+  validateCuttingListTrimBlankForProduction,
+} from '../shared/lib/cuttingListBlankConsumption.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import {
@@ -2984,9 +2987,13 @@ export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BR
   };
 }
 
-export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO, branchId = DEFAULT_BRANCH_ID) {
+export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO, branchId = DEFAULT_BRANCH_ID, opts = {}) {
   const q = Number(qty);
   if (Number.isNaN(q) || q <= 0) return { ok: false, error: 'Invalid quantity.' };
+  const adjType = String(type || '').trim();
+  if (adjType !== 'Increase' && adjType !== 'Decrease') {
+    return { ok: false, error: 'Adjustment type must be Increase or Decrease.' };
+  }
   if (!String(reasonCode || '').trim()) return { ok: false, error: 'A reason code is required.' };
   const day = String(dateISO || '').trim().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false, error: 'A valid adjustment date is required.' };
@@ -2995,17 +3002,36 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
-  const delta = type === 'Increase' ? q : -q;
+  const delta = adjType === 'Increase' ? q : -q;
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const LARGE_QTY = 100;
+  const LARGE_VALUE_NGN = 500_000;
   try {
+    let glMeta = { skipped: true };
+    let glWarning = null;
     db.transaction(() => {
       const row = getProductRowForWorkspace(db, productID, bid);
       if (!row) throw new Error('Product not found for this branch.');
-      const raw = Number(row.stock_level) + delta;
+      const onHand = Number(row.stock_level) || 0;
+      const raw = onHand + delta;
       if (raw < -1e-9) {
         throw new Error(
-          `Insufficient stock for this adjustment (on hand ${Number(row.stock_level) || 0}, change ${delta}).`
+          `Insufficient stock for this adjustment (on hand ${onHand}, change ${delta}). Negatives are not allowed on manual adjust.`
         );
+      }
+      const unitCost = resolveProductAdjustUnitCostNgn(db, productID, bid);
+      const valueNgn = Math.round(Math.abs(delta) * unitCost);
+      if (
+        (Math.abs(delta) >= LARGE_QTY || valueNgn >= LARGE_VALUE_NGN) &&
+        !opts.acknowledgeLargeAdjust
+      ) {
+        const err = new Error(
+          `Large stock adjustment (qty ${Math.abs(delta)}, est. ₦${valueNgn.toLocaleString('en-NG')}) requires branch manager acknowledgement (acknowledgeLargeAdjust).`
+        );
+        err.code = 'LARGE_ADJUST_CONFIRM';
+        err.qty = Math.abs(delta);
+        err.valueNgn = valueNgn;
+        throw err;
       }
       const next = raw;
       const pb = String(row.branch_id ?? '').trim();
@@ -3014,19 +3040,73 @@ export function adjustStock(db, productID, type, qty, reasonCode, note, dateISO,
         productID,
         pb
       );
-      appendMovementTx(db, {
+      const mov = appendMovementTx(db, {
         type: 'ADJUSTMENT',
         productID,
         qty: delta,
-        detail: `${reasonCode}${note ? ` — ${note}` : ''}`,
+        detail: `${reasonCode}${note ? ` — ${note}` : ''}`.slice(0, 500),
         dateISO: day,
         branchId: bid,
+        unitPriceNgn: unitCost > 0 ? unitCost : null,
+        valueNgn: valueNgn > 0 ? valueNgn : null,
       });
+      if (valueNgn > 0) {
+        const glR = tryPostInventoryVarianceJournal(db, {
+          entryDateISO: day,
+          amountNgn: valueNgn,
+          direction: delta < 0 ? 'shortage' : 'surplus',
+          branchId: bid,
+          createdByUserId: opts.actorUserId || null,
+          sourceId: String(mov?.id || `adj-${bid}-${productID}-${Date.now()}`).slice(0, 120),
+          memo: `Stock adjust ${productID} ${adjType} ${q} · ${reasonCode}`,
+        });
+        if (glR.ok === false) {
+          /** Stock movement already correct; do not roll back ops for GL (period lock / missing cost path). */
+          glWarning = glR.error || 'Variance journal could not post.';
+          glMeta = { skipped: true, reason: 'gl_failed_non_blocking', error: glWarning };
+        } else {
+          glMeta = glR;
+        }
+      }
     })();
-    return { ok: true };
+    return { ok: true, gl: glMeta, glWarning: glWarning || null };
   } catch (e) {
+    if (e?.code === 'LARGE_ADJUST_CONFIRM') {
+      return {
+        ok: false,
+        code: 'LARGE_ADJUST_CONFIRM',
+        error: String(e.message || e),
+        qty: e.qty,
+        valueNgn: e.valueNgn,
+      };
+    }
     return { ok: false, error: String(e.message || e) };
   }
+}
+
+function resolveProductAdjustUnitCostNgn(db, productId, branchId) {
+  const pid = String(productId || '').trim();
+  const bid = String(branchId || '').trim();
+  try {
+    const m = db
+      .prepare(
+        `SELECT unit_price_ngn, value_ngn, qty FROM stock_movements
+         WHERE product_id = ? AND (branch_id = ? OR IFNULL(branch_id,'') = '')
+           AND (
+             IFNULL(unit_price_ngn,0) > 0
+             OR (IFNULL(value_ngn,0) != 0 AND IFNULL(qty,0) != 0)
+           )
+         ORDER BY at_iso DESC LIMIT 1`
+      )
+      .get(pid, bid);
+    if (m && Number(m.unit_price_ngn) > 0) return Math.round(Number(m.unit_price_ngn));
+    if (m && Number(m.value_ngn) && Number(m.qty)) {
+      return Math.round(Math.abs(Number(m.value_ngn) / Number(m.qty)));
+    }
+  } catch {
+    /* older DBs */
+  }
+  return 0;
 }
 
 export function transferToProduction(db, productID, qty, productionOrderId, dateISO, branchId = DEFAULT_BRANCH_ID) {
@@ -5829,7 +5909,16 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
   if (!qrow) return { ok: false, error: 'Quotation not found.' };
   const qj = parseQuotationLinesJsonForStone(db, quotationRef);
   const stone = Boolean(qj && isStoneMeterQuotationLinesJson(db, qj));
-  if (stone && !quotationRequiresStoneMetreConsumption(qrow.lines_json)) {
+  if (stone) {
+    const coilAlign = assessCuttingListQuotationConsumption({
+      quotationLinesJson: qrow.lines_json,
+      cuttingListLines: lines,
+      accessoriesOnly,
+      stoneMeterQuote: true,
+    });
+    if (!coilAlign.ok) {
+      return { ok: false, error: coilAlign.message, code: coilAlign.code };
+    }
     return { ok: true };
   }
   const check = validateCuttingListQuotedRoofingAlignment({
@@ -5838,18 +5927,16 @@ function assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines
     accessoriesOnly,
   });
   if (!check.ok) return { ok: false, error: check.message, code: check.code };
-  if (!stone) {
-    const trimBlank = validateCuttingListTrimBlankForProduction({
-      quotationLinesJson: qrow.lines_json,
-      cuttingListLines: lines,
-    });
-    if (!trimBlank.ok) {
-      return {
-        ok: false,
-        error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
-        code: trimBlank.code || 'trim_blank_cl_missing',
-      };
-    }
+  const trimBlank = validateCuttingListTrimBlankForProduction({
+    quotationLinesJson: qrow.lines_json,
+    cuttingListLines: lines,
+  });
+  if (!trimBlank.ok) {
+    return {
+      ok: false,
+      error: trimBlank.message || trimBlank.error || 'Trim blank must be recorded under Flatsheet.',
+      code: trimBlank.code || 'trim_blank_cl_missing',
+    };
   }
   return { ok: true };
 }

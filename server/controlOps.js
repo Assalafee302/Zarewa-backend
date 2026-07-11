@@ -3418,11 +3418,12 @@ export function previewRefundRequest(db, payload) {
   if (quotationRef && quote?.lines_json && !refundedCategories.has('Stone flatsheet shortfall')) {
     for (const s of stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, quote.lines_json)) {
       const m2 = Number(s.shortfallM2) || 0;
-      const up = Math.round(Number(s.unitPriceNgn) || 0);
+      const pcs = Number(s.shortfallPcs) || 0;
       const amountNgn = roundMoney(s.amountNgn);
       if (amountNgn <= 0) continue;
+      const nm = String(s.name || 'Stone flatsheet').trim();
       suggestedLines.push({
-        label: `Stone flatsheet shortfall: ${s.name} (${s.lengthM} m) — ${m2.toFixed(2)} m² × ₦${up.toLocaleString('en-NG')}`,
+        label: `Stone flatsheet shortfall: ${nm} (${Number(pcs).toFixed(2)} × ${s.lengthM} m) — ${m2.toFixed(2)} m²`,
         amountNgn,
         category: 'Stone flatsheet shortfall',
       });

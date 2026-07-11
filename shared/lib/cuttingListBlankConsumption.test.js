@@ -82,7 +82,7 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.code).toBe('cutting_list_missing_for_quotation');
   });
 
-  it('skips coil trim blank gates for stone metre quotes', () => {
+  it('skips coil alignment for stone quotes without gutter/normal flatsheet (SF sheet counts allowed)', () => {
     const lines = {
       products: [
         { name: 'Roofing Sheet', qty: 80 },
@@ -91,12 +91,37 @@ describe('cuttingListBlankConsumption', () => {
     };
     const assessment = assessCuttingListQuotationConsumption({
       quotationLinesJson: lines,
-      cuttingListLines: [{ lineType: 'Roof', sheets: 80, lengthM: 1 }],
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 80, lengthM: 1 },
+        { lineType: 'Flatsheet', sheets: 3, lengthM: 2 },
+      ],
       stoneMeterQuote: true,
     });
+    expect(assessment.ok).toBe(true);
     expect(assessment.quotedTrimBlankM).toBe(0);
-    expect(assessment.expectedTotalM).toBe(80);
+    expect(assessment.expectedTotalM).toBe(0);
     expect(assessment.trimBlankProductionBlocked).toBe(false);
-    expect(assessment.warnings.some((w) => w.includes('Stone-coated quote'))).toBe(true);
+    expect(assessment.code).toBe('stone_sf_cl_skip_coil_alignment');
+  });
+
+  it('stone quote with gutter requires flatsheet section to cover coil blank (SF sheets may be extra)', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 80 },
+        { name: 'Gutter', qty: 12, girthMm: 400 },
+      ],
+    };
+    const gutterBlank = finishedTrimMetresToBlankMetres(12, 400);
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 80, lengthM: 1 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: gutterBlank },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(assessment.ok).toBe(true);
+    expect(assessment.quotedTrimBlankM).toBe(gutterBlank);
+    expect(assessment.expectedTotalM).toBe(gutterBlank);
   });
 });

@@ -284,23 +284,20 @@ describe('refundProductionAlignment', () => {
     expect(actorMayOverrideProductionAlignmentBlock({ roleKey: 'md' })).toBe(true);
   });
 
-  it('blocks refund submit when cutting list total mismatches quotation consumption', () => {
+  it('blocks refund submit when cutting list exceeds quotation consumption', () => {
     const db = memDb();
     db.data.quotations.push({
       id: 'Q-CL',
       lines_json: JSON.stringify({
-        products: [
-          { name: 'Roofing Sheet', qty: '100' },
-          { name: 'Ridge Cap', qty: '3', girthMm: 400 },
-        ],
+        products: [{ name: 'Roofing Sheet', qty: '100' }],
       }),
     });
     db.data.cutting_lists.push({ id: 'CL1', quotation_ref: 'Q-CL' });
     db.data.cutting_list_lines.push({
       cutting_list_id: 'CL1',
-      sheets: 50,
+      sheets: 60,
       length_m: 2,
-      total_m: 100,
+      total_m: 120,
       line_type: 'Roof',
     });
     const blocked = validateRefundProductionAlignmentAtSubmit(db, 'Q-CL', ['Unproduced meterage'], {
@@ -308,6 +305,29 @@ describe('refundProductionAlignment', () => {
     });
     expect(blocked.ok).toBe(false);
     expect(blocked.blockedCode).toBe('cutting_list_quotation_metre_mismatch');
+  });
+
+  it('does not block unproduced refund when cutting list is under quotation metres', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-CL-UNDER',
+      lines_json: JSON.stringify({
+        products: [{ name: 'Roofing Sheet', qty: '100' }],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-U', quotation_ref: 'Q-CL-UNDER' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-U',
+      sheets: 40,
+      length_m: 2,
+      total_m: 80,
+      line_type: 'Roof',
+    });
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q-CL-UNDER', ['Unproduced meterage'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.issues.some((i) => i.code === 'cutting_list_quotation_metre_under')).toBe(true);
   });
 
   it('does not block overpayment-only refunds on cutting-list metre data-quality issues', () => {

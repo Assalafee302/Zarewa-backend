@@ -77,6 +77,28 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
     expect(summary.floorDeliveredValueNgn).toBe(40_000);
     expect(summary.ppmSourceByJob['JOB-OK']).toBe('override');
   });
+
+  it('values produced at quoted selling ₦/m when MD below-floor exception is on file', () => {
+    const db = mockFloorDb({
+      coilMetersByJob: { 'JOB-MD': 10 },
+      coilGaugeByJob: { 'JOB-MD': '0.24mm' },
+    });
+    const quote = {
+      lines_json: JSON.stringify({ products: [{ name: 'Roofing Sheet', qty: 20, unitPrice: 3500 }] }),
+      branch_id: 'BR-KD',
+      md_price_exception_approved_at_iso: '2026-04-01T10:00:00Z',
+    };
+    const jobs = [{ job_id: 'JOB-MD', status: 'Completed', actual_meters: 10 }];
+    const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
+      cashInNgn: 100_000,
+      priorRefundedNgn: 0,
+      substitutePricePerMeterNgn: 4000,
+    });
+    expect(summary.honouredMdPriceException).toBe(true);
+    expect(summary.floorDeliveredValueNgn).toBe(35_000);
+    expect(summary.maxDefensibleRefundNgn).toBe(65_000);
+    expect(summary.ppmSourceByJob['JOB-MD']).toBe('md_approved_quoted_selling');
+  });
 });
 
 describe('insertRefundRequest economic floor (integration)', () => {

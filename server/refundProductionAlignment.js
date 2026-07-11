@@ -13,7 +13,7 @@ import {
 } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
-import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
+import { refundCuttingListQuotationMetreIssues, assessQuotationCuttingListConsumptionForRef } from './cuttingListQuotationConsumptionOps.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
@@ -27,9 +27,18 @@ const SUBMIT_ACTION_BY_CODE = {
   trim_blank_cl_soft_warning: 'acknowledge',
   trim_blank_cl_missing: 'block',
   cutting_list_trim_blank_missing: 'block',
+  /** CL above quote — must verify */
   cutting_list_quotation_metre_mismatch: 'block',
+  /** Quote has no metres but CL does — orphan metres */
   cutting_list_no_quoted_roofing_metres: 'block',
-  cutting_list_missing_for_quotation: 'block',
+  /** CL below quote / missing CL — normal for unproduced; do not block */
+  cutting_list_quotation_metre_under: 'info',
+  cutting_list_missing_for_quotation: 'info',
+  /** Produced above quote or above cutting list — hard verify */
+  produced_exceeds_quotation: 'block',
+  produced_exceeds_cutting_list: 'block',
+  /** CL above produced — confirm unfinished metres (ack; normal with unproduced) */
+  cutting_list_exceeds_produced: 'acknowledge',
 };
 
 /** Blockers that cannot be overridden with a manager note (double-count / cross-refund). */
@@ -277,17 +286,65 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
       const code = String(clIssue.code || '').trim();
       issues.push({
         code,
-        severity: clIssue.severity === 'warning' ? 'warning' : 'error',
+        severity: clIssue.severity === 'warning' || clIssue.severity === 'info' ? clIssue.severity : 'error',
         title:
           code === 'trim_blank_cl_soft_warning'
             ? 'Trim blank note'
             : code === 'trim_blank_cl_missing'
               ? 'Trim blank missing on cutting list'
-              : 'Cutting list vs quotation',
+              : code === 'cutting_list_quotation_metre_under' || code === 'cutting_list_missing_for_quotation'
+                ? 'Cutting list below quotation'
+                : 'Cutting list vs quotation',
         message: clIssue.message,
         ...clIssue,
       });
     }
+  }
+
+  const METRE_TOL = 0.5;
+  const { isStoneMeterQuote } = sumJobMeters(db, jobs, quote);
+  const quotedRoofingM = isStoneMeterQuote
+    ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+    : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
+  const producedM = Number(effectiveProduced) || 0;
+  if (quotedRoofingM > 0.001 && producedM > quotedRoofingM + METRE_TOL) {
+    issues.push({
+      code: 'produced_exceeds_quotation',
+      severity: 'error',
+      title: 'Production exceeds quotation',
+      message: `Produced output (${producedM.toFixed(2)} m) exceeds quoted roofing (${quotedRoofingM.toFixed(2)} m) by ${(
+        producedM - quotedRoofingM
+      ).toFixed(2)} m. Verify production records before refund.`,
+    });
+  }
+
+  const clAssessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
+  const cuttingListM = Number(clAssessment?.cuttingListTotalM) || 0;
+  if (cuttingListM > 0.001 && producedM > cuttingListM + METRE_TOL) {
+    issues.push({
+      code: 'produced_exceeds_cutting_list',
+      severity: 'error',
+      title: 'Production exceeds cutting list',
+      message: `Produced output (${producedM.toFixed(2)} m) exceeds cutting list total (${cuttingListM.toFixed(2)} m) by ${(
+        producedM - cuttingListM
+      ).toFixed(2)} m. Verify production records before refund.`,
+    });
+  }
+  if (
+    hasCompleted &&
+    cuttingListM > 0.001 &&
+    producedM > 0.001 &&
+    cuttingListM > producedM + METRE_TOL &&
+    !currentHasUnproduced
+  ) {
+    issues.push({
+      code: 'cutting_list_exceeds_produced',
+      severity: 'warning',
+      title: 'Cutting list exceeds production',
+      message: `Cutting list total (${cuttingListM.toFixed(2)} m) exceeds produced output (${producedM.toFixed(2)} m) by ${(
+        cuttingListM - producedM
+      ).toFixed(2)} m. Confirm unfinished metres (Unproduced meterage) or correct the cutting list before refund.`,
+    });
   }
 
   return issues;
@@ -437,12 +494,26 @@ export function parseStoredProductionAlignmentAck(rawJson) {
     const raw = String(rawJson ?? '').trim();
     if (!raw) return { acknowledgedCodes: [], overrideUsed: false, overrideNote: '' };
     const j = JSON.parse(raw);
+    const floorOv = j.economicFloorOverride;
     return {
       acknowledgedCodes: Array.isArray(j.acknowledgedCodes)
         ? j.acknowledgedCodes.map((c) => String(c).trim()).filter(Boolean)
         : [],
       overrideUsed: Boolean(j.overrideUsed),
       overrideNote: String(j.overrideNote || '').trim(),
+      economicFloorOverride:
+        floorOv && typeof floorOv === 'object'
+          ? {
+              used: Boolean(floorOv.used),
+              note: String(floorOv.note || '').trim(),
+              amountNgn: Math.round(Number(floorOv.amountNgn) || 0),
+              maxDefensibleAtCreate:
+                floorOv.maxDefensibleAtCreate != null
+                  ? Math.round(Number(floorOv.maxDefensibleAtCreate) || 0)
+                  : null,
+              atISO: String(floorOv.atISO || '').trim() || null,
+            }
+          : undefined,
     };
   } catch {
     return { acknowledgedCodes: [], overrideUsed: false, overrideNote: '' };
@@ -481,15 +552,30 @@ export function mergeProductionAlignmentAckJson(stored, validationResult, phase 
   ];
   const overrideUsed = Boolean(stored.overrideUsed || validationResult.overrideUsed);
   const overrideNote = validationResult.overrideNote || stored.overrideNote || '';
-  if (!codes.length && !overrideUsed) return null;
+  const economicFloorOverride =
+    validationResult.economicFloorOverride || stored.economicFloorOverride || undefined;
+  if (!codes.length && !overrideUsed && !economicFloorOverride?.used) return null;
   try {
-    return JSON.stringify({
+    const payload = {
       acknowledgedCodes: codes,
       overrideUsed,
       overrideNote: overrideUsed ? overrideNote : '',
       validatedAtISO: new Date().toISOString().slice(0, 19),
       phase,
-    }).slice(0, 8000);
+    };
+    if (economicFloorOverride?.used) {
+      payload.economicFloorOverride = {
+        used: true,
+        note: String(economicFloorOverride.note || '').trim(),
+        amountNgn: Math.round(Number(economicFloorOverride.amountNgn) || 0),
+        maxDefensibleAtCreate:
+          economicFloorOverride.maxDefensibleAtCreate != null
+            ? Math.round(Number(economicFloorOverride.maxDefensibleAtCreate) || 0)
+            : null,
+        atISO: economicFloorOverride.atISO || new Date().toISOString(),
+      };
+    }
+    return JSON.stringify(payload).slice(0, 8000);
   } catch {
     return null;
   }

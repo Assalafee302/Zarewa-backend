@@ -41,7 +41,10 @@ import {
 } from '../shared/lib/cuttingListBlankConsumption.js';
 import { roundCuttingListMetres2 } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
-import { quotationRefundBlockedPendingMdPriceConfirm } from '../shared/lib/quotationPriceException.js';
+import {
+  quotationBelowFloorExceptionApproved,
+  quotationRefundBlockedPendingMdPriceConfirm,
+} from '../shared/lib/quotationPriceException.js';
 import {
   productionGateApprovalLevelForActor,
   productionGateOverrideDeniedMessage,
@@ -429,6 +432,20 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   if (amt <= 0) return { ok: false, error: 'Refund amount must be positive.' };
 
   const excludeId = String(refundId || '').trim() || null;
+  const refundRow = excludeId
+    ? db
+        .prepare(
+          `SELECT production_alignment_ack_json, preview_snapshot_json, amount_ngn FROM customer_refunds WHERE refund_id = ?`
+        )
+        .get(excludeId)
+    : null;
+  const storedAlign = parseStoredProductionAlignmentAck(refundRow?.production_alignment_ack_json);
+  const floorOverride = storedAlign?.economicFloorOverride;
+  const floorOverrideHonoured =
+    Boolean(floorOverride?.used) &&
+    String(floorOverride?.note || '').trim().length >= 10 &&
+    Math.abs(amt - roundMoney(floorOverride?.amountNgn ?? -1)) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN;
+
   const preview = previewRefundRequest(db, {
     quotationRef: ref,
     excludeRefundId: excludeId,
@@ -439,7 +456,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const producedM = Number(economicFloor?.producedOutputMeters || 0);
 
   if (economicFloor?.incompleteFloorPricing && producedM > 0.001) {
-    if (!actorMayBypassIncompleteRefundFloor(actor, hasPermission)) {
+    if (!actorMayBypassIncompleteRefundFloor(actor, hasPermission) && !floorOverrideHonoured) {
       return {
         ok: false,
         code: 'REFUND_INCOMPLETE_FLOOR_PRICING',
@@ -453,6 +470,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   }
 
   if (
+    !floorOverrideHonoured &&
     economicFloor?.maxDefensibleRefundNgn != null &&
     amt > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
   ) {
@@ -507,14 +525,11 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   if (!lineArithmetic.ok) return lineArithmetic;
 
   if (phase === 'pay') {
-    const refundRow = refundId
-      ? db.prepare(`SELECT production_alignment_ack_json FROM customer_refunds WHERE refund_id = ?`).get(refundId)
-      : null;
     const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, refundRow);
     if (!alignPay.ok) return alignPay;
   }
 
-  return { ok: true, preview, economicFloor };
+  return { ok: true, preview, economicFloor, economicFloorOverrideHonoured: floorOverrideHonoured };
 }
 
 function nowIso() {
@@ -1138,6 +1153,8 @@ function ppmValueFromWorkbookLookup(lookup) {
  * Minimum economic value delivered at workbook floor ₦/m — sanity check for refund requests.
  * When any completed job has metres but no resolvable ₦/m, `incompleteFloorPricing` is true and
  * `maxDefensibleRefundNgn` is null (missing ppm must not inflate the free-cash cap).
+ * When MD already approved a below-floor price on the quotation, produced metres are valued at
+ * min(workbook floor, quoted selling ₦/m) so the approved deal economics are not re-blocked on refund.
  * @returns {{
  *   producedOutputMeters: number,
  *   floorDeliveredValueNgn: number,
@@ -1146,6 +1163,8 @@ function ppmValueFromWorkbookLookup(lookup) {
  *   cashInNgn: number,
  *   incompleteFloorPricing: boolean,
  *   usedPriceListFallback: boolean,
+ *   honouredMdPriceException: boolean,
+ *   quotedSellingPpmNgn: number | null,
  *   ppmSourceByJob: Record<string, string>,
  *   jobRows: { jobId: string, outputMeters: number, floorPpmNgn: number | null, floorValueNgn: number, ppmSource: string | null }[],
  * }}
@@ -1159,11 +1178,23 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
   const linesJson = quote?.lines_json ?? '';
 
+  const quotePriceExceptionShape = {
+    mdPriceExceptionApprovedAtISO: quote?.md_price_exception_approved_at_iso ?? quote?.mdPriceExceptionApprovedAtISO,
+    priceExceptionMdConfirmedAtISO:
+      quote?.price_exception_md_confirmed_at_iso ?? quote?.priceExceptionMdConfirmedAtISO,
+  };
+  const mdPriceExceptionHonoured = quotationBelowFloorExceptionApproved(quotePriceExceptionShape);
+  const quotedSellingPpmRaw =
+    quotedRoofingSheetAmountPerMeter(linesJson) ?? quotedAmountPerMeter(linesJson);
+  const quotedSellingPpmNgn =
+    quotedSellingPpmRaw != null && quotedSellingPpmRaw > 0 ? Math.round(quotedSellingPpmRaw) : null;
+
   const jobRows = [];
   const ppmSourceByJob = {};
   let floorDeliveredValueNgn = 0;
   let incompleteFloorPricing = false;
   let usedPriceListFallback = false;
+  let honouredMdPriceException = false;
 
   for (const j of productionJobs || []) {
     const st = String(j?.status ?? '').trim().toLowerCase();
@@ -1179,8 +1210,18 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
       linesJson,
       pricingAsAtIso
     );
-    const floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
-    const ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
+    let floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
+    let ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
+    if (
+      mdPriceExceptionHonoured &&
+      quotedSellingPpmNgn != null &&
+      floorPpmNgn != null &&
+      quotedSellingPpmNgn < floorPpmNgn
+    ) {
+      floorPpmNgn = quotedSellingPpmNgn;
+      ppmSource = 'md_approved_quoted_selling';
+      honouredMdPriceException = true;
+    }
     const jobId = String(j.job_id ?? j.jobID ?? '').trim();
     if (ppmSource) ppmSourceByJob[jobId] = ppmSource;
     if (ppmSource === 'price_list') usedPriceListFallback = true;
@@ -1211,6 +1252,8 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     cashInNgn,
     incompleteFloorPricing,
     usedPriceListFallback,
+    honouredMdPriceException,
+    quotedSellingPpmNgn,
     ppmSourceByJob,
     jobRows,
   };
@@ -2309,6 +2352,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
   const refundID = nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
   const requestedAtISO = String(payload.requestedAtISO ?? '').trim() || nowIso();
   let submitAlignmentResult = null;
+  let economicFloorOverrideAtCreate = null;
   try {
     assertPeriodOpen(db, requestedAtISO, 'Refund request date');
     const quotationRef = String(payload.quotationRef ?? '').trim();
@@ -2467,8 +2511,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       });
       const economicFloorAtCreate = previewForCaps.ok ? previewForCaps.preview?.economicFloor ?? null : null;
       const producedAtCreate = Number(economicFloorAtCreate?.producedOutputMeters || 0);
+      const mayBypassFloor = actorMayBypassIncompleteRefundFloor(actor, (p) => userHasPermission(actor, p));
+      const floorOverrideNote = String(
+        payload.productionAlignmentOverrideNote ??
+          payload.productionAlignmentOverride ??
+          payload.economicFloorOverrideNote ??
+          ''
+      ).trim();
       if (economicFloorAtCreate?.incompleteFloorPricing && producedAtCreate > 0.001) {
-        if (!actorMayBypassIncompleteRefundFloor(actor, (p) => userHasPermission(actor, p))) {
+        if (!mayBypassFloor) {
           return {
             ok: false,
             code: 'REFUND_INCOMPLETE_FLOOR_PRICING',
@@ -2484,18 +2535,32 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         Number.isFinite(Number(maxDefensibleAtCreate)) &&
         amountNgn > Number(maxDefensibleAtCreate) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
       ) {
-        return {
-          ok: false,
-          code: 'REFUND_EXCEEDS_ECONOMIC_FLOOR',
-          error: `Refund amount (₦${amountNgn.toLocaleString(
-            'en-NG'
-          )}) exceeds the economic floor cap (₦${Number(maxDefensibleAtCreate).toLocaleString(
-            'en-NG'
-          )}) after ${producedAtCreate.toFixed(
-            2
-          )} m produced at workbook minimum ₦/m (cash in minus floor delivered value, after prior refunds).`,
-          maxDefensibleRefundNgn: Number(maxDefensibleAtCreate),
-        };
+        if (mayBypassFloor && floorOverrideNote.length >= 10) {
+          economicFloorOverrideAtCreate = {
+            used: true,
+            note: floorOverrideNote,
+            amountNgn,
+            maxDefensibleAtCreate: Number(maxDefensibleAtCreate),
+            atISO: nowIso(),
+          };
+        } else {
+          return {
+            ok: false,
+            code: 'REFUND_EXCEEDS_ECONOMIC_FLOOR',
+            error: `Refund amount (₦${amountNgn.toLocaleString(
+              'en-NG'
+            )}) exceeds the economic floor cap (₦${Number(maxDefensibleAtCreate).toLocaleString(
+              'en-NG'
+            )}) after ${producedAtCreate.toFixed(
+              2
+            )} m produced at workbook minimum ₦/m (cash in minus floor delivered value, after prior refunds).${
+              mayBypassFloor
+                ? ' MD/admin may override with a note (min 10 characters) in the Branch manager / MD override field.'
+                : ''
+            }`,
+            maxDefensibleRefundNgn: Number(maxDefensibleAtCreate),
+          };
+        }
       }
       const categorySuggestedMaxNgn = previewForCaps.ok
         ? buildRefundCategorySuggestedMaxNgn(previewForCaps.preview?.suggestedLines)
@@ -2540,14 +2605,22 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     const reasonCategory = JSON.stringify(requestedCats);
 
     let productionAlignmentAckJson = null;
-    if (submitAlignmentResult?.ok && (submitAlignmentResult.acknowledgedCodes?.length || submitAlignmentResult.overrideUsed)) {
+    if (
+      (submitAlignmentResult?.ok &&
+        (submitAlignmentResult.acknowledgedCodes?.length || submitAlignmentResult.overrideUsed)) ||
+      economicFloorOverrideAtCreate?.used
+    ) {
       try {
-        productionAlignmentAckJson = JSON.stringify({
-          acknowledgedCodes: submitAlignmentResult.acknowledgedCodes || [],
-          overrideUsed: Boolean(submitAlignmentResult.overrideUsed),
-          overrideNote: submitAlignmentResult.overrideNote || '',
+        const ackPayload = {
+          acknowledgedCodes: submitAlignmentResult?.acknowledgedCodes || [],
+          overrideUsed: Boolean(submitAlignmentResult?.overrideUsed),
+          overrideNote: submitAlignmentResult?.overrideNote || '',
           validatedAtISO: nowIso(),
-        }).slice(0, 8000);
+        };
+        if (economicFloorOverrideAtCreate?.used) {
+          ackPayload.economicFloorOverride = economicFloorOverrideAtCreate;
+        }
+        productionAlignmentAckJson = JSON.stringify(ackPayload).slice(0, 8000);
       } catch {
         productionAlignmentAckJson = null;
       }
@@ -3870,6 +3943,11 @@ export function previewRefundRequest(db, payload) {
         'Economic floor check: workbook floor ₦/m could not be resolved for all produced jobs — create/approve is blocked unless MD/admin overrides. Missing rates must not inflate the max defensible refund.'
       );
     }
+    if (economicFloor.honouredMdPriceException) {
+      warnings.push(
+        'Economic floor uses MD-approved quoted selling ₦/m (below workbook minimum) — refund headroom matches the approved deal price.'
+      );
+    }
     if (economicFloor.usedPriceListFallback) {
       warnings.push(
         'Economic floor check: some rates from published list (workbook floor missing).'
@@ -3881,7 +3959,11 @@ export function previewRefundRequest(db, payload) {
       suggestedAmountNgn > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
     ) {
       warnings.push(
-        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).`
+        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).${
+          economicFloor.honouredMdPriceException
+            ? ''
+            : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
+        }`
       );
     }
   }

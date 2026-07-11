@@ -15,20 +15,28 @@ describe('refundCuttingListQuotationReconciliation', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('flags when cutting list and quoted metres diverge materially', () => {
+  it('flags when cutting list exceeds quoted metres', () => {
     const r = assessCuttingListQuotationMetreVariance({
       quotedRoofingMetres: 0,
       cuttingListMetresSum: 85,
     });
     expect(r.ok).toBe(true);
 
-    const bad = assessCuttingListQuotationMetreVariance({
+    const under = assessCuttingListQuotationMetreVariance({
       quotedRoofingMetres: 120,
       cuttingListMetresSum: 85,
     });
-    expect(bad.ok).toBe(false);
-    expect(bad.code).toBe('cutting_list_quotation_metre_mismatch');
-    expect(bad.deltaMetres).toBe(35);
+    expect(under.ok).toBe(true);
+    expect(under.code).toBe('cutting_list_quotation_metre_under');
+    expect(under.deltaMetres).toBe(35);
+
+    const over = assessCuttingListQuotationMetreVariance({
+      quotedRoofingMetres: 85,
+      cuttingListMetresSum: 120,
+    });
+    expect(over.ok).toBe(false);
+    expect(over.code).toBe('cutting_list_quotation_metre_mismatch');
+    expect(over.deltaMetres).toBe(35);
   });
 
   it('sums only roof lines from cutting list rows', () => {

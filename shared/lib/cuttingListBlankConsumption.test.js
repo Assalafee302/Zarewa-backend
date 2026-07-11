@@ -48,7 +48,7 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.expectedTotalM).toBe(101);
   });
 
-  it('fails save when trim blank is omitted from cutting list total', () => {
+  it('soft-allows cutting list under expected coil consumption (partial / unproduced)', () => {
     const lines = {
       products: [{ name: 'Roofing Sheet', qty: 100 }, { name: 'Ridge Cap', qty: 3, girthMm: 400 }],
     };
@@ -56,9 +56,24 @@ describe('cuttingListBlankConsumption', () => {
       quotationLinesJson: lines,
       cuttingListLines: [{ lineType: 'Roof', sheets: 50, lengthM: 2 }],
     });
-    expect(assessment.ok).toBe(false);
+    expect(assessment.ok).toBe(true);
+    expect(assessment.code).toBe('cutting_list_quotation_metre_under');
     expect(assessment.expectedTotalM).toBe(101);
     expect(assessment.cuttingListTotalM).toBe(100);
+    expect(assessment.trimBlankProductionBlocked).toBe(true);
+  });
+
+  it('hard-fails when cutting list exceeds expected coil consumption', () => {
+    const lines = {
+      products: [{ name: 'Roofing Sheet', qty: 100 }],
+    };
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [{ lineType: 'Roof', sheets: 60, lengthM: 2 }],
+    });
+    expect(assessment.ok).toBe(false);
+    expect(assessment.code).toBe('cutting_list_quotation_metre_mismatch');
+    expect(assessment.cuttingListTotalM).toBe(120);
   });
 
   it('blocks production when flatsheet section is short of trim blank', () => {

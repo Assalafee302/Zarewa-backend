@@ -402,14 +402,37 @@ export function assessCuttingListQuotationConsumption({
     };
   }
 
-  const deltaMetres = roundCuttingListMetres2(Math.abs(expectedTotalM - cuttingListTotalM));
+  const signedDeltaM = roundCuttingListMetres2(cuttingListTotalM - expectedTotalM);
+  const deltaMetres = roundCuttingListMetres2(Math.abs(signedDeltaM));
   const tol = Math.max(0, Number(sheetToleranceM) || 0);
   if (expectedTotalM > 0 && cuttingListTotalM > 0 && deltaMetres > tol + 1e-6) {
     const trimNote =
       quotedTrimBlankM > 0 ? ` (includes ${quotedTrimBlankM.toFixed(2)} m trim blank from quotation)` : '';
+    // CL above quotation / expected coil need — hard fail (over-consumption risk).
+    if (signedDeltaM > 0) {
+      return {
+        ok: false,
+        code: 'cutting_list_quotation_metre_mismatch',
+        warnings,
+        quotedSheetPoolM,
+        quotedTrimBlankM,
+        expectedTotalM,
+        cuttingListTotalM,
+        clFlatsheetM,
+        trimBlankGapM,
+        trimBlankProductionBlocked,
+        deltaMetres,
+        signedDeltaM,
+        message: `Cutting list total (${cuttingListTotalM.toFixed(2)} m) exceeds expected coil consumption (${expectedTotalM.toFixed(2)} m${trimNote}) by ${deltaMetres.toFixed(2)} m. Reduce sections so roof + cladding + flatsheet do not exceed the quotation.`,
+      };
+    }
+    // CL below quotation — normal for partial runs / unproduced refunds; soft note only.
+    warnings.push(
+      `Cutting list total (${cuttingListTotalM.toFixed(2)} m) is ${deltaMetres.toFixed(2)} m below expected coil consumption (${expectedTotalM.toFixed(2)} m${trimNote}). Under-quote lists are allowed; verify before treating leftover metres as unproduced.`
+    );
     return {
-      ok: false,
-      code: 'cutting_list_quotation_metre_mismatch',
+      ok: true,
+      code: 'cutting_list_quotation_metre_under',
       warnings,
       quotedSheetPoolM,
       quotedTrimBlankM,
@@ -419,7 +442,8 @@ export function assessCuttingListQuotationConsumption({
       trimBlankGapM,
       trimBlankProductionBlocked,
       deltaMetres,
-      message: `Cutting list total (${cuttingListTotalM.toFixed(2)} m) does not match expected coil consumption (${expectedTotalM.toFixed(2)} m${trimNote}) — difference ${deltaMetres.toFixed(2)} m. Adjust sections so roof + cladding + flatsheet match the quotation.`,
+      signedDeltaM,
+      message: warnings[warnings.length - 1],
     };
   }
 
@@ -434,6 +458,7 @@ export function assessCuttingListQuotationConsumption({
     trimBlankGapM,
     trimBlankProductionBlocked,
     deltaMetres: expectedTotalM > 0 ? deltaMetres : 0,
+    signedDeltaM: expectedTotalM > 0 ? signedDeltaM : 0,
   };
 }
 

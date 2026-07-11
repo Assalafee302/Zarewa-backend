@@ -117,6 +117,7 @@ export function assessQuotationCuttingListConsumptionForRef(db, quotationRef) {
 
 /**
  * Quoted coil consumption vs cutting list totals — refund data quality (sheet pool + trim blank).
+ * Under-quote cutting lists are informational; over-quote lists remain hard errors.
  * @param {import('better-sqlite3').Database} db
  * @param {string} quotationRef
  */
@@ -124,17 +125,22 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
   const assessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
   if (!assessment) return [];
   const cuttingListMetresSum = assessment.cuttingListTotalM ?? 0;
+  const expectedTotalM = Number(assessment.expectedTotalM) || 0;
   const issues = [];
-  const totalMismatchCodes = new Set([
+  const hardMismatchCodes = new Set([
     'cutting_list_quotation_metre_mismatch',
     'cutting_list_no_quoted_roofing_metres',
+  ]);
+  const softUnderCodes = new Set([
+    'cutting_list_quotation_metre_under',
     'cutting_list_missing_for_quotation',
   ]);
-  const totalAlreadyBlocked = !assessment.ok && totalMismatchCodes.has(String(assessment.code || '').trim());
+  const code = String(assessment.code || '').trim();
+  const totalAlreadyHardBlocked = !assessment.ok && hardMismatchCodes.has(code);
 
-  if (!assessment.ok && assessment.message) {
+  if (!assessment.ok && assessment.message && hardMismatchCodes.has(code)) {
     issues.push({
-      code: assessment.code || 'cutting_list_quotation_metre_mismatch',
+      code: code || 'cutting_list_quotation_metre_mismatch',
       severity: 'error',
       message: assessment.message,
       quotedMetres: assessment.expectedTotalM,
@@ -142,11 +148,35 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
       quotedTrimBlankM: assessment.quotedTrimBlankM,
       cuttingListMetresSum,
       deltaMetres: assessment.deltaMetres,
+      signedDeltaM: assessment.signedDeltaM,
       trimBlankGapM: assessment.trimBlankGapM,
     });
+  } else if (
+    (assessment.ok && softUnderCodes.has(code) && assessment.message) ||
+    (!assessment.ok && softUnderCodes.has(code) && assessment.message)
+  ) {
+    // Missing CL or under-quote: do not block refunds (quote > CL / quote > produced is normal).
+    issues.push({
+      code: code || 'cutting_list_quotation_metre_under',
+      severity: 'info',
+      message: assessment.message,
+      quotedMetres: assessment.expectedTotalM,
+      quotedSheetPoolM: assessment.quotedSheetPoolM,
+      quotedTrimBlankM: assessment.quotedTrimBlankM,
+      cuttingListMetresSum,
+      deltaMetres: assessment.deltaMetres,
+      signedDeltaM: assessment.signedDeltaM ?? roundSignedUnder(cuttingListMetresSum, expectedTotalM),
+      trimBlankGapM: assessment.trimBlankGapM,
+    });
+  } else if (assessment.ok && code === 'cutting_list_quotation_metre_under') {
+    /* already handled */
   }
+
   for (const warning of assessment.warnings || []) {
-    if (totalAlreadyBlocked && String(warning).includes('Flatsheet section')) continue;
+    if (totalAlreadyHardBlocked && String(warning).includes('Flatsheet section')) continue;
+    if (code === 'cutting_list_quotation_metre_under' && String(warning) === String(assessment.message || '')) {
+      continue;
+    }
     issues.push({
       code: 'trim_blank_cl_soft_warning',
       severity: 'warning',
@@ -156,7 +186,7 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
       trimBlankGapM: assessment.trimBlankGapM,
     });
   }
-  if (assessment.trimBlankProductionBlocked && !totalAlreadyBlocked) {
+  if (assessment.trimBlankProductionBlocked && !totalAlreadyHardBlocked) {
     issues.push({
       code: 'trim_blank_cl_missing',
       severity: 'error',
@@ -167,4 +197,10 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
     });
   }
   return issues;
+}
+
+function roundSignedUnder(cutting, expected) {
+  const c = Number(cutting) || 0;
+  const e = Number(expected) || 0;
+  return Math.round((c - e) * 100) / 100;
 }

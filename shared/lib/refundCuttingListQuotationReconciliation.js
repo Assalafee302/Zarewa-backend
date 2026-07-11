@@ -155,21 +155,45 @@ export function assessCuttingListQuotationMetreVariance({
   if (quoted <= 0 || cutting <= 0) {
     return { ok: true, quotedMetres: quoted, cuttingListMetresSum: cutting, deltaMetres: 0 };
   }
-  const delta = Math.abs(quoted - cutting);
+  const signedDeltaM = roundCuttingListMetres2(cutting - quoted);
+  const delta = Math.abs(signedDeltaM);
   const tol = Math.max(0, Number(toleranceM) || 0);
   if (delta <= tol + 1e-6) {
-    return { ok: true, quotedMetres: quoted, cuttingListMetresSum: cutting, deltaMetres: delta };
+    return {
+      ok: true,
+      quotedMetres: quoted,
+      cuttingListMetresSum: cutting,
+      deltaMetres: delta,
+      signedDeltaM,
+    };
+  }
+  // Cutting list above quote — hard verify. Under-quote is allowed (partial / unproduced).
+  if (signedDeltaM > 0) {
+    return {
+      ok: false,
+      code: 'cutting_list_quotation_metre_mismatch',
+      quotedMetres: quoted,
+      cuttingListMetresSum: cutting,
+      deltaMetres: delta,
+      signedDeltaM,
+      message: `Cutting list total (${cutting.toFixed(
+        2
+      )} m) exceeds quoted roofing metres (${quoted.toFixed(
+        2
+      )} m) by ${delta.toFixed(2)} m — verify before refund.`,
+    };
   }
   return {
-    ok: false,
-    code: 'cutting_list_quotation_metre_mismatch',
+    ok: true,
+    code: 'cutting_list_quotation_metre_under',
     quotedMetres: quoted,
     cuttingListMetresSum: cutting,
     deltaMetres: delta,
+    signedDeltaM,
     message: `Cutting list total (${cutting.toFixed(
       2
-    )} m) differs from quoted roofing metres (${quoted.toFixed(
+    )} m) is ${delta.toFixed(2)} m below quoted roofing metres (${quoted.toFixed(
       2
-    )} m) by ${delta.toFixed(2)} m — verify before unproduced refund.`,
+    )} m) — under-quote lists are allowed; leftover may be unproduced.`,
   };
 }

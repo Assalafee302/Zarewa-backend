@@ -5970,7 +5970,25 @@ function normalizeCuttingListLines(lines, { allowPartial = false } = {}) {
   return out;
 }
 
-/** Finalized cutting lists must use line-sum metres; reject client header overrides that disagree. */
+/** Finalized cutting lists must use line-sum metres; reject client header overrides that disagree.
+ * Stone flatsheet rows are sheet stock — excluded from roofing/coil linear-metre totals.
+ */
+function cuttingListLinearMetresExcludingStoneFlatsheet(lines) {
+  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+    const lt = String(line.lineType ?? line.line_type ?? 'Roof').trim();
+    if (lt === 'StoneFlatsheet') return sum;
+    return sum + (Number(line.totalM) || 0);
+  }, 0);
+}
+
+function cuttingListSheetsExcludingStoneFlatsheet(lines) {
+  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+    const lt = String(line.lineType ?? line.line_type ?? 'Roof').trim();
+    if (lt === 'StoneFlatsheet') return sum;
+    return sum + (Number(line.sheets) || 0);
+  }, 0);
+}
+
 function resolveCuttingListTotalMeters({ accessoriesOnly, isDraft, lineSumMeters, payloadTotalMeters }) {
   if (accessoriesOnly) return { totalMeters: 0 };
   const sum = roundCuttingListMetres2(lineSumMeters);
@@ -6306,7 +6324,7 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const id = nextCuttingListHumanId(db, branchId);
   const dateISO = String(payload.dateISO ?? '').trim() || new Date().toISOString().slice(0, 10);
   const dateLabel = shortDateFromIso(dateISO);
-  const lineSumMeters = lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);
+  const lineSumMeters = cuttingListLinearMetresExcludingStoneFlatsheet(lines);
   const totalMetersResolved = resolveCuttingListTotalMeters({
     accessoriesOnly,
     isDraft,
@@ -6316,7 +6334,7 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   if (totalMetersResolved.error) return { ok: false, error: totalMetersResolved.error };
   const totalMeters = totalMetersResolved.totalMeters;
   const sheetsToCut = Number(
-    payload.sheetsToCut ?? lines.reduce((sum, line) => sum + line.sheets, 0)
+    payload.sheetsToCut ?? cuttingListSheetsExcludingStoneFlatsheet(lines)
   );
   const productID = accessoriesOnly ? '' : String(payload.productID ?? '').trim();
   const productName = accessoriesOnly ? 'Accessories only' : String(payload.productName ?? '').trim();
@@ -6468,7 +6486,7 @@ export function updateCuttingList(db, cuttingListId, payload) {
     if (!metreAlign.ok) return metreAlign;
   }
   const dateISO = payload.dateISO ?? existing.date_iso;
-  const lineSumMeters = lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);
+  const lineSumMeters = cuttingListLinearMetresExcludingStoneFlatsheet(lines);
   const totalMetersResolved = resolveCuttingListTotalMeters({
     accessoriesOnly,
     isDraft: existingIsDraft && !finalize,
@@ -6480,7 +6498,7 @@ export function updateCuttingList(db, cuttingListId, payload) {
   const sheetsToCut =
     payload.sheetsToCut !== undefined
       ? Number(payload.sheetsToCut) || 0
-      : lines.reduce((sum, line) => sum + line.sheets, 0);
+      : cuttingListSheetsExcludingStoneFlatsheet(lines);
   const productID =
     accessoriesOnly
       ? ''

@@ -194,6 +194,9 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     currentNorm.has('order cancellation') || [...currentNorm].some((c) => c.includes('order cancellation'));
   const currentHasUnproduced =
     currentNorm.has('unproduced meterage') || [...currentNorm].some((c) => c.includes('unproduced'));
+  const currentHasStoneSfShortfall = [...currentNorm].some(
+    (c) => c.includes('stone flatsheet') || c.includes('sf shortfall') || c.includes('flatsheet shortfall')
+  );
   const priorHasOverpay = [...priorNorm].some((c) => c.includes('overpay'));
   const priorHasCancel = [...priorNorm].some((c) => c.includes('order cancellation'));
   const priorHasUnproduced = [...priorNorm].some((c) => c.includes('unproduced'));
@@ -260,20 +263,31 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
-  for (const clIssue of refundCuttingListQuotationMetreIssues(db, quotationRef)) {
-    const code = String(clIssue.code || '').trim();
-    issues.push({
-      code,
-      severity: clIssue.severity === 'warning' ? 'warning' : 'error',
-      title:
-        code === 'trim_blank_cl_soft_warning'
-          ? 'Trim blank note'
-          : code === 'trim_blank_cl_missing'
-            ? 'Trim blank missing on cutting list'
-            : 'Cutting list vs quotation',
-      message: clIssue.message,
-      ...clIssue,
-    });
+  /* Overpayment-only refunds are cash vs quote total — do not block on CL↔quote metre data quality. */
+  const overpaymentOnly =
+    currentHasOverpay &&
+    !currentHasCancel &&
+    !currentHasUnproduced &&
+    !currentHasStoneSfShortfall &&
+    currentNorm.size > 0 &&
+    [...currentNorm].every((c) => c.includes('overpay'));
+
+  if (!overpaymentOnly) {
+    for (const clIssue of refundCuttingListQuotationMetreIssues(db, quotationRef)) {
+      const code = String(clIssue.code || '').trim();
+      issues.push({
+        code,
+        severity: clIssue.severity === 'warning' ? 'warning' : 'error',
+        title:
+          code === 'trim_blank_cl_soft_warning'
+            ? 'Trim blank note'
+            : code === 'trim_blank_cl_missing'
+              ? 'Trim blank missing on cutting list'
+              : 'Cutting list vs quotation',
+        message: clIssue.message,
+        ...clIssue,
+      });
+    }
   }
 
   return issues;

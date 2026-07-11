@@ -310,6 +310,54 @@ describe('refundProductionAlignment', () => {
     expect(blocked.blockedCode).toBe('cutting_list_quotation_metre_mismatch');
   });
 
+  it('does not block overpayment-only refunds on cutting-list metre data-quality issues', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-OP',
+      total_ngn: 18000,
+      paid_ngn: 60000,
+      lines_json: JSON.stringify({
+        materialTypeId: 'MAT-005',
+        products: [{ name: 'Stone flatsheet 2', qty: '4' }],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-OP', quotation_ref: 'Q-OP' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-OP',
+      sheets: 1,
+      length_m: 12,
+      total_m: 12,
+      line_type: 'Roof',
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q-OP', ['Overpayment']);
+    expect(issues.some((i) => String(i.code || '').startsWith('cutting_list_'))).toBe(false);
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q-OP', ['Overpayment'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  it('stone SF quote with CL metres does not raise no_quoted_roofing when materialTypeId is in lines_json string', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-STONE-SF',
+      lines_json: JSON.stringify({
+        materialTypeId: 'MAT-005',
+        products: [{ name: 'Stone flatsheet 2', qty: '4' }],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-SF', quotation_ref: 'Q-STONE-SF' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-SF',
+      sheets: 4,
+      length_m: 2,
+      total_m: 8,
+      line_type: 'StoneFlatsheet',
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q-STONE-SF', ['Unproduced meterage']);
+    expect(issues.some((i) => i.code === 'cutting_list_no_quoted_roofing_metres')).toBe(false);
+  });
+
   it('parses stored alignment ack and merges at approval', () => {
     const stored = parseStoredProductionAlignmentAck(
       JSON.stringify({

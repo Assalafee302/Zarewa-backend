@@ -36,6 +36,17 @@ describe('stoneInventory', () => {
     expect(isStoneMeterQuotationLinesJson(db, { materialTypeId: 'MAT-002' })).toBe(false);
   });
 
+  it('isStoneMeterQuotationLinesJson accepts JSON string from quotations.lines_json', () => {
+    expect(
+      isStoneMeterQuotationLinesJson(
+        db,
+        JSON.stringify({ materialTypeId: 'MAT-005', products: [{ name: 'Stone flatsheet 2', qty: 4 }] })
+      )
+    ).toBe(true);
+    expect(isStoneMeterQuotationLinesJson(db, JSON.stringify({ materialTypeId: 'MAT-002' }))).toBe(false);
+    expect(isStoneMeterQuotationLinesJson(db, '{')).toBe(false);
+  });
+
   it('stoneFlatsheetProductIdFromSpec builds stable id', () => {
     expect(stoneFlatsheetProductIdFromSpec('Black', 1.4)).toBe('STONE-FS-black-1p4m');
     expect(stoneFlatsheetProductIdFromSpec('Black', 1.5)).toBe('STONE-FS-black-1p5m');

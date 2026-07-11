@@ -226,10 +226,18 @@ export function ensureStoneFlatsheetProduct(db, spec) {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {object} linesJson — quotation lines_json object
+ * @param {object | string | null | undefined} linesJson — quotation lines_json object or JSON string
  */
 export function isStoneMeterQuotationLinesJson(db, linesJson) {
-  const j = linesJson && typeof linesJson === 'object' ? linesJson : {};
+  let j = linesJson;
+  if (typeof j === 'string') {
+    try {
+      j = JSON.parse(j || '{}');
+    } catch {
+      j = {};
+    }
+  }
+  j = j && typeof j === 'object' ? j : {};
   const mid = String(j.materialTypeId || '').trim();
   if (mid === STONE_COATED_MATERIAL_TYPE_ID) return true;
   if (mid) {

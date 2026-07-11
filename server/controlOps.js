@@ -339,11 +339,13 @@ export function validateBundledTransportInstallCrossRequest(
 
 /**
  * Production alignment at payout — honour stored submit/approval acks; only re-block on hard blockers.
+ * Excludes the refund being paid so it cannot conflict with itself as a "prior" refund.
  * @param {object | null | undefined} [refundRow] customer_refunds row (for production_alignment_ack_json)
  */
 export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reasonCategories, refundRow = null) {
+  const excludeRefundId = String(refundRow?.refund_id || refundRow?.refundId || '').trim() || null;
   const issues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, reasonCategories)
+    refundProductionAlignmentWarnings(db, quotationRef, reasonCategories, { excludeRefundId })
   );
   const storedAlign = parseStoredProductionAlignmentAck(refundRow?.production_alignment_ack_json);
   const ackSet = new Set((storedAlign?.acknowledgedCodes || []).map((c) => String(c).trim()).filter(Boolean));
@@ -443,7 +445,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const refundRow = excludeId
     ? db
         .prepare(
-          `SELECT production_alignment_ack_json, preview_snapshot_json, amount_ngn FROM customer_refunds WHERE refund_id = ?`
+          `SELECT refund_id, production_alignment_ack_json, preview_snapshot_json, amount_ngn FROM customer_refunds WHERE refund_id = ?`
         )
         .get(excludeId)
     : null;
@@ -536,7 +538,10 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   if (!lineArithmetic.ok) return lineArithmetic;
 
   if (phase === 'pay') {
-    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, refundRow);
+    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, {
+      ...(refundRow || {}),
+      refund_id: excludeId || refundRow?.refund_id || null,
+    });
     if (!alignPay.ok) return alignPay;
   }
 
@@ -3946,14 +3951,18 @@ export function previewRefundRequest(db, payload) {
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
-        ...refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory),
+        ...refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory, {
+          excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
+        }),
       ]),
     };
   }
 
   const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
   const alignmentIssues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory)
+    refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory, {
+      excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
+    })
   );
   for (const issue of alignmentIssues) {
     if (issue.message && !warnings.includes(issue.message)) {

@@ -208,26 +208,26 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
   );
   const priorHasOverpay = [...priorNorm].some((c) => c.includes('overpay'));
   const priorHasCancel = [...priorNorm].some((c) => c.includes('order cancellation'));
-  const priorHasUnproduced = [...priorNorm].some((c) => c.includes('unproduced'));
 
+  /* Overpayment + Order cancellation double-count cash. Overpayment + Unproduced meterage are
+   * independent claims (cash above quote vs unpaid metres within quote) — allowed same or cross request. */
   const sameRequestOverpayAndCancel = currentHasOverpay && currentHasCancel;
   const crossRefundOverlap =
-    (priorHasOverpay && (currentHasCancel || currentHasUnproduced)) ||
-    ((priorHasCancel || priorHasUnproduced) && currentHasOverpay);
+    (priorHasOverpay && currentHasCancel) || (priorHasCancel && currentHasOverpay);
 
   if (sameRequestOverpayAndCancel || crossRefundOverlap) {
     let message =
-      'This quotation has Overpayment combined with cancellation/unproduced categories — verify amounts are not double-counted.';
+      'This quotation has Overpayment combined with Order cancellation — verify amounts are not double-counted.';
     if (sameRequestOverpayAndCancel) {
       message =
         'This refund request combines Overpayment with Order cancellation on the same breakdown — these double-count cash received. Remove one category or split into separate refund requests.';
     } else if (crossRefundOverlap) {
       message =
-        'A prior refund on this quotation overlaps with this request (Overpayment vs Order cancellation / Unproduced meterage). Resolve or reject the prior refund before submitting a conflicting category.';
+        'A prior refund on this quotation overlaps with this request (Overpayment vs Order cancellation). Resolve or reject the prior refund before submitting a conflicting category.';
     } else if (priorCategories.length && currentCategories.length) {
-      message = `Prior refund(s) on this quote (${priorCategories.join(', ')}) overlap with this request (${currentCategories.join(', ')}). Overpayment must not be double-counted with Order cancellation or Unproduced meterage on the same quotation.`;
+      message = `Prior refund(s) on this quote (${priorCategories.join(', ')}) overlap with this request (${currentCategories.join(', ')}). Overpayment must not be double-counted with Order cancellation on the same quotation.`;
     } else if (priorCategories.length > 1) {
-      message = `Multiple refund categories already exist on this quote (${priorCategories.join(', ')}). Verify Overpayment is not combined with Order cancellation or Unproduced meterage in a way that double-counts the same economic loss.`;
+      message = `Multiple refund categories already exist on this quote (${priorCategories.join(', ')}). Verify Overpayment is not combined with Order cancellation in a way that double-counts the same cash.`;
     }
     issues.push({
       code: sameRequestOverpayAndCancel ? 'multi_category_overlap_same_request' : 'multi_category_overlap',

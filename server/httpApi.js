@@ -8452,7 +8452,7 @@ export function registerHttpApi(app, db) {
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
-        ...refundProductionAlignmentWarnings(db, quotationRef),
+        ...refundProductionAlignmentWarnings(db, quotationRef, undefined, { excludeRefundId }),
       ]);
       const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
       const quote = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef);

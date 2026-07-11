@@ -22,10 +22,12 @@ function mockDb(data) {
           }
           if (s.includes('COALESCE(SUM(amount_ngn)')) {
             const ref = args[0];
+            const exclude = s.includes('refund_id !=') ? String(args[1] || '').trim() : '';
             const rows = data.customer_refunds.filter(
               (r) =>
                 r.quotation_ref === ref &&
-                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase())
+                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase()) &&
+                (!exclude || String(r.refund_id || '') !== exclude)
             );
             return { s: rows.reduce((sum, r) => sum + (Number(r.amount_ngn) || 0), 0) };
           }
@@ -48,14 +50,23 @@ function mockDb(data) {
           }
           if (s.includes('FROM customer_refunds') && s.includes('calculation_lines_json')) {
             const ref = args[0];
+            const exclude = s.includes('refund_id !=') ? String(args[1] || '').trim() : '';
             return data.customer_refunds.filter(
               (r) =>
                 r.quotation_ref === ref &&
-                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase())
+                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase()) &&
+                (!exclude || String(r.refund_id || '') !== exclude)
             );
           }
           if (s.includes('FROM customer_refunds') && s.includes('NOT IN')) {
-            return data.customer_refunds.filter((r) => r.quotation_ref === args[0]);
+            const ref = args[0];
+            const exclude = s.includes('refund_id !=') ? String(args[1] || '').trim() : '';
+            return data.customer_refunds.filter(
+              (r) =>
+                r.quotation_ref === ref &&
+                !['rejected', 'cancelled'].includes(String(r.status || '').toLowerCase()) &&
+                (!exclude || String(r.refund_id || '') !== exclude)
+            );
           }
           return [];
         },
@@ -109,6 +120,55 @@ describe('refundFinancialGuards', () => {
     });
     const r = validateRefundProductionAlignmentAtPayout(db, 'Q1', ['Order cancellation']);
     expect(r.ok).toBe(false);
+  });
+
+  it('validateRefundProductionAlignmentAtPayout excludes the refund being paid', () => {
+    const db = mockDb({
+      quotations: [{ id: 'Q1', lines_json: '{"products":[]}', total_ngn: 100000, paid_ngn: 100000 }],
+      production_jobs: [],
+      customer_refunds: [
+        {
+          refund_id: 'RF-PAY',
+          quotation_ref: 'Q1',
+          reason_category: '["Overpayment","Unproduced meterage"]',
+          status: 'Approved',
+          production_alignment_ack_json: null,
+        },
+      ],
+    });
+    const r = validateRefundProductionAlignmentAtPayout(
+      db,
+      'Q1',
+      ['Overpayment', 'Unproduced meterage'],
+      { refund_id: 'RF-PAY' }
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('validateRefundProductionAlignmentAtPayout still blocks Overpayment vs prior Order cancellation', () => {
+    const db = mockDb({
+      quotations: [{ id: 'Q1', lines_json: '{"products":[]}', total_ngn: 100000, paid_ngn: 100000 }],
+      production_jobs: [],
+      customer_refunds: [
+        {
+          refund_id: 'RF-CANCEL',
+          quotation_ref: 'Q1',
+          reason_category: 'Order cancellation',
+          status: 'Paid',
+        },
+        {
+          refund_id: 'RF-PAY',
+          quotation_ref: 'Q1',
+          reason_category: 'Overpayment',
+          status: 'Approved',
+        },
+      ],
+    });
+    const r = validateRefundProductionAlignmentAtPayout(db, 'Q1', ['Overpayment'], {
+      refund_id: 'RF-PAY',
+    });
+    expect(r.ok).toBe(false);
+    expect(String(r.error || '')).toMatch(/Overpayment vs Order cancellation/i);
   });
 
   it('validateBundledTransportInstallCrossRequest blocks split claims across refunds', () => {

@@ -200,7 +200,18 @@ describe('refundProductionAlignment', () => {
     expect(issues.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
   });
 
-  it('does not self-flag Overpayment+Unproduced when the pending refund is excluded', () => {
+  it('does not flag Overpayment then Unproduced meterage across separate refunds', () => {
+    const db = memDb();
+    db.data.customer_refunds.push({
+      quotation_ref: 'Q1',
+      reason_category: 'Overpayment',
+      status: 'Paid',
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q1', ['Unproduced meterage']);
+    expect(issues.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
+  });
+
+  it('does not self-flag Overpayment+Unproduced when another pending refund has the same mix', () => {
     const db = memDb();
     db.data.customer_refunds.push({
       refund_id: 'RF-SELF',
@@ -212,7 +223,7 @@ describe('refundProductionAlignment', () => {
       'Overpayment',
       'Unproduced meterage',
     ]);
-    expect(withoutExclude.some((i) => i.code === 'multi_category_overlap')).toBe(true);
+    expect(withoutExclude.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
 
     const withExclude = refundProductionAlignmentWarnings(
       db,
@@ -220,6 +231,23 @@ describe('refundProductionAlignment', () => {
       ['Overpayment', 'Unproduced meterage'],
       { excludeRefundId: 'RF-SELF' }
     );
+    expect(withExclude.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
+  });
+
+  it('still flags Overpayment then Order cancellation across separate refunds', () => {
+    const db = memDb();
+    db.data.customer_refunds.push({
+      refund_id: 'RF-PRIOR',
+      quotation_ref: 'Q1',
+      status: 'Pending',
+      reason_category: 'Overpayment',
+    });
+    const withoutExclude = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation']);
+    expect(withoutExclude.some((i) => i.code === 'multi_category_overlap')).toBe(true);
+
+    const withExclude = refundProductionAlignmentWarnings(db, 'Q1', ['Order cancellation'], {
+      excludeRefundId: 'RF-PRIOR',
+    });
     expect(withExclude.some((i) => String(i.code || '').includes('multi_category_overlap'))).toBe(false);
   });
 

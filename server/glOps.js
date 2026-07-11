@@ -123,6 +123,8 @@ export function ensureSupplementalGlAccounts(db) {
   ins.run('acc-capital', '3100', "Owner's capital", 'equity', 5);
   ins.run('acc-drawings', '3200', 'Drawings', 'equity', 6);
   ins.run('acc-retained', '3900', 'Retained earnings', 'equity', 7);
+  /** Physical count / manual adjust variance (perpetual inventory). */
+  ins.run('acc-inv-variance', '5055', 'Inventory count variance', 'expense', 85);
 }
 
 export function getGlAccountIdByCode(db, code) {
@@ -304,6 +306,125 @@ export function tryPostCoilScrapJournal(db, { entryDateISO, coilNo, kg, unitCost
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
+}
+
+/**
+ * Perpetual inventory qty variance (manual adjust or month-end count).
+ * Shortage (qty decrease / book &gt; count): Dr 5055 / Cr 1300.
+ * Surplus (qty increase / count &gt; book): Dr 1300 / Cr 5055.
+ * Skips when amount is 0.
+ */
+export function tryPostInventoryVarianceJournal(db, {
+  entryDateISO,
+  amountNgn,
+  direction,
+  branchId,
+  createdByUserId,
+  sourceId,
+  memo,
+  sourceKind = 'INVENTORY_VARIANCE_GL',
+}) {
+  try {
+    ensureSupplementalGlAccounts(db);
+  } catch (e) {
+    return { ok: false, error: `Could not ensure GL accounts: ${String(e.message || e)}` };
+  }
+  const amt = Math.round(Math.abs(Number(amountNgn) || 0));
+  if (amt <= 0) return { ok: true, skipped: true, reason: 'zero_amount' };
+  const sid = String(sourceId || '').trim().slice(0, 120);
+  if (!sid) return { ok: false, error: 'sourceId required for inventory variance journal.' };
+  const day = String(entryDateISO || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return { ok: false, error: 'Valid entryDateISO (YYYY-MM-DD) required for inventory variance journal.' };
+  }
+  const dir = String(direction || '').toLowerCase();
+  const shortage =
+    dir === 'shortage' || dir === 'decrease' || dir === 'credit_inventory' || dir === 'loss';
+  const lines = shortage
+    ? [
+        { accountCode: '5055', debitNgn: amt, memo: sid.slice(0, 80) },
+        { accountCode: '1300', creditNgn: amt, memo: sid.slice(0, 80) },
+      ]
+    : [
+        { accountCode: '1300', debitNgn: amt, memo: sid.slice(0, 80) },
+        { accountCode: '5055', creditNgn: amt, memo: sid.slice(0, 80) },
+      ];
+  try {
+    const r = postBalancedJournalTx(db, {
+      entryDateISO: day,
+      memo: String(memo || `Inventory variance ${sid}`).slice(0, 500),
+      sourceKind,
+      sourceId: sid,
+      branchId,
+      createdByUserId,
+      lines,
+    });
+    if (r && r.ok === false) return r;
+    return r || { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Month-end stock register lock — posts net physical-count variance only.
+ * Full closing value is stored on the period (perpetual 1300 already holds receipts less COGS;
+ * capitalising full closing again would double-count).
+ * @param {{ sourceIdSuffix?: string }} [extra] Unique suffix so reopen→re-capture can post a new variance.
+ */
+export function tryPostStockRegisterClosingJournal(db, {
+  entryDateISO,
+  branchId,
+  periodKey,
+  closingValueNgn,
+  varianceNgn,
+  createdByUserId,
+  sourceIdSuffix,
+}) {
+  try {
+    ensureSupplementalGlAccounts(db);
+  } catch (e) {
+    return { ok: false, error: `Could not ensure GL accounts: ${String(e.message || e)}` };
+  }
+  const pk = String(periodKey || '').trim();
+  const bid = String(branchId || '').trim();
+  if (!pk || !bid) return { ok: false, error: 'periodKey and branchId required.' };
+  const closeVal = Math.round(Number(closingValueNgn) || 0);
+  const variance = Math.round(Number(varianceNgn) || 0);
+
+  if (variance === 0) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'no_net_variance',
+      closingValueNgn: closeVal,
+      varianceNgn: 0,
+      varianceJournalId: null,
+    };
+  }
+
+  const suffix = String(sourceIdSuffix || Date.now()).replace(/[^\w-]/g, '').slice(0, 40);
+  const varianceResult = tryPostInventoryVarianceJournal(db, {
+    entryDateISO,
+    amountNgn: Math.abs(variance),
+    direction: variance < 0 ? 'shortage' : 'surplus',
+    branchId: bid,
+    createdByUserId,
+    sourceId: `src-var-${bid}-${pk}-${suffix}`.slice(0, 120),
+    sourceKind: 'STOCK_REGISTER_VARIANCE_GL',
+    memo: `Stock register count variance ${bid} ${pk} · closing ₦${closeVal.toLocaleString('en-NG')} · variance ₦${variance}`,
+  });
+
+  return {
+    ok: varianceResult.ok !== false,
+    closingValueNgn: closeVal,
+    varianceNgn: variance,
+    varianceJournalId: varianceResult.journalId || null,
+    duplicate: varianceResult.duplicate || false,
+    skipped: varianceResult.skipped || false,
+    error: varianceResult.error,
+    results: { variance: varianceResult },
+  };
 }
 
 export function listGlAccounts(db) {

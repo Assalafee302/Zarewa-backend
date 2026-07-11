@@ -152,7 +152,7 @@ export function computeClearanceProgress(register, clearanceRaw) {
     adjusted,
     query,
     finishedPending,
-    complete: pending === 0 && finishedPending === 0,
+    complete: pending === 0 && finishedPending === 0 && query === 0,
   };
 }
 
@@ -180,6 +180,9 @@ export function validateBmApprove(register, clearanceRaw, adjustmentsRaw) {
   const progress = computeClearanceProgress(register, clearanceRaw);
   if (progress.pending > 0) blockers.push(`${progress.pending} line(s) still pending review.`);
   if (progress.finishedPending > 0) blockers.push(`${progress.finishedPending} finished coil(s) not confirmed.`);
+  if (progress.query > 0) {
+    blockers.push(`${progress.query} line(s) marked Query — resolve or return to store before approving.`);
+  }
 
   const clearance = parseLineClearance(clearanceRaw);
   const adj = adjustmentsRaw && typeof adjustmentsRaw === 'object' ? adjustmentsRaw : {};

@@ -29,6 +29,7 @@ import {
   purchasesReceivedRows,
 } from '../shared/lib/standardReportsPurchases.js';
 import { stockCoilAsAtRows } from '../shared/lib/standardReportsStock.js';
+import { isInventoryMovementType } from '../shared/lib/inventoryMovementTypes.js';
 import {
   advanceStockRegisterWorkflow,
   buildStockRegisterForBranch,
@@ -37,6 +38,7 @@ import {
   getStockRegisterWorkflow,
   listStockRegisterInbox,
   patchCoilStockForm,
+  reopenStockRegisterClosing,
   saveStockRegisterBmAdjustments,
   saveStockRegisterLineClearance,
   saveStockRegisterPrintSnapshot,
@@ -5074,6 +5076,23 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/stock-register/reopen', requireAuth, (req, res) => {
+    try {
+      const periodEnd = String(req.body?.periodEnd || req.body?.endDate || '').slice(0, 10);
+      const reason = String(req.body?.reason || '').trim();
+      const branchScope = resolveBootstrapBranchScope(req);
+      if (!periodEnd || branchScope === 'ALL') {
+        return res.status(400).json({ ok: false, error: 'periodEnd and branch workspace required.' });
+      }
+      const r = reopenStockRegisterClosing(db, branchScope, periodEnd, req.user, reason);
+      const status = r.ok ? 200 : String(r.error || '').includes('Only MD') ? 403 : 400;
+      res.status(status).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not reopen stock register.' });
+    }
+  });
+
   app.patch('/api/coil-lots/:coilNo/stock-form', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = patchCoilStockForm(db, req.params.coilNo, req.body?.stockForm ?? req.body?.stock_form, {
@@ -7100,8 +7119,12 @@ export function registerHttpApi(app, db) {
     try {
       const lim = req.query?.limit != null ? Number(req.query.limit) : 500;
       const branchScope = resolveBootstrapBranchScope(req);
-      const rows = listStockMovementsForProduct(db, req.params.productId, lim, branchScope);
-      res.json({ ok: true, movements: rows });
+      let rows = listStockMovementsForProduct(db, req.params.productId, lim, branchScope);
+      const inventoryOnly = String(req.query?.inventoryOnly ?? '1') !== '0';
+      if (inventoryOnly) {
+        rows = (rows || []).filter((r) => isInventoryMovementType(r?.type || r?.Type || ''));
+      }
+      res.json({ ok: true, movements: rows || [], inventoryOnly });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7173,7 +7196,16 @@ export function registerHttpApi(app, db) {
   });
 
   app.post('/api/inventory/adjust', requirePermission('inventory.adjust'), (req, res) => {
-    const { productID, type, qty, reasonCode, note, dateISO, acknowledgeCoilSkuDrift } = req.body || {};
+    const {
+      productID,
+      type,
+      qty,
+      reasonCode,
+      note,
+      dateISO,
+      acknowledgeCoilSkuDrift,
+      acknowledgeLargeAdjust,
+    } = req.body || {};
     const pg = assertProductIdInWorkspace(db, req, productID);
     if (!pg.ok) return res.status(pg.status).json({ ok: false, error: pg.error });
     if (!String(reasonCode || '').trim()) {
@@ -7206,6 +7238,18 @@ export function registerHttpApi(app, db) {
         });
       }
     }
+    if (acknowledgeLargeAdjust) {
+      if (
+        !userHasPermission(req.user, 'material_incidents.approve') &&
+        !userHasPermission(req.user, '*')
+      ) {
+        return res.status(403).json({
+          ok: false,
+          code: 'LARGE_ADJUST_FORBIDDEN',
+          error: 'Large stock adjustments require branch manager (or MD) acknowledgement.',
+        });
+      }
+    }
     const r = write.adjustStock(
       db,
       productID,
@@ -7214,9 +7258,14 @@ export function registerHttpApi(app, db) {
       reasonCode,
       note,
       dateISO,
-      req.workspaceBranchId || DEFAULT_BRANCH_ID
+      req.workspaceBranchId || DEFAULT_BRANCH_ID,
+      {
+        acknowledgeLargeAdjust: Boolean(acknowledgeLargeAdjust),
+        actorUserId: req.user?.id || req.user?.userId || null,
+      }
     );
-    res.status(r.ok ? 200 : 400).json(r);
+    const status = r.ok ? 200 : r.code === 'LARGE_ADJUST_CONFIRM' ? 409 : 400;
+    res.status(status).json(r);
   });
 
   app.post('/api/inventory/transfer-to-production', requirePermission('production.manage'), (req, res) => {

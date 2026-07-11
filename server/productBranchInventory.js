@@ -64,17 +64,23 @@ export function getProductStockLevelForBranch(db, productId, branchId) {
 }
 
 /**
- * Branch-scoped stock delta with accessory/stone negative allowance.
+ * Branch-scoped stock delta.
+ * Negatives are blocked by default. Pass `{ allowNegative: true }` only for known fulfilment paths
+ * that intentionally overdraw accessories/stone (legacy). Prefer preventing oversell.
  * @returns {boolean} whether a row was updated
  */
-export function adjustProductStockForBranch(db, productId, delta, branchId) {
+export function adjustProductStockForBranch(db, productId, delta, branchId, opts = {}) {
   const pid = String(productId || '').trim();
   if (!pid) return false;
   const row = getProductRowForWorkspace(db, pid, branchId);
   if (!row) return false;
   const pb = String(row.branch_id ?? '').trim();
   const raw = Number(row.stock_level) + Number(delta || 0);
-  const allowNegative = productAllowsNegativeStock(pid, row);
+  const allowNegative =
+    opts.allowNegative === true ||
+    (opts.allowNegative !== false &&
+      productAllowsNegativeStock(pid, row) &&
+      process.env.ZAREWA_BLOCK_NEGATIVE_STOCK !== '1');
   if (!allowNegative && raw < -1e-9) {
     throw new Error(
       `Insufficient stock for ${pid} (on hand ${Number(row.stock_level) || 0}, change ${Number(delta) || 0}).`
@@ -92,8 +98,8 @@ export function adjustProductStockForBranch(db, productId, delta, branchId) {
 /**
  * @returns {boolean} whether a row was updated
  */
-export function bumpProductStockLevel(db, productId, branchId, delta) {
-  return adjustProductStockForBranch(db, productId, delta, branchId);
+export function bumpProductStockLevel(db, productId, branchId, delta, opts = {}) {
+  return adjustProductStockForBranch(db, productId, delta, branchId, opts);
 }
 
 export function getProductRowForWorkspace(db, productId, workspaceBranchId) {

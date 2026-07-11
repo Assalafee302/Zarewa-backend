@@ -294,6 +294,49 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
     )
   );
 
+  /** Stock register lock is a separate ceremony from accounting period lock. */
+  try {
+    const branchForStock = branchScope && branchScope !== 'ALL' ? String(branchScope) : null;
+    if (branchForStock && db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='stock_register_periods'`).get()) {
+      const srp = db
+        .prepare(
+          `SELECT status, locked_at_iso FROM stock_register_periods WHERE branch_id = ? AND period_key = ?`
+        )
+        .get(branchForStock, b.periodKey);
+      const st = String(srp?.status || '');
+      const stockLocked = st === 'locked' || Boolean(srp?.locked_at_iso);
+      steps.push(
+        step(
+          stockLocked ? 'ok' : st === 'md_approved' ? 'warn' : 'warn',
+          'stock_register_lock',
+          'Stock register locked (branch)',
+          stockLocked
+            ? `Stock register locked for ${branchForStock} · ${b.periodKey}.`
+            : st
+              ? `Stock register status is “${st}” — capture & lock after MD approve (separate from books period lock).`
+              : `No stock register period for ${branchForStock} · ${b.periodKey} — run Operations/Reports month-end stock register.`,
+          'stock'
+        )
+      );
+    } else {
+      steps.push(
+        step(
+          'warn',
+          'stock_register_lock',
+          'Stock register locked (branch)',
+          branchForStock
+            ? 'Could not read stock register periods.'
+            : 'Select a branch workspace to check stock register lock (HQ roll-up cannot lock one register).',
+          'stock'
+        )
+      );
+    }
+  } catch {
+    steps.push(
+      step('warn', 'stock_register_lock', 'Stock register locked (branch)', 'Could not evaluate stock register status.', 'stock')
+    );
+  }
+
   let controlTieOut = null;
   if (light) {
     steps.push(

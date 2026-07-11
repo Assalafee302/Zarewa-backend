@@ -26,6 +26,7 @@ import {
   validateStoreChecklist,
 } from '../shared/lib/stockRegisterLineClearance.js';
 import { appendAuditLog } from './controlOps.js';
+import { tryPostStockRegisterClosingJournal } from './glOps.js';
 function newPeriodId() {
   return `SRP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
@@ -407,11 +408,59 @@ export function advanceStockRegisterWorkflow(db, branchId, periodKey, action, bo
 }
 
 /**
+ * Net ₦ variance from BM physical count overrides (adjusted − system book).
+ * Positive = surplus (count &gt; book); negative = shortage.
+ */
+function computeBmCountVarianceNgn(reg) {
+  let variance = 0;
+  for (const family of ['aluminium', 'aluzinc']) {
+    for (const g of reg?.coilSections?.[family]?.groups || []) {
+      for (const r of g.rows || []) {
+        if (!r?.bmAdjusted || r.closingKg == null) continue;
+        const book = Math.max(
+          0,
+          (Number(r.openingKg) || 0) + (Number(r.receivedKg) || 0) - (Number(r.usedKg) || 0)
+        );
+        const counted = Number(r.closingKg) || 0;
+        const uc = Number(r.unitCostNgnPerKg) || 0;
+        if (uc > 0 && Number.isFinite(counted) && Number.isFinite(book)) {
+          variance += Math.round((counted - book) * uc);
+        }
+      }
+    }
+  }
+  for (const g of reg?.stoneCoated?.groups || []) {
+    for (const r of g.rows || []) {
+      if (!r?.bmAdjusted) continue;
+      const book = Number(r.systemRemainingM ?? r.openingM ?? 0) || 0;
+      const counted = Number(r.remainingM) || 0;
+      const up = Number(r.unitPriceNgnPerM) || 0;
+      if (up > 0 && Number.isFinite(counted) && Number.isFinite(book)) {
+        variance += Math.round((counted - book) * up);
+      }
+    }
+  }
+  for (const r of reg?.accessories?.rows || []) {
+    if (!r?.bmAdjusted) continue;
+    const book = Number(r.systemBalance ?? r.openingBalance ?? 0) || 0;
+    const counted = Number(r.balance) || 0;
+    const up = Number(r.unitPriceNgn) || 0;
+    if (up > 0 && Number.isFinite(counted) && Number.isFinite(book)) {
+      variance += Math.round((counted - book) * up);
+    }
+  }
+  return Number.isFinite(variance) ? Math.round(variance) : 0;
+}
+
+/**
  * Capture closing coil lines after MD approval — feeds next month opening.
+ * Posts inventory count variance GL (5055↔1300) when BM adjustments change valued qty.
  */
 export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   const bid = String(branchId || '').trim();
+  if (!bid) return { ok: false, error: 'Branch workspace required.' };
   const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
+  if (!periodKey || !end) return { ok: false, error: 'Valid period end date required (YYYY-MM-DD).' };
   const row = getPeriodRow(db, bid, periodKey);
   if (!row) return { ok: false, error: 'Register period not found.' };
   const st = String(row.status);
@@ -422,7 +471,17 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   const built = buildPackWithPeriodContext(db, bid, end, { viewMode: 'finance' });
   if (!built.ok) return built;
   const reg = built.fullPack || built.register;
+  if (!reg || typeof reg !== 'object') {
+    return { ok: false, error: 'Could not build stock register pack for capture.' };
+  }
   const now = nowIso();
+  const closingValueNgn = Math.round(Number(reg?.summary?.totalClosingValueNgn) || 0);
+  let varianceNgn = 0;
+  try {
+    varianceNgn = computeBmCountVarianceNgn(reg);
+  } catch {
+    varianceNgn = 0;
+  }
 
   if (!tableReady(db, 'inventory_coil_snapshots')) {
     return { ok: false, error: 'Snapshot table missing; run migrations.' };
@@ -438,10 +497,13 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   );
 
   const allCoilRows = [
-    ...(reg.coilSections?.aluminium?.groups || []).flatMap((g) => g.rows),
-    ...(reg.coilSections?.aluzinc?.groups || []).flatMap((g) => g.rows),
+    ...(reg.coilSections?.aluminium?.groups || []).flatMap((g) => g.rows || []),
+    ...(reg.coilSections?.aluzinc?.groups || []).flatMap((g) => g.rows || []),
   ];
 
+  /** GL must not block operational lock (e.g. accounting period already locked). */
+  let glResult = { ok: true, skipped: true, reason: 'pending' };
+  let glWarning = null;
   db.transaction(() => {
     db.prepare(`DELETE FROM inventory_coil_snapshots WHERE as_at_iso = ? AND branch_id = ?`).run(end, bid);
     const ins = db.prepare(
@@ -459,20 +521,20 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
           bid,
           line.coilNo,
           0,
-          line.colourAbbrev,
-          line.gaugeLabel,
+          line.colourAbbrev ?? null,
+          line.gaugeLabel ?? null,
           line.materialFamily === 'aluzinc' ? 'Aluzinc' : 'Aluminium',
           null,
           null,
           null,
-          line.unitCostNgnPerKg,
+          line.unitCostNgnPerKg != null ? Number(line.unitCostNgnPerKg) : null,
           now,
-          line.openingKg,
-          line.receivedKg,
-          line.usedKg,
-          line.stockForm,
+          Number(line.openingKg) || 0,
+          Number(line.receivedKg) || 0,
+          Number(line.usedKg) || 0,
+          line.stockForm ?? null,
           1,
-          line.remarkSuggested || ''
+          String(line.remarkSuggested || '').slice(0, 500)
         );
         continue;
       }
@@ -483,21 +545,21 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
         end,
         bid,
         line.coilNo,
-        line.closingKg,
-        line.colourAbbrev,
-        line.gaugeLabel,
+        Number(line.closingKg) || 0,
+        line.colourAbbrev ?? null,
+        line.gaugeLabel ?? null,
         line.materialFamily === 'aluzinc' ? 'Aluzinc' : 'Aluminium',
         lot?.product_id || null,
         lot?.po_id || null,
         lot?.supplier_name || null,
-        line.unitCostNgnPerKg,
+        line.unitCostNgnPerKg != null ? Number(line.unitCostNgnPerKg) : null,
         now,
-        line.openingKg,
-        line.receivedKg,
-        line.usedKg,
-        line.stockForm,
+        Number(line.openingKg) || 0,
+        Number(line.receivedKg) || 0,
+        Number(line.usedKg) || 0,
+        line.stockForm ?? null,
         0,
-        line.remarkSuggested || ''
+        String(line.remarkSuggested || '').slice(0, 500)
       );
     }
 
@@ -509,21 +571,57 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
       );
       for (const g of reg.stoneCoated?.groups || []) {
         for (const r of g.rows || []) {
-          pins.run(end, bid, r.productID, 'stone', r.remainingM, now);
+          if (!r?.productID) continue;
+          pins.run(end, bid, r.productID, 'stone', Number(r.remainingM) || 0, now);
         }
       }
       for (const r of reg.accessories?.rows || []) {
         for (const pid of r.productIds || []) {
+          if (!pid) continue;
           const p = getProductRowForWorkspace(db, pid, bid);
           pins.run(end, bid, pid, 'accessory', Number(p?.stock_level) || 0, now);
         }
       }
     }
 
+    const captureToken = now.replace(/[^\d]/g, '').slice(0, 14);
+    glResult = tryPostStockRegisterClosingJournal(db, {
+      entryDateISO: end,
+      branchId: bid,
+      periodKey,
+      closingValueNgn,
+      varianceNgn,
+      createdByUserId: actor?.id || actor?.userId || null,
+      sourceIdSuffix: captureToken,
+    });
+    if (glResult.ok === false) {
+      glWarning = glResult.error || 'Variance journal could not post; stock snapshots still locked.';
+      glResult = {
+        ok: true,
+        skipped: true,
+        reason: 'gl_failed_non_blocking',
+        error: glWarning,
+        varianceJournalId: null,
+        closingValueNgn,
+        varianceNgn,
+      };
+    }
+
+    const lockedReg = {
+      ...reg,
+      closingMeta: {
+        closingValueNgn,
+        varianceNgn,
+        varianceJournalId: glResult.varianceJournalId || null,
+        glSkipped: Boolean(glResult.skipped),
+        glWarning: glWarning || null,
+        capturedAtISO: now,
+      },
+    };
     upsertPeriodRow(db, bid, periodKey, end, {
       status: 'locked',
       locked_at_iso: now,
-      register_json: JSON.stringify(reg),
+      register_json: JSON.stringify(lockedReg),
     });
   })();
 
@@ -533,7 +631,13 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
     entityKind: 'stock_register_period',
     entityId: `${bid}:${periodKey}`,
     note: `Captured closing stock for ${periodKey}`,
-    details: { coilLineCount: allCoilRows.length },
+    details: {
+      coilLineCount: allCoilRows.length,
+      closingValueNgn,
+      varianceNgn,
+      varianceJournalId: glResult.varianceJournalId || null,
+      glWarning: glWarning || null,
+    },
   });
 
   return {
@@ -541,8 +645,54 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
     periodKey,
     periodEndIso: end,
     coilLineCount: allCoilRows.length,
+    closingValueNgn,
+    varianceNgn,
+    varianceJournalId: glResult.varianceJournalId || null,
+    glWarning: glWarning || null,
     workflow: mapPeriodRow(getPeriodRow(db, bid, periodKey)),
   };
+}
+
+/**
+ * Controlled reopen of a locked stock register (MD/admin). Does not delete snapshots;
+ * returns status to md_approved so capture can run again after corrections.
+ */
+export function reopenStockRegisterClosing(db, branchId, periodEndIso, actor, reason) {
+  const bid = String(branchId || '').trim();
+  const why = String(reason || '').trim();
+  if (!bid) return { ok: false, error: 'Branch workspace required.' };
+  if (why.length < 8) {
+    return { ok: false, error: 'A reopen reason of at least 8 characters is required.' };
+  }
+  const { periodKey, end } = periodBoundsFromEndDate(periodEndIso);
+  if (!periodKey || !end) return { ok: false, error: 'Valid period end date required (YYYY-MM-DD).' };
+
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  const perms = Array.isArray(actor?.permissions) ? actor.permissions : [];
+  const mayReopen =
+    isExecutiveRoleKey(rk) || rk === 'admin' || rk === 'md' || perms.includes('*');
+  if (!mayReopen) {
+    return { ok: false, error: 'Only MD or admin can reopen a locked stock register.' };
+  }
+  const row = getPeriodRow(db, bid, periodKey);
+  if (!row) return { ok: false, error: 'Register period not found.' };
+  if (String(row.status) !== 'locked') {
+    return { ok: false, error: 'Only a locked register can be reopened.' };
+  }
+  const now = nowIso();
+  upsertPeriodRow(db, bid, periodKey, end, {
+    status: 'md_approved',
+    locked_at_iso: null,
+  });
+  appendAuditLog(db, {
+    actor,
+    action: 'stock_register.reopen',
+    entityKind: 'stock_register_period',
+    entityId: `${bid}:${periodKey}`,
+    note: why.slice(0, 500),
+    details: { previousStatus: 'locked', reopenedAtISO: now },
+  });
+  return { ok: true, workflow: mapPeriodRow(getPeriodRow(db, bid, periodKey)) };
 }
 
 export function patchCoilStockForm(db, coilNo, stockForm, opts = {}) {

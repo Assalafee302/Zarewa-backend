@@ -398,6 +398,14 @@ export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundI
   return roundMoney(row?.s ?? 0);
 }
 
+function refundRequestIsOverpaymentOnly(categories) {
+  const cats = (Array.isArray(categories) ? categories : [])
+    .map((c) => String(c || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!cats.length) return false;
+  return cats.every((c) => c.includes('overpay'));
+}
+
 /**
  * Shared financial guards for refund approve and payout (live preview caps, economic floor, stale detection).
  */
@@ -454,8 +462,10 @@ export function validateRefundFinancialGuards(db, opts = {}) {
 
   const economicFloor = preview.preview?.economicFloor ?? null;
   const producedM = Number(economicFloor?.producedOutputMeters || 0);
+  const overpaymentOnly = refundRequestIsOverpaymentOnly(reasonCategories);
 
-  if (economicFloor?.incompleteFloorPricing && producedM > 0.001) {
+  // Overpayment is cash above quote total — not gated by workbook floor pricing of produced metres.
+  if (!overpaymentOnly && economicFloor?.incompleteFloorPricing && producedM > 0.001) {
     if (!actorMayBypassIncompleteRefundFloor(actor, hasPermission) && !floorOverrideHonoured) {
       return {
         ok: false,
@@ -470,6 +480,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   }
 
   if (
+    !overpaymentOnly &&
     !floorOverrideHonoured &&
     economicFloor?.maxDefensibleRefundNgn != null &&
     amt > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
@@ -492,7 +503,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
     cashInNgn: quotationCashInNgn(db, ref),
     totalRefundedNgn: totalRefundedExcluding,
-    economicFloor,
+    economicFloor: overpaymentOnly ? null : economicFloor,
   });
   const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
 
@@ -2518,7 +2529,12 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           payload.economicFloorOverrideNote ??
           ''
       ).trim();
-      if (economicFloorAtCreate?.incompleteFloorPricing && producedAtCreate > 0.001) {
+      const overpaymentOnlyAtCreate = refundRequestIsOverpaymentOnly(requestedCats);
+      if (
+        !overpaymentOnlyAtCreate &&
+        economicFloorAtCreate?.incompleteFloorPricing &&
+        producedAtCreate > 0.001
+      ) {
         if (!mayBypassFloor) {
           return {
             ok: false,
@@ -2528,9 +2544,26 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
             )} m produced. Resolve material workbook pricing or escalate to MD/CEO before creating this refund.`,
           };
         }
+        if (floorOverrideNote.length < 10) {
+          return {
+            ok: false,
+            code: 'REFUND_INCOMPLETE_FLOOR_PRICING',
+            error:
+              'Workbook floor ₦/m could not be resolved for produced jobs. MD/admin must enter an override note (min 10 characters) to create this refund — it will carry through approval and payout.',
+          };
+        }
+        economicFloorOverrideAtCreate = {
+          used: true,
+          note: floorOverrideNote,
+          amountNgn,
+          maxDefensibleAtCreate: null,
+          incompleteFloorPricing: true,
+          atISO: nowIso(),
+        };
       }
       const maxDefensibleAtCreate = economicFloorAtCreate?.maxDefensibleRefundNgn;
       if (
+        !overpaymentOnlyAtCreate &&
         maxDefensibleAtCreate != null &&
         Number.isFinite(Number(maxDefensibleAtCreate)) &&
         amountNgn > Number(maxDefensibleAtCreate) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
@@ -2568,7 +2601,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
         cashInNgn: elig.cashInNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
-        economicFloor: economicFloorAtCreate,
+        economicFloor: overpaymentOnlyAtCreate ? null : economicFloorAtCreate,
       });
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,

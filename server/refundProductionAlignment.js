@@ -299,52 +299,52 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
         ...clIssue,
       });
     }
-  }
 
-  const METRE_TOL = 0.5;
-  const { isStoneMeterQuote } = sumJobMeters(db, jobs, quote);
-  const quotedRoofingM = isStoneMeterQuote
-    ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
-    : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
-  const producedM = Number(effectiveProduced) || 0;
-  if (quotedRoofingM > 0.001 && producedM > quotedRoofingM + METRE_TOL) {
-    issues.push({
-      code: 'produced_exceeds_quotation',
-      severity: 'error',
-      title: 'Production exceeds quotation',
-      message: `Produced output (${producedM.toFixed(2)} m) exceeds quoted roofing (${quotedRoofingM.toFixed(2)} m) by ${(
-        producedM - quotedRoofingM
-      ).toFixed(2)} m. Verify production records before refund.`,
-    });
-  }
+    const METRE_TOL = 0.5;
+    const { isStoneMeterQuote } = sumJobMeters(db, jobs, quote);
+    const quotedRoofingM = isStoneMeterQuote
+      ? quotedRoofingSheetMetresFromLines(quote?.lines_json ?? '')
+      : quotedCoilSheetPoolMetresFromLines(quote?.lines_json ?? '');
+    const producedM = Number(effectiveProduced) || 0;
+    if (quotedRoofingM > 0.001 && producedM > quotedRoofingM + METRE_TOL) {
+      issues.push({
+        code: 'produced_exceeds_quotation',
+        severity: 'error',
+        title: 'Production exceeds quotation',
+        message: `Produced output (${producedM.toFixed(2)} m) exceeds quoted roofing (${quotedRoofingM.toFixed(2)} m) by ${(
+          producedM - quotedRoofingM
+        ).toFixed(2)} m. Verify production records before refund.`,
+      });
+    }
 
-  const clAssessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
-  const cuttingListM = Number(clAssessment?.cuttingListTotalM) || 0;
-  if (cuttingListM > 0.001 && producedM > cuttingListM + METRE_TOL) {
-    issues.push({
-      code: 'produced_exceeds_cutting_list',
-      severity: 'error',
-      title: 'Production exceeds cutting list',
-      message: `Produced output (${producedM.toFixed(2)} m) exceeds cutting list total (${cuttingListM.toFixed(2)} m) by ${(
-        producedM - cuttingListM
-      ).toFixed(2)} m. Verify production records before refund.`,
-    });
-  }
-  if (
-    hasCompleted &&
-    cuttingListM > 0.001 &&
-    producedM > 0.001 &&
-    cuttingListM > producedM + METRE_TOL &&
-    !currentHasUnproduced
-  ) {
-    issues.push({
-      code: 'cutting_list_exceeds_produced',
-      severity: 'warning',
-      title: 'Cutting list exceeds production',
-      message: `Cutting list total (${cuttingListM.toFixed(2)} m) exceeds produced output (${producedM.toFixed(2)} m) by ${(
-        cuttingListM - producedM
-      ).toFixed(2)} m. Confirm unfinished metres (Unproduced meterage) or correct the cutting list before refund.`,
-    });
+    const clAssessment = assessQuotationCuttingListConsumptionForRef(db, quotationRef);
+    const cuttingListM = Number(clAssessment?.cuttingListTotalM) || 0;
+    if (cuttingListM > 0.001 && producedM > cuttingListM + METRE_TOL) {
+      issues.push({
+        code: 'produced_exceeds_cutting_list',
+        severity: 'error',
+        title: 'Production exceeds cutting list',
+        message: `Produced output (${producedM.toFixed(2)} m) exceeds cutting list total (${cuttingListM.toFixed(2)} m) by ${(
+          producedM - cuttingListM
+        ).toFixed(2)} m. Verify production records before refund.`,
+      });
+    }
+    if (
+      hasCompleted &&
+      cuttingListM > 0.001 &&
+      producedM > 0.001 &&
+      cuttingListM > producedM + METRE_TOL &&
+      !currentHasUnproduced
+    ) {
+      issues.push({
+        code: 'cutting_list_exceeds_produced',
+        severity: 'warning',
+        title: 'Cutting list exceeds production',
+        message: `Cutting list total (${cuttingListM.toFixed(2)} m) exceeds produced output (${producedM.toFixed(2)} m) by ${(
+          cuttingListM - producedM
+        ).toFixed(2)} m. Confirm unfinished metres (Unproduced meterage) or correct the cutting list before refund.`,
+      });
+    }
   }
 
   return issues;

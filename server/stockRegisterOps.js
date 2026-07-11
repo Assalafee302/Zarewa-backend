@@ -453,7 +453,8 @@ function computeBmCountVarianceNgn(reg) {
 }
 
 /**
- * Capture closing coil lines after MD approval — feeds next month opening.
+ * Capture closing coil lines after procurement costing — feeds next month opening.
+ * Accepts procurement_costed (current) or md_approved (legacy in-flight periods).
  * Posts inventory count variance GL (5055↔1300) when BM adjustments change valued qty.
  */
 export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
@@ -464,8 +465,11 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
   const row = getPeriodRow(db, bid, periodKey);
   if (!row) return { ok: false, error: 'Register period not found.' };
   const st = String(row.status);
-  if (st !== 'md_approved') {
-    return { ok: false, error: 'MD approval required before capturing closing stock.' };
+  if (st !== 'procurement_costed' && st !== 'md_approved') {
+    return {
+      ok: false,
+      error: 'Procurement costing must be saved before capturing closing stock.',
+    };
   }
 
   const built = buildPackWithPeriodContext(db, bid, end, { viewMode: 'finance' });
@@ -655,7 +659,7 @@ export function captureStockRegisterClosing(db, branchId, periodEndIso, actor) {
 
 /**
  * Controlled reopen of a locked stock register (MD/admin). Does not delete snapshots;
- * returns status to md_approved so capture can run again after corrections.
+ * returns status to procurement_costed so capture can run again after corrections.
  */
 export function reopenStockRegisterClosing(db, branchId, periodEndIso, actor, reason) {
   const bid = String(branchId || '').trim();
@@ -681,7 +685,7 @@ export function reopenStockRegisterClosing(db, branchId, periodEndIso, actor, re
   }
   const now = nowIso();
   upsertPeriodRow(db, bid, periodKey, end, {
-    status: 'md_approved',
+    status: 'procurement_costed',
     locked_at_iso: null,
   });
   appendAuditLog(db, {
@@ -867,9 +871,10 @@ export function listStockRegisterInbox(db, branchId, queue = 'manager') {
   if (!tableReady(db, 'stock_register_periods')) return { ok: true, items: [] };
   let statuses;
   if (queue === 'procurement') statuses = ['bm_approved'];
-  else if (queue === 'md') statuses = ['procurement_costed'];
-  else if (queue === 'capture') statuses = ['md_approved'];
+  else if (queue === 'md') statuses = []; // MD gate removed from stock register ceremony
+  else if (queue === 'capture') statuses = ['procurement_costed', 'md_approved'];
   else statuses = ['store_confirmed'];
+  if (!statuses.length) return { ok: true, items: [] };
   const placeholders = statuses.map(() => '?').join(',');
   const rows = db
     .prepare(

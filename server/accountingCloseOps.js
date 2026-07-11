@@ -307,13 +307,13 @@ export function buildMonthEndCloseChecklist(db, periodKey, branchScope = 'ALL', 
       const stockLocked = st === 'locked' || Boolean(srp?.locked_at_iso);
       steps.push(
         step(
-          stockLocked ? 'ok' : st === 'md_approved' ? 'warn' : 'warn',
+          stockLocked ? 'ok' : st === 'procurement_costed' || st === 'md_approved' ? 'warn' : 'warn',
           'stock_register_lock',
           'Stock register locked (branch)',
           stockLocked
             ? `Stock register locked for ${branchForStock} · ${b.periodKey}.`
             : st
-              ? `Stock register status is “${st}” — capture & lock after MD approve (separate from books period lock).`
+              ? `Stock register status is “${st}” — capture & lock after procurement costing (separate from books period lock).`
               : `No stock register period for ${branchForStock} · ${b.periodKey} — run Operations/Reports month-end stock register.`,
           'stock'
         )

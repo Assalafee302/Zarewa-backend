@@ -24,6 +24,7 @@ import {
   userMayRejectStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
 import { categoryForWorkItem } from '../shared/lib/workspaceCategoryRegistry.js';
+import { userMayReviewPaymentRequests } from '../shared/workspaceGovernance.js';
 import {
   isConfidentialLevel,
   userCanSeeOfficeThreadRow,
@@ -156,7 +157,10 @@ export function userMayDecideWorkItem(user, row, opts = {}) {
   if (docType === 'staff_purchase_credit') {
     return userMayApproveStaffPurchaseCredit(user);
   }
-  if (docType === 'payment_request' || docType === 'po_transport_payment' || docType === 'bank_recon_exceptions') {
+  if (docType === 'payment_request') {
+    return userMayReviewPaymentRequests(user, (perm) => userHasPermission(user, perm));
+  }
+  if (docType === 'po_transport_payment' || docType === 'bank_recon_exceptions') {
     return userHasPermission(user, 'finance.approve');
   }
   return userMatchesWorkItemOfficeAudience(user, row);

@@ -235,6 +235,7 @@ import {
 } from './controlOps.js';
 import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
 import { buildExpenseCategoryMetaForActor } from '../shared/expenseCategoryPolicy.js';
+import { userMayReviewPaymentRequests } from '../shared/workspaceGovernance.js';
 import { buildExpenseCategoryExceptionReport, buildExpenseCategoryExceptionCsv, buildExpenseCategoryMonthlyAlert, buildExpenseCategoryOthersTrendReport } from './expenseCategoryReportOps.js';
 import { suggestExpenseCategoryForActor } from '../shared/lib/expenseCategorySuggestions.js';
 import {
@@ -9127,8 +9128,11 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/payment-requests/:requestId/decision', requirePermission('finance.approve'), (req, res) => {
+  app.post('/api/payment-requests/:requestId/decision', requireAuth, (req, res) => {
     try {
+      if (!userMayReviewPaymentRequests(req.user, (perm) => userHasPermission(req.user, perm))) {
+        return res.status(403).json({ ok: false, error: 'Forbidden' });
+      }
       const r = decidePaymentRequest(db, req.params.requestId, req.body || {}, req.user);
       if (r.ok) {
         const outcome = String(req.body?.status || '').trim() || 'reviewed';

@@ -7,6 +7,7 @@ import {
   isRefundLikeExpenseCategory,
   isExecutiveRoleKey,
   isBranchExpenseApproverRoleKey,
+  userMayReviewPaymentRequests,
 } from './workspaceGovernance.js';
 
 describe('workspaceGovernance', () => {
@@ -65,13 +66,13 @@ describe('workspaceGovernance', () => {
     const hi = EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi, 'fuel')).toBe(true);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'md' }, hasFinance, hi, 'fuel')).toBe(true);
-    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, () => false, hi, 'fuel')).toBe(false);
+    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, () => false, hi, 'fuel')).toBe(true);
   });
 
   it('requires executive above expense threshold', () => {
     const hasFinance = (p) => p === 'finance.approve';
     const hi = EXPENSE_MD_APPROVAL_THRESHOLD_NGN;
-    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi + 1, 'fuel')).toBe(true);
+    expect(actorMayApprovePaymentRequestAmount({ roleKey: 'sales_manager' }, hasFinance, hi + 1, 'fuel')).toBe(false);
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'md' }, hasFinance, hi + 1, 'fuel')).toBe(true);
   });
 
@@ -81,5 +82,11 @@ describe('workspaceGovernance', () => {
     expect(actorMayApprovePaymentRequestAmount({ roleKey: 'finance_manager' }, hasFinance, hi + 1, 'customer_refund')).toBe(
       true
     );
+  });
+
+  it('allows branch manager to enter payment-request review flow without finance.approve', () => {
+    expect(userMayReviewPaymentRequests({ roleKey: 'sales_manager' }, () => false)).toBe(true);
+    expect(userMayReviewPaymentRequests({ roleKey: 'sales_staff' }, () => false)).toBe(false);
+    expect(userMayReviewPaymentRequests({ roleKey: 'finance_manager' }, (p) => p === 'finance.approve')).toBe(true);
   });
 });

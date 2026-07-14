@@ -98,6 +98,21 @@ export function isExecutiveRoleKey(roleKey) {
 }
 
 /**
+ * True when the actor may open the payment-request approval flow at all.
+ * Specific category and amount checks remain enforced separately.
+ * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function userMayReviewPaymentRequests(actor, hasPermission) {
+  if (hasPermission('*')) return true;
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (rk === 'admin') return true;
+  if (isExecutiveRoleKey(rk)) return true;
+  if (isBranchManagerApprovalAuthority(rk)) return true;
+  return hasPermission('finance.approve');
+}
+
+/**
  * Expense / payment-request categories that are excluded from the general-expense MD threshold
  * (refunds are governed separately via refund threshold).
  * @param {string | null | undefined} expenseCategory
@@ -141,8 +156,8 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
 /**
  * True when actor may approve a non-refund-like payment request of this amount.
  * Finance manager / cashier with finance.approve may approve any amount.
- * Branch manager with finance.approve may approve any amount.
- * Above expense threshold for other roles: executive (or admin) with finance.approve.
+ * Branch manager may approve routine branch expenses up to the configured threshold.
+ * Above the threshold: executive (or admin) approval is required.
  * @param {{ roleKey?: string } | null | undefined} actor
  * @param {(perm: string) => boolean} hasPermission
  * @param {number} amountRequestedNgn
@@ -164,8 +179,9 @@ export function actorMayApprovePaymentRequestAmount(
   if (hasPermission('*')) return true;
   const rk = String(actor?.roleKey || '').trim().toLowerCase();
   if (rk === 'admin') return true;
+  if (isBranchManagerApprovalAuthority(rk)) return amt <= expenseT;
+  if (isExecutiveRoleKey(rk)) return true;
   if (!hasPermission('finance.approve')) return false;
-  if (isBranchManagerApprovalAuthority(rk)) return true;
   if (isFinanceDeskApproverRoleKey(rk)) return true;
   if (amt > expenseT) {
     return isExecutiveRoleKey(rk);

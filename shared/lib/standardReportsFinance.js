@@ -63,39 +63,41 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
   for (const r of refunds || []) {
     const id = String(r.refundID ?? r.refund_id ?? '').trim();
     const hist = Array.isArray(r.payoutHistory) ? r.payoutHistory : [];
-    if (hist.length > 0) {
-      for (const p of hist) {
-        const iso = toIsoDate(p.postedAtISO);
-        if (!iso) continue;
-        if (startDate && iso < startDate) continue;
-        if (endDate && iso > endDate) continue;
+    let linesFromHistory = 0;
+    for (const p of hist) {
+      const iso = toIsoDate(p.postedAtISO || p.posted_at_iso || p.paidAtISO || p.atISO);
+      if (!iso) continue;
+      if (startDate && iso < startDate) continue;
+      if (endDate && iso > endDate) continue;
+      const amountNgn = Math.round(Number(p.amountNgn) || 0);
+      if (amountNgn <= 0) continue;
+      linesFromHistory += 1;
+      paidInPeriod.push({
+        payoutDateISO: iso,
+        refundIdDisplay: displayDocNumber(id) || '—',
+        refundIdFull: id || '—',
+        customer: String(r.customer || '').trim() || '—',
+        quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
+        amountNgn,
+        bankAccount: String(p.accountName || '').trim() || '—',
+        reference: String(p.reference || '').trim() || '—',
+      });
+    }
+    if (linesFromHistory > 0) continue;
+    const iso = toIsoDate(r.paidAtISO || r.paid_at_iso);
+    if (iso && (!startDate || iso >= startDate) && (!endDate || iso <= endDate)) {
+      const paid = Math.round(Number(r.paidAmountNgn) || 0);
+      if (paid > 0) {
         paidInPeriod.push({
           payoutDateISO: iso,
           refundIdDisplay: displayDocNumber(id) || '—',
           refundIdFull: id || '—',
           customer: String(r.customer || '').trim() || '—',
           quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
-          amountNgn: Math.round(Number(p.amountNgn) || 0),
-          bankAccount: String(p.accountName || '').trim() || '—',
-          reference: String(p.reference || '').trim() || '—',
+          amountNgn: paid,
+          bankAccount: '—',
+          reference: String(r.paymentNote || '').trim() || '—',
         });
-      }
-    } else {
-      const iso = toIsoDate(r.paidAtISO);
-      if (iso && (!startDate || iso >= startDate) && (!endDate || iso <= endDate)) {
-        const paid = Math.round(Number(r.paidAmountNgn) || 0);
-        if (paid > 0) {
-          paidInPeriod.push({
-            payoutDateISO: iso,
-            refundIdDisplay: displayDocNumber(id) || '—',
-            refundIdFull: id || '—',
-            customer: String(r.customer || '').trim() || '—',
-            quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
-            amountNgn: paid,
-            bankAccount: '—',
-            reference: String(r.paymentNote || '').trim() || '—',
-          });
-        }
       }
     }
   }

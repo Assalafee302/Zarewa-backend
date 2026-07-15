@@ -193,4 +193,18 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.expectedTotalM).toBe(gutterBlank);
     expect(assessment.clFlatsheetM).toBe(gutterBlank);
   });
+
+  it('stoneMeterQuote flag still aligns coil when linesJson omits materialTypeId', () => {
+    const lines = {
+      products: [{ name: 'Gutter', qty: 12, girthMm: 400 }],
+    };
+    const gutterBlank = finishedTrimMetresToBlankMetres(12, 400);
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [{ lineType: 'Flatsheet', sheets: 1, lengthM: gutterBlank }],
+      stoneMeterQuote: true,
+    });
+    expect(assessment.ok).toBe(true);
+    expect(assessment.expectedTotalM).toBe(gutterBlank);
+  });
 });

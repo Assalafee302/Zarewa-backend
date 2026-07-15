@@ -167,6 +167,12 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     expect(quotationRequiresStoneCoilCuttingListAlignment(lines)).toBe(true);
   });
 
+  it('stoneMeterQuote override still detects coil lines when materialTypeId is omitted', () => {
+    const lines = { products: [{ name: 'Gutter', qty: '20' }] };
+    expect(quotationRequiresStoneCoilCuttingListAlignment(lines)).toBe(false);
+    expect(quotationRequiresStoneCoilCuttingListAlignment(lines, { stoneMeterQuote: true })).toBe(true);
+  });
+
   it('roofing + stone flatsheet quotes still require stone metre consumption', () => {
     const lines = {
       materialTypeId: 'MAT-005',

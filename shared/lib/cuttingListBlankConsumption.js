@@ -275,7 +275,10 @@ export function assessCuttingListQuotationConsumption({
   const warnings = [];
 
   /* SF-only / ridge-barge-only stone quotes: CL may record SF sheet counts — skip coil metre gate. */
-  if (stoneMeterQuote && !quotationRequiresStoneCoilCuttingListAlignment(quotationLinesJson)) {
+  if (
+    stoneMeterQuote &&
+    !quotationRequiresStoneCoilCuttingListAlignment(quotationLinesJson, { stoneMeterQuote: true })
+  ) {
     if (quotedTrimFinishedMetresFromProducts(quotationLinesJson, { stoneMeterQuote: false }) > 0) {
       warnings.push(
         'Stone-coated quote: ridge/bargeboard are cut from stone flatsheet (extra sheets) — do not add them as coil trim blank. Enter SF sheet counts on the cutting list; gutter/normal flatsheet (if any) go under Flatsheet metres.'

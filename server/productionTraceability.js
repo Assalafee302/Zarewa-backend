@@ -1634,7 +1634,9 @@ function applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, s
   let requiresStoneMetres = false;
   if (qRow?.lines_json) {
     try {
-      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json);
+      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
+        stoneMeterQuote: true,
+      });
     } catch {
       requiresStoneMetres = false;
     }
@@ -1700,7 +1702,9 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   let requiresStoneMetres = false;
   if (qRow?.lines_json) {
     try {
-      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json);
+      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
+        stoneMeterQuote: true,
+      });
     } catch {
       requiresStoneMetres = false;
     }

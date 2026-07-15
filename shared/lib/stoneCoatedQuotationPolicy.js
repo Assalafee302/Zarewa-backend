@@ -330,11 +330,22 @@ export function quotationHasStoneFlatsheetDemandLines(products) {
 }
 
 /**
+ * @param {object | string | null | undefined} linesJson
+ * @param {{ stoneMeterQuote?: boolean } | undefined} opts
+ *   When `stoneMeterQuote` is true, treat as stone even if linesJson omits materialTypeId
+ *   (caller already classified the job from quotation header / master data).
+ */
+function treatLinesAsStoneMeterQuote(linesJson, opts) {
+  return opts?.stoneMeterQuote === true || quotationIsStoneMeterQuote(linesJson);
+}
+
+/**
  * Whether completing production should consume stone-coated metre stock (vs stone flatsheet / coil only).
  * @param {object | string | null | undefined} linesJson
+ * @param {{ stoneMeterQuote?: boolean } | undefined} [opts]
  */
-export function quotationRequiresStoneMetreConsumption(linesJson) {
-  if (!quotationIsStoneMeterQuote(linesJson)) return false;
+export function quotationRequiresStoneMetreConsumption(linesJson, opts) {
+  if (!treatLinesAsStoneMeterQuote(linesJson, opts)) return false;
   return quotationHasStoneMetreProductLines(parseLinesJsonProducts(linesJson));
 }
 
@@ -342,18 +353,20 @@ export function quotationRequiresStoneMetreConsumption(linesJson) {
  * Whether cutting-list coil metre alignment applies (gutter / normal flatsheet on stone quotes).
  * SF-only and ridge/barge-only stone quotes skip the roofing↔CL metre gate.
  * @param {object | string | null | undefined} linesJson
+ * @param {{ stoneMeterQuote?: boolean } | undefined} [opts]
  */
-export function quotationRequiresStoneCoilCuttingListAlignment(linesJson) {
-  if (!quotationIsStoneMeterQuote(linesJson)) return false;
+export function quotationRequiresStoneCoilCuttingListAlignment(linesJson, opts) {
+  if (!treatLinesAsStoneMeterQuote(linesJson, opts)) return false;
   return quotationHasStoneCoilBackedProductLines(parseLinesJsonProducts(linesJson));
 }
 
 /**
  * Whether production should consume stone flatsheet stock (sold SF and/or ridge/barge yield).
  * @param {object | string | null | undefined} linesJson
+ * @param {{ stoneMeterQuote?: boolean } | undefined} [opts]
  */
-export function quotationRequiresStoneFlatsheetConsumption(linesJson) {
-  if (!quotationIsStoneMeterQuote(linesJson)) return false;
+export function quotationRequiresStoneFlatsheetConsumption(linesJson, opts) {
+  if (!treatLinesAsStoneMeterQuote(linesJson, opts)) return false;
   return quotationHasStoneFlatsheetDemandLines(parseLinesJsonProducts(linesJson));
 }
 

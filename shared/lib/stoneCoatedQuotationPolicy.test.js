@@ -9,6 +9,7 @@ import {
   quotationHasFlatSheetLine,
   quotationHasStoneMetreProductLines,
   quotationRequiresStoneCoilCuttingListAlignment,
+  quotationRequiresStoneFlatsheetConsumption,
   quotationRequiresStoneMetreConsumption,
   resolveStoneFlatsheetLengthM,
   stoneBargeboardMetresPerSheet,
@@ -151,14 +152,24 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     ).toBe(false);
   });
 
+  it('regular non-stone bargeboard does not trigger stone flatsheet consumption', () => {
+    expect(
+      quotationRequiresStoneFlatsheetConsumption({
+        materialTypeId: 'MAT-002',
+        products: [{ name: 'Bargeboard', qty: '11.4' }],
+      })
+    ).toBe(false);
+  });
+
   it('gutter alone requires coil CL alignment but not stone metres', () => {
-    const lines = { products: [{ name: 'Gutter', qty: '20' }] };
+    const lines = { materialTypeId: 'MAT-005', products: [{ name: 'Gutter', qty: '20' }] };
     expect(quotationRequiresStoneMetreConsumption(lines)).toBe(false);
     expect(quotationRequiresStoneCoilCuttingListAlignment(lines)).toBe(true);
   });
 
   it('roofing + stone flatsheet quotes still require stone metre consumption', () => {
     const lines = {
+      materialTypeId: 'MAT-005',
       products: [
         { name: 'Roofing Sheet', qty: '100' },
         { name: 'Stone flatsheet', qty: '24', stoneFlatsheetLengthM: 2 },

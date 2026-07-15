@@ -44,9 +44,13 @@ function skipMaterialCompareToCoil(expectedMaterialType) {
  * @param {Record<string, unknown> | null | undefined} quotation
  */
 export function firstPrimaryProductNameFromQuotation(quotation) {
-  const prods = quotation?.quotationLines?.products;
-  if (!Array.isArray(prods) || prods.length === 0) return '';
-  return String(prods[0]?.name ?? '').trim();
+  const named = String(quotation?.materialTypeName ?? quotation?.material_type_name ?? '').trim();
+  if (named) return named;
+  const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
+  if (mid === 'MAT-001') return 'Aluminium';
+  if (mid === 'MAT-002') return 'Aluzinc';
+  if (mid === 'MAT-005' || mid === 'stone-coated') return 'Stone coated';
+  return '';
 }
 
 /**

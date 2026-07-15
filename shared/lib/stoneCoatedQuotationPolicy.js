@@ -258,17 +258,35 @@ function parseQuoteLineQty(row) {
   return Number(String(row?.qty ?? '').replace(/,/g, '')) || 0;
 }
 
-function parseLinesJsonProducts(linesJson) {
+function parseLinesJsonObject(linesJson) {
   let j = linesJson;
   if (typeof j === 'string') {
     try {
       j = JSON.parse(j || '{}');
     } catch {
-      return [];
+      return null;
     }
   }
-  if (!j || typeof j !== 'object') return [];
+  if (!j || typeof j !== 'object') return null;
+  return j;
+}
+
+function parseLinesJsonProducts(linesJson) {
+  const j = parseLinesJsonObject(linesJson);
+  if (!j) return [];
   return Array.isArray(j.products) ? j.products : [];
+}
+
+/**
+ * True when the quotation/header payload uses the stone-coated inventory model.
+ * @param {object | string | null | undefined} linesJson
+ */
+export function quotationIsStoneMeterQuote(linesJson) {
+  const j = parseLinesJsonObject(linesJson);
+  if (!j) return false;
+  if (j.stoneMeterQuote === true) return true;
+  const mid = String(j.materialTypeId ?? j.material_type_id ?? '').trim();
+  return mid === 'MAT-005' || mid === 'stone-coated';
 }
 
 /**
@@ -316,6 +334,7 @@ export function quotationHasStoneFlatsheetDemandLines(products) {
  * @param {object | string | null | undefined} linesJson
  */
 export function quotationRequiresStoneMetreConsumption(linesJson) {
+  if (!quotationIsStoneMeterQuote(linesJson)) return false;
   return quotationHasStoneMetreProductLines(parseLinesJsonProducts(linesJson));
 }
 
@@ -325,6 +344,7 @@ export function quotationRequiresStoneMetreConsumption(linesJson) {
  * @param {object | string | null | undefined} linesJson
  */
 export function quotationRequiresStoneCoilCuttingListAlignment(linesJson) {
+  if (!quotationIsStoneMeterQuote(linesJson)) return false;
   return quotationHasStoneCoilBackedProductLines(parseLinesJsonProducts(linesJson));
 }
 
@@ -333,6 +353,7 @@ export function quotationRequiresStoneCoilCuttingListAlignment(linesJson) {
  * @param {object | string | null | undefined} linesJson
  */
 export function quotationRequiresStoneFlatsheetConsumption(linesJson) {
+  if (!quotationIsStoneMeterQuote(linesJson)) return false;
   return quotationHasStoneFlatsheetDemandLines(parseLinesJsonProducts(linesJson));
 }
 

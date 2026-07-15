@@ -119,6 +119,27 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.code).toBe('stone_sf_cl_skip_coil_alignment');
   });
 
+  it('rejects coil flatsheet/gutter metres on stone CL when quotation has none', () => {
+    const lines = {
+      products: [
+        { name: 'Roofing Sheet', qty: 80 },
+        { name: 'Stone flatsheet 2', qty: 4 },
+      ],
+    };
+    const assessment = assessCuttingListQuotationConsumption({
+      quotationLinesJson: lines,
+      cuttingListLines: [
+        { lineType: 'Roof', sheets: 80, lengthM: 1 },
+        { lineType: 'Flatsheet', sheets: 1, lengthM: 10 },
+        { lineType: 'StoneFlatsheet', sheets: 4, lengthM: 2 },
+      ],
+      stoneMeterQuote: true,
+    });
+    expect(assessment.ok).toBe(false);
+    expect(assessment.code).toBe('cutting_list_unquoted_coil_flatsheet');
+    expect(assessment.clFlatsheetM).toBe(10);
+  });
+
   it('stone roofing + sold SF uses StoneFlatsheet section without false coil mismatch', () => {
     const lines = {
       products: [

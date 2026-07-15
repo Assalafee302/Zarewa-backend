@@ -8,6 +8,7 @@ import {
   isStoneRidgeQuotationLine,
   normQuoteItemKey,
   normalizeStoneFlatsheetLengthM,
+  quotationIsStoneMeterQuote,
   resolveStoneFlatsheetLengthM,
   stoneBargeboardMetresPerSheet,
   stoneFlatsheetM2ToPcs,
@@ -34,6 +35,7 @@ export function parseQuotationStoneFlatsheetLines(linesJson) {
     }
   }
   if (!j || typeof j !== 'object') j = {};
+  if (!quotationIsStoneMeterQuote(j)) return [];
   const headerColour = String(j.materialColor || '').trim();
   const products = Array.isArray(j.products) ? j.products : [];
   const out = [];
@@ -73,6 +75,7 @@ export function parseQuotationStoneSfYieldLines(linesJson) {
     }
   }
   if (!j || typeof j !== 'object') j = {};
+  if (!quotationIsStoneMeterQuote(j)) return [];
   const headerColour = String(j.materialColor || '').trim();
   const products = Array.isArray(j.products) ? j.products : [];
   const out = [];
@@ -111,6 +114,7 @@ export function quotationHasStoneFlatsheetWithQtyButMissingLength(linesJson) {
     }
   }
   if (!j || typeof j !== 'object') return false;
+  if (!quotationIsStoneMeterQuote(j)) return false;
   const products = Array.isArray(j.products) ? j.products : [];
   for (const row of products) {
     const name = String(row?.name ?? '').trim();

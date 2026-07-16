@@ -8188,6 +8188,17 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/expenses', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
+      const allowDirect =
+        process.env.NODE_ENV === 'test' ||
+        String(process.env.ZAREWA_ALLOW_DIRECT_EXPENSE_POST || '').trim() === '1' ||
+        Boolean(req.body?.allowDirectTreasuryPost);
+      if (!allowDirect) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            'Direct expense posting is disabled. Submit an expense request for Branch Manager approval, then record treasury payout after approval.',
+        });
+      }
       if (sendIdempotentReplayIfAny(db, req, res, 'expense.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });

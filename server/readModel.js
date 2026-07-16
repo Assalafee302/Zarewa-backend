@@ -536,9 +536,11 @@ export function listManagementItems(db, branchScope = 'ALL') {
   `).all(...bRef.args);
 
   // 5. Payment requests pending approval (column is approval_status, not status)
+  const prHasPayee = hasColumn(db, 'payment_requests', 'payee_account_no');
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
            pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_data_b64,
+           ${prHasPayee ? 'pr.payee_name, pr.payee_account_no, pr.payee_bank_name,' : ''}
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
     FROM payment_requests pr
     LEFT JOIN expenses e ON e.expense_id = pr.expense_id
@@ -560,6 +562,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
     expense_category_lane:
       row.expense_category_lane ?? getExpenseCategoryLane(row.expense_category ?? ''),
     branch_id: row.branch_id ?? '',
+    payee_name: row.payee_name ?? '',
+    payee_account_no: row.payee_account_no ?? '',
+    payee_bank_name: row.payee_bank_name ?? '',
   }));
 
   // 6. Completed production jobs awaiting conversion / manager review sign-off (High/Low or flag)
@@ -2391,6 +2396,9 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
         attachmentName: row.attachment_name ?? '',
         attachmentMime: row.attachment_mime ?? '',
         attachmentPresent: hasAttachment,
+        payeeName: row.payee_name ?? '',
+        payeeAccountNo: row.payee_account_no ?? '',
+        payeeBankName: row.payee_bank_name ?? '',
       };
     });
 }
@@ -2440,6 +2448,9 @@ export function getPaymentRequestDetail(db, requestId) {
     attachmentName: row.attachment_name ?? '',
     attachmentMime: row.attachment_mime ?? '',
     attachmentPresent: hasAttachment,
+    payeeName: row.payee_name ?? '',
+    payeeAccountNo: row.payee_account_no ?? '',
+    payeeBankName: row.payee_bank_name ?? '',
   };
 }
 

@@ -1717,6 +1717,9 @@ export function insertPaymentRequest(db, payload, actor) {
   const lineItems = normalizePaymentRequestLineItems(payload.lineItems ?? payload.items);
   const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
   const categoryJustification = String(payload.categoryJustification ?? '').trim();
+  const payeeName = String(payload.payeeName ?? payload.payee_name ?? '').trim();
+  const payeeAccountNo = String(payload.payeeAccountNo ?? payload.payee_account_no ?? '').trim();
+  const payeeBankName = String(payload.payeeBankName ?? payload.payee_bank_name ?? '').trim();
   const { name: attName, mime: attMime, b64: attB64Raw } = parsePaymentRequestAttachment(payload);
   let attB64 = attB64Raw;
   if (attB64) {
@@ -1813,6 +1816,7 @@ export function insertPaymentRequest(db, payload, actor) {
           expenseIdForRow = newExpId;
         }
         const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
+        const prHasPayee = hasColumn(db, 'payment_requests', 'payee_account_no');
         if (prHasJustification) {
           db.prepare(
             `INSERT INTO payment_requests (
@@ -1862,6 +1866,13 @@ export function insertPaymentRequest(db, payload, actor) {
             attB64 || ''
           );
         }
+        if (prHasPayee) {
+          db.prepare(
+            `UPDATE payment_requests
+             SET payee_name = ?, payee_account_no = ?, payee_bank_name = ?
+             WHERE request_id = ?`
+          ).run(payeeName || '', payeeAccountNo || '', payeeBankName || '', requestID);
+        }
         appendAuditLog(db, {
           actor,
           action: 'payment_request.create',
@@ -1873,6 +1884,7 @@ export function insertPaymentRequest(db, payload, actor) {
             amountRequestedNgn,
             lineItemCount: lineItems.length,
             hasAttachment: Boolean(attB64),
+            hasPayeeAccount: Boolean(payeeAccountNo),
           },
         });
       })();
@@ -1904,6 +1916,15 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   const lineItems = normalizePaymentRequestLineItems(payload.lineItems ?? payload.items);
   const expenseCategory = String(payload.expenseCategory ?? payload.category ?? '').trim();
   const categoryJustification = String(payload.categoryJustification ?? row.category_justification ?? '').trim();
+  const payeeName = String(
+    payload.payeeName ?? payload.payee_name ?? row.payee_name ?? ''
+  ).trim();
+  const payeeAccountNo = String(
+    payload.payeeAccountNo ?? payload.payee_account_no ?? row.payee_account_no ?? ''
+  ).trim();
+  const payeeBankName = String(
+    payload.payeeBankName ?? payload.payee_bank_name ?? row.payee_bank_name ?? ''
+  ).trim();
   const { name: attName, mime: attMime, b64: attB64Raw } = parsePaymentRequestAttachment(payload);
   let attB64 = attB64Raw;
   if (attB64) {
@@ -1937,6 +1958,7 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
   const categoryLane = getExpenseCategoryLane(expenseCategory);
   const lineItemsJson = JSON.stringify(lineItems);
   const prHasJustification = hasColumn(db, 'payment_requests', 'category_justification');
+  const prHasPayee = hasColumn(db, 'payment_requests', 'payee_account_no');
   const expHasLane = hasColumn(db, 'expenses', 'category_lane');
 
   try {
@@ -1998,6 +2020,13 @@ export function updatePaymentRequest(db, requestID, payload, actor) {
           attB64 ? attB64 : String(row.attachment_data_b64 || ''),
           rid
         );
+      }
+      if (prHasPayee) {
+        db.prepare(
+          `UPDATE payment_requests
+           SET payee_name = ?, payee_account_no = ?, payee_bank_name = ?
+           WHERE request_id = ?`
+        ).run(payeeName || '', payeeAccountNo || '', payeeBankName || '', rid);
       }
 
       const expenseId = String(row.expense_id || '').trim();

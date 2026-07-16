@@ -1040,7 +1040,10 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   attachment_name TEXT,
   attachment_mime TEXT,
   attachment_data_b64 TEXT,
-  category_justification TEXT
+  category_justification TEXT,
+  payee_name TEXT,
+  payee_account_no TEXT,
+  payee_bank_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS accounts_payable (

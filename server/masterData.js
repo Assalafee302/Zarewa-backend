@@ -216,6 +216,7 @@ const MASTER_DATA_CONFIG = {
         name: requireName(payload.name, 'Item name'),
         unit: trimText(payload.unit || 'unit') || 'unit',
         defaultUnitPriceNgn: roundMoney(payload.defaultUnitPriceNgn),
+        floorUnitPriceNgn: roundMoney(payload.floorUnitPriceNgn ?? payload.floor_unit_price_ngn ?? 0),
         active: boolFlag(payload.active),
         sortOrder: sortNumber(payload.sortOrder, fallbackSort),
         inventoryProductId: invPid || null,
@@ -228,6 +229,7 @@ const MASTER_DATA_CONFIG = {
         name: row.name,
         unit: row.unit,
         defaultUnitPriceNgn: roundMoney(row.default_unit_price_ngn),
+        floorUnitPriceNgn: roundMoney(row.floor_unit_price_ngn ?? 0),
         active: Boolean(row.active),
         sortOrder: Number(row.sort_order) || 0,
         inventoryProductId: row.inventory_product_id ?? '',
@@ -644,12 +646,13 @@ function getStatements(kind, row) {
           row.name,
           row.unit,
           row.defaultUnitPriceNgn,
+          row.floorUnitPriceNgn || 0,
           row.active,
           row.sortOrder,
           row.inventoryProductId || null,
         ],
-        insertSql: `INSERT INTO setup_quote_items (item_id, item_type, name, unit, default_unit_price_ngn, active, sort_order, inventory_product_id) VALUES (?,?,?,?,?,?,?,?)`,
-        updateSql: `UPDATE setup_quote_items SET item_type = ?, name = ?, unit = ?, default_unit_price_ngn = ?, active = ?, sort_order = ?, inventory_product_id = ? WHERE item_id = ?`,
+        insertSql: `INSERT INTO setup_quote_items (item_id, item_type, name, unit, default_unit_price_ngn, floor_unit_price_ngn, active, sort_order, inventory_product_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+        updateSql: `UPDATE setup_quote_items SET item_type = ?, name = ?, unit = ?, default_unit_price_ngn = ?, floor_unit_price_ngn = ?, active = ?, sort_order = ?, inventory_product_id = ? WHERE item_id = ?`,
       };
     case 'colours':
       return {

@@ -519,6 +519,15 @@ function runMigrationsUnlocked(db) {
   if (!payReq.has('category_justification')) {
     db.exec(`ALTER TABLE payment_requests ADD COLUMN category_justification TEXT`);
   }
+  if (!payReq.has('payee_name')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN payee_name TEXT`);
+  }
+  if (!payReq.has('payee_account_no')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN payee_account_no TEXT`);
+  }
+  if (!payReq.has('payee_bank_name')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN payee_bank_name TEXT`);
+  }
 
   const expenses = tableCols('expenses');
   if (expenses.size && !expenses.has('category_lane')) {
@@ -1241,6 +1250,7 @@ function runMigrationsUnlocked(db) {
   migratePriceListAndPayrollMd(db);
   migrateProductionCompletionAdjustments(db);
   migrateQuotationLineCatalog2026(db);
+  migrateLinkUnpricedQuoteItems2026(db);
   migrateCoilAluzincColours2026(db);
   migrateMergeDuplicateSetupColours(db);
   migrateMergeDuplicateSuppliersOnBoot(db);
@@ -2371,6 +2381,135 @@ function migratePurchaseOrderLineType(db) {
   }
   runManyInBatches(db, statements);
   markSchemaMigrationDone(db, SCHEMA_MIGRATION_PO_LINE_TYPE);
+}
+
+/**
+ * Link quote products that sit outside the coil metre workbook to default/list prices
+ * (stone flatsheet m² + stone nail), and drop the duplicate Stone flatsheet 1.4 row.
+ */
+function migrateLinkUnpricedQuoteItems2026(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) return;
+
+  const sqiCols = new Set(db.prepare(`PRAGMA table_info(setup_quote_items)`).all().map((c) => c.name));
+  if (!sqiCols.has('floor_unit_price_ngn')) {
+    db.exec(`ALTER TABLE setup_quote_items ADD COLUMN floor_unit_price_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  const upsertQuoteDefaults = db.prepare(
+    `UPDATE setup_quote_items
+     SET default_unit_price_ngn = ?,
+         floor_unit_price_ngn = CASE
+           WHEN COALESCE(floor_unit_price_ngn, 0) > 0 THEN floor_unit_price_ngn
+           ELSE ?
+         END,
+         inventory_product_id = COALESCE(NULLIF(TRIM(inventory_product_id), ''), ?),
+         active = 1
+     WHERE item_id = ?`
+  );
+  upsertQuoteDefaults.run(6000, 5500, 'STONE-FS-black-1p4m', 'SQI-037');
+  upsertQuoteDefaults.run(6000, 5500, 'STONE-FS-black-2m', 'SQI-039');
+  upsertQuoteDefaults.run(12000, 0, 'ACC-STONE-NAIL-PACK', 'SQI-035');
+
+  // Duplicate of SQI-037 (same name/unit) — keep one active catalogue row.
+  db.prepare(`UPDATE setup_quote_items SET active = 0, sort_order = 999 WHERE item_id = 'SQI-038'`).run();
+
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_price_lists'`).get()) return;
+
+  const plCols = new Set(db.prepare(`PRAGMA table_info(setup_price_lists)`).all().map((c) => c.name));
+  const hasBook = plCols.has('book_label') && plCols.has('book_version') && plCols.has('effective_from_iso');
+
+  const existsPrice = db.prepare(`SELECT 1 FROM setup_price_lists WHERE price_id = ?`);
+  const insPrice = hasBook
+    ? db.prepare(
+        `INSERT INTO setup_price_lists (
+           price_id, quote_item_id, item_name, unit, unit_price_ngn,
+           gauge_id, colour_id, material_type_id, profile_id, notes,
+           active, sort_order, book_label, book_version, effective_from_iso
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,1,?)`
+      )
+    : db.prepare(
+        `INSERT INTO setup_price_lists (
+           price_id, quote_item_id, item_name, unit, unit_price_ngn,
+           gauge_id, colour_id, material_type_id, profile_id, notes,
+           active, sort_order
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,1,?)`
+      );
+  const updPrice = db.prepare(
+    `UPDATE setup_price_lists
+     SET quote_item_id = ?, item_name = ?, unit = ?, unit_price_ngn = ?,
+         material_type_id = ?, notes = ?, active = 1
+     WHERE price_id = ?`
+  );
+
+  /** @type {[string, string, string, string, number, string, string, number][]} */
+  const priceRows = [
+    [
+      'PRI-SF-14',
+      'SQI-037',
+      'Stone flatsheet 1.4',
+      'm²',
+      6000,
+      'MAT-005',
+      'Default list ₦/m² (workbook metres do not apply). Floor guidance ₦5,500/m².',
+      20,
+    ],
+    [
+      'PRI-SF-20',
+      'SQI-039',
+      'Stone flatsheet 2',
+      'm²',
+      6000,
+      'MAT-005',
+      'Default list ₦/m² (workbook metres do not apply). Floor guidance ₦5,500/m².',
+      21,
+    ],
+    [
+      'PRI-ACC-STONE-NAIL',
+      'SQI-035',
+      'Stone nail',
+      'pack',
+      12000,
+      '',
+      'Default accessory list from recent quotations; edit in pricing workbook Accessories.',
+      114,
+    ],
+  ];
+
+  for (const [priceId, quoteItemId, itemName, unit, unitPrice, materialTypeId, notes, sortOrder] of priceRows) {
+    if (existsPrice.get(priceId)) {
+      updPrice.run(quoteItemId, itemName, unit, unitPrice, materialTypeId || '', notes, priceId);
+    } else if (hasBook) {
+      insPrice.run(
+        priceId,
+        quoteItemId,
+        itemName,
+        unit,
+        unitPrice,
+        '',
+        '',
+        materialTypeId || '',
+        '',
+        notes,
+        sortOrder,
+        'Standard',
+        '2020-01-01'
+      );
+    } else {
+      insPrice.run(
+        priceId,
+        quoteItemId,
+        itemName,
+        unit,
+        unitPrice,
+        '',
+        '',
+        materialTypeId || '',
+        '',
+        notes,
+        sortOrder
+      );
+    }
+  }
 }
 
 /** Canonical quotation line catalog: products, accessories, services (Zarewa 2026 list). */

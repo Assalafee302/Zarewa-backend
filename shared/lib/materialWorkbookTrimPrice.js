@@ -68,7 +68,23 @@ export function maxPublishedListPerMeterForMatGauge(rows, materialKey, gaugeLabe
 }
 
 /**
- * Published list NGN/m for a trim line (ridge / flashing) at a strip width.
+ * Split a sheet ₦/m into trim strip ₦/m and add ridge add-on.
+ * @param {number} basePerMeter
+ * @param {number} girthMm
+ * @param {number} addOnNgn
+ */
+function trimPerMeterFromSheetBase(basePerMeter, girthMm, addOnNgn) {
+  const base = Number(basePerMeter) || 0;
+  const girth = Number(girthMm);
+  if (!(base > 0) || !Number.isFinite(girth) || girth <= 0 || girth > 1200) return 0;
+  const segments = 1200 / girth;
+  if (!Number.isFinite(segments) || segments <= 0) return 0;
+  return roundPublishedPriceNgn(base / segments + Math.max(0, Number(addOnNgn) || 0));
+}
+
+/**
+ * Floor + list ₦/m for a trim line from workbook sheet economics + ridge add-ons.
+ * Floor uses workbook minimum ₦/m (+ internal add-on); list uses published/suggested list (+ customer list add-on).
  * @param {{
  *   materialPricingRows: object[],
  *   ridgeAddOns?: object[],
@@ -78,10 +94,11 @@ export function maxPublishedListPerMeterForMatGauge(rows, materialKey, gaugeLabe
  *   designLabel?: string,
  *   girthMm: number | string,
  * }} ctx
+ * @returns {{ floorPerMeter: number; suggestedListPerMeter: number } | null}
  */
-export function resolveTrimListPricePerMeterFromWorkbook(ctx) {
+export function resolveTrimWorkbookMetaFromWorkbook(ctx) {
   const girth = Number(ctx?.girthMm);
-  if (!Number.isFinite(girth) || girth <= 0 || girth > 1200) return 0;
+  if (!Number.isFinite(girth) || girth <= 0 || girth > 1200) return null;
 
   const hit = resolveMaterialWorkbookPriceFromRows(ctx.materialPricingRows, {
     materialKey: ctx.materialKey,
@@ -98,14 +115,38 @@ export function resolveTrimListPricePerMeterFromWorkbook(ctx) {
       ctx.branchId
     );
   }
-  if (!listBase) return 0;
-
-  const segments = 1200 / girth;
-  if (!Number.isFinite(segments) || segments <= 0) return 0;
+  const floorBase = hit?.floorPerMeter || 0;
+  if (!(listBase > 0) && !(floorBase > 0)) return null;
 
   const ridgeRow = ridgeMatchedAddOnRow(ctx.ridgeAddOns, ctx.materialKey, girth);
-  const addOn = ridgeRow ? customerRidgeListAddOnNgn(ridgeRow) : 0;
-  return roundPublishedPriceNgn(listBase / segments + addOn);
+  const listAddOn = ridgeRow ? customerRidgeListAddOnNgn(ridgeRow) : 0;
+  const floorAddOn = Math.max(0, Math.round(Number(ridgeRow?.addOnNgn) || 0));
+
+  const suggestedListPerMeter = listBase > 0 ? trimPerMeterFromSheetBase(listBase, girth, listAddOn) : 0;
+  let floorPerMeter = floorBase > 0 ? trimPerMeterFromSheetBase(floorBase, girth, floorAddOn) : 0;
+  // When sheet floor is missing, list is the enforceable minimum (legacy trim gate).
+  if (!(floorPerMeter > 0) && suggestedListPerMeter > 0) floorPerMeter = suggestedListPerMeter;
+  if (!(floorPerMeter > 0) && !(suggestedListPerMeter > 0)) return null;
+  return {
+    floorPerMeter: floorPerMeter || suggestedListPerMeter,
+    suggestedListPerMeter: suggestedListPerMeter || floorPerMeter,
+  };
+}
+
+/**
+ * Published list NGN/m for a trim line (ridge / flashing) at a strip width.
+ * @param {{
+ *   materialPricingRows: object[],
+ *   ridgeAddOns?: object[],
+ *   materialKey: string,
+ *   gaugeLabel: string,
+ *   branchId: string,
+ *   designLabel?: string,
+ *   girthMm: number | string,
+ * }} ctx
+ */
+export function resolveTrimListPricePerMeterFromWorkbook(ctx) {
+  return resolveTrimWorkbookMetaFromWorkbook(ctx)?.suggestedListPerMeter || 0;
 }
 
 /**

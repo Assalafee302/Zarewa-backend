@@ -1304,10 +1304,133 @@ function runMigrationsUnlocked(db) {
   migrateAiKnowledgeCenter(db);
   migrateAiIntelligenceRouter(db);
   migrateAiAutomationEngine(db);
+  migrateWorkspaceV3Rooms(db);
   try {
     seedZarewaOrgStandard(db);
   } catch (e) {
     console.warn('[migrate] seedZarewaOrgStandard skipped:', e?.message || e);
+  }
+}
+
+/** Workspace V3 — rooms, activity, presence (Teams-style Online Office). */
+function migrateWorkspaceV3Rooms(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_rooms (
+      id TEXT PRIMARY KEY,
+      scope_kind TEXT NOT NULL,
+      branch_id TEXT,
+      department_key TEXT,
+      slug TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      created_by_user_id TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_rooms_branch_slug ON workspace_rooms(branch_id, slug);
+    CREATE INDEX IF NOT EXISTS idx_workspace_rooms_scope ON workspace_rooms(scope_kind, updated_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS workspace_room_members (
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      joined_at_iso TEXT NOT NULL,
+      muted_until_iso TEXT,
+      PRIMARY KEY (room_id, user_id),
+      FOREIGN KEY (room_id) REFERENCES workspace_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_room_threads (
+      room_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      pinned_at_iso TEXT,
+      PRIMARY KEY (room_id, thread_id),
+      FOREIGN KEY (room_id) REFERENCES workspace_rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (thread_id) REFERENCES office_threads(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_activity_events (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      actor_user_id TEXT,
+      event_kind TEXT NOT NULL,
+      target_kind TEXT,
+      target_id TEXT,
+      summary_text TEXT NOT NULL,
+      payload_json TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_activity_branch ON workspace_activity_events(branch_id, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS workspace_activity_reads (
+      user_id TEXT PRIMARY KEY,
+      last_read_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_mentions (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      mentioned_user_id TEXT,
+      mentioned_role_key TEXT,
+      room_id TEXT,
+      thread_id TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_mentions_user ON workspace_mentions(mentioned_user_id, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS workspace_presence (
+      user_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'offline',
+      branch_id TEXT,
+      desk_key TEXT,
+      last_seen_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+  `);
+
+  const threadCols = new Set(db.prepare(`PRAGMA table_info(office_threads)`).all().map((c) => c.name));
+  if (!threadCols.has('conversation_mode')) {
+    db.exec(`ALTER TABLE office_threads ADD COLUMN conversation_mode TEXT NOT NULL DEFAULT 'memo'`);
+  }
+  if (!threadCols.has('room_id')) {
+    db.exec(`ALTER TABLE office_threads ADD COLUMN room_id TEXT`);
+  }
+  if (!threadCols.has('is_pinned')) {
+    db.exec(`ALTER TABLE office_threads ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!threadCols.has('pinned_work_item_id')) {
+    db.exec(`ALTER TABLE office_threads ADD COLUMN pinned_work_item_id TEXT`);
+  }
+
+  const msgCols = new Set(db.prepare(`PRAGMA table_info(office_messages)`).all().map((c) => c.name));
+  if (!msgCols.has('parent_message_id')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN parent_message_id TEXT`);
+  }
+  if (!msgCols.has('mentions_json')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN mentions_json TEXT`);
+  }
+  if (!msgCols.has('attachments_json')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN attachments_json TEXT`);
+  }
+  if (!msgCols.has('work_card_json')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN work_card_json TEXT`);
+  }
+
+  try {
+    const wiCols = new Set(db.prepare(`PRAGMA table_info(work_items)`).all().map((c) => c.name));
+    if (!wiCols.has('origin_room_id')) {
+      db.exec(`ALTER TABLE work_items ADD COLUMN origin_room_id TEXT`);
+    }
+    if (!wiCols.has('origin_message_id')) {
+      db.exec(`ALTER TABLE work_items ADD COLUMN origin_message_id TEXT`);
+    }
+  } catch {
+    /* work_items may not exist in some test DBs */
   }
 }
 

@@ -1365,6 +1365,85 @@ CREATE TABLE IF NOT EXISTS office_messages (
 
 CREATE INDEX IF NOT EXISTS idx_office_messages_thread ON office_messages(thread_id, created_at_iso);
 
+CREATE TABLE IF NOT EXISTS workspace_rooms (
+  id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL,
+  branch_id TEXT,
+  department_key TEXT,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  is_archived INTEGER NOT NULL DEFAULT 0,
+  created_by_user_id TEXT,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_rooms_branch_slug ON workspace_rooms(branch_id, slug);
+
+CREATE TABLE IF NOT EXISTS workspace_room_members (
+  room_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  joined_at_iso TEXT NOT NULL,
+  muted_until_iso TEXT,
+  PRIMARY KEY (room_id, user_id),
+  FOREIGN KEY (room_id) REFERENCES workspace_rooms(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workspace_room_threads (
+  room_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  pinned_at_iso TEXT,
+  PRIMARY KEY (room_id, thread_id),
+  FOREIGN KEY (room_id) REFERENCES workspace_rooms(id) ON DELETE CASCADE,
+  FOREIGN KEY (thread_id) REFERENCES office_threads(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workspace_activity_events (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  actor_user_id TEXT,
+  event_kind TEXT NOT NULL,
+  target_kind TEXT,
+  target_id TEXT,
+  summary_text TEXT NOT NULL,
+  payload_json TEXT,
+  created_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_activity_branch ON workspace_activity_events(branch_id, created_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_activity_reads (
+  user_id TEXT PRIMARY KEY,
+  last_read_at_iso TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workspace_mentions (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  mentioned_user_id TEXT,
+  mentioned_role_key TEXT,
+  room_id TEXT,
+  thread_id TEXT,
+  created_at_iso TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_mentions_user ON workspace_mentions(mentioned_user_id, created_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_presence (
+  user_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'offline',
+  branch_id TEXT,
+  desk_key TEXT,
+  last_seen_at_iso TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS office_thread_reads (
   user_id TEXT NOT NULL,
   thread_id TEXT NOT NULL,

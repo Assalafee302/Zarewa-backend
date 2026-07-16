@@ -169,14 +169,16 @@ export function avgMapFromMeta(meta) {
  * @param {string} productId
  * @param {string | null} sinceIso
  * @param {string | null} [branchId]
+ * @param {string | null} [untilIso] inclusive end date (YYYY-MM-DD)
  */
-export function purchaseConversionMetaByGauge(db, productId, sinceIso = null, branchId = null) {
+export function purchaseConversionMetaByGauge(db, productId, sinceIso = null, branchId = null, untilIso = null) {
   /** @type {Record<string, { avg: number | null; n: number; lastAtIso: string | null }>} */
   const out = {};
   const pid = String(productId || '').trim();
   if (!pid) return out;
   if (!tableExists(db, 'coil_lots')) return out;
   const since = sinceIso && String(sinceIso).trim().length >= 10 ? String(sinceIso).trim().slice(0, 10) : null;
+  const until = untilIso && String(untilIso).trim().length >= 10 ? String(untilIso).trim().slice(0, 10) : null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
   const hasBranch = Boolean(bid && pragmaHasColumn(db, 'coil_lots', 'branch_id'));
   let sql = `SELECT gauge_label, supplier_conversion_kg_per_m, received_at_iso FROM coil_lots
@@ -188,6 +190,10 @@ export function purchaseConversionMetaByGauge(db, productId, sinceIso = null, br
   if (since) {
     sql += ` AND received_at_iso IS NOT NULL AND SUBSTR(received_at_iso, 1, 10) >= ?`;
     args.push(since);
+  }
+  if (until) {
+    sql += ` AND received_at_iso IS NOT NULL AND SUBSTR(received_at_iso, 1, 10) <= ?`;
+    args.push(until);
   }
   if (hasBranch) {
     sql += ` AND branch_id = ?`;
@@ -213,8 +219,8 @@ export function purchaseConversionMetaByGauge(db, productId, sinceIso = null, br
   return out;
 }
 
-export function purchaseAvgConversionKgPerMByGauge(db, productId, sinceIso = null, branchId = null) {
-  return avgMapFromMeta(purchaseConversionMetaByGauge(db, productId, sinceIso, branchId));
+export function purchaseAvgConversionKgPerMByGauge(db, productId, sinceIso = null, branchId = null, untilIso = null) {
+  return avgMapFromMeta(purchaseConversionMetaByGauge(db, productId, sinceIso, branchId, untilIso));
 }
 
 /**
@@ -222,8 +228,9 @@ export function purchaseAvgConversionKgPerMByGauge(db, productId, sinceIso = nul
  * @param {string} productId
  * @param {string | null} sinceIso
  * @param {string | null} [branchId]
+ * @param {string | null} [untilIso] inclusive end date (YYYY-MM-DD)
  */
-export function gaugeHistoryConversionMetaByGauge(db, productId, sinceIso = null, branchId = null) {
+export function gaugeHistoryConversionMetaByGauge(db, productId, sinceIso = null, branchId = null, untilIso = null) {
   /** @type {Record<string, { avg: number | null; n: number; lastAtIso: string | null }>} */
   const out = {};
   const pid = String(productId || '').trim();
@@ -232,6 +239,7 @@ export function gaugeHistoryConversionMetaByGauge(db, productId, sinceIso = null
     return out;
   }
   const since = sinceIso && String(sinceIso).trim().length >= 10 ? String(sinceIso).trim().slice(0, 10) : null;
+  const until = untilIso && String(untilIso).trim().length >= 10 ? String(untilIso).trim().slice(0, 10) : null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
   const hasBranch = Boolean(bid && pragmaHasColumn(db, 'coil_lots', 'branch_id'));
   let sql = `SELECT c.gauge_label, c.actual_conversion_kg_per_m, c.checked_at_iso
@@ -245,6 +253,10 @@ export function gaugeHistoryConversionMetaByGauge(db, productId, sinceIso = null
   if (since) {
     sql += ` AND c.checked_at_iso IS NOT NULL AND SUBSTR(c.checked_at_iso, 1, 10) >= ?`;
     args.push(since);
+  }
+  if (until) {
+    sql += ` AND c.checked_at_iso IS NOT NULL AND SUBSTR(c.checked_at_iso, 1, 10) <= ?`;
+    args.push(until);
   }
   if (hasBranch) {
     sql += ` AND cl.branch_id = ?`;
@@ -270,8 +282,8 @@ export function gaugeHistoryConversionMetaByGauge(db, productId, sinceIso = null
   return out;
 }
 
-export function gaugeHistoryAvgConversionKgPerMByGauge(db, productId, sinceIso = null, branchId = null) {
-  return avgMapFromMeta(gaugeHistoryConversionMetaByGauge(db, productId, sinceIso, branchId));
+export function gaugeHistoryAvgConversionKgPerMByGauge(db, productId, sinceIso = null, branchId = null, untilIso = null) {
+  return avgMapFromMeta(gaugeHistoryConversionMetaByGauge(db, productId, sinceIso, branchId, untilIso));
 }
 
 export function averageOfThreeConversions(a, b, c) {

@@ -15,6 +15,7 @@ import { ACCOUNTING_OPENING_DATE_ISO } from '../shared/lib/accountingCutover.js'
 import { evaluateDeliveryPaymentRelease } from './deliveryReleaseGate.js';
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { buildMaterialTransactionReport } from '../shared/lib/materialTransactionReportCore.js';
+import { buildConversionSummaryReport } from './conversionSummaryReport.js';
 import { buildPurchaseReport } from '../shared/lib/purchaseReportCore.js';
 import {
   arAsAtReportRows,
@@ -4648,6 +4649,26 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not build material transaction report.' });
+    }
+  });
+
+  app.get('/api/reports/conversion-summary', requireManagementReportsView, (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      if (!startDate || !endDate || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'Valid startDate and endDate are required.' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const report = buildConversionSummaryReport(db, {
+        startDate,
+        endDate,
+        branchId: branchScope === 'ALL' ? null : branchScope,
+      });
+      res.json({ ok: true, startDate, endDate, branchScope, report });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build conversion summary report.' });
     }
   });
 

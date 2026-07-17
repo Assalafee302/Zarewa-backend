@@ -493,6 +493,8 @@ function clearAccountLock(db, userId) {
   ).run(userId);
 }
 
+export { clearAccountLock };
+
 /** @param {Record<string, unknown> | null | undefined} row */
 export function accountLockMetaFromRow(row) {
   if (!row) {
@@ -550,6 +552,8 @@ function recordFailedLoginAttempt(db, row) {
   return { locked: false, userId: row.id, attemptCount: count };
 }
 
+export { recordFailedLoginAttempt };
+
 function buildLoginFailureAudits(row, username, fail) {
   const actor = {
     id: row?.id ?? null,
@@ -602,7 +606,7 @@ function createPasswordHash(password) {
   return `${salt}:${digest}`;
 }
 
-function verifyPassword(password, storedHash) {
+export function verifyPassword(password, storedHash) {
   const [salt, expected] = String(storedHash || '').split(':');
   if (!salt || !expected) return false;
   const digest = crypto.scryptSync(String(password), salt, 64).toString('hex');
@@ -1950,6 +1954,10 @@ export function requireAuth(req, res, next) {
   }
   if (!req.user) {
     return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
+  }
+
+  if (req.mobileAuth) {
+    return next();
   }
 
   if (process.env.NODE_ENV === 'test' && process.env.ZAREWA_TEST_ENFORCE_CSRF !== '1') {

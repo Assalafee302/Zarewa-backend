@@ -1310,6 +1310,44 @@ function runMigrationsUnlocked(db) {
   } catch (e) {
     console.warn('[migrate] seedZarewaOrgStandard skipped:', e?.message || e);
   }
+  migrateMobileAuth2026(db);
+}
+
+/** Zarewa mobile companion — bearer tokens + device registry (push later). */
+function migrateMobileAuth2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      access_token_hash TEXT NOT NULL,
+      refresh_token_hash TEXT NOT NULL,
+      device_id TEXT,
+      device_name TEXT,
+      platform TEXT,
+      created_at_iso TEXT NOT NULL,
+      last_seen_at_iso TEXT NOT NULL,
+      access_expires_at_iso TEXT NOT NULL,
+      refresh_expires_at_iso TEXT NOT NULL,
+      revoked_at_iso TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mobile_auth_access_hash ON mobile_auth_sessions(access_token_hash);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mobile_auth_refresh_hash ON mobile_auth_sessions(refresh_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_mobile_auth_user ON mobile_auth_sessions(user_id, revoked_at_iso);
+
+    CREATE TABLE IF NOT EXISTS mobile_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      device_name TEXT,
+      platform TEXT,
+      fcm_token TEXT,
+      registered_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mobile_devices_user_device ON mobile_devices(user_id, device_id);
+  `);
 }
 
 /** Workspace V3 — rooms, activity, presence (Teams-style Online Office). */
@@ -1407,6 +1445,13 @@ function migrateWorkspaceV3Rooms(db) {
     db.exec(`ALTER TABLE office_threads ADD COLUMN pinned_work_item_id TEXT`);
   }
 
+  const memberCols = new Set(
+    db.prepare(`PRAGMA table_info(workspace_room_members)`).all().map((c) => c.name)
+  );
+  if (!memberCols.has('muted_until_iso')) {
+    db.exec(`ALTER TABLE workspace_room_members ADD COLUMN muted_until_iso TEXT`);
+  }
+
   const msgCols = new Set(db.prepare(`PRAGMA table_info(office_messages)`).all().map((c) => c.name));
   if (!msgCols.has('parent_message_id')) {
     db.exec(`ALTER TABLE office_messages ADD COLUMN parent_message_id TEXT`);
@@ -1419,6 +1464,12 @@ function migrateWorkspaceV3Rooms(db) {
   }
   if (!msgCols.has('work_card_json')) {
     db.exec(`ALTER TABLE office_messages ADD COLUMN work_card_json TEXT`);
+  }
+  if (!msgCols.has('edited_at_iso')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN edited_at_iso TEXT`);
+  }
+  if (!msgCols.has('deleted_at_iso')) {
+    db.exec(`ALTER TABLE office_messages ADD COLUMN deleted_at_iso TEXT`);
   }
 
   try {

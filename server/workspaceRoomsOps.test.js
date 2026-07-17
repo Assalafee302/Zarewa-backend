@@ -5,6 +5,10 @@ import {
   postRoomMessage,
   getRoomMessages,
   markRoomRead,
+  muteRoom,
+  archiveRoom,
+  editRoomMessage,
+  deleteRoomMessage,
   promoteFromRoom,
   createDmRoom,
   listActivityEvents,
@@ -185,6 +189,69 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
     const own = mine.events.filter((e) => e.actorUserId === user.id);
     expect(own.length).toBeGreaterThan(0);
     expect(own.every((e) => e.read === true)).toBe(true);
+  });
+
+  it('mutes and unmutes an accessible room and exposes the mute expiry', () => {
+    const general = roomBySlug('general');
+    const until = new Date(Date.now() + 60_000).toISOString();
+    const muted = muteRoom(db, scope, staffUser, general.id, { mutedUntilIso: until });
+    expect(muted).toEqual({ ok: true, muted: true, mutedUntilIso: until });
+    const listed = listWorkspaceRooms(db, scope, staffUser);
+    expect(listed.rooms.find((r) => r.id === general.id)?.mutedUntilIso).toBe(until);
+    expect(muteRoom(db, scope, staffUser, general.id, { mutedUntilIso: null })).toEqual({
+      ok: true,
+      muted: false,
+      mutedUntilIso: null,
+    });
+  });
+
+  it('archives rooms only for owners, admins, executives, or creators', () => {
+    const general = roomBySlug('general');
+    expect(archiveRoom(db, scope, staffUser, general.id, { archived: true }).ok).toBe(false);
+    expect(archiveRoom(db, scope, user, general.id, { archived: true })).toEqual({
+      ok: true,
+      archived: true,
+    });
+    expect(listWorkspaceRooms(db, scope, user).rooms.some((r) => r.id === general.id)).toBe(false);
+    expect(archiveRoom(db, scope, user, general.id, { archived: false })).toEqual({
+      ok: true,
+      archived: false,
+    });
+  });
+
+  it('supports replies, author edits, executive moderation, and deleted tombstones', () => {
+    const general = roomBySlug('general');
+    const parent = postRoomMessage(db, scope, staffUser, DEFAULT_BRANCH_ID, general.id, {
+      body: 'Parent message',
+    });
+    const reply = postRoomMessage(db, scope, staffUser, DEFAULT_BRANCH_ID, general.id, {
+      body: 'Reply message',
+      parentMessageId: parent.message.id,
+    });
+    expect(reply.ok).toBe(true);
+    expect(reply.message.parentMessageId).toBe(parent.message.id);
+
+    const denied = editRoomMessage(db, scope, bystander, general.id, reply.message.id, {
+      body: 'Not mine',
+    });
+    expect(denied.error).toBe('Forbidden.');
+    const edited = editRoomMessage(db, scope, staffUser, general.id, reply.message.id, {
+      body: 'Edited reply',
+    });
+    expect(edited.ok).toBe(true);
+    expect(edited.message.editedAtIso).toBeTruthy();
+
+    expect(deleteRoomMessage(db, scope, execUser, general.id, reply.message.id).ok).toBe(true);
+    const listed = getRoomMessages(db, scope, staffUser, general.id);
+    const tombstone = listed.messages.find((m) => m.id === reply.message.id);
+    expect(tombstone?.deleted).toBe(true);
+    expect(tombstone?.body).toBe('This message was deleted');
+    expect(
+      postRoomMessage(db, scope, staffUser, DEFAULT_BRANCH_ID, general.id, {
+        body: 'Cannot reply to deleted',
+        parent_message_id: reply.message.id,
+      }).ok
+    ).toBe(false);
   });
 
   it('rejects empty and oversized messages', () => {

@@ -190,17 +190,16 @@ function roleMatchesDepartment(deptKey, rk) {
   return allowed.includes(rk);
 }
 
-function isRoomMuted(db, roomId, userId) {
-  if (!roomId || !userId) return false;
+function roomMuteState(db, roomId, userId) {
+  if (!roomId || !userId) return { muted: false, mutedUntilIso: null };
   try {
     const row = db
       .prepare(`SELECT muted_until_iso FROM workspace_room_members WHERE room_id = ? AND user_id = ?`)
       .get(roomId, userId);
     const until = String(row?.muted_until_iso || '').trim();
-    if (!until) return false;
-    return until > nowIso();
+    return { muted: Boolean(until && until > nowIso()), mutedUntilIso: until || null };
   } catch {
-    return false;
+    return { muted: false, mutedUntilIso: null };
   }
 }
 
@@ -488,6 +487,7 @@ function unreadForRoom(db, roomId, userId, threadId) {
     // Strict > so the message that marked last_read is not re-counted; exclude self.
     // Attachment-only messages (empty body) still count as unread.
     const hasAttachments = tableHasColumn(db, 'office_messages', 'attachments_json');
+    const hasDeletedAt = tableHasColumn(db, 'office_messages', 'deleted_at_iso');
     const contentClause = hasAttachments
       ? `AND (IFNULL(TRIM(body),'') != '' OR IFNULL(attachments_json,'') != '')`
       : `AND IFNULL(TRIM(body),'') != ''`;
@@ -497,6 +497,7 @@ function unreadForRoom(db, roomId, userId, threadId) {
          WHERE thread_id = ?
            AND created_at_iso > ?
            AND IFNULL(author_user_id,'') != ?
+           ${hasDeletedAt ? 'AND deleted_at_iso IS NULL' : ''}
            ${contentClause}`
       )
       .get(threadId, since, userId);
@@ -512,11 +513,12 @@ function lastMessageForRoom(db, threadId) {
   if (!threadId) return null;
   try {
     const hasAttachments = tableHasColumn(db, 'office_messages', 'attachments_json');
+    const hasDeletedAt = tableHasColumn(db, 'office_messages', 'deleted_at_iso');
     const row = db
       .prepare(
         `SELECT author_user_id, body, created_at_iso${hasAttachments ? ', attachments_json' : ''}
          FROM office_messages
-         WHERE thread_id = ? AND kind = 'user'
+         WHERE thread_id = ? AND kind = 'user'${hasDeletedAt ? ' AND deleted_at_iso IS NULL' : ''}
          ORDER BY created_at_iso DESC LIMIT 1`
       )
       .get(threadId);
@@ -609,7 +611,8 @@ export function listWorkspaceRooms(db, scope, user) {
   for (const r of rows) {
     if (!userMayAccessRoom(db, scope, user, r)) continue;
     const threadId = primaryThreadId(db, r.id);
-    const muted = isRoomMuted(db, r.id, uid);
+    const muteState = roomMuteState(db, r.id, uid);
+    const muted = muteState.muted;
     const unread = muted ? 0 : unreadForRoom(db, r.id, uid, threadId);
     const isDm = r.scope_kind === 'dm';
     const peer = isDm ? dmPeerForRoom(db, r.id, uid) : null;
@@ -627,6 +630,7 @@ export function listWorkspaceRooms(db, scope, user) {
       threadId,
       unreadCount: unread,
       muted,
+      mutedUntilIso: muteState.mutedUntilIso,
       peerUserId: peer?.userId || null,
       lastMessage: lastMessageForRoom(db, threadId),
       createdAtIso: r.created_at_iso,
@@ -677,6 +681,99 @@ export function userMayPostInRoom(db, scope, user, room) {
   return true;
 }
 
+function roomMemberRole(db, roomId, userId) {
+  if (!roomId || !userId) return null;
+  try {
+    const row = db
+      .prepare(`SELECT role FROM workspace_room_members WHERE room_id = ? AND user_id = ?`)
+      .get(roomId, userId);
+    return row?.role ? String(row.role).trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function roomEventTargetUserIds(db, room) {
+  if (room?.scope_kind !== 'dm') return null;
+  try {
+    return db
+      .prepare(`SELECT user_id FROM workspace_room_members WHERE room_id = ?`)
+      .all(room.id)
+      .map((r) => String(r.user_id));
+  } catch {
+    return null;
+  }
+}
+
+export function muteRoom(db, scope, user, roomId, { mutedUntilIso } = {}) {
+  if (!workspaceRoomsTablesReady(db)) return { ok: false, error: 'Rooms not available.' };
+  const room = db.prepare(`SELECT * FROM workspace_rooms WHERE id = ?`).get(String(roomId || ''));
+  if (!room) return { ok: false, error: 'Room not found.' };
+  if (!userMayAccessRoom(db, scope, user, room)) return { ok: false, error: 'Forbidden.' };
+
+  const uid = String(user?.id || '').trim();
+  if (!uid) return { ok: false, error: 'Sign in required.' };
+  if (!userIsRoomMember(db, room.id, uid)) addRoomMember(db, room.id, uid, 'member', nowIso());
+  if (!userIsRoomMember(db, room.id, uid)) {
+    return { ok: false, error: 'Could not update room membership.' };
+  }
+
+  const raw = mutedUntilIso;
+  const until = raw === false || raw == null || String(raw).trim() === '' || String(raw).trim() === '0'
+    ? null
+    : String(raw).trim();
+  db.prepare(
+    `UPDATE workspace_room_members SET muted_until_iso = ? WHERE room_id = ? AND user_id = ?`
+  ).run(until, room.id, uid);
+
+  const state = roomMuteState(db, room.id, uid);
+  return { ok: true, muted: state.muted, mutedUntilIso: state.mutedUntilIso };
+}
+
+export function archiveRoom(db, scope, actor, roomId, { archived = true } = {}) {
+  if (!workspaceRoomsTablesReady(db)) return { ok: false, error: 'Rooms not available.' };
+  const room = db.prepare(`SELECT * FROM workspace_rooms WHERE id = ?`).get(String(roomId || ''));
+  if (!room) return { ok: false, error: 'Room not found.' };
+
+  const uid = String(actor?.id || '').trim();
+  if (!uid) return { ok: false, error: 'Sign in required.' };
+  const accessibleRoom = { ...room, is_archived: 0 };
+  if (!userMayAccessRoom(db, scope, actor, accessibleRoom)) return { ok: false, error: 'Forbidden.' };
+  const memberRole = roomMemberRole(db, room.id, uid);
+  const mayManage =
+    memberRole === 'owner' ||
+    memberRole === 'admin' ||
+    isExecRoomRole(actor) ||
+    String(room.created_by_user_id || '') === uid;
+  if (!mayManage) return { ok: false, error: 'Forbidden.' };
+
+  const nextArchived = archived !== false;
+  const now = nowIso();
+  db.prepare(`UPDATE workspace_rooms SET is_archived = ?, updated_at_iso = ? WHERE id = ?`).run(
+    nextArchived ? 1 : 0,
+    now,
+    room.id
+  );
+  appendAuditLog(db, {
+    actor,
+    action: 'workspace.room.archive',
+    entityKind: 'workspace_room',
+    entityId: room.id,
+    note: nextArchived ? 'Archived room' : 'Restored room',
+    details: { archived: nextArchived },
+  });
+  const targetUserIds = roomEventTargetUserIds(db, room);
+  broadcastWorkspaceEvent({
+    type: 'room.updated',
+    branchId: activityBranchForRoom(room, scope?.branchId),
+    roomId: room.id,
+    payload: { archived: nextArchived },
+    revision: Date.now(),
+    ...(targetUserIds ? { targetUserIds } : {}),
+  });
+  return { ok: true, archived: nextArchived };
+}
+
 export function markRoomRead(db, scope, user, roomId) {
   if (!workspaceRoomsTablesReady(db)) return { ok: false, error: 'Rooms not available.' };
   const room = db.prepare(`SELECT * FROM workspace_rooms WHERE id = ?`).get(String(roomId || ''));
@@ -720,6 +817,8 @@ export function getRoomMessages(db, scope, user, roomId, { limit = 80, beforeIso
   const hasMentions = tableHasColumn(db, 'office_messages', 'mentions_json');
   const hasAttachments = tableHasColumn(db, 'office_messages', 'attachments_json');
   const hasWorkCard = tableHasColumn(db, 'office_messages', 'work_card_json');
+  const hasEditedAt = tableHasColumn(db, 'office_messages', 'edited_at_iso');
+  const hasDeletedAt = tableHasColumn(db, 'office_messages', 'deleted_at_iso');
 
   // Optional columns are folded into the single query — no per-message
   // follow-up SELECTs (was an N+1 of up to 200 queries per load).
@@ -728,6 +827,8 @@ export function getRoomMessages(db, scope, user, roomId, { limit = 80, beforeIso
     hasMentions ? 'mentions_json' : null,
     hasAttachments ? 'attachments_json' : null,
     hasWorkCard ? 'work_card_json' : null,
+    hasEditedAt ? 'edited_at_iso' : null,
+    hasDeletedAt ? 'deleted_at_iso' : null,
   ]
     .filter(Boolean)
     .map((c) => `, ${c}`)
@@ -750,19 +851,25 @@ export function getRoomMessages(db, scope, user, roomId, { limit = 80, beforeIso
     )
     .all(...(beforeIso ? [threadId, String(beforeIso), Math.min(200, Math.max(1, Number(limit) || 80))] : [threadId, Math.min(200, Math.max(1, Number(limit) || 80))]))
     .reverse()
-    .map((m) => ({
-      id: m.id,
-      threadId: m.thread_id,
-      authorUserId: m.author_user_id,
-      authorDisplayName: authorName(m.author_user_id),
-      body: m.body,
-      kind: m.kind,
-      createdAtIso: m.created_at_iso,
-      parentMessageId: hasParent ? m.parent_message_id || null : null,
-      mentions: hasMentions ? safeJsonParse(m.mentions_json, []) : [],
-      attachments: hasAttachments ? safeJsonParse(m.attachments_json, []) : [],
-      workCard: hasWorkCard ? safeJsonParse(m.work_card_json, null) : null,
-    }));
+    .map((m) => {
+      const deleted = Boolean(hasDeletedAt && m.deleted_at_iso);
+      return {
+        id: m.id,
+        threadId: m.thread_id,
+        authorUserId: m.author_user_id,
+        authorDisplayName: authorName(m.author_user_id),
+        body: deleted ? 'This message was deleted' : m.body,
+        kind: m.kind,
+        createdAtIso: m.created_at_iso,
+        editedAtIso: hasEditedAt ? m.edited_at_iso || null : null,
+        deletedAtIso: hasDeletedAt ? m.deleted_at_iso || null : null,
+        deleted,
+        parentMessageId: hasParent ? m.parent_message_id || null : null,
+        mentions: deleted ? [] : hasMentions ? safeJsonParse(m.mentions_json, []) : [],
+        attachments: deleted ? [] : hasAttachments ? safeJsonParse(m.attachments_json, []) : [],
+        workCard: deleted ? null : hasWorkCard ? safeJsonParse(m.work_card_json, null) : null,
+      };
+    });
 
   const pinnedRows = db
     .prepare(
@@ -833,6 +940,21 @@ export function postRoomMessage(db, scope, actor, workspaceBranchId, roomId, bod
   const now = nowIso();
   const uid = String(actor?.id || '').trim();
   if (!uid) return { ok: false, error: 'Sign in required.' };
+  const hasParentCol = tableHasColumn(db, 'office_messages', 'parent_message_id');
+  const parentMessageId = body?.parentMessageId || body?.parent_message_id
+    ? String(body.parentMessageId || body.parent_message_id).trim()
+    : null;
+  if (parentMessageId) {
+    if (!hasParentCol) return { ok: false, error: 'Message replies are not available.' };
+    const hasDeletedAt = tableHasColumn(db, 'office_messages', 'deleted_at_iso');
+    const parent = db
+      .prepare(
+        `SELECT id FROM office_messages
+         WHERE id = ? AND thread_id = ?${hasDeletedAt ? ' AND deleted_at_iso IS NULL' : ''}`
+      )
+      .get(parentMessageId, threadId);
+    if (!parent) return { ok: false, error: 'Parent message not found in this room.' };
+  }
 
   const mentionHandles = [...text.matchAll(/@([a-zA-Z0-9_](?:[a-zA-Z0-9_.-]{0,62}[a-zA-Z0-9_])?)/g)]
     .map((m) => m[1])
@@ -866,6 +988,10 @@ export function postRoomMessage(db, scope, actor, workspaceBranchId, roomId, bod
       if (hasAttachmentsCol && attachments.length) {
         cols.push('attachments_json');
         vals.push(JSON.stringify(attachments));
+      }
+      if (hasParentCol && parentMessageId) {
+        cols.push('parent_message_id');
+        vals.push(parentMessageId);
       }
       db.prepare(
         `INSERT INTO office_messages (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(',')})`
@@ -922,6 +1048,7 @@ export function postRoomMessage(db, scope, actor, workspaceBranchId, roomId, bod
     body: text,
     kind: 'user',
     createdAtIso: now,
+    parentMessageId,
     mentions: mentionHandles,
     attachments,
   };
@@ -951,6 +1078,146 @@ export function postRoomMessage(db, scope, actor, workspaceBranchId, roomId, bod
   });
 
   return { ok: true, message };
+}
+
+export function editRoomMessage(db, scope, actor, roomId, messageId, { body } = {}) {
+  if (!workspaceRoomsTablesReady(db)) return { ok: false, error: 'Rooms not available.' };
+  const room = db.prepare(`SELECT * FROM workspace_rooms WHERE id = ?`).get(String(roomId || ''));
+  if (!room) return { ok: false, error: 'Room not found.' };
+  if (!userMayAccessRoom(db, scope, actor, room)) return { ok: false, error: 'Forbidden.' };
+
+  const threadId = primaryThreadId(db, room.id);
+  if (!threadId) return { ok: false, error: 'Room has no thread.' };
+  if (
+    !tableHasColumn(db, 'office_messages', 'edited_at_iso') ||
+    !tableHasColumn(db, 'office_messages', 'deleted_at_iso')
+  ) {
+    return { ok: false, error: 'Message editing is not available.' };
+  }
+
+  const hasAttachments = tableHasColumn(db, 'office_messages', 'attachments_json');
+  const message = db
+    .prepare(
+      `SELECT id, thread_id, author_user_id, body, kind, created_at_iso, edited_at_iso, deleted_at_iso${
+        hasAttachments ? ', attachments_json' : ''
+      }
+       FROM office_messages WHERE id = ? AND thread_id = ?`
+    )
+    .get(String(messageId || ''), threadId);
+  if (!message) return { ok: false, error: 'Message not found in this room.' };
+  if (message.deleted_at_iso) return { ok: false, error: 'Deleted messages cannot be edited.' };
+
+  const uid = String(actor?.id || '').trim();
+  if (!uid) return { ok: false, error: 'Sign in required.' };
+  if (String(message.author_user_id || '') !== uid && !isExecRoomRole(actor)) {
+    return { ok: false, error: 'Forbidden.' };
+  }
+
+  const text = String(body ?? '').trim();
+  const attachments = hasAttachments ? safeJsonParse(message.attachments_json, []) : [];
+  if (!text && attachments.length === 0) return { ok: false, error: 'Message is required.' };
+  if (text.length > MAX_MESSAGE_BODY_LEN) {
+    return { ok: false, error: `Message too long (max ${MAX_MESSAGE_BODY_LEN} characters).` };
+  }
+
+  const now = nowIso();
+  db.prepare(`UPDATE office_messages SET body = ?, edited_at_iso = ? WHERE id = ? AND thread_id = ?`).run(
+    text,
+    now,
+    message.id,
+    threadId
+  );
+  db.prepare(`UPDATE office_threads SET updated_at_iso = ? WHERE id = ?`).run(now, threadId);
+  db.prepare(`UPDATE workspace_rooms SET updated_at_iso = ? WHERE id = ?`).run(now, room.id);
+
+  appendAuditLog(db, {
+    actor,
+    action: 'workspace.room.message.edit',
+    entityKind: 'workspace_room',
+    entityId: room.id,
+    note: text.slice(0, 120),
+    details: { messageId: message.id, threadId },
+  });
+  const targetUserIds = roomEventTargetUserIds(db, room);
+  broadcastWorkspaceEvent({
+    type: 'message.updated',
+    branchId: activityBranchForRoom(room, scope?.branchId),
+    roomId: room.id,
+    payload: { messageId: message.id, threadId },
+    revision: Date.now(),
+    ...(targetUserIds ? { targetUserIds } : {}),
+  });
+
+  return {
+    ok: true,
+    message: {
+      id: message.id,
+      threadId,
+      authorUserId: message.author_user_id,
+      authorDisplayName: displayNameForUser(db, message.author_user_id),
+      body: text,
+      kind: message.kind,
+      createdAtIso: message.created_at_iso,
+      editedAtIso: now,
+      deletedAtIso: null,
+      deleted: false,
+      attachments,
+    },
+  };
+}
+
+export function deleteRoomMessage(db, scope, actor, roomId, messageId) {
+  if (!workspaceRoomsTablesReady(db)) return { ok: false, error: 'Rooms not available.' };
+  const room = db.prepare(`SELECT * FROM workspace_rooms WHERE id = ?`).get(String(roomId || ''));
+  if (!room) return { ok: false, error: 'Room not found.' };
+  if (!userMayAccessRoom(db, scope, actor, room)) return { ok: false, error: 'Forbidden.' };
+
+  const threadId = primaryThreadId(db, room.id);
+  if (!threadId) return { ok: false, error: 'Room has no thread.' };
+  if (!tableHasColumn(db, 'office_messages', 'deleted_at_iso')) {
+    return { ok: false, error: 'Message deletion is not available.' };
+  }
+
+  const message = db
+    .prepare(`SELECT id, author_user_id, deleted_at_iso FROM office_messages WHERE id = ? AND thread_id = ?`)
+    .get(String(messageId || ''), threadId);
+  if (!message) return { ok: false, error: 'Message not found in this room.' };
+  const uid = String(actor?.id || '').trim();
+  if (!uid) return { ok: false, error: 'Sign in required.' };
+  if (String(message.author_user_id || '') !== uid && !isExecRoomRole(actor)) {
+    return { ok: false, error: 'Forbidden.' };
+  }
+  if (message.deleted_at_iso) return { ok: true };
+
+  const now = nowIso();
+  const clears = [`body = ''`, `deleted_at_iso = ?`];
+  if (tableHasColumn(db, 'office_messages', 'attachments_json')) clears.push(`attachments_json = '[]'`);
+  db.prepare(`UPDATE office_messages SET ${clears.join(', ')} WHERE id = ? AND thread_id = ?`).run(
+    now,
+    message.id,
+    threadId
+  );
+  db.prepare(`UPDATE office_threads SET updated_at_iso = ? WHERE id = ?`).run(now, threadId);
+  db.prepare(`UPDATE workspace_rooms SET updated_at_iso = ? WHERE id = ?`).run(now, room.id);
+
+  appendAuditLog(db, {
+    actor,
+    action: 'workspace.room.message.delete',
+    entityKind: 'workspace_room',
+    entityId: room.id,
+    note: 'Deleted message',
+    details: { messageId: message.id, threadId },
+  });
+  const targetUserIds = roomEventTargetUserIds(db, room);
+  broadcastWorkspaceEvent({
+    type: 'message.deleted',
+    branchId: activityBranchForRoom(room, scope?.branchId),
+    roomId: room.id,
+    payload: { messageId: message.id, threadId },
+    revision: Date.now(),
+    ...(targetUserIds ? { targetUserIds } : {}),
+  });
+  return { ok: true };
 }
 
 export function pinRoomWorkCard(db, scope, actor, roomId, payload) {

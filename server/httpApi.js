@@ -281,7 +281,11 @@ import {
   listWorkspaceRooms,
   getRoomMessages,
   markRoomRead,
+  muteRoom,
+  archiveRoom,
   postRoomMessage,
+  editRoomMessage,
+  deleteRoomMessage,
   pinRoomWorkCard,
   promoteFromRoom,
   createDmRoom,
@@ -890,7 +894,11 @@ function requireCoilSnapshotCapture(req, res, next) {
  * @param {import('express').Express} app
  * @param {import('better-sqlite3').Database} db
  */
+import { registerMobileApi } from './mobileApi.js';
+
 export function registerHttpApi(app, db) {
+  registerMobileApi(app, db);
+
   setSessionTimeoutAuditHook(({ user }) => {
     appendAuditLog(db, {
       actor: user,
@@ -5878,6 +5886,42 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.post('/api/workspace/rooms/:roomId/mute', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const scope = officeScopeFromReq(req);
+      const r = muteRoom(db, scope, req.user, String(req.params.roomId || ''), {
+        mutedUntilIso: req.body?.unmute ? null : req.body?.mutedUntilIso,
+      });
+      if (!r.ok) {
+        if (r.error === 'Forbidden.') return res.status(403).json(r);
+        if (r.error === 'Room not found.') return res.status(404).json(r);
+        return res.status(400).json(r);
+      }
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update room mute.' });
+    }
+  });
+
+  app.post('/api/workspace/rooms/:roomId/archive', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const scope = officeScopeFromReq(req);
+      const r = archiveRoom(db, scope, req.user, String(req.params.roomId || ''), {
+        archived: req.body?.archived !== false,
+      });
+      if (!r.ok) {
+        if (r.error === 'Forbidden.') return res.status(403).json(r);
+        if (r.error === 'Room not found.') return res.status(404).json(r);
+        return res.status(400).json(r);
+      }
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update room archive.' });
+    }
+  });
+
   app.post('/api/workspace/rooms/:roomId/messages', requireAuth, requirePermission('office.use'), (req, res) => {
     try {
       const scope = officeScopeFromReq(req);
@@ -5900,6 +5944,65 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Could not send message.' });
     }
   });
+
+  app.patch(
+    '/api/workspace/rooms/:roomId/messages/:messageId',
+    requireAuth,
+    requirePermission('office.use'),
+    (req, res) => {
+      try {
+        const scope = officeScopeFromReq(req);
+        const r = editRoomMessage(
+          db,
+          scope,
+          req.user,
+          String(req.params.roomId || ''),
+          String(req.params.messageId || ''),
+          req.body || {}
+        );
+        if (!r.ok) {
+          if (r.error === 'Forbidden.') return res.status(403).json(r);
+          if (r.error === 'Room not found.' || r.error === 'Message not found in this room.') {
+            return res.status(404).json(r);
+          }
+          return res.status(400).json(r);
+        }
+        res.json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not edit room message.' });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/workspace/rooms/:roomId/messages/:messageId',
+    requireAuth,
+    requirePermission('office.use'),
+    (req, res) => {
+      try {
+        const scope = officeScopeFromReq(req);
+        const r = deleteRoomMessage(
+          db,
+          scope,
+          req.user,
+          String(req.params.roomId || ''),
+          String(req.params.messageId || '')
+        );
+        if (!r.ok) {
+          if (r.error === 'Forbidden.') return res.status(403).json(r);
+          if (r.error === 'Room not found.' || r.error === 'Message not found in this room.') {
+            return res.status(404).json(r);
+          }
+          return res.status(400).json(r);
+        }
+        res.json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not delete room message.' });
+      }
+    }
+  );
 
   app.post('/api/workspace/rooms/:roomId/pin', requireAuth, requirePermission('office.use'), (req, res) => {
     try {

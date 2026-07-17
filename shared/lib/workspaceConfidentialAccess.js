@@ -77,6 +77,16 @@ export function userCanSeeOfficeThreadRow(scope, user, row) {
   const createdBy = String(row.created_by_user_id ?? row.createdByUserId ?? '').trim();
   const participant = userIsDistributionParticipant(uid, [createdBy, ...to, ...cc]);
 
+  // Workspace channel/DM threads are membership-gated — admin/HQ rollup must not
+  // browse every DM via the office desk API.
+  const mode = String(row.conversation_mode ?? row.conversationMode ?? payload?.scopeKind ?? '').toLowerCase();
+  const kind = String(row.kind || '').toLowerCase();
+  const isWorkspaceChat = mode === 'dm' || mode === 'channel' || kind === 'dm' || kind === 'channel';
+  if (isWorkspaceChat) {
+    if (String(createdBy) === uid || participant) return true;
+    return false;
+  }
+
   if (userHasPermission(user, '*')) return true;
   if (rk === 'admin') return true;
 

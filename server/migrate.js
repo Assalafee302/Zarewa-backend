@@ -1432,6 +1432,33 @@ function migrateWorkspaceV3Rooms(db) {
   } catch {
     /* work_items may not exist in some test DBs */
   }
+
+  try {
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_rooms_scope_slug_unique
+       ON workspace_rooms(scope_kind, IFNULL(branch_id, ''), slug)`
+    );
+  } catch {
+    /* index may already exist with different definition on some hosts */
+  }
+
+  const activityCols = new Set(
+    db.prepare(`PRAGMA table_info(workspace_activity_events)`).all().map((c) => c.name)
+  );
+  if (!activityCols.has('target_user_id')) {
+    try {
+      db.exec(`ALTER TABLE workspace_activity_events ADD COLUMN target_user_id TEXT`);
+    } catch {
+      /* column may exist on MySQL via different migration path */
+    }
+  }
+  try {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_workspace_activity_target_user ON workspace_activity_events(target_user_id, created_at_iso DESC)`
+    );
+  } catch {
+    /* optional */
+  }
 }
 
 /** AI Knowledge Center — centralized knowledge store for future Zare AI improvements. */

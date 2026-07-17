@@ -39,7 +39,7 @@ export function createApp(db) {
       },
     })
   );
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '4mb' }));
 
   // Dev default: common Vite dev (5173/5174) + preview (4173) on localhost + 127.0.0.1.
   const corsOrigin =

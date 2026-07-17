@@ -4,12 +4,14 @@ import {
   listWorkspaceRooms,
   postRoomMessage,
   getRoomMessages,
+  markRoomRead,
   promoteFromRoom,
   createDmRoom,
   listActivityEvents,
   upsertPresence,
   listPresence,
   markActivityRead,
+  userMayPostInRoom,
   MAX_MESSAGE_BODY_LEN,
 } from './workspaceRoomsOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
@@ -46,6 +48,24 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
     permissions: ['office.use'],
     displayName: 'Other Branch',
   };
+  const staffUser = {
+    id: 'u_ws_v3_staff',
+    roleKey: 'sales_staff',
+    permissions: ['office.use'],
+    displayName: 'Staff Only',
+  };
+  const bystander = {
+    id: 'u_ws_v3_bystander',
+    roleKey: 'sales_staff',
+    permissions: ['office.use'],
+    displayName: 'Bystander',
+  };
+  const execUser = {
+    id: 'u_ws_v3_exec',
+    roleKey: 'md',
+    permissions: ['office.use', '*'],
+    displayName: 'MD User',
+  };
   const scope = { viewAll: false, branchId: DEFAULT_BRANCH_ID };
   const otherScope = { viewAll: false, branchId: 'branch-other-xyz' };
 
@@ -67,11 +87,19 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
     }
   }
 
+  function roomBySlug(slug, roomsUser = user) {
+    const { rooms } = listWorkspaceRooms(db, scope, roomsUser);
+    return rooms.find((x) => x.slug === slug);
+  }
+
   beforeEach(() => {
     db = createDatabase(':memory:', { seed: false });
     insertUser(user);
     insertUser(peer);
     insertUser(otherBranchUser);
+    insertUser(staffUser);
+    insertUser(execUser);
+    insertUser(bystander);
   });
 
   afterEach(() => {
@@ -91,8 +119,7 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
   });
 
   it('sends and lists room messages; plain posts stay out of the activity feed', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+    const general = roomBySlug('general');
     expect(general).toBeTruthy();
     const sent = postRoomMessage(db, scope, user, DEFAULT_BRANCH_ID, general.id, { body: 'Hello ops' });
     expect(sent.ok).toBe(true);
@@ -100,27 +127,56 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
     const listed = getRoomMessages(db, scope, user, general.id);
     expect(listed.ok).toBe(true);
     expect(listed.messages.some((m) => m.body === 'Hello ops')).toBe(true);
-    // Feed is reserved for mentions/assignments/work-item events — a plain
-    // channel post must NOT create a message.created activity entry.
     const a = listActivityEvents(db, scope, user);
     expect(a.events.some((e) => e.eventKind === 'message.created')).toBe(false);
   });
 
-  it('mentions emit activity and reject trailing punctuation in handles', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+  it('mentions emit activity for target only (username resolution)', () => {
+    const general = roomBySlug('general');
     const sent = postRoomMessage(db, scope, user, DEFAULT_BRANCH_ID, general.id, {
-      body: `Ping @${peer.id}. please review`,
+      body: `Ping @${peer.id} please review`,
     });
     expect(sent.ok).toBe(true);
-    const a = listActivityEvents(db, scope, peer);
-    const mention = a.events.find((e) => e.eventKind === 'mention');
-    expect(mention).toBeTruthy();
+    const forPeer = listActivityEvents(db, scope, peer);
+    const forBystander = listActivityEvents(db, scope, bystander);
+    expect(forPeer.events.some((e) => e.eventKind === 'mention')).toBe(true);
+    expect(forBystander.events.some((e) => e.eventKind === 'mention')).toBe(false);
+  });
+
+  it('denies leadership room access to non-exec staff', () => {
+    listWorkspaceRooms(db, scope, execUser);
+    const leadership = db
+      .prepare(`SELECT * FROM workspace_rooms WHERE scope_kind = 'company' AND slug = 'leadership'`)
+      .get();
+    expect(leadership).toBeTruthy();
+    const denied = getRoomMessages(db, scope, staffUser, leadership.id);
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/Forbidden/i);
+    const allowed = getRoomMessages(db, scope, execUser, leadership.id);
+    expect(allowed.ok).toBe(true);
+  });
+
+  it('denies announcement posts for non-exec staff but allows exec', () => {
+    listWorkspaceRooms(db, scope, user);
+    const announcements = db
+      .prepare(`SELECT * FROM workspace_rooms WHERE scope_kind = 'company' AND slug = 'announcements'`)
+      .get();
+    expect(announcements).toBeTruthy();
+    expect(userMayPostInRoom(db, scope, staffUser, announcements)).toBe(false);
+    expect(userMayPostInRoom(db, scope, execUser, announcements)).toBe(true);
+    const denied = postRoomMessage(db, scope, staffUser, DEFAULT_BRANCH_ID, announcements.id, {
+      body: 'Staff cannot post here',
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/Forbidden/i);
+    const allowed = postRoomMessage(db, scope, execUser, DEFAULT_BRANCH_ID, announcements.id, {
+      body: 'Exec notice',
+    });
+    expect(allowed.ok).toBe(true);
   });
 
   it('marks own activity events as read for the actor', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+    const general = roomBySlug('general');
     promoteFromRoom(db, scope, user, DEFAULT_BRANCH_ID, general.id, {
       kind: 'work_item',
       excerpt: 'Own event unread check',
@@ -132,16 +188,14 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
   });
 
   it('rejects empty and oversized messages', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+    const general = roomBySlug('general');
     expect(postRoomMessage(db, scope, user, DEFAULT_BRANCH_ID, general.id, { body: '  ' }).ok).toBe(false);
     const huge = 'x'.repeat(MAX_MESSAGE_BODY_LEN + 1);
     expect(postRoomMessage(db, scope, user, DEFAULT_BRANCH_ID, general.id, { body: huge }).ok).toBe(false);
   });
 
   it('promotes room chat to work item and requires excerpt', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+    const general = roomBySlug('general');
     expect(
       promoteFromRoom(db, scope, user, DEFAULT_BRANCH_ID, general.id, {
         kind: 'work_item',
@@ -156,6 +210,25 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
     expect(r.workItemId).toBeTruthy();
   });
 
+  it('rejects promote when messageId is not in room thread', () => {
+    const general = roomBySlug('general');
+    const other = postRoomMessage(db, scope, user, DEFAULT_BRANCH_ID, general.id, { body: 'seed' });
+    const foreignMsgId = 'OM-foreign-not-in-thread';
+    const r = promoteFromRoom(db, scope, user, DEFAULT_BRANCH_ID, general.id, {
+      kind: 'work_item',
+      excerpt: 'Bad promote',
+      messageId: foreignMsgId,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Message not found/i);
+    const good = promoteFromRoom(db, scope, user, DEFAULT_BRANCH_ID, general.id, {
+      kind: 'work_item',
+      excerpt: 'Good promote',
+      messageId: other.message?.id,
+    });
+    expect(good.ok).toBe(true);
+  });
+
   it('creates DM and hides it from non-members', () => {
     const dm = createDmRoom(db, scope, user, peer.id);
     expect(dm.ok).toBe(true);
@@ -167,18 +240,32 @@ describe.skipIf(!mysqlOk)('workspaceRoomsOps', () => {
   });
 
   it('blocks cross-branch room access', () => {
-    const { rooms } = listWorkspaceRooms(db, scope, user);
-    const general = rooms.find((x) => x.slug === 'general');
+    const general = roomBySlug('general');
     const denied = getRoomMessages(db, otherScope, otherBranchUser, general.id);
     expect(denied.ok).toBe(false);
     expect(denied.error).toMatch(/Forbidden/i);
   });
 
-  it('records presence, mark read, and activity list is safe', () => {
-    expect(upsertPresence(db, user, { status: 'online', branchId: DEFAULT_BRANCH_ID }).ok).toBe(true);
+  it('markRoomRead marks thread without loading messages', () => {
+    const general = roomBySlug('general');
+    postRoomMessage(db, scope, peer, DEFAULT_BRANCH_ID, general.id, { body: 'unread ping' });
+    const listed = listWorkspaceRooms(db, scope, user);
+    const room = listed.rooms.find((r) => r.id === general.id);
+    expect(room?.unreadCount).toBeGreaterThan(0);
+    expect(markRoomRead(db, scope, user, general.id).ok).toBe(true);
+    const after = listWorkspaceRooms(db, scope, user);
+    const roomAfter = after.rooms.find((r) => r.id === general.id);
+    expect(roomAfter?.unreadCount || 0).toBe(0);
+  });
+
+  it('records presence with desk key', () => {
+    expect(
+      upsertPresence(db, user, { status: 'online', branchId: DEFAULT_BRANCH_ID, deskKey: 'sales' }).ok
+    ).toBe(true);
     const p = listPresence(db, scope);
     expect(p.ok).toBe(true);
-    expect(p.presence.some((x) => x.userId === user.id)).toBe(true);
+    const row = p.presence.find((x) => x.userId === user.id);
+    expect(row?.deskKey).toBe('sales');
     expect(markActivityRead(db, user.id).ok).toBe(true);
     const a = listActivityEvents(db, scope, user);
     expect(a.ok).toBe(true);

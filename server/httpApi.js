@@ -280,6 +280,7 @@ import {
 import {
   listWorkspaceRooms,
   getRoomMessages,
+  markRoomRead,
   postRoomMessage,
   pinRoomWorkCard,
   promoteFromRoom,
@@ -5841,7 +5842,14 @@ export function registerHttpApi(app, db) {
     try {
       const scope = officeScopeFromReq(req);
       const limit = Number(req.query.limit) || 80;
-      const r = getRoomMessages(db, scope, req.user, String(req.params.roomId || ''), { limit });
+      const beforeIso = req.query.beforeIso ? String(req.query.beforeIso) : undefined;
+      const markRead =
+        req.query.markRead === '1' || String(req.query.markRead || '').toLowerCase() === 'true';
+      const r = getRoomMessages(db, scope, req.user, String(req.params.roomId || ''), {
+        limit,
+        beforeIso,
+        markRead,
+      });
       if (!r.ok) {
         if (r.error === 'Forbidden.') return res.status(403).json(r);
         if (r.error === 'Room not found.') return res.status(404).json(r);
@@ -5851,6 +5859,22 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load messages.' });
+    }
+  });
+
+  app.post('/api/workspace/rooms/:roomId/read', requireAuth, requirePermission('office.use'), (req, res) => {
+    try {
+      const scope = officeScopeFromReq(req);
+      const r = markRoomRead(db, scope, req.user, String(req.params.roomId || ''));
+      if (!r.ok) {
+        if (r.error === 'Forbidden.') return res.status(403).json(r);
+        if (r.error === 'Room not found.') return res.status(404).json(r);
+        return res.status(400).json(r);
+      }
+      res.json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not mark room read.' });
     }
   });
 

@@ -1381,6 +1381,8 @@ CREATE TABLE IF NOT EXISTS workspace_rooms (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_rooms_branch_slug ON workspace_rooms(branch_id, slug);
+CREATE INDEX IF NOT EXISTS idx_workspace_rooms_scope ON workspace_rooms(scope_kind, updated_at_iso DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_rooms_scope_slug_unique ON workspace_rooms(scope_kind, IFNULL(branch_id, ''), slug);
 
 CREATE TABLE IF NOT EXISTS workspace_room_members (
   room_id TEXT NOT NULL,
@@ -1407,6 +1409,7 @@ CREATE TABLE IF NOT EXISTS workspace_activity_events (
   id TEXT PRIMARY KEY,
   branch_id TEXT NOT NULL,
   actor_user_id TEXT,
+  target_user_id TEXT,
   event_kind TEXT NOT NULL,
   target_kind TEXT,
   target_id TEXT,
@@ -1416,6 +1419,7 @@ CREATE TABLE IF NOT EXISTS workspace_activity_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_activity_branch ON workspace_activity_events(branch_id, created_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_activity_target_user ON workspace_activity_events(target_user_id, created_at_iso DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_activity_reads (
   user_id TEXT PRIMARY KEY,

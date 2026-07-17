@@ -33,3 +33,17 @@ describe('adaptExecSqlForMysql reserved column names', () => {
     expect(mysql).not.toMatch(/\n\s+key VARCHAR/i);
   });
 });
+
+describe('adaptExecSqlForMysql index IFNULL expressions', () => {
+  it('strips IFNULL from CREATE UNIQUE INDEX but leaves SELECT IFNULL alone', () => {
+    const idx = adaptExecSqlForMysql(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_rooms_scope_slug_unique
+       ON workspace_rooms(scope_kind, IFNULL(branch_id, ''), slug)`
+    );
+    expect(idx).not.toMatch(/IFNULL/i);
+    expect(idx).toMatch(/ON workspace_rooms\(scope_kind, branch_id, slug\)/i);
+
+    const select = adaptExecSqlForMysql(`SELECT IFNULL(branch_id, '') AS b FROM workspace_rooms`);
+    expect(select).toContain(`IFNULL(branch_id, '')`);
+  });
+});

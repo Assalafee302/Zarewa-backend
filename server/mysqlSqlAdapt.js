@@ -1,4 +1,8 @@
-import { escapeMysqlReservedColumnNames, mysqlTypeForSqliteTextColumnName } from './schemaMysqlTransform.js';
+import {
+  escapeMysqlReservedColumnNames,
+  mysqlTypeForSqliteTextColumnName,
+  stripMysqlIncompatibleIndexExprs,
+} from './schemaMysqlTransform.js';
 
 /**
  * Rewrites SQLite-oriented DDL fragments (e.g. migrate.js `db.exec`) for MySQL.
@@ -18,6 +22,10 @@ export function adaptExecSqlForMysql(sql) {
   s = s.replace(/\bCREATE INDEX IF NOT EXISTS\b/gi, 'CREATE INDEX');
   /* SQLite partial indexes — not supported in MySQL */
   s = s.replace(/\)\s*WHERE\b[\s\S]*?;/gi, ');');
+  /* MariaDB rejects IFNULL(...) inside CREATE INDEX column lists (SQLite allows it). */
+  if (/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(s.trim())) {
+    s = stripMysqlIncompatibleIndexExprs(s);
+  }
   /* Short widths keep composite indexes under InnoDB's ~3072-byte prefix limit. */
   const varcharForDefault = (col) =>
     /_id$|_ref$|_no$|_key$|_token$|^id$|^key$/i.test(col) ? 'VARCHAR(128)' : 'VARCHAR(255)';

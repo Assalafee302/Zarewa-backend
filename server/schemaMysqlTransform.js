@@ -1,4 +1,21 @@
 /**
+ * SQLite allows IFNULL/COALESCE expressions in index column lists; MariaDB/MySQL
+ * reject that syntax (errno 1064 near the expression). Collapse to the base column
+ * so bootstrap and migrate CREATE INDEX statements remain valid.
+ * Uniqueness for NULL branch_id is weaker than SQLite's IFNULL('',) form — app code
+ * still guards company-room slug uniqueness.
+ */
+export function stripMysqlIncompatibleIndexExprs(sql) {
+  return String(sql || '').replace(
+    /\bIFNULL\s*\(\s*([a-z_][a-z0-9_]*)\s*,\s*(?:''|"")\s*\)/gi,
+    '$1'
+  ).replace(
+    /\bCOALESCE\s*\(\s*([a-z_][a-z0-9_]*)\s*,\s*(?:''|"")\s*\)/gi,
+    '$1'
+  );
+}
+
+/**
  * Adapts the canonical DDL in schemaSql.js (SQLite-oriented comments) for MySQL 8.
  */
 export function sqliteDdlToMysql(ddl) {
@@ -11,6 +28,7 @@ export function sqliteDdlToMysql(ddl) {
   s = s.replace(/\bCREATE INDEX IF NOT EXISTS\b/gi, 'CREATE INDEX');
   /* SQLite partial indexes — not supported in MySQL */
   s = s.replace(/\)\s*WHERE\b[\s\S]*?;/gi, ');');
+  s = stripMysqlIncompatibleIndexExprs(s);
   s = mapTextColumnsForMysql(s);
   s = escapeMysqlReservedColumnNames(s);
   s = addMysqlIndexKeyLengths(s);

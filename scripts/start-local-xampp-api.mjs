@@ -5,6 +5,7 @@
  *
  *   node scripts/start-local-xampp-api.mjs
  */
+process.env.ZAREWA_LOCAL_XAMPP = '1';
 process.env.ZAREWA_MYSQL_HOST = '127.0.0.1';
 process.env.ZAREWA_MYSQL_PORT = '3306';
 process.env.ZAREWA_MYSQL_USER = 'root';

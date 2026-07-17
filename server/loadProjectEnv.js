@@ -35,10 +35,12 @@ function loadEnvFileQuiet(envPath) {
 
 /**
  * Loads repo-root `.env` then `.env.local`.
- * Keys in `.env.local` always override `.env` (and override shell for those keys).
+ * Keys in `.env.local` always override `.env` (and override shell for those keys),
+ * except when `ZAREWA_LOCAL_XAMPP=1` (start:local-xampp) which re-applies local MySQL after files.
  */
 export function loadProjectEnv() {
   const root = repoRootEnvDir();
+  const forceLocalXampp = String(process.env.ZAREWA_LOCAL_XAMPP || '').trim() === '1';
   try {
     loadEnvFileQuiet(path.join(root, '.env'));
     const localPath = path.join(root, '.env.local');
@@ -46,6 +48,17 @@ export function loadProjectEnv() {
       for (const [key, value] of parseEnvLines(fs.readFileSync(localPath, 'utf8'))) {
         process.env[key] = value;
       }
+    }
+    if (forceLocalXampp) {
+      process.env.ZAREWA_MYSQL_HOST = '127.0.0.1';
+      process.env.ZAREWA_MYSQL_PORT = '3306';
+      process.env.ZAREWA_MYSQL_USER = 'root';
+      process.env.ZAREWA_MYSQL_PASSWORD = '';
+      process.env.ZAREWA_MYSQL_DATABASE = 'zarewa_db';
+      process.env.ZAREWA_COOKIE_DOMAIN = '';
+      process.env.COOKIE_SECURE = '0';
+      process.env.ZAREWA_COOKIE_SAMESITE = 'lax';
+      if (!process.env.ZAREWA_ALLOW_SEEDED_USERS) process.env.ZAREWA_ALLOW_SEEDED_USERS = '1';
     }
   } catch (e) {
     console.warn('[zarewa] Could not load env files:', e?.message || e);

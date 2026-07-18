@@ -86,7 +86,13 @@ import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from '../shared/customerPhoneKey.js';
-import { actorId, actorName, canUseAllBranchesRollup, userHasPermission } from './auth.js';
+import {
+  actorId,
+  actorName,
+  canUseAllBranchesRollup,
+  editMutationRequiresSecondApproval,
+  userHasPermission,
+} from './auth.js';
 import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
 import { assertEntityBranchForWorkspaceWrite, assertTreasuryAccountForWorkspace, userMayPostAcrossBranches } from './branchScope.js';
 import {
@@ -6405,13 +6411,15 @@ export function clearCuttingListProductionHold(db, cuttingListId, actor = null) 
   return { ok: true };
 }
 
-export function updateCuttingList(db, cuttingListId, payload) {
+export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
   const isAutosave = Boolean(payload.autosave);
   const finalize = Boolean(payload.finalize);
   const existingIsDraft = isCuttingListDraftStatus(existing.status);
-  if (isCuttingListProductionCompleted(db, existing)) {
+  // Admin/MD may correct completed production records; everyone else stays locked.
+  const mayEditAfterProduction = !editMutationRequiresSecondApproval(actor);
+  if (isCuttingListProductionCompleted(db, existing) && !mayEditAfterProduction) {
     return { ok: false, error: 'Cutting list cannot be edited after production is completed.' };
   }
   if (Number(existing.production_registered)) {

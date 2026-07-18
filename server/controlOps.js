@@ -4507,11 +4507,15 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Listing runs {@link previewRefundRequest} per row so only quotations with preview total ≥
+ * Obvious overpayments use a cheap eligibility result; other candidates run
+ * {@link previewRefundRequest} so only quotations with preview total ≥
  * {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear (same rules as eligibility-check picklist).
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
+ * @param {{ candidateLimit?: number; resultLimit?: number }} [opts]
  */
-export function getEligibleRefundQuotations(db) {
+export function getEligibleRefundQuotations(db, opts = {}) {
+  const candidateLimit = Math.max(0, Math.min(500, Math.floor(Number(opts.candidateLimit) || 0)));
+  const resultLimit = Math.max(0, Math.min(200, Math.floor(Number(opts.resultLimit) || 0)));
   const sql = `
     SELECT q.*,
       COALESCE((
@@ -4537,6 +4541,7 @@ export function getEligibleRefundQuotations(db) {
         OR TRIM(COALESCE(q.status, '')) = 'Void'
       )
     ORDER BY q.date_iso DESC
+    ${candidateLimit > 0 ? `LIMIT ${candidateLimit}` : ''}
   `;
   const rows = db.prepare(sql).all();
   const out = [];
@@ -4547,24 +4552,34 @@ export function getEligibleRefundQuotations(db) {
     const paid = roundMoney(row.paid_ngn);
     if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
 
-    const preview = previewRefundRequest(db, { quotationRef: row.id });
-    if (!preview?.ok) continue;
-    const categories = Array.isArray(preview.preview?.eligibleRefundCategories)
-      ? preview.preview.eligibleRefundCategories.map((x) => String(x || '').trim()).filter(Boolean)
-      : [];
-    const suggestedPreviewAmountNgn = Math.round(Number(preview.preview?.suggestedAmountNgn) || 0);
-    const productionFulfillment = preview.preview?.productionFulfillment;
-    const overpayExcess = Math.round(Number(preview.preview?.overpaymentExcessNgn) || 0);
-    const autoSuggestedPositive = (preview.preview?.suggestedLines || []).some(
-      (l) => roundMoney(l.amountNgn) > 0
-    );
-    if (
-      productionFulfillment?.fullyProducedRoofing &&
-      overpayExcess <= 0 &&
-      !autoSuggestedPositive &&
-      suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
-    ) {
-      continue;
+    const overpayExcess = Math.round(Number(meets.overpaymentExcessNgn) || 0);
+    let categories;
+    let suggestedPreviewAmountNgn;
+    if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN) {
+      // Avoid the expensive full production/refund preview for the common, unambiguous case.
+      // Selecting the quotation still runs previewRefundRequest and reveals any additional categories.
+      categories = ['Overpayment'];
+      suggestedPreviewAmountNgn = Math.min(overpayExcess, meets.remainingNgn);
+    } else {
+      const preview = previewRefundRequest(db, { quotationRef: row.id });
+      if (!preview?.ok) continue;
+      categories = Array.isArray(preview.preview?.eligibleRefundCategories)
+        ? preview.preview.eligibleRefundCategories.map((x) => String(x || '').trim()).filter(Boolean)
+        : [];
+      suggestedPreviewAmountNgn = Math.round(Number(preview.preview?.suggestedAmountNgn) || 0);
+      const productionFulfillment = preview.preview?.productionFulfillment;
+      const previewOverpayExcess = Math.round(Number(preview.preview?.overpaymentExcessNgn) || 0);
+      const autoSuggestedPositive = (preview.preview?.suggestedLines || []).some(
+        (l) => roundMoney(l.amountNgn) > 0
+      );
+      if (
+        productionFulfillment?.fullyProducedRoofing &&
+        previewOverpayExcess <= 0 &&
+        !autoSuggestedPositive &&
+        suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
+      ) {
+        continue;
+      }
     }
     const pickRow = {
       ...row,
@@ -4575,6 +4590,7 @@ export function getEligibleRefundQuotations(db) {
     };
     if (!quotationMeetsRefundPickerFloor(pickRow)) continue;
     out.push(pickRow);
+    if (resultLimit > 0 && out.length >= resultLimit) break;
   }
   return out;
 }

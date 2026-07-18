@@ -6776,7 +6776,7 @@ export function registerHttpApi(app, db) {
         'cutting_list',
         cid,
         (stripped) => {
-          const r = write.updateCuttingList(db, cid, stripped || {});
+          const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
           const cuttingList = getCuttingList(db, cid);
           return { ok: true, cuttingList };
@@ -8666,7 +8666,10 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/refunds/eligible-quotations', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
-      const rows = getEligibleRefundQuotations(db);
+      const requestedLimit = Math.floor(Number(req.query.limit) || 0);
+      const resultLimit = Math.max(0, Math.min(100, requestedLimit));
+      const candidateLimit = resultLimit;
+      const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
       res.json({ ok: true, quotations: rows });
     } catch (e) {
       console.error(e);

@@ -113,4 +113,54 @@ describe.skipIf(!mysqlOk)('cutting list draft finalize', () => {
     expect(blocked.ok).toBe(false);
     expect(blocked.code).toMatch(/cutting_list/);
   });
+
+  it('blocks non-admin edits after production completed, allows admin/MD', () => {
+    db = createDatabase(':memory:');
+    const created = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+      totalMeters: 10,
+    });
+    expect(created.ok).toBe(true);
+
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, cutting_list_id, status, branch_id, created_at_iso)
+       VALUES (?, ?, 'Completed', 'BR-YL', ?)`
+    ).run('JOB-CL-DONE-1', created.id, new Date().toISOString());
+    db.prepare(
+      `UPDATE cutting_lists
+       SET production_registered = 1, production_register_ref = ?, status = 'Finished'
+       WHERE id = ?`
+    ).run('JOB-CL-DONE-1', created.id);
+
+    const blocked = updateCuttingList(
+      db,
+      created.id,
+      { lines: [{ sheets: 3, lengthM: 5, lineType: 'Roof' }], totalMeters: 15 },
+      { roleKey: 'sales_staff' }
+    );
+    expect(blocked.ok).toBe(false);
+    expect(String(blocked.error || '')).toMatch(/cannot be edited after production/i);
+
+    const allowedAdmin = updateCuttingList(
+      db,
+      created.id,
+      { lines: [{ sheets: 3, lengthM: 5, lineType: 'Roof' }], totalMeters: 15 },
+      { roleKey: 'admin' }
+    );
+    expect(allowedAdmin.ok).toBe(true);
+    expect(getCuttingList(db, created.id)?.totalMeters).toBe(15);
+
+    const allowedMd = updateCuttingList(
+      db,
+      created.id,
+      { lines: [{ sheets: 4, lengthM: 5, lineType: 'Roof' }], totalMeters: 20 },
+      { roleKey: 'md' }
+    );
+    expect(allowedMd.ok).toBe(true);
+    expect(getCuttingList(db, created.id)?.totalMeters).toBe(20);
+  });
 });

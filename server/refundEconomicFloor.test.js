@@ -32,7 +32,15 @@ function mockFloorDb({ coilMetersByJob = {}, coilGaugeByJob = {} } = {}) {
           const jobId = String(args[0] ?? '').trim();
           if (s.includes('FROM production_job_coils') && s.includes('gauge')) {
             const g = coilGaugeByJob[jobId];
-            return g ? [{ g }] : [];
+            const meters = Number(coilMetersByJob[jobId]) || 0;
+            // Support mixed-gauge fixtures: coilGaugeByJob[jobId] may be an array of { g, meters }.
+            if (Array.isArray(g)) {
+              return g.map((row) => ({
+                g: row.g ?? row.gaugeLabel,
+                meters: Number(row.meters) || 0,
+              }));
+            }
+            return g ? [{ g, meters }] : [];
           }
           return [];
         },
@@ -119,6 +127,37 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
     expect(summary.ppmSourceByJob['JOB-STONE']).toBe('quoted_selling_fallback');
     expect(summary.floorDeliveredValueNgn).toBe(39_200);
     expect(summary.maxDefensibleRefundNgn).toBe(60_800);
+  });
+
+  it('values mixed coil gauges on one job with override ppm applied per slice', () => {
+    // Override still applies one rate, but metres must not collapse to a single first-gauge label.
+    const db = mockFloorDb({
+      coilMetersByJob: { 'JOB-MIX': 575 },
+      coilGaugeByJob: {
+        'JOB-MIX': [
+          { g: '0.24mm', meters: 259 },
+          { g: '0.22mm', meters: 316 },
+        ],
+      },
+    });
+    const quote = {
+      lines_json: JSON.stringify({
+        materialGauge: '0.24mm',
+        products: [{ name: 'Roofing Sheet', qty: 575, unitPrice: 4800, gauge: '0.24mm' }],
+      }),
+      branch_id: 'BR-KD',
+    };
+    const jobs = [{ job_id: 'JOB-MIX', status: 'Completed', actual_meters: 575 }];
+    const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
+      cashInNgn: 2_912_960,
+      priorRefundedNgn: 0,
+      substitutePricePerMeterNgn: 4800,
+    });
+    expect(summary.incompleteFloorPricing).toBe(false);
+    expect(summary.producedOutputMeters).toBe(575);
+    expect(summary.floorDeliveredValueNgn).toBe(575 * 4800);
+    expect(summary.jobRows[0].gaugeSlices?.length).toBe(2);
+    expect(summary.jobRows[0].gaugeSlices?.map((s) => s.coilGaugeLabel)).toEqual(['0.24mm', '0.22mm']);
   });
 });
 

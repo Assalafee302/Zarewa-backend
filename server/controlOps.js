@@ -1022,27 +1022,44 @@ function workbookFloorPpmForQuotedGaugeDesign(db, materialKey, quotedGd, sheetBr
   return blank != null && blank > 0 ? blank : null;
 }
 
-function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.02) {
+/**
+ * True when quoted vs coil gauges are commercially different.
+ * Tolerance only absorbs label noise (0.24 vs 0.240), not the usual 0.02mm gauge steps
+ * (0.24 vs 0.22 must credit). Historical default of 0.02mm wrongly treated adjacent gauges as equal.
+ */
+function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.005) {
   const a = firstGaugeMmFromLabel(quotedLabel);
   const b = firstGaugeMmFromLabel(producedLabel);
   if (a == null || b == null) return false;
-  return Math.abs(a - b) > tolMm;
+  return Math.abs(a - b) > tolMm + 1e-9;
 }
 
 /**
- * Physical coil gauge from job allocations (authoritative when steel came from a roll
- * whose gauge differs from the FG master product card — e.g. quoted 0.28, coil 0.24).
+ * Stable key so "0.22mm" and "0.22" group together for mixed-coil substitution.
+ * @param {string} label
+ */
+function coilGaugeGroupKey(label) {
+  const mm = firstGaugeMmFromLabel(label);
+  if (mm == null) return String(label || '').trim().toLowerCase();
+  return String(Math.round(mm * 1000) / 1000);
+}
+
+/**
+ * Coil metres on a job grouped by physical gauge (one job can consume several rolls).
+ * Metres come from `production_job_coils.meters_produced` — authoritative for gauge split.
  * @param {import('better-sqlite3').Database} db
  * @param {string | null | undefined} jobId
+ * @returns {{ gaugeLabel: string, meters: number }[]}
  */
-function producedGaugeLabelFromJobCoils(db, jobId) {
+function coilGaugeMeterGroupsFromJob(db, jobId) {
   const jid = String(jobId ?? '').trim();
-  if (!jid) return '';
+  if (!jid) return [];
   let rows = [];
   try {
     rows = db
       .prepare(
-        `SELECT COALESCE(NULLIF(TRIM(pjc.gauge_label), ''), NULLIF(TRIM(cl.gauge_label), '')) AS g
+        `SELECT COALESCE(NULLIF(TRIM(pjc.gauge_label), ''), NULLIF(TRIM(cl.gauge_label), '')) AS g,
+                COALESCE(pjc.meters_produced, 0) AS meters
          FROM production_job_coils pjc
          LEFT JOIN coil_lots cl ON cl.coil_no = pjc.coil_no
          WHERE pjc.job_id = ?
@@ -1050,13 +1067,42 @@ function producedGaugeLabelFromJobCoils(db, jobId) {
       )
       .all(jid);
   } catch {
-    return '';
+    return [];
   }
+  /** @type {Map<string, { gaugeLabel: string, meters: number }>} */
+  const byKey = new Map();
   for (const r of rows) {
     const g = String(r?.g ?? '').trim();
-    if (g) return g;
+    if (!g) continue;
+    const meters = Number(r?.meters) || 0;
+    const key = coilGaugeGroupKey(g);
+    if (!key) continue;
+    const prev = byKey.get(key);
+    if (prev) {
+      prev.meters += meters;
+    } else {
+      byKey.set(key, { gaugeLabel: g, meters });
+    }
   }
-  return '';
+  return [...byKey.values()].map((g) => ({
+    gaugeLabel: g.gaugeLabel,
+    meters: Math.round((Number(g.meters) || 0) * 100) / 100,
+  }));
+}
+
+/**
+ * Physical coil gauge from job allocations (authoritative when steel came from a roll
+ * whose gauge differs from the FG master product card — e.g. quoted 0.28, coil 0.24).
+ * When a job has mixed gauges, returns the first labelled allocation (prefer
+ * {@link coilGaugeMeterGroupsFromJob} for substitution / floor maths).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null | undefined} jobId
+ */
+function producedGaugeLabelFromJobCoils(db, jobId) {
+  const groups = coilGaugeMeterGroupsFromJob(db, jobId);
+  if (groups.length === 0) return '';
+  const withMetres = groups.find((g) => (Number(g.meters) || 0) > 0);
+  return String((withMetres || groups[0]).gaugeLabel || '').trim();
 }
 
 /** Include `pricing_profile_aliases` canonical design when resolving workbook rows. */
@@ -1085,13 +1131,24 @@ function expandedDesignKeysForWorkbook(db, designLabelRaw) {
 /**
  * Workbook **floor** ₦/m (material pricing `minimum_price_per_m_ngn`) for steel actually used:
  * **allocated coil gauge** + design/colour, then published list from `price_list_items` if no sheet row.
+ * Pass `coilGaugeLabel` when a job has mixed gauges and each slice must be priced separately.
  * @returns {{ ppm: number, source: 'override' | 'workbook_floor' | 'price_list' } | null}
  *   null when there is no coil gauge on the job (caller treats as “cannot auto-price”).
  */
-function listWorkbookPpmForJobAllocatedCoil(db, job, branchId, quotedGd, overrideSubPpm, linesJson = '', asAtIso) {
+function listWorkbookPpmForJobAllocatedCoil(
+  db,
+  job,
+  branchId,
+  quotedGd,
+  overrideSubPpm,
+  linesJson = '',
+  asAtIso,
+  coilGaugeLabel = null
+) {
   const ov = positiveNumber(overrideSubPpm);
   if (ov != null && ov > 0) return { ppm: ov, source: 'override' };
-  const coilGauge = producedGaugeLabelFromJobCoils(db, job?.job_id);
+  const coilGauge =
+    String(coilGaugeLabel ?? '').trim() || producedGaugeLabelFromJobCoils(db, job?.job_id);
   if (!coilGauge) return null;
 
   const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
@@ -1237,45 +1294,91 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     if (st !== 'completed') continue;
     const outputM = jobOutputMetresForUnproducedRefund(db, j);
     if (outputM <= 0) continue;
-    const lookup = listWorkbookPpmForJobAllocatedCoil(
-      db,
-      j,
-      branchId,
-      quotedGd,
-      overrideSubPpm,
-      linesJson,
-      pricingAsAtIso
-    );
-    let floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
-    let ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
-    // Stone / offcut FG jobs often have no allocated coil workbook row — use quoted selling ₦/m
-    // so incomplete pricing does not null the entire economic floor (and falsely block overpayment).
-    if (floorPpmNgn == null && quotedSellingPpmNgn != null) {
-      floorPpmNgn = quotedSellingPpmNgn;
-      ppmSource = 'quoted_selling_fallback';
-    }
-    if (
-      mdPriceExceptionHonoured &&
-      quotedSellingPpmNgn != null &&
-      floorPpmNgn != null &&
-      quotedSellingPpmNgn < floorPpmNgn
-    ) {
-      floorPpmNgn = quotedSellingPpmNgn;
-      ppmSource = 'md_approved_quoted_selling';
-      honouredMdPriceException = true;
-    }
     const jobId = String(j.job_id ?? j.jobID ?? '').trim();
-    if (ppmSource) ppmSourceByJob[jobId] = ppmSource;
-    if (ppmSource === 'price_list') usedPriceListFallback = true;
-    if (floorPpmNgn == null) incompleteFloorPricing = true;
-    const floorValueNgn = floorPpmNgn != null ? roundMoney(outputM * floorPpmNgn) : 0;
-    floorDeliveredValueNgn += floorValueNgn;
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter((g) => (Number(g.meters) || 0) > 0.001);
+    const coilMetersSum = gaugeGroups.reduce((s, g) => s + (Number(g.meters) || 0), 0);
+
+    /** @type {{ meters: number, coilGaugeLabel: string | null }[]} */
+    const slices =
+      coilMetersSum > 0.001
+        ? [
+            ...gaugeGroups.map((g) => ({ meters: Number(g.meters) || 0, coilGaugeLabel: g.gaugeLabel })),
+            // Offcut / job actual above coil metres — value remainder without inventing a coil gauge.
+            ...(outputM > coilMetersSum + 0.001
+              ? [{ meters: outputM - coilMetersSum, coilGaugeLabel: null }]
+              : []),
+          ]
+        : [{ meters: outputM, coilGaugeLabel: null }];
+
+    // When job output is below coil sum (rare drift), scale coil slices down to outputM.
+    const sliceMetersSum = slices.reduce((s, x) => s + x.meters, 0);
+    const scale =
+      coilMetersSum > 0.001 && outputM + 0.001 < coilMetersSum && sliceMetersSum > 0.001
+        ? outputM / coilMetersSum
+        : 1;
+
+    let jobFloorValueNgn = 0;
+    let jobFloorPpmNgn = null;
+    let jobPpmSource = null;
+    let jobIncomplete = false;
+    const sliceRows = [];
+
+    for (const slice of slices) {
+      const sliceM = Math.round(slice.meters * scale * 100) / 100;
+      if (sliceM <= 0.001) continue;
+      const lookup = listWorkbookPpmForJobAllocatedCoil(
+        db,
+        j,
+        branchId,
+        quotedGd,
+        overrideSubPpm,
+        linesJson,
+        pricingAsAtIso,
+        slice.coilGaugeLabel
+      );
+      let floorPpmNgn = ppmValueFromWorkbookLookup(lookup) != null ? Math.round(lookup.ppm) : null;
+      let ppmSource = floorPpmNgn != null ? String(lookup.source || '') : null;
+      // Stone / offcut FG jobs often have no allocated coil workbook row — use quoted selling ₦/m
+      // so incomplete pricing does not null the entire economic floor (and falsely block overpayment).
+      if (floorPpmNgn == null && quotedSellingPpmNgn != null) {
+        floorPpmNgn = quotedSellingPpmNgn;
+        ppmSource = 'quoted_selling_fallback';
+      }
+      if (
+        mdPriceExceptionHonoured &&
+        quotedSellingPpmNgn != null &&
+        floorPpmNgn != null &&
+        quotedSellingPpmNgn < floorPpmNgn
+      ) {
+        floorPpmNgn = quotedSellingPpmNgn;
+        ppmSource = 'md_approved_quoted_selling';
+        honouredMdPriceException = true;
+      }
+      if (ppmSource === 'price_list') usedPriceListFallback = true;
+      if (floorPpmNgn == null) jobIncomplete = true;
+      const floorValueNgn = floorPpmNgn != null ? roundMoney(sliceM * floorPpmNgn) : 0;
+      jobFloorValueNgn += floorValueNgn;
+      if (jobFloorPpmNgn == null && floorPpmNgn != null) jobFloorPpmNgn = floorPpmNgn;
+      if (!jobPpmSource && ppmSource) jobPpmSource = ppmSource;
+      sliceRows.push({
+        meters: roundMoney(sliceM),
+        coilGaugeLabel: slice.coilGaugeLabel,
+        floorPpmNgn,
+        floorValueNgn,
+        ppmSource,
+      });
+    }
+
+    if (jobPpmSource) ppmSourceByJob[jobId] = jobPpmSource;
+    if (jobIncomplete) incompleteFloorPricing = true;
+    floorDeliveredValueNgn += jobFloorValueNgn;
     jobRows.push({
       jobId,
       outputMeters: roundMoney(outputM),
-      floorPpmNgn,
-      floorValueNgn,
-      ppmSource,
+      floorPpmNgn: gaugeGroups.length > 1 ? null : jobFloorPpmNgn,
+      floorValueNgn: roundMoney(jobFloorValueNgn),
+      ppmSource: jobPpmSource,
+      gaugeSlices: sliceRows.length > 1 ? sliceRows : undefined,
     });
   }
 
@@ -1365,39 +1468,53 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
 
   if (quotedGaugeRaw) {
     for (const j of productionJobs) {
-      const m = Number(j.actual_meters) || 0;
-      if (m <= 0) continue;
-      const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
-      if (!coilGauge) {
-        if (!stoneMeterQuote) {
+      const jobId = String(j.job_id ?? '').trim();
+      const actualM = Number(j.actual_meters) || 0;
+      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter((g) => (Number(g.meters) || 0) > 0.001);
+      const slices =
+        gaugeGroups.length > 0
+          ? gaugeGroups
+          : actualM > 0
+            ? [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, jobId), meters: actualM }]
+            : [];
+      if (slices.length === 0) continue;
+
+      for (const slice of slices) {
+        const m = Number(slice.meters) || 0;
+        if (m <= 0) continue;
+        const coilGauge = String(slice.gaugeLabel || '').trim();
+        if (!coilGauge) {
+          if (!stoneMeterQuote) {
+            issues.push({
+              code: 'substitution_coil_gauge_missing',
+              jobId: jobId || undefined,
+              productId: String(j.product_id ?? '').trim() || undefined,
+              message: `Job “${String(j.product_name || j.job_id).trim()}” has metres but no coil gauge on allocations — link coils so gauge vs quotation can be compared.`,
+            });
+          }
+          continue;
+        }
+        if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
+        const lookup = listWorkbookPpmForJobAllocatedCoil(
+          db,
+          j,
+          branchId,
+          quotedGdIssue,
+          null,
+          quote?.lines_json ?? '',
+          pricingAsAtIso,
+          coilGauge
+        );
+        const ppm = ppmValueFromWorkbookLookup(lookup);
+        if (ppm == null || ppm <= 0) {
+          const pid = String(j.product_id ?? '').trim();
           issues.push({
-            code: 'substitution_coil_gauge_missing',
-            jobId: String(j.job_id ?? '').trim() || undefined,
-            productId: String(j.product_id ?? '').trim() || undefined,
-            message: `Job “${String(j.product_name || j.job_id).trim()}” has metres but no coil gauge on allocations — link coils so gauge vs quotation can be compared.`,
+            code: 'substitution_list_price',
+            jobId: jobId || undefined,
+            productId: pid || undefined,
+            message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}” (${m.toFixed(2)} m). No workbook price matched: the system prefers material_pricing_sheet_rows.minimum_price_per_m_ngn (coil gauge + design), then price_list_items. Add material pricing rows for the branch, or price_list_items with gauge_key ≈ coil gauge, or set substitutePricePerMeterNgn / workbook override in preview.`,
           });
         }
-        continue;
-      }
-      if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) continue;
-      const lookup = listWorkbookPpmForJobAllocatedCoil(
-        db,
-        j,
-        branchId,
-        quotedGdIssue,
-        null,
-        quote?.lines_json ?? '',
-        pricingAsAtIso
-      );
-      const ppm = ppmValueFromWorkbookLookup(lookup);
-      if (ppm == null || ppm <= 0) {
-        const pid = String(j.product_id ?? '').trim();
-        issues.push({
-          code: 'substitution_list_price',
-          jobId: String(j.job_id ?? '').trim() || undefined,
-          productId: pid || undefined,
-          message: `Quoted gauge (${quotedGaugeRaw}) vs allocated coil (${coilGauge}) on job “${String(j.product_name || j.job_id).trim()}”. No workbook price matched: the system prefers material_pricing_sheet_rows.minimum_price_per_m_ngn (coil gauge + design), then price_list_items. Add material pricing rows for the branch, or price_list_items with gauge_key ≈ coil gauge, or set substitutePricePerMeterNgn / workbook override in preview.`,
-        });
       }
     }
   }
@@ -3145,80 +3262,96 @@ function buildSubstitutionJobDiagnosis(db, quote, productionJobs, pricePerMeter,
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const jobs = [];
   for (const j of productionJobs) {
-    const coilGaugeRaw = producedGaugeLabelFromJobCoils(db, j.job_id);
-    const m = Number(j.actual_meters) || 0;
     const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
+    const actualM = Number(j.actual_meters) || 0;
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id);
+    const positiveGroups = gaugeGroups.filter((g) => (Number(g.meters) || 0) > 0.001);
+    const slices =
+      positiveGroups.length > 0
+        ? positiveGroups
+        : [{ gaugeLabel: producedGaugeLabelFromJobCoils(db, j.job_id), meters: actualM }];
 
-    let outcome = 'UNKNOWN';
-    let producedPpm = null;
-    let deltaPpm = null;
+    for (const slice of slices) {
+      const coilGaugeRaw = String(slice.gaugeLabel || '').trim();
+      const m = Number(slice.meters) || 0;
 
-    if (!quotedGaugeRaw) {
-      outcome = 'SKIP_NO_QUOTED_GAUGE — add gauge on quotation header or product lines.';
-    } else if (m <= 0) {
-      outcome =
-        'SKIP_ZERO_ACTUAL_METRES — job.actual_meters is 0 (if metres were corrected post-completion, check completion adjustments on the job row).';
-    } else if (!coilGaugeRaw) {
-      outcome =
-        'SKIP_NO_COIL_GAUGE — production_job_coils / coil_lots have no gauge for this job; allocate coils with gauge labels.';
-    } else if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)) {
-      outcome =
-        'SKIP_SAME_GAUGE — coil gauge matches quoted gauge within 0.02mm; no substitution credit.';
-    } else if (!pricePerMeter) {
-      outcome =
-        'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
-    } else {
-      const lookup = listWorkbookPpmForJobAllocatedCoil(
-        db,
-        j,
-        branchId,
-        quotedGd,
-        overrideSubPpm,
-        quote?.lines_json ?? '',
-        pricingAsAtIso
-      );
-      const ppm = ppmValueFromWorkbookLookup(lookup);
-      producedPpm = ppm;
-      if (ppm == null || ppm <= 0) {
+      let outcome = 'UNKNOWN';
+      let producedPpm = null;
+      let deltaPpm = null;
+
+      if (!quotedGaugeRaw) {
+        outcome = 'SKIP_NO_QUOTED_GAUGE — add gauge on quotation header or product lines.';
+      } else if (m <= 0) {
         outcome =
-          'SKIP_NO_WORKBOOK_PRICE — no material pricing floor row or price_list_items match for this coil gauge + design/colour (or pass substitutePricePerMeterNgn).';
+          'SKIP_ZERO_ACTUAL_METRES — no coil metres_produced / job.actual_meters for this gauge slice.';
+      } else if (!coilGaugeRaw) {
+        outcome =
+          'SKIP_NO_COIL_GAUGE — production_job_coils / coil_lots have no gauge for this job; allocate coils with gauge labels.';
+      } else if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)) {
+        outcome =
+          'SKIP_SAME_GAUGE — coil gauge matches quoted gauge within noise tolerance; no substitution credit.';
+      } else if (!pricePerMeter) {
+        outcome =
+          'SKIP_NO_QUOTED_BLENDED_PPM — no roofing-sheet blended ₦/m from product lines (need qty × unitPrice), and no pricePerMeterNgn override.';
       } else {
-        deltaPpm = pricePerMeter - ppm;
-        if (deltaPpm <= 0) {
-          outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above workbook floor/list for coil (${ppm}).`;
+        const lookup = listWorkbookPpmForJobAllocatedCoil(
+          db,
+          j,
+          branchId,
+          quotedGd,
+          overrideSubPpm,
+          quote?.lines_json ?? '',
+          pricingAsAtIso,
+          coilGaugeRaw
+        );
+        const ppm = ppmValueFromWorkbookLookup(lookup);
+        producedPpm = ppm;
+        if (ppm == null || ppm <= 0) {
+          outcome =
+            'SKIP_NO_WORKBOOK_PRICE — no material pricing floor row or price_list_items match for this coil gauge + design/colour (or pass substitutePricePerMeterNgn).';
         } else {
-          outcome = `CREDIT — quoted ${quotedGaugeRaw} vs coil ${coilGaugeRaw}: Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
+          deltaPpm = pricePerMeter - ppm;
+          if (deltaPpm <= 0) {
+            outcome = `SKIP_NON_POSITIVE_DELTA — quoted blended ₦/m (${Math.round(pricePerMeter)}) is not above workbook floor/list for coil (${ppm}).`;
+          } else {
+            outcome = `CREDIT — quoted ${quotedGaugeRaw} vs coil ${coilGaugeRaw}: Δ ${Math.round(deltaPpm)} ₦/m × ${m} m`;
+          }
         }
       }
-    }
 
-    jobs.push({
-      jobId: j.job_id,
-      jobLabel,
-      productName: j.product_name ?? '',
-      productId: j.product_id ?? '',
-      jobStatus: j.status ?? '',
-      actualMetersOnJobRow: m,
-      quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
-      coilGaugeFromAllocations: coilGaugeRaw || null,
-      gaugeDiffersBeyondTolerance0p02mm: Boolean(
-        quotedGaugeRaw && coilGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)
-      ),
-      shouldEnterSubstitutionCreditPath: Boolean(
-        quotedGaugeRaw &&
-          coilGaugeRaw &&
-          m > 0 &&
-          gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw) &&
-          pricePerMeter
-      ),
-      quotedBlendedPpmRounded: pricePerMeter != null ? Math.round(pricePerMeter) : null,
-      producedListPpm: producedPpm,
-      deltaPpm: deltaPpm != null ? Math.round(deltaPpm) : null,
-      outcome,
-    });
+      jobs.push({
+        jobId: j.job_id,
+        jobLabel,
+        productName: j.product_name ?? '',
+        productId: j.product_id ?? '',
+        jobStatus: j.status ?? '',
+        actualMetersOnJobRow: actualM,
+        coilMetersThisGauge: m,
+        quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
+        coilGaugeFromAllocations: coilGaugeRaw || null,
+        gaugeDiffersBeyondTolerance0p02mm: Boolean(
+          quotedGaugeRaw && coilGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)
+        ),
+        // Alias kept for older diagnosis consumers; same check as gaugeDiffersBeyondTolerance0p02mm.
+        gaugeDiffersBeyondNoiseTolerance: Boolean(
+          quotedGaugeRaw && coilGaugeRaw && gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw)
+        ),
+        shouldEnterSubstitutionCreditPath: Boolean(
+          quotedGaugeRaw &&
+            coilGaugeRaw &&
+            m > 0 &&
+            gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGaugeRaw) &&
+            pricePerMeter
+        ),
+        quotedBlendedPpmRounded: pricePerMeter != null ? Math.round(pricePerMeter) : null,
+        producedListPpm: producedPpm,
+        deltaPpm: deltaPpm != null ? Math.round(deltaPpm) : null,
+        outcome,
+      });
+    }
   }
   return {
-    substitutionModel: 'quoted_gauge_vs_coil_gauge_workbook',
+    substitutionModel: 'quoted_gauge_vs_coil_gauge_workbook_per_allocation',
     pricingAsAtIso,
     quotedGaugeLabelForSubstitution: quotedGaugeRaw || null,
     firstQuotedProductGaugeDesign: quotedGd,
@@ -3613,9 +3746,9 @@ export function previewRefundRequest(db, payload) {
   }
 
   /**
-   * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (0.02mm tolerance).
+   * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (per coil metres when mixed).
    * Credit = max(0, quoted blended ₦/m − workbook **floor** ₦/m for coil gauge + design as at **quotation date**,
-   * else published list from `price_list_items`) × actual metres per job.
+   * else published list from `price_list_items`) × metres for each thinner-gauge allocation.
    * Does not use job product name or FG card gauge for the comparison trigger.
    */
   const substitutionPerMeterBreakdown = [];
@@ -3660,76 +3793,94 @@ export function previewRefundRequest(db, payload) {
     }
 
     for (const j of productionJobs) {
-      const m = Number(j.actual_meters) || 0;
       const jobLabel = String(j.product_name || j.job_id || 'Production job').trim();
-      if (m <= 0) continue;
       if (!quotedGaugeRaw) continue;
 
-      const coilGauge = producedGaugeLabelFromJobCoils(db, j.job_id);
-      if (!coilGauge) {
-        if (!stoneMeterQuoteForSub) {
-          missingCoilGaugeLabels.push(jobLabel);
-        }
-        continue;
-      }
-      if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) {
-        continue;
-      }
-
-      anyGaugeVsCoilCase = true;
-
-      const producedLookup = listWorkbookPpmForJobAllocatedCoil(
-        db,
-        j,
-        branchId,
-        quotedGd,
-        overrideSubPpm,
-        quote?.lines_json ?? '',
-        pricingAsAtIso
+      const actualM = Number(j.actual_meters) || 0;
+      const gaugeGroups = coilGaugeMeterGroupsFromJob(db, j.job_id).filter(
+        (g) => (Number(g.meters) || 0) > 0.001
       );
-      const producedPpm = ppmValueFromWorkbookLookup(producedLookup);
-      if (producedPpm == null || producedPpm <= 0) {
-        missingListPriceLabels.push(jobLabel);
-        continue;
-      }
+      // Prefer per-coil metres so mixed gauges (e.g. 0.24 + 0.22 on one job) each get credit.
+      // Fall back to job.actual_meters only when allocations have no metres_produced.
+      const slices =
+        gaugeGroups.length > 0
+          ? gaugeGroups.map((g) => ({ meters: Number(g.meters) || 0, coilGauge: g.gaugeLabel }))
+          : actualM > 0
+            ? [{ meters: actualM, coilGauge: producedGaugeLabelFromJobCoils(db, j.job_id) }]
+            : [];
+      if (slices.length === 0) continue;
 
-      // Floor-to-floor when both workbook floors exist; else customer blended ₦/m vs coil floor/list.
-      let creditPpm;
-      let quotedPricePerMeterNgn;
-      if (quotedFloorPpm != null && quotedFloorPpm > 0 && producedPpm > 0) {
-        creditPpm = Math.max(0, quotedFloorPpm - producedPpm);
-        quotedPricePerMeterNgn = Math.round(quotedFloorPpm);
-      } else if (pricePerMeter) {
-        creditPpm = Math.max(0, pricePerMeter - producedPpm);
-        quotedPricePerMeterNgn = Math.round(pricePerMeter);
-      } else {
-        continue;
-      }
+      for (const slice of slices) {
+        const m = Number(slice.meters) || 0;
+        if (m <= 0) continue;
+        const coilGauge = String(slice.coilGauge || '').trim();
+        if (!coilGauge) {
+          if (!stoneMeterQuoteForSub) {
+            missingCoilGaugeLabels.push(jobLabel);
+          }
+          continue;
+        }
+        if (!gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) {
+          continue;
+        }
 
-      if (creditPpm <= 0) {
-        noPositiveDelta = true;
-        continue;
-      }
+        anyGaugeVsCoilCase = true;
 
-      const credit = roundMoney(creditPpm * m);
-      totalCredit += credit;
-      substitutionPerMeterBreakdown.push({
-        jobId: j.job_id,
-        productName: String(j.product_name || '').trim(),
-        meters: m,
-        quotedPricePerMeterNgn,
-        producedListPricePerMeterNgn: producedPpm,
-        quotedGaugeDesignLabel:
-          quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
-        quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
-        quotedFloorPricePerMeterNgn: quotedFloorPpm != null && quotedFloorPpm > 0 ? Math.round(quotedFloorPpm) : null,
-        deltaPerMeterNgn: Math.round(creditPpm),
-        creditNgn: credit,
-        quotedGaugeForComparison: quotedGaugeRaw,
-        coilGaugeFromAllocations: coilGauge,
-        creditBasis:
-          quotedFloorPpm != null && quotedFloorPpm > 0 ? 'floor_to_floor' : 'blended_to_coil_floor',
-      });
+        const producedLookup = listWorkbookPpmForJobAllocatedCoil(
+          db,
+          j,
+          branchId,
+          quotedGd,
+          overrideSubPpm,
+          quote?.lines_json ?? '',
+          pricingAsAtIso,
+          coilGauge
+        );
+        const producedPpm = ppmValueFromWorkbookLookup(producedLookup);
+        if (producedPpm == null || producedPpm <= 0) {
+          missingListPriceLabels.push(`${jobLabel} (${coilGauge})`);
+          continue;
+        }
+
+        // Floor-to-floor when both workbook floors exist; else customer blended ₦/m vs coil floor/list.
+        let creditPpm;
+        let quotedPricePerMeterNgn;
+        if (quotedFloorPpm != null && quotedFloorPpm > 0 && producedPpm > 0) {
+          creditPpm = Math.max(0, quotedFloorPpm - producedPpm);
+          quotedPricePerMeterNgn = Math.round(quotedFloorPpm);
+        } else if (pricePerMeter) {
+          creditPpm = Math.max(0, pricePerMeter - producedPpm);
+          quotedPricePerMeterNgn = Math.round(pricePerMeter);
+        } else {
+          continue;
+        }
+
+        if (creditPpm <= 0) {
+          noPositiveDelta = true;
+          continue;
+        }
+
+        const credit = roundMoney(creditPpm * m);
+        totalCredit += credit;
+        substitutionPerMeterBreakdown.push({
+          jobId: j.job_id,
+          productName: String(j.product_name || '').trim(),
+          meters: m,
+          quotedPricePerMeterNgn,
+          producedListPricePerMeterNgn: producedPpm,
+          quotedGaugeDesignLabel:
+            quotedGd != null ? `${quotedGd.gauge} / ${quotedGd.design}` : null,
+          quotedListPricePerMeterNgn: quotedListPpm != null && quotedListPpm > 0 ? quotedListPpm : null,
+          quotedFloorPricePerMeterNgn:
+            quotedFloorPpm != null && quotedFloorPpm > 0 ? Math.round(quotedFloorPpm) : null,
+          deltaPerMeterNgn: Math.round(creditPpm),
+          creditNgn: credit,
+          quotedGaugeForComparison: quotedGaugeRaw,
+          coilGaugeFromAllocations: coilGauge,
+          creditBasis:
+            quotedFloorPpm != null && quotedFloorPpm > 0 ? 'floor_to_floor' : 'blended_to_coil_floor',
+        });
+      }
     }
 
     if (anyGaugeVsCoilCase || missingCoilGaugeLabels.length > 0) {

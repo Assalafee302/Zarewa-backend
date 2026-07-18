@@ -140,4 +140,66 @@ describe('pricingAsOf', () => {
     expect(sub.amountNgn).toBe(30_000);
     expect(prev.preview.substitutionPerMeterBreakdown[0].producedListPricePerMeterNgn).toBe(2000);
   });
+
+  it('substitution credits only the thinner-gauge metres when one job has mixed coils', () => {
+    // Quoted 0.24 — first coil matches (no credit); second coil 0.22 must still credit.
+    // Clear as-of history so current workbook floors are used for both gauges.
+    db.prepare(`DELETE FROM material_pricing_sheet_events`).run();
+    db.prepare(
+      `UPDATE material_pricing_sheet_rows
+       SET minimum_price_per_m_ngn = 4800, commission_ngn_per_m = 0, updated_at_iso = '2026-01-01'
+       WHERE material_key = 'alu' AND gauge_mm = '0.24' AND branch_id = 'BR-KD' AND design_key = 'iv'`
+    ).run();
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_rows (
+        id, material_key, gauge_mm, branch_id, design_key,
+        minimum_price_per_m_ngn, commission_ngn_per_m, updated_at_iso
+      ) VALUES ('MPS-MIX-022', 'alu', '0.22', 'BR-KD', 'iv', 4500, 0, '2026-01-01')`
+    ).run();
+    const linesMix = JSON.stringify({
+      materialGauge: '0.24mm',
+      materialDesign: 'IV',
+      products: [{ name: 'Roofing Sheet', qty: 575.3, unitPrice: 4800, gauge: '0.24mm', design: 'IV' }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id)
+       VALUES ('QT-MIX-SUB', 'CUS-001', 'Test', '2026-07-16', 2811440, 2912960, 'Paid', 'Finished', ?, 'BR-KD')`
+    ).run(linesMix);
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-MIX', 'Longspan', 0, 'm', 'BR-KD', '0.24mm', 'IV', 'Aluminium')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-MIX', 'QT-MIX-SUB', 'FG-MIX', 'Longspan', 575.3, 'Completed', '2026-07-16T10:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO coil_lots (coil_no, product_id, qty_received, qty_remaining, current_weight_kg, current_status, gauge_label, colour)
+       VALUES
+         ('CL-MIX-024', 'FG-MIX', 1000, 1000, 1000, 'Available', '0.24mm', 'IV'),
+         ('CL-MIX-022', 'FG-MIX', 1000, 1000, 1000, 'Available', '0.22mm', 'IV')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_job_coils (
+        id, job_id, sequence_no, coil_no, gauge_label, opening_weight_kg, closing_weight_kg, consumed_weight_kg,
+        meters_produced, allocation_status, allocated_at_iso
+      ) VALUES
+        ('PJC-MIX-024', 'JOB-MIX', 1, 'CL-MIX-024', '0.24mm', 646, 61, 585, 259.5, 'Completed', '2026-07-16T10:00:00Z'),
+        ('PJC-MIX-022', 'JOB-MIX', 2, 'CL-MIX-022', '0.22mm', 1347, 700, 647, 315.8, 'Completed', '2026-07-16T11:00:00Z')`
+    ).run();
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-MIX-SUB' });
+    expect(prev.ok).toBe(true);
+    const sub = prev.preview.suggestedLines.find((l) => l.category === 'Substitution Difference');
+    expect(sub).toBeDefined();
+    // Only 0.22 slice: (4800 − 4500) × 315.8 m
+    expect(sub.amountNgn).toBe(Math.round(300 * 315.8));
+    const bd = prev.preview.substitutionPerMeterBreakdown;
+    expect(bd).toHaveLength(1);
+    expect(bd[0].coilGaugeFromAllocations).toBe('0.22mm');
+    expect(bd[0].meters).toBe(315.8);
+    expect(bd[0].deltaPerMeterNgn).toBe(300);
+  });
 });

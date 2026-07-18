@@ -410,6 +410,7 @@ import {
   applyCompletedProductionAccessoryCorrections,
   applyCompletedProductionCoilCorrections,
   applyCompletedProductionStoneFlatsheetCorrections,
+  applyCompletedProductionStoneMetresCorrections,
   applyProductionCompletionAdjustment,
   cancelProductionJob,
   completeProductionJob,
@@ -7294,6 +7295,27 @@ export function registerHttpApi(app, db) {
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
         return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
           applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, {
+            actor: req.user,
+            outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
+          })
+        );
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/production-jobs/:jobId/completion-stone-metres-corrections',
+    requirePermission(productionCorrectionPerms),
+    (req, res) => {
+      try {
+        const jid = req.params.jobId;
+        const jg = assertProductionJobIdInWorkspace(db, req, jid);
+        if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionStoneMetresCorrections(db, jid, stripped || {}, {
             actor: req.user,
             outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
           })

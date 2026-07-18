@@ -3385,6 +3385,191 @@ export function applyCompletedProductionStoneFlatsheetCorrections(db, jobID, pay
   }
 }
 
+/** Net stone roofing metres drawn for a job (positive = stock consumed). */
+function netStoneMetresConsumedForJob(db, jobId) {
+  const jid = String(jobId ?? '').trim();
+  if (!jid) return 0;
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(qty), 0) AS s
+       FROM stock_movements
+       WHERE ref = ? AND type = 'STONE_CONSUMPTION'`
+    )
+    .get(jid);
+  /** Consumption posts negative qty; net consumed = −sum(qty). */
+  return -safeNumber(row?.s);
+}
+
+/**
+ * After completion, restate stone-coated roofing metres for a job.
+ * Adjusts stone raw stock by the delta; for pure stone jobs also restates finished-goods
+ * metres and `actual_meters`. Hybrid jobs keep coil/offcut `actual_meters` unchanged.
+ * Same permission intent as other post-completion corrections; does not rewrite GL recognition.
+ * @param {{ actor?: object, outerTransaction?: boolean }} [opts]
+ */
+export function applyCompletedProductionStoneMetresCorrections(db, jobID, payload = {}, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  if (String(job.status ?? '') !== 'Completed') {
+    return { ok: false, error: 'Stone metres correction applies only to completed jobs.' };
+  }
+  if (!jobIsStoneMeter(db, job)) {
+    return { ok: false, error: 'Stone metres correction applies only to stone-coated jobs.' };
+  }
+  if (quotationIsAccessoriesOnlyForJob(db, job)) {
+    return {
+      ok: false,
+      error: 'Accessories-only stone jobs have no roofing metres to correct. Use finished-goods stock correction if needed.',
+    };
+  }
+  const note = String(payload.reason ?? payload.note ?? '').trim();
+  if (note.length < 12) {
+    return { ok: false, error: 'Enter a detailed reason (at least 12 characters) for this correction.' };
+  }
+  const metresRaw = safeNumber(
+    payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? payload.totalMeters
+  );
+  if (!Number.isFinite(metresRaw)) {
+    return { ok: false, error: 'Stone metres consumed must be a number.' };
+  }
+  const qref = String(job.quotation_ref ?? '').trim();
+  const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
+  let requiresStoneMetres = false;
+  if (qRow?.lines_json) {
+    try {
+      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
+        stoneMeterQuote: true,
+      });
+    } catch {
+      requiresStoneMetres = false;
+    }
+  }
+  const previousFromMovements = netStoneMetresConsumedForJob(db, jobId);
+  const pureStone = !jobExpectsCoilAllocation(db, job);
+  const previous =
+    Math.abs(previousFromMovements) >= 1e-9
+      ? previousFromMovements
+      : pureStone
+        ? safeNumber(job.actual_meters)
+        : 0;
+  const nextMetres = requiresStoneMetres || Math.abs(previous) >= 1e-9 ? metresRaw : 0;
+  if (requiresStoneMetres && Math.abs(nextMetres) < 1e-9) {
+    return {
+      ok: false,
+      error:
+        'Enter stone metres consumed as a non-zero number (positive draws stock; negative returns metres to stock).',
+    };
+  }
+  const delta = nextMetres - previous;
+  if (Math.abs(delta) < 1e-6) {
+    return { ok: false, error: 'Corrected stone metres match what is already recorded — nothing to change.' };
+  }
+  const stonePid =
+    Math.abs(nextMetres) >= 1e-9 || Math.abs(previous) >= 1e-9
+      ? resolveStoneRawProductIdForQuotation(db, qRow, jobBranchId(job))
+      : null;
+  if ((Math.abs(nextMetres) >= 1e-9 || Math.abs(previous) >= 1e-9) && !stonePid) {
+    return {
+      ok: false,
+      error: 'Could not resolve stone-coated stock SKU from the quotation (design, colour, gauge).',
+    };
+  }
+  const atISO = normalizeIso(payload.atISO || nowIso());
+  try {
+    assertPeriodOpen(db, atISO, 'Production stone metres correction date');
+    if (pureStone) {
+      const adjRow = db
+        .prepare(
+          `SELECT COALESCE(SUM(delta_finished_goods_m), 0) AS s
+           FROM production_completion_adjustments WHERE job_id = ?`
+        )
+        .get(jobId);
+      const proposedOutput = Math.max(0, nextMetres) + safeNumber(adjRow?.s);
+      const paidRefundGate = validateProductionEditAgainstPaidRefunds(db, job, {
+        proposedJobOutputMetres: proposedOutput,
+      });
+      if (!paidRefundGate.ok) return paidRefundGate;
+    }
+
+    const runBody = () => {
+      const stockBranch = jobBranchId(job);
+      if (stonePid && Math.abs(delta) >= 1e-9) {
+        adjustProductStockTx(db, stonePid, -delta, stockBranch);
+        appendStockMovementTx(db, {
+          atISO,
+          type: 'STONE_CONSUMPTION',
+          ref: jobId,
+          productID: stonePid,
+          qty: -delta,
+          branchId: stockBranch,
+          detail:
+            delta < 0
+              ? `${jobId} stone-coated correction return ${Math.abs(delta).toFixed(2)} m`
+              : `${jobId} stone-coated correction draw ${delta.toFixed(2)} m`,
+          dateISO: atISO.slice(0, 10),
+        });
+      }
+      if (pureStone) {
+        const productId = String(job.product_id ?? '').trim();
+        if (productId && Math.abs(delta) >= 1e-9) {
+          const prodRow = getProductRowForWorkspace(db, productId, stockBranch);
+          const current = Number(prodRow?.stock_level) || 0;
+          const nextStock = current + delta;
+          if (nextStock < -0.0001) {
+            throw new Error(
+              `This correction would send finished goods ${productId} negative (${nextStock.toFixed(2)} m on hand).`
+            );
+          }
+          adjustProductStockTx(db, productId, delta, stockBranch);
+          appendStockMovementTx(db, {
+            atISO,
+            type: 'PRODUCTION_FG_ADJUSTMENT',
+            ref: jobId,
+            productID: productId,
+            qty: delta,
+            branchId: stockBranch,
+            detail: `Stone metres completion correction ${jobId}: ${
+              note.length > 120 ? `${note.slice(0, 117)}…` : note
+            }`,
+            dateISO: atISO.slice(0, 10),
+          });
+        }
+        db.prepare(`UPDATE production_jobs SET actual_meters = ? WHERE job_id = ?`).run(nextMetres, jobId);
+      }
+      appendAuditLog(db, {
+        actor: opts.actor,
+        action: 'production.completion_stone_metres_correct',
+        entityKind: 'production_job',
+        entityId: jobId,
+        note: note.length > 200 ? `${note.slice(0, 197)}…` : note,
+        details: {
+          reason: note,
+          previousStoneMeters: previous,
+          nextStoneMeters: nextMetres,
+          deltaStoneMeters: delta,
+          pureStone,
+          stoneProductId: stonePid,
+        },
+      });
+    };
+    if (opts.outerTransaction) runBody();
+    else db.transaction(runBody)();
+
+    notifyRefundIntegrityDriftIfNeeded(db, qref, opts.actor, 'production.completion_stone_metres_correct', jobId);
+    return {
+      ok: true,
+      previousStoneMeters: previous,
+      stoneMetersConsumed: nextMetres,
+      deltaStoneMeters: delta,
+      actualMeters: pureStone ? nextMetres : safeNumber(job.actual_meters),
+    };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
 /**
  * All production_job_coils rows for a coil (any job status) — for traceability / orphan diagnosis.
  */

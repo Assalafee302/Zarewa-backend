@@ -894,6 +894,90 @@ describe('Inventory scenarios (simulated flows)', () => {
     expect(mov.body.movements.some((m) => m.type === 'STONE_CONSUMPTION')).toBe(true);
   });
 
+  it('S10d — Stone metres completion correction restates raw + FG stock', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+    const sr = await agent.post('/api/inventory/stone-receipt').send({
+      designLabel: 'Milano',
+      colourLabel: 'Black',
+      gaugeLabel: '0.40mm',
+      metresReceived: 200,
+    });
+    expect(sr.status).toBe(200);
+    const stonePid = sr.body.productId;
+    const b0 = await agent.get('/api/bootstrap');
+    const stone0 = b0.body.products.find((p) => p.productID === stonePid).stockLevel;
+    const fg0 = b0.body.products.find((p) => p.productID === 'FG-101').stockLevel;
+
+    const qref = await freshPaidStoneQuotationForCutting(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: qref,
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Stone finished',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 40 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Stone finished',
+      plannedMeters: 40,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+
+    expect(
+      (
+        await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+          allocations: [],
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (
+        await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({
+          startedAtISO: '2026-04-02',
+        })
+      ).status
+    ).toBe(200);
+
+    const underEntered = 30;
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-04-02T16:00:00.000Z',
+      stoneMetersConsumed: underEntered,
+    });
+    expect(complete.status).toBe(200);
+    expect(complete.body.ok).toBe(true);
+
+    const corrected = 42;
+    const corr = await agent
+      .post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-stone-metres-corrections`)
+      .send({
+        stoneMetersConsumed: corrected,
+        reason: 'Metres under-recorded at complete — yard count was 42 m not 30 m.',
+      });
+    expect(corr.status).toBe(200);
+    expect(corr.body.ok).toBe(true);
+    expect(corr.body.previousStoneMeters).toBeCloseTo(underEntered, 2);
+    expect(corr.body.stoneMetersConsumed).toBeCloseTo(corrected, 2);
+    expect(corr.body.deltaStoneMeters).toBeCloseTo(corrected - underEntered, 2);
+
+    const b1 = await agent.get('/api/bootstrap');
+    const stone1 = b1.body.products.find((p) => p.productID === stonePid).stockLevel;
+    const fg1 = b1.body.products.find((p) => p.productID === 'FG-101').stockLevel;
+    const jobRow = (b1.body.productionJobs || []).find((j) => j.jobID === jobId);
+    expect(stone1).toBeCloseTo(stone0 - corrected, 2);
+    expect(fg1).toBeCloseTo(fg0 + corrected, 2);
+    expect(Number(jobRow?.actualMeters)).toBeCloseTo(corrected, 2);
+  });
+
   it('S10b — Stone accessories-only production completes without roofing metres', async () => {
     const app = makeApp();
     const agent = request.agent(app);

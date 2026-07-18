@@ -976,6 +976,15 @@ describe('Inventory scenarios (simulated flows)', () => {
     expect(stone1).toBeCloseTo(stone0 - corrected, 2);
     expect(fg1).toBeCloseTo(fg0 + corrected, 2);
     expect(Number(jobRow?.actualMeters)).toBeCloseTo(corrected, 2);
+
+    /* Refund preview + intelligence must recognize the corrected metres. */
+    const preview = await agent.post('/api/refunds/preview').send({ quotationRef: qref });
+    expect(preview.status).toBe(200);
+    expect(preview.body.ok).toBe(true);
+    expect(Number(preview.body.preview.producedMetersForUnproduced)).toBeCloseTo(corrected, 2);
+    const intel = await agent.get(`/api/refunds/intelligence?quotationRef=${encodeURIComponent(qref)}`);
+    expect(intel.status).toBe(200);
+    expect(Number(intel.body.summary.producedMeters)).toBeCloseTo(corrected, 2);
   });
 
   it('S10b — Stone accessories-only production completes without roofing metres', async () => {

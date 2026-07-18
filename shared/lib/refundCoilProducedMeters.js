@@ -58,15 +58,45 @@ export function jobOutputMetresForUnproducedRefund(db, job) {
 }
 
 /**
+ * Net stone-coated roofing metres drawn for a job (STONE_CONSUMPTION posts negative qty on draw).
+ * Includes post-completion stone metres corrections, which restate these movements.
+ */
+export function netStoneConsumptionMetresForJob(db, jobId) {
+  if (!db) return 0;
+  const jid = String(jobId ?? '').trim();
+  if (!jid) return 0;
+  let row;
+  try {
+    row = db
+      .prepare(
+        `SELECT COALESCE(SUM(COALESCE(qty, 0)), 0) AS s FROM stock_movements WHERE ref = ? AND type = 'STONE_CONSUMPTION'`
+      )
+      .get(jid);
+  } catch {
+    return 0;
+  }
+  return Math.max(0, -(Number(row?.s) || 0));
+}
+
+/**
  * Metres that reduce unproduced-meterage refund potential.
  * Coil roofing: coil metres per job, or job actual metres when completed from offcut/accessories only.
- * Stone meter quotes: completed job actual metres (no coil rows on stone jobs).
+ * Stone meter quotes: per completed job, the larger of actual metres and net stone consumption
+ * (hybrid stone jobs keep roofing metres in STONE_CONSUMPTION movements, not actual_meters).
  */
 export function producedMetersForUnproducedRefund(db, productionJobs, opts = {}) {
-  if (opts.isStoneMeterQuote) {
-    return jobActualMetersFromProductionJobs(productionJobs);
-  }
   if (!Array.isArray(productionJobs) || productionJobs.length === 0) return 0;
+  if (opts.isStoneMeterQuote) {
+    let sum = 0;
+    for (const j of productionJobs) {
+      const st = String(j.status ?? '').trim().toLowerCase();
+      if (st !== 'completed') continue;
+      const actualM = Number(j.actual_meters ?? j.actualMeters) || 0;
+      const stoneM = netStoneConsumptionMetresForJob(db, j.job_id ?? j.jobID);
+      sum += Math.max(actualM, stoneM);
+    }
+    return sum;
+  }
   let sum = 0;
   for (const j of productionJobs) {
     sum += jobOutputMetresForUnproducedRefund(db, j);

@@ -8668,7 +8668,10 @@ export function registerHttpApi(app, db) {
     try {
       const requestedLimit = Math.floor(Number(req.query.limit) || 0);
       const resultLimit = Math.max(0, Math.min(100, requestedLimit));
-      const candidateLimit = resultLimit;
+      // Scan a wider pool than the result size — eligibility filters out most rows, and
+      // capping candidates at resultLimit hid real unrefunded quotes behind false positives.
+      const candidateLimit =
+        resultLimit > 0 ? Math.min(500, Math.max(resultLimit * 10, 150)) : 0;
       const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
       res.json({ ok: true, quotations: rows });
     } catch (e) {

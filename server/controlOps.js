@@ -4507,7 +4507,7 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Obvious overpayments use a cheap eligibility result; other candidates run
+ * Obvious overpayments with no prior active refunds use a cheap eligibility result; other candidates run
  * {@link previewRefundRequest} so only quotations with preview total ≥
  * {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear (same rules as eligibility-check picklist).
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
@@ -4553,9 +4553,13 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
 
     const overpayExcess = Math.round(Number(meets.overpaymentExcessNgn) || 0);
+    // Overpayment excess is cash-in minus quote total — it does not subtract prior refunds.
+    // Only take the cheap path when no active refunds exist yet; otherwise preview must
+    // apply refundedCategories (so already-refunded Overpayment does not stay on the pick list).
+    const hasActiveRefunds = Math.round(Number(row.total_refunded) || 0) > 0;
     let categories;
     let suggestedPreviewAmountNgn;
-    if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN) {
+    if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hasActiveRefunds) {
       // Avoid the expensive full production/refund preview for the common, unambiguous case.
       // Selecting the quotation still runs previewRefundRequest and reveals any additional categories.
       categories = ['Overpayment'];

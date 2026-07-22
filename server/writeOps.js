@@ -5398,7 +5398,7 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
       amount_ngn = excluded.amount_ngn,
       method = excluded.method,
       status = CASE
-        WHEN TRIM(LOWER(COALESCE(sales_receipts.status, ''))) IN ('cleared', 'reversed') THEN sales_receipts.status
+        WHEN TRIM(LOWER(COALESCE(sales_receipts.status, ''))) IN ('cleared', 'confirmed', 'reversed') THEN sales_receipts.status
         ELSE excluded.status
       END,
       handled_by = excluded.handled_by,
@@ -5430,7 +5430,7 @@ export function quotationHasUnclearedReceipts(db, quotationRef) {
     .prepare(
       `SELECT COUNT(*) AS c FROM sales_receipts
        WHERE quotation_ref = ?
-         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
          AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     )
     .get(qid);

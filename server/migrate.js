@@ -463,6 +463,11 @@ function runMigrationsUnlocked(db) {
          AND TRIM(finance_reconciliation_saved_at_iso) != ''
          AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared'))`
     );
+    // Legacy Confirmed = finance already signed off before Pending clearance / Cleared existed.
+    db.exec(
+      `UPDATE sales_receipts SET status = 'Cleared'
+       WHERE TRIM(LOWER(COALESCE(status, ''))) = 'confirmed'`
+    );
     db.exec(
       `UPDATE sales_receipts SET status = 'Pending clearance'
        WHERE (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')

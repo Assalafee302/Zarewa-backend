@@ -25,7 +25,9 @@ export function isReceiptCleared(row) {
   if (!row || isReceiptReversed(row)) return false;
   const saved = row.financeReconciliationSavedAtISO ?? row.finance_reconciliation_saved_at_iso;
   if (saved != null && String(saved).trim() !== '') return true;
-  return normStatus(row?.status) === 'cleared';
+  // Legacy "Confirmed" predates Pending clearance / Cleared and means finance already signed off.
+  const s = normStatus(row?.status);
+  return s === 'cleared' || s === 'confirmed';
 }
 
 /** Finance reconciliation saved — bank-received amount is authoritative for what was paid. */

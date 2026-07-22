@@ -2525,7 +2525,7 @@ function quotationHasUnclearedReceipts(db, quotationRef) {
     .prepare(
       `SELECT COUNT(*) AS c FROM sales_receipts
        WHERE quotation_ref = ?
-         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed'))
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
          AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     )
     .get(qid);

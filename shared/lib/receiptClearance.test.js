@@ -11,6 +11,8 @@ describe('receiptClearance', () => {
   it('treats finance reconciliation timestamp as cleared', () => {
     expect(isReceiptCleared({ status: 'Posted', financeReconciliationSavedAtISO: '2026-01-01' })).toBe(true);
     expect(isReceiptPendingClearance({ status: 'Posted' })).toBe(true);
+    expect(isReceiptCleared({ status: 'Confirmed' })).toBe(true);
+    expect(isReceiptPendingClearance({ status: 'Confirmed' })).toBe(false);
   });
 
   it('sums pending clearance only', () => {

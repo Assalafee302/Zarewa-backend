@@ -456,6 +456,30 @@ function runMigrationsUnlocked(db) {
     db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_reconciliation_saved_by_user_id TEXT`);
   }
 
+  // Backfill receipt registrar from the ledger posting actor (legacy rows stored handled_by as '—').
+  if (r.size && db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_entries'`).get()) {
+    try {
+      db.exec(
+        `UPDATE sales_receipts
+         SET handled_by = (
+           SELECT TRIM(le.created_by_name)
+           FROM ledger_entries le
+           WHERE le.id = COALESCE(NULLIF(TRIM(sales_receipts.ledger_entry_id), ''), sales_receipts.id)
+             AND TRIM(COALESCE(le.created_by_name, '')) != ''
+           LIMIT 1
+         )
+         WHERE TRIM(COALESCE(handled_by, '')) IN ('', '—')
+           AND EXISTS (
+             SELECT 1 FROM ledger_entries le
+             WHERE le.id = COALESCE(NULLIF(TRIM(sales_receipts.ledger_entry_id), ''), sales_receipts.id)
+               AND TRIM(COALESCE(le.created_by_name, '')) != ''
+           )`
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
+
   if (r.size) {
     db.exec(
       `UPDATE sales_receipts SET status = 'Cleared'

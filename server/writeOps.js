@@ -5383,6 +5383,7 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
     branchId != null && String(branchId).trim()
       ? String(branchId).trim()
       : String(entry.branchId || quotationRow.branchId || '').trim() || null;
+  const handledBy = String(entry.createdByName ?? entry.created_by_name ?? '').trim() || '—';
   db.prepare(
     `
     INSERT INTO sales_receipts (
@@ -5401,7 +5402,10 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
         WHEN TRIM(LOWER(COALESCE(sales_receipts.status, ''))) IN ('cleared', 'confirmed', 'reversed') THEN sales_receipts.status
         ELSE excluded.status
       END,
-      handled_by = excluded.handled_by,
+      handled_by = CASE
+        WHEN TRIM(COALESCE(excluded.handled_by, '')) IN ('', '—') THEN sales_receipts.handled_by
+        ELSE excluded.handled_by
+      END,
       ledger_entry_id = excluded.ledger_entry_id,
       branch_id = excluded.branch_id
   `
@@ -5416,7 +5420,7 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
     entry.amountNgn,
     entry.paymentMethod ?? '—',
     'Pending clearance',
-    '—',
+    handledBy,
     entry.id,
     bid
   );
@@ -5450,6 +5454,7 @@ export function ledgerReceiptRowToUpsertEntry(row) {
     quotationRef: row.quotation_ref,
     paymentMethod: row.payment_method,
     branchId: row.branch_id,
+    createdByName: row.created_by_name ?? '',
   };
 }
 
@@ -5600,6 +5605,7 @@ export function correctReceiptOverpaySplit(db, opts) {
         quotationRef: freshRec.quotation_ref,
         paymentMethod: freshRec.payment_method,
         branchId: freshRec.branch_id,
+        createdByName: freshRec.created_by_name ?? '',
       },
       {
         id: qt.id,
@@ -9787,6 +9793,7 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
           quotationRef: freshRec.quotation_ref,
           paymentMethod: freshRec.payment_method,
           branchId: freshRec.branch_id,
+          createdByName: freshRec.created_by_name ?? '',
         },
         { id: qt.id, customer: qt.customer, customer_name: qt.customer, branchId: qt.branchId },
         freshRec.branch_id || null

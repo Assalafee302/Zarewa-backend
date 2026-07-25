@@ -50,6 +50,7 @@ export const TREASURY_ACCOUNTS_VISIBLE_PERMS = [
 /** Ledger & advance-in (customer money) */
 export const LEDGER_RELATED_PERMS = [
   ...FINANCE_DOMAIN_PERMS,
+  ...CASHIER_DESK_PERMS,
   'receipts.post',
   'refunds.request',
   'refunds.approve',

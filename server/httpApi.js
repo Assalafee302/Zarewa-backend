@@ -125,7 +125,7 @@ import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { buildAp3BranchPlReport } from './ap3BranchPlOps.js';
-import { buildPricingGovernancePack } from './pricingGovernanceOps.js';
+import { buildPricingGovernancePack, proposeWorkbookCostRefresh } from './pricingGovernanceOps.js';
 import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import {
   buildCreditorsRegister,
@@ -427,6 +427,9 @@ import { buildMaintenanceInsightsPack } from './maintenanceInsightsOps.js';
 import { buildManagerBranchBenchmark } from './managerBranchBenchmarkOps.js';
 import { mergeManagerTargetsBlob } from '../shared/lib/managerOrgTargets.js';
 import { createBranchShiftNote, listBranchShiftNotes } from './branchShiftNotesOps.js';
+import { createChecklistEvent, listChecklistEvents } from './checklistEventsOps.js';
+import { listOtBoard } from './hrOtBoardOps.js';
+import { buildOpsHealthAnalyticsPack, opsHealthAnalyticsToCsv } from './opsHealthAnalyticsOps.js';
 import {
   createCustomerComplaint,
   getCustomerComplaint,
@@ -1721,6 +1724,19 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[pricing-governance]', e);
       return res.status(500).json({ ok: false, error: 'Pricing governance pack failed.' });
+    }
+  });
+
+  app.post('/api/finance/pricing-governance/propose-cost-refresh', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp3CostingReadiness(req.user)) {
+        return res.status(403).json({ ok: false, error: 'You do not have permission to refresh workbook cost.', code: 'FORBIDDEN' });
+      }
+      const result = proposeWorkbookCostRefresh(db, req.body?.rowId, req.user);
+      return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      console.error('[pricing-governance-cost-refresh]', e);
+      return res.status(500).json({ ok: false, error: 'Could not refresh workbook cost.' });
     }
   });
 
@@ -6406,6 +6422,50 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  function mayViewOpsHealth(req) {
+    return (
+      userMayViewAp3CostingReadiness(req.user) ||
+      userHasPermission(req.user, 'reports.view') ||
+      userHasPermission(req.user, 'operations.view')
+    );
+  }
+
+  function opsHealthPackForRequest(req) {
+    const branchScope = resolveBootstrapBranchScope(req);
+    const branchId =
+      branchScope === 'ALL'
+        ? String(req.query?.branchId || req.workspaceBranchId || '').trim()
+        : String(branchScope || '').trim();
+    return buildOpsHealthAnalyticsPack(db, {
+      branchId: branchId || 'ALL',
+      dayIso: req.query?.dayIso,
+      from: req.query?.from,
+      to: req.query?.to,
+    });
+  }
+
+  app.get('/api/analytics/ops-health', requireAuth, (req, res) => {
+    try {
+      if (!mayViewOpsHealth(req)) return res.status(403).json({ ok: false, error: 'You do not have permission to view operations health.', code: 'FORBIDDEN' });
+      return res.json(opsHealthPackForRequest(req));
+    } catch (e) {
+      console.error('[ops-health]', e);
+      return res.status(500).json({ ok: false, error: 'Could not load operations health.' });
+    }
+  });
+
+  app.get('/api/analytics/ops-health.csv', requireAuth, (req, res) => {
+    try {
+      if (!mayViewOpsHealth(req)) return res.status(403).json({ ok: false, error: 'You do not have permission to view operations health.', code: 'FORBIDDEN' });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="ops-health-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return res.send(opsHealthAnalyticsToCsv(opsHealthPackForRequest(req)));
+    } catch (e) {
+      console.error('[ops-health-csv]', e);
+      return res.status(500).send('Could not export operations health.');
+    }
+  });
+
   app.get('/api/analytics/business-intelligence/export', requireManagementReportsView, (req, res) => {
     try {
       const branchScope = req.query?.branchId
@@ -10277,6 +10337,59 @@ export function registerHttpApi(app, db) {
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not save shift note.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/branch-checklist-events',
+    requireAuth,
+    requirePermission(['sales.manage', 'sales.view', 'operations.view', 'operations.manage']),
+    (req, res) => {
+      try {
+        const scope = resolveBootstrapBranchScope(req);
+        const branchId = scope === 'ALL' ? String(req.query.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID).trim() : String(scope).trim();
+        return res.json({
+          ok: true,
+          events: listChecklistEvents(db, { branchId, dayIso: req.query.dayIso, limit: Number(req.query.limit) || 100 }),
+        });
+      } catch (e) {
+        console.error('[branch-checklist-events]', e);
+        return res.status(500).json({ ok: false, error: 'Could not load checklist events.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/branch-checklist-events',
+    requireAuth,
+    requirePermission(['sales.manage', 'operations.manage']),
+    (req, res) => {
+      try {
+        const scope = resolveBootstrapBranchScope(req);
+        const body = { ...(req.body || {}) };
+        if (scope !== 'ALL') body.branchId = scope;
+        const result = createChecklistEvent(db, body, req.user, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+        return res.status(result.ok ? 201 : 400).json(result);
+      } catch (e) {
+        console.error('[branch-checklist-events]', e);
+        return res.status(500).json({ ok: false, error: 'Could not save checklist event.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/hr/ot-board',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const scope = resolveBootstrapBranchScope(req);
+        const branchId = scope === 'ALL' ? String(req.query.branchId || '').trim() : String(scope).trim();
+        return res.json({ ok: true, rows: listOtBoard(db, { branchId, dayIso: req.query.dayIso, from: req.query.from, to: req.query.to }) });
+      } catch (e) {
+        console.error('[hr-ot-board]', e);
+        return res.status(500).json({ ok: false, error: 'Could not load OT board.' });
       }
     }
   );

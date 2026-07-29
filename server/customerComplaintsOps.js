@@ -5,7 +5,7 @@ import { nextCustomerComplaintHumanId } from './humanId.js';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { appendAuditLog } from './controlOps.js';
 
-export const COMPLAINT_CHANNELS = ['phone', 'whatsapp', 'in_person', 'email'];
+export const COMPLAINT_CHANNELS = ['phone', 'whatsapp', 'in_person', 'email', 'delivery'];
 export const COMPLAINT_CATEGORIES = [
   'product_quality',
   'delivery_delay',
@@ -147,7 +147,7 @@ export function createCustomerComplaint(db, body, actor, workspaceBranchId) {
     DEFAULT_BRANCH_ID;
 
   const channel = normEnum(body?.channel, COMPLAINT_CHANNELS, '');
-  if (!channel) return { ok: false, error: 'channel is required (phone, whatsapp, in_person, email).' };
+  if (!channel) return { ok: false, error: 'channel is required (phone, whatsapp, in_person, email, delivery).' };
   const category = normEnum(body?.category, COMPLAINT_CATEGORIES, '');
   if (!category) {
     return {

@@ -46,6 +46,7 @@ import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
+import { createCustomerComplaint } from './customerComplaintsOps.js';
 import {
   cuttingListTotalMetresFromLines,
   roundCuttingListMetres2,
@@ -1929,6 +1930,20 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
   if (String(status).trim() !== 'Delivered') {
     satisfactionScore = null;
   }
+  const quotationTotal = Number(row.quotation_total_ngn ?? row.total_ngn);
+  const quotation =
+    !Number.isFinite(quotationTotal) && row.quotation_ref
+      ? db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(row.quotation_ref)
+      : null;
+  const totalNgn = Number.isFinite(quotationTotal) ? quotationTotal : Number(quotation?.total_ngn) || 0;
+  if (String(status).trim() === 'Delivered' && totalNgn > 500000 && satisfactionScore == null) {
+    return { ok: false, error: 'satisfactionScore is required for deliveries above ₦500,000.', code: 'CSAT_REQUIRED' };
+  }
+  const podConfirmedByUserId = String(opts.actor?.id || '').trim() || null;
+  const podConfirmedByName =
+    String(opts.actor?.displayName || opts.actor?.username || opts.actor?.email || '').trim() || null;
+  const podCollectedByRole =
+    String(payload.podCollectedByRole ?? payload.pod_collected_by_role ?? '').trim() || null;
 
   let deliveryGate = null;
   if (String(status).trim() === 'Delivered') {
@@ -1989,6 +2004,9 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
         `UPDATE deliveries
          SET status = ?, delivered_date_iso = ?, pod_notes = ?, courier_confirmed = ?, customer_signed_pod = ?,
              satisfaction_score = COALESCE(?, satisfaction_score),
+             pod_confirmed_by_user_id = COALESCE(?, pod_confirmed_by_user_id),
+             pod_confirmed_by_name = COALESCE(?, pod_confirmed_by_name),
+             pod_collected_by_role = COALESCE(?, pod_collected_by_role),
              fulfillment_posted = CASE
                WHEN ? = 'Delivered' AND fulfillment_posted = 0 THEN CASE
                  WHEN EXISTS (SELECT 1 FROM delivery_lines WHERE delivery_id = ?) THEN 1
@@ -2004,11 +2022,32 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
         courierConfirmed,
         customerSignedPod,
         satisfactionScore,
+        podConfirmedByUserId,
+        podConfirmedByName,
+        podCollectedByRole,
         status,
         deliveryId,
         deliveryId
       );
     })();
+    let lowCsatComplaint;
+    if (satisfactionScore != null && satisfactionScore <= 2) {
+      const complaint = createCustomerComplaint(
+        db,
+        {
+          customerId: row.customer_id,
+          branchId: row.branch_id,
+          channel: 'delivery',
+          category: 'service',
+          severity: satisfactionScore === 1 ? 'high' : 'low',
+          linkedOrderId: row.quotation_ref,
+          description: `Low delivery CSAT (${satisfactionScore}/5) for delivery ${deliveryId}; quotation ${row.quotation_ref || 'not recorded'}.`,
+        },
+        opts.actor || {},
+        row.branch_id || DEFAULT_BRANCH_ID
+      );
+      lowCsatComplaint = complaint.ok ? complaint.complaint : { error: complaint.error };
+    }
     if (deliveryGate?.wouldBlock && deliveryGate.mode === 'warn') {
       if (deliveryGate.code === 'DELIVERY_RELEASE_CREDIT_EXCEPTION') {
         appendAuditLog(db, {
@@ -2038,9 +2077,13 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
           },
         });
       }
-      return { ok: true, deliveryGateWarning: deliveryGate };
+      return { ok: true, deliveryGateWarning: deliveryGate, ...(lowCsatComplaint ? { lowCsatComplaint } : {}) };
     }
-    return { ok: true, deliveryGate: deliveryGate?.mode !== 'off' ? deliveryGate : undefined };
+    return {
+      ok: true,
+      deliveryGate: deliveryGate?.mode !== 'off' ? deliveryGate : undefined,
+      ...(lowCsatComplaint ? { lowCsatComplaint } : {}),
+    };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

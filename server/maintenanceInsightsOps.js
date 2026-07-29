@@ -58,6 +58,40 @@ export function buildMaintenanceMachineInsights(db, scope = {}) {
     openWoByMachine.set(String(r.machine_id), Number(r.open_count) || 0);
   }
 
+  const outputMetresByMachine = new Map();
+  try {
+    const outputRows = db
+      .prepare(
+        `SELECT m.id AS machine_id, SUM(COALESCE(pj.actual_meters, 0)) AS output_metres
+         FROM machines m
+         LEFT JOIN production_jobs pj
+           ON pj.machine_id = m.id OR (pj.machine_id IS NULL AND pj.machine_name = m.name)
+         GROUP BY m.id`
+      )
+      .all();
+    for (const r of outputRows) outputMetresByMachine.set(String(r.machine_id), Number(r.output_metres) || 0);
+  } catch {
+    try {
+      const outputRows = db
+        .prepare(
+          `SELECT m.id AS machine_id, SUM(COALESCE(pj.actual_meters, 0)) AS output_metres
+           FROM machines m LEFT JOIN production_jobs pj ON pj.machine_name = m.name GROUP BY m.id`
+        )
+        .all();
+      for (const r of outputRows) outputMetresByMachine.set(String(r.machine_id), Number(r.output_metres) || 0);
+    } catch {
+      // Production jobs cannot be linked to machines in this schema.
+    }
+  }
+  const downtimeByMachine = new Map();
+  const downtimeRows = db
+    .prepare(
+      `SELECT machine_id, SUM(COALESCE(downtime_hours, 0)) AS downtime_hours
+       FROM maintenance_work_orders GROUP BY machine_id`
+    )
+    .all();
+  for (const r of downtimeRows) downtimeByMachine.set(String(r.machine_id), Number(r.downtime_hours) || 0);
+
   const primaryAssetByMachine = new Map();
   const linkRows = db
     .prepare(
@@ -114,6 +148,8 @@ export function buildMaintenanceMachineInsights(db, scope = {}) {
       lifetimeMaintenanceNgn: costs.lifetimeNgn,
       lifetimeRepairCost: costs.lifetimeNgn,
       costLineCount: costs.lineCount,
+      outputMetres: outputMetresByMachine.get(mid) || 0,
+      downtimeHours: downtimeByMachine.get(mid) || 0,
       openWorkOrders: openWoByMachine.get(mid) || 0,
       pctOfCost,
       ratioOfCost: costNgn && costNgn > 0 ? costs.lifetimeNgn / costNgn : null,

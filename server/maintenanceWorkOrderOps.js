@@ -257,6 +257,19 @@ export function createMaintenanceCostLine(db, workOrderId, body, actor) {
   if (sourceKind !== 'payment_request' && sourceKind !== 'expense') {
     return { ok: false, error: 'sourceKind must be payment_request or expense.' };
   }
+  const requestedVendorId = String(body?.vendorId || '').trim();
+  if (!wo.vendorId && !requestedVendorId) {
+    return { ok: false, error: 'Vendor is required before linking a payment request or expense cost line.' };
+  }
+  if (!wo.vendorId && requestedVendorId) {
+    const vendor = getMaintenanceVendor(db, requestedVendorId);
+    if (!vendor || vendor.status !== 'active') return { ok: false, error: 'Active vendor required.' };
+    db.prepare(`UPDATE maintenance_work_orders SET vendor_id = ?, vendor_name = ? WHERE id = ?`).run(
+      vendor.id,
+      vendor.name,
+      wo.id
+    );
+  }
   if (sourceKind === 'payment_request') {
     const pr = db.prepare(`SELECT request_id FROM payment_requests WHERE request_id = ?`).get(sourceId);
     if (!pr) return { ok: false, error: 'Payment request not found for source_id.' };

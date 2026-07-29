@@ -163,8 +163,22 @@ function runMigrationsUnlocked(db) {
   `);
   ensureEditApprovalTable(db);
   const tableCols = (name) => {
-    const rows = db.prepare(`PRAGMA table_info(${name})`).all();
-    return new Set(rows.map((c) => c.name));
+    try {
+      const rows = db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = ?`
+        )
+        .all(name);
+      if (rows.length) return new Set(rows.map((c) => c.column_name));
+    } catch {
+      // SQLite development databases do not expose information_schema.
+    }
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
   };
 
   db.exec(`
@@ -580,6 +594,15 @@ function runMigrationsUnlocked(db) {
     if (!deliveries.has('satisfaction_score')) {
       db.exec(`ALTER TABLE deliveries ADD COLUMN satisfaction_score INTEGER`);
     }
+    if (!deliveries.has('pod_confirmed_by_user_id')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN pod_confirmed_by_user_id TEXT`);
+    }
+    if (!deliveries.has('pod_confirmed_by_name')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN pod_confirmed_by_name TEXT`);
+    }
+    if (!deliveries.has('pod_collected_by_role')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN pod_collected_by_role TEXT`);
+    }
   }
 
   db.exec(`
@@ -588,6 +611,13 @@ function runMigrationsUnlocked(db) {
       branch_id TEXT NOT NULL,
       shift_date TEXT NOT NULL,
       note TEXT NOT NULL,
+      note_kind TEXT DEFAULT 'night',
+      gates_ok INTEGER DEFAULT 0,
+      cctv_ok INTEGER DEFAULT 0,
+      cash_ok INTEGER DEFAULT 0,
+      keys_ok INTEGER DEFAULT 0,
+      incident_code TEXT,
+      attachment_ref TEXT,
       author_user_id TEXT,
       author_name TEXT,
       created_at_iso TEXT NOT NULL,
@@ -595,6 +625,32 @@ function runMigrationsUnlocked(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_branch_shift_notes_branch_date
       ON branch_shift_notes(branch_id, shift_date DESC);
+  `);
+  const shiftNotes = tableCols('branch_shift_notes');
+  for (const [name, ddl] of [
+    ['note_kind', `ALTER TABLE branch_shift_notes ADD COLUMN note_kind TEXT DEFAULT 'night'`],
+    ['gates_ok', `ALTER TABLE branch_shift_notes ADD COLUMN gates_ok INTEGER DEFAULT 0`],
+    ['cctv_ok', `ALTER TABLE branch_shift_notes ADD COLUMN cctv_ok INTEGER DEFAULT 0`],
+    ['cash_ok', `ALTER TABLE branch_shift_notes ADD COLUMN cash_ok INTEGER DEFAULT 0`],
+    ['keys_ok', `ALTER TABLE branch_shift_notes ADD COLUMN keys_ok INTEGER DEFAULT 0`],
+    ['incident_code', `ALTER TABLE branch_shift_notes ADD COLUMN incident_code TEXT`],
+    ['attachment_ref', `ALTER TABLE branch_shift_notes ADD COLUMN attachment_ref TEXT`],
+  ]) {
+    if (shiftNotes.size && !shiftNotes.has(name)) db.exec(ddl);
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS checklist_events (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      day_iso TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      note TEXT,
+      author_user_id TEXT,
+      author_name TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_checklist_events_branch_day
+      ON checklist_events(branch_id, day_iso DESC);
   `);
 
   const cutting = tableCols('cutting_lists');

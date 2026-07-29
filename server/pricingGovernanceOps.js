@@ -4,6 +4,7 @@
  */
 import { productIdForMaterialKey } from '../shared/lib/coilDensityStandard.js';
 import { purchaseWeightedAvgCostPerKgLastDays } from './materialPricingOps.js';
+import { appendAuditLog } from './controlOps.js';
 
 /** Flag when |workbook − GRN WAC| / GRN WAC exceeds this percent. Mid of 5–10% band. */
 export const COST_VARIANCE_THRESHOLD_PCT = 8;
@@ -128,6 +129,32 @@ export function buildCostVarianceRows(db, opts = {}) {
     });
   }
   return out;
+}
+
+/**
+ * Apply the current GRN WAC to a flagged workbook row. This is a proposal action,
+ * but intentionally writes only the cost field so the workbook retains its pricing controls.
+ */
+export function proposeWorkbookCostRefresh(db, rowId, actor) {
+  const id = String(rowId || '').trim();
+  if (!id) return { ok: false, error: 'rowId is required.' };
+  const row = buildCostVarianceRows(db, { branchId: null }).find((entry) => entry.id === id);
+  if (!row) return { ok: false, error: 'Workbook row not found.' };
+  if (!row.flagged || row.grnWeightedAvgCostPerKgNgn == null) {
+    return { ok: false, error: 'Only flagged rows with a GRN WAC can be refreshed.' };
+  }
+  const nextCost = Math.round(Number(row.grnWeightedAvgCostPerKgNgn) || 0);
+  if (nextCost <= 0) return { ok: false, error: 'GRN WAC must be positive.' };
+  db.prepare(`UPDATE material_pricing_sheet_rows SET cost_per_kg_ngn = ? WHERE id = ?`).run(nextCost, id);
+  appendAuditLog(db, {
+    actor,
+    action: 'pricing_governance.propose_cost_refresh',
+    entityKind: 'material_pricing_sheet_row',
+    entityId: id,
+    note: `Workbook cost refreshed from ₦${row.workbookCostPerKgNgn} to GRN WAC ₦${nextCost}.`,
+    details: { branchId: row.branchId, materialKey: row.materialKey, priorCost: row.workbookCostPerKgNgn, nextCost },
+  });
+  return { ok: true, rowId: id, priorCostPerKgNgn: row.workbookCostPerKgNgn, costPerKgNgn: nextCost };
 }
 
 /**

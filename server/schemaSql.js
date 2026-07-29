@@ -265,7 +265,10 @@ CREATE TABLE IF NOT EXISTS deliveries (
   courier_confirmed INTEGER DEFAULT 0,
   customer_signed_pod INTEGER DEFAULT 0,
   fulfillment_posted INTEGER DEFAULT 0,
-  satisfaction_score INTEGER
+  satisfaction_score INTEGER,
+  pod_confirmed_by_user_id TEXT,
+  pod_confirmed_by_name TEXT,
+  pod_collected_by_role TEXT
 );
 
 CREATE TABLE IF NOT EXISTS delivery_lines (
@@ -2297,6 +2300,13 @@ CREATE TABLE IF NOT EXISTS branch_shift_notes (
   branch_id TEXT NOT NULL,
   shift_date TEXT NOT NULL,
   note TEXT NOT NULL,
+  note_kind TEXT DEFAULT 'night',
+  gates_ok INTEGER DEFAULT 0,
+  cctv_ok INTEGER DEFAULT 0,
+  cash_ok INTEGER DEFAULT 0,
+  keys_ok INTEGER DEFAULT 0,
+  incident_code TEXT,
+  attachment_ref TEXT,
   author_user_id TEXT,
   author_name TEXT,
   created_at_iso TEXT NOT NULL,
@@ -2304,4 +2314,17 @@ CREATE TABLE IF NOT EXISTS branch_shift_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_branch_shift_notes_branch_date
   ON branch_shift_notes(branch_id, shift_date DESC);
+
+CREATE TABLE IF NOT EXISTS checklist_events (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  day_iso TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  note TEXT,
+  author_user_id TEXT,
+  author_name TEXT,
+  created_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checklist_events_branch_day
+  ON checklist_events(branch_id, day_iso DESC);
 `;

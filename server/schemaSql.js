@@ -1790,6 +1790,7 @@ CREATE TABLE IF NOT EXISTS maintenance_work_orders (
   closed_by_user_id TEXT,
   assigned_to_user_id TEXT,
   downtime_hours REAL NOT NULL DEFAULT 0,
+  vendor_id TEXT,
   vendor_name TEXT,
   replacement_required INTEGER NOT NULL DEFAULT 0,
   related_material_request_id TEXT,
@@ -1835,6 +1836,24 @@ CREATE TABLE IF NOT EXISTS maintenance_cost_lines (
 
 CREATE INDEX IF NOT EXISTS idx_maintenance_cost_lines_work_order
   ON maintenance_cost_lines(work_order_id, posted_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS maintenance_vendors (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact_person TEXT,
+  phone TEXT,
+  specialty TEXT NOT NULL DEFAULT 'general',
+  branches_served_json TEXT NOT NULL DEFAULT '[]',
+  bank_details_json TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  notes TEXT,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL,
+  created_by_user_id TEXT,
+  updated_by_user_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_vendors_status_name
+  ON maintenance_vendors(status, name);
 
 CREATE TABLE IF NOT EXISTS hr_performance_reviews (
   id TEXT PRIMARY KEY,

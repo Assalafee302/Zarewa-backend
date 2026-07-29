@@ -140,7 +140,6 @@ import {
   getRegisterSettlement,
   listRegisterSettlements,
   payRegisterSettlement,
-  registerLineAvailableSettlementNgn,
   registerLineSettlementCapacity,
   withdrawRegisterSettlement,
 } from './accountingRegisterSettlementOps.js';
@@ -254,7 +253,6 @@ import {
   rejectEditApproval,
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
-  getEditApproval,
   getEditApprovalDetail,
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
@@ -343,7 +341,6 @@ import {
   listStaffForSalesCustomerLink,
   listStaffPurchaseCreditQueue,
   listStaffQuotationsForPurchaseCredit,
-  bulkEnsureStaffSalesCustomers,
   syncQuotationStaffPurchaseFlag,
   unlinkSalesCustomerFromStaff,
   userMayLinkStaffSalesCustomer,
@@ -392,7 +389,9 @@ import { OFFICE_OPERATION_TEMPLATES } from '../shared/officeComposeTemplates.js'
 import {
   appendWorkItemDecision,
   createMaterialRequest,
+  createMaintenanceWorkOrder,
   createWorkItem,
+  listMachines,
   officeKeyForUser,
   upsertWorkItemBySource,
   ensureWorkItemsForVisibleOfficeThreads,
@@ -401,9 +400,28 @@ import {
   syncDerivedWorkItems,
   linkWorkItemToOfficeThread,
   listMaterialRequests,
+  listMaintenanceWorkOrders,
   listUnifiedWorkItems,
   userMayDecideWorkItem,
 } from './workItems.js';
+import {
+  createMaintenanceVendor,
+  listMaintenanceTechnicians,
+  listMaintenanceVendors,
+  updateMaintenanceVendor,
+  updateStaffTechnicianFlags,
+} from './maintenanceVendorsOps.js';
+import {
+  acknowledgeMaintenanceWorkOrder,
+  assignMaintenanceWorkOrder,
+  createMaintenanceCostLine,
+  getMaintenanceWorkOrder,
+  linkWorkOrderPaymentRequest,
+  listMaintenanceCostLines,
+  listOpenMaintenanceIssues,
+  resolveMaintenanceWorkOrder,
+} from './maintenanceWorkOrderOps.js';
+import { buildMaintenanceInsightsPack } from './maintenanceInsightsOps.js';
 import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from './masterData.js';
 import { parseSupplierProfileJson } from './supplierProfile.js';
 import {
@@ -8325,6 +8343,322 @@ export function registerHttpApi(app, db) {
       res.status(500).json({ ok: false, error: 'Could not create material request.' });
     }
   });
+
+  function mayEditMaintenanceVendors(user) {
+    const rk = String(user?.roleKey || user?.role_key || '')
+      .trim()
+      .toLowerCase();
+    return rk === 'admin' || rk === 'md' || rk === 'sales_manager' || rk === 'branch_manager';
+  }
+
+  app.get(
+    '/api/maintenance/vendors',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const branchId =
+          branchScope === 'ALL' ? String(req.query.branchId || '').trim() : branchScope;
+        const vendors = listMaintenanceVendors(db, {
+          branchId: branchId || undefined,
+          status: String(req.query.status || '').trim() || undefined,
+          includeAllBranches: branchScope === 'ALL' && !branchId,
+        });
+        res.json({ ok: true, vendors, canEdit: mayEditMaintenanceVendors(req.user) });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load maintenance vendors.' });
+      }
+    }
+  );
+
+  app.post('/api/maintenance/vendors', requireAuth, (req, res) => {
+    try {
+      if (!mayEditMaintenanceVendors(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Only Branch Manager or above can edit vendors.' });
+      }
+      const r = createMaintenanceVendor(
+        db,
+        req.body || {},
+        req.user,
+        req.workspaceBranchId || DEFAULT_BRANCH_ID
+      );
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not create vendor.' });
+    }
+  });
+
+  app.patch('/api/maintenance/vendors/:vendorId', requireAuth, (req, res) => {
+    try {
+      if (!mayEditMaintenanceVendors(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Only Branch Manager or above can edit vendors.' });
+      }
+      const r = updateMaintenanceVendor(db, req.params.vendorId, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update vendor.' });
+    }
+  });
+
+  app.get(
+    '/api/maintenance/technicians',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const branchId =
+          branchScope === 'ALL' ? String(req.query.branchId || '').trim() : branchScope;
+        const technicians = listMaintenanceTechnicians(db, {
+          branchId: branchId || undefined,
+          activeOnly: String(req.query.activeOnly || '1') !== '0',
+        });
+        res.json({ ok: true, technicians, canEdit: mayEditMaintenanceVendors(req.user) });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load technicians.' });
+      }
+    }
+  );
+
+  app.patch('/api/maintenance/technicians/:userId', requireAuth, (req, res) => {
+    try {
+      if (!mayEditMaintenanceVendors(req.user)) {
+        return res
+          .status(403)
+          .json({ ok: false, error: 'Only Branch Manager or above can edit technician flags.' });
+      }
+      const r = updateStaffTechnicianFlags(db, req.params.userId, req.body || {}, req.user);
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not update technician flags.' });
+    }
+  });
+
+  app.get(
+    '/api/maintenance/machines',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const scope = {
+          viewAll: branchScope === 'ALL',
+          branchId: branchScope === 'ALL' ? req.workspaceBranchId || DEFAULT_BRANCH_ID : branchScope,
+        };
+        res.json({ ok: true, machines: listMachines(db, scope) });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load machines.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/maintenance/work-orders',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const openOnly = String(req.query.openOnly || '') === '1' || String(req.query.inbox || '') === 'issues';
+        if (openOnly) {
+          const issues = listOpenMaintenanceIssues(db, {
+            viewAll: branchScope === 'ALL',
+            branchId: branchScope === 'ALL' ? '' : branchScope,
+          });
+          return res.json({ ok: true, workOrders: issues });
+        }
+        const scope = {
+          viewAll: branchScope === 'ALL',
+          branchId: branchScope === 'ALL' ? req.workspaceBranchId || DEFAULT_BRANCH_ID : branchScope,
+        };
+        res.json({ ok: true, workOrders: listMaintenanceWorkOrders(db, scope) });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load work orders.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders',
+    requireAuth,
+    requirePermission(['operations.manage', 'production.manage']),
+    (req, res) => {
+      try {
+        const body = { ...(req.body || {}) };
+        const priorityRaw = String(body.priority || 'normal').trim().toLowerCase();
+        const priorityMap = {
+          low: 'low',
+          high: 'high',
+          machine_down: 'machine_down',
+          'machine-down': 'machine_down',
+          normal: 'normal',
+        };
+        body.priority = priorityMap[priorityRaw] || priorityRaw || 'normal';
+        body.kind = 'corrective';
+        body.status = body.status || 'open';
+        if (!body.summary) {
+          body.summary = String(body.symptom || '').trim().slice(0, 120) || 'Fault report';
+        }
+        if (body.attachment?.dataBase64) {
+          body.data = {
+            ...(body.data && typeof body.data === 'object' ? body.data : {}),
+            attachment: {
+              name: body.attachment.name || 'photo',
+              mime: body.attachment.mime || 'image/jpeg',
+              dataBase64: body.attachment.dataBase64,
+            },
+          };
+        }
+        const r = createMaintenanceWorkOrder(
+          db,
+          body,
+          req.user,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID
+        );
+        res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not create work order.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/maintenance/work-orders/:workOrderId',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const wo = getMaintenanceWorkOrder(db, req.params.workOrderId);
+        if (!wo) return res.status(404).json({ ok: false, error: 'Work order not found.' });
+        const costLines = listMaintenanceCostLines(db, wo.id);
+        res.json({ ok: true, workOrder: wo, costLines });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load work order.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders/:workOrderId/acknowledge',
+    requireAuth,
+    (req, res) => {
+      try {
+        if (!mayEditMaintenanceVendors(req.user) && String(req.user?.roleKey || '') !== 'admin') {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or above required.' });
+        }
+        const r = acknowledgeMaintenanceWorkOrder(db, req.params.workOrderId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not acknowledge work order.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders/:workOrderId/assign',
+    requireAuth,
+    (req, res) => {
+      try {
+        if (!mayEditMaintenanceVendors(req.user)) {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or above required.' });
+        }
+        const r = assignMaintenanceWorkOrder(db, req.params.workOrderId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not assign work order.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders/:workOrderId/resolve',
+    requireAuth,
+    (req, res) => {
+      try {
+        if (!mayEditMaintenanceVendors(req.user)) {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or above required.' });
+        }
+        const r = resolveMaintenanceWorkOrder(db, req.params.workOrderId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not resolve work order.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders/:workOrderId/link-payment-request',
+    requireAuth,
+    (req, res) => {
+      try {
+        if (!mayEditMaintenanceVendors(req.user)) {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or above required.' });
+        }
+        const r = linkWorkOrderPaymentRequest(
+          db,
+          req.params.workOrderId,
+          req.body?.paymentRequestId || req.body?.requestId,
+          req.user
+        );
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not link payment request.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/maintenance/work-orders/:workOrderId/cost-lines',
+    requireAuth,
+    (req, res) => {
+      try {
+        if (!mayEditMaintenanceVendors(req.user)) {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or above required.' });
+        }
+        const r = createMaintenanceCostLine(db, req.params.workOrderId, req.body || {}, req.user);
+        res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not create cost line.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/maintenance/insights',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const pack = buildMaintenanceInsightsPack(db, {
+          viewAll: branchScope === 'ALL',
+          branchId:
+            branchScope === 'ALL'
+              ? String(req.query.branchId || '').trim()
+              : branchScope,
+        });
+        res.json(pack);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load maintenance insights.' });
+      }
+    }
+  );
 
 
 

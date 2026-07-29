@@ -2168,9 +2168,9 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
         id, reference_no, branch_id, machine_id, plan_id, status, priority, kind, summary, symptom, diagnosis,
         resolution, incident_date_iso, opened_at_iso, acknowledged_at_iso, approved_at_iso, closed_at_iso,
         opened_by_user_id, acknowledged_by_user_id, approved_by_user_id, closed_by_user_id, assigned_to_user_id,
-        downtime_hours, vendor_name, replacement_required, related_material_request_id, related_payment_request_id,
+        downtime_hours, vendor_id, vendor_name, replacement_required, related_material_request_id, related_payment_request_id,
         related_work_item_id, data_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       referenceNo,
@@ -2195,6 +2195,7 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
       null,
       String(body?.assignedToUserId || '').trim() || null,
       Number(body?.downtimeHours) || 0,
+      String(body?.vendorId || '').trim() || null,
       String(body?.vendorName || '').trim() || null,
       body?.replacementRequired ? 1 : 0,
       String(body?.relatedMaterialRequestId || '').trim() || null,
@@ -2230,8 +2231,8 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
       data: {
         priority: String(body?.priority || 'normal').trim() || 'normal',
         kind: String(body?.kind || 'corrective').trim() || 'corrective',
-        routePath: '/operations',
-        routeState: { focusOpsTab: 'production' },
+        routePath: '/manager',
+        routeState: { inbox: 'issues', workOrderId: id },
       },
       visibilityEntries: [
         { visibilityKind: 'user_id', visibilityValue: String(actor?.id || '').trim() },
@@ -2252,6 +2253,20 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
     note: summary,
     details: { workItemId },
   });
+  try {
+    appendMaintenanceEvent(
+      db,
+      id,
+      {
+        eventKind: 'opened',
+        note: String(body?.symptom || summary).trim() || summary,
+        data: { priority: String(body?.priority || 'normal') },
+      },
+      actor
+    );
+  } catch {
+    /* event best-effort */
+  }
   return { ok: true, workOrderId: id };
 }
 

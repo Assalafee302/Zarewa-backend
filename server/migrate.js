@@ -1340,6 +1340,64 @@ function runMigrationsUnlocked(db) {
     console.warn('[migrate] seedZarewaOrgStandard skipped:', e?.message || e);
   }
   migrateMobileAuth2026(db);
+  migrateMaintenanceRegistry2026(db);
+}
+
+/** Maintenance vendors registry + technician flags on staff profiles. */
+function migrateMaintenanceRegistry2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maintenance_vendors (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      contact_person TEXT,
+      phone TEXT,
+      specialty TEXT NOT NULL DEFAULT 'general',
+      branches_served_json TEXT NOT NULL DEFAULT '[]',
+      bank_details_json TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_maintenance_vendors_status_name
+      ON maintenance_vendors(status, name);
+  `);
+
+  const woCols = db.prepare(`PRAGMA table_info(maintenance_work_orders)`).all().map((c) => c.name);
+  if (!woCols.includes('vendor_id')) {
+    db.exec(`ALTER TABLE maintenance_work_orders ADD COLUMN vendor_id TEXT`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_maintenance_work_orders_vendor
+       ON maintenance_work_orders(vendor_id)`
+    );
+  }
+
+  const hrCols = db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name);
+  if (!hrCols.includes('is_technician')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN is_technician INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!hrCols.includes('technician_specialty')) {
+    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN technician_specialty TEXT`);
+  }
+
+  try {
+    // Inline seed — avoid circular import; designation ids match shared/maintenanceRegistry.js
+    const iso = new Date().toISOString();
+    const designationIds = ['desig_mtech', 'desig_amtech', 'desig_msup'];
+    const placeholders = designationIds.map(() => '?').join(',');
+    db.prepare(
+      `UPDATE hr_staff_profiles
+       SET is_technician = 1,
+           technician_specialty = COALESCE(NULLIF(TRIM(technician_specialty), ''), 'general'),
+           updated_at_iso = ?
+       WHERE designation_id IN (${placeholders})
+         AND COALESCE(is_technician, 0) = 0`
+    ).run(iso, ...designationIds);
+  } catch (e) {
+    console.warn('[migrate] technician seed skipped:', e?.message || e);
+  }
 }
 
 /** Zarewa mobile companion — bearer tokens + device registry (push later). */

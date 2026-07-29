@@ -11,6 +11,13 @@ process.env.NODE_ENV = 'test';
 // Repo .env often sets COOKIE_SECURE=1 for production; Playwright uses plain http://127.0.0.1.
 process.env.COOKIE_SECURE = '0';
 process.env.ZAREWA_COOKIE_DOMAIN = '';
+// Keep E2E on local XAMPP even when .env.local points at Hostinger (loadProjectEnv may overwrite).
+if (!process.env.CI && process.env.ZAREWA_MYSQL_LOCAL !== '0') {
+  process.env.ZAREWA_MYSQL_HOST = '127.0.0.1';
+  process.env.ZAREWA_MYSQL_PORT = '3306';
+  process.env.ZAREWA_MYSQL_USER = 'root';
+  process.env.ZAREWA_MYSQL_PASSWORD = '';
+}
 
 const e2eDb = String(process.env.ZAREWA_MYSQL_E2E_DATABASE || 'zarewa_e2e').trim() || 'zarewa_e2e';
 const db = createDatabase({ reset: true, database: e2eDb });

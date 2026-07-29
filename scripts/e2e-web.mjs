@@ -16,10 +16,13 @@ const env = {
   E2E_API_PORT: apiPort,
 };
 // Local Playwright stack: default to XAMPP-style MySQL (empty root password) unless CI or explicitly disabled.
+// Force local credentials — do not inherit Hostinger/.env remote user (cannot CREATE DATABASE zarewa_e2e).
+// ZAREWA_LOCAL_XAMPP=1 makes loadProjectEnv() re-apply local MySQL after .env/.env.local overwrite.
 if (!process.env.CI && process.env.ZAREWA_MYSQL_LOCAL !== '0') {
-  env.ZAREWA_MYSQL_HOST = env.ZAREWA_MYSQL_HOST || '127.0.0.1';
-  env.ZAREWA_MYSQL_PORT = env.ZAREWA_MYSQL_PORT || '3306';
-  env.ZAREWA_MYSQL_USER = env.ZAREWA_MYSQL_USER || 'root';
+  env.ZAREWA_LOCAL_XAMPP = '1';
+  env.ZAREWA_MYSQL_HOST = '127.0.0.1';
+  env.ZAREWA_MYSQL_PORT = '3306';
+  env.ZAREWA_MYSQL_USER = 'root';
   env.ZAREWA_MYSQL_PASSWORD = '';
 }
 // Playwright UI is http://127.0.0.1 — Secure cookies from .env would never persist in the browser.

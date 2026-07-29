@@ -154,7 +154,7 @@ export function buildMaintenanceVendorCostComparison(db, scope = {}) {
       MAX(COALESCE(v.phone, '')) AS phone,
       SUM(cl.amount_ngn) AS total_ngn,
       SUM(CASE
-            WHEN date(COALESCE(cl.posted_at_iso, wo.opened_at_iso)) >= date('now', '-90 days')
+            WHEN DATE(COALESCE(cl.posted_at_iso, wo.opened_at_iso)) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
             THEN cl.amount_ngn ELSE 0
           END) AS last90_ngn,
       COUNT(*) AS line_count,

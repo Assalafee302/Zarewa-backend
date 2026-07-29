@@ -19,3 +19,6 @@ test-results
 playwright/.cache
 e2e/.auth
 scripts/output/
+
+# Editor workspace files (local only)
+*.code-workspace

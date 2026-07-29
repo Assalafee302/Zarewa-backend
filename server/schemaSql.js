@@ -264,7 +264,8 @@ CREATE TABLE IF NOT EXISTS deliveries (
   pod_notes TEXT,
   courier_confirmed INTEGER DEFAULT 0,
   customer_signed_pod INTEGER DEFAULT 0,
-  fulfillment_posted INTEGER DEFAULT 0
+  fulfillment_posted INTEGER DEFAULT 0,
+  satisfaction_score INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS delivery_lines (
@@ -2290,4 +2291,17 @@ CREATE TABLE IF NOT EXISTS hr_id_cards (
   temp_card_issued INTEGER DEFAULT 0,
   temp_card_issued_at_iso TEXT
 );
+
+CREATE TABLE IF NOT EXISTS branch_shift_notes (
+  id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  shift_date TEXT NOT NULL,
+  note TEXT NOT NULL,
+  author_user_id TEXT,
+  author_name TEXT,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_branch_shift_notes_branch_date
+  ON branch_shift_notes(branch_id, shift_date DESC);
 `;

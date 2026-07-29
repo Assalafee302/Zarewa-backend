@@ -3242,6 +3242,19 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
       const remark = String(r?.remark ?? '').trim();
       const minutesLate =
         status === 'late' ? Math.max(0, Math.min(480, Math.round(Number(r?.minutesLate) || 0))) : 0;
+      // Attendance capture only — not used for payroll OT calculation.
+      let scheduledMinutes = null;
+      let workedMinutes = null;
+      if (status !== 'absent') {
+        const schedRaw = Number(r?.scheduledMinutes ?? r?.scheduled_minutes);
+        const workRaw = Number(r?.workedMinutes ?? r?.worked_minutes);
+        if (Number.isFinite(schedRaw) && schedRaw > 0) {
+          scheduledMinutes = Math.max(1, Math.min(24 * 60, Math.round(schedRaw)));
+        }
+        if (Number.isFinite(workRaw) && workRaw >= 0) {
+          workedMinutes = Math.max(0, Math.min(24 * 60, Math.round(workRaw)));
+        }
+      }
       return {
         userId,
         status,
@@ -3249,6 +3262,8 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
         ...(outTime ? { outTime } : {}),
         ...(remark ? { remark } : {}),
         ...(status === 'late' && minutesLate > 0 ? { minutesLate } : {}),
+        ...(scheduledMinutes != null ? { scheduledMinutes } : {}),
+        ...(workedMinutes != null ? { workedMinutes } : {}),
       };
     })
     .filter(Boolean);

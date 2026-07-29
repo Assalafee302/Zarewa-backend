@@ -577,7 +577,25 @@ function runMigrationsUnlocked(db) {
     if (!deliveries.has('fulfillment_posted')) {
       db.exec(`ALTER TABLE deliveries ADD COLUMN fulfillment_posted INTEGER DEFAULT 0`);
     }
+    if (!deliveries.has('satisfaction_score')) {
+      db.exec(`ALTER TABLE deliveries ADD COLUMN satisfaction_score INTEGER`);
+    }
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS branch_shift_notes (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      shift_date TEXT NOT NULL,
+      note TEXT NOT NULL,
+      author_user_id TEXT,
+      author_name TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_branch_shift_notes_branch_date
+      ON branch_shift_notes(branch_id, shift_date DESC);
+  `);
 
   const cutting = tableCols('cutting_lists');
   if (cutting.size) {

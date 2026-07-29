@@ -125,6 +125,7 @@ import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
 import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
 import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
 import { buildAp3BranchPlReport } from './ap3BranchPlOps.js';
+import { buildPricingGovernancePack } from './pricingGovernanceOps.js';
 import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import {
   buildCreditorsRegister,
@@ -400,6 +401,7 @@ import {
   syncDerivedWorkItems,
   linkWorkItemToOfficeThread,
   listMaterialRequests,
+  listMaintenancePlans,
   listMaintenanceWorkOrders,
   listUnifiedWorkItems,
   userMayDecideWorkItem,
@@ -422,6 +424,9 @@ import {
   resolveMaintenanceWorkOrder,
 } from './maintenanceWorkOrderOps.js';
 import { buildMaintenanceInsightsPack } from './maintenanceInsightsOps.js';
+import { buildManagerBranchBenchmark } from './managerBranchBenchmarkOps.js';
+import { mergeManagerTargetsBlob } from '../shared/lib/managerOrgTargets.js';
+import { createBranchShiftNote, listBranchShiftNotes } from './branchShiftNotesOps.js';
 import {
   createCustomerComplaint,
   getCustomerComplaint,
@@ -476,6 +481,7 @@ import {
   listAdvanceInEvents,
   listAuditLog,
   listAuditLogNdjsonRows,
+  listApprovalActions,
   listPeriodLocks,
   listCustomerCrmInteractions,
   listCoilLots,
@@ -1692,6 +1698,29 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[ap3-branch-pl]', e);
       return res.status(500).json({ ok: false, error: 'Branch P&L report failed.' });
+    }
+  });
+
+  /** Phase 3 pricing governance — finance_manager and above (same gate as AP3 costing). */
+  app.get('/api/finance/pricing-governance', requireAuth, (req, res) => {
+    try {
+      if (!userMayViewAp3CostingReadiness(req.user)) {
+        return res.status(403).json({
+          ok: false,
+          error: 'You do not have permission to view pricing governance.',
+          code: 'FORBIDDEN',
+        });
+      }
+      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
+      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+      const pack = buildPricingGovernancePack(db, {
+        branchId,
+        limit: Number(req.query?.limit) || undefined,
+      });
+      return res.json(pack);
+    } catch (e) {
+      console.error('[pricing-governance]', e);
+      return res.status(500).json({ ok: false, error: 'Pricing governance pack failed.' });
     }
   });
 
@@ -3504,17 +3533,7 @@ export function registerHttpApi(app, db) {
         return res.json({ ok: true, orgManagerTargets: null });
       }
       const prev = getJsonBlob(db, 'org.manager_targets.v1') || {};
-      const next = { ...prev };
-      if (Object.prototype.hasOwnProperty.call(body, 'nairaTargetPerMonth')) {
-        const n = Number(body.nairaTargetPerMonth);
-        if (Number.isFinite(n) && n > 0) next.nairaTargetPerMonth = n;
-        else delete next.nairaTargetPerMonth;
-      }
-      if (Object.prototype.hasOwnProperty.call(body, 'meterTargetPerMonth')) {
-        const m = Number(body.meterTargetPerMonth);
-        if (Number.isFinite(m) && m > 0) next.meterTargetPerMonth = m;
-        else delete next.meterTargetPerMonth;
-      }
+      const next = mergeManagerTargetsBlob(prev, body);
       if (Object.keys(next).length === 0) {
         setJsonBlob(db, 'org.manager_targets.v1', null);
         appendAuditLog(db, {
@@ -8495,6 +8514,25 @@ export function registerHttpApi(app, db) {
     }
   );
 
+  app.get(
+    '/api/maintenance/plans',
+    requireAuth,
+    requirePermission(['operations.view', 'operations.manage', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const scope = {
+          viewAll: branchScope === 'ALL',
+          branchId: branchScope === 'ALL' ? req.workspaceBranchId || DEFAULT_BRANCH_ID : branchScope,
+        };
+        res.json({ ok: true, plans: listMaintenancePlans(db, scope) });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load maintenance plans.' });
+      }
+    }
+  );
+
   app.post(
     '/api/maintenance/work-orders',
     requireAuth,
@@ -10141,14 +10179,107 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/audit-log', requirePermission('audit.view'), (_req, res) => {
-    try {
-      res.json({ ok: true, auditLog: listAuditLog(db) });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ ok: false, error: 'Could not load audit log' });
+  app.get(
+    '/api/audit-log',
+    requirePermission(['audit.view', 'sales.manage', 'reports.view', 'quotations.manage']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const limit = Math.min(300, Math.max(20, Number(req.query.limit) || 120));
+        const auditLog = listAuditLog(db, limit);
+        const approvalActions = listApprovalActions(db, limit);
+        const branchId = branchScope === 'ALL' ? '' : String(branchScope || '').trim();
+        const fullAccess = userHasPermission(req.user, 'audit.view') || userHasPermission(req.user, '*');
+        const filterAudit = (row) => {
+          if (!branchId || fullAccess) return true;
+          const d = row.details || {};
+          const bid = String(d.branchId || d.branch_id || '').trim();
+          if (bid) return bid === branchId;
+          const action = String(row.action || '').toLowerCase();
+          return /^(quotation|customer_complaint|maintenance|refund|payment_request|expense|credit_exception|edit_approval)/.test(
+            action
+          );
+        };
+        const scopedAudit = !branchId || fullAccess ? auditLog : auditLog.filter(filterAudit);
+        res.json({
+          ok: true,
+          auditLog: scopedAudit,
+          approvalActions,
+          meta: { branchScoped: Boolean(branchId) && !fullAccess, branchId: branchId || 'ALL' },
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load audit log' });
+      }
     }
-  });
+  );
+
+  app.get(
+    '/api/management/branch-benchmark',
+    requireManagementReportsView,
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const branchId =
+          branchScope === 'ALL'
+            ? String(req.query.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID).trim()
+            : String(branchScope).trim();
+        const pack = buildManagerBranchBenchmark(db, {
+          branchId,
+          periodKey: String(req.query.period || req.query.periodKey || 'month').trim() || 'month',
+        });
+        res.status(pack.ok ? 200 : 400).json(pack);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load branch benchmark.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/branch-shift-notes',
+    requireAuth,
+    requirePermission(['sales.manage', 'sales.view', 'operations.view', 'operations.manage']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const branchId =
+          branchScope === 'ALL'
+            ? String(req.query.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID).trim()
+            : String(branchScope).trim();
+        const shiftDate = String(req.query.shiftDate || req.query.dayIso || '').trim().slice(0, 10);
+        res.json({
+          ok: true,
+          notes: listBranchShiftNotes(db, {
+            branchId,
+            shiftDate: shiftDate || undefined,
+            limit: Number(req.query.limit) || 30,
+          }),
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load shift notes.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/branch-shift-notes',
+    requireAuth,
+    requirePermission(['sales.manage', 'operations.manage', 'operations.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const body = { ...(req.body || {}) };
+        if (branchScope !== 'ALL') body.branchId = branchScope;
+        const r = createBranchShiftNote(db, body, req.user, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+        res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not save shift note.' });
+      }
+    }
+  );
 
   /**
    * Annex D §D.5.4: full export is admin-only (`audit.export` is not in any role bundle;

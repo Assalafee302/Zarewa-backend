@@ -1917,6 +1917,19 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
   const courierConfirmed = payload.courierConfirmed ? 1 : 0;
   const customerSignedPod = payload.customerSignedPod ? 1 : 0;
 
+  let satisfactionScore = null;
+  if (payload.satisfactionScore != null || payload.satisfaction_score != null) {
+    const raw = Number(payload.satisfactionScore ?? payload.satisfaction_score);
+    if (!Number.isFinite(raw) || raw < 1 || raw > 5 || Math.round(raw) !== raw) {
+      return { ok: false, error: 'satisfactionScore must be an integer from 1 to 5.' };
+    }
+    satisfactionScore = raw;
+  }
+  // At POD (Delivered), capture CSAT when provided; leave null if omitted (optional signal).
+  if (String(status).trim() !== 'Delivered') {
+    satisfactionScore = null;
+  }
+
   let deliveryGate = null;
   if (String(status).trim() === 'Delivered') {
     deliveryGate = evaluateDeliveryPaymentRelease(db, {
@@ -1975,6 +1988,7 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
       db.prepare(
         `UPDATE deliveries
          SET status = ?, delivered_date_iso = ?, pod_notes = ?, courier_confirmed = ?, customer_signed_pod = ?,
+             satisfaction_score = COALESCE(?, satisfaction_score),
              fulfillment_posted = CASE
                WHEN ? = 'Delivered' AND fulfillment_posted = 0 THEN CASE
                  WHEN EXISTS (SELECT 1 FROM delivery_lines WHERE delivery_id = ?) THEN 1
@@ -1989,6 +2003,7 @@ export function confirmDelivery(db, deliveryId, payload = {}, opts = {}) {
         podNotes,
         courierConfirmed,
         customerSignedPod,
+        satisfactionScore,
         status,
         deliveryId,
         deliveryId

@@ -44,15 +44,22 @@ function safeJsonParse(raw, fallback) {
 export function listHrJobPostings(db, opts = {}) {
   if (!hrRecruitingTablesReady(db)) return [];
   const status = String(opts.status || '').trim();
+  const branchId = String(opts.branchId || '').trim();
   let sql = `SELECT id, title, branch_id AS branchId, department, description, status,
                     openings, created_at_iso AS createdAtIso, updated_at_iso AS updatedAtIso,
                     created_by_user_id AS createdByUserId
              FROM hr_job_postings`;
   const args = [];
+  const wheres = [];
   if (status && JOB_STATUSES.has(status)) {
-    sql += ` WHERE status = ?`;
+    wheres.push(`status = ?`);
     args.push(status);
   }
+  if (branchId) {
+    wheres.push(`TRIM(COALESCE(branch_id, '')) = ?`);
+    args.push(branchId);
+  }
+  if (wheres.length) sql += ` WHERE ${wheres.join(' AND ')}`;
   sql += ` ORDER BY updated_at_iso DESC LIMIT 200`;
   return db.prepare(sql).all(...args);
 }

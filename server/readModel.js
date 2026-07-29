@@ -1731,6 +1731,10 @@ export function listDeliveries(db, branchScope = 'ALL', opts = {}) {
         courierConfirmed: Boolean(row.courier_confirmed),
         customerSignedPod: Boolean(row.customer_signed_pod),
         fulfillmentPosted: Boolean(row.fulfillment_posted),
+        satisfactionScore:
+          row.satisfaction_score != null && Number.isFinite(Number(row.satisfaction_score))
+            ? Number(row.satisfaction_score)
+            : null,
         lineCount: lines.length,
         totalQty: lines.reduce((sum, line) => sum + (Number(line.qty) || 0), 0),
         lines,

@@ -3000,11 +3000,26 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.get('/api/hr/recruiting/jobs', requireHrAny('hr.staff.manage', 'hr.directory.view'), (req, res) => {
+  app.get('/api/hr/recruiting/jobs', requireHrAny('hr.staff.manage', 'hr.directory.view', 'hr.team.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const status = String(req.query?.status || '').trim();
-      return res.json({ ok: true, jobs: listHrJobPostings(db, { status }) });
+      const teamOnly =
+        !hrUserHas(req.user, 'hr.staff.manage') &&
+        !hrUserHas(req.user, 'hr.directory.view') &&
+        hrUserHas(req.user, 'hr.team.view');
+      const branchId = teamOnly
+        ? String(req.workspaceBranchId || req.query?.branchId || '').trim()
+        : String(req.query?.branchId || '').trim();
+      const forcedStatus = teamOnly ? 'open' : status;
+      return res.json({
+        ok: true,
+        jobs: listHrJobPostings(db, {
+          status: forcedStatus || undefined,
+          branchId: branchId || undefined,
+        }),
+        meta: { branchScoped: Boolean(teamOnly), readOnly: Boolean(teamOnly) },
+      });
     } catch (e) {
             return hrApiFail(res, e, 'Could not load jobs.');
     }

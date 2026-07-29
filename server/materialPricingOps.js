@@ -49,7 +49,24 @@ export function purchaseWeightedAvgCostPerKgLastDays(db, productId, branchId, da
   const pid = String(productId || '').trim();
   const bid = String(branchId || '').trim();
   if (!pid || !bid) return null;
-  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get()) return null;
+  let coilReady = false;
+  try {
+    coilReady = Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='coil_lots'`).get());
+  } catch {
+    try {
+      coilReady = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS ok FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = 'coil_lots'`
+          )
+          .get()
+      );
+    } catch {
+      coilReady = false;
+    }
+  }
+  if (!coilReady) return null;
   const since = isoDateDaysAgo(days);
   const rows = db
     .prepare(

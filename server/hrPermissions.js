@@ -282,6 +282,8 @@ export const HR_TEAM_API_PATTERNS = [
   /^\/designations$/,
   /^\/api\/hr\/discipline-cases(\/|$)/,
   /^\/discipline-cases(\/|$)/,
+  /^\/api\/hr\/recruiting\/jobs$/,
+  /^\/recruiting\/jobs$/,
 ];
 
 /**

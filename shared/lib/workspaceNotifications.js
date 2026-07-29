@@ -77,7 +77,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
     items.push({
       id: 'mgr-cash-out',
       category: 'manager',
-      title: 'Cash out',
+      title: 'Refunds & expenses',
       detail: parts.join(' · '),
       severity: 'warning',
       priority: 88,

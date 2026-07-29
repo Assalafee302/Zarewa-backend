@@ -6,7 +6,7 @@ test.describe.configure({ timeout: 90_000 });
 test.describe('Stone / accessory receipts (Procurement)', () => {
   test('admin posts stone metre receipt from modal', async ({ page }) => {
     await signInViaUi(page, 'admin', 'Admin@123');
-    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Purchase' }).click();
+    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Procurement' }).click();
     await expect(page).toHaveURL(/\/procurement$/);
 
     await page.getByRole('button', { name: /stone \/ accessory receipt/i }).click();

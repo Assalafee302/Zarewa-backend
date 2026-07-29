@@ -16,13 +16,13 @@ test.describe('LC100 E2E smoke — linked module chain', () => {
     await expect(page).toHaveURL(/\/sales$/);
     await expect(page.getByRole('heading', { name: /sales/i })).toBeVisible({ timeout: 20_000 });
 
-    await modulesNav.getByRole('link', { name: 'Production' }).click();
+    await modulesNav.getByRole('link', { name: 'Operations' }).click();
     await expect(page).toHaveURL(/\/operations$/);
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible();
 
     await modulesNav.getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/accounts$/);
-    await expect(page.getByRole('heading', { name: /finance & accounts/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Finance$/i })).toBeVisible();
   });
 
   test('LC100-048: cutting list tab loads in Sales workspace', async ({ page }) => {

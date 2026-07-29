@@ -40,7 +40,7 @@ function loadEnvFileQuiet(envPath) {
  */
 export function loadProjectEnv() {
   const root = repoRootEnvDir();
-  const forceLocalXampp = String(process.env.ZAREWA_LOCAL_XAMPP || '').trim() === '1';
+  const shellForcesLocalXampp = String(process.env.ZAREWA_LOCAL_XAMPP || '').trim() === '1';
   try {
     loadEnvFileQuiet(path.join(root, '.env'));
     const localPath = path.join(root, '.env.local');
@@ -49,6 +49,10 @@ export function loadProjectEnv() {
         process.env[key] = value;
       }
     }
+    // Honour the flag from `.env.local` too, so `npm run dev:stack` can opt into
+    // local MySQL without restating every connection and cookie override.
+    const forceLocalXampp =
+      shellForcesLocalXampp || String(process.env.ZAREWA_LOCAL_XAMPP || '').trim() === '1';
     if (forceLocalXampp) {
       process.env.ZAREWA_MYSQL_HOST = '127.0.0.1';
       process.env.ZAREWA_MYSQL_PORT = '3306';

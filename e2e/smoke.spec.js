@@ -7,7 +7,7 @@ test.describe('Authenticated app flows', () => {
   test('dashboard loads after sign-in with active user identity', async ({ page }) => {
     await signInViaUi(page, 'admin', 'Admin@123');
     await page.goto('/operations');
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('button', { name: /signed in as zarewa admin/i })).toBeVisible();
   });
 
@@ -19,16 +19,16 @@ test.describe('Authenticated app flows', () => {
     await modulesNav.getByRole('link', { name: 'Sales' }).click();
     await expect(page).toHaveURL(/\/sales$/);
 
-    await modulesNav.getByRole('link', { name: 'Purchase' }).click();
+    await modulesNav.getByRole('link', { name: 'Procurement' }).click();
     await expect(page).toHaveURL(/\/procurement$/);
 
-    await modulesNav.getByRole('link', { name: 'Production' }).click();
+    await modulesNav.getByRole('link', { name: 'Operations' }).click();
     await expect(page).toHaveURL(/\/operations$/);
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible();
 
     await modulesNav.getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/accounts$/);
-    await expect(page.getByRole('heading', { name: /finance & accounts/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Finance$/i })).toBeVisible();
 
     await modulesNav.getByRole('link', { name: 'Reports' }).click();
     await expect(page).toHaveURL(/\/reports$/);
@@ -62,7 +62,7 @@ test.describe('Authenticated app flows', () => {
     await expect(
       page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Finance' })
     ).toHaveCount(0);
-    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Purchase' }).click();
+    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Procurement' }).click();
     await expect(page).toHaveURL(/\/procurement$/);
   });
 

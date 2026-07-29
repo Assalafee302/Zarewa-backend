@@ -419,7 +419,7 @@ const OPERATIONAL_TOPICS = [
     title: 'PO approval rules (guide)',
     answer: 'purchase_orders.manage or branch policy — approver clicks in Zarewa.',
     steps: [
-      'Pending PO shows in approver queue.',
+      'Pending purchase orders shows in approver queue.',
       'Approver reviews lines and supplier.',
       'Approve/Reject in UI — Zare explains rules only.',
     ],

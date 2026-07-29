@@ -11,8 +11,8 @@ test.describe.configure({ timeout: 120_000 });
 const MODULES_NAV = [
   { link: 'Workspace', url: /\//, heading: /desk|workspace|office/i },
   { link: 'Sales', url: /\/sales/, heading: /sales/i },
-  { link: 'Purchase', url: /\/procurement/, heading: /procurement|purchase/i },
-  { link: 'Production', url: /\/operations/, heading: /store|production/i },
+  { link: 'Procurement', url: /\/procurement/, heading: /procurement|purchase/i },
+  { link: 'Operations', url: /\/operations/, heading: /operations/i },
   { link: 'Finance', url: /\/accounts/, heading: /finance|accounts/i },
 ];
 
@@ -70,9 +70,9 @@ test.describe('Operational scenario clicks (admin)', () => {
     await expect(page.getByText(/procurement|purchase|supplier/i).first()).toBeVisible({ timeout: 20_000 });
   });
 
-  test('operations: store and production heading', async ({ page }) => {
+  test('operations: operations heading', async ({ page }) => {
     await page.goto('/operations');
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible({ timeout: 20_000 });
   });
 
   test('finance: accounts shell', async ({ page }) => {

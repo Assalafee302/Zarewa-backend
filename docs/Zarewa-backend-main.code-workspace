@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../Zarewa-frontend-main"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "Zarewa-backend-main"
+	}
+}

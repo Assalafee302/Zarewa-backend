@@ -4164,7 +4164,7 @@ export function postOffcutPoolReturnInward(db, payload = {}, opts = {}) {
   if (!bookRef) return { ok: false, error: 'Book / transaction reference is required.' };
 
   try {
-    assertPeriodOpen(db, dateISO, 'Return inward date');
+    assertPeriodOpen(db, dateISO, 'Offcut return pool date');
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

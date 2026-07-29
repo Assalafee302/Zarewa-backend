@@ -118,7 +118,7 @@ test.describe('Production register — API on E2E stack', () => {
 
     await waitForProductionJobInBootstrap(page, jobID);
     await page.goto('/operations');
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible({ timeout: 20_000 });
     await page.getByRole('tablist', { name: 'Section' }).getByRole('tab', { name: 'Production line' }).click();
     /** LiveProductionMonitor (queue + test ids) lives in the trace modal, not the main list shell. */
     const activeRow = page.locator('li').filter({ hasText: cuttingListId }).first();

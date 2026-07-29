@@ -215,7 +215,7 @@ export const ROLE_DEFINITIONS = {
   },
   /** Role key `finance_manager` retained for backward compatibility; label matches company structure. */
   finance_manager: {
-    label: 'Accountant / Head of Accounts',
+    label: 'Head of Accounts',
     permissions: [
       'dashboard.view',
       'office.use',
@@ -262,7 +262,7 @@ export const ROLE_DEFINITIONS = {
     ],
   },
   sales_manager: {
-    label: 'Branch manager',
+    label: 'Branch Manager',
     permissions: [
       'dashboard.view',
       'office.use',
@@ -303,11 +303,11 @@ export const ROLE_DEFINITIONS = {
   },
   /** Mining division — My Profile self-service; no ERP modules. */
   hr_portal_only: {
-    label: 'HR portal only',
+    label: 'Employee self-service',
     permissions: [...HR_ROLE_PERMISSION_BUNDLES.selfService],
   },
   hr_admin: {
-    label: 'HR / Admin',
+    label: 'HR Administrator',
     permissions: [
       'dashboard.view',
       'office.use',
@@ -317,7 +317,7 @@ export const ROLE_DEFINITIONS = {
     ],
   },
   gmhr: {
-    label: 'GM HR',
+    label: 'General Manager, HR',
     permissions: [
       'dashboard.view',
       'office.use',
@@ -328,7 +328,7 @@ export const ROLE_DEFINITIONS = {
     ],
   },
   operations_officer: {
-    label: 'Operations officer / Store keeper',
+    label: 'Operations Officer (Store)',
     permissions: [...OPERATIONS_FLOOR_ROLE_PERMISSIONS, ...HR_ROLE_PERMISSION_BUNDLES.selfService],
   },
   ceo: {

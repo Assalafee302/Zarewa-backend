@@ -82,7 +82,7 @@ describe('publicUserFromRow role normalization', () => {
       permissions_json: null,
     });
     expect(user.roleKey).toBe('operations_officer');
-    expect(user.roleLabel).toBe('Operations officer / Store keeper');
+    expect(user.roleLabel).toBe('Operations Officer (Store)');
   });
 });
 

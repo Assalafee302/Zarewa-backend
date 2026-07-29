@@ -8,23 +8,23 @@ test.describe('Complete gate — module shells by role', () => {
     await signInViaUi(page, 'finance.manager', 'Finance@123');
     await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/accounts$/);
-    await expect(page.getByRole('heading', { name: /finance & accounts/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /finance/i })).toBeVisible();
     await page.getByRole('tab', { name: /^treasury$/i }).click();
     await expect(page.getByText(/total liquidity/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('operations: Store & production shell', async ({ page }) => {
+  test('operations: Operations shell', async ({ page }) => {
     await signInViaUi(page, 'operations', 'Ops@123');
-    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Production' }).click();
+    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Operations' }).click();
     await expect(page).toHaveURL(/\/operations$/);
-    await expect(page.getByRole('heading', { name: /store & production/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Operations$/i })).toBeVisible();
   });
 
   test('admin: Procurement purchases shell', async ({ page }) => {
     await signInViaUi(page, 'admin', 'Admin@123');
-    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Purchase' }).click();
+    await page.getByRole('navigation', { name: 'Modules' }).getByRole('link', { name: 'Procurement' }).click();
     await expect(page).toHaveURL(/\/procurement$/);
-    await expect(page.locator('h1').filter({ hasText: /^Purchases$/i })).toBeVisible();
+    await expect(page.locator('h1').filter({ hasText: /^Procurement$/i })).toBeVisible();
   });
 
   test('admin: removed HR and accounting routes redirect safely', async ({ page }) => {

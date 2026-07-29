@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  assignMaintenanceWorkOrder,
   createMaintenanceCostLine,
+  getMaintenanceWorkOrder,
   listOpenMaintenanceIssues,
 } from './maintenanceWorkOrderOps.js';
+
+vi.mock('./workItems.js', () => ({
+  appendMaintenanceEvent: () => ({ ok: true, eventId: 'EV-1' }),
+  listMaintenanceWorkOrders: () => [],
+}));
+
+vi.mock('./maintenanceVendorsOps.js', () => ({
+  getMaintenanceVendor: () => ({ id: 'MVN-1', name: 'FixCo', status: 'active' }),
+}));
 
 describe('maintenanceWorkOrderOps cost-line gate', () => {
   it('rejects cost lines without source_id (message contract)', () => {
@@ -84,5 +95,71 @@ describe('listOpenMaintenanceIssues', () => {
       priority: 'machine_down',
       openedAtIso: '2026-07-29T09:00:00.000Z',
     });
+  });
+});
+
+describe('getMaintenanceWorkOrder / assign', () => {
+  it('keeps machineName on get-by-id', () => {
+    const db = {
+      prepare(sql) {
+        expect(String(sql)).toMatch(/LEFT JOIN machines/i);
+        return {
+          get: () => ({
+            id: 'MWO-1',
+            reference_no: 'MWO-1',
+            branch_id: 'BR-KD',
+            machine_id: 'MAC-1',
+            status: 'open',
+            priority: 'high',
+            kind: 'corrective',
+            summary: 'Fault',
+            opened_at_iso: '2026-07-29T09:00:00.000Z',
+            downtime_hours: 0,
+            data_json: null,
+            machine_name: 'Roll former',
+            machine_code: 'RF-1',
+          }),
+        };
+      },
+    };
+    expect(getMaintenanceWorkOrder(db, 'MWO-1')).toMatchObject({
+      id: 'MWO-1',
+      machineName: 'Roll former',
+      machineCode: 'RF-1',
+    });
+  });
+
+  it('advances status to assigned when technician is set', () => {
+    const runs = [];
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        return {
+          get: () => ({
+            id: 'MWO-1',
+            reference_no: 'MWO-1',
+            branch_id: 'BR-KD',
+            machine_id: 'MAC-1',
+            status: 'assigned',
+            priority: 'high',
+            kind: 'corrective',
+            summary: 'Fault',
+            opened_at_iso: '2026-07-29T09:00:00.000Z',
+            downtime_hours: 0,
+            data_json: null,
+            machine_name: 'Roll former',
+            machine_code: 'RF-1',
+            assigned_to_user_id: 'USR-TECH',
+          }),
+          run: (...args) => {
+            runs.push({ sql: s, args });
+          },
+        };
+      },
+    };
+    const r = assignMaintenanceWorkOrder(db, 'MWO-1', { assignedToUserId: 'USR-TECH' }, { id: 'USR-BM' });
+    expect(r.ok).toBe(true);
+    expect(runs.some((x) => /status = CASE/i.test(x.sql))).toBe(true);
+    expect(r.workOrder?.status).toBe('assigned');
   });
 });

@@ -45,6 +45,8 @@ function mapWo(row) {
     relatedPaymentRequestId: row.related_payment_request_id || '',
     relatedMaterialRequestId: row.related_material_request_id || '',
     relatedWorkItemId: row.related_work_item_id || '',
+    machineName: row.machine_name || '',
+    machineCode: row.machine_code || '',
     data,
   };
 }
@@ -52,7 +54,14 @@ function mapWo(row) {
 export function getMaintenanceWorkOrder(db, workOrderId) {
   const id = String(workOrderId || '').trim();
   if (!id) return null;
-  const row = db.prepare(`SELECT * FROM maintenance_work_orders WHERE id = ?`).get(id);
+  const row = db
+    .prepare(
+      `SELECT wo.*, m.name AS machine_name, m.machine_code
+       FROM maintenance_work_orders wo
+       LEFT JOIN machines m ON m.id = wo.machine_id
+       WHERE wo.id = ?`
+    )
+    .get(id);
   return mapWo(row);
 }
 
@@ -83,11 +92,7 @@ export function listOpenMaintenanceIssues(db, scope = {}) {
       ELSE 2
     END,
     wo.opened_at_iso DESC`;
-  return db.prepare(sql).all(...params).map((row) => ({
-    ...mapWo(row),
-    machineName: row.machine_name || '',
-    machineCode: row.machine_code || '',
-  }));
+  return db.prepare(sql).all(...params).map((row) => mapWo(row));
 }
 
 export function acknowledgeMaintenanceWorkOrder(db, workOrderId, body, actor) {
@@ -136,6 +141,17 @@ export function assignMaintenanceWorkOrder(db, workOrderId, body, actor) {
       vendorName,
       wo.id
     );
+  }
+  const assignedSomeone = Boolean(techId || vendorId);
+  if (assignedSomeone) {
+    db.prepare(
+      `UPDATE maintenance_work_orders
+       SET status = CASE
+         WHEN LOWER(COALESCE(status, '')) IN ('closed', 'cancelled', 'rejected') THEN status
+         ELSE 'assigned'
+       END
+       WHERE id = ?`
+    ).run(wo.id);
   }
   const parts = [];
   if (techId) parts.push(`technician ${techId}`);

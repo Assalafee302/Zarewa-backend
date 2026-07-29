@@ -28,6 +28,11 @@ describe.skipIf(!mysqlOk)('maintenanceVendorsOps', () => {
 
   beforeEach(() => {
     db = createDatabase(':memory:', { seed: false });
+    // audit_log.actor_user_id is a FK to app_users, so the acting BM must exist.
+    db.prepare(
+      `INSERT INTO app_users (id, username, display_name, password_hash, role_key, status, created_at_iso)
+       VALUES ('USR-BM', 'bm.user', 'BM', 'x', 'sales_manager', 'active', ?)`
+    ).run(new Date().toISOString());
   });
 
   afterEach(() => {

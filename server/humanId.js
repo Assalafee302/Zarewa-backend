@@ -44,6 +44,8 @@ const SAFE_TABLES = new Set([
   'maintenance_plans',
   'maintenance_work_orders',
   'maintenance_events',
+  'maintenance_vendors',
+  'maintenance_cost_lines',
   'hr_performance_reviews',
   'coil_control_events',
   'material_incidents',

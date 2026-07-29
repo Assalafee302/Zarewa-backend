@@ -422,6 +422,15 @@ import {
   resolveMaintenanceWorkOrder,
 } from './maintenanceWorkOrderOps.js';
 import { buildMaintenanceInsightsPack } from './maintenanceInsightsOps.js';
+import {
+  createCustomerComplaint,
+  getCustomerComplaint,
+  listCustomerComplaints,
+  updateCustomerComplaint,
+  COMPLAINT_CATEGORIES,
+  COMPLAINT_CHANNELS,
+  COMPLAINT_SEVERITIES,
+} from './customerComplaintsOps.js';
 import { deleteMasterDataRecord, listMasterData, upsertMasterDataRecord } from './masterData.js';
 import { parseSupplierProfileJson } from './supplierProfile.js';
 import {
@@ -10275,6 +10284,121 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+
+  app.get(
+    '/api/customer-complaints',
+    requireAuth,
+    requirePermission(SALES_DOMAIN_PERMS),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const openOnly = String(req.query.openOnly || '') === '1';
+        const customerId = String(req.query.customerId || '').trim();
+        const pack = listCustomerComplaints(db, {
+          viewAll: branchScope === 'ALL',
+          branchId:
+            branchScope === 'ALL'
+              ? String(req.query.branchId || '').trim()
+              : branchScope,
+          openOnly,
+          customerId: customerId || undefined,
+        });
+        res.json({
+          ok: true,
+          complaints: pack,
+          meta: {
+            channels: COMPLAINT_CHANNELS,
+            categories: COMPLAINT_CATEGORIES,
+            severities: COMPLAINT_SEVERITIES,
+          },
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load complaints.' });
+      }
+    }
+  );
+
+  app.get(
+    '/api/customer-complaints/:complaintId',
+    requireAuth,
+    requirePermission(SALES_DOMAIN_PERMS),
+    (req, res) => {
+      try {
+        const complaint = getCustomerComplaint(db, req.params.complaintId);
+        if (!complaint) return res.status(404).json({ ok: false, error: 'Complaint not found.' });
+        const branchScope = resolveBootstrapBranchScope(req);
+        if (branchScope !== 'ALL' && String(complaint.branchId) !== String(branchScope)) {
+          return res.status(404).json({ ok: false, error: 'Complaint not found.' });
+        }
+        res.json({ ok: true, complaint });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not load complaint.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/customer-complaints',
+    requireAuth,
+    requirePermission(['customers.manage', 'sales.manage']),
+    (req, res) => {
+      try {
+        const body = { ...(req.body || {}) };
+        if (!body.customerId && req.body?.customerID) body.customerId = req.body.customerID;
+        const r = createCustomerComplaint(db, body, req.user, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+        res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not create complaint.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/customers/:customerId/complaints',
+    requireAuth,
+    requirePermission(['customers.manage', 'sales.manage']),
+    (req, res) => {
+      try {
+        const r = createCustomerComplaint(
+          db,
+          { ...(req.body || {}), customerId: req.params.customerId },
+          req.user,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID
+        );
+        res.status(r.ok ? 201 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not create complaint.' });
+      }
+    }
+  );
+
+  app.patch(
+    '/api/customer-complaints/:complaintId',
+    requireAuth,
+    requirePermission(['customers.manage', 'sales.manage', 'sales.view']),
+    (req, res) => {
+      try {
+        const existing = getCustomerComplaint(db, req.params.complaintId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Complaint not found.' });
+        const rk = String(req.user?.roleKey || '').toLowerCase();
+        const mayManage =
+          ['admin', 'md', 'ceo', 'chairman', 'sales_manager', 'branch_manager'].includes(rk) ||
+          userHasPermission(req.user, 'customers.manage');
+        if (!mayManage) {
+          return res.status(403).json({ ok: false, error: 'Branch Manager or customers.manage required.' });
+        }
+        const r = updateCustomerComplaint(db, req.params.complaintId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Could not update complaint.' });
+      }
+    }
+  );
 
   app.get('/api/bank-reconciliation', requirePermission('finance.view'), (req, res) => {
     try {

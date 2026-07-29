@@ -27,6 +27,7 @@ const SAFE_TABLES = new Set([
   'bank_deposits',
   'bank_deposit_allocations',
   'customer_crm_interactions',
+  'customer_complaints',
   'customer_refunds',
   'payment_requests',
   'accounting_register_settlements',
@@ -271,6 +272,10 @@ export function nextBankDepositAllocationHumanId(db, branchId) {
 
 export function nextCrmInteractionHumanId(db, branchId) {
   return allocateHumanId(db, 'CRM', branchId, { table: 'customer_crm_interactions', idColumn: 'id' });
+}
+
+export function nextCustomerComplaintHumanId(db, branchId) {
+  return allocateHumanId(db, 'CMP', branchId, { table: 'customer_complaints', idColumn: 'id' });
 }
 
 export function nextExpenseHumanId(db, branchId) {

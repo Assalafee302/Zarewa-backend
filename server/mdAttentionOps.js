@@ -7,6 +7,7 @@ import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { buildPendingApprovalsReport, buildProductionStatusReport } from './operationalReportsOps.js';
 import { listStaffPurchaseCreditQueue } from './staffPurchaseCreditOps.js';
 import { listRegisterSettlements } from './accountingRegisterSettlementOps.js';
+import { listBranchesMissingBranchManager } from './customerComplaintsOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -266,6 +267,35 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       reasons: ['Payment gate breach on completed production'],
       row: pg,
     });
+  }
+
+  // Data integrity: active branches with no Branch Manager (sales_manager / branch_manager).
+  // Surfaces for MD/admin via existing governance attention + notification bell.
+  try {
+    const missingBm = listBranchesMissingBranchManager(db).filter((b) => {
+      if (branchScope === 'ALL' || !branchScope) return true;
+      return String(b.branchId) === String(branchScope);
+    });
+    for (const b of missingBm) {
+      pushItem(items, {
+        id: `missing_bm:${b.branchId}`,
+        kind: 'governance',
+        priority: 92,
+        title: `No Branch Manager — ${b.branchName || b.branchId}`,
+        subtitle: `Assign a Branch Manager (sales_manager) for ${b.branchName || b.branchId} in Settings / Users`,
+        amountNgn: null,
+        atIso: null,
+        branchId: b.branchId,
+        reasons: [
+          'Data integrity — missing key role',
+          'Complaints and other branch workflows fall back without a BM owner',
+        ],
+        integrityKind: 'missing_branch_manager',
+        row: { integrityKind: 'missing_branch_manager', branchId: b.branchId, branchName: b.branchName },
+      });
+    }
+  } catch {
+    /* table may be mid-migrate */
   }
 
   items.sort((a, b) => b.priority - a.priority || String(b.atIso || '').localeCompare(String(a.atIso || '')));

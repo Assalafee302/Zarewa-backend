@@ -58,6 +58,20 @@ describe.skipIf(!mysqlOk)('mobile auth API', () => {
     expect(Array.isArray(home.body.tabs)).toBe(true);
     expect(home.body.counts).toBeTruthy();
 
+    const approvals = await agent
+      .get('/api/mobile/approvals')
+      .set('Authorization', `Bearer ${login.body.accessToken}`);
+    expect(approvals.status).toBe(200);
+    expect(approvals.body.ok).toBe(true);
+    expect(Array.isArray(approvals.body.items)).toBe(true);
+
+    const quotes = await agent
+      .get('/api/mobile/quotes')
+      .set('Authorization', `Bearer ${login.body.accessToken}`);
+    expect(quotes.status).toBe(200);
+    expect(quotes.body.ok).toBe(true);
+    expect(Array.isArray(quotes.body.quotations)).toBe(true);
+
     const refresh = await agent.post('/api/mobile/auth/refresh').send({
       refreshToken: login.body.refreshToken,
     });

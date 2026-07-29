@@ -38,6 +38,37 @@ CREATE TABLE IF NOT EXISTS customer_crm_interactions (
 
 CREATE INDEX IF NOT EXISTS idx_crm_interactions_customer ON customer_crm_interactions(customer_id, at_iso DESC);
 
+CREATE TABLE IF NOT EXISTS customer_complaints (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  branch_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  category TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'low',
+  description TEXT NOT NULL,
+  linked_order_id TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  assigned_to_user_id TEXT,
+  opened_by_user_id TEXT,
+  opened_by_name TEXT,
+  opened_at_iso TEXT NOT NULL,
+  resolution_note TEXT,
+  resolved_at_iso TEXT,
+  resolved_by_user_id TEXT,
+  related_refund_id TEXT,
+  related_payment_request_id TEXT,
+  updated_at_iso TEXT,
+  data_json TEXT,
+  FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_complaints_branch_status
+  ON customer_complaints(branch_id, status, opened_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_complaints_customer
+  ON customer_complaints(customer_id, opened_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_complaints_assignee
+  ON customer_complaints(assigned_to_user_id, status);
+
 CREATE TABLE IF NOT EXISTS quotations (
   id TEXT PRIMARY KEY,
   customer_id TEXT NOT NULL,

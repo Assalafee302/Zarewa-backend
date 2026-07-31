@@ -21,6 +21,20 @@ export function resolveListLimit(opts) {
 
 export { DEFAULT_LIST_LIMIT };
 
+/**
+ * List opts for production queue / cutting-list history.
+ * Default: unlimited so Operations / Sales history does not silently drop older rows.
+ * Cap with env `ZAREWA_PRODUCTION_HISTORY_LIMIT` (positive integer) when needed.
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function productionHistoryListOpts() {
+  const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
+  if (raw == null || String(raw).trim() === '') return { unlimited: true };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+}
+
 /** @param {number} limit */
 export function sqlLimitClause(limit) {
   return limit > 0 ? ' LIMIT ?' : '';

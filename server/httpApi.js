@@ -187,6 +187,7 @@ import {
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
 import { parseListQuery, sendPaginatedList, slicePage } from './listPagination.js';
+import { productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
 import { humanizeValidationMessage } from './validationLabels.js';
 import { permissionGuidanceMessage } from './permissionMessages.js';
@@ -4717,7 +4718,7 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const report = buildMaterialTransactionReport({
-        productionJobs: listProductionJobs(db, branchScope),
+        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
         quotations: listQuotations(db, branchScope),
         refunds: listRefunds(db, branchScope),
@@ -4764,7 +4765,7 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const report = buildMaterialTransactionReport({
-        productionJobs: listProductionJobs(db, branchScope),
+        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
         productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
         quotations: listQuotations(db, branchScope),
         refunds: listRefunds(db, branchScope),
@@ -4828,7 +4829,7 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const quotations = listQuotations(db, branchScope);
-      const jobs = listProductionJobs(db, branchScope);
+      const jobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
       const rows = revenueProductionReportRows(quotations, jobs, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, rows });
     } catch (e) {
@@ -4843,7 +4844,7 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const quotations = listQuotations(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope);
+      const productionJobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
       const rows = arAsAtReportRows(quotations, ledger, productionJobs);
       res.json({
         ok: true,
@@ -4867,7 +4868,7 @@ export function registerHttpApi(app, db) {
       const raw = listSalesReceipts(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const jobs = listProductionJobs(db, branchScope);
+      const jobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
       const rows = salesBridgeReportRows(enriched, jobs, startDate, endDate, asAtDate);
       res.json({ ok: true, startDate, endDate, asAtDate: asAtDate || null, branchScope, rows });
     } catch (e) {
@@ -11019,7 +11020,7 @@ export function registerHttpApi(app, db) {
 
       const quotations = listQuotations(db, branchScope).filter((q) => q.customerID === id);
       const ledgerScope = listLedgerEntries(db, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope);
+      const productionJobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
       const policyFlags = readFinanceFeatureFlags();
       const outstandingByQuotation = quotations.map((q) => {
         const paymentPolicy = quotationPaymentPolicySnapshot(q, productionJobs);
@@ -11110,7 +11111,7 @@ export function registerHttpApi(app, db) {
       const qg = assertQuotationIdInWorkspace(db, req, qid);
       if (!qg.ok) return apiError(res, { status: qg.status, code: 'FORBIDDEN', error: qg.error });
       const quoteLedger = listLedgerEntriesForQuotation(db, qid, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope).filter(
+      const productionJobs = listProductionJobs(db, branchScope, productionHistoryListOpts()).filter(
         (j) => String(j.quotationRef || '').trim() === qid
       );
       const policyFlags = readFinanceFeatureFlags();

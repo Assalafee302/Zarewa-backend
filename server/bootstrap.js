@@ -93,7 +93,7 @@ import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
-import { rowListOpts } from './listQueryOpts.js';
+import { productionHistoryListOpts, rowListOpts } from './listQueryOpts.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -254,14 +254,21 @@ export function buildBootstrap(db, opts = {}) {
   const poListOpts = { ...rowListOpts(opts, 'purchaseOrders'), skipSideEffects: skipSideEffects || true };
   const refunds = refundsOk ? listRefunds(db, branchScope, listOpts('refunds')) : [];
   const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
+  const cuttingListHistoryOpts =
+    opts.listLimits?.cuttingLists != null ? listOpts('cuttingLists') : productionHistoryListOpts();
+  const productionJobsHistoryOpts =
+    opts.listLimits?.productionJobs != null
+      ? rowListOpts(opts, 'productionJobs')
+      : productionHistoryListOpts();
   const productionJobsList = prodRollupOk
-    ? listProductionJobs(db, branchScope, rowListOpts(opts, 'productionJobs'))
+    ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
         db,
         productionJobsList,
-        listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS })
+        // Coils must cover every loaded job — do not apply the conversion-check row cap here.
+        listProductionJobCoils(db, branchScope, { limit: 0 })
       )
     : [];
 
@@ -296,7 +303,7 @@ export function buildBootstrap(db, opts = {}) {
           ledgerRows
         )
       : [],
-    cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, listOpts('cuttingLists')) : [],
+    cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, cuttingListHistoryOpts) : [],
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
@@ -422,7 +429,12 @@ export function buildBootstrap(db, opts = {}) {
         expenses: listLimit('expenses'),
         paymentRequests: listLimit('paymentRequests'),
         treasuryMovements: listLimit('treasuryMovements'),
-        cuttingLists: listLimit('cuttingLists'),
+        cuttingLists: cuttingListHistoryOpts.unlimited
+          ? 0
+          : Number(cuttingListHistoryOpts.limit) || listLimit('cuttingLists'),
+        productionJobs: productionJobsHistoryOpts.unlimited
+          ? 0
+          : Number(productionJobsHistoryOpts.limit) || listLimit('productionJobs'),
         ledgerEntries: ledgerRowLimit,
       },
       truncated: {
@@ -433,7 +445,9 @@ export function buildBootstrap(db, opts = {}) {
         expenses: expensesSnapshotOk,
         paymentRequests: payReqOk,
         treasuryMovements: treasuryMovementsOk,
-        cuttingLists: opsOk || salesOk,
+        /** Only truncated when an explicit positive history cap is configured. */
+        cuttingLists: (opsOk || salesOk) && !cuttingListHistoryOpts.unlimited,
+        productionJobs: prodRollupOk && !productionJobsHistoryOpts.unlimited,
         ledgerEntries: ledgerOk,
       },
     },
@@ -447,10 +461,10 @@ function take(list, limit) {
 }
 
 /**
- * Dashboard bootstrap trims cutting lists and production jobs independently. Lists sort by
- * different keys (cutting list `date_iso` vs job `created_at_iso`), so a newly registered job
- * can appear in the trimmed job slice while its cutting list is dropped (or the reverse).
- * Merge missing pairs so Operations → Production queue stays consistent.
+ * Dashboard bootstrap previously trimmed cutting lists and production jobs independently.
+ * Lists sort by different keys (`date_iso` vs `created_at_iso`), so joins could break when
+ * either side was capped. Production history is now loaded uncapped by default; this repair
+ * still merges missing pairs when an explicit history limit is configured.
  *
  * @param {Record<string, unknown>} full
  * @param {{ cuttingLists: unknown[]; productionJobs: unknown[]; productionJobCoils?: unknown[] }} partial
@@ -546,7 +560,6 @@ export function buildDashboardBootstrap(db, opts = {}) {
       quotations: limit,
       purchaseOrders: limit,
       movements: limit,
-      productionJobs: limit,
       ledgerEntries: Math.min(limit, 300),
     },
   });
@@ -556,7 +569,8 @@ export function buildDashboardBootstrap(db, opts = {}) {
     customers: take(full.customers, limit),
     quotations: full.quotations,
     receipts: take(full.receipts, limit),
-    cuttingLists: take(full.cuttingLists, limit),
+    /** Full production history — trimming hides older queue / closed records in Operations. */
+    cuttingLists: full.cuttingLists,
     purchaseOrders: full.purchaseOrders,
     deliveries: take(full.deliveries, limit),
     refunds: take(full.refunds, limit),
@@ -568,9 +582,9 @@ export function buildDashboardBootstrap(db, opts = {}) {
     coilLots: full.coilLots ?? [],
     coilControlEvents: take(full.coilControlEvents ?? [], limit),
     productionJobs: full.productionJobs,
-    productionJobCoils: take(full.productionJobCoils, limit),
+    productionJobCoils: full.productionJobCoils,
     productionConversionChecks: take(full.productionConversionChecks, limit),
-    productionCompletionAdjustments: take(full.productionCompletionAdjustments, limit),
+    productionCompletionAdjustments: full.productionCompletionAdjustments,
     unifiedWorkItems: take(full.unifiedWorkItems, Math.min(limit, 180)),
     materialRequests: take(full.materialRequests, Math.min(limit, 120)),
     inTransitLoads: take(full.inTransitLoads, Math.min(limit, 120)),

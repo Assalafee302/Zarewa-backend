@@ -78,6 +78,7 @@ import {
   listMaintenanceWorkOrders,
   listMaterialRequests,
 } from './workItems.js';
+import { productionHistoryListOpts } from './listQueryOpts.js';
 
 const MAX_PROD_ROWS = Math.min(
   5000,
@@ -141,7 +142,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
       ? enrichSalesReceiptRowsWithCashFromLedger(listSalesReceipts(db, branchScope), ledgerRows)
       : [],
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
-    cuttingLists: salesOk ? listCuttingLists(db, branchScope) : [],
+    cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
@@ -176,18 +177,20 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     branchId:
       branchScope === 'ALL' ? DEFAULT_BRANCH_ID : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
   };
-  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope) : [];
+  const historyOpts = productionHistoryListOpts();
+  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope, historyOpts) : [];
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
         db,
         productionJobsList,
-        listProductionJobCoils(db, branchScope, { limit: MAX_PROD_ROWS })
+        // Full allocations for every loaded job (history must not lose coil labels on older rows).
+        listProductionJobCoils(db, branchScope, { limit: 0 })
       )
     : [];
   return {
     ok: true,
     domain: 'operations',
-    cuttingLists: opsOk ? listCuttingLists(db, branchScope) : [],
+    cuttingLists: opsOk ? listCuttingLists(db, branchScope, historyOpts) : [],
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
     productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],

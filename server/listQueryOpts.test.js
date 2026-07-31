@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { resolveListLimit, sqlLimitClause, rowListOpts, DEFAULT_LIST_LIMIT } from './listQueryOpts.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  resolveListLimit,
+  sqlLimitClause,
+  rowListOpts,
+  DEFAULT_LIST_LIMIT,
+  productionHistoryListOpts,
+} from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
+  afterEach(() => {
+    delete process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
+  });
+
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
     expect(resolveListLimit()).toBe(DEFAULT_LIST_LIMIT);
     expect(resolveListLimit({})).toBe(DEFAULT_LIST_LIMIT);
@@ -30,5 +40,16 @@ describe('listQueryOpts', () => {
     expect(rowListOpts({}, 'quotations')).toEqual({});
     expect(rowListOpts({ listLimits: { quotations: 600 } }, 'quotations')).toEqual({ limit: 600 });
     expect(rowListOpts({ listLimits: { quotations: 0 } }, 'quotations')).toEqual({ unlimited: true });
+  });
+
+  it('productionHistoryListOpts defaults to unlimited', () => {
+    expect(productionHistoryListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('productionHistoryListOpts honors ZAREWA_PRODUCTION_HISTORY_LIMIT', () => {
+    process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT = '2500';
+    expect(productionHistoryListOpts()).toEqual({ limit: 2500 });
+    process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT = '0';
+    expect(productionHistoryListOpts()).toEqual({ unlimited: true });
   });
 });

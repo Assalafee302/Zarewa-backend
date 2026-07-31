@@ -291,6 +291,13 @@ export function normalizeExpenseImportRows(input) {
     const r = raw && typeof raw === 'object' ? raw : {};
     const catRaw = String(r.category ?? r.categoryRaw ?? '').trim();
     const category = catRaw ? mapLegacyExpenseCategoryToCanonical(catRaw) : '';
+    const treasuryRaw =
+      r.treasuryAccountId != null && String(r.treasuryAccountId).trim() !== ''
+        ? r.treasuryAccountId
+        : '';
+    const treasuryAccountId =
+      treasuryRaw !== '' && Number.isFinite(Number(treasuryRaw)) ? Number(treasuryRaw) : null;
+    const accountKey = String(r.accountKey ?? '').trim() || (treasuryAccountId == null ? String(treasuryRaw || '').trim() : '');
     return {
       row: Number(r.row) || i + 2,
       include: r.include !== false && r.include !== 0 && r.include !== '0',
@@ -298,11 +305,8 @@ export function normalizeExpenseImportRows(input) {
       amountNgn: intMoney(r.amountNgn ?? r.amount),
       category,
       categoryRaw: catRaw,
-      accountKey: String(r.accountKey ?? r.treasuryAccountId ?? '').trim(),
-      treasuryAccountId:
-        r.treasuryAccountId != null && String(r.treasuryAccountId).trim() !== ''
-          ? Number(r.treasuryAccountId)
-          : null,
+      accountKey,
+      treasuryAccountId,
       reference: String(r.reference ?? '').trim(),
       paymentMethod: String(r.paymentMethod ?? '').trim() || 'Import',
       description: String(r.description ?? '').trim(),

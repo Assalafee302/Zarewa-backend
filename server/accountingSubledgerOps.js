@@ -44,11 +44,6 @@ import {
 } from './readModel.js';
 import { quotationHasUnclearedReceipts } from './writeOps.js';
 
-const SIGNIFICANT_OVERPAY_NGN = Math.max(
-  0,
-  Math.round(Number(process.env.ACCOUNTING_SIGNIFICANT_OVERPAY_NGN) || 100_000)
-);
-
 function branchScopeFromOpts(opts = {}) {
   const raw = String(opts.branchId || opts.branch || '').trim();
   return raw && raw !== 'ALL' ? raw : 'ALL';
@@ -217,15 +212,6 @@ function buildCustomerDepositQuoteItemSegments(db, branchScope) {
   }
   const sortDesc = (a, b) => b.amountNgn - a.amountNgn;
   return { onLine: onLine.sort(sortDesc), backlog: backlog.sort(sortDesc) };
-}
-
-/**
- * Paid quote deposits before production earns revenue — split by pipeline segment.
- * @param {{ onProductionLine: boolean }} segment
- */
-function buildCustomerDepositQuoteItems(db, branchScope, { onProductionLine }) {
-  const segments = buildCustomerDepositQuoteItemSegments(db, branchScope);
-  return onProductionLine ? segments.onLine : segments.backlog;
 }
 
 function buildCustomerRefundCommitmentItems(db, branchScope) {
@@ -1172,43 +1158,6 @@ export function refundableOverpayCreditNgnForCustomer(db, ledger, customerID, br
   const economicExcessNgn = economicOverpayExcessSumForCustomer(db, customerID, branchScope);
   const amountNgn = Math.min(Math.max(0, ledgerPoolNgn), Math.max(0, economicExcessNgn));
   return { amountNgn, ledgerPoolNgn, economicExcessNgn };
-}
-
-function buildOverpaymentCreditItems(db, branchScope) {
-  const ledger = listLedgerEntries(db, branchScope);
-  const customers = listCustomers(db, branchScope);
-  const items = [];
-  for (const c of customers) {
-    const { amountNgn, ledgerPoolNgn, economicExcessNgn } = refundableOverpayCreditNgnForCustomer(
-      db,
-      ledger,
-      c.customerID,
-      branchScope
-    );
-    if (amountNgn <= 0) continue;
-    const detail =
-      ledgerPoolNgn > amountNgn
-        ? `Refundable overpayment credit (₦${amountNgn.toLocaleString()} economic excess; ledger pool ₦${ledgerPoolNgn.toLocaleString()})`
-        : 'Refundable overpayment credit — cash received above quote total';
-    items.push(
-      withEntity(
-        {
-          id: `${c.customerID}-overpay`,
-          partyName: c.name,
-          partyRef: c.customerID,
-          branchId: c.branchId || '',
-          amountNgn,
-          ledgerPoolNgn,
-          economicExcessNgn,
-          detail,
-          isSignificant: amountNgn >= SIGNIFICANT_OVERPAY_NGN,
-        },
-        'customer',
-        c.customerID
-      )
-    );
-  }
-  return items.sort((a, b) => b.amountNgn - a.amountNgn);
 }
 
 /** Sales receipts with no quotation — suspense until matched (not uncleared workflow items). */

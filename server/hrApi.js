@@ -99,7 +99,6 @@ import {
   upsertHrBeneficiary,
   recordHrBenefitPayment,
   createHrIncidentMemo,
-  escalateHrIncidentToDiscipline,
   createHrTransferRecommendation,
   reviewHrTransferRecommendation,
   listMissingHrPolicyAcceptances,
@@ -250,7 +249,6 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
 import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
-  actorMayManageObligations,
   actorMayRecordStaffRepayments,
   chairmanWaiveObligationBalance,
   getStaffObligationAccountDetail,
@@ -424,7 +422,6 @@ import {
   hrApiPathForRequest,
   userCanAccessScholarshipDomesticExecutive,
   userCanViewScholarshipDomesticRegisters,
-  userCanManageScholarshipDomesticRegisters,
   staffUserIsScholarshipOrDomestic,
   userHasHrSelfServiceOnly,
   userCanEndorseBranchHr,

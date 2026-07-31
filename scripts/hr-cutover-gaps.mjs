@@ -1,7 +1,6 @@
 process.env.ZAREWA_MYSQL_PASSWORD = process.env.ZAREWA_MYSQL_PASSWORD ?? '';
 import { openConfiguredMysql } from '../server/cliMysql.js';
 import { listHrStaff, listHrDataCleanupQueue, hrNextUatReadiness } from '../server/hrOps.js';
-import { canUseAllBranchesRollup } from '../server/auth.js';
 
 const { db } = openConfiguredMysql({ migrate: false });
 const scope = { viewAll: true, branchId: 'BR-HQ', scopeMode: 'org' };

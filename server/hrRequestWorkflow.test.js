@@ -29,7 +29,7 @@ function makeRequestDb(initialRow) {
           if (s.includes('role_key IN')) return [];
           return [];
         },
-        run(...args) {
+        run() {
           if (s.includes('UPDATE hr_requests SET status')) {
             if (s.includes("'branch_manager_review'")) state.status = 'branch_manager_review';
             if (s.includes("'gm_hr_review'")) state.status = 'gm_hr_review';

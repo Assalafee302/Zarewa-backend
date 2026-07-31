@@ -76,9 +76,9 @@ function selectAdapter(config) {
  * OpenAI-compatible /v1/embeddings adapter (OpenAI, HF router, Ollama, Gemini).
  *
  * @param {string[]} texts
- * @param {EmbeddingModelConfig} config
+ * @param {EmbeddingModelConfig} _config unused — provider settings are read from env
  */
-async function embedViaOpenAiCompatible(texts, config) {
+async function embedViaOpenAiCompatible(texts, _config) {
   const cfg = readEmbeddingConfig();
   const vectors = await embedTexts(cfg, texts);
   if (!vectors?.length) {

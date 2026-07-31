@@ -23,7 +23,6 @@ import {
 import {
   getStaffPurchaseCreditAuditTimeline,
   notifyMdStaffPurchaseCreditSubmitted,
-  summarizePendingStaffPurchaseCreditByBranch,
   syncStaffPurchaseCreditWorkItem,
 } from './staffPurchaseCreditWorkItems.js';
 
@@ -31,15 +30,6 @@ export {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
 } from './staffPurchaseCreditWorkItems.js';
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function roleKey(actor) {
   return String(actor?.roleKey || actor?.role || '').toLowerCase();

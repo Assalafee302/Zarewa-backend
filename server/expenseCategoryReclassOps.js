@@ -51,7 +51,7 @@ function listActivePayoutMovements(db, sourceKind, sourceId, outType) {
     .all(sourceKind, sourceId, outType);
 }
 
-function updateExpenseCategory(db, expenseId, expenseCategory, categoryJustification) {
+function updateExpenseCategory(db, expenseId, expenseCategory) {
   const eid = String(expenseId || '').trim();
   if (!eid) return;
   const categoryLane = getExpenseCategoryLane(expenseCategory);
@@ -210,12 +210,7 @@ export function reclassifyPaidPaymentRequestCategory(db, requestID, payload, act
     assertPeriodOpen(db, reclassDate, 'Category reclass date');
     const glResults = [];
     db.transaction(() => {
-      const { categoryLane, prHasJustification } = updateExpenseCategory(
-        db,
-        expenseId,
-        expenseCategory,
-        categoryJustification
-      );
+      const { categoryLane, prHasJustification } = updateExpenseCategory(db, expenseId, expenseCategory);
       if (prHasJustification) {
         db.prepare(`UPDATE payment_requests SET category_justification = ? WHERE request_id = ?`).run(
           categoryJustification || null,
@@ -318,7 +313,7 @@ export function reclassifyPaidExpenseCategory(db, expenseID, payload, actor) {
     assertPeriodOpen(db, reclassDate, 'Category reclass date');
     const glResults = [];
     db.transaction(() => {
-      updateExpenseCategory(db, eid, expenseCategory, payload.categoryJustification);
+      updateExpenseCategory(db, eid, expenseCategory);
       for (const mv of movements) {
         const amt = Math.abs(roundMoney(mv.amount_ngn));
         if (amt <= 0) continue;

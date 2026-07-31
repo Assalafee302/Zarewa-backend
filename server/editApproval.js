@@ -498,7 +498,7 @@ export function cuttingListEditRequiresEditApproval(db, user, cuttingListId) {
  * Receipt finance settlement (first reconcile or revision) is open to Finance/Cashier — no second-party token.
  * @param {import('better-sqlite3').Database} db
  */
-export function receiptFinanceSettlementRequiresEditApproval(db, user, receiptId) {
+export function receiptFinanceSettlementRequiresEditApproval(_db, _user, _receiptId) {
   return false;
 }
 
@@ -523,7 +523,7 @@ export function ledgerReceiptMovementRevisionRequiresEditApproval(db, user, move
  * Expense / payment pay-from corrections are open to Finance — no second-party token.
  * @param {import('better-sqlite3').Database} db
  */
-export function expenseOutflowCorrectionRequiresEditApproval(db, user, movementId) {
+export function expenseOutflowCorrectionRequiresEditApproval(_db, _user, _movementId) {
   return false;
 }
 

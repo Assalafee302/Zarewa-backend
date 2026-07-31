@@ -2,7 +2,6 @@
  * DB-backed quote ↔ cutting-list consumption checks (refund data quality, manager audit).
  */
 import { assessCuttingListQuotationConsumption } from '../shared/lib/cuttingListBlankConsumption.js';
-import { cuttingListTotalMetresFromLines } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { parseQuotationAccessoryLines } from './accessoryFulfillment.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 

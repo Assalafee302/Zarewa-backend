@@ -8,7 +8,6 @@ import {
 } from '../shared/workspaceGovernance.js';
 import {
   coilProducedMetersFromProductionJobs,
-  jobActualMetersFromProductionJobs,
   producedMetersForUnproducedRefund,
 } from '../shared/lib/refundCoilProducedMeters.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
@@ -91,7 +90,6 @@ function sumJobMeters(db, jobs, quote = null) {
     }
   }
   const coilActual = coilProducedMetersFromProductionJobs(db, terminalJobs);
-  const completedActual = jobActualMetersFromProductionJobs(jobs);
   const effectiveProduced = producedMetersForUnproducedRefund(db, jobs, {
     isStoneMeterQuote,
   });
@@ -155,11 +153,7 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
   }
   for (const c of selected) refundCats.add(c);
 
-  const { planned, actual, coilActual, effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(
-    db,
-    jobs,
-    quote
-  );
+  const { planned, effectiveProduced, hasCompleted, hasCancelled } = sumJobMeters(db, jobs, quote);
   const partialProduction =
     hasCompleted && planned > 0 && effectiveProduced > 0 && effectiveProduced < planned * 0.98;
 

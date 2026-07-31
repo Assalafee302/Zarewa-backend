@@ -2691,8 +2691,6 @@ function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
   const uc = Math.round(Number(coil.unit_cost_ngn_per_kg) || 0);
   const cogsNgn = uc > 0 ? Math.round(consumed * uc) : null;
   const prevLanded = Math.round(Number(coil.landed_cost_ngn) || 0);
-  const nextLanded =
-    cogsNgn != null && prevLanded > 0 ? prevLanded + cogsNgn : coil.landed_cost_ngn ?? null;
   const tailClearedKg = finishRollTailNetClearedKg(db, jobId, coilNo);
   const restoreKg = consumed + tailClearedKg;
   const restoreCogs =

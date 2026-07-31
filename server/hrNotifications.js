@@ -390,10 +390,6 @@ function hrTransferRoutePath(transferId, scope) {
   return `/hr/discipline-exit?tab=exit&view=transfers&transferId=${id}${sc}`;
 }
 
-function teamTransferRoutePath(transferId) {
-  return `/team-hr/transfers?transferId=${encodeURIComponent(String(transferId || '').trim())}`;
-}
-
 function transferScopeForStatus(status) {
   const s = String(status || '').trim();
   if (s === 'branch_review') return 'branch_queue';
@@ -469,7 +465,6 @@ export function notifyHrTransferQueueHandoff(db, row, nextStatus, actorUserId) {
   const staffName = staff?.display_name || 'Staff member';
   const body = `${staffName} · ${row.id}`;
   const route = hrTransferRoutePath(row.id, transferScopeForStatus(nextStatus));
-  const teamRoute = teamTransferRoutePath(row.id);
 
   if (nextStatus === 'hr_review') {
     notifyUsers(db, listHrReviewersForBranch(db, row.from_branch_id, actorUserId), {

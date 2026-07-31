@@ -60,9 +60,9 @@ export function previewDepreciationRun(db, periodKey, branchScope = 'ALL') {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {string} workspaceBranchId Branch tag on journal header when scope is single-branch (legacy; scope wins)
+ * @param {string} _workspaceBranchId Branch tag on journal header when scope is single-branch (legacy; scope wins)
  */
-export function postDepreciationRun(db, periodKey, branchScope, user, workspaceBranchId) {
+export function postDepreciationRun(db, periodKey, branchScope, user, _workspaceBranchId) {
   const pre = previewDepreciationRun(db, periodKey, branchScope);
   if (!pre.ok) return pre;
   if (pre.totalDepreciationNgn <= 0) {

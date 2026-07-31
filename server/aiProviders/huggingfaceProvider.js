@@ -84,7 +84,9 @@ export async function generateText(prompt, options = {}) {
   const model = options.model || DEFAULT_LLM;
   const started = Date.now();
   const maxTokens = Math.min(2048, Math.max(64, Number(options.maxTokens) || 512));
-  const temperature = Number(options.temperature) ?? 0.35;
+  const temperature = Number.isFinite(Number(options.temperature))
+    ? Number(options.temperature)
+    : 0.35;
 
   let url;
   let body;

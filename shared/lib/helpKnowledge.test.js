@@ -41,7 +41,7 @@ describe('helpKnowledge', () => {
     const m = matchHelpArticle('How do I pay an approved refund as cashier');
     expect(m).not.toBeNull();
     expect(m.article.id).toBe('cashier-desk-workflow');
-    expect(formatHelpArticleReply(m.article)).toContain('/cashier');
+    expect(formatHelpArticleReply(m.article)).toContain('/accounts?tab=desk');
   });
 
   it('matches accounting desk questions', () => {

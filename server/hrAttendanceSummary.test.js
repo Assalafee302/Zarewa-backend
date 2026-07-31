@@ -22,7 +22,7 @@ function makeAttendanceDb(overrides = {}) {
         return { get: () => ({ 1: 1 }) };
       }
       return {
-        get(...args) {
+        get() {
           if (s.includes('branch_id AS branchId FROM hr_staff_profiles')) {
             return profile;
           }
@@ -34,7 +34,7 @@ function makeAttendanceDb(overrides = {}) {
           }
           return undefined;
         },
-        all(...args) {
+        all() {
           if (s.includes('FROM hr_daily_roll_calls') && s.includes('day_iso')) {
             return dailyRolls;
           }

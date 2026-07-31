@@ -20,7 +20,6 @@ import {
   leaveTypeRequiresGmHrApproval,
 } from './hrPolicyConstants.js';
 import {
-  getDesignationTenureEligibility,
   getStaffTenureSummary,
   roundTenureYears,
   validateStaffTenureForSave,
@@ -60,8 +59,6 @@ import {
   notifyIdCardReady,
   notifyIdCardRequestSubmitted,
   notifyPayrollRunStatus,
-  notifyScholarshipPaymentApproved,
-  notifyScholarshipPaymentPaid,
   notifyScholarshipRequestOutcome,
 } from './hrNotifications.js';
 import { submitExecutiveSchoolFee } from './hrExecutiveBenefitsOps.js';
@@ -5198,7 +5195,6 @@ function payrollLinesWithProfile(db, runId) {
         bankName: row.bankName,
         bankAccountNo: acct,
         bankCode: resolveBankCode(row.bankName, row.bankCode),
-        held: Math.round(Number(row.net_ngn) || 0) <= 0,
       };
     });
 }
@@ -7040,7 +7036,6 @@ export function getHrMeDomesticSummary(db, userId, opts = {}) {
   const base = getHrMeDomesticProfile(db, userId);
   if (!base.ok) return base;
 
-  const uid = String(userId || '').trim();
   const displayName = String(base.profile?.displayName || '').trim();
   const domesticProfileId = String(base.profile?.domesticProfileId || '').trim();
   const docSummary = opts.documentSummary || {};
@@ -8683,7 +8678,7 @@ export function createHrIncidentMemo(db, actorUserId, body) {
   return { ok: true, memo };
 }
 
-export function escalateHrIncidentToDiscipline(db, memoId, actorUserId, body = {}) {
+export function escalateHrIncidentToDiscipline() {
   return { ok: false, error: 'Deprecated: use POST /api/hr/incident-memos/:id/escalate (routes through incidentOps).' };
 }
 

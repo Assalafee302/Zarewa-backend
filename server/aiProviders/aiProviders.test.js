@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildProviderResponse, estimateTokens } from '../../shared/lib/aiProviders/providerResponseTypes.js';
-import {
-  isHuggingFaceEnabled,
-  readProviderConfig,
-} from './config/providerConfig.js';
+import { isHuggingFaceEnabled } from './config/providerConfig.js';
 import { getTaskRouting, isOpenAiOnlyTask, isHuggingFacePreferredTask } from './modelRegistry.js';
 import {
   buildProviderChain,
@@ -64,7 +61,6 @@ describe('costController', () => {
   });
 
   it('redirects to huggingface when openai over limit', () => {
-    const cfg = readProviderConfig();
     for (let i = 0; i < 600; i += 1) {
       recordProviderUsage('openai', 'test', 1000);
     }

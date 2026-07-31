@@ -117,9 +117,8 @@ export function createActionProposal(db, input = {}) {
 
 /**
  * @param {string} type
- * @param {object} payload
  */
-function describeSuggestedAction(type, payload) {
+function describeSuggestedAction(type) {
   switch (type) {
     case 'memo':
       return 'Review and submit memo draft';

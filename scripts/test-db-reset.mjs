@@ -4,10 +4,7 @@
  * Run before integration suites when a prior run was killed mid-migrate.
  */
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mysqlCandidates = [
   'C:\\xampp\\mysql\\bin\\mysql.exe',
   'C:\\Program Files\\xampp\\mysql\\bin\\mysql.exe',

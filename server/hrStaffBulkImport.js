@@ -506,7 +506,7 @@ export function describeBulkImportHeaderMap(sheetHeaders) {
   return { matched, unmatched, map };
 }
 
-function enrichMappedRowFromExtras(mapped, raw, headerMap) {
+function enrichMappedRowFromExtras(mapped, raw) {
   const out = { ...mapped };
   const readLoose = (aliases) => {
     const wants = new Set(aliases.map((a) => normHeader(a)));
@@ -836,15 +836,6 @@ function toTitleCase(s) {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
-}
-
-function slugToken(s, max = 30) {
-  return String(s || '')
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '')
-    .slice(0, max);
 }
 
 function buildDesignationIndex(db) {
@@ -1577,17 +1568,6 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
     titleMappings,
     branchGuide: BULK_IMPORT_BRANCH_GUIDE,
   };
-}
-
-function slugUsername(displayName, employeeNo) {
-  const base = String(displayName || employeeNo || 'staff')
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '.')
-    .replace(/^\.+|\.+$/g, '')
-    .slice(0, 40);
-  return base || `staff.${String(employeeNo || '').replace(/\W/g, '') || 'user'}`;
 }
 
 export function commitBulkStaffImport(db, actor, buffer, scope = {}) {

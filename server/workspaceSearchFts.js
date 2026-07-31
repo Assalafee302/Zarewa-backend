@@ -1,4 +1,3 @@
-import { branchPredicate } from './branchSql.js';
 import {
   canReadFinanceDomain,
   canReadOperationsDomain,

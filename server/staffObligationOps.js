@@ -484,7 +484,7 @@ export function migrateLegacyStaffLoan(db, actor, body = {}) {
     principalOutstandingNgn: 0,
     installmentNgn,
     termMonths,
-    monthsPaid: 0,
+    monthsPaid,
     status: OBLIGATION_STATUS.ACTIVE,
     deductionsActive: outstanding > 0,
     disbursedAtIso: disbursedAt,

@@ -2984,7 +2984,6 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       conversionVarianceReasonText: 'Finish-roll correction test setup.',
     });
     if (complete.status !== 200) {
-      // eslint-disable-next-line no-console
       console.error('complete failed', complete.status, complete.body);
     }
     expect(complete.status).toBe(200);
@@ -3010,7 +3009,6 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       ],
     });
     if (corr.status !== 200) {
-      // eslint-disable-next-line no-console
       console.error('corr failed', corr.status, corr.body);
     }
     expect(corr.status).toBe(200);

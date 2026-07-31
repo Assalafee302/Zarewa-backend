@@ -18,10 +18,7 @@ import {
   patchDisciplineCase,
   getDisciplineCase,
 } from './hrDisciplineCasesOps.js';
-import {
-  listRecoverySchedulesForCase,
-  listRecoverySchedulesForUser,
-} from './hrIncidentRecoveryOps.js';
+import { listRecoverySchedulesForCase } from './hrIncidentRecoveryOps.js';
 import { buildIncidentAuditPack, exportIncidentAuditPackPdf } from './incidentAuditPackOps.js';
 import {
   computePayrollRun,
@@ -464,7 +461,7 @@ describe.skipIf(!isMysqlAvailableForTests())('HR accountability full lifecycle s
       );
       expect(step1.ok).toBe(true);
       const caseId = step1.caseId;
-      const registryId = step1.caseRegistryId || step1.registryId;
+      expect(step1.caseRegistryId || step1.registryId).toBeTruthy();
 
       upsertCaseResponsibility(db, ACTOR, caseId, fourPartyMap(staffIds));
 

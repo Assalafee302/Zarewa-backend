@@ -227,10 +227,8 @@ function applyPlan(db, staffRows) {
       ).run(docId, row.userId, Buffer.from('pilot').toString('base64'), now, adminUser.id);
     }
 
-    let roleKey = row.roleKey;
     if (plan.portalOnly || isErpAccessRestrictedPayrollGroup(plan.payrollGroup)) {
       enforcePortalOnlyRole(db, row.userId, plan.payrollGroup);
-      roleKey = HR_PORTAL_ONLY_ROLE_KEY;
     } else if (plan.keepRole) {
       if (row.roleKey === HR_PORTAL_ONLY_ROLE_KEY && !isErpAccessRestrictedPayrollGroup(plan.payrollGroup)) {
         db.prepare(`UPDATE app_users SET role_key = ?, permissions_json = NULL, department = ? WHERE id = ?`).run(
@@ -238,7 +236,6 @@ function applyPlan(db, staffRows) {
           'sales_staff',
           row.userId
         );
-        roleKey = 'sales_staff';
       }
     }
 
@@ -313,6 +310,7 @@ if (apply) {
     JSON.stringify(
       {
         phase: 'after',
+        staffCount: after.length,
         fixes,
         readiness: {
           productionReady: readiness.productionReady,

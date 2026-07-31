@@ -73,7 +73,8 @@ export function openRecoveryObligationFromSchedule(db, scheduleId, actor = null)
   const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(sched.user_id);
   const branchId = String(prof?.branch_id || DEFAULT_BRANCH_ID).trim();
   const total = Math.round(Number(sched.total_amount_ngn) || 0);
-  const outstanding = Math.round(Number(sched.principal_outstanding_ngn) ?? total);
+  const outstandingRaw = Number(sched.principal_outstanding_ngn);
+  const outstanding = Math.round(Number.isFinite(outstandingRaw) ? outstandingRaw : total);
   const installment = Math.round(Number(sched.installment_amount_ngn) || 0);
   const termMonths = Math.round(Number(sched.duration_months) || 0);
   const monthsPaid = Math.round(Number(sched.months_deducted) || 0);

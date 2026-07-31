@@ -2592,9 +2592,24 @@ function migrateOperationsMaintenanceWorkspace(db) {
     if (!coilCols.has('requested_by_display')) db.exec(`ALTER TABLE coil_requests ADD COLUMN requested_by_display TEXT`);
     if (!coilCols.has('work_item_id')) db.exec(`ALTER TABLE coil_requests ADD COLUMN work_item_id TEXT`);
     if (!coilCols.has('material_request_id')) db.exec(`ALTER TABLE coil_requests ADD COLUMN material_request_id TEXT`);
+    if (!coilCols.has('unit')) db.exec(`ALTER TABLE coil_requests ADD COLUMN unit TEXT NOT NULL DEFAULT 'kg'`);
     db.prepare(
       `UPDATE coil_requests SET branch_id = 'BR-KD' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
     ).run();
+    // Infer metres for existing stone-labelled requests that still say kg
+    try {
+      db.prepare(
+        `UPDATE coil_requests
+         SET unit = 'm'
+         WHERE LOWER(TRIM(COALESCE(unit, 'kg'))) = 'kg'
+           AND (
+             LOWER(COALESCE(material_type, '')) LIKE '%stone%'
+             OR LOWER(COALESCE(note, '')) LIKE '% shortfall % m%'
+           )`
+      ).run();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

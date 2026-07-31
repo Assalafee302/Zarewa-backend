@@ -379,7 +379,7 @@ function enrichQuotationWithLineTable(db, mapped) {
 }
 
 /** Batch-load quotation_lines for branch scope (avoids N+1 per quotation). */
-function enrichQuotationsWithLineTableBatch(db, mapped, branchScope = 'ALL') {
+function enrichQuotationsWithLineTableBatch(db, mapped) {
   const needsLines = mapped.filter((m) => !m.quotationLines);
   if (!needsLines.length) return mapped;
 
@@ -827,10 +827,6 @@ export function listManagerQuotationAudit(db, quotationRef) {
       productionJobsMetersSum: allJobMeters,
     },
   };
-}
-
-function listDeliveryLinesForId(db, deliveryId) {
-  return deliveryLinesByIds(db, [deliveryId]).get(deliveryId) || [];
 }
 
 function deliveryLinesByIds(db, deliveryIds) {
@@ -2523,6 +2519,7 @@ export function listCoilRequests(db, branchScope = 'ALL') {
       status: row.status,
       createdAtISO: row.created_at_iso,
       acknowledgedAtISO: row.acknowledged_at_iso,
+      approvedAtISO: row.acknowledged_at_iso,
       branchId: row.branch_id ?? '',
       requestedByUserId: row.requested_by_user_id ?? '',
       requestedByDisplay: row.requested_by_display ?? '',
@@ -2530,6 +2527,7 @@ export function listCoilRequests(db, branchScope = 'ALL') {
       colour: row.colour,
       materialType: row.material_type,
       requestedKg: row.requested_kg,
+      unit: String(row.unit || '').trim().toLowerCase() === 'm' ? 'm' : 'kg',
       note: row.note,
       workItemId: row.work_item_id ?? '',
       materialRequestId: row.material_request_id ?? '',

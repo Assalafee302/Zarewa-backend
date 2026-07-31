@@ -427,6 +427,7 @@ import {
 import { buildMaintenanceInsightsPack } from './maintenanceInsightsOps.js';
 import { buildManagerBranchBenchmark } from './managerBranchBenchmarkOps.js';
 import { mergeManagerTargetsBlob } from '../shared/lib/managerOrgTargets.js';
+import { mergeOrgStoreRestockBlob, normalizeOrgStoreRestock } from './orgStoreRestock.js';
 import { createBranchShiftNote, listBranchShiftNotes } from './branchShiftNotesOps.js';
 import { createChecklistEvent, listChecklistEvents } from './checklistEventsOps.js';
 import { listOtBoard } from './hrOtBoardOps.js';
@@ -3575,6 +3576,38 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not save company manager targets.' });
+    }
+  });
+
+  app.patch('/api/setup/org-store-restock', requireAuth, requirePermission('settings.manage'), (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      if (body.clear === true) {
+        setJsonBlob(db, 'org.store_restock.v1', null);
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'org.store_restock.clear',
+          entityKind: 'settings',
+          entityId: 'org.store_restock.v1',
+          note: 'Cleared store restock mins (defaults apply)',
+        });
+        return res.json({ ok: true, orgStoreRestock: normalizeOrgStoreRestock(null) });
+      }
+      const prev = getJsonBlob(db, 'org.store_restock.v1') || {};
+      const next = mergeOrgStoreRestockBlob(prev, body);
+      setJsonBlob(db, 'org.store_restock.v1', next);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'org.store_restock.update',
+        entityKind: 'settings',
+        entityId: 'org.store_restock.v1',
+        note: 'Updated store restock mins',
+        details: next,
+      });
+      return res.json({ ok: true, orgStoreRestock: next });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not save store restock settings.' });
     }
   });
 
@@ -8356,6 +8389,11 @@ export function registerHttpApi(app, db) {
       };
       const r = write.addCoilRequest(db, payload);
       if (r.ok && r.row?.id) {
+        const qtyUnit =
+          String(payload.unit || r.row.unit || '').toLowerCase() === 'm' ||
+          String(payload.materialType || '').toLowerCase().includes('stone')
+            ? 'm'
+            : 'kg';
         const mr = createMaterialRequest(
           db,
           {
@@ -8372,7 +8410,7 @@ export function registerHttpApi(app, db) {
                 gauge: payload.gauge,
                 colour: payload.colour,
                 materialType: payload.materialType,
-                unit: 'kg',
+                unit: qtyUnit,
                 qtyRequested: Number(payload.requestedKg) || 0,
                 note: String(payload.note || '').trim() || '',
               },
@@ -8392,10 +8430,47 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.patch('/api/coil-requests/:id/acknowledge', requirePermission(['operations.manage', 'production.manage']), (req, res) => {
+  app.patch('/api/coil-requests/:id/acknowledge', requirePermission(['operations.manage', 'production.manage', 'sales.manage']), (req, res) => {
     const crid = req.params.id;
+    const rk = String(req.user?.roleKey || '').trim().toLowerCase();
+    const mayBm =
+      rk === 'admin' ||
+      rk === 'md' ||
+      rk === 'ceo' ||
+      rk === 'sales_manager' ||
+      rk === 'branch_manager' ||
+      userHasPermission(req.user, 'sales.manage') ||
+      userHasPermission(req.user, '*');
+    if (!mayBm) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Branch manager (or MD) must approve stock requests before procurement buys.',
+      });
+    }
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'coil_request', crid, () =>
-      write.acknowledgeCoilRequest(db, crid)
+      write.approveCoilRequest(db, crid)
+    );
+  });
+
+  app.patch('/api/coil-requests/:id/approve', requirePermission(['sales.manage', 'operations.manage', 'production.manage']), (req, res) => {
+    const crid = req.params.id;
+    const rk = String(req.user?.roleKey || '').trim().toLowerCase();
+    const mayBm =
+      rk === 'admin' ||
+      rk === 'md' ||
+      rk === 'ceo' ||
+      rk === 'sales_manager' ||
+      rk === 'branch_manager' ||
+      userHasPermission(req.user, 'sales.manage') ||
+      userHasPermission(req.user, '*');
+    if (!mayBm) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Branch manager (or MD) must approve stock requests before procurement buys.',
+      });
+    }
+    return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'coil_request', crid, () =>
+      write.approveCoilRequest(db, crid)
     );
   });
 

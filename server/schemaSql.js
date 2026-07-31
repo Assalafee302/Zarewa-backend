@@ -1169,6 +1169,7 @@ CREATE TABLE IF NOT EXISTS coil_requests (
   colour TEXT,
   material_type TEXT,
   requested_kg REAL,
+  unit TEXT NOT NULL DEFAULT 'kg',
   note TEXT,
   work_item_id TEXT,
   material_request_id TEXT

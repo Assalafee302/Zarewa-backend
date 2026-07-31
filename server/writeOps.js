@@ -1,4 +1,4 @@
-import { isAllowedExpenseCategory, mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import {
   validateSpecialLaneTreasuryPayout,
@@ -4407,23 +4407,50 @@ export function addCoilRequest(db, payload) {
   const branchId = String(payload?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const id = nextCoilRequestHumanId(db, branchId);
   const createdAtIso = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO coil_requests (
-      id, status, created_at_iso, branch_id, requested_by_user_id, requested_by_display, gauge, colour, material_type, requested_kg, note
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    id,
-    'pending',
-    createdAtIso,
-    branchId,
-    String(payload?.requestedByUserId || '').trim() || null,
-    String(payload?.requestedByDisplay || '').trim() || null,
-    payload.gauge ?? '',
-    payload.colour ?? '',
-    payload.materialType ?? '',
-    Number(payload.requestedKg) || 0,
-    payload.note ?? ''
+  const unitRaw = String(payload?.unit || '').trim().toLowerCase();
+  const mt = String(payload?.materialType || '').toLowerCase();
+  const unit = unitRaw === 'm' || mt.includes('stone') ? 'm' : 'kg';
+  const hasUnitCol = Boolean(
+    db.prepare(`PRAGMA table_info(coil_requests)`).all().some((c) => c.name === 'unit')
   );
+  if (hasUnitCol) {
+    db.prepare(
+      `INSERT INTO coil_requests (
+        id, status, created_at_iso, branch_id, requested_by_user_id, requested_by_display, gauge, colour, material_type, requested_kg, unit, note
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      id,
+      'pending',
+      createdAtIso,
+      branchId,
+      String(payload?.requestedByUserId || '').trim() || null,
+      String(payload?.requestedByDisplay || '').trim() || null,
+      payload.gauge ?? '',
+      payload.colour ?? '',
+      payload.materialType ?? '',
+      Number(payload.requestedKg) || 0,
+      unit,
+      payload.note ?? ''
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO coil_requests (
+        id, status, created_at_iso, branch_id, requested_by_user_id, requested_by_display, gauge, colour, material_type, requested_kg, note
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      id,
+      'pending',
+      createdAtIso,
+      branchId,
+      String(payload?.requestedByUserId || '').trim() || null,
+      String(payload?.requestedByDisplay || '').trim() || null,
+      payload.gauge ?? '',
+      payload.colour ?? '',
+      payload.materialType ?? '',
+      Number(payload.requestedKg) || 0,
+      payload.note ?? ''
+    );
+  }
   return {
     ok: true,
     row: {
@@ -4433,19 +4460,42 @@ export function addCoilRequest(db, payload) {
       branchId,
       requestedByUserId: String(payload?.requestedByUserId || '').trim() || '',
       requestedByDisplay: String(payload?.requestedByDisplay || '').trim() || '',
+      unit,
       ...payload,
+      unit,
     },
   };
 }
 
-export function acknowledgeCoilRequest(db, id) {
+/** True when status is buy-ready (BM approved). Legacy `acknowledged` counts as approved. */
+export function coilRequestIsApproved(status) {
+  const s = String(status || '')
+    .trim()
+    .toLowerCase();
+  return s === 'approved' || s === 'acknowledged';
+}
+
+/**
+ * BM approve stock/coil request: pending → approved (buy path open for MD/Procurement).
+ * Reuses acknowledged_at_iso as approval timestamp.
+ */
+export function approveCoilRequest(db, id) {
+  const now = new Date().toISOString();
   const r = db
     .prepare(
-      `UPDATE coil_requests SET status = 'acknowledged', acknowledged_at_iso = ? WHERE id = ? AND status = 'pending'`
+      `UPDATE coil_requests SET status = 'approved', acknowledged_at_iso = ? WHERE id = ? AND LOWER(TRIM(status)) = 'pending'`
     )
-    .run(new Date().toISOString(), id);
+    .run(now, id);
   if (r.changes === 0) return { ok: false, error: 'Request not found or not pending.' };
-  return { ok: true };
+  return { ok: true, status: 'approved', approvedAtISO: now };
+}
+
+/**
+ * Legacy alias — same as BM approve (status `approved`).
+ * Kept for older clients calling /acknowledge.
+ */
+export function acknowledgeCoilRequest(db, id) {
+  return approveCoilRequest(db, id);
 }
 
 export function replaceTreasuryAccounts(db, accounts) {

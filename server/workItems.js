@@ -1219,25 +1219,36 @@ function listLegacyCoilRequestWorkItems(db, scope, user) {
     userHasPermission(user, 'operations.manage') ||
     userHasPermission(user, 'production.manage') ||
     userHasPermission(user, 'purchase_orders.manage') ||
-    userHasPermission(user, 'procurement.manage');
+    userHasPermission(user, 'procurement.manage') ||
+    canSeeManagementApprovalQueues(user);
   if (!canSee) return [];
-  return listCoilRequests(db).map((row) =>
-    legacyWorkItemBase({
-      id: legacyItemId('coil-request', row.id),
-      referenceNo: row.id,
-      branchId: row.branchId || scope?.branchId || DEFAULT_BRANCH_ID,
-      officeKey: 'procurement',
-      documentClass: 'request',
-      documentType: 'material_request',
-      status: String(row.status || 'pending').toLowerCase(),
-      title: `Material request ${row.id}`,
-      summary: `${row.gauge || '—'} mm · ${row.colour || '—'} · ${row.materialType || '—'}${row.requestedKg ? ` · ${row.requestedKg} kg` : ''}`,
-      createdAtIso: row.createdAtISO || '',
-      sourceKind: 'coil_request',
-      sourceId: row.id,
-      routePath: '/operations',
+  return listCoilRequests(db)
+    .filter((row) => {
+      const st = String(row.status || '').toLowerCase();
+      // Pending needs BM; approved/acknowledged stays visible for procurement triage.
+      return st === 'pending' || st === 'approved' || st === 'acknowledged';
     })
-  );
+    .map((row) => {
+      const st = String(row.status || 'pending').toLowerCase();
+      const pendingBm = st === 'pending';
+      const buyReady = st === 'approved' || st === 'acknowledged';
+      return legacyWorkItemBase({
+        id: legacyItemId('coil-request', row.id),
+        referenceNo: row.id,
+        branchId: row.branchId || scope?.branchId || DEFAULT_BRANCH_ID,
+        officeKey: pendingBm ? 'branch_manager' : 'procurement',
+        documentClass: pendingBm ? 'approval' : 'request',
+        documentType: 'material_request',
+        status: pendingBm ? 'pending_review' : buyReady ? 'approved' : st,
+        title: pendingBm ? `Approve stock request ${row.id}` : `Buy stock request ${row.id}`,
+        summary: `${row.gauge || '—'} · ${row.colour || '—'} · ${row.materialType || '—'}${row.requestedKg ? ` · ${row.requestedKg}` : ''}${pendingBm ? ' · awaiting BM' : ' · buy-ready'}`,
+        createdAtIso: row.createdAtISO || '',
+        sourceKind: 'coil_request',
+        sourceId: row.id,
+        routePath: pendingBm ? '/manager' : '/procurement',
+        requiresApproval: pendingBm,
+      });
+    });
 }
 
 function listLegacyHrRequestWorkItems(db, scope, user) {

@@ -86,6 +86,7 @@ import {
 } from './workItems.js';
 import { sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { normalizeOrgStoreRestock } from './orgStoreRestock.js';
 import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
@@ -202,6 +203,7 @@ export function buildBootstrap(db, opts = {}) {
     if (Number.isFinite(m) && m > 0) o.meterTargetPerMonth = m;
     return Object.keys(o).length ? o : null;
   })();
+  const orgStoreRestock = normalizeOrgStoreRestock(getJsonBlob(db, 'org.store_restock.v1'));
   const orgGovernanceLimitsSnapshot = user ? getOrgGovernanceLimits(db) : null;
   const ledgerRowLimit =
     opts.listLimits?.ledgerEntries != null
@@ -384,6 +386,7 @@ export function buildBootstrap(db, opts = {}) {
         ? getJsonBlob(db, `user_dashboard_prefs:${session.user.id}`) ?? {}
         : {},
     orgManagerTargets,
+    orgStoreRestock,
     orgGovernanceLimits: orgGovernanceLimitsSnapshot,
     unifiedWorkItems: user
       ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 200 }))

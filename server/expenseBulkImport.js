@@ -525,7 +525,17 @@ export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRAN
         bid
       );
       if (r.ok) {
-        created.push({ row: row.row, expenseID: r.expenseID });
+        created.push({
+          row: row.row,
+          expenseID: r.expenseID,
+          date: row.date,
+          amountNgn: row.amountNgn,
+          category: row.category,
+          reference: row.reference || '',
+          paymentMethod: row.paymentMethod || 'Import',
+          description: row.description || '',
+          treasuryAccountId: row.treasuryAccountId || null,
+        });
       } else {
         failed.push({ row: row.row, error: r.error || 'Could not create expense.' });
         throw new Error(r.error || `Row ${row.row} failed.`);

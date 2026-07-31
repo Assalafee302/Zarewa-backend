@@ -246,6 +246,14 @@ import {
   reclassifyPaidPaymentRequestCategory,
 } from './expenseCategoryReclassOps.js';
 import {
+  buildExpenseImportTemplateXlsx,
+  parseExpenseImportWorkbook,
+  previewExpenseBulkImport,
+  commitExpenseBulkImport,
+  normalizeExpenseImportRows,
+} from './expenseBulkImport.js';
+import { EXPENSE_CATEGORY_OPTIONS } from '../shared/expenseCategories.js';
+import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
   ADMIN_DATA_RESET_PRESETS,
   applyAdminDataReset,
@@ -9080,6 +9088,89 @@ export function registerHttpApi(app, db) {
         status: 400,
         code: 'EXPENSE_CREATE_FAILED',
         error: safeErrorMessage(e, 'Could not create expense.'),
+      });
+    }
+  });
+
+  /** Bulk historical expense import — template, preview (editable), commit. Requires finance.post. */
+  app.get('/api/expenses/import/template', requirePermission(['finance.post', 'expenses.create']), (_req, res) => {
+    try {
+      const buf = buildExpenseImportTemplateXlsx();
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader('Content-Disposition', 'attachment; filename="Expenses import.xlsx"');
+      return res.send(buf);
+    } catch (e) {
+      console.error(e);
+      return apiError(res, {
+        status: 500,
+        code: 'EXPENSE_IMPORT_TEMPLATE_FAILED',
+        error: safeErrorMessage(e, 'Could not build expense import template.'),
+      });
+    }
+  });
+
+  app.get('/api/expenses/import/categories', requirePermission(['finance.post', 'expenses.create']), (_req, res) => {
+    return res.json({ ok: true, categories: [...EXPENSE_CATEGORY_OPTIONS] });
+  });
+
+  app.post('/api/expenses/import/preview', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
+    try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
+      const requireTreasury = req.body?.requireTreasury !== false;
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      let rows = normalizeExpenseImportRows(req.body?.rows);
+      if (!rows.length) {
+        const b64 = req.body?.fileBase64 || req.body?.data;
+        if (!b64) {
+          return res.status(400).json({ ok: false, error: 'Upload a file (fileBase64) or send edited rows.' });
+        }
+        const parsed = parseExpenseImportWorkbook(Buffer.from(String(b64), 'base64'));
+        if (!parsed.ok) return res.status(400).json(parsed);
+        rows = parsed.rows;
+      }
+      const r = previewExpenseBulkImport(db, rows, req.user, { requireTreasury, branchId });
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return apiError(res, {
+        status: 400,
+        code: 'EXPENSE_IMPORT_PREVIEW_FAILED',
+        error: safeErrorMessage(e, 'Could not preview expense import.'),
+      });
+    }
+  });
+
+  app.post('/api/expenses/import/commit', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
+    try {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
+      const requireTreasury = req.body?.requireTreasury !== false;
+      const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      let rows = normalizeExpenseImportRows(req.body?.rows);
+      if (!rows.length) {
+        const b64 = req.body?.fileBase64 || req.body?.data;
+        if (!b64) {
+          return res.status(400).json({ ok: false, error: 'Send edited preview rows (or fileBase64).' });
+        }
+        const parsed = parseExpenseImportWorkbook(Buffer.from(String(b64), 'base64'));
+        if (!parsed.ok) return res.status(400).json(parsed);
+        rows = parsed.rows;
+      }
+      const r = commitExpenseBulkImport(db, req.user, rows, branchId, {
+        workspaceViewAll: Boolean(req.workspaceViewAll),
+        requireTreasury,
+      });
+      return res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      return apiError(res, {
+        status: 400,
+        code: 'EXPENSE_IMPORT_COMMIT_FAILED',
+        error: safeErrorMessage(e, 'Could not import expenses.'),
       });
     }
   });

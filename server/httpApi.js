@@ -7352,8 +7352,11 @@ export function registerHttpApi(app, db) {
   });
 
   const managerReviewSignoffPerms = ['production.release'];
-  /** Who may post completion corrections (coil / accessories / stone flatsheet FG restatements). */
-  const productionCorrectionPerms = ['production.release'];
+  /**
+   * Who may post completion corrections (coil / accessories / stone flatsheet FG restatements).
+   * Matches LiveProductionMonitor: BM/MD via production.release, store floor via operations.manage.
+   */
+  const productionCorrectionPerms = ['production.release', 'operations.manage'];
   const returnToPlannedPerms = ['production.release'];
 
   app.post('/api/production-jobs/:jobId/return-to-planned', requirePermission(returnToPlannedPerms), (req, res) => {

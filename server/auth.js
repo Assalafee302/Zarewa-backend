@@ -144,8 +144,9 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
 
 /**
  * Store / production floor: receive, run register, deliver, raise incidents.
- * Does NOT include production.release (hold clear / manager review / post-complete corrections)
- * or material_incidents.approve (BM write-offs / BM stock-register fields).
+ * Does NOT include production.release (hold clear / manager review / return-to-planned).
+ * Post-complete qty corrections use operations.manage (same as the production monitor UI).
+ * Does NOT include material_incidents.approve (BM write-offs / BM stock-register fields).
  */
 export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
   'dashboard.view',

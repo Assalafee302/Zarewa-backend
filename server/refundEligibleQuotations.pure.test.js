@@ -24,6 +24,7 @@ function overpaymentDb({ totalRefunded = 0 } = {}) {
             return [
               {
                 id: 'RCT-1',
+                quotation_ref: 'QT-FAST-1',
                 amount_ngn: 120_000,
                 ledger_entry_id: null,
                 finance_reconciliation_saved_at_iso: null,
@@ -32,7 +33,7 @@ function overpaymentDb({ totalRefunded = 0 } = {}) {
               },
             ];
           }
-          if (text.includes('SELECT * FROM ledger_entries')) return [];
+          if (text.includes('FROM ledger_entries')) return [];
           if (text.includes("type = 'OVERPAY_ADVANCE'")) return [];
           if (text.includes('FROM customer_refunds')) {
             // previewRefundRequest loads prior refunds when the fast path is skipped

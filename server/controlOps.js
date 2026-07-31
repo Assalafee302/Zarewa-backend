@@ -10,7 +10,7 @@ import {
   nextPaymentRequestHumanId,
   nextRefundHumanId,
 } from './humanId.js';
-import { isAllowedExpenseCategory, mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
+import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
 import {
   actorMayApprovePaymentRequestCategory,
   CAPEX_MIN_ASSET_DESCRIPTION_LEN,
@@ -110,11 +110,14 @@ import {
   buildDerivedRefundCategoryCapsNgn,
   mergeRefundCategoryCapsNgn,
 } from '../shared/lib/refundCategoryDerivedCaps.js';
-import { assessCuttingListQuotationMetreVariance } from '../shared/lib/refundCuttingListQuotationReconciliation.js';
 import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
 import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
-import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import {
+  emptyQuotationPaymentCashBreakdown,
+  quotationPaymentCashBreakdown,
+  quotationPaymentCashBreakdownByRef,
+} from './quotationPaymentCash.js';
 import { companionOverpayNgnByReceiptId } from '../shared/lib/customerLedgerCore.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import {
@@ -4511,13 +4514,22 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * {@link previewRefundRequest} so only quotations with preview total ≥
  * {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear (same rules as eligibility-check picklist).
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
+ *
+ * Listing path batches cash-in for all SQL candidates (avoids ~7 queries per row) and never scans
+ * an unbounded quotation table — candidate pool is hard-capped even when limits are omitted.
  * @param {{ candidateLimit?: number; resultLimit?: number }} [opts]
  */
 export function getEligibleRefundQuotations(db, opts = {}) {
   const candidateLimit = Math.max(0, Math.min(500, Math.floor(Number(opts.candidateLimit) || 0)));
   const resultLimit = Math.max(0, Math.min(200, Math.floor(Number(opts.resultLimit) || 0)));
+  // Always bound the candidate scan — unlimited used to walk every paid closed quote and was very slow.
+  const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 500;
   const sql = `
-    SELECT q.*,
+    SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
+           q.handled_by, q.branch_id,
+           q.bm_price_exception_approved_at_iso, q.price_exception_md_review_required,
+           q.price_exception_md_confirmed_at_iso, q.md_price_exception_approved_at_iso,
+           q.refunds_blocked_at_iso, q.refunds_blocked_reason,
       COALESCE((
         SELECT SUM(amount_ngn) FROM customer_refunds
         WHERE quotation_ref = q.id AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')
@@ -4541,29 +4553,59 @@ export function getEligibleRefundQuotations(db, opts = {}) {
         OR TRIM(COALESCE(q.status, '')) = 'Void'
       )
     ORDER BY q.date_iso DESC
-    ${candidateLimit > 0 ? `LIMIT ${candidateLimit}` : ''}
+    LIMIT ${effectiveCandidateLimit}
   `;
   const rows = db.prepare(sql).all();
-  const out = [];
+
+  // Cheap SQL-row filters before any cash / preview work.
+  const candidates = [];
   for (const row of rows) {
-    const meets = quotationMeetsRefundEligibility(db, row.id, row);
-    if (!meets.ok || meets.remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
+    if (quotationRefundsBlocked(row)) continue;
     const total = roundMoney(row.total_ngn);
     const paid = roundMoney(row.paid_ngn);
     if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;
+    if (
+      quotationRefundBlockedPendingMdPriceConfirm({
+        bmPriceExceptionApprovedAtISO: row.bm_price_exception_approved_at_iso,
+        priceExceptionMdReviewRequired: row.price_exception_md_review_required,
+        priceExceptionMdConfirmedAtISO: row.price_exception_md_confirmed_at_iso,
+        mdPriceExceptionApprovedAtISO: row.md_price_exception_approved_at_iso,
+      })
+    ) {
+      continue;
+    }
+    candidates.push(row);
+  }
 
-    const overpayExcess = Math.round(Number(meets.overpaymentExcessNgn) || 0);
+  const cashByRef = quotationPaymentCashBreakdownByRef(
+    db,
+    candidates.map((r) => r.id)
+  );
+
+  const out = [];
+  for (const row of candidates) {
+    const cash = cashByRef.get(row.id) || emptyQuotationPaymentCashBreakdown();
+    const cashInNgn = roundMoney(cash.cashInNgn);
+    const paidNgn = roundMoney(row.paid_ngn);
+    if (cashInNgn <= 0 && paidNgn <= 0) continue;
+
+    const totalRefundedNgn = roundMoney(row.total_refunded);
+    const remainingNgn = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn });
+    if (remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
+
+    const quoteTotalNgn = roundMoney(row.total_ngn);
+    const overpayExcess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
     // Overpayment excess is cash-in minus quote total — it does not subtract prior refunds.
     // Only take the cheap path when no active refunds exist yet; otherwise preview must
     // apply refundedCategories (so already-refunded Overpayment does not stay on the pick list).
-    const hasActiveRefunds = Math.round(Number(row.total_refunded) || 0) > 0;
+    const hasActiveRefunds = totalRefundedNgn > 0;
     let categories;
     let suggestedPreviewAmountNgn;
     if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hasActiveRefunds) {
       // Avoid the expensive full production/refund preview for the common, unambiguous case.
       // Selecting the quotation still runs previewRefundRequest and reveals any additional categories.
       categories = ['Overpayment'];
-      suggestedPreviewAmountNgn = Math.min(overpayExcess, meets.remainingNgn);
+      suggestedPreviewAmountNgn = Math.min(overpayExcess, remainingNgn);
     } else {
       const preview = previewRefundRequest(db, { quotationRef: row.id });
       if (!preview?.ok) continue;
@@ -4589,8 +4631,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       ...row,
       eligible_refund_categories: categories,
       suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
-      cash_in_ngn: meets.cashInNgn,
-      remaining_ngn: meets.remainingNgn,
+      cash_in_ngn: cashInNgn,
+      remaining_ngn: remainingNgn,
     };
     if (!quotationMeetsRefundPickerFloor(pickRow)) continue;
     out.push(pickRow);

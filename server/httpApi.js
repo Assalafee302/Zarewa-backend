@@ -9107,12 +9107,12 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/refunds/eligible-quotations', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
-      const requestedLimit = Math.floor(Number(req.query.limit) || 0);
-      const resultLimit = Math.max(0, Math.min(100, requestedLimit));
+      // Default 50 — unbounded lists used to scan every paid closed quote and were very slow.
+      const requestedLimit = Math.floor(Number(req.query.limit) || 50);
+      const resultLimit = Math.max(1, Math.min(100, requestedLimit));
       // Scan a wider pool than the result size — eligibility filters out most rows, and
       // capping candidates at resultLimit hid real unrefunded quotes behind false positives.
-      const candidateLimit =
-        resultLimit > 0 ? Math.min(500, Math.max(resultLimit * 10, 150)) : 0;
+      const candidateLimit = Math.min(500, Math.max(resultLimit * 10, 150));
       const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
       res.json({ ok: true, quotations: rows });
     } catch (e) {

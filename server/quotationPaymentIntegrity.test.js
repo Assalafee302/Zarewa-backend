@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
-import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
+import {
+  quotationPaymentCashBreakdown,
+  quotationPaymentCashBreakdownByRef,
+} from './quotationPaymentCash.js';
 import { previewRefundRequest, quotationMeetsRefundEligibility } from './controlOps.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 
@@ -35,6 +38,13 @@ describe('quotation payment integrity (duplicate entry)', () => {
     const meets = quotationMeetsRefundEligibility(db, 'QT-A');
     expect(meets.ok).toBe(true);
     expect(meets.remainingNgn).toBe(15_860);
+  });
+
+  it('batch cash breakdown matches single-quote breakdown', () => {
+    const single = quotationPaymentCashBreakdown(db, 'QT-A');
+    const batch = quotationPaymentCashBreakdownByRef(db, ['QT-A', 'QT-MISSING']);
+    expect(batch.get('QT-A')).toEqual(single);
+    expect(batch.get('QT-MISSING')?.cashInNgn).toBe(0);
   });
 
   it('preview overpayment suggestion matches per-quote headroom', () => {

@@ -187,7 +187,7 @@ import {
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
 import { parseListQuery, sendPaginatedList, slicePage } from './listPagination.js';
-import { productionHistoryListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
 import { humanizeValidationMessage } from './validationLabels.js';
 import { permissionGuidanceMessage } from './permissionMessages.js';
@@ -4855,7 +4855,7 @@ export function registerHttpApi(app, db) {
       const raw = listSalesReceipts(db, branchScope);
       const ledger = listLedgerEntries(db, branchScope);
       const enriched = enrichSalesReceiptRowsWithCashFromLedger(raw, ledger);
-      const tm = listTreasuryMovements(db, branchScope);
+      const tm = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
       const rows = receiptsRegisterReportRows(enriched, ledger, tm, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, rows });
     } catch (e) {
@@ -4923,7 +4923,7 @@ export function registerHttpApi(app, db) {
       const startDate = String(req.query.startDate || '').slice(0, 10);
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
-      const expenses = listExpenses(db, branchScope);
+      const expenses = listExpenses(db, branchScope, financeHistoryListOpts());
       const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate);
       res.json({ ok: true, startDate, endDate, branchScope, detail, summaryByCategory });
     } catch (e) {
@@ -4955,7 +4955,7 @@ export function registerHttpApi(app, db) {
         purchaseOrders: listPurchaseOrders(db, branchScope),
         coilLots: listCoilLots(db, branchScope),
         stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
-        treasuryMovements: listTreasuryMovements(db, branchScope),
+        treasuryMovements: listTreasuryMovements(db, branchScope, financeHistoryListOpts()),
         products: listProducts(db, branchScope),
         masterData: listMasterData(db),
         startDate,
@@ -4980,7 +4980,7 @@ export function registerHttpApi(app, db) {
         return res.json({ ok: true, cut: 'ordered', startDate, endDate, branchScope, rows });
       }
       if (cut === 'paid') {
-        const tm = listTreasuryMovements(db, branchScope);
+        const tm = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
         const rows = purchasesPaidRows(tm, startDate, endDate);
         return res.json({ ok: true, cut: 'paid', startDate, endDate, branchScope, rows });
       }

@@ -5,11 +5,13 @@ import {
   rowListOpts,
   DEFAULT_LIST_LIMIT,
   productionHistoryListOpts,
+  financeHistoryListOpts,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
   afterEach(() => {
     delete process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
+    delete process.env.ZAREWA_FINANCE_HISTORY_LIMIT;
   });
 
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
@@ -51,5 +53,16 @@ describe('listQueryOpts', () => {
     expect(productionHistoryListOpts()).toEqual({ limit: 2500 });
     process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT = '0';
     expect(productionHistoryListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('financeHistoryListOpts defaults to unlimited', () => {
+    expect(financeHistoryListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('financeHistoryListOpts honors ZAREWA_FINANCE_HISTORY_LIMIT', () => {
+    process.env.ZAREWA_FINANCE_HISTORY_LIMIT = '8000';
+    expect(financeHistoryListOpts()).toEqual({ limit: 8000 });
+    process.env.ZAREWA_FINANCE_HISTORY_LIMIT = '0';
+    expect(financeHistoryListOpts()).toEqual({ unlimited: true });
   });
 });

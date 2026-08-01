@@ -35,6 +35,21 @@ export function productionHistoryListOpts() {
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
+/**
+ * List opts for Finance desk expenses / payment requests / treasury movements.
+ * Default: unlimited so Account → Payouts & expenses does not look like “only ~3 weeks”
+ * when volume exceeds the generic 500/600 bootstrap row caps.
+ * Cap with env `ZAREWA_FINANCE_HISTORY_LIMIT` (positive integer) when needed.
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function financeHistoryListOpts() {
+  const raw = process.env.ZAREWA_FINANCE_HISTORY_LIMIT;
+  if (raw == null || String(raw).trim() === '') return { unlimited: true };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+}
+
 /** @param {number} limit */
 export function sqlLimitClause(limit) {
   return limit > 0 ? ' LIMIT ?' : '';

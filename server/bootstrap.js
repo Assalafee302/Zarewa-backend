@@ -94,7 +94,7 @@ import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
-import { productionHistoryListOpts, rowListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts, rowListOpts } from './listQueryOpts.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -262,6 +262,14 @@ export function buildBootstrap(db, opts = {}) {
     opts.listLimits?.productionJobs != null
       ? rowListOpts(opts, 'productionJobs')
       : productionHistoryListOpts();
+  const expensesHistoryOpts =
+    opts.listLimits?.expenses != null ? listOpts('expenses') : financeHistoryListOpts();
+  const paymentRequestsHistoryOpts =
+    opts.listLimits?.paymentRequests != null ? listOpts('paymentRequests') : financeHistoryListOpts();
+  const treasuryMovementsHistoryOpts =
+    opts.listLimits?.treasuryMovements != null
+      ? listOpts('treasuryMovements')
+      : financeHistoryListOpts();
   const productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
@@ -323,9 +331,11 @@ export function buildBootstrap(db, opts = {}) {
     /** Ridge / flashing strip add-ons for trim auto-pricing on quotations. */
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
-    treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope, listOpts('treasuryMovements')) : [],
-    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, listOpts('expenses')) : [],
-    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, listOpts('paymentRequests')) : [],
+    treasuryMovements: treasuryMovementsOk
+      ? listTreasuryMovements(db, branchScope, treasuryMovementsHistoryOpts)
+      : [],
+    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, expensesHistoryOpts) : [],
+    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, paymentRequestsHistoryOpts) : [],
     glJournalSearchSlice: finOk ? listGlJournalsForWorkspaceSearch(db, branchScope, { limit: 800 }) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
@@ -429,9 +439,15 @@ export function buildBootstrap(db, opts = {}) {
         deliveries: listLimit('deliveries'),
         refunds: listLimit('refunds'),
         receipts: listLimit('receipts'),
-        expenses: listLimit('expenses'),
-        paymentRequests: listLimit('paymentRequests'),
-        treasuryMovements: listLimit('treasuryMovements'),
+        expenses: expensesHistoryOpts.unlimited
+          ? 0
+          : Number(expensesHistoryOpts.limit) || listLimit('expenses'),
+        paymentRequests: paymentRequestsHistoryOpts.unlimited
+          ? 0
+          : Number(paymentRequestsHistoryOpts.limit) || listLimit('paymentRequests'),
+        treasuryMovements: treasuryMovementsHistoryOpts.unlimited
+          ? 0
+          : Number(treasuryMovementsHistoryOpts.limit) || listLimit('treasuryMovements'),
         cuttingLists: cuttingListHistoryOpts.unlimited
           ? 0
           : Number(cuttingListHistoryOpts.limit) || listLimit('cuttingLists'),
@@ -445,9 +461,10 @@ export function buildBootstrap(db, opts = {}) {
         deliveries: opsOk,
         refunds: refundsOk,
         receipts: salesOk,
-        expenses: expensesSnapshotOk,
-        paymentRequests: payReqOk,
-        treasuryMovements: treasuryMovementsOk,
+        /** Only truncated when an explicit positive finance history cap is configured. */
+        expenses: expensesSnapshotOk && !expensesHistoryOpts.unlimited,
+        paymentRequests: payReqOk && !paymentRequestsHistoryOpts.unlimited,
+        treasuryMovements: treasuryMovementsOk && !treasuryMovementsHistoryOpts.unlimited,
         /** Only truncated when an explicit positive history cap is configured. */
         cuttingLists: (opsOk || salesOk) && !cuttingListHistoryOpts.unlimited,
         productionJobs: prodRollupOk && !productionJobsHistoryOpts.unlimited,
@@ -577,9 +594,10 @@ export function buildDashboardBootstrap(db, opts = {}) {
     purchaseOrders: full.purchaseOrders,
     deliveries: take(full.deliveries, limit),
     refunds: take(full.refunds, limit),
-    expenses: take(full.expenses, limit),
-    paymentRequests: take(full.paymentRequests, limit),
-    treasuryMovements: take(full.treasuryMovements, limit),
+    /** Full finance register — trimming made Account look like only ~3 weeks of history. */
+    expenses: full.expenses,
+    paymentRequests: full.paymentRequests,
+    treasuryMovements: full.treasuryMovements,
     movements: take(full.movements, limit),
     /** Full coil register — trimming hides coils (e.g. CL-26-2043) from Stock Management. */
     coilLots: full.coilLots ?? [],

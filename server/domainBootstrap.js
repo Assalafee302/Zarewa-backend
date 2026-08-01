@@ -78,7 +78,7 @@ import {
   listMaintenanceWorkOrders,
   listMaterialRequests,
 } from './workItems.js';
-import { productionHistoryListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 
 const MAX_PROD_ROWS = Math.min(
   5000,
@@ -280,9 +280,11 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     ledgerEntries: ledgerOk ? ledgerRows : [],
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
-    treasuryMovements: treasuryMovementsOk ? listTreasuryMovements(db, branchScope) : [],
-    expenses: expensesSnapshotOk ? listExpenses(db, branchScope) : [],
-    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope) : [],
+    treasuryMovements: treasuryMovementsOk
+      ? listTreasuryMovements(db, branchScope, financeHistoryListOpts())
+      : [],
+    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, financeHistoryListOpts()) : [],
+    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, financeHistoryListOpts()) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     refunds: refundsOk ? listRefunds(db, branchScope) : [],

@@ -140,7 +140,7 @@ export function buildExpenseImportTemplateXlsx() {
       'PETROL-JUL-01',
       'Cash',
       'Diesel for generator — Kaduna yard',
-      'EXP-IMPORT-SAMPLE-1',
+      '',
     ],
     [
       '2026-07-03',
@@ -150,7 +150,7 @@ export function buildExpenseImportTemplateXlsx() {
       'INV-MECH-882',
       'Transfer',
       'Corrugator bearing replacement',
-      'EXP-IMPORT-SAMPLE-2',
+      '',
     ],
     [
       '2026-07-05',
@@ -298,6 +298,12 @@ export function normalizeExpenseImportRows(input) {
     const treasuryAccountId =
       treasuryRaw !== '' && Number.isFinite(Number(treasuryRaw)) ? Number(treasuryRaw) : null;
     const accountKey = String(r.accountKey ?? '').trim() || (treasuryAccountId == null ? String(treasuryRaw || '').trim() : '');
+    let expenseID = String(r.expenseID ?? r.expenseId ?? '').trim();
+    // Template / legacy sample ids are never stored by insertExpenseEntry; drop them so they
+    // do not block re-imports via the "already exists" preview check.
+    if (/^EXP-IMPORT-SAMPLE/i.test(expenseID) || /^EXP-LEGACY-/i.test(expenseID)) {
+      expenseID = '';
+    }
     return {
       row: Number(r.row) || i + 2,
       include: r.include !== false && r.include !== 0 && r.include !== '0',
@@ -310,7 +316,7 @@ export function normalizeExpenseImportRows(input) {
       reference: String(r.reference ?? '').trim(),
       paymentMethod: String(r.paymentMethod ?? '').trim() || 'Import',
       description: String(r.description ?? '').trim(),
-      expenseID: String(r.expenseID ?? r.expenseId ?? '').trim(),
+      expenseID,
     };
   });
 }
@@ -480,7 +486,8 @@ export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
 export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRANCH_ID, opts = {}) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const preview = previewExpenseBulkImport(db, rows, actor, { ...opts, branchId: bid });
-  if (!preview.validCount) {
+  const toPost = preview.previewTable.filter((r) => r.include && r.status === 'ok');
+  if (!toPost.length) {
     return {
       ok: false,
       error:
@@ -490,66 +497,54 @@ export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRAN
       preview,
     };
   }
-  if (preview.incompleteCount > 0 || preview.invalidCount > 0 || preview.needsUpdateCount > 0) {
-    return {
-      ok: false,
-      error:
-        preview.message ||
-        `${preview.needsUpdateCount || preview.incompleteCount + preview.invalidCount} row(s) still need updates in the preview. Fix or uncheck them before posting.`,
-      preview,
-    };
-  }
 
+  // Do not wrap in an outer db.transaction(): insertExpenseEntry already opens a transaction,
+  // and nested MySQL SAVEPOINTs are unreliable (`SAVEPOINT sp_N does not exist`).
   const created = [];
   const failed = [];
 
-  const run = db.transaction(() => {
-    for (const row of preview.previewTable) {
-      if (!row.include || row.status !== 'ok') continue;
-      const r = insertExpenseEntry(
-        db,
-        {
-          expenseID: row.expenseID || undefined,
-          category: row.category,
-          amountNgn: row.amountNgn,
-          date: row.date,
-          reference: row.reference || row.expenseID || `IMPORT-${row.row}`,
-          expenseType: row.description || row.category,
-          paymentMethod: row.paymentMethod || 'Import',
-          treasuryAccountId: row.treasuryAccountId || undefined,
-          categoryJustification: row.description || row.reference || '',
-          createdBy: actor?.displayName || actor?.username || 'expense-import',
-          actor,
-          workspaceViewAll: Boolean(opts.workspaceViewAll),
-        },
-        bid
-      );
-      if (r.ok) {
-        created.push({
-          row: row.row,
-          expenseID: r.expenseID,
-          date: row.date,
-          amountNgn: row.amountNgn,
-          category: row.category,
-          reference: row.reference || '',
-          paymentMethod: row.paymentMethod || 'Import',
-          description: row.description || '',
-          treasuryAccountId: row.treasuryAccountId || null,
-        });
-      } else {
-        failed.push({ row: row.row, error: r.error || 'Could not create expense.' });
-        throw new Error(r.error || `Row ${row.row} failed.`);
-      }
+  for (const row of toPost) {
+    const r = insertExpenseEntry(
+      db,
+      {
+        category: row.category,
+        amountNgn: row.amountNgn,
+        date: row.date,
+        reference: row.reference || `IMPORT-${row.row}`,
+        expenseType: row.description || row.category,
+        paymentMethod: row.paymentMethod || 'Import',
+        treasuryAccountId: row.treasuryAccountId || undefined,
+        categoryJustification: row.description || row.reference || '',
+        createdBy: actor?.displayName || actor?.username || 'expense-import',
+        actor,
+        workspaceViewAll: Boolean(opts.workspaceViewAll),
+      },
+      bid
+    );
+    if (r.ok) {
+      created.push({
+        row: row.row,
+        expenseID: r.expenseID,
+        date: row.date,
+        amountNgn: row.amountNgn,
+        category: row.category,
+        reference: row.reference || '',
+        paymentMethod: row.paymentMethod || 'Import',
+        description: row.description || '',
+        treasuryAccountId: row.treasuryAccountId || null,
+      });
+    } else {
+      failed.push({ row: row.row, error: r.error || 'Could not create expense.' });
     }
-  });
+  }
 
-  try {
-    run();
-  } catch (e) {
+  if (!created.length) {
+    const first = failed[0]?.error || 'Import failed.';
     return {
       ok: false,
-      error: String(e?.message || e || 'Import failed.'),
+      error: failed.length > 1 ? `${first} (${failed.length} rows failed.)` : first,
       createdCount: 0,
+      created: [],
       failed,
       preview,
     };
@@ -560,7 +555,15 @@ export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRAN
     branchId: bid,
     createdCount: created.length,
     created,
-    totalAmountNgn: preview.totalAmountNgn,
+    failed,
+    skippedIncomplete: preview.incompleteCount + preview.invalidCount,
+    totalAmountNgn: created.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
     preview,
+    warning:
+      failed.length > 0
+        ? `Posted ${created.length} expense(s); ${failed.length} row(s) failed.`
+        : preview.incompleteCount + preview.invalidCount > 0
+          ? `Posted ${created.length} ready row(s). Incomplete/error rows were left unposted.`
+          : '',
   };
 }

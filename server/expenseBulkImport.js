@@ -27,23 +27,59 @@ export const EXPENSE_IMPORT_HEADERS = Object.freeze([
 
 const MAX_IMPORT_ROWS = 500;
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function ymd(year, month, day) {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+/**
+ * Parse workbook/UI dates to YYYY-MM-DD.
+ * Never defaults to today — blank stays blank so the user can set last-month dates in preview.
+ * @param {unknown} v
+ * @returns {string}
+ */
+export function parseExpenseImportDate(v) {
+  if (v instanceof Date && !Number.isNaN(+v)) {
+    // Use local calendar parts so a Nigeria midnight Date is not shifted back by toISOString() UTC.
+    return ymd(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  }
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    // Excel serial day count → UTC y/m/d
+    const utc = Math.round((v - 25569) * 86400 * 1000);
+    const d = new Date(utc);
+    if (!Number.isNaN(+d)) return ymd(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  }
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+
+  // Nigerian / UK style DD/MM/YYYY (or DD-MM-YYYY)
+  const dmy = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
+  if (dmy) {
+    const a = Number(dmy[1]);
+    const b = Number(dmy[2]);
+    const year = Number(dmy[3]);
+    let day = a;
+    let month = b;
+    // If first part > 12, it must be day (DMY). If second > 12, treat as MDY.
+    if (a <= 12 && b > 12) {
+      month = a;
+      day = b;
+    }
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return ymd(year, month, day);
+    }
+  }
+
+  return '';
+}
+
 function intMoney(v) {
   const n = Math.round(Number(String(v ?? '').replace(/[₦#,]/g, '').trim()) || 0);
   return Number.isFinite(n) ? n : 0;
-}
-
-function isoDate(v) {
-  if (v instanceof Date && !Number.isNaN(+v)) return v.toISOString().slice(0, 10);
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    const utc = Math.round((v - 25569) * 86400 * 1000);
-    const d = new Date(utc);
-    if (!Number.isNaN(+d)) return d.toISOString().slice(0, 10);
-  }
-  const s = String(v ?? '').trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d2 = new Date(s);
-  if (!Number.isNaN(+d2)) return d2.toISOString().slice(0, 10);
-  return '';
 }
 
 function pick(row, keys) {
@@ -133,17 +169,17 @@ export function resolveTreasuryAccountId(db, accountKeyRaw, branchId = '') {
 export function buildExpenseImportTemplateXlsx() {
   const examples = [
     [
-      '2026-07-01',
+      '2026-07-15',
       45000,
       'Fuel & lubricant',
       'Main Cash',
-      'PETROL-JUL-01',
+      'PETROL-JUL-15',
       'Cash',
       'Diesel for generator — Kaduna yard',
       '',
     ],
     [
-      '2026-07-03',
+      '2026-07-20',
       125000,
       'Maintenance',
       'GTB Ops',
@@ -153,7 +189,7 @@ export function buildExpenseImportTemplateXlsx() {
       '',
     ],
     [
-      '2026-07-05',
+      '2026-07-28',
       80000,
       'Office expenses',
       '1',
@@ -200,14 +236,16 @@ export function buildExpenseImportTemplateXlsx() {
     ['CLI (optional): node server/importAccessFinancePack.mjs --dry-run --dir docs/import'],
     [''],
     ['Columns'],
-    ['Date — YYYY-MM-DD preferred (incomplete dates can be fixed in preview)'],
+    ['Date — REQUIRED. Use the real expense date (e.g. 2026-07-15 for July). Dates are NEVER auto-filled to today.'],
     ['Amount — NGN (blank/zero rows must be updated in preview before post)'],
     ['Category — use a value from the Categories sheet'],
     ['AccountKey — treasury account name/id on the same branch'],
     ['Reference — voucher / invoice ref'],
     ['PaymentMethod — Cash, Transfer, etc.'],
     ['Description — memo (Others category needs at least 40 characters)'],
-    ['ExpenseID — optional stable id; skipped if already present'],
+    ['ExpenseID — leave blank (system assigns). Sample ids are ignored.'],
+    [''],
+    ['Last-month catch-up: set each row Date to a day in that month, or blank Date and use “Apply date” in the preview.'],
   ]);
   instrWs['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(wb, instrWs, 'Instructions');
@@ -252,7 +290,7 @@ export function parseExpenseImportWorkbook(buffer) {
       return {
         row: i + 2,
         include: true,
-        date: isoDate(pick(row, ['Date', 'ExpenseDate', 'Posted'])),
+        date: parseExpenseImportDate(pick(row, ['Date', 'ExpenseDate', 'Posted'])),
         amountNgn: intMoney(amountRaw),
         category,
         categoryRaw: catRaw,
@@ -307,7 +345,7 @@ export function normalizeExpenseImportRows(input) {
     return {
       row: Number(r.row) || i + 2,
       include: r.include !== false && r.include !== 0 && r.include !== '0',
-      date: isoDate(r.date),
+      date: parseExpenseImportDate(r.date),
       amountNgn: intMoney(r.amountNgn ?? r.amount),
       category,
       categoryRaw: catRaw,
@@ -339,7 +377,10 @@ function validateImportRow(db, row, actor, opts = {}) {
 
   if (!row.date) {
     missingFields.push('date');
-    errors.push('Update date in the preview (YYYY-MM-DD).');
+    errors.push('Set the expense date in the preview (YYYY-MM-DD). It is never filled with today automatically.');
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
+    missingFields.push('date');
+    errors.push('Date must be YYYY-MM-DD (example: 2026-07-15 for July).');
   }
   if (!(row.amountNgn > 0)) {
     missingFields.push('amount');
@@ -504,12 +545,20 @@ export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRAN
   const failed = [];
 
   for (const row of toPost) {
+    const expenseDate = parseExpenseImportDate(row.date);
+    if (!expenseDate) {
+      failed.push({
+        row: row.row,
+        error: 'Expense date is required (YYYY-MM-DD). Import never auto-fills today’s date.',
+      });
+      continue;
+    }
     const r = insertExpenseEntry(
       db,
       {
         category: row.category,
         amountNgn: row.amountNgn,
-        date: row.date,
+        date: expenseDate,
         reference: row.reference || `IMPORT-${row.row}`,
         expenseType: row.description || row.category,
         paymentMethod: row.paymentMethod || 'Import',
@@ -525,7 +574,7 @@ export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRAN
       created.push({
         row: row.row,
         expenseID: r.expenseID,
-        date: row.date,
+        date: expenseDate,
         amountNgn: row.amountNgn,
         category: row.category,
         reference: row.reference || '',

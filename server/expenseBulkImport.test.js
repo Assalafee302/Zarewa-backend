@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeExpenseImportRows } from './expenseBulkImport.js';
+import { normalizeExpenseImportRows, parseExpenseImportDate } from './expenseBulkImport.js';
 
-describe('expenseBulkImport normalize', () => {
+describe('expenseBulkImport dates', () => {
+  it('never defaults blank dates to today', () => {
+    expect(parseExpenseImportDate('')).toBe('');
+    expect(parseExpenseImportDate(null)).toBe('');
+    expect(parseExpenseImportDate(undefined)).toBe('');
+  });
+
+  it('keeps explicit calendar dates stable', () => {
+    expect(parseExpenseImportDate('2026-07-15')).toBe('2026-07-15');
+    expect(parseExpenseImportDate('15/07/2026')).toBe('2026-07-15');
+    expect(parseExpenseImportDate('15-07-2026')).toBe('2026-07-15');
+  });
+
   it('strips sample and legacy expense ids so they do not block re-import', () => {
     const rows = normalizeExpenseImportRows([
       {
@@ -12,7 +24,7 @@ describe('expenseBulkImport normalize', () => {
         expenseID: 'EXP-IMPORT-SAMPLE-1',
       },
       {
-        date: '2026-07-02',
+        date: '15/07/2026',
         amountNgn: 2000,
         category: 'Maintenance',
         treasuryAccountId: 2,
@@ -28,6 +40,7 @@ describe('expenseBulkImport normalize', () => {
     ]);
     expect(rows[0].expenseID).toBe('');
     expect(rows[1].expenseID).toBe('');
+    expect(rows[1].date).toBe('2026-07-15');
     expect(rows[2].expenseID).toBe('EXP-KEEP-ME');
   });
 });

@@ -67,4 +67,23 @@ describe('refundCategoryDerivedCaps', () => {
     expect(caps['Order cancellation']).toBe(1_000_000);
     expect(caps.Other).toBe(1_000_000);
   });
+
+  it('enforces Accessory shortfall derived cap at ₦0 when preview has no suggestion', () => {
+    const check = validateRefundCategorySuggestedCapsNgn({
+      calculationLines: [{ category: 'Accessory shortfall', amountNgn: 50_000, include: true }],
+      categorySuggestedMaxNgn: {},
+      derivedCategoryMaxNgn: {},
+    });
+    expect(check.ok).toBe(false);
+    expect(check.category).toBe('Accessory shortfall');
+  });
+
+  it('allows Accessory shortfall up to preview-suggested net delta only', () => {
+    const check = validateRefundCategorySuggestedCapsNgn({
+      calculationLines: [{ category: 'Accessory shortfall', amountNgn: 12_000, include: true }],
+      categorySuggestedMaxNgn: { 'Accessory shortfall': 12_000 },
+      derivedCategoryMaxNgn: {},
+    });
+    expect(check.ok).toBe(true);
+  });
 });

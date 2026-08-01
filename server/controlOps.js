@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { accessoryFulfillmentSummaryForQuotation } from './accessoryFulfillment.js';
+import { accessoryFulfillmentSummaryForQuotation, normAccessoryNameKey } from './accessoryFulfillment.js';
 import { actorId, actorName, userHasPermission } from './auth.js';
 import { assertEntityBranchForWorkspaceWrite } from './branchScope.js';
 import { DEFAULT_BRANCH_ID, getBranch } from './branches.js';
@@ -133,6 +133,8 @@ import {
   suggestRefundCategoriesFromProduction,
   validateRefundProductionAlignmentAtSubmit,
 } from './refundProductionAlignment.js';
+import { loadActiveRefundShortfallCaps } from './refundPaidProductionEditGate.js';
+import { QUANTITY_NETTED_REFUND_CATEGORIES } from '../shared/lib/refundPaidProductionCaps.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -3433,15 +3435,59 @@ export function previewRefundRequest(db, payload) {
     : [];
 
   const refundedCategories = new Set();
-  existingRefunds.forEach(r => {
+  const openRefundedCategories = new Set();
+  existingRefunds.forEach((r) => {
+    const status = String(r.status || '')
+      .trim()
+      .toLowerCase();
+    const isOpen = status === 'pending' || status === 'approved';
     try {
       const cats = JSON.parse(r.reason_category || '[]');
-      if (Array.isArray(cats)) cats.forEach(c => refundedCategories.add(c));
-      else refundedCategories.add(r.reason_category);
+      if (Array.isArray(cats)) {
+        cats.forEach((c) => {
+          refundedCategories.add(c);
+          if (isOpen) openRefundedCategories.add(c);
+        });
+      } else {
+        refundedCategories.add(r.reason_category);
+        if (isOpen) openRefundedCategories.add(r.reason_category);
+      }
     } catch {
       refundedCategories.add(r.reason_category);
+      if (isOpen) openRefundedCategories.add(r.reason_category);
     }
   });
+
+  /** Paid accessory/stone shortfalls may reopen only for unpaid qty delta; other categories stay hard-blocked once Paid. */
+  const hardBlockedCategories = new Set();
+  for (const cat of refundedCategories) {
+    if (QUANTITY_NETTED_REFUND_CATEGORIES.has(cat)) {
+      if (openRefundedCategories.has(cat)) hardBlockedCategories.add(cat);
+    } else {
+      hardBlockedCategories.add(cat);
+    }
+  }
+
+  let paidRefundsOnQuotationNgn = 0;
+  let priorRefundsOnQuotationNgn = 0;
+  const priorRefundsOnQuotation = existingRefunds.map((r) => {
+    const amountNgn = roundMoney(r.amount_ngn);
+    const paidAmountNgn = roundMoney(r.paid_amount_ngn);
+    const status = String(r.status || '').trim();
+    priorRefundsOnQuotationNgn += amountNgn;
+    if (status.toLowerCase() === 'paid' || paidAmountNgn > 0) {
+      paidRefundsOnQuotationNgn += paidAmountNgn > 0 ? paidAmountNgn : amountNgn;
+    }
+    return {
+      refundId: r.refund_id,
+      status,
+      amountNgn,
+      paidAmountNgn,
+      reasonCategory: r.reason_category,
+    };
+  });
+  paidRefundsOnQuotationNgn = roundMoney(paidRefundsOnQuotationNgn);
+  priorRefundsOnQuotationNgn = roundMoney(priorRefundsOnQuotationNgn);
 
   const cashBreakdown = quotationRef ? quotationPaymentCashBreakdown(db, quotationRef) : null;
   const paidOnQuoteNgn =
@@ -3553,7 +3599,7 @@ export function previewRefundRequest(db, payload) {
 
   // 1. Overpayment Auto-detection (RECEIPT total + OVERPAY_ADVANCE from split-till posting)
   const overpaymentExcessNgn = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-  if (!refundedCategories.has('Overpayment') && overpaymentExcessNgn > 0) {
+  if (!hardBlockedCategories.has('Overpayment') && overpaymentExcessNgn > 0) {
     suggestedLines.push({
       label: `Overpayment on ${quotationRef || 'quotation'}`,
       amountNgn: overpaymentExcessNgn,
@@ -3565,7 +3611,7 @@ export function previewRefundRequest(db, payload) {
   if (
     includeCustomerCommission &&
     quotationRef &&
-    !refundedCategories.has('Customer commission') &&
+    !hardBlockedCategories.has('Customer commission') &&
     cashInNgn > 0 &&
     quote?.lines_json
   ) {
@@ -3590,7 +3636,7 @@ export function previewRefundRequest(db, payload) {
     const unproducedPotential = Math.max(0, quotedMeters - producedMetersForUnproduced);
     if (
       unproducedPotential > 0 &&
-      !refundedCategories.has('Unproduced meterage') &&
+      !hardBlockedCategories.has('Unproduced meterage') &&
       !materialDelivered
     ) {
       suggestedLines.push({
@@ -3606,7 +3652,7 @@ export function previewRefundRequest(db, payload) {
   if (
     quotedTrimFinishedM > 0.001 &&
     trimPricePerMeter > 0 &&
-    !refundedCategories.has('Unproduced meterage') &&
+    !hardBlockedCategories.has('Unproduced meterage') &&
     !materialDelivered
   ) {
     const poolQuoted = stoneMeterQuoteForUnproduced
@@ -3654,8 +3700,8 @@ export function previewRefundRequest(db, payload) {
     const isInstall = matchesInstallationService(nl);
 
     if (isTransport && isInstall) {
-      const needTransport = !refundedCategories.has('Transport issue');
-      const needInstall = !refundedCategories.has('Installation issue');
+      const needTransport = !hardBlockedCategories.has('Transport issue');
+      const needInstall = !hardBlockedCategories.has('Installation issue');
       const appliesToCategories = [];
       if (needTransport) appliesToCategories.push('Transport issue');
       if (needInstall) appliesToCategories.push('Installation issue');
@@ -3672,7 +3718,7 @@ export function previewRefundRequest(db, payload) {
       }
       continue;
     }
-    if (isTransport && !refundedCategories.has('Transport issue')) {
+    if (isTransport && !hardBlockedCategories.has('Transport issue')) {
       suggestedLines.push({
         label: `Unclaimed transport: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
         amountNgn: amt,
@@ -3680,7 +3726,7 @@ export function previewRefundRequest(db, payload) {
       });
       continue;
     }
-    if (isInstall && !refundedCategories.has('Installation issue')) {
+    if (isInstall && !hardBlockedCategories.has('Installation issue')) {
       suggestedLines.push({
         label: `Unclaimed installation: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
         amountNgn: amt,
@@ -3691,7 +3737,7 @@ export function previewRefundRequest(db, payload) {
     miscServiceLines.push({ name: String(s?.name ?? 'Service').trim() || 'Service', amt });
   }
 
-  if (miscServiceLines.length && !refundedCategories.has('Additional services')) {
+  if (miscServiceLines.length && !hardBlockedCategories.has('Additional services')) {
     const totalMisc = roundMoney(miscServiceLines.reduce((sum, x) => sum + x.amt, 0));
     if (totalMisc > 0) {
       const names = miscServiceLines.map((x) => x.name);
@@ -3703,38 +3749,54 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
-  if (quotationRef && !refundedCategories.has('Accessory shortfall')) {
+  if (quotationRef && !hardBlockedCategories.has('Accessory shortfall')) {
     const accSummary = accessoryFulfillmentSummaryForQuotation(db, quotationRef);
+    const shortfallCaps = loadActiveRefundShortfallCaps(db, quotationRef);
     for (const a of accSummary) {
       const sf = Math.max(0, Number(a.shortfall) || 0);
-      if (sf <= 0) continue;
+      const alreadyQty =
+        shortfallCaps.accessoryShortfallByKey.get(normAccessoryNameKey(a.name)) || 0;
+      const netSf = Math.max(0, sf - alreadyQty);
+      if (netSf <= 0) continue;
       const up = Math.round(Number(a.unitPriceNgn) || 0);
-      const amountNgn = roundMoney(sf * up);
+      const amountNgn = roundMoney(netSf * up);
       if (amountNgn <= 0) continue;
+      const paidNote = alreadyQty > 0 ? ` — ${alreadyQty} already refunded` : '';
       suggestedLines.push({
-        label: `Accessory shortfall: ${a.name} (${sf} × ₦${up.toLocaleString('en-NG')})`,
+        label: `Accessory shortfall: ${a.name} (${netSf} × ₦${up.toLocaleString('en-NG')})${paidNote}`,
         amountNgn,
         category: 'Accessory shortfall',
       });
     }
   }
 
-  if (quotationRef && quote?.lines_json && !refundedCategories.has('Stone flatsheet shortfall')) {
+  if (quotationRef && quote?.lines_json && !hardBlockedCategories.has('Stone flatsheet shortfall')) {
+    const shortfallCaps = loadActiveRefundShortfallCaps(db, quotationRef);
     for (const s of stoneFlatsheetShortfallRefundSuggestions(db, quotationRef, quote.lines_json)) {
       const m2 = Number(s.shortfallM2) || 0;
-      const pcs = Number(s.shortfallPcs) || 0;
-      const amountNgn = roundMoney(s.amountNgn);
+      const key = `${normAccessoryNameKey(s.name)}|${s.lengthM}`;
+      const alreadyM2 = shortfallCaps.stoneShortfallM2ByKey.get(key) || 0;
+      const netM2 = Math.max(0, m2 - alreadyM2);
+      if (netM2 <= 0) continue;
+      const unitR = Math.round(Number(s.unitPriceNgn) || 0);
+      const amountNgn =
+        unitR > 0
+          ? roundMoney(netM2 * unitR)
+          : roundMoney((Number(s.amountNgn) || 0) * (m2 > 0 ? netM2 / m2 : 0));
       if (amountNgn <= 0) continue;
+      const pcs = Number(s.shortfallPcs) || 0;
+      const netPcs = m2 > 0 ? Math.round((pcs * (netM2 / m2)) * 100) / 100 : pcs;
       const nm = String(s.name || 'Stone flatsheet').trim();
+      const paidNote = alreadyM2 > 0 ? ` — ${alreadyM2.toFixed(2)} m² already refunded` : '';
       suggestedLines.push({
-        label: `Stone flatsheet shortfall: ${nm} (${Number(pcs).toFixed(2)} × ${s.lengthM} m) — ${m2.toFixed(2)} m²`,
+        label: `Stone flatsheet shortfall: ${nm} (${Number(netPcs).toFixed(2)} × ${s.lengthM} m) — ${netM2.toFixed(2)} m²${paidNote}`,
         amountNgn,
         category: 'Stone flatsheet shortfall',
       });
     }
   }
 
-  if (quote && quotationRef && !refundedCategories.has('Calculation error')) {
+  if (quote && quotationRef && !hardBlockedCategories.has('Calculation error')) {
     const lineSum = sumQuotationLinesJsonFlexible(quote.lines_json);
     if (lineSum > 0) {
       const diff = roundMoney(quoteTotalNgn - lineSum);
@@ -3755,7 +3817,7 @@ export function previewRefundRequest(db, payload) {
    * Does not use job product name or FG card gauge for the comparison trigger.
    */
   const substitutionPerMeterBreakdown = [];
-  if (quotationRef && !refundedCategories.has('Substitution Difference') && productionJobs.length) {
+  if (quotationRef && !hardBlockedCategories.has('Substitution Difference') && productionJobs.length) {
     let linesPayloadForSub = parseJsonValue(quote?.lines_json);
     if (typeof linesPayloadForSub !== 'object' || !linesPayloadForSub) linesPayloadForSub = {};
     const stoneMeterQuoteForSub = isStoneMeterQuotationLinesJson(db, linesPayloadForSub);
@@ -4017,7 +4079,7 @@ export function previewRefundRequest(db, payload) {
 
   const eligibleRefundCategories = [];
   for (const cat of REFUND_REASON_CATEGORY_VALUES) {
-    if (refundedCategories.has(cat)) continue;
+    if (hardBlockedCategories.has(cat)) continue;
     if (blockedRefundCategories.includes(cat)) continue;
     if (cat === 'Order cancellation') {
       if (hasCancelledProductionJob) eligibleRefundCategories.push(cat);
@@ -4097,7 +4159,7 @@ export function previewRefundRequest(db, payload) {
       linesJsonPreview: lj.length > 6000 ? `${lj.slice(0, 6000)}…` : lj,
       materialDelivered,
       blockedRefundCategoriesSnapshot: [...blockedRefundCategories],
-      substitutionCategoryAlreadyInRefund: refundedCategories.has('Substitution Difference'),
+      substitutionCategoryAlreadyInRefund: hardBlockedCategories.has('Substitution Difference'),
       receipts: (() => {
         const ledgerRows = db.prepare(`SELECT * FROM ledger_entries WHERE quotation_ref = ?`).all(quotationRef);
         const companion = companionOverpayNgnByReceiptId(
@@ -4239,7 +4301,7 @@ export function previewRefundRequest(db, payload) {
   const orderCancelDerivedCap = roundMoney(effectiveCategorySuggestedMaxNgn['Order cancellation'] || 0);
   if (
     hasCancelledProductionJob &&
-    !refundedCategories.has('Order cancellation') &&
+    !hardBlockedCategories.has('Order cancellation') &&
     orderCancelDerivedCap > 0 &&
     !finalSuggestedLines.some(
       (l) => String(l.category || '').trim() === 'Order cancellation' && roundMoney(l.amountNgn) > 0
@@ -4286,6 +4348,9 @@ export function previewRefundRequest(db, payload) {
       derivedCategoryMaxNgn,
       warnings,
       alreadyRefundedCategories: Array.from(refundedCategories),
+      paidRefundsOnQuotationNgn,
+      priorRefundsOnQuotationNgn,
+      priorRefundsOnQuotation,
       blockedRefundCategories,
       eligibleRefundCategories,
       productionSuggestedCategories,

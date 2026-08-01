@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   aggregatePaidShortfallsFromRefundLines,
+  aggregateActiveRefundShortfallsFromRefunds,
   maxProducedMetresAfterPaidUnproducedRefund,
   parseAccessoryShortfallLabel,
   parseStoneFlatsheetShortfallLabel,
@@ -50,5 +51,40 @@ describe('refundPaidProductionCaps', () => {
         'Stone flatsheet shortfall: Ridge Cap (1.00 × 2 m) — 2.00 m²'
       )
     ).toEqual({ name: 'Ridge Cap', lengthM: 2, shortfallM2: 2, shortfallPcs: 1 });
+  });
+
+  it('aggregates shortfalls from active refunds including unpaid Pending rows', () => {
+    const caps = aggregateActiveRefundShortfallsFromRefunds([
+      {
+        status: 'Paid',
+        calculation_lines_json: JSON.stringify([
+          {
+            category: 'Accessory shortfall',
+            label: 'Accessory shortfall: Ridge cap (5 × ₦1,200)',
+            include: true,
+          },
+        ]),
+      },
+      {
+        status: 'Pending',
+        calculation_lines_json: JSON.stringify([
+          {
+            category: 'Accessory shortfall',
+            label: 'Accessory shortfall: Ridge cap (2 × ₦1,200) — 5 already refunded',
+            include: true,
+          },
+        ]),
+      },
+    ]);
+    expect(caps.accessoryShortfallByKey.get('ridge cap')).toBe(7);
+  });
+
+  it('parses accessory label with already-refunded suffix', () => {
+    expect(
+      parseAccessoryShortfallLabel('Accessory shortfall: Drive screw (3 × ₦500) — 2 already refunded')
+    ).toEqual({
+      name: 'Drive screw',
+      qty: 3,
+    });
   });
 });

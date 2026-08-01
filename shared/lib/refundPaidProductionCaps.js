@@ -120,6 +120,29 @@ export function aggregatePaidShortfallsFromRefunds(refundRows) {
   return aggregatePaidShortfallsFromRefundLines(allLines);
 }
 
+/**
+ * Shortfalls encoded on any active (non-rejected / non-cancelled) refund calculation lines.
+ * Used so a second accessory/stone refund can only claim the unpaid delta after a cashed refund.
+ * @param {Array<{ calculation_lines_json?: string; status?: string }>} refundRows
+ */
+export function aggregateActiveRefundShortfallsFromRefunds(refundRows) {
+  const allLines = [];
+  for (const row of refundRows || []) {
+    const st = String(row?.status || '')
+      .trim()
+      .toLowerCase();
+    if (st === 'rejected' || st === 'cancelled') continue;
+    allLines.push(...parseJsonLines(row?.calculation_lines_json));
+  }
+  return aggregatePaidShortfallsFromRefundLines(allLines);
+}
+
+/** Categories where a Paid refund does not hard-block a new request — only qty/money delta is allowed. */
+export const QUANTITY_NETTED_REFUND_CATEGORIES = new Set([
+  'Accessory shortfall',
+  'Stone flatsheet shortfall',
+]);
+
 /** Max roofing metres still producible after paid unproduced refunds. */
 export function maxProducedMetresAfterPaidUnproducedRefund(quotedMetres, unproducedMetresRefunded) {
   const quoted = Number(quotedMetres) || 0;

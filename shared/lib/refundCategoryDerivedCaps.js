@@ -8,7 +8,13 @@ function roundCapMoney(value) {
 }
 
 /** Categories that must always have a derived cap even when preview suggests ₦0. */
-export const REFUND_DERIVED_CAP_CATEGORIES = new Set(['Order cancellation', 'Other']);
+export const REFUND_DERIVED_CAP_CATEGORIES = new Set([
+  'Order cancellation',
+  'Other',
+  /** Prevent re-claiming full accessory/stone shortfall after a cashed refund (cap 0 when no delta). */
+  'Accessory shortfall',
+  'Stone flatsheet shortfall',
+]);
 
 /**
  * @param {{

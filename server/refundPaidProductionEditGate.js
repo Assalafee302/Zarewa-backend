@@ -1,4 +1,5 @@
 import {
+  aggregateActiveRefundShortfallsFromRefunds,
   aggregatePaidShortfallsFromRefunds,
   maxProducedMetresAfterPaidUnproducedRefund,
 } from '../shared/lib/refundPaidProductionCaps.js';
@@ -38,6 +39,27 @@ export function loadPaidRefundProductionCaps(db, quotationRef) {
     )
     .all(ref);
   return aggregatePaidShortfallsFromRefunds(rows);
+}
+
+/** Caps from all open + paid refunds (excludes rejected/cancelled) for refund preview delta netting. */
+export function loadActiveRefundShortfallCaps(db, quotationRef) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) {
+    return {
+      unproducedMetres: 0,
+      accessoryShortfallByKey: new Map(),
+      stoneShortfallM2ByKey: new Map(),
+    };
+  }
+  const rows = db
+    .prepare(
+      `SELECT calculation_lines_json, status
+       FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+    )
+    .all(ref);
+  return aggregateActiveRefundShortfallsFromRefunds(rows);
 }
 
 export function jobEffectiveOutputMetres(db, jobId) {

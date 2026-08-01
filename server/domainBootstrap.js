@@ -78,7 +78,7 @@ import {
   listMaintenanceWorkOrders,
   listMaterialRequests,
 } from './workItems.js';
-import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts, salesCustomersListOpts } from './listQueryOpts.js';
 
 const MAX_PROD_ROWS = Math.min(
   5000,
@@ -136,7 +136,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
   return {
     ok: true,
     domain: 'sales',
-    customers: salesOk ? listCustomers(db, branchScope) : [],
+    customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
     quotations: salesOk ? listQuotations(db, branchScope) : [],
     receipts: salesOk
       ? enrichSalesReceiptRowsWithCashFromLedger(listSalesReceipts(db, branchScope), ledgerRows)

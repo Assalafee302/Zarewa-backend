@@ -50,6 +50,21 @@ export function financeHistoryListOpts() {
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
+/**
+ * List opts for Sales customer directory (quotations / receipts pickers).
+ * Default: unlimited so QuotationModal does not hide customers past the generic 500/600 caps
+ * (lists are ordered by name, so later alphabet names disappear).
+ * Cap with env `ZAREWA_SALES_CUSTOMERS_LIMIT` (positive integer) when needed.
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function salesCustomersListOpts() {
+  const raw = process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
+  if (raw == null || String(raw).trim() === '') return { unlimited: true };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+}
+
 /** @param {number} limit */
 export function sqlLimitClause(limit) {
   return limit > 0 ? ' LIMIT ?' : '';

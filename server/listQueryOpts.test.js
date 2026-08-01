@@ -6,12 +6,14 @@ import {
   DEFAULT_LIST_LIMIT,
   productionHistoryListOpts,
   financeHistoryListOpts,
+  salesCustomersListOpts,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
   afterEach(() => {
     delete process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
     delete process.env.ZAREWA_FINANCE_HISTORY_LIMIT;
+    delete process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
   });
 
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
@@ -64,5 +66,16 @@ describe('listQueryOpts', () => {
     expect(financeHistoryListOpts()).toEqual({ limit: 8000 });
     process.env.ZAREWA_FINANCE_HISTORY_LIMIT = '0';
     expect(financeHistoryListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('salesCustomersListOpts defaults to unlimited', () => {
+    expect(salesCustomersListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('salesCustomersListOpts honors ZAREWA_SALES_CUSTOMERS_LIMIT', () => {
+    process.env.ZAREWA_SALES_CUSTOMERS_LIMIT = '1200';
+    expect(salesCustomersListOpts()).toEqual({ limit: 1200 });
+    process.env.ZAREWA_SALES_CUSTOMERS_LIMIT = '0';
+    expect(salesCustomersListOpts()).toEqual({ unlimited: true });
   });
 });

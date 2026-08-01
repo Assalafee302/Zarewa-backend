@@ -94,7 +94,7 @@ import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
-import { financeHistoryListOpts, productionHistoryListOpts, rowListOpts } from './listQueryOpts.js';
+import { financeHistoryListOpts, productionHistoryListOpts, rowListOpts, salesCustomersListOpts } from './listQueryOpts.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -270,6 +270,8 @@ export function buildBootstrap(db, opts = {}) {
     opts.listLimits?.treasuryMovements != null
       ? listOpts('treasuryMovements')
       : financeHistoryListOpts();
+  const customersHistoryOpts =
+    opts.listLimits?.customers != null ? listOpts('customers') : salesCustomersListOpts();
   const productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
@@ -288,7 +290,7 @@ export function buildBootstrap(db, opts = {}) {
     permissions: [...(session.permissions || [])],
     workspaceBranches: listBranches(db),
     branchScope,
-    customers: salesOk ? listCustomers(db, branchScope, listOpts('customers')) : [],
+    customers: salesOk ? listCustomers(db, branchScope, customersHistoryOpts) : [],
     quotations: salesOk
       ? listQuotations(db, branchScope, rowListOpts(opts, 'quotations'))
       : prodRollupOk
@@ -435,7 +437,9 @@ export function buildBootstrap(db, opts = {}) {
       : null,
     bootstrapMeta: {
       listLimitsApplied: {
-        customers: listLimit('customers'),
+        customers: customersHistoryOpts.unlimited
+          ? 0
+          : Number(customersHistoryOpts.limit) || listLimit('customers'),
         deliveries: listLimit('deliveries'),
         refunds: listLimit('refunds'),
         receipts: listLimit('receipts'),
@@ -457,7 +461,8 @@ export function buildBootstrap(db, opts = {}) {
         ledgerEntries: ledgerRowLimit,
       },
       truncated: {
-        customers: salesOk,
+        /** Only truncated when an explicit positive customers cap is configured. */
+        customers: salesOk && !customersHistoryOpts.unlimited,
         deliveries: opsOk,
         refunds: refundsOk,
         receipts: salesOk,
@@ -586,7 +591,8 @@ export function buildDashboardBootstrap(db, opts = {}) {
   const partial = {
     ...full,
     // Heavy arrays trimmed for dashboard charts/KPIs (SQL limits applied above where supported).
-    customers: take(full.customers, limit),
+    /** Full customer directory — trimming hid later alphabet names in QuotationModal. */
+    customers: full.customers,
     quotations: full.quotations,
     receipts: take(full.receipts, limit),
     /** Full production history — trimming hides older queue / closed records in Operations. */

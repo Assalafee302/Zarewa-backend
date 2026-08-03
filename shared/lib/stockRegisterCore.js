@@ -310,9 +310,19 @@ function buildCoilLine(lot, ctx) {
     return null;
   }
 
-  const closingKg = finishedInPeriod ? null : closingCalc > 0 ? closingCalc : liveKgWhole > 0 ? liveKgWhole : 0;
+  // Month-end balance: open + received − used. Finished coils still show this (usually 0) so the Close
+  // column reconciles; they stay out of physical count (closingBlank) and active gauge valuation paths.
+  const closingKg = finishedInPeriod
+    ? Math.max(0, closingCalc)
+    : closingCalc > 0
+      ? closingCalc
+      : liveKgWhole > 0
+        ? liveKgWhole
+        : 0;
   const countVarianceKg =
-    closingKg != null && liveKgWhole > 0 && closingCalc !== liveKgWhole ? roundKg(liveKgWhole - closingCalc) : null;
+    !finishedInPeriod && liveKgWhole > 0 && closingCalc !== liveKgWhole
+      ? roundKg(liveKgWhole - closingCalc)
+      : null;
 
   const row = {
     colourAbbrev: colourAbbrevForRegister(ctx.masterData, lot.colour),
@@ -515,7 +525,8 @@ function coilSectionSummary(groups, materialFamily, spoolKg, fallbackUnitCostNgn
   const fallback = Number(fallbackUnitCostNgnPerKg) || 0;
   for (const g of groups || []) {
     for (const r of g.rows || []) {
-      if (r.closingKg == null) continue;
+      // Finished coils report Close for reconciliation only — not closing stock valuation.
+      if (r.finishedInPeriod || r.closingBlank || r.closingKg == null) continue;
       const gross = Number(r.closingKg) || 0;
       grossClosingKg += gross;
       const net = netKgFromGrossClosing(gross, materialFamily, r.stockForm, spoolKg);
@@ -711,7 +722,7 @@ export function buildNetKgSummaryByGauge(register) {
       let gross = 0;
       let net = 0;
       for (const r of g.rows || []) {
-        if (r.closingKg == null) continue;
+        if (r.finishedInPeriod || r.closingBlank || r.closingKg == null) continue;
         const gk = Number(r.closingKg) || 0;
         gross += gk;
         net += netKgFromGrossClosing(gk, materialFamily, r.stockForm);

@@ -83,8 +83,49 @@ describe('stockRegisterCore', () => {
 
     const row2222 = aluz.rows.find((r) => r.coilNo === '2222');
     expect(row2222.receivedKg).toBeGreaterThan(0);
+    expect(row2222.usedKg).toBe(1000);
     expect(row2222.finishedInPeriod).toBe(true);
-    expect(row2222.closingKg).toBeNull();
+    expect(row2222.closingBlank).toBe(true);
+    // Consumed coils still expose month-end balance (open + rcvd − used) for Close reconciliation.
+    expect(row2222.closingKg).toBe(0);
+  });
+
+  it('shows residual closing kg when a finished coil had opening+used but unused balance on books', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [{ coilNo: '3333', currentWeightKg: 800 }],
+      coilLots: [
+        {
+          coilNo: '3333',
+          colour: 'NB',
+          gaugeLabel: '0.25mm',
+          materialTypeName: 'Aluminium',
+          currentWeightKg: 0,
+          currentStatus: 'Consumed',
+          stockForm: 'coil',
+          receivedAtISO: '2026-01-01',
+        },
+      ],
+      productionJobs: [
+        {
+          jobID: 'PJ-2',
+          status: 'Completed',
+          completedAtISO: '2026-04-10T10:00:00',
+        },
+      ],
+      productionJobCoils: [{ jobID: 'PJ-2', coilNo: '3333', consumedWeightKg: 500 }],
+      coilControlEvents: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    const alu = pack.coilSections.aluminium.groups.find((g) => g.gaugeLabel === '0.25mm');
+    const row = alu.rows.find((r) => r.coilNo === '3333');
+    expect(row.finishedInPeriod).toBe(true);
+    expect(row.openingKg).toBe(800);
+    expect(row.usedKg).toBe(500);
+    expect(row.closingKg).toBe(300);
   });
 
   it('excludes negative or zero in-transit qty when received exceeds loaded', () => {

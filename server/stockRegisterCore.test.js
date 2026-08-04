@@ -128,6 +128,100 @@ describe('stockRegisterCore', () => {
     expect(row.closingKg).toBe(300);
   });
 
+  it('does not put later-month usage into Used kg or wipe April Close when live is already zero', () => {
+    // Coil at April start 2000 kg. April used 500 → period-end 1500. May used remaining 1500 (live now 0).
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      // No prior capture — opening must walk live back using post-period usage.
+      coilLots: [
+        {
+          coilNo: '4444',
+          colour: 'NB',
+          gaugeLabel: '0.22mm',
+          materialTypeName: 'Aluzinc',
+          currentWeightKg: 0,
+          currentStatus: 'Consumed',
+          stockForm: 'coil',
+          receivedAtISO: '2026-01-15',
+        },
+      ],
+      productionJobs: [
+        {
+          jobID: 'PJ-APR',
+          status: 'Completed',
+          productionDateISO: '2026-04-12',
+          completedAtISO: '2026-04-12T10:00:00',
+        },
+        {
+          jobID: 'PJ-MAY',
+          status: 'Completed',
+          productionDateISO: '2026-05-08',
+          completedAtISO: '2026-05-08T10:00:00',
+        },
+      ],
+      productionJobCoils: [
+        { jobID: 'PJ-APR', coilNo: '4444', consumedWeightKg: 500 },
+        { jobID: 'PJ-MAY', coilNo: '4444', consumedWeightKg: 1500 },
+      ],
+      coilControlEvents: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    const aluz = pack.coilSections.aluzinc.groups.find((g) => g.gaugeLabel === '0.22mm');
+    const row = aluz.rows.find((r) => r.coilNo === '4444');
+    expect(row.openingKg).toBe(2000);
+    expect(row.usedKg).toBe(500);
+    expect(row.closingKg).toBe(1500);
+    expect(row.finishedInPeriod).toBe(false);
+  });
+
+  it('Used kg stays period-only when previous month capture exists and later months used the rest', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-KD',
+      periodEnd: '2026-04-30',
+      prevClosingSnapshots: [{ coilNo: '5555', currentWeightKg: 1200 }],
+      coilLots: [
+        {
+          coilNo: '5555',
+          colour: 'PRED',
+          gaugeLabel: '0.25mm',
+          materialTypeName: 'Aluminium',
+          currentWeightKg: 0,
+          currentStatus: 'Consumed',
+          stockForm: 'coil',
+          receivedAtISO: '2025-11-01',
+        },
+      ],
+      productionJobs: [
+        {
+          jobID: 'PJ-A',
+          status: 'Completed',
+          completedAtISO: '2026-04-20T10:00:00',
+        },
+        {
+          jobID: 'PJ-B',
+          status: 'Completed',
+          completedAtISO: '2026-05-02T10:00:00',
+        },
+      ],
+      productionJobCoils: [
+        { jobID: 'PJ-A', coilNo: '5555', consumedWeightKg: 400 },
+        { jobID: 'PJ-B', coilNo: '5555', consumedWeightKg: 800 },
+      ],
+      coilControlEvents: [],
+      products: [],
+      stockMovements: [],
+      inTransitLoads: [],
+    });
+    const alu = pack.coilSections.aluminium.groups.find((g) => g.gaugeLabel === '0.25mm');
+    const row = alu.rows.find((r) => r.coilNo === '5555');
+    expect(row.openingKg).toBe(1200);
+    expect(row.usedKg).toBe(400);
+    expect(row.closingKg).toBe(800);
+  });
+
   it('excludes negative or zero in-transit qty when received exceeds loaded', () => {
     const pack = buildStockRegisterPack({
       branchId: 'BR-KD',

@@ -95,11 +95,12 @@ function buildPackWithPeriodContext(db, branchId, periodEndIso, opts = {}) {
     periodEnd: end,
     coilLots: listCoilLots(db, bid),
     prevClosingSnapshots: prevSnapshots,
-    productionJobs: listProductionJobs(db, bid),
+    // Unlimited lists so period used/closing is not capped by default list rows (other months).
+    productionJobs: listProductionJobs(db, bid, { unlimited: true }),
     productionJobCoils: listProductionJobCoils(db, bid, { limit: 0 }),
-    coilControlEvents: listCoilControlEventsInPeriod(db, bid, start, end),
+    coilControlEvents: listCoilControlEventsFrom(db, bid, start),
     products: listProducts(db, bid),
-    stockMovements: listStockMovements(db, bid),
+    stockMovements: listStockMovements(db, bid, { unlimited: true }),
     inTransitLoads: listInTransitLoads(db, bid),
     masterData: listMasterData(db),
     stoneOpeningByProduct,
@@ -231,16 +232,19 @@ function openingMapsFromSnapshots(db, branchId, asAtIso) {
   return { stone, accessory };
 }
 
-function listCoilControlEventsInPeriod(db, branchId, start, end) {
+function listCoilControlEventsFrom(db, branchId, startIso) {
   if (!tableReady(db, 'coil_control_events')) return [];
   const bid = String(branchId || '').trim();
+  const start = String(startIso || '').slice(0, 10);
+  if (!start) return [];
+  // From period start onward — pack builders split in-period vs post-period used kg.
   const rows = db
     .prepare(
       `SELECT * FROM coil_control_events
-       WHERE branch_id = ? AND date_iso >= ? AND date_iso <= ?
+       WHERE branch_id = ? AND date_iso >= ?
        ORDER BY date_iso ASC, id ASC`
     )
-    .all(bid, start, end);
+    .all(bid, start);
   return rows.map((row) => ({
     coilNo: row.coil_no ?? '',
     kgCoilDelta: Number(row.kg_coil_delta) || 0,
@@ -809,7 +813,7 @@ export function getStockRegisterLineDetail(db, branchId, periodKey, lineKey) {
   let productionJobs = [];
   if (item.kind === 'coil' || item.kind === 'finished') {
     productionJobs = coilProductionJobsInPeriod(
-      listProductionJobs(db, bid),
+      listProductionJobs(db, bid, { unlimited: true }),
       listProductionJobCoils(db, bid, { limit: 0 }),
       item.row.coilNo,
       start,

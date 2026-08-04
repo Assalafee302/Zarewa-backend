@@ -148,9 +148,19 @@ function inPeriod(iso, start, end) {
   return (!start || d >= start) && (!end || d <= end);
 }
 
+/** Business date strictly after period end (post-period usage / receipts). */
+function afterPeriodEnd(iso, end) {
+  const d = toIsoDate(iso);
+  const e = toIsoDate(end);
+  if (!d || !e) return false;
+  return d > e;
+}
+
 /**
  * @param {object[]} productionJobs
  * @param {object[]} productionJobCoils
+ * @param {string} start inclusive YYYY-MM-DD
+ * @param {string} end inclusive YYYY-MM-DD
  */
 export function coilProductionUsedByCoil(productionJobs, productionJobCoils, start, end) {
   const completed = new Set();
@@ -158,6 +168,33 @@ export function coilProductionUsedByCoil(productionJobs, productionJobCoils, sta
     if (String(j.status || '').trim() !== 'Completed') continue;
     const d = jobBusinessDateISO(j);
     if (!inPeriod(d, start, end)) continue;
+    completed.add(String(j.jobID || j.job_id || '').trim());
+  }
+  const byCoil = new Map();
+  for (const c of productionJobCoils || []) {
+    const jid = String(c.jobID || c.job_id || '').trim();
+    if (!completed.has(jid)) continue;
+    const cn = String(c.coilNo || c.coil_no || '').trim();
+    if (!cn) continue;
+    const used = roundKg(c.consumedWeightKg ?? c.consumed_weight_kg);
+    if (used <= 0) continue;
+    byCoil.set(cn, roundKg((byCoil.get(cn) || 0) + used));
+  }
+  return byCoil;
+}
+
+/**
+ * Production kg used after the period end date (for reconstructing month-end from live stock).
+ * @param {object[]} productionJobs
+ * @param {object[]} productionJobCoils
+ * @param {string} periodEnd
+ */
+export function coilProductionUsedAfterPeriod(productionJobs, productionJobCoils, periodEnd) {
+  const completed = new Set();
+  for (const j of productionJobs || []) {
+    if (String(j.status || '').trim() !== 'Completed') continue;
+    const d = jobBusinessDateISO(j);
+    if (!afterPeriodEnd(d, periodEnd)) continue;
     completed.add(String(j.jobID || j.job_id || '').trim());
   }
   const byCoil = new Map();
@@ -245,6 +282,21 @@ export function coilControlUsedByCoil(coilControlEvents, start, end) {
   return byCoil;
 }
 
+/** Coil control outflows after period end (kg). */
+export function coilControlUsedAfterPeriod(coilControlEvents, periodEnd) {
+  const byCoil = new Map();
+  for (const e of coilControlEvents || []) {
+    const d = toIsoDate(e.dateISO || e.date_iso || e.createdAtISO || e.created_at_iso);
+    if (!afterPeriodEnd(d, periodEnd)) continue;
+    const cn = String(e.coilNo || e.coil_no || '').trim();
+    if (!cn) continue;
+    const delta = Number(e.kgCoilDelta ?? e.kg_coil_delta) || 0;
+    if (delta >= 0) continue;
+    byCoil.set(cn, roundKg((byCoil.get(cn) || 0) + Math.abs(delta)));
+  }
+  return byCoil;
+}
+
 function mergeUsedMaps(...maps) {
   const out = new Map();
   for (const m of maps) {
@@ -259,6 +311,18 @@ function coilReceivedInPeriod(coilLots, start, end) {
     const cn = String(lot.coilNo || '').trim();
     const rd = toIsoDate(lot.receivedAtISO);
     if (!cn || !inPeriod(rd, start, end)) continue;
+    const kg = Number(lot.weightKg ?? lot.qtyReceived) || 0;
+    byCoil.set(cn, roundKg(kg));
+  }
+  return byCoil;
+}
+
+function coilReceivedAfterPeriod(coilLots, periodEnd) {
+  const byCoil = new Map();
+  for (const lot of coilLots || []) {
+    const cn = String(lot.coilNo || '').trim();
+    const rd = toIsoDate(lot.receivedAtISO);
+    if (!cn || !afterPeriodEnd(rd, periodEnd)) continue;
     const kg = Number(lot.weightKg ?? lot.qtyReceived) || 0;
     byCoil.set(cn, roundKg(kg));
   }
@@ -293,35 +357,62 @@ function buildCoilLine(lot, ctx) {
   const openingKg = roundKg(ctx.openingByCoil.get(cn) || 0);
   const receivedKg = roundKg(ctx.receivedByCoil.get(cn) || 0);
   const usedKg = roundKg(ctx.usedByCoil.get(cn) || 0);
+  const usedAfterKg = roundKg(ctx.usedAfterByCoil?.get(cn) || 0);
   const usedM = roundM(ctx.usedMByCoil?.get(cn) || 0);
   const kgPerM = usedM > 0 && usedKg > 0 ? roundM(usedKg / usedM) : null;
   const stockForm = String(lot.stockForm || lot.stock_form || 'coil').toLowerCase() === 'roll' ? 'roll' : 'coil';
 
   const liveKg = Number(lot.currentWeightKg) || 0;
+  const liveKgWhole = roundKg(liveKg);
+  // Month-end Close is open + received − period used only. Reconstruct period-end on-hand from live when
+  // later months have already burned stock after this period (do not let that post-period use wipe Close).
+  const recAfterKg = roundKg(ctx.receivedAfterByCoil?.get(cn) || 0);
+  const periodEndFromLive = roundKg(Math.max(0, liveKgWhole + usedAfterKg - recAfterKg));
   const closingCalc = roundKg(openingKg + receivedKg - usedKg);
   const consumedNow = liveKg <= 0.0001 || String(lot.currentStatus || '').trim() === 'Consumed';
-  const finishedInPeriod = consumedNow && (usedKg > 0 || receivedKg > 0 || openingKg > 0);
-  const liveKgWhole = roundKg(liveKg);
+  // Period-end books cleared (open + rcvd − period used). Do not treat “consumed in a later month” as finished here.
+  const finishedInPeriod =
+    closingCalc <= 0.0001 && (usedKg > 0 || receivedKg > 0 || openingKg > 0);
+  // Coil fully off the yard now with residual books and no further use after this month.
+  const finishedResidual =
+    !finishedInPeriod &&
+    consumedNow &&
+    closingCalc > 0.0001 &&
+    (usedKg > 0 || receivedKg > 0 || openingKg > 0) &&
+    usedAfterKg <= 0.0001;
 
-  if (!finishedInPeriod && openingKg <= 0 && receivedKg <= 0 && usedKg <= 0 && liveKg <= 0.0001) {
+  if (
+    !finishedInPeriod &&
+    !finishedResidual &&
+    openingKg <= 0 &&
+    receivedKg <= 0 &&
+    usedKg <= 0 &&
+    periodEndFromLive <= 0.0001 &&
+    liveKg <= 0.0001
+  ) {
     return null;
   }
-  if (consumedNow && !finishedInPeriod && openingKg <= 0 && receivedKg <= 0 && usedKg <= 0) {
+  if (
+    consumedNow &&
+    !finishedInPeriod &&
+    !finishedResidual &&
+    openingKg <= 0 &&
+    receivedKg <= 0 &&
+    usedKg <= 0 &&
+    periodEndFromLive <= 0.0001
+  ) {
     return null;
   }
 
-  // Month-end balance: open + received − used. Finished coils still show this (usually 0) so the Close
-  // column reconciles; they stay out of physical count (closingBlank) and active gauge valuation paths.
-  const closingKg = finishedInPeriod
-    ? Math.max(0, closingCalc)
-    : closingCalc > 0
-      ? closingCalc
-      : liveKgWhole > 0
-        ? liveKgWhole
-        : 0;
+  // Prefer books for the month. Never replace a positive period close with live when later months already used stock.
+  let closingKg = Math.max(0, closingCalc);
+  if (closingKg <= 0 && periodEndFromLive > 0 && !finishedInPeriod) {
+    closingKg = periodEndFromLive;
+  }
+  const isFinishedLine = finishedInPeriod || finishedResidual;
   const countVarianceKg =
-    !finishedInPeriod && liveKgWhole > 0 && closingCalc !== liveKgWhole
-      ? roundKg(liveKgWhole - closingCalc)
+    !isFinishedLine && liveKgWhole > 0 && closingKg !== liveKgWhole
+      ? roundKg(liveKgWhole - closingKg)
       : null;
 
   const row = {
@@ -336,8 +427,8 @@ function buildCoilLine(lot, ctx) {
     usedM,
     kgPerM,
     closingKg,
-    closingBlank: finishedInPeriod,
-    finishedInPeriod,
+    closingBlank: isFinishedLine,
+    finishedInPeriod: isFinishedLine,
     stockForm,
     remark: '',
     unitCostNgnPerKg: lot.unitCostNgnPerKg != null ? Math.round(Number(lot.unitCostNgnPerKg)) : null,
@@ -888,9 +979,14 @@ export function buildStockRegisterPack(opts = {}) {
 
   const openingByCoil = openingFromPrevSnapshot(opts.prevClosingSnapshots);
   const receivedByCoil = coilReceivedInPeriod(opts.coilLots, start, end);
+  const receivedAfterByCoil = coilReceivedAfterPeriod(opts.coilLots, end);
   const usedByCoil = mergeUsedMaps(
     coilProductionUsedByCoil(opts.productionJobs, opts.productionJobCoils, start, end),
     coilControlUsedByCoil(opts.coilControlEvents, start, end)
+  );
+  const usedAfterByCoil = mergeUsedMaps(
+    coilProductionUsedAfterPeriod(opts.productionJobs, opts.productionJobCoils, end),
+    coilControlUsedAfterPeriod(opts.coilControlEvents, end)
   );
   const usedMByCoil = coilProductionUsedMByCoil(opts.productionJobs, opts.productionJobCoils, start, end);
 
@@ -901,15 +997,20 @@ export function buildStockRegisterPack(opts = {}) {
     if (rd && rd < start) {
       const live = Number(lot.currentWeightKg) || 0;
       const rec = receivedByCoil.get(cn) || 0;
+      const recAfter = receivedAfterByCoil.get(cn) || 0;
       const used = usedByCoil.get(cn) || 0;
-      openingByCoil.set(cn, roundKg(Math.max(0, live + used - rec)));
+      const usedAfter = usedAfterByCoil.get(cn) || 0;
+      // Walk live stock back to period-start: add period + post-period outflows, reverse post-period receipts.
+      openingByCoil.set(cn, roundKg(Math.max(0, live + used + usedAfter - rec - recAfter)));
     }
   }
 
   const ctx = {
     openingByCoil,
     receivedByCoil,
+    receivedAfterByCoil,
     usedByCoil,
+    usedAfterByCoil,
     usedMByCoil,
     masterData: opts.masterData || null,
   };

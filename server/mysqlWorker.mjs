@@ -122,6 +122,14 @@ function isDuplicateIndexNameError(e) {
   return errno === 1061 || code === 'ER_DUP_KEYNAME';
 }
 
+/** Bootstrap + re-run of CREATE/ALTER may re-apply ADD COLUMN after full SCHEMA_SQL. */
+function isDuplicateColumnError(e) {
+  const errno = /** @type {{ errno?: number }} */ (e).errno;
+  const code = /** @type {{ code?: string }} */ (e).code;
+  const msg = String(e?.sqlMessage || e?.message || '');
+  return errno === 1060 || code === 'ER_DUP_FIELDNAME' || /duplicate column name/i.test(msg);
+}
+
 /** Legacy DBs may lack columns added later; migrations recreate these indexes after ALTER. */
 function isMissingIndexColumnError(e) {
   const errno = /** @type {{ errno?: number }} */ (e).errno;
@@ -217,6 +225,8 @@ async function execBootstrapDdl(ddl) {
   const conn = await pool.getConnection();
   try {
     await conn.query('SET NAMES utf8mb4');
+    /* Allow bootstrap DDL shapes mapped from SQLite (TEXT defaults stripped separately). */
+    await conn.query(`SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'`);
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     for (const part of parts) {
       const stmt = part.endsWith(';') ? part : `${part};`;
@@ -276,6 +286,10 @@ async function execRaw(sql) {
     } catch (e) {
       /* Migrations repeat CREATE INDEX after bootstrap; SQLite had IF NOT EXISTS. */
       if (isSkippableBootstrapIndexError(e, part)) {
+        continue;
+      }
+      /* Full SCHEMA_SQL + migrate ALTERs can re-add columns that already exist. */
+      if (isDuplicateColumnError(e) && /^\s*ALTER\s+TABLE\b/i.test(part)) {
         continue;
       }
       throw e;

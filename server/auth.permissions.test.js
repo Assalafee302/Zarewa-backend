@@ -55,6 +55,10 @@ describe('operations_officer role aliases', () => {
     expect(ops).not.toContain('material_incidents.approve');
     expect(ops).toContain('operations.manage');
     expect(ops).toContain('material_incidents.create');
+    expect(ops).toContain('ot.request');
+    expect(ops).toContain('ot.view_branch');
+    expect(ops).not.toContain('ot.approve');
+    expect(ops).not.toContain('ot.pay');
     expect(permissionsForRole('storekeeper')).toEqual(ops);
     expect(permissionsForRole('store_keeper')).toEqual(ops);
   });
@@ -63,6 +67,18 @@ describe('operations_officer role aliases', () => {
     const bm = permissionsForRole('sales_manager');
     expect(bm).toContain('production.release');
     expect(bm).toContain('material_incidents.approve');
+    expect(bm).toContain('ot.approve');
+    expect(bm).toContain('ot.view_branch');
+    expect(bm).not.toContain('ot.request');
+    expect(bm).not.toContain('ot.pay');
+  });
+
+  it('grants cashier ot.pay without request/approve', () => {
+    const cashier = permissionsForRole('cashier');
+    expect(cashier).toContain('ot.pay');
+    expect(cashier).toContain('ot.view_branch');
+    expect(cashier).not.toContain('ot.request');
+    expect(cashier).not.toContain('ot.approve');
   });
 
   it('includes HR self-service so floor staff can use My Profile', () => {

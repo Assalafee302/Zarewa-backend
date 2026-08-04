@@ -158,6 +158,9 @@ export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
   'inventory.adjust',
   'deliveries.manage',
   'material_incidents.create',
+  /** Branch OT pay requests (storekeeper creates/submits). */
+  'ot.request',
+  'ot.view_branch',
 ];
 
 /** Store floor + production register (coil and stone-coated). One role: operations officer / store keeper. */
@@ -259,6 +262,9 @@ export const ROLE_DEFINITIONS = {
       /** Phase B: desk routes — legacy finance perms retained for compatibility until B3. */
       'cashier.desk.view',
       'cashier.receipts.confirm',
+      /** Branch OT — mark paid only; payable locked at BM approve. */
+      'ot.pay',
+      'ot.view_branch',
       ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
   },
@@ -284,6 +290,9 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'material_incidents.approve',
+      /** Branch OT — approve/reject rates; no mark-paid. */
+      'ot.approve',
+      'ot.view_branch',
       ...HR_ROLE_PERMISSION_BUNDLES.branchManager,
       ...HR_ROLE_PERMISSION_BUNDLES.selfService,
     ],
@@ -662,6 +671,8 @@ export const STORE_FLOOR_PERMISSION_KEYS = [
   'inventory.adjust',
   'deliveries.manage',
   'material_incidents.create',
+  'ot.request',
+  'ot.view_branch',
 ];
 
 const STORE_FLOOR_DEPARTMENT_LABELS = new Set([

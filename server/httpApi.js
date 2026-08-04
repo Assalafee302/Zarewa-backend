@@ -370,6 +370,7 @@ import {
 } from './interBranchOfficeOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { registerHrApi } from './hrApi.js';
+import { registerOtApi } from './otApi.js';
 import { registerAiKnowledgeCenterRoutes } from './aiKnowledgeCenter/index.js';
 import { registerAiIntelligenceRouterRoutes } from './aiIntelligenceRouter/index.js';
 import {
@@ -3624,6 +3625,7 @@ export function registerHttpApi(app, db) {
   app.use('/api', requireAuth, requireActivePassword);
 
   registerHrApi(app, db);
+  registerOtApi(app, db);
   registerAiKnowledgeCenterRoutes(app, db, aiKnowledgeBuckets);
   registerAiIntelligenceRouterRoutes(app, db, aiRouterBuckets);
   registerUnifiedAiRoutes(app, db, aiUnifiedBuckets);

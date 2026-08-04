@@ -30,9 +30,21 @@ export function sqliteDdlToMysql(ddl) {
   s = s.replace(/\)\s*WHERE\b[\s\S]*?;/gi, ');');
   s = stripMysqlIncompatibleIndexExprs(s);
   s = mapTextColumnsForMysql(s);
+  s = stripMysqlIllegalTextBlobDefaults(s);
   s = escapeMysqlReservedColumnNames(s);
   s = addMysqlIndexKeyLengths(s);
   return s;
+}
+
+/**
+ * MySQL 8+ (STRICT / NO_ZERO_DATE modes) rejects DEFAULT on BLOB/TEXT/GEOMETRY/JSON.
+ * mapTextColumns maps large columns to MEDIUMTEXT which still cannot carry a DEFAULT.
+ */
+export function stripMysqlIllegalTextBlobDefaults(sql) {
+  return String(sql || '').replace(
+    /\b(MEDIUMTEXT|LONGTEXT|TINYTEXT|TEXT|BLOB|MEDIUMBLOB|LONGBLOB|JSON)(\s+NOT\s+NULL)?\s+DEFAULT\s+(?:'[^']*'|"[^"]*"|NULL)/gi,
+    '$1$2'
+  );
 }
 
 export function escapeMysqlReservedColumnNames(sql) {

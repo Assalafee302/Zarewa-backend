@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { sqliteDdlToMysql, stripMysqlIncompatibleIndexExprs } from './schemaMysqlTransform.js';
+import {
+  sqliteDdlToMysql,
+  stripMysqlIncompatibleIndexExprs,
+  stripMysqlIllegalTextBlobDefaults,
+} from './schemaMysqlTransform.js';
 
 describe('schemaMysqlTransform material incident indexes', () => {
   it('does not prefix REAL columns in pool index', () => {
@@ -39,5 +43,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_rooms_scope_slug_unique
     expect(stripMysqlIncompatibleIndexExprs(`ON t(scope_kind, IFNULL(branch_id, ''), slug)`)).toBe(
       `ON t(scope_kind, branch_id, slug)`
     );
+  });
+});
+
+describe('schemaMysqlTransform MEDIUMTEXT defaults', () => {
+  it('strips DEFAULT on JSON-mapped MEDIUMTEXT columns (MySQL 8 STRICT)', () => {
+    const ddl = `tags_json TEXT NOT NULL DEFAULT '[]',\n  body_text TEXT NOT NULL DEFAULT '',\n  status TEXT NOT NULL DEFAULT 'active'`;
+    const mysql = sqliteDdlToMysql(ddl);
+    expect(mysql).toMatch(/tags_json\s+MEDIUMTEXT\s+NOT\s+NULL/i);
+    expect(mysql).not.toMatch(/tags_json\s+MEDIUMTEXT\s+NOT\s+NULL\s+DEFAULT/i);
+    expect(mysql).toMatch(/status\s+VARCHAR\(100\)\s+NOT\s+NULL\s+DEFAULT\s+'active'/i);
+  });
+
+  it('stripMysqlIllegalTextBlobDefaults is idempotent on clean DDL', () => {
+    expect(stripMysqlIllegalTextBlobDefaults(`x MEDIUMTEXT NOT NULL,\n`)).toContain('MEDIUMTEXT NOT NULL');
   });
 });

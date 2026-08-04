@@ -170,7 +170,13 @@ function runMigrationsUnlocked(db) {
            WHERE table_schema = DATABASE() AND table_name = ?`
         )
         .all(name);
-      if (rows.length) return new Set(rows.map((c) => c.column_name));
+      if (rows.length) {
+        return new Set(
+          rows
+            .map((c) => String(c.column_name ?? c.COLUMN_NAME ?? c.Column_name ?? '').toLowerCase())
+            .filter(Boolean)
+        );
+      }
     } catch {
       // SQLite development databases do not expose information_schema.
     }
@@ -1447,6 +1453,109 @@ function runMigrationsUnlocked(db) {
   }
   migrateMobileAuth2026(db);
   migrateMaintenanceRegistry2026(db);
+  migrateOtModule2026(db);
+}
+
+/**
+ * Branch OT pay requests (storekeeper → BM → cashier).
+ * Additive — does not touch hr_daily_roll_calls / attendance OT board.
+ */
+function migrateOtModule2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ot_requests (
+      id TEXT PRIMARY KEY,
+      day_iso TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      work_type TEXT NOT NULL,
+      reason TEXT,
+      quotation_ref TEXT,
+      production_job_id TEXT,
+      po_id TEXT,
+      coil_lot_ref TEXT,
+      approval_before_start INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL,
+      submitted_at_iso TEXT,
+      approved_by_user_id TEXT,
+      approved_by_name TEXT,
+      approved_at_iso TEXT,
+      rejected_by_user_id TEXT,
+      rejected_by_name TEXT,
+      rejected_at_iso TEXT,
+      rejection_reason TEXT,
+      paid_by_user_id TEXT,
+      paid_by_name TEXT,
+      paid_at_iso TEXT,
+      payment_note TEXT,
+      payment_method TEXT,
+      total_payable_ngn INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_ot_requests_branch_status
+      ON ot_requests(branch_id, status, day_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ot_requests_branch_day
+      ON ot_requests(branch_id, day_iso DESC);
+    CREATE INDEX IF NOT EXISTS idx_ot_requests_quotation_ref
+      ON ot_requests(quotation_ref);
+    CREATE INDEX IF NOT EXISTS idx_ot_requests_po_id
+      ON ot_requests(po_id);
+
+    CREATE TABLE IF NOT EXISTS ot_staff_lines (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      staff_user_id TEXT NOT NULL,
+      role_label TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      FOREIGN KEY (request_id) REFERENCES ot_requests(id) ON DELETE CASCADE,
+      FOREIGN KEY (staff_user_id) REFERENCES app_users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ot_staff_lines_request
+      ON ot_staff_lines(request_id, sort_order);
+
+    CREATE TABLE IF NOT EXISTS ot_work_details (
+      request_id TEXT PRIMARY KEY,
+      material_type TEXT,
+      work_done TEXT,
+      quantity REAL,
+      quantity_unit TEXT,
+      machine_area TEXT,
+      actual_completion_time TEXT,
+      factory_locked_by TEXT,
+      FOREIGN KEY (request_id) REFERENCES ot_requests(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ot_payment_line (
+      request_id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0,
+      rate_requested INTEGER NOT NULL DEFAULT 0,
+      rate_approved INTEGER,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      remarks TEXT,
+      variance_reason TEXT,
+      FOREIGN KEY (request_id) REFERENCES ot_requests(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ot_status_history (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      actor_user_id TEXT,
+      actor_name TEXT,
+      actor_role TEXT,
+      note TEXT,
+      details_json TEXT,
+      at_iso TEXT NOT NULL,
+      FOREIGN KEY (request_id) REFERENCES ot_requests(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ot_status_history_request
+      ON ot_status_history(request_id, at_iso ASC);
+  `);
 }
 
 /** Maintenance vendors registry + technician flags on staff profiles. */

@@ -51,6 +51,7 @@ const SAFE_TABLES = new Set([
   'coil_control_events',
   'material_incidents',
   'incident_registry',
+  'ot_requests',
 ]);
 
 function assertSafeTable(table) {
@@ -224,6 +225,11 @@ export function nextCoilControlEventHumanId(db, branchId) {
 
 export function nextMaterialIncidentHumanId(db, branchId) {
   return allocateHumanId(db, 'MEX', branchId, { table: 'material_incidents', idColumn: 'id' });
+}
+
+/** Branch OT pay request: OT-KD-26-0001 */
+export function nextOtRequestHumanId(db, branchId) {
+  return allocateHumanId(db, 'OT', branchId, { table: 'ot_requests', idColumn: 'id' });
 }
 
 export function nextIncidentRegistryHumanId(db, branchId) {

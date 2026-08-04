@@ -32,11 +32,20 @@ function normKey(s) {
     .replace(/\s+/g, ' ');
 }
 
+/** Local calendar YYYY-MM-DD (avoids UTC midnight shifting the business day for WAT/etc.). */
+function localCalendarDateIso(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /** @param {string | null | undefined} iso */
 export function normalizePricingAsAtIso(iso) {
   const t = String(iso ?? '').trim().slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-  return new Date().toISOString().slice(0, 10);
+  // Prefer local calendar day — publish + quote UI use local, not UTC.
+  return localCalendarDateIso();
 }
 
 /** @param {{ date_iso?: string | null; created_at_iso?: string | null }} quoteRow */

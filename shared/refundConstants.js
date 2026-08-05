@@ -2,7 +2,7 @@
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 10;
+export const REFUND_PREVIEW_VERSION = 11;
 
 /**
  * Refund quotation picker:
@@ -53,6 +53,76 @@ export const REFUND_REASON_CATEGORY_VALUES = [
   'Customer commission',
   'Other',
 ];
+
+/**
+ * Refund categories that refund cash for paid-in-full overpayment or quoted services —
+ * not gated by workbook floor value of produced roofing metres.
+ */
+export const REFUND_ECONOMIC_FLOOR_EXEMPT_CATEGORIES = [
+  'Overpayment',
+  'Transport issue',
+  'Installation issue',
+  'Additional services',
+];
+
+const FLOOR_EXEMPT_CAT_KEYS = new Set(
+  REFUND_ECONOMIC_FLOOR_EXEMPT_CATEGORIES.map((c) => c.toLowerCase())
+);
+
+function refundCategoryIsEconomicFloorExempt(cat) {
+  const s = String(cat || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return false;
+  if (FLOOR_EXEMPT_CAT_KEYS.has(s)) return true;
+  // Partial match for legacy / free-text overpayment labels.
+  if (s.includes('overpay')) return true;
+  return false;
+}
+
+/**
+ * True when every reason category is overpayment or a quoted service
+ * (transport / installation / additional services).
+ * @param {unknown} categories
+ */
+export function refundCategoriesAreEconomicFloorExempt(categories) {
+  const cats = (Array.isArray(categories) ? categories : [])
+    .map((c) => String(c || '').trim())
+    .filter(Boolean);
+  if (!cats.length) return false;
+  return cats.every((c) => refundCategoryIsEconomicFloorExempt(c));
+}
+
+/**
+ * True when every included calculation line is floor-exempt (overpayment or quoted service).
+ * @param {Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[], label?: string }> | null | undefined} lines
+ */
+export function refundCalculationLinesAreEconomicFloorExempt(lines) {
+  const included = (Array.isArray(lines) ? lines : []).filter((l) => {
+    if (l?.include === false) return false;
+    const amt = Math.round(Number(l?.amountNgn) || 0);
+    return amt > 0 && String(l?.label ?? l?.category ?? '').trim();
+  });
+  if (!included.length) return false;
+  return included.every((l) => {
+    const multi = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
+    if (multi.length > 0) {
+      return multi.every((c) => refundCategoryIsEconomicFloorExempt(c));
+    }
+    return refundCategoryIsEconomicFloorExempt(l?.category);
+  });
+}
+
+/**
+ * Preview / create / approve: skip production economic-floor cap for this request.
+ * @param {{ categories?: unknown, calculationLines?: unknown }} p
+ */
+export function refundRequestIsEconomicFloorExempt({ categories, calculationLines } = {}) {
+  return (
+    refundCategoriesAreEconomicFloorExempt(categories) ||
+    refundCalculationLinesAreEconomicFloorExempt(calculationLines)
+  );
+}
 
 /** Map legacy / test strings to canonical categories (duplicate detection + preview). */
 export const REFUND_CATEGORY_LEGACY_ALIASES = {

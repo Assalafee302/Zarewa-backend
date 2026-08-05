@@ -31,6 +31,30 @@ describe('refundQuotationMoney', () => {
     })).toBe(1_551_620);
   });
 
+  it('does not re-add historical overpayment when only other lines remain after prior refunds', () => {
+    // cash 542k, quote 459k → overpay excess 83k; prior refund 98k already cashed
+    const lines = [{ category: 'Transport issue', amountNgn: 15_000 }];
+    expect(
+      quotationRemainingRefundableNgn({
+        cashInNgn: 542_000,
+        quoteTotalNgn: 459_000,
+        totalRefundedNgn: 98_000,
+        suggestedLines: lines,
+      })
+    ).toBe(15_000);
+  });
+
+  it('residual overpay with empty lines subtracts prior refunds', () => {
+    expect(
+      quotationRemainingRefundableNgn({
+        cashInNgn: 542_000,
+        quoteTotalNgn: 459_000,
+        totalRefundedNgn: 50_000,
+        suggestedLines: [],
+      })
+    ).toBe(33_000);
+  });
+
   it('hard cap limits total when overpay excess plus independent lines exceed cash received', () => {
     const lines = [
       { category: 'Overpayment', amountNgn: 400_000 },

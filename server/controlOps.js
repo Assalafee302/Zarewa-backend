@@ -27,6 +27,7 @@ import {
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
+  refundRequestIsEconomicFloorExempt,
 } from '../shared/refundConstants.js';
 import {
   isStoneFlatsheetQuotationLine,
@@ -405,31 +406,6 @@ export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundI
   return roundMoney(row?.s ?? 0);
 }
 
-function refundRequestIsOverpaymentOnly(categories) {
-  const cats = (Array.isArray(categories) ? categories : [])
-    .map((c) => String(c || '').trim().toLowerCase())
-    .filter(Boolean);
-  if (!cats.length) return false;
-  return cats.every((c) => c.includes('overpay'));
-}
-
-/** True when included calculation lines are exclusively Overpayment. */
-function refundCalculationLinesAreOverpaymentOnly(lines) {
-  const included = (Array.isArray(lines) ? lines : []).filter((l) => {
-    if (l?.include === false) return false;
-    const amt = roundMoney(l?.amountNgn);
-    return amt > 0 && String(l?.label ?? l?.category ?? '').trim();
-  });
-  if (!included.length) return false;
-  return included.every((l) => {
-    const cat = String(l?.category || '').trim().toLowerCase();
-    if (cat.includes('overpay')) return true;
-    const applies = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
-    return (
-      applies.length > 0 && applies.every((c) => String(c || '').trim().toLowerCase().includes('overpay'))
-    );
-  });
-}
 
 /**
  * Shared financial guards for refund approve and payout (live preview caps, economic floor, stale detection).
@@ -487,12 +463,13 @@ export function validateRefundFinancialGuards(db, opts = {}) {
 
   const economicFloor = preview.preview?.economicFloor ?? null;
   const producedM = Number(economicFloor?.producedOutputMeters || 0);
-  const overpaymentOnly =
-    refundRequestIsOverpaymentOnly(reasonCategories) ||
-    refundCalculationLinesAreOverpaymentOnly(lines);
+  // Overpayment + quoted services are cash/service refunds — not gated by roofing floor ₦/m.
+  const floorExempt = refundRequestIsEconomicFloorExempt({
+    categories: reasonCategories,
+    calculationLines: lines,
+  });
 
-  // Overpayment is cash above quote total — not gated by workbook floor pricing of produced metres.
-  if (!overpaymentOnly && economicFloor?.incompleteFloorPricing && producedM > 0.001) {
+  if (!floorExempt && economicFloor?.incompleteFloorPricing && producedM > 0.001) {
     if (!actorMayBypassIncompleteRefundFloor(actor, hasPermission) && !floorOverrideHonoured) {
       return {
         ok: false,
@@ -507,7 +484,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   }
 
   if (
-    !overpaymentOnly &&
+    !floorExempt &&
     !floorOverrideHonoured &&
     economicFloor?.maxDefensibleRefundNgn != null &&
     amt > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
@@ -530,7 +507,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
     cashInNgn: quotationCashInNgn(db, ref),
     totalRefundedNgn: totalRefundedExcluding,
-    economicFloor: overpaymentOnly ? null : economicFloor,
+    economicFloor: floorExempt ? null : economicFloor,
   });
   const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
 
@@ -699,29 +676,60 @@ function quotationHasCompletedDelivery(db, quotationRef) {
 }
 
 function collectQuotationServices(db, quotationRef, quote) {
-  let list = [];
+  const seen = new Set();
+  /** @type {any[]} */
+  const list = [];
+  const pushService = (row) => {
+    if (!row || typeof row !== 'object') return;
+    const name = String(row?.name ?? row?.description ?? row?.itemName ?? '').trim();
+    const { qty, unitPrice } = serviceQtyAndUnitPriceNgn(row);
+    if (!name && qty * unitPrice <= 0) return;
+    const key = `${name.toLowerCase()}|${qty}|${unitPrice}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    list.push({
+      ...row,
+      name: name || String(row?.name ?? 'Service').trim() || 'Service',
+      qty: qty || row?.qty,
+      unitPrice: unitPrice || row?.unitPrice,
+    });
+  };
   try {
     const raw = quote?.lines_json;
     const j = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw;
-    if (Array.isArray(j?.services)) list = j.services.slice();
+    if (Array.isArray(j?.services)) {
+      for (const s of j.services) pushService(s);
+    }
+    // Some quotes store transport / labour as typed rows under products or flat lines arrays.
+    for (const key of ['products', 'accessories', 'items', 'lines']) {
+      if (!Array.isArray(j?.[key])) continue;
+      for (const row of j[key]) {
+        const t = String(row?.type ?? row?.itemType ?? row?.category ?? row?.lineType ?? '')
+          .trim()
+          .toLowerCase();
+        if (t === 'service' || t === 'services') pushService(row);
+      }
+    }
   } catch {
-    list = [];
+    /* ignore parse errors */
   }
   if (list.length === 0 && quotationRef) {
     try {
       const rows = db
         .prepare(
           `SELECT name, qty, unit_price_ngn FROM quotation_lines
-           WHERE quotation_id = ? AND category = 'services'
+           WHERE quotation_id = ? AND LOWER(TRIM(COALESCE(category, ''))) IN ('services', 'service')
            ORDER BY sort_order`
         )
         .all(quotationRef);
-      list = rows.map((r) => ({
-        id: `ql-${r.name}-${r.unit_price_ngn}`,
-        name: r.name,
-        qty: r.qty,
-        unitPrice: r.unit_price_ngn,
-      }));
+      for (const r of rows) {
+        pushService({
+          id: `ql-${r.name}-${r.unit_price_ngn}`,
+          name: r.name,
+          qty: r.qty,
+          unitPrice: r.unit_price_ngn,
+        });
+      }
     } catch {
       /* quotation_lines may be missing in some contexts */
     }
@@ -2711,11 +2719,12 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           payload.economicFloorOverrideNote ??
           ''
       ).trim();
-      const overpaymentOnlyAtCreate =
-        refundRequestIsOverpaymentOnly(requestedCats) ||
-        refundCalculationLinesAreOverpaymentOnly(calcLinesRaw);
+      const floorExemptAtCreate = refundRequestIsEconomicFloorExempt({
+        categories: requestedCats,
+        calculationLines: calcLinesRaw,
+      });
       if (
-        !overpaymentOnlyAtCreate &&
+        !floorExemptAtCreate &&
         economicFloorAtCreate?.incompleteFloorPricing &&
         producedAtCreate > 0.001
       ) {
@@ -2747,7 +2756,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       }
       const maxDefensibleAtCreate = economicFloorAtCreate?.maxDefensibleRefundNgn;
       if (
-        !overpaymentOnlyAtCreate &&
+        !floorExemptAtCreate &&
         maxDefensibleAtCreate != null &&
         Number.isFinite(Number(maxDefensibleAtCreate)) &&
         amountNgn > Number(maxDefensibleAtCreate) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
@@ -2785,7 +2794,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       const derivedCategoryMaxNgn = buildDerivedRefundCategoryCapsNgn({
         cashInNgn: elig.cashInNgn,
         totalRefundedNgn: elig.totalRefundedNgn,
-        economicFloor: overpaymentOnlyAtCreate ? null : economicFloorAtCreate,
+        economicFloor: floorExemptAtCreate ? null : economicFloorAtCreate,
       });
       const lineValidation = validateRefundCalculationLinesNgn({
         cashInNgn: elig.cashInNgn,
@@ -3718,20 +3727,25 @@ export function previewRefundRequest(db, payload) {
       }
       continue;
     }
-    if (isTransport && !hardBlockedCategories.has('Transport issue')) {
-      suggestedLines.push({
-        label: `Unclaimed transport: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
-        amountNgn: amt,
-        category: 'Transport issue',
-      });
+    if (isTransport) {
+      if (!hardBlockedCategories.has('Transport issue')) {
+        suggestedLines.push({
+          label: `Unclaimed transport: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
+          amountNgn: amt,
+          category: 'Transport issue',
+        });
+      }
+      // Never reclassify blocked transport under Additional services (would double-suggest).
       continue;
     }
-    if (isInstall && !hardBlockedCategories.has('Installation issue')) {
-      suggestedLines.push({
-        label: `Unclaimed installation: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
-        amountNgn: amt,
-        category: 'Installation issue',
-      });
+    if (isInstall) {
+      if (!hardBlockedCategories.has('Installation issue')) {
+        suggestedLines.push({
+          label: `Unclaimed installation: ${String(s?.name ?? 'Service').trim() || 'Service'}`,
+          amountNgn: amt,
+          category: 'Installation issue',
+        });
+      }
       continue;
     }
     miscServiceLines.push({ name: String(s?.name ?? 'Service').trim() || 'Service', amt });
@@ -4273,13 +4287,21 @@ export function previewRefundRequest(db, payload) {
       Number.isFinite(Number(economicFloor.maxDefensibleRefundNgn)) &&
       suggestedAmountNgn > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
     ) {
-      warnings.push(
-        `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).${
-          economicFloor.honouredMdPriceException
-            ? ''
-            : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
-        }`
-      );
+      const floorExemptSuggested = refundRequestIsEconomicFloorExempt({
+        categories: suggestedLines
+          .filter((l) => roundMoney(l.amountNgn) > 0)
+          .map((l) => l.category),
+        calculationLines: suggestedLines.map((l) => ({ ...l, include: true })),
+      });
+      if (!floorExemptSuggested) {
+        warnings.push(
+          `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).${
+            economicFloor.honouredMdPriceException
+              ? ''
+              : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
+          }`
+        );
+      }
     }
   }
 

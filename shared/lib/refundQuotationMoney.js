@@ -170,7 +170,13 @@ export function validateRefundSameRequestOverlapCategoriesNgn(calculationLines) 
 }
 
 /**
- * Remaining refundable for UI / preview: overpayment excess + independent category amounts, capped by cash hard cap.
+ * Remaining refundable for UI / preview: sum of live suggested (or entered) lines,
+ * capped by cash still on this quotation after prior refunds.
+ *
+ * Never re-add full historical overpayment excess when overpayment is not on the
+ * suggested lines (e.g. already hard-blocked after a paid refund) — that
+ * double-counted headroom and made remaining look like prior refunds never happened.
+ *
  * @param {{
  *   cashInNgn: number,
  *   quoteTotalNgn: number,
@@ -185,9 +191,18 @@ export function quotationRemainingRefundableNgn({
   suggestedLines,
 }) {
   const hardCap = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn });
+  const lines = Array.isArray(suggestedLines) ? suggestedLines : [];
+  if (lines.length > 0) {
+    const suggestedSum = lines.reduce(
+      (sum, line) => sum + roundRefundMoney(line?.amountNgn),
+      0
+    );
+    return Math.min(hardCap, Math.max(0, suggestedSum));
+  }
+  // No live lines: residual overpayment only (after cash already refunded), not full excess.
   const overpay = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-  const independent = quotationIndependentRefundLinesSumNgn(suggestedLines);
-  return Math.min(hardCap, overpay + independent);
+  const residualOverpay = Math.max(0, overpay - roundRefundMoney(totalRefundedNgn));
+  return Math.min(hardCap, residualOverpay);
 }
 
 /**

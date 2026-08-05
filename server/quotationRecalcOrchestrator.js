@@ -3,6 +3,10 @@
  */
 import { appendAuditLog, previewRefundRequest } from './controlOps.js';
 import { reconcileSalesReceiptMirrorsForQuotation } from './writeOps.js';
+import {
+  normalizeRefundReasonCategoriesForApi,
+  refundCategoriesAreEconomicFloorExempt,
+} from '../shared/refundConstants.js';
 
 /**
  * Open refunds whose amount exceeds the economic floor cap available to that refund
@@ -69,6 +73,8 @@ export function listStaleOpenRefundsForQuotation(db, quotationRef, economicFloor
 
   const stale = [];
   for (const r of openRefunds) {
+    const cats = normalizeRefundReasonCategoriesForApi(r.reason_category);
+    if (refundCategoriesAreEconomicFloorExempt(cats)) continue;
     const amt = Math.round(Number(r.amount_ngn) || 0);
     let maxDef;
     if (hasCashFloor) {

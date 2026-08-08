@@ -9,8 +9,13 @@
 import crypto from 'node:crypto';
 import { actorId, actorName } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
-import { appendAuditLog } from './controlOps.js';
-import { nextOtRequestHumanId } from './humanId.js';
+import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
+import { nextOtRequestHumanId, nextPostingBatchHumanId, nextTreasuryMovementHumanId } from './humanId.js';
+import {
+  latestPayoutDay,
+  payoutLinePostedAtISO,
+  payoutLinePostedDay,
+} from '../shared/lib/treasuryPayoutDates.js';
 
 export const OT_STATUS = {
   DRAFT: 'draft',
@@ -36,6 +41,60 @@ export const OT_BM_ACTIONABLE_STATUS = OT_STATUS.PENDING_BM;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeIsoTimestamp(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return nowIso();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T12:00:00.000Z`;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return nowIso();
+  return new Date(t).toISOString();
+}
+
+function moneyRound(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Local treasury outflow insert — avoids importing writeOps (heavy / circular). */
+function insertOtTreasuryOutflowTx(db, payload) {
+  const treasuryAccountId = Number(payload.treasuryAccountId);
+  if (!treasuryAccountId) throw new Error('treasuryAccountId is required.');
+  const amountNgn = moneyRound(payload.amountNgn);
+  if (!amountNgn) throw new Error('Treasury movement amount must be non-zero.');
+  const row = db.prepare(`SELECT id, name, balance FROM treasury_accounts WHERE id = ?`).get(treasuryAccountId);
+  if (!row) throw new Error('Treasury account not found.');
+  const nextBalance = moneyRound(row.balance) + amountNgn;
+  if (nextBalance < 0) throw new Error(`Insufficient balance in ${row.name}.`);
+  db.prepare(`UPDATE treasury_accounts SET balance = ? WHERE id = ?`).run(nextBalance, treasuryAccountId);
+  const branchForTm = String(payload.workspaceBranchId || payload.branchId || DEFAULT_BRANCH_ID).trim();
+  const id = String(payload.id || '').trim() || nextTreasuryMovementHumanId(db, branchForTm);
+  const postedAtISO = normalizeIsoTimestamp(payload.postedAtISO);
+  db.prepare(
+    `INSERT INTO treasury_movements (
+      id, posted_at_iso, type, treasury_account_id, amount_ngn, reference,
+      counterparty_kind, counterparty_id, counterparty_name, source_kind, source_id,
+      note, created_by, reverses_movement_id, batch_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    postedAtISO,
+    payload.type,
+    treasuryAccountId,
+    amountNgn,
+    payload.reference ?? null,
+    payload.counterpartyKind ?? null,
+    payload.counterpartyId ?? null,
+    payload.counterpartyName ?? null,
+    payload.sourceKind ?? null,
+    payload.sourceId ?? null,
+    payload.note ?? null,
+    payload.createdBy ?? null,
+    null,
+    payload.batchId ?? null
+  );
+  return id;
 }
 
 function newLineId(prefix) {
@@ -1110,12 +1169,8 @@ export function rejectOtRequest(db, actor, requestId, body = {}, opts = {}) {
 }
 
 /**
- * approved_by_bm → paid (mark paid only; no treasury posting in v1).
- *
- * Payable amount is locked at approve time:
- * - does not update ot_requests.total_payable_ngn
- * - does not update ot_payment_line rate_approved / amount_ngn
- * - ignores any amount/rate fields on the body (cashier cannot alter payables)
+ * approved_by_bm → paid. Posts treasury outflows like refund / expense payout
+ * (paymentLines required). Payable amount stays locked at BM approve time.
  */
 export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
   if (!tableReady(db)) return { ok: false, error: 'OT module not initialised.', code: 'OT_NOT_READY' };
@@ -1130,20 +1185,95 @@ export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
       status: row.status,
     };
   }
-  const scopeBranch = String(opts.branchId || '').trim();
+  const scopeBranch = String(opts.branchId || body.workspaceBranchId || '').trim();
   if (scopeBranch && scopeBranch !== String(row.branch_id)) {
     return { ok: false, error: 'OT request is outside your branch scope.', code: 'OT_BRANCH_SCOPE' };
   }
 
-  // Cashier mark-paid only — ignore any attempt to change the locked payable.
-  const paymentNote = String(body.paymentNote ?? body.payment_note ?? '').trim() || null;
-  const paymentMethod = String(body.paymentMethod ?? body.payment_method ?? '').trim() || null;
   const lockedPayableNgn = Math.round(Number(row.total_payable_ngn) || 0);
+  if (!(lockedPayableNgn > 0)) {
+    return { ok: false, error: 'Approved payable amount is missing.', code: 'OT_PAY_AMOUNT' };
+  }
+
+  const defaultPaidDay =
+    String(body.paidAtISO ?? body.dateISO ?? '').trim().slice(0, 10) || nowIso().slice(0, 10);
+  const paymentNote = String(body.paymentNote ?? body.payment_note ?? body.note ?? '').trim() || null;
+  const paidByLabel =
+    String(body.paidBy ?? body.paid_by ?? '').trim() || actorName(actor) || 'Finance';
+
+  const paymentLines = Array.isArray(body.paymentLines)
+    ? body.paymentLines
+        .map((line) => ({
+          treasuryAccountId: Number(line?.treasuryAccountId),
+          amountNgn: Math.round(Number(line?.amountNgn) || 0),
+          reference: String(line?.reference ?? '').trim() || id,
+          note: String(line?.note ?? '').trim() || paymentNote || '',
+          postedAtISO: payoutLinePostedAtISO(line, defaultPaidDay, normalizeIsoTimestamp),
+        }))
+        .filter((line) => line.treasuryAccountId && line.amountNgn > 0)
+    : [];
+
+  if (!paymentLines.length) {
+    return {
+      ok: false,
+      error: 'Add at least one treasury payout line (same as refunds and expenses).',
+      code: 'OT_PAY_LINES',
+    };
+  }
+
+  const payoutAmountNgn = paymentLines.reduce((sum, line) => sum + line.amountNgn, 0);
+  if (payoutAmountNgn !== lockedPayableNgn) {
+    return {
+      ok: false,
+      error: `Payout must equal the locked payable (${lockedPayableNgn}).`,
+      code: 'OT_PAY_AMOUNT_MISMATCH',
+    };
+  }
+
+  const paymentMethod =
+    String(body.paymentMethod ?? body.payment_method ?? '').trim() ||
+    (paymentLines.length > 1 ? 'split' : 'treasury');
   const paymentBefore = db.prepare(`SELECT rate_approved, amount_ngn FROM ot_payment_line WHERE request_id = ?`).get(id);
+  const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
   const now = nowIso();
+  const workspaceBranchId = String(body.workspaceBranchId || opts.branchId || row.branch_id || '').trim();
 
   try {
+    for (const day of new Set(paymentLines.map((line) => payoutLinePostedDay(line, defaultPaidDay)))) {
+      assertPeriodOpen(db, day, 'OT payout date');
+    }
+
     db.transaction(() => {
+      const fresh = db.prepare(`SELECT * FROM ot_requests WHERE id = ?`).get(id);
+      if (!fresh || String(fresh.status) !== OT_STATUS.APPROVED) {
+        throw new Error('Only approved_by_bm requests can be marked paid.');
+      }
+      const lockedFresh = Math.round(Number(fresh.total_payable_ngn) || 0);
+      if (payoutAmountNgn !== lockedFresh) {
+        throw new Error(`Payout must equal the locked payable (${lockedFresh}).`);
+      }
+
+      const batchId = nextPostingBatchHumanId(db);
+      for (const line of paymentLines) {
+        insertOtTreasuryOutflowTx(db, {
+          type: 'OT_PAYOUT',
+          treasuryAccountId: line.treasuryAccountId,
+          amountNgn: -line.amountNgn,
+          reference: line.reference || id,
+          note: line.note || paymentNote || fresh.reason || 'Overtime pay',
+          postedAtISO: line.postedAtISO,
+          counterpartyKind: 'STAFF',
+          counterpartyId: null,
+          counterpartyName: 'Overtime pay',
+          sourceKind: 'OT_REQUEST',
+          sourceId: id,
+          batchId,
+          createdBy: paidByLabel,
+          workspaceBranchId,
+          branchId: fresh.branch_id,
+        });
+      }
+
       const updated = db
         .prepare(
           `UPDATE ot_requests SET
@@ -1154,8 +1284,8 @@ export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
         .run(
           OT_STATUS.PAID,
           actorId(actor),
-          actorName(actor),
-          now,
+          paidByLabel,
+          paidAtISO || now,
           paymentNote,
           paymentMethod,
           now,
@@ -1168,10 +1298,12 @@ export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
         fromStatus: OT_STATUS.APPROVED,
         toStatus: OT_STATUS.PAID,
         actor,
-        note: paymentNote || 'Marked paid',
+        note: paymentNote || 'Paid via treasury',
         details: {
           paymentMethod,
           totalPayableNgn: lockedPayableNgn,
+          payoutAmountNgn,
+          paymentLineCount: paymentLines.length,
         },
       });
     })();
@@ -1182,10 +1314,10 @@ export function payOtRequest(db, actor, requestId, body = {}, opts = {}) {
   appendOtAudit(db, actor, 'ot_request.pay', id, `Paid ${id}`, {
     totalPayableNgn: lockedPayableNgn,
     paymentMethod,
+    payoutAmountNgn,
   });
 
   const after = getOtRequest(db, id);
-  // Defensive: payable must match pre-pay snapshot (approve-time lock).
   if (
     after.ok &&
     (after.request.totalPayableNgn !== lockedPayableNgn ||

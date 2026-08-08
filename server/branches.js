@@ -1,3 +1,8 @@
+import {
+  ACCOUNTING_OPENING_DATE_ISO,
+  openingPeriodKeyFromDateISO,
+} from '../shared/lib/accountingCutover.js';
+
 /** Default branch for legacy rows and first login. */
 export const DEFAULT_BRANCH_ID = 'BR-KD';
 
@@ -89,4 +94,64 @@ export function setBranchCuttingListMinPaidFraction(db, branchId, fraction) {
   if (!exists) return { ok: false, error: 'Branch not found.' };
   db.prepare(`UPDATE branches SET cutting_list_min_paid_fraction = ? WHERE id = ?`).run(f, bid);
   return { ok: true, branchId: bid, cuttingListMinPaidFraction: f };
+}
+
+/**
+ * Per-branch accounting opening cutover (defaults to HQ signed go-live date).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ * @returns {{ dateISO: string; periodKey: string }}
+ */
+export function resolveBranchOpeningCutover(db, branchId) {
+  const bid = String(branchId || '').trim();
+  let dateISO = ACCOUNTING_OPENING_DATE_ISO;
+  if (bid) {
+    try {
+      const cols = new Set(
+        db
+          .prepare(`PRAGMA table_info(branches)`)
+          .all()
+          .map((c) => c.name)
+      );
+      if (cols.has('opening_cutover_date_iso')) {
+        const row = db
+          .prepare(`SELECT opening_cutover_date_iso AS dateISO FROM branches WHERE id = ?`)
+          .get(bid);
+        const raw = String(row?.dateISO || '').trim().slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) dateISO = raw;
+      }
+    } catch {
+      /* table mid-migrate */
+    }
+  }
+  return { dateISO, periodKey: openingPeriodKeyFromDateISO(dateISO) };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ * @param {string} dateISO
+ */
+export function setBranchOpeningCutoverDate(db, branchId, dateISO) {
+  const bid = String(branchId || '').trim();
+  const d = String(dateISO || '').trim().slice(0, 10);
+  if (!bid) return { ok: false, error: 'branchId is required.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ok: false, error: 'opening cutover date must be YYYY-MM-DD.' };
+  const exists = db.prepare(`SELECT 1 FROM branches WHERE id = ?`).get(bid);
+  if (!exists) return { ok: false, error: 'Branch not found.' };
+  try {
+    const cols = new Set(
+      db
+        .prepare(`PRAGMA table_info(branches)`)
+        .all()
+        .map((c) => c.name)
+    );
+    if (!cols.has('opening_cutover_date_iso')) {
+      return { ok: false, error: 'opening_cutover_date_iso column not migrated yet.' };
+    }
+    db.prepare(`UPDATE branches SET opening_cutover_date_iso = ? WHERE id = ?`).run(d, bid);
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Could not set opening cutover date.' };
+  }
+  return { ok: true, branchId: bid, ...resolveBranchOpeningCutover(db, bid) };
 }

@@ -398,8 +398,17 @@ export function registerOtApi(app, db) {
 
   app.post('/api/ot/requests/:id/pay', requireAuth, requirePermission(OT_PAY_PERM), (req, res) => {
     try {
-      // Mark-paid only — domain layer ignores payable overrides from body.
-      const r = payOtRequest(db, otActor(req), req.params.id, req.body || {}, branchOpts(req));
+      const r = payOtRequest(
+        db,
+        otActor(req),
+        req.params.id,
+        {
+          ...(req.body || {}),
+          workspaceBranchId: workspaceBranch(req),
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        },
+        branchOpts(req)
+      );
       sendOtResult(res, r);
     } catch (e) {
       console.error(e);

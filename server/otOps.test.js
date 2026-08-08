@@ -123,6 +123,17 @@ function seedOtFixture(db) {
   return { branchId, ops, bm, cashier, staffA, staffB, quotationId: cust ? qid : null, poId };
 }
 
+function pickTreasuryAccountId(db) {
+  try {
+    const row =
+      db.prepare(`SELECT id FROM treasury_accounts WHERE COALESCE(active, 1) = 1 ORDER BY id ASC LIMIT 1`).get() ||
+      db.prepare(`SELECT id FROM treasury_accounts ORDER BY id ASC LIMIT 1`).get();
+    return row?.id != null ? Number(row.id) : null;
+  } catch {
+    return null;
+  }
+}
+
 function baseProductionPayload(fx) {
   return {
     branchId: fx.branchId,
@@ -248,17 +259,27 @@ describe.skipIf(!dbOk())('otOps state machine', () => {
     const lockedRate = appr.paymentLine.rateApproved;
     const lockedAmount = appr.paymentLine.amountNgn;
 
-    // Cashier mark-paid ignores forged amounts — payable stays approve-time lock
+    // Cashier payout via treasury lines — payable stays approve-time lock
+    const treasuryAccountId = pickTreasuryAccountId(db);
+    if (!treasuryAccountId) return;
     const pay = payOtRequest(
       db,
       actor(fx.cashier || fx.bm, 'cashier'),
       id,
       {
-        paymentMethod: 'Cash',
         paymentNote: 'Paid from petty cash',
         rateApproved: 1,
         amountNgn: 999999,
         totalPayableNgn: 1,
+        paymentLines: [
+          {
+            treasuryAccountId,
+            amountNgn: lockedPayable,
+            reference: id,
+            dateISO: '2026-08-04',
+          },
+        ],
+        workspaceBranchId: fx.branchId,
       },
       { branchId: fx.branchId }
     );
@@ -270,7 +291,16 @@ describe.skipIf(!dbOk())('otOps state machine', () => {
     expect(pay.paymentLine.amountNgn).toBe(lockedAmount);
 
     // No re-pay
-    const repay = payOtRequest(db, actor(fx.cashier || fx.bm, 'cashier'), id, {}, { branchId: fx.branchId });
+    const repay = payOtRequest(
+      db,
+      actor(fx.cashier || fx.bm, 'cashier'),
+      id,
+      {
+        paymentLines: [{ treasuryAccountId, amountNgn: lockedPayable, dateISO: '2026-08-04' }],
+        workspaceBranchId: fx.branchId,
+      },
+      { branchId: fx.branchId }
+    );
     expect(repay.ok).toBe(false);
     expect(repay.code).toBe('OT_PAY_STATUS');
 
@@ -369,7 +399,19 @@ describe.skipIf(!dbOk())('otOps state machine', () => {
     const created = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
     const id = created.request.id;
     submitOtRequest(db, actor(fx.ops, 'operations_officer'), id);
-    const pay = payOtRequest(db, actor(fx.cashier || fx.bm, 'cashier'), id, {}, { branchId: fx.branchId });
+    const treasuryAccountId = pickTreasuryAccountId(db);
+    const pay = payOtRequest(
+      db,
+      actor(fx.cashier || fx.bm, 'cashier'),
+      id,
+      treasuryAccountId
+        ? {
+            paymentLines: [{ treasuryAccountId, amountNgn: 1000, dateISO: '2026-08-04' }],
+            workspaceBranchId: fx.branchId,
+          }
+        : {},
+      { branchId: fx.branchId }
+    );
     expect(pay.ok).toBe(false);
     expect(pay.code).toBe('OT_PAY_STATUS');
   });

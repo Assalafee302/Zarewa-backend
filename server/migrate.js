@@ -900,6 +900,15 @@ function runMigrationsUnlocked(db) {
   if (refunds.size > 0 && !refunds.has('production_alignment_ack_json')) {
     db.exec(`ALTER TABLE customer_refunds ADD COLUMN production_alignment_ack_json TEXT`);
   }
+  if (refunds.size > 0 && !refunds.has('credit_applied_ngn')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN credit_applied_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (refunds.size > 0 && !refunds.has('credit_applied_to_quotation_ref')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN credit_applied_to_quotation_ref TEXT`);
+  }
+  if (refunds.size > 0 && !refunds.has('credit_confirmation_status')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN credit_confirmation_status TEXT`);
+  }
   // Legacy index blocked multiple refund requests per quotation (product defaulted to "—").
   const hasRefundPendingIdx = db
     .prepare(
@@ -1378,6 +1387,7 @@ function runMigrationsUnlocked(db) {
   migrateMaterialPricingWorkbook(db);
   migratePricingPolicy2026(db);
   migrateLedgerPerformanceIndexes(db);
+  migrateRefundCreditApplications(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
   migrateLoginSecurityPhase12(db);
@@ -5882,6 +5892,11 @@ function migrateBranches(db) {
   if (branchesCols.size && !branchesCols.has('cutting_list_min_paid_fraction')) {
     db.exec(`ALTER TABLE branches ADD COLUMN cutting_list_min_paid_fraction REAL NOT NULL DEFAULT 0.7`);
   }
+  if (branchesCols.size && !branchesCols.has('opening_cutover_date_iso')) {
+    db.exec(
+      `ALTER TABLE branches ADD COLUMN opening_cutover_date_iso TEXT NOT NULL DEFAULT '2026-06-01'`
+    );
+  }
 
   const sessions = tableCols('user_sessions');
   if (!sessions.has('current_branch_id')) {
@@ -6701,5 +6716,55 @@ function migrateLedgerPerformanceIndexes(db) {
     `);
   } catch {
     /* ignore — index may already exist under another name on some hosts */
+  }
+}
+
+/** Cross-quote refund/overpay credit apply onto a new quotation (no bank clearance). */
+function migrateRefundCreditApplications(db) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS refund_credit_applications (
+        application_id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        target_quotation_ref TEXT NOT NULL,
+        source_quotation_ref TEXT,
+        refund_id TEXT,
+        kind TEXT NOT NULL,
+        amount_ngn INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Credit confirmation',
+        ledger_bank_reference TEXT,
+        created_at_iso TEXT NOT NULL,
+        created_by_user_id TEXT,
+        created_by_name TEXT,
+        branch_id TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_customer
+        ON refund_credit_applications(customer_id, created_at_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_target
+        ON refund_credit_applications(target_quotation_ref, created_at_iso DESC);
+    `);
+  } catch {
+    /* MySQL / host differences */
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS refund_credit_applications (
+          application_id VARCHAR(64) PRIMARY KEY,
+          customer_id VARCHAR(64) NOT NULL,
+          target_quotation_ref VARCHAR(64) NOT NULL,
+          source_quotation_ref VARCHAR(64) NULL,
+          refund_id VARCHAR(64) NULL,
+          kind VARCHAR(32) NOT NULL,
+          amount_ngn BIGINT NOT NULL,
+          status VARCHAR(64) NOT NULL DEFAULT 'Credit confirmation',
+          ledger_bank_reference VARCHAR(128) NULL,
+          created_at_iso VARCHAR(40) NOT NULL,
+          created_by_user_id VARCHAR(64) NULL,
+          created_by_name VARCHAR(128) NULL,
+          branch_id VARCHAR(64) NULL
+        )
+      `);
+    } catch {
+      /* ignore */
+    }
   }
 }

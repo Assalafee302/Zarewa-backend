@@ -2263,6 +2263,9 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
         payeeBankName: row.payee_bank_name ?? '',
         payoutHistory,
         branchId: row.branch_id ?? '',
+        creditAppliedNgn: Number(row.credit_applied_ngn) || 0,
+        creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',
+        creditConfirmationStatus: row.credit_confirmation_status ?? '',
         quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,
         quotationRefundsBlockedReason: row.quotation_refunds_blocked_reason ?? '',
       };

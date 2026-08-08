@@ -635,8 +635,33 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   payee_account_no TEXT,
   payee_bank_name TEXT,
   branch_id TEXT,
+  credit_applied_ngn INTEGER NOT NULL DEFAULT 0,
+  credit_applied_to_quotation_ref TEXT,
+  credit_confirmation_status TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
+
+CREATE TABLE IF NOT EXISTS refund_credit_applications (
+  application_id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  target_quotation_ref TEXT NOT NULL,
+  source_quotation_ref TEXT,
+  refund_id TEXT,
+  kind TEXT NOT NULL,
+  amount_ngn INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Credit confirmation',
+  ledger_bank_reference TEXT,
+  created_at_iso TEXT NOT NULL,
+  created_by_user_id TEXT,
+  created_by_name TEXT,
+  branch_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_customer
+  ON refund_credit_applications(customer_id, created_at_iso DESC);
+
+CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_target
+  ON refund_credit_applications(target_quotation_ref, created_at_iso DESC);
 
 CREATE TABLE IF NOT EXISTS setup_quote_items (
   item_id TEXT PRIMARY KEY,

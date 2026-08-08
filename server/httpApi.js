@@ -571,6 +571,7 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import {
   allocateBankDepositTx,
   findSimilarOpenBankDeposits,
@@ -11931,6 +11932,128 @@ export function registerHttpApi(app, db) {
       });
     }
   }
+  );
+
+  app.get(
+    '/api/ledger/refund-credit-eligible',
+    requirePermission('receipts.post'),
+    (req, res) => {
+      try {
+        const customerID = String(req.query.customerID || '').trim();
+        const targetQuotationRef = String(
+          req.query.targetQuotationRef || req.query.quotationRef || ''
+        ).trim();
+        if (!customerID || !targetQuotationRef) {
+          return res.status(400).json({
+            ok: false,
+            error: 'customerID and targetQuotationRef are required',
+          });
+        }
+        const branchScope = resolveBootstrapBranchScope(req);
+        const cust = getCustomer(db, customerID, branchScope);
+        if (!cust) return res.status(404).json({ ok: false, error: 'Customer not found' });
+        const qGate = assertQuotationIdInWorkspace(db, req, targetQuotationRef);
+        if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
+        const listed = refundCreditApplyOps.listEligibleRefundCredits(db, customerID, targetQuotationRef, {
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        });
+        if (!listed.ok) return res.status(400).json(listed);
+        res.json(listed);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load transferable credit' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/ledger/apply-refund-credit',
+    requirePermission('receipts.post'),
+    ledgerPostRateLimit(),
+    (req, res) => {
+      try {
+        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.apply_refund_credit')) return;
+        const {
+          customerID,
+          targetQuotationRef,
+          quotationRef,
+          amountNgn,
+          sourceIds,
+          dateISO,
+        } = req.body || {};
+        const target = String(targetQuotationRef || quotationRef || '').trim();
+        const cid = String(customerID || '').trim();
+        if (!cid || !target) {
+          return res.status(400).json({
+            ok: false,
+            error: 'customerID and targetQuotationRef are required',
+          });
+        }
+        const branchScope = resolveBootstrapBranchScope(req);
+        const cust = getCustomer(db, cid, branchScope);
+        if (!cust) return res.status(404).json({ ok: false, error: 'Customer not found' });
+        const postingBr = assertCustomerLedgerPostingBranch(cust, req);
+        if (!postingBr.ok) return res.status(400).json({ ok: false, error: postingBr.error });
+        const qGate = assertQuotationIdInWorkspace(db, req, target);
+        if (!qGate.ok) return res.status(qGate.status).json({ ok: false, error: qGate.error });
+        const qt = getQuotation(db, target);
+        if (!qt) return res.status(404).json({ ok: false, error: 'Quotation not found' });
+        if (qt.customerID !== cid) {
+          return res.status(400).json({ ok: false, error: 'Quotation does not belong to this customer' });
+        }
+
+        const applied = refundCreditApplyOps.applyRefundCreditToQuotation(db, {
+          customerID: cid,
+          targetQuotationRef: target,
+          amountNgn,
+          sourceIds,
+          dateISO,
+          actor: req.user,
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        });
+        if (!applied.ok) {
+          const status = applied.code === 'PERIOD_LOCKED' ? 400 : 400;
+          return res.status(status).json(applied);
+        }
+        const payload = { ok: true, ...applied };
+        storeIdempotentSuccess(db, req, 'ledger.apply_refund_credit', 201, payload);
+        res.status(201).json(payload);
+      } catch (e) {
+        console.error(e);
+        const msg = String(e?.message || e);
+        if (/falls in locked period|locked period/i.test(msg)) {
+          return res.status(400).json({ ok: false, error: msg, code: 'PERIOD_LOCKED' });
+        }
+        if (/flagged|refund request|cleared by manager/i.test(msg)) {
+          return res.status(400).json({ ok: false, error: msg, code: 'LEDGER_POST_BLOCKED' });
+        }
+        res.status(500).json({
+          ok: false,
+          error: msg || 'Failed to apply refund credit',
+          code: 'LEDGER_APPLY_REFUND_CREDIT_FAILED',
+        });
+      }
+    }
+  );
+
+  app.get(
+    '/api/ledger/refund-credit-applications',
+    requirePermission('receipts.post'),
+    (req, res) => {
+      try {
+        const customerID = String(req.query.customerID || '').trim();
+        const branchScope = resolveBootstrapBranchScope(req);
+        const rows = refundCreditApplyOps.listRefundCreditApplications(
+          db,
+          customerID,
+          branchScope === 'ALL' ? 'ALL' : branchScope
+        );
+        res.json({ ok: true, applications: rows });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to list credit applications' });
+      }
+    }
   );
 
   app.post(

@@ -183,10 +183,18 @@ function normalizeIsoTimestamp(value) {
  * @param {import('better-sqlite3').Database} db
  * @param {Array<Record<string, unknown>>} planRows
  * @param {string | null} branchId
- * @param {{ allowPerRowBranchId?: boolean }} [opts] When false (default), ignore `branchId` on each row so callers cannot override booking branch.
+ * @param {{ allowPerRowBranchId?: boolean, allowActiveRefundQuotationRefs?: Set<string> | string[] }} [opts]
+ *   When false (default), ignore `branchId` on each row so callers cannot override booking branch.
+ *   `allowActiveRefundQuotationRefs` permits internal credit-transfer rows on source quotes that still have Pending/Approved refunds.
  */
 export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
   const allowPerRow = Boolean(opts.allowPerRowBranchId);
+  const allowRefundQuotes =
+    opts.allowActiveRefundQuotationRefs instanceof Set
+      ? opts.allowActiveRefundQuotationRefs
+      : Array.isArray(opts.allowActiveRefundQuotationRefs)
+        ? new Set(opts.allowActiveRefundQuotationRefs.map((x) => String(x || '').trim()).filter(Boolean))
+        : null;
   const ins = db.prepare(`
     INSERT INTO ledger_entries (
       id, at_iso, type, customer_id, customer_name, amount_ngn, quotation_ref,
@@ -208,9 +216,9 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
         }
       }
 
-      // Also check for refunds
+      // Also check for refunds (credit-apply may post OVERPAY_REVERSAL on the source quote).
       const ref = db.prepare(`SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`).get(r.quotationRef);
-      if (ref) {
+      if (ref && !(allowRefundQuotes && allowRefundQuotes.has(String(r.quotationRef)))) {
         throw new Error(`Quotation ${r.quotationRef} has an active refund request (${ref.refund_id}) and is closed for further payments.`);
       }
     }

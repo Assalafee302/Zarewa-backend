@@ -15,6 +15,7 @@ import {
   OT_STATUS,
   approveOtRequest,
   createOtRequest,
+  deleteOtRequest,
   getOtRequest,
   listOtRequests,
   payOtRequest,
@@ -79,8 +80,11 @@ function httpStatusForOtResult(r) {
   if (!r || r.ok) return 200;
   const code = String(r.code || '');
   if (code === 'OT_NOT_FOUND') return 404;
-  if (code === 'OT_BRANCH_SCOPE') return 403;
+  if (code === 'OT_BRANCH_SCOPE' || code === 'OT_DELETE_OWNER' || code === 'OT_EDIT_OWNER' || code === 'OT_SUBMIT_OWNER') {
+    return 403;
+  }
   if (code === 'OT_NOT_READY') return 503;
+  if (code === 'OT_DUPLICATE') return 409;
   return 400;
 }
 
@@ -345,6 +349,16 @@ export function registerOtApi(app, db) {
     try {
       const body = { ...(req.body || {}), branchId: workspaceBranch(req) };
       const r = updateOtRequest(db, otActor(req), req.params.id, body);
+      sendOtResult(res, r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.delete('/api/ot/requests/:id', requireAuth, requirePermission(OT_REQUEST_PERM), (req, res) => {
+    try {
+      const r = deleteOtRequest(db, otActor(req), req.params.id, branchOpts(req));
       sendOtResult(res, r);
     } catch (e) {
       console.error(e);

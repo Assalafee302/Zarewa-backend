@@ -3055,7 +3055,7 @@ export function registerHttpApi(app, db) {
 
   app.get(
     '/api/management/attention',
-    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage']),
+    requirePermission(['audit.view', 'refunds.approve', 'sales.manage', 'quotations.manage', 'ot.approve']),
     (req, res) => {
       try {
         const branchScope = resolveBootstrapBranchScope(req);

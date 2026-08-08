@@ -323,6 +323,75 @@ function validateDomainLinksForSubmit(db, workType, links) {
   return { ok: true };
 }
 
+/** Statuses that still count as an open/active OT (block creating another for same day+link). */
+const OT_OPEN_STATUSES = Object.freeze([
+  OT_STATUS.DRAFT,
+  OT_STATUS.PENDING_BM,
+  OT_STATUS.APPROVED,
+  OT_STATUS.PAID,
+]);
+
+/**
+ * Prevent duplicate OT pay requests for the same branch + day + work link.
+ * Production keyed by quotation; offload by PO; other by creator on that day.
+ * Rejected rows do not block a replacement request.
+ * @returns {{ ok: true } | { ok: false, error: string, code: string, duplicateId?: string }}
+ */
+export function assertNoDuplicateOtRequest(db, opts = {}) {
+  const branchId = String(opts.branchId || '').trim();
+  const dayIso = normalizeDayIso(opts.dayIso);
+  const workType = String(opts.workType || '').trim();
+  const excludeId = String(opts.excludeId || '').trim();
+  if (!branchId || !dayIso || !workType) return { ok: true };
+
+  const statusPlaceholders = OT_OPEN_STATUSES.map(() => '?').join(',');
+  let sql = `SELECT id, status, quotation_ref, po_id, created_by_user_id
+             FROM ot_requests
+             WHERE branch_id = ? AND day_iso = ? AND work_type = ?
+               AND status IN (${statusPlaceholders})`;
+  const args = [branchId, dayIso, workType, ...OT_OPEN_STATUSES];
+
+  if (workType === 'production') {
+    const quotationRef = String(opts.quotationRef || '').trim();
+    if (!quotationRef) return { ok: true };
+    sql += ` AND quotation_ref = ?`;
+    args.push(quotationRef);
+  } else if (workType === 'offload') {
+    const poId = String(opts.poId || '').trim();
+    if (!poId) return { ok: true };
+    sql += ` AND po_id = ?`;
+    args.push(poId);
+  } else {
+    const createdBy = String(opts.createdByUserId || '').trim();
+    if (!createdBy) return { ok: true };
+    sql += ` AND created_by_user_id = ?`;
+    args.push(createdBy);
+  }
+
+  if (excludeId) {
+    sql += ` AND id != ?`;
+    args.push(excludeId);
+  }
+  sql += ` ORDER BY created_at_iso ASC LIMIT 1`;
+
+  const hit = db.prepare(sql).get(...args);
+  if (!hit) return { ok: true };
+
+  const linkHint =
+    workType === 'production'
+      ? `quotation ${opts.quotationRef}`
+      : workType === 'offload'
+        ? `PO ${opts.poId}`
+        : 'this day';
+  return {
+    ok: false,
+    error: `An OT request already exists for ${dayIso} (${linkHint}): ${hit.id} (${hit.status}). Delete the draft or wait for the existing request to finish before creating another.`,
+    code: 'OT_DUPLICATE',
+    duplicateId: hit.id,
+    duplicateStatus: hit.status,
+  };
+}
+
 function replaceChildren(db, requestId, staffLines, workDetails, paymentLine) {
   db.prepare(`DELETE FROM ot_staff_lines WHERE request_id = ?`).run(requestId);
   db.prepare(`DELETE FROM ot_work_details WHERE request_id = ?`).run(requestId);
@@ -559,10 +628,21 @@ export function createOtRequest(db, actor, body = {}) {
       ? 1
       : 0;
 
-  const id = nextOtRequestHumanId(db, branchId);
-  const now = nowIso();
   const creatorId = actorId(actor);
   const creatorName = actorName(actor);
+
+  const dup = assertNoDuplicateOtRequest(db, {
+    branchId,
+    dayIso,
+    workType,
+    quotationRef: links.quotationRef,
+    poId: links.poId,
+    createdByUserId: creatorId,
+  });
+  if (!dup.ok) return dup;
+
+  const id = nextOtRequestHumanId(db, branchId);
+  const now = nowIso();
 
   try {
     db.transaction(() => {
@@ -674,6 +754,17 @@ export function updateOtRequest(db, actor, requestId, body = {}) {
         ? 1
         : 0;
 
+  const dup = assertNoDuplicateOtRequest(db, {
+    branchId,
+    dayIso,
+    workType,
+    quotationRef: links.quotationRef,
+    poId: links.poId,
+    createdByUserId: row.created_by_user_id,
+    excludeId: id,
+  });
+  if (!dup.ok) return dup;
+
   const now = nowIso();
   try {
     db.transaction(() => {
@@ -709,6 +800,56 @@ export function updateOtRequest(db, actor, requestId, body = {}) {
 
   appendOtAudit(db, actor, 'ot_request.update', id, `Updated draft ${id}`, { workType });
   return getOtRequest(db, id);
+}
+
+/**
+ * Delete draft or rejected OT request (creator only). Removes children explicitly
+ * so both SQLite and MySQL stay clean even if FK cascade is off.
+ */
+export function deleteOtRequest(db, actor, requestId, opts = {}) {
+  if (!tableReady(db)) return { ok: false, error: 'OT module not initialised.', code: 'OT_NOT_READY' };
+  const id = String(requestId || '').trim();
+  const row = db.prepare(`SELECT * FROM ot_requests WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'OT request not found.', code: 'OT_NOT_FOUND' };
+
+  const scopeBranch = String(opts.branchId || '').trim();
+  if (scopeBranch && scopeBranch !== String(row.branch_id)) {
+    return { ok: false, error: 'OT request is outside your branch scope.', code: 'OT_BRANCH_SCOPE' };
+  }
+
+  const status = String(row.status || '');
+  if (status !== OT_STATUS.DRAFT && status !== OT_STATUS.REJECTED) {
+    return {
+      ok: false,
+      error: 'Only draft or rejected OT requests can be deleted.',
+      code: 'OT_DELETE_STATUS',
+      status,
+    };
+  }
+
+  const actorUid = actorId(actor);
+  if (actorUid && row.created_by_user_id && String(row.created_by_user_id) !== String(actorUid)) {
+    return { ok: false, error: 'You can only delete OT requests you created.', code: 'OT_DELETE_OWNER' };
+  }
+
+  try {
+    db.transaction(() => {
+      db.prepare(`DELETE FROM ot_status_history WHERE request_id = ?`).run(id);
+      db.prepare(`DELETE FROM ot_staff_lines WHERE request_id = ?`).run(id);
+      db.prepare(`DELETE FROM ot_work_details WHERE request_id = ?`).run(id);
+      db.prepare(`DELETE FROM ot_payment_line WHERE request_id = ?`).run(id);
+      const removed = db.prepare(`DELETE FROM ot_requests WHERE id = ?`).run(id);
+      if (!removed.changes) throw new Error('OT request already removed.');
+    })();
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Could not delete OT request.', code: 'OT_DELETE_FAILED' };
+  }
+
+  appendOtAudit(db, actor, 'ot_request.delete', id, `Deleted ${id}`, {
+    branchId: row.branch_id,
+    status,
+  });
+  return { ok: true, deletedId: id };
 }
 
 /**
@@ -760,6 +901,17 @@ export function submitOtRequest(db, actor, requestId, opts = {}) {
   if (!String(full.request.reason || '').trim()) {
     return { ok: false, error: 'Reason is required before submit.', code: 'OT_REASON_REQUIRED' };
   }
+
+  const dup = assertNoDuplicateOtRequest(db, {
+    branchId: full.request.branchId,
+    dayIso: full.request.dayIso,
+    workType: full.request.workType,
+    quotationRef: full.request.quotationRef,
+    poId: full.request.poId,
+    createdByUserId: full.request.createdByUserId,
+    excludeId: id,
+  });
+  if (!dup.ok) return dup;
 
   const now = nowIso();
   try {

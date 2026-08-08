@@ -8,6 +8,7 @@ import { buildPendingApprovalsReport, buildProductionStatusReport } from './oper
 import { listStaffPurchaseCreditQueue } from './staffPurchaseCreditOps.js';
 import { listRegisterSettlements } from './accountingRegisterSettlementOps.js';
 import { listBranchesMissingBranchManager } from './customerComplaintsOps.js';
+import { OT_STATUS, listOtRequests } from './otOps.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -169,6 +170,43 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       reasons: ['Pending payment approval', amt >= expenseHi ? 'Large payment' : null].filter(Boolean),
       row: p,
     });
+  }
+
+  try {
+    const otOpts = {
+      status: OT_STATUS.PENDING_BM,
+      limit: 100,
+    };
+    if (branchScope && branchScope !== 'ALL') {
+      otOpts.branchId = String(branchScope).trim();
+    }
+    for (const ot of listOtRequests(db, otOpts)) {
+      const amt = Math.round(Number(ot.totalPayableNgn) || 0);
+      const link =
+        ot.quotationRef ||
+        ot.poId ||
+        (ot.workType === 'other' ? 'Other OT' : String(ot.workType || 'OT'));
+      pushItem(items, {
+        id: `ot:${ot.id}`,
+        kind: 'overtime',
+        priority: 73,
+        otRequestId: ot.id,
+        title: ot.id,
+        subtitle: `${ot.dayIso || ''} · ${ot.workType || 'OT'} · ${link} · ${ot.createdByName || 'Store'}`.replace(
+          /^\s·\s/,
+          ''
+        ),
+        amountNgn: amt > 0 ? amt : null,
+        atIso: ot.submittedAtIso || ot.updatedAtIso || ot.createdAtIso,
+        branchId: ot.branchId || '',
+        reasons: ['Pending overtime pay approval', ot.reason ? String(ot.reason).slice(0, 80) : null].filter(
+          Boolean
+        ),
+        row: ot,
+      });
+    }
+  } catch {
+    /* OT tables may be mid-migrate */
   }
 
   for (const m of raw.pendingMaterialIncidents || []) {

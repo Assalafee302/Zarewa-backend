@@ -3,6 +3,7 @@ import { createDatabase } from './db.js';
 import {
   OT_STATUS,
   createOtRequest,
+  deleteOtRequest,
   updateOtRequest,
   submitOtRequest,
   approveOtRequest,
@@ -385,5 +386,58 @@ describe.skipIf(!dbOk())('otOps state machine', () => {
     );
     expect(other.ok).toBe(false);
     expect(other.code).toBe('OT_EDIT_OWNER');
+  });
+
+  it('blocks duplicate open OT for same day + quotation', () => {
+    if (!fx.quotationId) return;
+    const first = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
+    expect(first.ok).toBe(true);
+
+    const dup = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
+    expect(dup.ok).toBe(false);
+    expect(dup.code).toBe('OT_DUPLICATE');
+    expect(dup.duplicateId).toBe(first.request.id);
+  });
+
+  it('allows deleting draft duplicate and recreating', () => {
+    if (!fx.quotationId) return;
+    const first = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
+    expect(first.ok).toBe(true);
+    const id = first.request.id;
+
+    const del = deleteOtRequest(db, actor(fx.ops, 'operations_officer'), id, { branchId: fx.branchId });
+    expect(del.ok).toBe(true);
+    expect(del.deletedId).toBe(id);
+    expect(getOtRequest(db, id).ok).toBe(false);
+
+    const again = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
+    expect(again.ok).toBe(true);
+    expect(again.request.id).not.toBe(id);
+  });
+
+  it('cannot delete pending or paid OT; rejected can be deleted by creator', () => {
+    if (!fx.quotationId) return;
+    const created = createOtRequest(db, actor(fx.ops, 'operations_officer'), baseProductionPayload(fx));
+    const id = created.request.id;
+    submitOtRequest(db, actor(fx.ops, 'operations_officer'), id);
+
+    const delPending = deleteOtRequest(db, actor(fx.ops, 'operations_officer'), id, {
+      branchId: fx.branchId,
+    });
+    expect(delPending.ok).toBe(false);
+    expect(delPending.code).toBe('OT_DELETE_STATUS');
+
+    rejectOtRequest(
+      db,
+      actor(fx.bm, 'sales_manager'),
+      id,
+      { reason: 'Duplicate entry cleanup test' },
+      { branchId: fx.branchId }
+    );
+
+    const delRej = deleteOtRequest(db, actor(fx.ops, 'operations_officer'), id, {
+      branchId: fx.branchId,
+    });
+    expect(delRej.ok).toBe(true);
   });
 });

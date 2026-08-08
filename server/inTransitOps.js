@@ -305,7 +305,6 @@ export function syncInTransitLoadFromTransportPost(db, poId, actor = null, opts 
 }
 
 export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor = null) {
-  void receivedEntries;
   if (!inTransitTablesReady(db)) return { ok: true, load: null };
   const load = findLoadByPo(db, poId);
   if (!load) return { ok: true, load: null };
@@ -331,12 +330,23 @@ export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor =
   const fullyReceived = poLinesFullyReceived(lineRows, mapPoLineFromDb);
   const anyShort = lines.some((line) => line.shortLandedQty > 0);
   const status = fullyReceived ? (anyShort ? 'short_landed' : 'received') : anyShort ? 'partial_receipt' : 'in_transit';
-  const now = nowIso();
+  const storekeeperDays = (Array.isArray(receivedEntries) ? receivedEntries : [])
+    .map((e) =>
+      String(e?.receivedAtISO ?? e?.received_at_iso ?? e?.dateISO ?? e?.date_iso ?? '')
+        .trim()
+        .slice(0, 10)
+    )
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  const receivedAt =
+    storekeeperDays.length > 0
+      ? `${storekeeperDays[storekeeperDays.length - 1]}T12:00:00`
+      : nowIso();
   db.prepare(
     `UPDATE in_transit_loads
      SET status = ?, received_at_iso = CASE WHEN ? IN ('received', 'short_landed') THEN COALESCE(received_at_iso, ?) ELSE received_at_iso END
      WHERE id = ?`
-  ).run(status, status, now, load.id);
+  ).run(status, status, receivedAt, load.id);
 
   appendAuditLog(db, {
     actor,

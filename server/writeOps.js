@@ -2237,6 +2237,30 @@ export function confirmGrn(
   const grnDateISO = new Date().toISOString().slice(0, 10);
   const glUserId = opts?.actor?.id != null ? String(opts.actor.id) : null;
 
+  function entryReceivedDateISO(e) {
+    const raw = String(
+      e?.receivedAtISO ?? e?.received_at_iso ?? e?.dateISO ?? e?.date_iso ?? ''
+    )
+      .trim()
+      .slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    return grnDateISO;
+  }
+
+  /** Business timestamp for stock movements — calendar day from storekeeper, noon local-ish. */
+  function entryReceivedAtISO(dayISO) {
+    return `${dayISO}T12:00:00`;
+  }
+
+  for (const e of entries) {
+    const raw = String(
+      e?.receivedAtISO ?? e?.received_at_iso ?? e?.dateISO ?? e?.date_iso ?? ''
+    ).trim();
+    if (raw && !/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+      return { ok: false, error: 'Enter a valid date of receival (YYYY-MM-DD) for each line.' };
+    }
+  }
+
   const insLot = db.prepare(`
     INSERT INTO coil_lots (
       coil_no, product_id, line_key, qty_received, weight_kg, colour, gauge_label, material_type_name,
@@ -2292,6 +2316,8 @@ export function confirmGrn(
           ? /^ACC-/i.test(String(product.product_id || '').trim())
           : /^ACC-/i.test(pid);
 
+      const lineDateISO = entryReceivedDateISO(e);
+
       if (isFs) {
         const fsRef = `SF-${String(poID).replace(/[^A-Za-z0-9-]/g, '')}-${String(line.line_key || i)}`;
         coilNumbers.push(fsRef);
@@ -2307,12 +2333,13 @@ export function confirmGrn(
           productID: e.productID,
           qty: m2,
           detail: `${fsRef} · ${qty} sheets → ${m2.toFixed(2)} m² · ${e.location || 'main store'}`,
-          dateISO: grnDateISO,
+          dateISO: lineDateISO,
+          atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upSheet || null,
           valueNgn: landedFs,
         });
         const glF = tryPostInventoryReceiptJournal(db, {
-          entryDateISO: grnDateISO,
+          entryDateISO: lineDateISO,
           sourceKind: 'STONE_FLATSHEET_GRN',
           sourceId: fsRef,
           landedCostNgn: landedFs,
@@ -2339,12 +2366,13 @@ export function confirmGrn(
           productID: e.productID,
           qty,
           detail: `${stoneRef} · ${qty} m · ${e.location || 'main store'}`,
-          dateISO: grnDateISO,
+          dateISO: lineDateISO,
+          atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upM || null,
           valueNgn: landedStone,
         });
         const glS = tryPostInventoryReceiptJournal(db, {
-          entryDateISO: grnDateISO,
+          entryDateISO: lineDateISO,
           sourceKind: 'STONE_GRN',
           sourceId: stoneRef,
           landedCostNgn: landedStone,
@@ -2371,12 +2399,13 @@ export function confirmGrn(
           productID: e.productID,
           qty,
           detail: `${accRef} · ${qty} u · ${e.location || 'main store'}`,
-          dateISO: grnDateISO,
+          dateISO: lineDateISO,
+          atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upEach || null,
           valueNgn: landedAcc,
         });
         const glA = tryPostInventoryReceiptJournal(db, {
-          entryDateISO: grnDateISO,
+          entryDateISO: lineDateISO,
           sourceKind: 'ACCESSORY_GRN',
           sourceId: accRef,
           landedCostNgn: landedAcc,
@@ -2431,7 +2460,7 @@ export function confirmGrn(
         poID,
         sid,
         sname,
-        grnDateISO,
+        lineDateISO,
         coilBranch,
         econ.landedCostNgn,
         econ.unitCostNgnPerKg
@@ -2450,12 +2479,13 @@ export function confirmGrn(
         productID: e.productID,
         qty: creditQty,
         detail: `${coilNo} · ${e.location || 'main store'}`,
-        dateISO: grnDateISO,
+        dateISO: lineDateISO,
+        atISO: entryReceivedAtISO(lineDateISO),
         unitPriceNgn: econ.unitCostNgnPerKg ?? null,
         valueNgn: econ.landedCostNgn ?? null,
       });
       const glR = tryPostGrnInventoryJournal(db, {
-        entryDateISO: grnDateISO,
+        entryDateISO: lineDateISO,
         coilNo,
         landedCostNgn: econ.landedCostNgn,
         branchId: coilBranch,

@@ -7987,6 +7987,37 @@ export function registerHttpApi(app, db) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
     }
   });
+  app.post('/api/coil-lots/:coilNo/undo-finish-roll', (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
+    }
+    if (!userMayEditCoilLotMasterData(req.user)) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Only a branch manager (or above) can undo finish roll and restore the coil.',
+        code: 'FORBIDDEN',
+      });
+    }
+    return next();
+  }, (req, res) => {
+    try {
+      const coilNo = decodeURIComponent(String(req.params.coilNo || '').trim());
+      const r = write.postCoilUndoFinishRoll(
+        db,
+        { ...req.body, coilNo },
+        { workspaceBranchId: req.workspaceBranchId, actor: req.user }
+      );
+      if (r.ok) {
+        const sync = syncProductionJobCoilConsumedWeightsForCoil(db, coilNo);
+        r.consumedWeightSync = sync;
+      }
+      const status = r.ok ? 200 : r.code === 'UNDO_FINISH_ROLL_CONFIRM_REQUIRED' ? 400 : 400;
+      res.status(status).json(r);
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
   app.post('/api/coil-lots/:coilNo/return-material', requirePermission(coilMaterialPerms), (req, res) => {
     try {
       const r = write.returnCoilMaterialToStock(

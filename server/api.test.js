@@ -2997,6 +2997,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const line = list.body.allocations[0];
     const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
       reason: 'Roll finished was ticked by mistake — steel remains on the roll after yard check.',
+      confirmUndoFinishRoll: true,
       readings: [
         {
           allocationId: line.id,
@@ -3108,6 +3109,63 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     const ev = boot.body.coilControlEvents.find((e) => e.eventKind === 'finish_roll' && e.coilNo === child);
     expect(ev).toBeTruthy();
     expect(Number(ev.kgCoilDelta)).toBeCloseTo(-85, 1);
+  });
+
+  it('coil-lots undo-finish-roll restores tail for branch manager; store staff forbidden', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const d = '2026-03-31';
+    const split = await agent.post(`/api/coil-lots/${encodeURIComponent(coilA)}/split`).send({
+      splitKg: 40,
+      note: 'Undo finish child',
+      dateISO: d,
+    });
+    expect(split.status).toBe(200);
+    const child = split.body.newCoilNo;
+
+    const finish = await agent.post(`/api/coil-lots/${encodeURIComponent(child)}/finish-roll`).send({
+      note: 'Mistaken finish roll — will undo',
+      dateISO: d,
+    });
+    expect(finish.status).toBe(200);
+    expect(finish.body.tailKgCleared).toBeCloseTo(40, 1);
+
+    const needConfirm = await agent.post(`/api/coil-lots/${encodeURIComponent(child)}/undo-finish-roll`).send({
+      note: 'Mistaken finish — steel remains on roll',
+      dateISO: d,
+    });
+    expect(needConfirm.status).toBe(400);
+    expect(needConfirm.body.code).toBe('UNDO_FINISH_ROLL_CONFIRM_REQUIRED');
+
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const denied = await staff.post(`/api/coil-lots/${encodeURIComponent(child)}/undo-finish-roll`).send({
+      note: 'Mistaken finish — steel remains on roll',
+      confirmUndoFinishRoll: true,
+      dateISO: d,
+    });
+    expect(denied.status).toBe(403);
+
+    const mgr = request.agent(app);
+    await loginAs(mgr, 'sales.manager', 'Sales@123');
+    const undo = await mgr.post(`/api/coil-lots/${encodeURIComponent(child)}/undo-finish-roll`).send({
+      note: 'Mistaken finish — steel remains on roll',
+      confirmUndoFinishRoll: true,
+      dateISO: d,
+    });
+    expect(undo.status).toBe(200);
+    expect(undo.body.ok).toBe(true);
+    expect(undo.body.kgRestored).toBeCloseTo(40, 1);
+    expect(String(undo.body.currentStatus || '').toLowerCase()).toBe('available');
+
+    const boot = await mgr.get('/api/bootstrap');
+    const lot = boot.body.coilLots.find((c) => c.coilNo === child);
+    expect(Number(lot.qtyRemaining || lot.currentWeightKg)).toBeCloseTo(40, 1);
+    expect(String(lot.currentStatus || '').toLowerCase()).toBe('available');
+    const undoEv = boot.body.coilControlEvents.find(
+      (e) => e.eventKind === 'undo_finish_roll' && e.coilNo === child
+    );
+    expect(undoEv).toBeTruthy();
+    expect(Number(undoEv.kgCoilDelta)).toBeCloseTo(40, 1);
   });
 
   it('coil-lots PATCH master-data updates metadata for branch manager; sales staff forbidden', async () => {

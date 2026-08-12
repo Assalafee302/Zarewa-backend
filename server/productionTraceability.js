@@ -1,4 +1,4 @@
-import { actorName } from './auth.js';
+import { actorName, userMayEditCoilLotMasterData } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog, assertPeriodOpen, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { recordRefundIntegrityDriftAfterProductionChange } from './quotationRecalcOrchestrator.js';
@@ -244,7 +244,17 @@ function mapProductionJobCoilRow(row) {
 
 /** Coil allocation rows for a single job (read API / snapshot-friendly). */
 export function listProductionJobCoilsForJob(db, jobID) {
-  return listJobCoilsForJob(db, jobID).map(mapProductionJobCoilRow);
+  const jid = String(jobID ?? '').trim();
+  return listJobCoilsForJob(db, jid).map((row) => {
+    const mapped = mapProductionJobCoilRow(row);
+    const tailKg = finishRollTailNetClearedKg(db, jid, mapped.coilNo);
+    return {
+      ...mapped,
+      finishCoilTailKg: tailKg,
+      /** Still treated as finished on the book until BM+ unchecks and confirms restore. */
+      finishCoil: tailKg > 0.05,
+    };
+  });
 }
 
 /**
@@ -2897,6 +2907,11 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
   const lines = Array.isArray(payload.readings) ? payload.readings : [];
   if (!lines.length) return { ok: false, error: 'Send corrected readings for each coil line.' };
 
+  const confirmUndoFinishRoll =
+    payload.confirmUndoFinishRoll === true ||
+    payload.confirm === true ||
+    String(payload.confirmUndoFinishRoll || '').trim().toLowerCase() === 'true';
+
   const existing = listJobCoilsForJob(db, jobId);
   const oldCoilNos = existing.map((r) => String(r.coil_no ?? '').trim()).filter(Boolean);
   const byAid = new Map(existing.map((r) => [String(r.id ?? '').trim(), r]));
@@ -2999,6 +3014,40 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     validateUniqueCoils(parsed.map((p) => ({ coilNo: p.nextCoil })));
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
+  }
+
+  const undoFinishTargets = [];
+  for (const p of parsed) {
+    if (p.finishCoil) continue;
+    const cn = String(p.nextCoil || '').trim();
+    if (!cn) continue;
+    const priorCoil = p.isNew ? '' : String(p.row?.coil_no ?? '').trim();
+    const tailOnPrior = priorCoil ? finishRollTailNetClearedKg(db, jobId, priorCoil) : 0;
+    const tailOnNext = finishRollTailNetClearedKg(db, jobId, cn);
+    const restoringKg = Math.max(tailOnPrior, priorCoil === cn ? tailOnNext : 0);
+    if (restoringKg > 0.05) {
+      undoFinishTargets.push({ coilNo: priorCoil || cn, kg: restoringKg });
+    }
+  }
+  if (undoFinishTargets.length) {
+    if (!userMayEditCoilLotMasterData(opts.actor)) {
+      return {
+        ok: false,
+        error:
+          'Unchecking Finish roll restores cleared coil stock. Only a branch manager (or above) can confirm that.',
+        code: 'FORBIDDEN',
+        undoFinishRollCoils: undoFinishTargets,
+      };
+    }
+    if (!confirmUndoFinishRoll) {
+      return {
+        ok: false,
+        error:
+          'Confirm undo Finish roll: usable steel remains on the roll and the cleared tail should return to stock.',
+        code: 'UNDO_FINISH_ROLL_CONFIRM_REQUIRED',
+        undoFinishRollCoils: undoFinishTargets,
+      };
+    }
   }
 
   const specChanged = parsed.filter(

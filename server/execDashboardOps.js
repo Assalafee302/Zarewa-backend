@@ -532,7 +532,7 @@ function canActOnWorkItemKind(user, kind) {
 function workItemRoute(kind, row = {}) {
   const k = String(kind || '').toLowerCase();
   if (k === 'refunds') return '/manager';
-  if (k === 'register_settlement') return '/accounting';
+  if (k === 'register_settlement') return '/exec?tab=decide';
   if (k === 'payments') return '/manager';
   if (k === 'material') return '/operations/material-exceptions';
   if (k === 'edit_approvals') return '/manager';
@@ -845,9 +845,12 @@ function listExecutiveUnifiedTrayItems(db, branchScope, user) {
   return listUnifiedWorkItems(db, scope, user, { limit: 60 }).filter((it) => {
     const st = String(it.status || '').toLowerCase();
     if (['completed', 'done', 'cancelled', 'approved', 'rejected'].includes(st)) return false;
+    const docKind = String(it.documentType || it.type || it.sourceKind || '').toLowerCase();
+    // Payable withdrawals awaiting MD/finance approval (not payout stage).
+    if (docKind === 'register_settlement' && /^(pending|pending_review|submitted|open)$/i.test(st)) return true;
     const ro = String(it.responsibleOfficeKey || it.officeKey || '').toLowerCase();
     if (ro === 'executive' || ro === 'finance') return true;
-    const amt = Number(it.amountNgn) || 0;
+    const amt = Number(it.amountNgn) || Number(it.data?.amountNgn) || 0;
     if (amt >= 200_000 && /pending|submitted|awaiting|open/.test(st)) return true;
     return false;
   }).slice(0, 10);

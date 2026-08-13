@@ -1395,24 +1395,28 @@ export function registerHttpApi(app, db) {
       const settlement = result.settlement;
       if (settlement) {
         const amt = Math.round(Number(settlement.amountNgn) || 0);
-        const gov = getOrgGovernanceLimits(db);
-        const mdTier = amt >= gov.refundExecutiveThresholdNgn;
+        // Always Executive office — Finance/MD approve; do not send to branch_manager.
         upsertWorkItemBySource(db, {
           actor: req.user,
           sourceKind: 'register_settlement',
           sourceId: String(settlement.settlementId || ''),
           branchId: settlement.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
-          officeKey: mdTier ? 'executive' : 'branch_manager',
-          responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
+          officeKey: 'executive',
+          responsibleOfficeKey: 'executive',
           documentClass: 'approval',
           documentType: 'register_settlement',
           status: 'pending',
           title: `Register withdrawal ${String(settlement.settlementId || '').trim()}`,
           summary: `${settlement.partyName || 'Party'} · ₦${amt.toLocaleString('en-NG')} · ${String(settlement.reason || 'Withdrawal request').trim()}`,
           requiresApproval: true,
+          visibilityEntries: [
+            { visibilityKind: 'office_key', visibilityValue: 'executive' },
+            { visibilityKind: 'office_key', visibilityValue: 'finance' },
+          ],
           data: {
-            routePath: '/accounting',
-            routeState: { focusTab: 'debtors', settlementId: settlement.settlementId },
+            amountNgn: amt,
+            routePath: '/exec',
+            routeState: { tab: 'decide', settlementId: settlement.settlementId },
           },
         });
       }
@@ -1438,26 +1442,39 @@ export function registerHttpApi(app, db) {
           const outcome = String(req.body?.status || '').trim() || 'reviewed';
           const settlement = result.settlement;
           const amt = Math.round(Number(settlement?.approvedAmountNgn || settlement?.amountNgn) || 0);
-          const gov = getOrgGovernanceLimits(db);
-          const mdTier = amt >= gov.refundExecutiveThresholdNgn;
+          const approved = String(outcome).toLowerCase() === 'approved';
+          // After MD/finance approval, hand off to Finance office for cashier payout.
           const target = upsertWorkItemBySource(db, {
             actor: req.user,
             sourceKind: 'register_settlement',
             sourceId: String(req.params.settlementId || ''),
             branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
-            officeKey: mdTier ? 'executive' : 'branch_manager',
-            responsibleOfficeKey: mdTier ? 'executive' : 'branch_manager',
-            documentClass: 'approval',
+            officeKey: approved ? 'finance' : 'executive',
+            responsibleOfficeKey: approved ? 'finance' : 'executive',
+            documentClass: approved ? 'request' : 'approval',
             documentType: 'register_settlement',
-            status: outcome.toLowerCase(),
-            title: `Register settlement ${String(req.params.settlementId || '').trim()}`,
+            status: approved ? 'awaiting_payment' : outcome.toLowerCase(),
+            title: approved
+              ? `Pay register withdrawal ${String(req.params.settlementId || '').trim()}`
+              : `Register settlement ${String(req.params.settlementId || '').trim()}`,
             summary:
               String(req.body?.note || '').trim() ||
-              `${settlement?.partyName || 'Party'} · ₦${(settlement?.approvedAmountNgn || settlement?.amountNgn || 0).toLocaleString('en-NG')}`,
-            requiresApproval: true,
+              `${settlement?.partyName || 'Party'} · ₦${amt.toLocaleString('en-NG')}${
+                approved ? ' · Approved — record treasury payout' : ''
+              }`,
+            requiresApproval: !approved,
+            requiresResponse: approved,
+            closedAtIso: approved ? '' : undefined,
+            visibilityEntries: [
+              { visibilityKind: 'office_key', visibilityValue: 'executive' },
+              { visibilityKind: 'office_key', visibilityValue: 'finance' },
+            ],
             data: {
-              routePath: '/accounting',
-              routeState: { focusTab: 'debtors', settlementId: req.params.settlementId },
+              amountNgn: amt,
+              routePath: approved ? '/accounts' : '/accounting',
+              routeState: approved
+                ? { accountsTab: 'desk', settlementId: req.params.settlementId }
+                : { focusTab: 'debtors', settlementId: req.params.settlementId },
             },
           });
           if (target.ok) {
@@ -1467,7 +1484,7 @@ export function registerHttpApi(app, db) {
               actorBranchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
               decisionKey: 'register_settlement_review',
               outcomeStatus: outcome.toLowerCase(),
-              nextStatus: outcome.toLowerCase(),
+              nextStatus: approved ? 'awaiting_payment' : outcome.toLowerCase(),
               note: String(req.body?.note || '').trim() || `Settlement ${outcome.toLowerCase()}`,
             });
           }
@@ -1512,6 +1529,44 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
+      if (result.ok) {
+        try {
+          const settlement = result.settlement;
+          const amt = Math.round(Number(settlement?.approvedAmountNgn || settlement?.amountNgn) || 0);
+          const fullyPaid = Boolean(result.fullyPaid);
+          upsertWorkItemBySource(db, {
+            actor: req.user,
+            sourceKind: 'register_settlement',
+            sourceId: String(req.params.settlementId || ''),
+            branchId: settlement?.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID,
+            officeKey: 'finance',
+            responsibleOfficeKey: 'finance',
+            documentClass: 'request',
+            documentType: 'register_settlement',
+            status: fullyPaid ? 'paid' : 'awaiting_payment',
+            title: fullyPaid
+              ? `Register withdrawal ${String(req.params.settlementId || '').trim()} paid`
+              : `Pay register withdrawal ${String(req.params.settlementId || '').trim()}`,
+            summary: fullyPaid
+              ? `${settlement?.partyName || 'Party'} · Fully paid`
+              : `${settlement?.partyName || 'Party'} · Partial payout — balance still due`,
+            requiresApproval: false,
+            requiresResponse: !fullyPaid,
+            closedAtIso: fullyPaid ? new Date().toISOString() : '',
+            visibilityEntries: [
+              { visibilityKind: 'office_key', visibilityValue: 'executive' },
+              { visibilityKind: 'office_key', visibilityValue: 'finance' },
+            ],
+            data: {
+              amountNgn: amt,
+              routePath: '/accounts',
+              routeState: { accountsTab: 'desk', settlementId: req.params.settlementId },
+            },
+          });
+        } catch (syncErr) {
+          console.error('[register-settlement-pay-work-item-sync]', syncErr);
+        }
+      }
       return res.status(result.ok ? 201 : 400).json(result);
     } catch (e) {
       console.error('[accounting-settlement-pay]', e);

@@ -47,7 +47,14 @@ function newSlaEventId() {
 
 function isClosedStatus(status) {
   const s = String(status || '').trim().toLowerCase();
-  return s === 'approved' || s === 'rejected' || s === 'closed' || s === 'completed' || s === 'cancelled';
+  return (
+    s === 'approved' ||
+    s === 'rejected' ||
+    s === 'closed' ||
+    s === 'completed' ||
+    s === 'cancelled' ||
+    s === 'paid'
+  );
 }
 
 function defaultDueAtIso(priority, requiresAttention) {
@@ -154,6 +161,9 @@ export function userMayDecideWorkItem(user, row, opts = {}) {
   if (docType === 'refund_request') {
     return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
   }
+  if (docType === 'register_settlement') {
+    return userHasPermission(user, 'refunds.approve') || userHasPermission(user, 'finance.approve');
+  }
   if (docType === 'staff_purchase_credit') {
     return userMayApproveStaffPurchaseCredit(user);
   }
@@ -177,7 +187,12 @@ function userMatchesWorkItemOfficeAudience(user, row) {
   if (rk === 'admin' || userHasPermission(user, '*')) return true;
   if (ro === 'branch_manager' || ro === 'executive') return canSeeManagementApprovalQueues(user);
   if (ro === 'finance' || ro === 'treasury') {
-    return userHasPermission(user, 'finance.approve') || userHasPermission(user, 'treasury.manage');
+    return (
+      userHasPermission(user, 'finance.approve') ||
+      userHasPermission(user, 'finance.pay') ||
+      userHasPermission(user, 'treasury.manage') ||
+      userHasPermission(user, 'cashier.desk.view')
+    );
   }
   if (ro === 'procurement') {
     return userHasPermission(user, 'procurement.manage') || userHasPermission(user, 'purchase_orders.manage');
@@ -230,6 +245,9 @@ function documentTypeDefaultOfficeKey(documentType) {
   }
   if (type === 'payment_request' || type === 'bank_recon_exceptions' || type === 'po_transport_payment') {
     return 'finance';
+  }
+  if (type === 'register_settlement') {
+    return 'executive';
   }
   if (type === 'material_request' || type === 'in_transit_load' || type === 'coil_grn_short_receipt') {
     return 'procurement';
@@ -323,6 +341,12 @@ function mapPersistedWorkItemRow(row, visibility = []) {
     sourceKind: row.source_kind || '',
     sourceId: row.source_id || '',
     linkedThreadId: row.linked_thread_id || '',
+    amountNgn:
+      data?.amountNgn != null
+        ? Math.round(Number(data.amountNgn) || 0)
+        : data?.amountRequestedNgn != null
+          ? Math.round(Number(data.amountRequestedNgn) || 0)
+          : null,
     data,
     visibility,
     persisted: true,
@@ -382,9 +406,18 @@ export function userCanSeePersistedWorkItem(db, scope, user, row) {
     if (entry.visibilityKind === 'office_key') {
       const ev = String(entry.visibilityValue || '').trim();
       const ro = String(row.responsible_office_key || row.office_key || '').trim();
-      if (ev === ro || ev === officeKey) {
-        if (userMatchesWorkItemOfficeAudience(user, row)) return true;
+      if (ev && ev === officeKey) {
+        if (
+          userMatchesWorkItemOfficeAudience(user, {
+            ...row,
+            office_key: ev,
+            responsible_office_key: ev,
+          })
+        ) {
+          return true;
+        }
       }
+      if (ev === ro && userMatchesWorkItemOfficeAudience(user, row)) return true;
     }
     if (
       entry.visibilityKind === 'branch_id' &&
@@ -788,7 +821,7 @@ export function appendWorkItemDecision(db, payload, opts = {}) {
     db.prepare(
       `UPDATE work_items
        SET status = ?, updated_at_iso = ?, key_decision_summary = ?,
-           closed_at_iso = CASE WHEN ? IN ('closed','approved','rejected','cancelled','completed') THEN COALESCE(closed_at_iso, ?) ELSE closed_at_iso END
+           closed_at_iso = CASE WHEN ? IN ('closed','approved','rejected','cancelled','completed','paid') THEN COALESCE(closed_at_iso, ?) ELSE closed_at_iso END
        WHERE id = ?`
     ).run(nextStatus, actedAtIso, summary, nextStatus, actedAtIso, workItemId);
     if (isClosedStatus(nextStatus)) {

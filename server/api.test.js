@@ -1727,6 +1727,17 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'EXPENSE')).toBe(true);
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'TREASURY_TRANSFER')).toBe(true);
 
+    const bankCharge = await agent.post('/api/treasury/bank-charges').send({
+      treasuryAccountId: from.id,
+      amountNgn: 750,
+      dateISO: '2026-03-29',
+      description: 'Stamp duty',
+      reference: 'BANK-CHG-TEST',
+    });
+    expect(bankCharge.status).toBe(201);
+    expect(bankCharge.body.ok).toBe(true);
+    expect(bankCharge.body.expenseID).toBeTruthy();
+
     const batchId = transfer.body.batchId;
     expect(batchId).toBeTruthy();
 

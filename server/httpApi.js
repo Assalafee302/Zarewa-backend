@@ -571,6 +571,7 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import {
   allocateBankDepositTx,
@@ -9016,6 +9017,33 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/treasury/bank-charges', requirePermission('finance.pay'), (req, res) => {
+    try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'bank_charge.create')) return;
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
+      const r = recordBankCharge(
+        db,
+        {
+          ...(req.body || {}),
+          createdBy: req.user.displayName,
+          actor: req.user,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        },
+        req.workspaceBranchId || DEFAULT_BRANCH_ID
+      );
+      if (r.ok) storeIdempotentSuccess(db, req, 'bank_charge.create', 201, r);
+      res.status(r.ok ? 201 : 400).json(r);
+    } catch (e) {
+      console.error(e);
+      apiError(res, {
+        status: 400,
+        code: 'BANK_CHARGE_CREATE_FAILED',
+        error: safeErrorMessage(e, 'Could not record bank charge.'),
+      });
     }
   });
 

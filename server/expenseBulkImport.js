@@ -11,7 +11,7 @@ import {
 import { validateExpenseCategorySelection } from '../shared/expenseCategoryPolicy.js';
 import { userHasPermission } from './auth.js';
 import { insertExpenseEntry } from './writeOps.js';
-import { DEFAULT_BRANCH_ID } from './branches.js';
+import { requireExplicitBranchId } from './branches.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
 
 export const EXPENSE_IMPORT_HEADERS = Object.freeze([
@@ -373,7 +373,12 @@ function validateImportRow(db, row, actor, opts = {}) {
     return { errors, warnings, missingFields, treasuryAccountId: null, needsUpdate: false };
   }
 
-  const bid = String(opts.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const branchCheck = requireExplicitBranchId(opts.branchId, 'expense import row');
+  if (!branchCheck.ok) {
+    errors.push(branchCheck.error);
+    return { errors, warnings, missingFields, treasuryAccountId: null, needsUpdate: true };
+  }
+  const bid = branchCheck.branchId;
 
   if (!row.date) {
     missingFields.push('date');
@@ -466,7 +471,9 @@ function validateImportRow(db, row, actor, opts = {}) {
  * @param {{ requireTreasury?: boolean, branchId?: string }} [opts]
  */
 export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
-  const branchId = String(opts.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const branchCheck = requireExplicitBranchId(opts.branchId, 'expense import');
+  if (!branchCheck.ok) return { ok: false, error: branchCheck.error };
+  const branchId = branchCheck.branchId;
   const normalized = normalizeExpenseImportRows(rows);
   const previewTable = normalized.map((row) => {
     const v = validateImportRow(db, row, actor, { ...opts, branchId });
@@ -524,8 +531,10 @@ export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
  * @param {string} branchId
  * @param {{ workspaceViewAll?: boolean, requireTreasury?: boolean }} [opts]
  */
-export function commitExpenseBulkImport(db, actor, rows, branchId = DEFAULT_BRANCH_ID, opts = {}) {
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
+  const branchCheck = requireExplicitBranchId(branchId, 'expense import');
+  if (!branchCheck.ok) return { ok: false, error: branchCheck.error };
+  const bid = branchCheck.branchId;
   const preview = previewExpenseBulkImport(db, rows, actor, { ...opts, branchId: bid });
   const toPost = preview.previewTable.filter((r) => r.include && r.status === 'ok');
   if (!toPost.length) {

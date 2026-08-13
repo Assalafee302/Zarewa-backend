@@ -5,7 +5,6 @@
 
 import crypto from 'node:crypto';
 import XLSX from 'xlsx';
-import { DEFAULT_BRANCH_ID } from './branches.js';
 import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady, registerNewStaffWithProfile, upsertHrStaffProfile } from './hrOps.js';
 import { lookupHrSalaryMatrixRow } from './hrCompensationOps.js';
@@ -689,7 +688,7 @@ function lookupBranchId(db, codeOrId, name) {
 function resolveBranchId(db, row, scope) {
   const payrollGroup = detectStaffPayrollGroup(row);
   if (['scholarship', 'chairman_staffs', 'mining_div', 'hq_admin'].includes(payrollGroup)) {
-    return null;
+    return lookupBranchId(db, BULK_IMPORT_HQ_BRANCH.id, BULK_IMPORT_HQ_BRANCH.name) || BULK_IMPORT_HQ_BRANCH.id;
   }
   const bag = normTitleToken(
     `${row.workLocation || ''} ${row.branchCode || ''} ${row.branchName || ''} ${row.departmentName || ''}`
@@ -701,9 +700,12 @@ function resolveBranchId(db, row, scope) {
   if (mapped) return mapped;
   if (bag.includes('yola')) return lookupBranchId(db, 'BR-YL', 'Yola') || 'BR-YL';
   if (bag.includes('maiduguri') || bag.includes('maig')) return lookupBranchId(db, 'BR-MDG', 'Maiduguri') || 'BR-MDG';
-  if (bag.includes('jalingo')) return lookupBranchId(db, row.branchCode, row.branchName) || DEFAULT_BRANCH_ID;
-  if (bag.includes('kaduna') || bag.includes('kd')) return lookupBranchId(db, 'BR-KD', 'Kaduna') || DEFAULT_BRANCH_ID;
-  return scope?.branchId || DEFAULT_BRANCH_ID;
+  if (bag.includes('jalingo')) return lookupBranchId(db, row.branchCode, row.branchName);
+  if (bag.includes('kaduna') || bag.includes('kd')) {
+    return lookupBranchId(db, 'BR-KD', 'Kaduna') || 'BR-KD';
+  }
+  const scoped = String(scope?.branchId || '').trim();
+  return scoped || null;
 }
 
 const VALID_EMPLOYMENT_TYPES = new Set(['permanent', 'contract', 'casual', 'intern', 'temporary']);
@@ -1288,6 +1290,13 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
     if (owner && owner !== existingUserId) errors.push({ field: 'phoneNumber', message: 'Duplicate phone' });
   }
   const branchId = resolveBranchId(db, row, {});
+  if (!branchId) {
+    errors.push({
+      field: 'branchCode',
+      message:
+        'Branch is required — set Branch Code (e.g. BR-YL), Branch Name, or Work Location (Yola / Kaduna / Maiduguri). Rows are never assigned to Kaduna by default.',
+    });
+  }
 
   const titleResolved = resolveUploadedJobTitle(row.designation, designationIndex);
   const codeMatch = resolveDesignationByCode(row.designationCode, designationIndex);

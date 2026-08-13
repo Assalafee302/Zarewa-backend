@@ -5,6 +5,9 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   BANK_DEPOSIT_ALLOC_KIND_ADVANCE,
   BANK_DEPOSIT_ALLOC_KIND_RECEIPT,
+  BANK_DEPOSIT_CLOSE_AMOUNT_FLOOR_NGN,
+  BANK_DEPOSIT_CLOSE_AMOUNT_RATIO,
+  BANK_DEPOSIT_CLOSE_DATE_DAYS,
   BANK_DEPOSIT_RECLASS_EXPENSE_OFFSET,
   BANK_DEPOSIT_RECLASS_INTER_BRANCH,
   BANK_DEPOSIT_RECLASS_KINDS,
@@ -21,6 +24,7 @@ import {
   BANK_DEPOSIT_TREASURY_SOURCE_KIND,
   BANK_DEPOSIT_TREASURY_TYPE,
   bankDepositRemainingNgn,
+  scoreBankDepositMatch,
 } from '../shared/lib/bankDeposits.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
 import {
@@ -356,7 +360,6 @@ export function allocateBankDepositTx(db, { depositId, ledgerEntryId, kind, amou
 /** Fuzzy match for duplicate prevention when Sales posts without linking. */
 export function findSimilarOpenBankDeposits(db, { branchId, amountNgn, bankDateISO, bankReference, limit = 5 }) {
   const bid = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const amt = roundMoney(amountNgn);
   const rows = db
     .prepare(
       `SELECT * FROM bank_deposits
@@ -368,20 +371,24 @@ export function findSimilarOpenBankDeposits(db, { branchId, amountNgn, bankDateI
     )
     .all(bid);
 
-  const refKey = String(bankReference || '')
-    .trim()
-    .toLowerCase();
-  const date = String(bankDateISO || '').slice(0, 10);
-
+  const target = { amountNgn, bankDateISO, bankReference };
   const scored = [];
   for (const row of rows) {
     const mapped = mapDepositRow(row);
-    let score = 0;
-    if (refKey && String(row.bank_reference || '').trim().toLowerCase() === refKey) score += 100;
-    if (amt > 0 && roundMoney(row.amount_ngn) === amt) score += 40;
-    if (date && String(row.bank_date_iso) === date) score += 20;
-    if (amt > 0 && Math.abs(roundMoney(row.amount_ngn) - amt) <= Math.max(100, amt * 0.01)) score += 10;
-    if (score > 0) scored.push({ ...mapped, matchScore: score });
+    const match = scoreBankDepositMatch(mapped, target);
+    if (match.score > 0) {
+      scored.push({
+        ...mapped,
+        matchScore: match.score,
+        matchHints: match.matchHints,
+        amountExact: match.amountExact,
+        amountClose: match.amountClose,
+        dateExact: match.dateExact,
+        dateClose: match.dateClose,
+        dateDiffDays: match.dateDiffDays,
+        canMergeDuplicate: match.canMergeDuplicate,
+      });
+    }
   }
   scored.sort((a, b) => b.matchScore - a.matchScore);
   return scored.slice(0, Math.max(1, Math.min(limit, 20)));
@@ -430,6 +437,8 @@ export function listBankDeposits(db, branchScope = 'ALL', opts = {}) {
 
 /**
  * Deposits registered by Finance that match unlinked receipt/advance treasury (double-count risk).
+ * Includes exact pairs plus close-amount / close-date suggestions.
+ * Merge is allowed only when amount is exact and date is exact or within {@link BANK_DEPOSIT_CLOSE_DATE_DAYS}.
  * @param {import('better-sqlite3').Database} db
  */
 export function listBankDepositDuplicateExceptions(db, branchScope = 'ALL') {
@@ -439,6 +448,10 @@ export function listBankDepositDuplicateExceptions(db, branchScope = 'ALL') {
     branchSql = ' AND d.branch_id = ?';
     args.push(String(branchScope).trim());
   }
+
+  const amountTolFloor = BANK_DEPOSIT_CLOSE_AMOUNT_FLOOR_NGN;
+  const amountTolRatio = BANK_DEPOSIT_CLOSE_AMOUNT_RATIO;
+  const closeDateDays = BANK_DEPOSIT_CLOSE_DATE_DAYS;
 
   const rows = db
     .prepare(
@@ -479,50 +492,64 @@ export function listBankDepositDuplicateExceptions(db, branchScope = 'ALL') {
         AND NOT EXISTS (
           SELECT 1 FROM treasury_movements rev WHERE rev.reverses_movement_id = tm.id
         )
-        AND ABS(tm.amount_ngn) = d.amount_ngn
-        AND substr(tm.posted_at_iso, 1, 10) = d.bank_date_iso
+        AND ABS(ABS(tm.amount_ngn) - d.amount_ngn) <=
+              GREATEST(?, CAST(ROUND(GREATEST(ABS(tm.amount_ngn), d.amount_ngn) * ?) AS SIGNED))
+        AND ABS(DATEDIFF(DATE(LEFT(tm.posted_at_iso, 10)), DATE(d.bank_date_iso))) <= ?
         ${branchSql}
       ORDER BY d.bank_date_iso DESC, d.registered_at_iso DESC`
     )
-    .all(...args);
+    .all(amountTolFloor, amountTolRatio, closeDateDays, ...args);
 
-  return rows.map((row) => {
-    const depRef = String(row.deposit_bank_reference || '').trim().toLowerCase();
-    const ledRef = String(row.ledger_bank_reference || row.treasury_reference || '')
-      .trim()
-      .toLowerCase();
-    let matchScore = 40;
-    if (depRef && ledRef && depRef === ledRef) matchScore += 100;
-    else if (depRef && ledRef && (depRef.includes(ledRef) || ledRef.includes(depRef))) matchScore += 30;
+  return rows
+    .map((row) => {
+      const deposit = mapDepositRow({
+        id: row.deposit_id,
+        branch_id: row.branch_id,
+        bank_date_iso: row.bank_date_iso,
+        amount_ngn: row.deposit_amount_ngn,
+        allocated_ngn: row.deposit_allocated_ngn,
+        description: row.deposit_description,
+        bank_reference: row.deposit_bank_reference,
+        status: row.deposit_status,
+      });
+      const ledgerBankReference = row.ledger_bank_reference ?? row.treasury_reference ?? '';
+      const match = scoreBankDepositMatch(deposit, {
+        amountNgn: row.treasury_amount_ngn,
+        bankDateISO: String(row.treasury_posted_at_iso || '').slice(0, 10),
+        bankReference: ledgerBankReference,
+      });
 
-    const deposit = mapDepositRow({
-      id: row.deposit_id,
-      branch_id: row.branch_id,
-      bank_date_iso: row.bank_date_iso,
-      amount_ngn: row.deposit_amount_ngn,
-      allocated_ngn: row.deposit_allocated_ngn,
-      description: row.deposit_description,
-      bank_reference: row.deposit_bank_reference,
-      status: row.deposit_status,
-    });
+      // Require at least one amount signal and one date signal (SQL already bounds both).
+      if (!match.amountClose || !match.dateClose) return null;
 
-    return {
-      depositId: row.deposit_id,
-      deposit,
-      ledgerEntryId: row.ledger_entry_id,
-      ledgerType: row.ledger_type,
-      customerId: row.customer_id ?? '',
-      customerName: row.customer_name ?? '',
-      amountNgn: roundMoney(row.deposit_amount_ngn),
-      ledgerAmountNgn: roundMoney(row.ledger_amount_ngn),
-      bankDateISO: row.bank_date_iso,
-      depositBankReference: row.deposit_bank_reference ?? '',
-      ledgerBankReference: row.ledger_bank_reference ?? row.treasury_reference ?? '',
-      treasuryType: row.treasury_type,
-      treasurySourceKind: row.treasury_source_kind,
-      matchScore,
-    };
-  });
+      return {
+        depositId: row.deposit_id,
+        deposit,
+        ledgerEntryId: row.ledger_entry_id,
+        ledgerType: row.ledger_type,
+        customerId: row.customer_id ?? '',
+        customerName: row.customer_name ?? '',
+        amountNgn: roundMoney(row.deposit_amount_ngn),
+        ledgerAmountNgn: roundMoney(row.ledger_amount_ngn),
+        treasuryAmountNgn: roundMoney(row.treasury_amount_ngn),
+        bankDateISO: row.bank_date_iso,
+        ledgerBankDateISO: String(row.treasury_posted_at_iso || '').slice(0, 10),
+        depositBankReference: row.deposit_bank_reference ?? '',
+        ledgerBankReference,
+        treasuryType: row.treasury_type,
+        treasurySourceKind: row.treasury_source_kind,
+        matchScore: match.score,
+        matchHints: match.matchHints,
+        amountExact: match.amountExact,
+        amountClose: match.amountClose,
+        dateExact: match.dateExact,
+        dateClose: match.dateClose,
+        dateDiffDays: match.dateDiffDays,
+        canMerge: match.canMergeDuplicate,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.matchScore - a.matchScore || String(b.bankDateISO).localeCompare(String(a.bankDateISO)));
 }
 
 /**
@@ -540,12 +567,13 @@ export function mergeBankDepositDuplicate(db, { depositId, ledgerEntryId, actor 
   if (!le) return { ok: false, error: 'Ledger entry not found.' };
 
   const exceptions = listBankDepositDuplicateExceptions(db, depRow.branch_id).filter(
-    (x) => x.depositId === depId && x.ledgerEntryId === leId
+    (x) => x.depositId === depId && x.ledgerEntryId === leId && x.canMerge
   );
   if (!exceptions.length) {
     return {
       ok: false,
-      error: 'No duplicate match found for this deposit and ledger entry.',
+      error:
+        'No mergeable duplicate match found. Amounts must match exactly; dates may be within ±2 days.',
       code: 'NOT_DUPLICATE_PAIR',
     };
   }

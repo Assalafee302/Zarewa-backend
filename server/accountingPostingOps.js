@@ -4,7 +4,11 @@
  */
 
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
-import { ACCOUNTING_OPENING_DATE_ISO, ACCOUNTING_OPENING_SOURCE_ID } from '../shared/lib/accountingCutover.js';
+import {
+  ACCOUNTING_OPENING_DATE_ISO,
+  ACCOUNTING_OPENING_SOURCE_ID,
+  openingBalanceSourceId,
+} from '../shared/lib/accountingCutover.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { ensureSupplierAdvanceGlAccount } from './ap2SupplierAdvanceGl.js';
@@ -15,23 +19,39 @@ import {
   postBalancedJournalTx,
   seedDefaultGlAccounts,
 } from './glOps.js';
+import { resolveBranchOpeningCutover } from './branches.js';
 
 const OPENING_SOURCE_KIND = 'OPENING_BALANCE';
 
-export function openingBalanceSourceId(branchScope) {
-  const bid = String(branchScope ?? '').trim();
-  if (!bid || bid === 'ALL') return ACCOUNTING_OPENING_SOURCE_ID;
-  return `${ACCOUNTING_OPENING_SOURCE_ID}:${bid}`;
-}
+export { openingBalanceSourceId };
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} branchScope */
 export function isOpeningBalancePostedForBranch(db, branchScope) {
   ensureArchitecturalGlAccounts(db);
-  const sid = openingBalanceSourceId(branchScope);
-  return Boolean(
+  const bid = String(branchScope ?? '').trim();
+  if (!bid || bid === 'ALL') {
+    return Boolean(
+      db
+        .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = ? LIMIT 1`)
+        .get(OPENING_SOURCE_KIND)
+    );
+  }
+  const cutover = resolveBranchOpeningCutover(db, bid);
+  const primarySid = openingBalanceSourceId(bid, cutover.dateISO);
+  if (
     db
       .prepare(`SELECT 1 FROM gl_journal_entries WHERE source_kind = ? AND source_id = ? LIMIT 1`)
-      .get(OPENING_SOURCE_KIND, sid)
+      .get(OPENING_SOURCE_KIND, primarySid)
+  ) {
+    return true;
+  }
+  // Legacy Kaduna HQ journal may use org-wide source id with branch_id set.
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM gl_journal_entries WHERE source_kind = ? AND source_id = ? AND branch_id = ? LIMIT 1`
+      )
+      .get(OPENING_SOURCE_KIND, ACCOUNTING_OPENING_SOURCE_ID, bid)
   );
 }
 
@@ -319,7 +339,8 @@ export function getOpeningBalanceStatus(db, branchScope) {
   const scope = String(branchScope ?? '').trim();
   if (scope && scope !== 'ALL') {
     const posted = isOpeningBalancePostedForBranch(db, scope);
-    const sid = openingBalanceSourceId(scope);
+    const cutover = resolveBranchOpeningCutover(db, scope);
+    const sid = openingBalanceSourceId(scope, cutover.dateISO);
     const rows = posted
       ? db
           .prepare(

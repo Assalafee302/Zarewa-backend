@@ -71,6 +71,20 @@ export function assertSingleBranchWorkspaceForBulkWrite(req) {
 }
 
 /**
+ * Resolve the active workspace branch for writes — never falls back to DEFAULT_BRANCH_ID.
+ * @param {{ workspaceViewAll?: boolean; workspaceBranchId?: string }} req
+ */
+export function resolveRequiredWorkspaceBranchId(req) {
+  const gate = assertSingleBranchWorkspaceForCreate(req);
+  if (!gate.ok) return gate;
+  const branchId = String(req?.workspaceBranchId ?? '').trim();
+  if (!branchId) {
+    return { ok: false, error: 'Select a workspace branch before creating records.' };
+  }
+  return { ok: true, branchId };
+}
+
+/**
  * Non-admin treasury bulk payloads may only touch accounts for the active workspace branch.
  * @param {object | null | undefined} user
  * @param {Array<{ branchId?: string; branch_id?: string; name?: string; id?: number | string }>} accounts

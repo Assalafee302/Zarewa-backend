@@ -10,6 +10,23 @@ export const DEFAULT_BRANCH_ID = 'BR-KD';
 export const GLOBAL_MASTER_DATA_BRANCH = '';
 
 /**
+ * Require an explicit branch id for onboarding/import writes — never falls back to Kaduna.
+ * @param {unknown} branchId
+ * @param {string} [label]
+ * @returns {{ ok: true, branchId: string } | { ok: false, error: string }}
+ */
+export function requireExplicitBranchId(branchId, label = 'record') {
+  const bid = String(branchId ?? '').trim();
+  if (!bid) {
+    return {
+      ok: false,
+      error: `branchId is required for ${label} — never assigned to Kaduna by default.`,
+    };
+  }
+  return { ok: true, branchId: bid };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @returns {Array<{ id: string; code: string; name: string; active: boolean; sortOrder: number; cuttingListMinPaidFraction: number }>}
  */

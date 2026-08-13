@@ -94,7 +94,7 @@ import {
   editMutationRequiresSecondApproval,
   userHasPermission,
 } from './auth.js';
-import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH } from './branches.js';
+import { DEFAULT_BRANCH_ID, GLOBAL_MASTER_DATA_BRANCH, requireExplicitBranchId } from './branches.js';
 import { assertEntityBranchForWorkspaceWrite, assertTreasuryAccountForWorkspace, userMayPostAcrossBranches } from './branchScope.js';
 import {
   mergeSupplierProfilePatch,
@@ -2843,11 +2843,13 @@ function reconcileCoilProductStockFromLots(db, productID, branchId) {
  * Rows use camelCase or snake_case. Required: coilNo, currentKg (on-hand kg). Product ID may be
  * omitted when `defaultProductId` is set (e.g. COIL-ALU) or when Material type maps to a catalog SKU.
  */
-export function importCoilLotsFromSpreadsheet(db, payload, branchId = DEFAULT_BRANCH_ID, actor = null) {
+export function importCoilLotsFromSpreadsheet(db, payload, branchId, actor = null) {
   const rowsIn = Array.isArray(payload?.rows) ? payload.rows : [];
   if (!rowsIn.length) return { ok: false, error: 'No rows to import.' };
   const insertOnly = Boolean(payload?.insertOnly);
-  const bid = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const branchCheck = requireExplicitBranchId(branchId, 'coil import');
+  if (!branchCheck.ok) return branchCheck;
+  const bid = branchCheck.branchId;
   const hasCoilBranch = pragmaHasColumn(db, 'coil_lots', 'branch_id');
   const payloadDefaultPid = String(payload?.defaultProductId ?? '').trim();
 

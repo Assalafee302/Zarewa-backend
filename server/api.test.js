@@ -1727,17 +1727,6 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'EXPENSE')).toBe(true);
     expect(after.body.treasuryMovements.some((m) => m.sourceKind === 'TREASURY_TRANSFER')).toBe(true);
 
-    const bankCharge = await agent.post('/api/treasury/bank-charges').send({
-      treasuryAccountId: from.id,
-      amountNgn: 750,
-      dateISO: '2026-03-29',
-      description: 'Stamp duty',
-      reference: 'BANK-CHG-TEST',
-    });
-    expect(bankCharge.status).toBe(201);
-    expect(bankCharge.body.ok).toBe(true);
-    expect(bankCharge.body.expenseID).toBeTruthy();
-
     const batchId = transfer.body.batchId;
     expect(batchId).toBeTruthy();
 
@@ -1770,6 +1759,34 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         (m) => m.sourceKind === 'TREASURY_TRANSFER' && m.sourceId === batchId
       )
     ).toBe(false);
+  });
+
+  it('POST /api/treasury/bank-charges posts expense outflow from the selected account', async () => {
+    const before = await agent.get('/api/bootstrap');
+    const from = before.body.treasuryAccounts[0];
+    expect(from?.id).toBeTruthy();
+
+    const bankCharge = await agent.post('/api/treasury/bank-charges').send({
+      treasuryAccountId: from.id,
+      amountNgn: 750,
+      dateISO: '2026-03-29',
+      description: 'Stamp duty',
+      reference: 'BANK-CHG-TEST',
+    });
+    expect(bankCharge.status).toBe(201);
+    expect(bankCharge.body.ok).toBe(true);
+    expect(bankCharge.body.expenseID).toBeTruthy();
+    expect(bankCharge.body.treasuryMovementId).toBeTruthy();
+
+    const after = await agent.get('/api/bootstrap');
+    expect(
+      after.body.treasuryMovements.some(
+        (m) => m.id === bankCharge.body.treasuryMovementId && m.sourceKind === 'EXPENSE' && m.amountNgn === -750
+      )
+    ).toBe(true);
+    expect(after.body.expenses.some((e) => e.expenseID === bankCharge.body.expenseID && e.category === 'Bank charges')).toBe(
+      true
+    );
   });
 
   it('POST /api/payment-requests and /decision review the approval flow', async () => {

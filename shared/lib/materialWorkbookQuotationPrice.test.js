@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canonicalPriceListDesignKey,
+  designKeysToTry,
   isMeterSheetProductLine,
   publishedListPriceFromWorkbook,
   resolveMaterialWorkbookPriceFromRows,
+  resolvePublishedListUnitNgnFromItems,
 } from './materialWorkbookQuotationPrice.js';
 
 describe('materialWorkbookQuotationPrice', () => {
@@ -35,12 +38,31 @@ describe('materialWorkbookQuotationPrice', () => {
     expect(isMeterSheetProductLine('Screw')).toBe(false);
   });
 
+  it('maps quotation profile labels onto publish design keys', () => {
+    expect(canonicalPriceListDesignKey('Longspan (Indus6)')).toBe('longspan');
+    expect(canonicalPriceListDesignKey('Longspan (Metra)')).toBe('longspan');
+    expect(canonicalPriceListDesignKey('Roman')).toBe('rome');
+    expect(canonicalPriceListDesignKey('Steptile')).toBe('steptiles');
+    expect(designKeysToTry('Longspan (Indus6)')).toContain('longspan');
+  });
+
   it('resolveMaterialWorkbookPriceFromRows matches gauge material design branch', () => {
     const hit = resolveMaterialWorkbookPriceFromRows(rows, {
       materialKey: 'aluzinc',
       gaugeMm: '0.45mm',
       branchId: 'BR-001',
       designLabel: 'Longspan',
+    });
+    expect(hit?.floorPerMeter).toBe(4000);
+    expect(hit?.suggestedListPerMeter).toBe(4200);
+  });
+
+  it('matches Longspan (Indus6) to published longspan workbook rows', () => {
+    const hit = resolveMaterialWorkbookPriceFromRows(rows, {
+      materialKey: 'aluzinc',
+      gaugeMm: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: 'Longspan (Indus6)',
     });
     expect(hit?.floorPerMeter).toBe(4000);
     expect(hit?.suggestedListPerMeter).toBe(4200);
@@ -92,5 +114,35 @@ describe('materialWorkbookQuotationPrice', () => {
 
   it('publishedListPriceFromWorkbook rounds floor + commission', () => {
     expect(publishedListPriceFromWorkbook(4010, 90)).toBe(4100);
+  });
+
+  it('resolvePublishedListUnitNgnFromItems prefers workbook publish over stale admin rows', () => {
+    const items = [
+      {
+        id: 'PL-OLD',
+        gaugeKey: '0.45mm',
+        designKey: 'long span',
+        materialTypeKey: 'aluzinc',
+        branchId: 'BR-001',
+        unitPricePerMeterNgn: 5000,
+        effectiveFromIso: '2026-01-01',
+      },
+      {
+        id: 'PL-MPS-NEW',
+        gaugeKey: '0.45',
+        designKey: 'longspan',
+        materialTypeKey: 'aluzinc',
+        branchId: 'BR-001',
+        unitPricePerMeterNgn: 4200,
+        effectiveFromIso: '2026-08-14',
+      },
+    ];
+    const n = resolvePublishedListUnitNgnFromItems(items, {
+      gaugeLabel: '0.45mm',
+      designLabel: 'Longspan (Indus6)',
+      materialTypeKey: 'aluzinc',
+      branchId: 'BR-001',
+    });
+    expect(n).toBe(4200);
   });
 });

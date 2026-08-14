@@ -18,6 +18,7 @@ import { appendAuditLog } from './controlOps.js';
 import { upsertPriceListItem, defaultPriceListEffectiveFromIso } from './pricingOps.js';
 import { listMaterialPricingRowsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
+import { gaugeMmKeyFromLabel } from '../shared/lib/materialWorkbookQuotationPrice.js';
 
 export { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 export { suggestedPricePerMeterNgn } from '../shared/lib/suggestedPricePerMeter.js';
@@ -873,7 +874,7 @@ export function publishMaterialPricingSheet(db, body, actor) {
       db,
       {
         id: plId,
-        gaugeKey: row.gaugeMm,
+        gaugeKey: gaugeMmKeyFromLabel(row.gaugeMm) || row.gaugeMm,
         designKey: syncDesign,
         unitPricePerMeterNgn: listPrice,
         branchId,

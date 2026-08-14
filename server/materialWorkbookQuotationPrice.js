@@ -35,8 +35,10 @@ export function canReadMaterialPricingSheetRows(db) {
 export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
   if (!canReadMaterialPricingSheetRows(db)) return [];
   const scope = branchScope != null ? String(branchScope).trim() : '';
+  // HQ / view-all uses branchScope "ALL" — that is not a real branch_id.
+  const allBranches = !scope || scope.toUpperCase() === 'ALL';
   let rows;
-  if (scope) {
+  if (!allBranches) {
     rows = db
       .prepare(
         `SELECT id, material_key, gauge_mm, branch_id, design_key,
@@ -111,17 +113,18 @@ export function listMaterialPricingRowsForQuotationLookup(db, branchId, material
   if (!canReadMaterialPricingSheetRows(db)) return [];
   const bid = String(branchId || '').trim();
   const mk = normKey(materialKey);
-  const g = String(gaugeMm || '').trim();
+  const g = gaugeMmKeyFromLabel(gaugeMm);
   if (!bid || !mk || !g) return [];
   const rows = db
     .prepare(
       `SELECT id, material_key, gauge_mm, branch_id, design_key,
               minimum_price_per_m_ngn, commission_ngn_per_m
        FROM material_pricing_sheet_rows
-       WHERE branch_id = ? AND material_key = ? AND TRIM(gauge_mm) = TRIM(?)
+       WHERE branch_id = ? AND material_key = ?
        ORDER BY design_key ASC`
     )
-    .all(bid, mk, g);
+    .all(bid, mk)
+    .filter((r) => gaugeMmKeyFromLabel(r.gauge_mm) === g);
   return rows.map((r) => {
     const floor = Math.round(Number(r.minimum_price_per_m_ngn) || 0);
     const commission = Math.max(0, Number(r.commission_ngn_per_m) || 0);
@@ -163,7 +166,7 @@ export function resolveMaterialWorkbookPriceForQuotation(db, ctx) {
   const asAt = ctx.asAtIso != null && String(ctx.asAtIso).trim() ? String(ctx.asAtIso).trim().slice(0, 10) : null;
   const rows = asAt
     ? listMaterialPricingRowsAsOf(db, bid, asAt).filter(
-        (r) => normKey(r.materialKey) === mk && String(r.gaugeMm || '').trim() === g
+        (r) => normKey(r.materialKey) === mk && gaugeMmKeyFromLabel(r.gaugeMm) === g
       )
     : listMaterialPricingRowsForQuotationLookup(db, bid, mk, g);
   return resolveMaterialWorkbookPriceFromRows(rows, {

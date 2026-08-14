@@ -57,7 +57,7 @@ export function maxPublishedListPerMeterForMatGauge(rows, materialKey, gaugeLabe
   let best = 0;
   for (const r of rows) {
     if (normPricingKey(r.materialKey) !== mk) continue;
-    if (String(r.gaugeMm ?? '').trim() !== g) continue;
+    if (gaugeMmKeyFromLabel(r.gaugeMm) !== g) continue;
     if (String(r.branchId ?? '').trim() !== bid) continue;
     const list =
       Math.round(Number(r.publishedListPriceNgn) || 0) ||
@@ -177,7 +177,7 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
     const meters = quotationLineQtyNumber(line);
     if (meters <= 0) return;
     const girthMm = resolveTrimGirthMmForLine(line);
-    const floor = resolveTrimListPricePerMeterFromWorkbook({
+    const meta = resolveTrimWorkbookMetaFromWorkbook({
       materialPricingRows,
       ridgeAddOns,
       materialKey,
@@ -186,6 +186,7 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
       designLabel,
       girthMm,
     });
+    const floor = Number(meta?.floorPerMeter) || 0;
     if (floor <= 0) return;
 
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
@@ -197,9 +198,9 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
     if (effectivePerMeter <= 0) return;
     if (effectivePerMeter + 0.0001 < floor) {
       violations.push({
-        // Keep below_floor for gate compatibility; basis is published trim list (+ ridge), not workbook floor.
+        // MD gate is workbook floor (+ ridge add-on). Selling below list but ≥ floor is allowed.
         code: 'below_floor',
-        priceBasis: 'published_list_plus_ridge',
+        priceBasis: 'workbook_floor_plus_ridge',
         lineCategory: 'products',
         lineIndex: idx,
         lineName: String(line?.name ?? '').trim(),
@@ -207,12 +208,11 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
         design: designLabel || `girth ${girthMm}mm`,
         girthMm,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
-        // floorPerMeter kept for compat; minimumPerMeter is the list-derived minimum.
         floorPerMeter: floor,
         minimumPerMeter: floor,
-        recommendedPerMeter: floor,
+        recommendedPerMeter: Number(meta?.suggestedListPerMeter) || floor,
         trimWorkbook: true,
-        message: 'Below trim list price',
+        message: 'Below trim workbook floor',
       });
     }
   });

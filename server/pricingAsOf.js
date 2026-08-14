@@ -3,7 +3,12 @@
  * Used for refunds, substitution, historical price-list print, and quotation-period checks.
  */
 
-import { publishedListPriceFromWorkbook } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import {
+  publishedListPriceFromWorkbook,
+  gaugeMmKeyFromLabel,
+  priceListDesignKeysMatch,
+  designKeysToTry,
+} from '../shared/lib/materialWorkbookQuotationPrice.js';
 
 const DEFAULT_EFFECTIVE_FROM = '2020-01-01';
 
@@ -149,8 +154,9 @@ export function listPriceListItemsAsOf(db, asAtIso, opts = {}) {
 export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
   if (!canReadPriceListItems(db)) return null;
   const asAt = normalizePricingAsAtIso(asAtIso ?? ctx?.asAtIso);
-  const g = normKey(ctx.gaugeLabel || ctx.gaugeId);
+  const g = gaugeMmKeyFromLabel(ctx.gaugeLabel || ctx.gaugeId);
   const d = normKey(ctx.designLabel || ctx.profileName || ctx.colourName);
+  const designKeys = d ? designKeysToTry(d) : [];
   const mt = normKey(ctx.materialTypeName || ctx.materialTypeId);
   const col = normKey(ctx.colourName);
   const prof = normKey(ctx.profileName);
@@ -160,13 +166,14 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
   let best = null;
   let bestScore = -1;
   for (const r of rows) {
-    const rg = normKey(r.gauge_key);
+    const rg = gaugeMmKeyFromLabel(r.gauge_key);
     const rd = normKey(r.design_key);
     const rmt = normKey(r.material_type_key || '');
     const rcol = normKey(r.colour_key || '');
     const rprof = normKey(r.profile_key || '');
     if (g && rg && rg !== g) continue;
-    if (d && rd && rd !== d) continue;
+    const designHit = designKeys.length ? priceListDesignKeysMatch(rd, designKeys) : !rd;
+    if (designKeys.length && rd && !designHit) continue;
     if (rmt && mt && !mt.includes(rmt) && !rmt.includes(mt)) continue;
     if (rcol && col && rcol !== col) continue;
     if (rprof && prof && rprof !== prof) continue;
@@ -174,7 +181,8 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
 
     let score = 0;
     if (g && rg === g) score += 2;
-    if (d && rd === d) score += 2;
+    if (designHit && rd) score += 4;
+    if (String(r.id || '').startsWith('PL-MPS-')) score += 2;
     if (rmt) score += 2;
     if (rcol) score += 2;
     if (rprof) score += 2;
@@ -203,7 +211,7 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
  * @param {string | null | undefined} asAtIso
  */
 export function floorPricePerMeterForGaugeDesignAsOf(db, gaugeKey, designKey, branchId, asAtIso) {
-  const g = normKey(gaugeKey);
+  const g = gaugeMmKeyFromLabel(gaugeKey);
   const d = normKey(designKey);
   if (!g || !d) return null;
   const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
@@ -211,7 +219,7 @@ export function floorPricePerMeterForGaugeDesignAsOf(db, gaugeKey, designKey, br
   const rows = selectPriceListRowsAsOf(db.prepare(`SELECT * FROM price_list_items`).all(), asAt);
   let best = null;
   for (const row of rows) {
-    if (normKey(row.gauge_key) !== g || normKey(row.design_key) !== d) continue;
+    if (gaugeMmKeyFromLabel(row.gauge_key) !== g || !priceListDesignKeysMatch(row.design_key, designKeysToTry(d))) continue;
     const rb = row.branch_id != null && String(row.branch_id).trim() ? String(row.branch_id).trim() : null;
     if (bid && rb && rb !== bid) continue;
     if (!best) {

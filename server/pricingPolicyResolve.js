@@ -191,6 +191,9 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
       asAtIso,
     });
     if (wb != null && wb > 0) return wb;
+    // Published list is selling price (floor + commission), not the MD floor.
+    // Do not treat price_list_items as the floor for roofing / flat sheet.
+    return null;
   }
 
   const lineKind = String(line?.lineKind ?? 'roofing')

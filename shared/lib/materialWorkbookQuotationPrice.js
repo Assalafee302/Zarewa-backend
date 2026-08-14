@@ -61,6 +61,71 @@ export function publishedListPriceFromWorkbook(floor, commission) {
   return roundPublishedPriceNgn(f + c);
 }
 
+/** Compact token for profile / design matching (drops spaces and punctuation). */
+export function compactDesignToken(s) {
+  return normPricingKey(s).replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Map quotation profile labels (e.g. "Longspan (Indus6)", "Roman") onto workbook
+ * publish keys (longspan / metcoppo / steptiles / rome / stone-coated).
+ * @param {string} label
+ */
+export function canonicalPriceListDesignKey(label) {
+  const compact = compactDesignToken(label);
+  if (!compact) return '';
+  const aliases = {
+    longspan: 'longspan',
+    longspanindus6: 'longspan',
+    longspanindus: 'longspan',
+    longspanmetra: 'longspan',
+    longspanindustrial6: 'longspan',
+    longspanindustrial6metra: 'longspan',
+    industrial6: 'longspan',
+    industrialsix: 'longspan',
+    indus6: 'longspan',
+    metra: 'longspan',
+    metcoppo: 'metcoppo',
+    steptiles: 'steptiles',
+    steptile: 'steptiles',
+    rome: 'rome',
+    roman: 'rome',
+    romantile: 'rome',
+    stonecoated: 'stone-coated',
+  };
+  if (aliases[compact]) return aliases[compact];
+  if (compact.includes('longspan')) return 'longspan';
+  if (compact.includes('metcoppo')) return 'metcoppo';
+  if (compact.includes('steptile')) return 'steptiles';
+  if (compact === 'rome' || compact.startsWith('roman')) return 'rome';
+  if (compact.includes('stonecoat')) return 'stone-coated';
+  return '';
+}
+
+/**
+ * True when a price-list / workbook design_key matches the quote's candidate keys.
+ * Canonical aliases (Longspan (Indus6) ↔ longspan, Roman ↔ rome) count as a hit;
+ * short unrelated tokens such as "long" do not.
+ * @param {string} rowDesignKey
+ * @param {string[]} quoteDesignKeys
+ */
+export function priceListDesignKeysMatch(rowDesignKey, quoteDesignKeys) {
+  const rd = normPricingKey(rowDesignKey);
+  if (!rd || !Array.isArray(quoteDesignKeys) || !quoteDesignKeys.length) return false;
+  const rdCompact = compactDesignToken(rd);
+  const rdCanon = canonicalPriceListDesignKey(rd);
+  for (const raw of quoteDesignKeys) {
+    const dk = normPricingKey(raw);
+    if (!dk) continue;
+    if (dk === rd) return true;
+    if (compactDesignToken(dk) === rdCompact) return true;
+    const dkCanon = canonicalPriceListDesignKey(dk);
+    if (dkCanon && (dkCanon === rd || dkCanon === rdCanon || dkCanon === rdCompact)) return true;
+    if (rdCanon && (rdCanon === dk || rdCanon === compactDesignToken(dk))) return true;
+  }
+  return false;
+}
+
 /**
  * @param {string} designLabel
  * @param {string[]} [extraDesignKeys]
@@ -77,8 +142,68 @@ export function designKeysToTry(designLabel, extraDesignKeys = []) {
   add(designLabel);
   const compact = normPricingKey(designLabel).replace(/ /g, '');
   if (compact) add(compact);
+  const canon = canonicalPriceListDesignKey(designLabel);
+  if (canon) add(canon);
   for (const k of extraDesignKeys) add(k);
   return out;
+}
+
+/**
+ * Published `price_list_items` unit ₦/m for a quotation line.
+ * Prefers workbook-publish rows (PL-MPS-*) and later effective dates when scores tie,
+ * so a re-publish beats leftover Price List Admin rows with equivalent keys.
+ *
+ * @param {Array<{ id?: string; gaugeKey?: string; gaugeMm?: string; designKey?: string; materialTypeKey?: string; materialKey?: string; branchId?: string; unitPricePerMeterNgn?: number; effectiveFromIso?: string }>} items
+ * @param {{ gaugeLabel?: string; gaugeMm?: string; designLabel?: string; designKeys?: string[]; materialTypeKey?: string; materialKey?: string; branchId?: string; skipDesign?: boolean }} ctx
+ * @returns {number}
+ */
+export function resolvePublishedListUnitNgnFromItems(items, ctx) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  const gaugeK = gaugeMmKeyFromLabel(ctx?.gaugeLabel ?? ctx?.gaugeMm);
+  const materialKey = normPricingKey(ctx?.materialTypeKey ?? ctx?.materialKey);
+  const branchId = String(ctx?.branchId ?? '').trim();
+  const designKeys = ctx?.skipDesign ? [] : designKeysToTry(ctx?.designLabel, ctx?.designKeys);
+
+  let bestScore = -1;
+  let bestN = 0;
+  let bestEff = '';
+  for (const row of items) {
+    const rg = gaugeMmKeyFromLabel(row.gaugeKey ?? row.gaugeMm);
+    const rd = normPricingKey(row.designKey);
+    const rmt = normPricingKey(row.materialTypeKey ?? row.materialKey);
+    const rb = String(row.branchId ?? '').trim();
+
+    if (rb && branchId && rb !== branchId) continue;
+    if (gaugeK && rg && rg !== gaugeK) continue;
+    const designHit = designKeys.length ? priceListDesignKeysMatch(rd, designKeys) : !rd;
+    if (designKeys.length && rd && !designHit) continue;
+    if (rmt && materialKey) {
+      if (rmt !== materialKey && !materialKey.includes(rmt) && !rmt.includes(materialKey)) continue;
+    } else if (rmt && !materialKey) {
+      continue;
+    }
+
+    const n = Math.round(Number(row.unitPricePerMeterNgn) || 0);
+    if (n <= 0) continue;
+
+    let score = 0;
+    if (gaugeK && rg === gaugeK) score += 4;
+    if (designHit && rd) score += 6;
+    else if (designKeys.length && !rd) score += 1;
+    if (rmt && materialKey) score += 2;
+    if (rb && branchId) score += 1;
+    if (String(row.id ?? '').startsWith('PL-MPS-')) score += 2;
+    const eff = String(row.effectiveFromIso ?? '').slice(0, 10);
+
+    const betterScore = score > bestScore;
+    const newerSameScore = score === bestScore && score > 0 && eff > bestEff;
+    if (betterScore || newerSameScore) {
+      bestScore = score;
+      bestN = n;
+      bestEff = eff;
+    }
+  }
+  return bestScore > 0 ? bestN : 0;
 }
 
 /**
@@ -100,12 +225,12 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   const pool = rows.filter(
     (r) =>
       normPricingKey(r.materialKey) === mk &&
-      String(r.gaugeMm ?? '').trim() === g &&
+      gaugeMmKeyFromLabel(r.gaugeMm) === g &&
       String(r.branchId ?? '').trim() === bid
   );
   if (!pool.length) return null;
 
-  // Exact design match only (no fuzzy includes). Prefer exact key, else blank design row.
+  // Canonical design match (Longspan (Indus6) ↔ longspan). Prefer exact key, else blank design row.
   // Never fall back to min floor across unrelated designs.
   let best = null;
   let bestScore = -1;
@@ -116,7 +241,7 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
 
     let score = 0;
     if (designKeys.length) {
-      if (designKeys.some((dk) => dk && rd === dk)) score = 20;
+      if (priceListDesignKeysMatch(rd, designKeys)) score = 20;
       else if (!rd) score = 8;
       else continue;
     } else if (!rd) {

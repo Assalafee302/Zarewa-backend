@@ -55,9 +55,34 @@ describe('materialWorkbookTrimPrice', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0].trimWorkbook).toBe(true);
     expect(violations[0].code).toBe('below_floor');
-    expect(violations[0].priceBasis).toBe('published_list_plus_ridge');
+    expect(violations[0].priceBasis).toBe('workbook_floor_plus_ridge');
     expect(violations[0].minimumPerMeter).toBe(violations[0].floorPerMeter);
     expect(violations[0].floorPerMeter).toBeGreaterThan(500);
-    expect(violations[0].message).toMatch(/trim list/i);
+    expect(violations[0].message).toMatch(/workbook floor/i);
+  });
+
+  it('allows trim prices below list when still at or above workbook floor', () => {
+    const list = resolveTrimListPricePerMeterFromWorkbook({
+      materialPricingRows,
+      ridgeAddOns,
+      materialKey: 'aluzinc',
+      gaugeLabel: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: 'Longspan',
+      girthMm: 400,
+    });
+    const betweenFloorAndList = list - 20;
+    expect(betweenFloorAndList).toBeGreaterThan(0);
+    const violations = quotationTrimWorkbookFloorViolations({
+      products: [{ name: 'Ridge cap', qty: 12, unitPrice: betweenFloorAndList, girthMm: 400 }],
+      materialKey: 'aluzinc',
+      gaugeLabel: '0.45mm',
+      branchId: 'BR-001',
+      designLabel: 'Longspan',
+      materialPricingRows,
+      ridgeAddOns,
+    });
+    expect(list).toBeGreaterThan(betweenFloorAndList);
+    expect(violations).toHaveLength(0);
   });
 });

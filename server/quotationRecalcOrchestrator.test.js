@@ -117,4 +117,40 @@ describe('listStaleOpenRefundsForQuotation', () => {
     expect(stale.map((s) => s.refundId)).toContain('RF-A');
     expect(stale.find((s) => s.refundId === 'RF-A')?.maxDefensibleRefundNgn).toBe(70_000);
   });
+
+  it('does not flag a mixed refund when only exempt lines sit above the floor', () => {
+    const rows = [
+      {
+        refund_id: 'RF-MIX',
+        status: 'Pending',
+        amount_ngn: 115_960,
+        reason_category: '["Overpayment","Unproduced meterage"]',
+        calculation_lines_json: JSON.stringify([
+          { category: 'Unproduced meterage', amountNgn: 113_640 },
+          { category: 'Overpayment', amountNgn: 2_320 },
+        ]),
+      },
+    ];
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        return {
+          all: () => {
+            if (s.includes("IN ('pending', 'approved')")) return rows;
+            if (s.includes("NOT IN ('rejected', 'cancelled')")) {
+              return rows.map((r) => ({ refund_id: r.refund_id, amount_ngn: r.amount_ngn }));
+            }
+            return [];
+          },
+        };
+      },
+    };
+    const stale = listStaleOpenRefundsForQuotation(db, 'Q-MIX', {
+      cashInNgn: 500_000,
+      floorDeliveredValueNgn: 386_360,
+      priorRefundedNgn: 0,
+      maxDefensibleRefundNgn: 113_640,
+    });
+    expect(stale).toEqual([]);
+  });
 });

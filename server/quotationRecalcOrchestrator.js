@@ -5,7 +5,7 @@ import { appendAuditLog, previewRefundRequest } from './controlOps.js';
 import { reconcileSalesReceiptMirrorsForQuotation } from './writeOps.js';
 import {
   normalizeRefundReasonCategoriesForApi,
-  refundCategoriesAreEconomicFloorExempt,
+  refundAmountExceedsEconomicFloorCap,
 } from '../shared/refundConstants.js';
 
 /**
@@ -29,7 +29,7 @@ export function listStaleOpenRefundsForQuotation(db, quotationRef, economicFloor
 
   const openRefunds = db
     .prepare(
-      `SELECT refund_id, status, amount_ngn, reason_category
+      `SELECT refund_id, status, amount_ngn, reason_category, calculation_lines_json
        FROM customer_refunds
        WHERE quotation_ref = ?
          AND TRIM(COALESCE(LOWER(status), '')) IN ('pending', 'approved')`
@@ -74,8 +74,14 @@ export function listStaleOpenRefundsForQuotation(db, quotationRef, economicFloor
   const stale = [];
   for (const r of openRefunds) {
     const cats = normalizeRefundReasonCategoriesForApi(r.reason_category);
-    if (refundCategoriesAreEconomicFloorExempt(cats)) continue;
     const amt = Math.round(Number(r.amount_ngn) || 0);
+    let lines = [];
+    try {
+      const parsed = JSON.parse(String(r.calculation_lines_json || '[]'));
+      lines = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      lines = [];
+    }
     let maxDef;
     if (hasCashFloor) {
       const others = otherActiveById.get(String(r.refund_id)) ?? 0;
@@ -85,7 +91,15 @@ export function listStaleOpenRefundsForQuotation(db, quotationRef, economicFloor
     } else {
       maxDef = legacyMax;
     }
-    if (amt > maxDef + 1) {
+    if (
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: amt,
+        calculationLines: lines,
+        categories: cats,
+        maxDefensibleRefundNgn: maxDef,
+        toleranceNgn: 1,
+      })
+    ) {
       stale.push({
         refundId: r.refund_id,
         status: r.status,

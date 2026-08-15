@@ -27,6 +27,8 @@ import {
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   REFUND_PREVIEW_VERSION,
   REFUND_REASON_CATEGORY_VALUES,
+  refundAmountExceedsEconomicFloorCap,
+  refundFloorGatedAmountNgn,
   refundRequestIsEconomicFloorExempt,
 } from '../shared/refundConstants.js';
 import {
@@ -484,21 +486,26 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   }
 
   if (
-    !floorExempt &&
     !floorOverrideHonoured &&
-    economicFloor?.maxDefensibleRefundNgn != null &&
-    amt > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+    refundAmountExceedsEconomicFloorCap({
+      amountNgn: amt,
+      calculationLines: lines,
+      categories: reasonCategories,
+      maxDefensibleRefundNgn: economicFloor?.maxDefensibleRefundNgn,
+      toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+    })
   ) {
+    const gatedAmt = refundFloorGatedAmountNgn(lines);
     return {
       ok: false,
       code: 'REFUND_STALE_ECONOMIC_FLOOR',
-      error: `Refund amount (₦${amt.toLocaleString(
+      error: `Production-related refund amount (₦${gatedAmt.toLocaleString(
         'en-NG'
       )}) exceeds the current economic floor cap (₦${Number(
         economicFloor.maxDefensibleRefundNgn
       ).toLocaleString('en-NG')}) after ${producedM.toFixed(
         2
-      )} m produced. Production may have changed — recalculate integrity and adjust the refund.`,
+      )} m produced. Overpayment and quoted services are not counted against this cap. Production may have changed — recalculate integrity and adjust the refund.`,
     };
   }
 
@@ -2755,11 +2762,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         };
       }
       const maxDefensibleAtCreate = economicFloorAtCreate?.maxDefensibleRefundNgn;
+      const floorGatedAtCreate = refundFloorGatedAmountNgn(calcLinesRaw);
       if (
-        !floorExemptAtCreate &&
-        maxDefensibleAtCreate != null &&
-        Number.isFinite(Number(maxDefensibleAtCreate)) &&
-        amountNgn > Number(maxDefensibleAtCreate) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+        refundAmountExceedsEconomicFloorCap({
+          amountNgn,
+          calculationLines: calcLinesRaw,
+          categories: requestedCats,
+          maxDefensibleRefundNgn: maxDefensibleAtCreate,
+          toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+        })
       ) {
         if (mayBypassFloor && floorOverrideNote.length >= 10) {
           economicFloorOverrideAtCreate = {
@@ -2773,13 +2784,13 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           return {
             ok: false,
             code: 'REFUND_EXCEEDS_ECONOMIC_FLOOR',
-            error: `Refund amount (₦${amountNgn.toLocaleString(
+            error: `Production-related refund amount (₦${floorGatedAtCreate.toLocaleString(
               'en-NG'
             )}) exceeds the economic floor cap (₦${Number(maxDefensibleAtCreate).toLocaleString(
               'en-NG'
             )}) after ${producedAtCreate.toFixed(
               2
-            )} m produced at workbook minimum ₦/m (cash in minus floor delivered value, after prior refunds).${
+            )} m produced at workbook minimum ₦/m (cash in minus floor delivered value, after prior refunds). Overpayment and quoted services are not counted against this cap.${
               mayBypassFloor
                 ? ' MD/admin may override with a note (min 10 characters) in the Branch manager / MD override field.'
                 : ''
@@ -4282,26 +4293,24 @@ export function previewRefundRequest(db, payload) {
         'Economic floor check: some rates from published list (workbook floor missing).'
       );
     }
+    const suggestedForFloor = suggestedLines.map((l) => ({ ...l, include: true }));
     if (
-      economicFloor.maxDefensibleRefundNgn != null &&
-      Number.isFinite(Number(economicFloor.maxDefensibleRefundNgn)) &&
-      suggestedAmountNgn > Number(economicFloor.maxDefensibleRefundNgn) + REFUND_AMOUNT_LINE_TOLERANCE_NGN
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: suggestedAmountNgn,
+        calculationLines: suggestedForFloor,
+        categories: suggestedLines.filter((l) => roundMoney(l.amountNgn) > 0).map((l) => l.category),
+        maxDefensibleRefundNgn: economicFloor.maxDefensibleRefundNgn,
+        toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+      })
     ) {
-      const floorExemptSuggested = refundRequestIsEconomicFloorExempt({
-        categories: suggestedLines
-          .filter((l) => roundMoney(l.amountNgn) > 0)
-          .map((l) => l.category),
-        calculationLines: suggestedLines.map((l) => ({ ...l, include: true })),
-      });
-      if (!floorExemptSuggested) {
-        warnings.push(
-          `Refund preview total ₦${suggestedAmountNgn.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds).${
-            economicFloor.honouredMdPriceException
-              ? ''
-              : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
-          }`
-        );
-      }
+      const gatedSuggested = refundFloorGatedAmountNgn(suggestedForFloor);
+      warnings.push(
+        `Production-related refund preview ₦${gatedSuggested.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds). Overpayment and quoted services are not counted against this cap.${
+          economicFloor.honouredMdPriceException
+            ? ''
+            : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
+        }`
+      );
     }
   }
 

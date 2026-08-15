@@ -93,6 +93,14 @@ export function refundCategoriesAreEconomicFloorExempt(categories) {
   return cats.every((c) => refundCategoryIsEconomicFloorExempt(c));
 }
 
+function refundLineIsEconomicFloorExempt(line) {
+  const multi = Array.isArray(line?.appliesToCategories) ? line.appliesToCategories : [];
+  if (multi.length > 0) {
+    return multi.every((c) => refundCategoryIsEconomicFloorExempt(c));
+  }
+  return refundCategoryIsEconomicFloorExempt(line?.category);
+}
+
 /**
  * True when every included calculation line is floor-exempt (overpayment or quoted service).
  * @param {Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[], label?: string }> | null | undefined} lines
@@ -104,13 +112,7 @@ export function refundCalculationLinesAreEconomicFloorExempt(lines) {
     return amt > 0 && String(l?.label ?? l?.category ?? '').trim();
   });
   if (!included.length) return false;
-  return included.every((l) => {
-    const multi = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
-    if (multi.length > 0) {
-      return multi.every((c) => refundCategoryIsEconomicFloorExempt(c));
-    }
-    return refundCategoryIsEconomicFloorExempt(l?.category);
-  });
+  return included.every((l) => refundLineIsEconomicFloorExempt(l));
 }
 
 /**
@@ -122,6 +124,47 @@ export function refundRequestIsEconomicFloorExempt({ categories, calculationLine
     refundCategoriesAreEconomicFloorExempt(categories) ||
     refundCalculationLinesAreEconomicFloorExempt(calculationLines)
   );
+}
+
+/**
+ * Sum of included lines that are gated by workbook floor (unproduced, substitution, shortfall, Other, …).
+ * Overpayment and quoted services are excluded so mixed Full-refund requests are not blocked by those amounts.
+ * @param {Array<{ category?: string, amountNgn?: number, include?: boolean, appliesToCategories?: string[] }> | null | undefined} lines
+ */
+export function refundFloorGatedAmountNgn(lines) {
+  return (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+    if (line?.include === false) return sum;
+    const amt = Math.round(Number(line?.amountNgn) || 0);
+    if (amt <= 0) return sum;
+    if (refundLineIsEconomicFloorExempt(line)) return sum;
+    return sum + amt;
+  }, 0);
+}
+
+/**
+ * Whether production-related (floor-gated) amounts exceed the economic floor cap.
+ * Mixed requests compare only the gated slice; all-exempt requests never exceed.
+ * @param {{
+ *   amountNgn?: number,
+ *   calculationLines?: unknown,
+ *   categories?: unknown,
+ *   maxDefensibleRefundNgn?: number | null,
+ *   toleranceNgn?: number,
+ * }} p
+ */
+export function refundAmountExceedsEconomicFloorCap({
+  amountNgn,
+  calculationLines,
+  categories,
+  maxDefensibleRefundNgn,
+  toleranceNgn = REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+} = {}) {
+  if (maxDefensibleRefundNgn == null || !Number.isFinite(Number(maxDefensibleRefundNgn))) return false;
+  if (refundRequestIsEconomicFloorExempt({ categories, calculationLines })) return false;
+  const cap = Math.round(Number(maxDefensibleRefundNgn));
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  const gated = lines.length > 0 ? refundFloorGatedAmountNgn(lines) : Math.round(Number(amountNgn) || 0);
+  return gated > cap + Math.round(Number(toleranceNgn) || 0);
 }
 
 /** Map legacy / test strings to canonical categories (duplicate detection + preview). */

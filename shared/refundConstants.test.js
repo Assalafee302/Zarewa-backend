@@ -5,6 +5,8 @@ import {
   REFUND_PREVIEW_VERSION,
   MIN_REFUND_QUOTATION_REMAINING_NGN,
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+  refundAmountExceedsEconomicFloorCap,
+  refundFloorGatedAmountNgn,
 } from './refundConstants.js';
 
 describe('refundConstants', () => {
@@ -69,5 +71,37 @@ describe('refundConstants', () => {
 
   it('exposes amount vs lines tolerance', () => {
     expect(REFUND_AMOUNT_LINE_TOLERANCE_NGN).toBe(1);
+  });
+
+  it('gates economic floor only on production-related lines', () => {
+    const mixed = [
+      { category: 'Unproduced meterage', amountNgn: 113_640 },
+      { category: 'Overpayment', amountNgn: 2_320 },
+    ];
+    expect(refundFloorGatedAmountNgn(mixed)).toBe(113_640);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 115_960,
+        calculationLines: mixed,
+        categories: ['Unproduced meterage', 'Overpayment'],
+        maxDefensibleRefundNgn: 113_640,
+      })
+    ).toBe(false);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 115_960,
+        calculationLines: [{ category: 'Other', amountNgn: 115_960 }],
+        categories: ['Other'],
+        maxDefensibleRefundNgn: 113_640,
+      })
+    ).toBe(true);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 15_000,
+        calculationLines: [{ category: 'Additional services', amountNgn: 15_000 }],
+        categories: ['Additional services'],
+        maxDefensibleRefundNgn: 12_000,
+      })
+    ).toBe(false);
   });
 });

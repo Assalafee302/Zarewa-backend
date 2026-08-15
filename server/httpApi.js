@@ -673,6 +673,7 @@ import { readAiAssistConfig, runAiChat, runOfficeMemoPolish } from './aiAssist.j
 import { buildAiContextForRequest, readAiStatusForRequest } from './aiAssistContext.js';
 import { loadBusinessIntelligencePack } from './businessIntelligenceOps.js';
 import { buildBusinessIntelligenceXlsx } from './businessIntelligenceExport.js';
+import { buildEnteredDataXlsx, collectEnteredDataPack, enteredDataFilename } from './enteredDataExport.js';
 import { BI_ENGINE_REV } from '../shared/lib/businessIntelligence.js';
 import { handleMemoAssist } from './helpMemoAssist.js';
 import { sanitizeZarePageContext, sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
@@ -4751,6 +4752,30 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load report summary' });
+    }
+  });
+
+  /** All entered operational records (not period-filtered). */
+  app.get('/api/reports/entered-data.xlsx', requireManagementReportsView, (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const pack = collectEnteredDataPack(db, branchScope);
+      const buf = buildEnteredDataXlsx(pack);
+      const filename = enteredDataFilename(branchScope, pack.generatedAtISO);
+      appendAuditLog(db, {
+        actor: req.user,
+        action: 'reports.entered_data_export',
+        entityKind: 'reports',
+        entityId: 'entered-data.xlsx',
+        note: `Entered-data workbook (${pack.recordCount} rows, ${branchScope})`,
+        details: { branchScope, recordCount: pack.recordCount, totals: pack.totals },
+      });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(buf);
+    } catch (e) {
+      console.error('[entered-data-export]', e);
+      return res.status(500).json({ ok: false, error: 'Could not export entered data.' });
     }
   });
 

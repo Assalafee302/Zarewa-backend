@@ -492,6 +492,7 @@ export function validateRefundFinancialGuards(db, opts = {}) {
       calculationLines: lines,
       categories: reasonCategories,
       maxDefensibleRefundNgn: economicFloor?.maxDefensibleRefundNgn,
+      overpaymentExcessNgn: preview.preview?.overpaymentExcessNgn,
       toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
     })
   ) {
@@ -2769,6 +2770,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
           calculationLines: calcLinesRaw,
           categories: requestedCats,
           maxDefensibleRefundNgn: maxDefensibleAtCreate,
+          overpaymentExcessNgn: previewForCaps.preview?.overpaymentExcessNgn,
           toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
         })
       ) {
@@ -4300,6 +4302,7 @@ export function previewRefundRequest(db, payload) {
         calculationLines: suggestedForFloor,
         categories: suggestedLines.filter((l) => roundMoney(l.amountNgn) > 0).map((l) => l.category),
         maxDefensibleRefundNgn: economicFloor.maxDefensibleRefundNgn,
+        overpaymentExcessNgn: overpaymentExcessNgn,
         toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
       })
     ) {

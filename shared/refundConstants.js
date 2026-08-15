@@ -93,12 +93,26 @@ export function refundCategoriesAreEconomicFloorExempt(categories) {
   return cats.every((c) => refundCategoryIsEconomicFloorExempt(c));
 }
 
+function refundTextLooksFloorExempt(text) {
+  const s = String(text || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return false;
+  if (FLOOR_EXEMPT_CAT_KEYS.has(s)) return true;
+  if (s.includes('overpay')) return true;
+  if (s.includes('transport')) return true;
+  if (s.includes('install')) return true;
+  if (s.includes('additional service')) return true;
+  return false;
+}
+
 function refundLineIsEconomicFloorExempt(line) {
   const multi = Array.isArray(line?.appliesToCategories) ? line.appliesToCategories : [];
   if (multi.length > 0) {
-    return multi.every((c) => refundCategoryIsEconomicFloorExempt(c));
+    return multi.every((c) => refundCategoryIsEconomicFloorExempt(c) || refundTextLooksFloorExempt(c));
   }
-  return refundCategoryIsEconomicFloorExempt(line?.category);
+  if (refundCategoryIsEconomicFloorExempt(line?.category)) return true;
+  return refundTextLooksFloorExempt(line?.category) || refundTextLooksFloorExempt(line?.label);
 }
 
 /**
@@ -157,13 +171,24 @@ export function refundAmountExceedsEconomicFloorCap({
   calculationLines,
   categories,
   maxDefensibleRefundNgn,
+  overpaymentExcessNgn = 0,
   toleranceNgn = REFUND_AMOUNT_LINE_TOLERANCE_NGN,
 } = {}) {
   if (maxDefensibleRefundNgn == null || !Number.isFinite(Number(maxDefensibleRefundNgn))) return false;
   if (refundRequestIsEconomicFloorExempt({ categories, calculationLines })) return false;
   const cap = Math.round(Number(maxDefensibleRefundNgn));
   const lines = Array.isArray(calculationLines) ? calculationLines : [];
-  const gated = lines.length > 0 ? refundFloorGatedAmountNgn(lines) : Math.round(Number(amountNgn) || 0);
+  let gated = lines.length > 0 ? refundFloorGatedAmountNgn(lines) : Math.round(Number(amountNgn) || 0);
+  const overpay = Math.max(0, Math.round(Number(overpaymentExcessNgn) || 0));
+  if (overpay > 0) {
+    const alreadyExempt = (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+      if (line?.include === false) return sum;
+      const amt = Math.round(Number(line?.amountNgn) || 0);
+      if (amt <= 0 || !refundLineIsEconomicFloorExempt(line)) return sum;
+      return sum + amt;
+    }, 0);
+    gated = Math.max(0, gated - Math.max(0, overpay - alreadyExempt));
+  }
   return gated > cap + Math.round(Number(toleranceNgn) || 0);
 }
 

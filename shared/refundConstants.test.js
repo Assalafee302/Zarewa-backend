@@ -103,5 +103,24 @@ describe('refundConstants', () => {
         maxDefensibleRefundNgn: 12_000,
       })
     ).toBe(false);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 115_960,
+        calculationLines: [
+          { category: 'Unproduced meterage', amountNgn: 113_640 },
+          { label: 'Overpayment on QT-KD-26-0001', amountNgn: 2_320 },
+        ],
+        maxDefensibleRefundNgn: 113_640,
+      })
+    ).toBe(false);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 115_960,
+        calculationLines: [{ category: 'Unproduced meterage', amountNgn: 115_960 }],
+        categories: ['Unproduced meterage'],
+        maxDefensibleRefundNgn: 113_640,
+        overpaymentExcessNgn: 2_320,
+      })
+    ).toBe(false);
   });
 });

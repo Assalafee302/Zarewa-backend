@@ -6898,28 +6898,23 @@ export function registerHttpApi(app, db) {
           error: 'Recording haulage against treasury requires finance.pay permission.',
         });
       }
-      return handleWriteWithEditApproval(res, db, req.user, body, 'purchase_order', poId, (stripped, ctx) => {
-        const inOuter = Boolean(ctx?.withinEditApprovalTransaction);
-        const syncOpts = inOuter ? { outerTransaction: true } : {};
-        const r = write.postPurchaseOrderTransport(db, poId, {
-          treasuryAccountId: stripped?.treasuryAccountId,
-          amountNgn: stripped?.amountNgn,
-          reference: stripped?.reference,
-          dateISO: stripped?.dateISO,
-          postedAtISO: stripped?.postedAtISO,
-          note: stripped?.note,
-          createdBy: stripped?.createdBy || req.user.displayName,
-          actor: req.user,
-          workspaceBranchId: req.workspaceBranchId,
-          workspaceViewAll: Boolean(req.workspaceViewAll),
-          skipInnerTransaction: inOuter,
-        });
-        if (r.ok) {
-          syncFinancePoTransportWorkItem(db, poId, req.user, syncOpts);
-          syncInTransitLoadFromTransportPost(db, poId, req.user, syncOpts);
-        }
-        return r;
+      const r = write.postPurchaseOrderTransport(db, poId, {
+        treasuryAccountId: body.treasuryAccountId,
+        amountNgn: body.amountNgn,
+        reference: body.reference,
+        dateISO: body.dateISO,
+        postedAtISO: body.postedAtISO,
+        note: body.note,
+        createdBy: body.createdBy || req.user.displayName,
+        actor: req.user,
+        workspaceBranchId: req.workspaceBranchId,
+        workspaceViewAll: Boolean(req.workspaceViewAll),
       });
+      if (r.ok) {
+        syncFinancePoTransportWorkItem(db, poId, req.user);
+        syncInTransitLoadFromTransportPost(db, poId, req.user);
+      }
+      return res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });

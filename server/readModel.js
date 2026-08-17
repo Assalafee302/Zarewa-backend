@@ -362,6 +362,7 @@ function mapQuotationRow(db, row) {
     priceExceptionMdReviewRequired: Number(row.price_exception_md_review_required) === 1,
     priceExceptionMdConfirmedAtISO: row.price_exception_md_confirmed_at_iso ?? null,
     priceExceptionMdConfirmedByUserId: row.price_exception_md_confirmed_by_user_id ?? null,
+    paymentGateBasisTotalNgn: Math.round(Number(row.payment_gate_basis_total_ngn) || 0),
     archived: Number(row.archived) === 1,
     lifecycleNote: row.quotation_lifecycle_note ?? '',
   };

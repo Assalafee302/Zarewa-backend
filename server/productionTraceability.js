@@ -1096,7 +1096,6 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
       )
       .get(qref);
     if (quote) {
-      // Pass full quote (incl. date_iso) so floor checks use as-of quote date.
       const { violations, hasFloorRows } = quotationPriceViolations(db, quote);
       if (
         hasFloorRows &&

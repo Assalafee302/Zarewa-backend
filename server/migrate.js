@@ -396,6 +396,9 @@ function runMigrationsUnlocked(db) {
   if (!q.has('price_exception_md_review_required')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_review_required INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!q.has('payment_gate_basis_total_ngn')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN payment_gate_basis_total_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
   if (!q.has('price_exception_md_confirmed_at_iso')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN price_exception_md_confirmed_at_iso TEXT`);
   }

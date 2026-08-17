@@ -183,7 +183,14 @@ function quotationHasPricingFloorData(db) {
   return wb > 0 || pl > 0;
 }
 
-export function quotationPriceViolations(db, quoteRow) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id?: string; lines_json?: string | null; branch_id?: string | null; date_iso?: string | null }} quoteRow
+ * @param {{ pricingMode?: 'current' | 'quotation_date' }} [opts]
+ *   `current` (default) — live workbook / price list for cutting list & production gates.
+ *   `quotation_date` — historical floors (refunds / substitution only).
+ */
+export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const violations = [];
   if (!quoteRow?.id) return { violations, hasFloorRows: false };
   if (!quotationHasPricingFloorData(db)) return { violations, hasFloorRows: false };
@@ -200,7 +207,9 @@ export function quotationPriceViolations(db, quoteRow) {
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
+  const useQuoteDate = opts.pricingMode === 'quotation_date';
   const pricingAsAtIso =
+    useQuoteDate &&
     String(quoteRow?.date_iso ?? '').trim().slice(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)
       ? String(quoteRow.date_iso).trim().slice(0, 10)
       : undefined;

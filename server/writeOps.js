@@ -45,6 +45,11 @@ import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMa
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
+import {
+  meetsCuttingListPaymentGate,
+  nextPaymentGateBasisTotalNgn,
+  paymentGateBasisAfterQuotationTotalIncrease,
+} from '../shared/lib/cuttingListPaymentGate.js';
 import { quotationRefundsBlocked } from '../shared/lib/quotationRefundsBlocked.js';
 import { createCustomerComplaint } from './customerComplaintsOps.js';
 import {
@@ -368,7 +373,9 @@ export function overpayCreditRemainingOnQuotationDb(db, customerID, quotationId)
 export function syncQuotationPaidFromReceipts(db, quotationId) {
   const qid = String(quotationId || '').trim();
   if (!qid) return { ok: false, error: 'Quotation id required.' };
-  const row = db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qid);
+  const row = db
+    .prepare(`SELECT total_ngn, branch_id, payment_gate_basis_total_ngn FROM quotations WHERE id = ?`)
+    .get(qid);
   if (!row) return { ok: false, error: 'Quotation not found.' };
 
   const r1 = db
@@ -422,11 +429,34 @@ export function syncQuotationPaidFromReceipts(db, quotationId) {
   if (paidTotal <= 0) paymentStatus = 'Unpaid';
   else if (isEffectivelyFullyPaid(paidTotal, total)) paymentStatus = 'Paid';
   else paymentStatus = 'Partial';
-  db.prepare(`UPDATE quotations SET paid_ngn = ?, payment_status = ? WHERE id = ?`).run(
+
+  const bid = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  let minPaidFrac = 0.7;
+  try {
+    const brRow = db.prepare(`SELECT cutting_list_min_paid_fraction FROM branches WHERE id = ?`).get(bid);
+    const f = Number(brRow?.cutting_list_min_paid_fraction);
+    if (Number.isFinite(f) && f >= 0.05 && f <= 1) minPaidFrac = f;
+  } catch {
+    minPaidFrac = 0.7;
+  }
+  const basisBump = nextPaymentGateBasisTotalNgn(
     paidTotal,
-    paymentStatus,
-    qid
+    total,
+    row.payment_gate_basis_total_ngn,
+    minPaidFrac
   );
+
+  if (basisBump != null) {
+    db.prepare(
+      `UPDATE quotations SET paid_ngn = ?, payment_status = ?, payment_gate_basis_total_ngn = ? WHERE id = ?`
+    ).run(paidTotal, paymentStatus, basisBump, qid);
+  } else {
+    db.prepare(`UPDATE quotations SET paid_ngn = ?, payment_status = ? WHERE id = ?`).run(
+      paidTotal,
+      paymentStatus,
+      qid
+    );
+  }
   return {
     ok: true,
     paidNgn: paidTotal,
@@ -6510,7 +6540,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   const qrow = db
     .prepare(
       `SELECT total_ngn, paid_ngn, manager_production_approved_at_iso, manager_production_approval_level,
-              branch_id, lines_json, date_iso,
+              branch_id, lines_json, date_iso, payment_gate_basis_total_ngn,
               md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso,
               price_exception_md_review_required
        FROM quotations WHERE id = ?`
@@ -6568,7 +6598,6 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
   } catch {
     minPaidFrac = 0.7;
   }
-  const threshold = total * minPaidFrac - 1e-6;
   const cashPaidTotal = quotationRecordedCashPaidNgn(db, qref, bid);
   if (
     !forDraft &&
@@ -6583,12 +6612,15 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
         'Zero payment requires Managing Director production approval. Branch Manager override is not sufficient.',
     };
   }
-  if (!forDraft && !managerOk && cashPaidTotal < threshold) {
+  if (!forDraft && !managerOk) {
     const pct = Math.round(minPaidFrac * 100);
-    return {
-      ok: false,
-      error: `At least ${pct}% of the quotation must be paid (recorded receipts / applied advances on file) before creating a cutting list.`,
-    };
+    const hasBelowFloor = hasFloorRows && violations.length > 0;
+    if (!meetsCuttingListPaymentGate(qrow, cashPaidTotal, minPaidFrac, hasBelowFloor)) {
+      return {
+        ok: false,
+        error: `At least ${pct}% of the quotation must be paid (recorded receipts / applied advances on file) before creating a cutting list.`,
+      };
+    }
   }
   const existing = excludeCuttingListId
     ? db
@@ -9072,6 +9104,28 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   if (!cust) throw new Error('Customer not found.');
   const customerName = cust.name;
 
+  const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  let minPaidFracUpd = 0.7;
+  try {
+    const brRow = db.prepare(`SELECT cutting_list_min_paid_fraction FROM branches WHERE id = ?`).get(bidUpd);
+    const f = Number(brRow?.cutting_list_min_paid_fraction);
+    if (Number.isFinite(f) && f >= 0.05 && f <= 1) minPaidFracUpd = f;
+  } catch {
+    minPaidFracUpd = 0.7;
+  }
+  const oldTotalNgn = Math.round(Number(existing.total_ngn) || 0);
+  const newTotalNgn = Math.round(Number(totalNgn) || 0);
+  const basisAfterTotalIncrease =
+    payload.lines != null
+      ? paymentGateBasisAfterQuotationTotalIncrease(
+          oldTotalNgn,
+          newTotalNgn,
+          existing.paid_ngn,
+          existing.payment_gate_basis_total_ngn,
+          minPaidFracUpd
+        )
+      : null;
+
   const dateISO = payload.dateISO ?? existing.date_iso;
   const dateLabel = shortDateFromIso(dateISO);
   const dueDateISO = payload.dueDateISO !== undefined ? payload.dueDateISO : existing.due_date_iso;
@@ -9144,6 +9198,12 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
       linesStr,
       quotationId
     );
+    if (basisAfterTotalIncrease != null) {
+      db.prepare(`UPDATE quotations SET payment_gate_basis_total_ngn = ? WHERE id = ?`).run(
+        basisAfterTotalIncrease,
+        quotationId
+      );
+    }
     if (payload.lines) syncQuotationLineRows(db, quotationId, linesJson);
   })();
 

@@ -129,4 +129,50 @@ describe.skipIf(!mysqlOk)('MD below-floor price exception', () => {
     expect(clOk.status).toBe(201);
     expect(clOk.body.ok).toBe(true);
   });
+
+  it('published list price at current floor does not block cutting list (current pricing gate)', async () => {
+    const admin = request.agent(app);
+    await loginAs(admin, 'admin', 'Admin@123');
+
+    await admin.post('/api/pricing/price-list').send({
+      gaugeKey: '0.55mm',
+      designKey: 'milano',
+      unitPricePerMeterNgn: 4000,
+      effectiveFromIso: '2026-01-01',
+    });
+    await admin.post('/api/pricing/price-list').send({
+      gaugeKey: '0.55mm',
+      designKey: 'milano',
+      unitPricePerMeterNgn: 3600,
+      effectiveFromIso: '2026-08-01',
+    });
+
+    const q = await admin.post('/api/quotations').send({
+      customerID: 'CUS-001',
+      projectName: 'Published list gate',
+      dateISO: '2026-06-15',
+      lines: {
+        materialGauge: '0.55mm',
+        materialDesign: 'milano',
+        products: [{ name: 'Roof', qty: '10', unitPrice: '3600' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(q.status).toBe(201);
+    const qid = q.body.quotationId;
+
+    db.prepare(`UPDATE quotations SET paid_ngn = total_ngn, payment_gate_basis_total_ngn = total_ngn WHERE id = ?`).run(
+      qid
+    );
+
+    const clOk = await admin.post('/api/cutting-lists').send({
+      quotationRef: qid,
+      customerID: 'CUS-001',
+      dateISO: '2026-08-17',
+      lines: [{ sheets: 2, lengthM: 3.5, totalM: 7, lineType: 'Roof' }],
+    });
+    expect(clOk.status).toBe(201);
+    expect(clOk.body.ok).toBe(true);
+  });
 });

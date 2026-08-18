@@ -25,7 +25,7 @@ describe('legacyAccountsAccess', () => {
     expect(getAllowedLegacyAccountTabs(cashier)).toContain('desk');
     expect(getAllowedLegacyAccountTabs(cashier)).not.toContain('audit');
     expect(resolveLegacyAccountsRedirect(cashier, 'audit')?.to).toBe('/accounts?tab=desk');
-    expect(getAllowedLegacyAccountTabs(cashier)).not.toContain('disbursements');
+    expect(getAllowedLegacyAccountTabs(cashier)).toContain('disbursements');
   });
 
   it('accountant can access audit tab', () => {

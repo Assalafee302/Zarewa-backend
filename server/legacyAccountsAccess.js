@@ -13,8 +13,8 @@ const ROLE_CASHIER = 'cashier';
 const ROLE_ACCOUNTANT = 'finance_manager';
 const OVERSIGHT_ROLES = new Set(['admin', 'md']);
 
-/** Cashier: Finance desk + receipts + movements. */
-const CASHIER_LEGACY_TABS = new Set(['desk', 'receipts', 'movements']);
+/** Cashier: desk, receipts, transfers, and payouts. */
+const CASHIER_LEGACY_TABS = new Set(['desk', 'receipts', 'movements', 'disbursements']);
 
 /** Accountant — Finance desk replaces legacy Treasury tab. */
 const ACCOUNTANT_LEGACY_TABS = new Set(['desk', 'receipts', 'movements', 'disbursements', 'audit']);

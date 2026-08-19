@@ -65,6 +65,19 @@ import { submitExecutiveSchoolFee } from './hrExecutiveBenefitsOps.js';
 import { encryptBankAccount, maskBankAccount, decryptBankAccount } from './hrBankCrypto.js';
 import { getHrDepartment, getHrDesignation } from './hrMasterData.js';
 import {
+  actorDeniedHqPayControl,
+  assessmentDisciplinaryForUser,
+  loadSalaryStructureIndex,
+  periodEndIso,
+  resolveSalaryStructureFromIndex,
+} from './hrSalaryStructureOps.js';
+import {
+  persistQualificationRank,
+  persistStaffRoleCompliance,
+  recomputeAllStaffRoleCompliance,
+  syncRoleStartedAtIso,
+} from './hrRoleComplianceOps.js';
+import {
   buildStaffCompensationSummary,
   lookupHrSalaryMatrixRow,
   resolveStaffCompensationForSave,
@@ -361,6 +374,16 @@ function hrIsProductionStaffSelectSql(db) {
     : '0 AS isProductionStaff,';
 }
 
+function hrRoleComplianceSelectSql(db) {
+  return hasColumn(db, 'hr_staff_profiles', 'compliance_status')
+    ? `p.compliance_status AS complianceStatus, p.compliance_reason AS complianceReason,
+           p.qualification_rank AS qualificationRank, p.role_started_at_iso AS roleStartedAtIso,
+           p.bank_verification_status AS bankVerificationStatus, p.employment_status AS employmentStatus,`
+    : `NULL AS complianceStatus, NULL AS complianceReason,
+           NULL AS qualificationRank, NULL AS roleStartedAtIso,
+           NULL AS bankVerificationStatus, NULL AS employmentStatus,`;
+}
+
 /**
  * @param {{ user: object; workspaceBranchId?: string; workspaceViewAll?: boolean }} req
  */
@@ -386,12 +409,14 @@ export function listHrStaff(db, scope, opts = {}) {
   const orgWide = Boolean(viewAll) || scopeMode === 'org';
   const joinType = requireProfile ? 'INNER' : 'LEFT';
   const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
+  const roleComplianceCol = hrRoleComplianceSelectSql(db);
 
   let sql = `
     SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
            u.avatar_url AS avatarUrl,
            p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
            p.department_id AS departmentId, p.designation_id AS designationId,
+           ${roleComplianceCol}
            p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
            p.contract_end_iso AS contractEndIso,
            p.probation_end_iso AS probationEndIso,
@@ -537,6 +562,12 @@ export function enrichHrStaffListRows(db, rows, opts = {}) {
       ...row,
       selfServiceEligible: Boolean(Number(row.selfServiceEligible)),
       isProductionStaff: Boolean(Number(row.isProductionStaff)),
+      qualificationRank: row.qualificationRank != null ? Number(row.qualificationRank) : null,
+      roleStartedAtIso: row.roleStartedAtIso || null,
+      bankVerificationStatus: row.bankVerificationStatus || null,
+      employmentStatus: row.employmentStatus || null,
+      roleComplianceStatus: row.complianceStatus || null,
+      roleComplianceReason: row.complianceReason || null,
       profileLocked: Boolean(Number(row.profileLocked)),
       profileSubmittedAtIso: row.profileSubmittedAtIso || null,
       profileVerifiedAtIso: row.profileVerifiedAtIso || null,
@@ -820,6 +851,7 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
   const page = Math.max(1, Math.round(Number(opts.page) || 1));
   const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
   const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
+  const roleComplianceCol = hrRoleComplianceSelectSql(db);
   const { sql: filterSql, args: filterArgs, today, in30, in60, quick } = buildHrStaffDirectoryFilterSql(db, scope, opts);
 
   let sql = `
@@ -827,6 +859,7 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
            u.avatar_url AS avatarUrl,
            p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
            p.department_id AS departmentId, p.designation_id AS designationId,
+           ${roleComplianceCol}
            p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
            p.contract_end_iso AS contractEndIso,
            p.probation_end_iso AS probationEndIso,
@@ -1975,6 +2008,16 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   ) {
     syncLegalDisplayNameFromProfile(db, userId);
   }
+
+  persistQualificationRank(db, userId, body?.qualificationRank);
+  syncRoleStartedAtIso(db, {
+    userId,
+    prevDesignationId: prevRow?.designation_id,
+    nextDesignationId: designationId,
+    dateJoinedIso: row.date_joined_iso,
+    explicitStartIso: body?.roleStartedAtIso,
+  });
+  persistStaffRoleCompliance(db, userId);
 
   return {
     ok: true,
@@ -3874,58 +3917,23 @@ export function listHrSalaryMatrix(db) {
     .all();
 }
 
-export function upsertHrSalaryMatrixRow(db, actor, body = {}) {
-  if (!salaryMatrixReady(db)) return { ok: false, error: 'Salary matrix not initialised.' };
-  const payrollGroup = String(body.payrollGroup || 'branch_ops').trim();
-  const salaryLevel = Math.round(Number(body.salaryLevel) || 0);
-  const salaryStep = Math.round(Number(body.salaryStep) || 0);
-  if (!payrollGroup || salaryLevel < 1 || salaryStep < 1) {
-    return { ok: false, error: 'payrollGroup, salaryLevel, and salaryStep are required.' };
-  }
-  const existing = db
-    .prepare(
-      `SELECT id FROM hr_salary_matrix WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`
-    )
-    .get(payrollGroup, salaryLevel, salaryStep);
-  const id = existing?.id || newId('HRMX');
-  const now = nowIso();
-  db.prepare(
-    `INSERT OR REPLACE INTO hr_salary_matrix (
-      id, payroll_group, salary_level, salary_step, base_salary_ngn, housing_allowance_ngn,
-      transport_allowance_ngn, effective_from_iso, notes, updated_at_iso, updated_by_user_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    id,
-    payrollGroup,
-    salaryLevel,
-    salaryStep,
-    Math.max(0, Math.round(Number(body.baseSalaryNgn) || 0)),
-    Math.max(0, Math.round(Number(body.housingAllowanceNgn) || 0)),
-    Math.max(0, Math.round(Number(body.transportAllowanceNgn) || 0)),
-    String(body.effectiveFromIso || '').trim().slice(0, 10) || null,
-    String(body.notes ?? '').trim() || null,
-    now,
-    actor?.id || null
-  );
-  return { ok: true, id };
+export const SALARY_MATRIX_NO_LONGER_FEEDS_PAYROLL =
+  'This salary matrix no longer feeds payroll. Propose and approve a salary structure version instead.';
+
+export function upsertHrSalaryMatrixRow(_db, _actor, _body = {}) {
+  return {
+    ok: false,
+    error: SALARY_MATRIX_NO_LONGER_FEEDS_PAYROLL,
+    code: 'SALARY_MATRIX_READ_ONLY',
+  };
 }
 
-export function deleteHrSalaryMatrixRow(db, actor, { id, payrollGroup, salaryLevel, salaryStep } = {}) {
-  if (!salaryMatrixReady(db)) return { ok: false, error: 'Salary matrix not initialised.' };
-  let rowId = String(id || '').trim();
-  if (!rowId && payrollGroup && salaryLevel && salaryStep) {
-    const row = db
-      .prepare(
-        `SELECT id FROM hr_salary_matrix WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`
-      )
-      .get(String(payrollGroup).trim(), Math.round(Number(salaryLevel)), Math.round(Number(salaryStep)));
-    rowId = row?.id || '';
-  }
-  if (!rowId) return { ok: false, error: 'Matrix row id or group/level/step is required.' };
-  const exists = db.prepare(`SELECT id FROM hr_salary_matrix WHERE id = ?`).get(rowId);
-  if (!exists) return { ok: false, error: 'Matrix row not found.' };
-  db.prepare(`DELETE FROM hr_salary_matrix WHERE id = ?`).run(rowId);
-  return { ok: true, id: rowId };
+export function deleteHrSalaryMatrixRow(_db, _actor, _opts = {}) {
+  return {
+    ok: false,
+    error: SALARY_MATRIX_NO_LONGER_FEEDS_PAYROLL,
+    code: 'SALARY_MATRIX_READ_ONLY',
+  };
 }
 
 export function listHrBranchPayrollContributions(db, periodYyyymm) {
@@ -4189,6 +4197,9 @@ export function getHrPayslipPeriodHint(db, userId) {
 
 export function createPayrollRun(db, actor, body) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  if (actorDeniedHqPayControl(actor)) {
+    return { ok: false, code: 'HQ_PAY_DENIED', error: 'Branch managers cannot run payroll. HQ only.' };
+  }
   const periodYyyymm = String(body?.periodYyyymm || '').trim().replace(/\D/g, '').slice(0, 6);
   if (!/^\d{6}$/.test(periodYyyymm)) return { ok: false, error: 'periodYyyymm must be YYYYMM.' };
   const existing = db
@@ -4264,6 +4275,7 @@ export function computePayrollRun(db, runId) {
   if (!run) return { ok: false, error: 'Payroll run not found.' };
   if (run.status !== 'draft') return { ok: false, error: 'Only draft runs can be recomputed.' };
   const period = run.period_yyyymm;
+  const asOfIso = periodEndIso(period);
   const policy = getHrPolicyPayload(db);
   const penEmpP = Number(policy.pensionEmployeePercent) || 8;
   const penErP = Number(policy.pensionEmployerPercent) || 10;
@@ -4280,7 +4292,7 @@ export function computePayrollRun(db, runId) {
 
   const staff = db
     .prepare(
-      `SELECT p.user_id, p.branch_id, p.base_salary_ngn, p.housing_allowance_ngn, p.transport_allowance_ngn,
+      `SELECT p.user_id, p.branch_id, p.designation_id, p.base_salary_ngn, p.housing_allowance_ngn, p.transport_allowance_ngn,
               p.paye_tax_ngn, p.pension_percent_override, p.payroll_group, p.profile_extra_json
        FROM hr_staff_profiles p
        JOIN app_users u ON u.id = p.user_id AND u.status = 'active'
@@ -4312,19 +4324,28 @@ export function computePayrollRun(db, runId) {
 
   let totalGross = 0;
   let totalPensionEmployer = 0;
+  const salaryIndex = loadSalaryStructureIndex(db);
   for (const s of staff) {
     const payrollGroup = normalizePayrollGroup(s.payroll_group);
     if (!isPayrollRunEligible(payrollGroup)) continue;
-    const base = Math.round(Number(s.base_salary_ngn) || 0);
-    const housing = Math.round(Number(s.housing_allowance_ngn) || 0);
-    const transport = Math.round(Number(s.transport_allowance_ngn) || 0);
+    const hit = resolveSalaryStructureFromIndex(salaryIndex, {
+      designationId: s.designation_id,
+      branchId: s.branch_id,
+      asOfIso,
+    });
+    const profileFallback =
+      Math.round(Number(s.base_salary_ngn) || 0) +
+      Math.round(Number(s.housing_allowance_ngn) || 0) +
+      Math.round(Number(s.transport_allowance_ngn) || 0);
+    const salaryAmount = hit ? Math.round(Number(hit.amount_ngn) || 0) : profileFallback;
+    const salaryVersionId = hit?.id || null;
     const attendance =
       requiresAttendance(payrollGroup) ?
         attendanceDeductionForUser(db, s.user_id, s.branch_id, period)
       : { deductionNgn: 0 };
     const deductionNgn = Math.round(Number(attendance.deductionNgn) || 0);
-    const bonus = isYearEnd && isPayrollRunEligible(payrollGroup) ? Math.round(base * bonusRate) : 0;
-    const gross = base + housing + transport + bonus - deductionNgn;
+    const bonus = isYearEnd && isPayrollRunEligible(payrollGroup) ? Math.round(salaryAmount * bonusRate) : 0;
+    const gross = salaryAmount + bonus - deductionNgn;
     const payeApplies = requiresPaye(payrollGroup);
     const tax = payeApplies ? Math.max(0, Math.round(Number(s.paye_tax_ngn) || 0)) : 0;
     const meetsPension = staffMeetsPensionPolicy({
@@ -4340,9 +4361,19 @@ export function computePayrollRun(db, runId) {
       useLegacyDisc ? Math.max(0, Math.round(Number(comp.monthlyDisciplinaryDeductionNgn) || 0)) : 0;
     const { total: loanTotal, loans: loanParts } = activeStaffLoanBreakdown(db, s.user_id);
     const { total: recoveryTotal, recoveries: recoveryParts } = activeIncidentRecoveryBreakdown(db, s.user_id);
-    const other = loanTotal + recoveryTotal + discFix;
+    const disciplinaryNgn =
+      assessmentDisciplinaryForUser(db, s.user_id, s.branch_id, period) || discFix;
+    const other = loanTotal + recoveryTotal + disciplinaryNgn;
     const net = gross - tax - pension - other;
     ins.run(runId, s.user_id, gross, bonus, deductionNgn, other, tax, pension, net);
+    try {
+      db.prepare(
+        `UPDATE hr_payroll_lines SET salary_version_id = ?, loan_deduction_ngn = ?, disciplinary_deduction_ngn = ?
+         WHERE run_id = ? AND user_id = ?`
+      ).run(salaryVersionId, loanTotal, disciplinaryNgn, runId, s.user_id);
+    } catch {
+      /* optional columns until migrate */
+    }
     try {
       db.prepare(`UPDATE hr_payroll_lines SET pension_employer_ngn = ? WHERE run_id = ? AND user_id = ?`).run(
         pensionEmployer,
@@ -4954,6 +4985,8 @@ export function listPayrollLines(db, runId) {
         impliedTaxPercent: g > 0 ? Math.round((tx * 1000) / g) / 10 : null,
         impliedPensionPercent:
           g > 0 ? Math.round((Math.round(Number(row.pension_ngn) || 0) * 1000) / g) / 10 : null,
+        salaryVersionId: row.salary_version_id || null,
+        paySource: row.salary_version_id ? 'structure' : 'profile_fallback',
         ...earnings,
       };
     });
@@ -5685,7 +5718,7 @@ export function getHrDashboardAlerts(db) {
   const probationEnding = db.prepare(`
     SELECT sp.user_id, u.display_name, sp.probation_end_iso, sp.job_title, sp.branch_id
     FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
-    WHERE sp.probation_end_iso BETWEEN ? AND ? AND sp.status='active'
+    WHERE sp.probation_end_iso BETWEEN ? AND ? AND COALESCE(sp.employment_status, 'active') IN ('active', 'probation')
   `).all(todayIso, in30Iso);
 
   // Contracts expiring within 60 days
@@ -5694,7 +5727,7 @@ export function getHrDashboardAlerts(db) {
     contractsExpiring = db.prepare(`
       SELECT sp.user_id, u.display_name, sp.contract_end_iso, sp.job_title, sp.branch_id
       FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
-      WHERE sp.contract_end_iso BETWEEN ? AND ? AND sp.employment_type='contract' AND sp.status='active'
+      WHERE sp.contract_end_iso BETWEEN ? AND ? AND sp.employment_type='contract' AND COALESCE(sp.employment_status, 'active') IN ('active', 'probation')
     `).all(todayIso, in60Iso);
   } catch { /* contract_end_iso may not exist yet */ }
 
@@ -7328,6 +7361,12 @@ export function getHrMeProfile(db, userId) {
     legalDisplayName: composeLegalDisplayName(safeJsonParse(p.profile_extra_json, {}).personal || {}),
     lineManagerUserId: p.line_manager_user_id ?? null,
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
+    qualificationRank: p.qualification_rank != null ? Number(p.qualification_rank) : null,
+    roleStartedAtIso: p.role_started_at_iso ?? null,
+    employmentStatus: p.employment_status ?? null,
+    bankVerificationStatus: p.bank_verification_status ?? null,
+    roleComplianceStatus: p.compliance_status ?? null,
+    roleComplianceReason: p.compliance_reason ?? null,
   };
   if (isScholarshipBeneficiary(payrollGroup)) {
     const school = hr.profileExtra?.schoolProfile && typeof hr.profileExtra.schoolProfile === 'object'
@@ -8377,20 +8416,35 @@ export function deleteHrStaffAccount(db, actor, userId, body = {}) {
 
 export function runHrScheduledJobs(db) {
   if (!hrTablesReady(db)) return { ok: false, error: 'no_hr' };
+  let roleCompliance = { skipped: true };
+  try {
+    roleCompliance = recomputeAllStaffRoleCompliance(db);
+  } catch {
+    roleCompliance = { ok: false, error: 'role_compliance' };
+  }
   try {
     const row = db
       .prepare(`SELECT finished_at_iso FROM hr_job_runs WHERE job_key = ? ORDER BY started_at_iso DESC LIMIT 1`)
       .get('hr.daily_tick');
     const last = row?.finished_at_iso ? Date.parse(String(row.finished_at_iso)) : 0;
-    if (last && Date.now() - last < 60 * 60 * 1000) return { ok: true, skipped: true };
+    if (last && Date.now() - last < 60 * 60 * 1000) {
+      return { ok: true, skipped: true, roleCompliance };
+    }
     const id = newId('HRJOB');
     const now = nowIso();
     db.prepare(
       `INSERT INTO hr_job_runs (id, job_key, started_at_iso, finished_at_iso, status, detail_json) VALUES (?,?,?,?,?,?)`
-    ).run(id, 'hr.daily_tick', now, now, 'ok', JSON.stringify({ tick: true }));
-    return { ok: true, jobId: id };
+    ).run(
+      id,
+      'hr.daily_tick',
+      now,
+      now,
+      'ok',
+      JSON.stringify({ tick: true, roleComplianceUpdated: roleCompliance.updated ?? 0 })
+    );
+    return { ok: true, jobId: id, roleCompliance };
   } catch {
-    return { ok: false, error: 'job_table' };
+    return { ok: false, error: 'job_table', roleCompliance };
   }
 }
 
@@ -9270,7 +9324,7 @@ export function getStaffTurnoverTrend(db, months) {
     const joiners = db.prepare(`SELECT COUNT(*) as cnt FROM hr_staff_profiles WHERE date_joined_iso BETWEEN ? AND ?`).get(startIso, endIso)?.cnt || 0;
     // Leavers: check lifecycle separation last_working_day in this period
     // Since lifecycle is in JSON, we count staff whose status changed to separated in this period
-    const leavers = db.prepare(`SELECT COUNT(*) as cnt FROM hr_staff_profiles WHERE status='separated' AND updated_at_iso BETWEEN ? AND ?`).get(startIso + 'T00:00:00', endIso + 'T23:59:59')?.cnt || 0;
+    const leavers = db.prepare(`SELECT COUNT(*) as cnt FROM hr_staff_profiles WHERE employment_status='exited' AND updated_at_iso BETWEEN ? AND ?`).get(startIso + 'T00:00:00', endIso + 'T23:59:59')?.cnt || 0;
     results.push({ period, label, joiners, leavers, net: joiners - leavers });
   }
   return results.reverse();
@@ -9278,10 +9332,10 @@ export function getStaffTurnoverTrend(db, months) {
 
 export function getHeadcountSummary(db) {
   const all = db.prepare(`
-    SELECT sp.user_id, sp.branch_id, sp.department, sp.employment_type, sp.status, sp.gender, sp.job_title,
+    SELECT sp.user_id, sp.branch_id, sp.department, sp.employment_type, sp.employment_status AS status, sp.gender, sp.job_title,
            sp.date_joined_iso, u.display_name
     FROM hr_staff_profiles sp JOIN app_users u ON u.id=sp.user_id
-    WHERE sp.status='active' OR u.status='active'
+    WHERE COALESCE(sp.employment_status, 'active') IN ('active', 'probation') OR u.status='active'
   `).all();
 
   const total = all.length;

@@ -246,6 +246,15 @@ import { decryptBankAccount } from './hrBankCrypto.js';
 import { getTeamRosterSummary, resolveHrScopeMode } from './hrTeamScope.js';
 import { countOpenIncidents } from './hrAccountabilityOps.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
+import {
+  actorDeniedHqPayControl,
+  approveHrSalaryStructureVersion,
+  getHrPayOverview,
+  listHrPayRegister,
+  listHrSalaryStructureVersions,
+  proposeHrSalaryStructureVersion,
+  withdrawHrSalaryStructureVersion,
+} from './hrSalaryStructureOps.js';
 import { getHrAnalyticsDashboard } from './hrAnalyticsOps.js';
 import { getStaffLoanSchedule, listLoanScheduleIssues } from './hrLoanSchedule.js';
 import {
@@ -528,6 +537,16 @@ function requireHrAny(...perms) {
     if (hrUserHas(req.user, '*') || perms.some((p) => hrUserHas(req.user, p))) return next();
     return res.status(403).json({ ok: false, error: 'You do not have permission for this HR action.' });
   };
+}
+
+function denyHqPayIfBranchManager(req, res) {
+  if (!actorDeniedHqPayControl(req.user)) return false;
+  res.status(403).json({
+    ok: false,
+    code: 'HQ_PAY_DENIED',
+    error: 'Branch managers cannot change salary structure or run payroll. HQ only.',
+  });
+  return true;
 }
 
 /**
@@ -2507,6 +2526,7 @@ export function registerHrApi(app, db) {
   app.post('/api/hr/payroll-runs/:runId/recompute', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      if (denyHqPayIfBranchManager(req, res)) return;
       const gate = assertHrPolicyGate(db, req.user?.id, 'hr_payroll_edit');
       if (!gate.ok) return res.status(403).json(gate);
       const r = computePayrollRun(db, req.params.runId);
@@ -2520,6 +2540,7 @@ export function registerHrApi(app, db) {
   app.patch('/api/hr/payroll-runs/:runId', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.gm_approve'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      if (denyHqPayIfBranchManager(req, res)) return;
       const body = req.body || {};
       if (body.status === 'paid' && !userCanPayPayroll(req.user)) {
         return res.status(403).json({ ok: false, error: 'Finance payroll payment permission required.' });
@@ -2538,6 +2559,7 @@ export function registerHrApi(app, db) {
   app.post('/api/hr/payroll-runs/:runId/gm-approve', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      if (denyHqPayIfBranchManager(req, res)) return;
       if (!userCanGmApprovePayroll(req.user)) {
         return res.status(403).json({ ok: false, error: 'GM HR payroll approval required.' });
       }
@@ -2552,6 +2574,7 @@ export function registerHrApi(app, db) {
   app.post('/api/hr/payroll-runs/:runId/md-approve', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
+      if (denyHqPayIfBranchManager(req, res)) return;
       if (!userCanMdApprovePayroll(req.user) && !hrUserHas(req.user, '*')) {
         return res.status(403).json({ ok: false, error: 'Managing Director payroll approval required.' });
       }
@@ -2686,7 +2709,7 @@ export function registerHrApi(app, db) {
     try {
       if (!hrReady(res, db)) return;
       const r = upsertHrSalaryMatrixRow(db, req.user, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
+      if (!r.ok) return res.status(r.code === 'SALARY_MATRIX_READ_ONLY' ? 409 : 400).json(r);
       return res.json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Could not save salary matrix row.');
@@ -2702,12 +2725,106 @@ export function registerHrApi(app, db) {
         salaryLevel: req.query?.salaryLevel,
         salaryStep: req.query?.salaryStep,
       });
-      if (!r.ok) return res.status(400).json(r);
+      if (!r.ok) return res.status(r.code === 'SALARY_MATRIX_READ_ONLY' ? 409 : 400).json(r);
       return res.json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Could not delete salary matrix row.');
     }
   });
+
+  app.get(
+    '/api/hr/salary-structure',
+    requireHrAny('hr.payroll.prepare', 'hr.staff.manage', 'hr.settings.manage', 'hr.salary_structure.approve'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        return res.json({
+          ok: true,
+          versions: listHrSalaryStructureVersions(db, {
+            status: req.query?.status,
+            designationId: req.query?.designationId,
+            branchId: req.query?.branchId,
+          }),
+        });
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not load salary structure.');
+      }
+    }
+  );
+
+  app.get(
+    '/api/hr/salary-structure/overview',
+    requireHrAny('hr.payroll.prepare', 'hr.staff.manage', 'hr.settings.manage', 'hr.salary_structure.approve'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        return res.json({ ok: true, overview: getHrPayOverview(db) });
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not load pay overview.');
+      }
+    }
+  );
+
+  app.get(
+    '/api/hr/salary-structure/register',
+    requireHrAny('hr.payroll.prepare', 'hr.staff.manage', 'hr.settings.manage', 'hr.salary_structure.approve'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        return res.json({ ok: true, register: listHrPayRegister(db) });
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not load pay register.');
+      }
+    }
+  );
+
+  app.post(
+    '/api/hr/salary-structure',
+    requireHrAny('hr.staff.manage', 'hr.settings.manage', 'hr.payroll.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        if (denyHqPayIfBranchManager(req, res)) return;
+        const r = proposeHrSalaryStructureVersion(db, req.body || {}, req.user);
+        if (!r.ok) return res.status(r.code === 'HQ_PAY_DENIED' ? 403 : 400).json(r);
+        return res.status(201).json(r);
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not propose salary structure.');
+      }
+    }
+  );
+
+  app.post(
+    '/api/hr/salary-structure/:id/approve',
+    requireHrAny('hr.salary_structure.approve'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        if (denyHqPayIfBranchManager(req, res)) return;
+        const r = approveHrSalaryStructureVersion(db, req.params.id, req.user);
+        if (!r.ok) return res.status(r.code === 'HQ_PAY_DENIED' ? 403 : 400).json(r);
+        return res.json(r);
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not approve salary structure.');
+      }
+    }
+  );
+
+  app.post(
+    '/api/hr/salary-structure/:id/withdraw',
+    requireHrAny('hr.staff.manage', 'hr.settings.manage', 'hr.payroll.manage'),
+    (req, res) => {
+      try {
+        if (!hrReady(res, db)) return;
+        if (denyHqPayIfBranchManager(req, res)) return;
+        const r = withdrawHrSalaryStructureVersion(db, req.params.id, req.user);
+        if (!r.ok) return res.status(r.code === 'HQ_PAY_DENIED' ? 403 : 400).json(r);
+        return res.json(r);
+      } catch (e) {
+        return hrApiFail(res, e, 'Could not withdraw salary structure proposal.');
+      }
+    }
+  );
 
   app.get('/api/hr/compensation/variance-types', requireHrAny('hr.staff.manage', 'hr.payroll.prepare', 'hr.settings.manage'), (_req, res) => {
     return res.json({ ok: true, types: COMPENSATION_VARIANCE_TYPES });

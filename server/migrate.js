@@ -18,6 +18,7 @@ import { backfillStaffObligationsFromLoans } from './staffObligationOps.js';
 import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligationOps.js';
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
+import { recomputeAllStaffRoleCompliance } from './hrRoleComplianceOps.js';
 import {
   SCHEMA_MIGRATION_FTS,
   ensureWorkspaceSearchFtsSchema,
@@ -1467,6 +1468,7 @@ function runMigrationsUnlocked(db) {
   migrateMobileAuth2026(db);
   migrateMaintenanceRegistry2026(db);
   migrateOtModule2026(db);
+  migrateHrRoleComplianceLifecycle2026(db);
 }
 
 /**
@@ -6769,5 +6771,174 @@ function migrateRefundCreditApplications(db) {
     } catch {
       /* ignore */
     }
+  }
+}
+
+/**
+ * Role-requirement compliance, versioned salary structure, loan installment rows,
+ * branch assessment reports, and payslip provenance columns.
+ * Payroll must read hr_loan_schedule_installments by period (not installment_ngn × remaining months).
+ * hr_salary_matrix is retained as a historical reference and no longer feeds payroll.
+ */
+function migrateHrRoleComplianceLifecycle2026(db) {
+  const tableCols = (name) => {
+    try {
+      return new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    } catch {
+      return new Set();
+    }
+  };
+
+  const des = tableCols('hr_designations');
+  if (des.size) {
+    if (!des.has('staff_band')) {
+      db.exec(`ALTER TABLE hr_designations ADD COLUMN staff_band TEXT`);
+    }
+    if (!des.has('min_qualification_rank')) {
+      db.exec(`ALTER TABLE hr_designations ADD COLUMN min_qualification_rank INTEGER`);
+    }
+    if (!des.has('max_tenure_years')) {
+      db.exec(`ALTER TABLE hr_designations ADD COLUMN max_tenure_years REAL`);
+    }
+  }
+
+  const hr = tableCols('hr_staff_profiles');
+  if (hr.size) {
+    if (!hr.has('role_started_at_iso')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN role_started_at_iso TEXT`);
+    }
+    if (!hr.has('qualification_rank')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN qualification_rank INTEGER`);
+    }
+    if (!hr.has('employment_status')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN employment_status TEXT`);
+    }
+    if (!hr.has('bank_verification_status')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN bank_verification_status TEXT`);
+    }
+    if (!hr.has('compliance_status')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN compliance_status TEXT`);
+    }
+    if (!hr.has('compliance_reason')) {
+      db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN compliance_reason TEXT`);
+    }
+    try {
+      db.exec(`
+        UPDATE hr_staff_profiles
+        SET role_started_at_iso = date_joined_iso
+        WHERE (role_started_at_iso IS NULL OR TRIM(role_started_at_iso) = '')
+          AND date_joined_iso IS NOT NULL AND TRIM(date_joined_iso) != ''
+      `);
+      db.exec(`UPDATE hr_staff_profiles SET employment_status = 'active' WHERE employment_status IS NULL OR TRIM(employment_status) = ''`);
+      db.exec(
+        `UPDATE hr_staff_profiles SET bank_verification_status = 'unverified' WHERE bank_verification_status IS NULL OR TRIM(bank_verification_status) = ''`
+      );
+      db.exec(`UPDATE hr_staff_profiles SET compliance_status = 'ok' WHERE compliance_status IS NULL OR TRIM(compliance_status) = ''`);
+    } catch {
+      /* host SQL dialect */
+    }
+    try {
+      recomputeAllStaffRoleCompliance(db);
+    } catch {
+      /* compute is also invoked from hr.daily_tick */
+    }
+  }
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hr_salary_structure_versions (
+        id TEXT PRIMARY KEY,
+        designation_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT '',
+        amount_ngn INTEGER NOT NULL,
+        effective_from_iso TEXT NOT NULL,
+        status TEXT NOT NULL,
+        approved_by_user_id TEXT,
+        approved_at_iso TEXT,
+        proposed_by_user_id TEXT,
+        proposed_at_iso TEXT,
+        notes TEXT,
+        created_at_iso TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_hr_sal_struct_desig_branch
+        ON hr_salary_structure_versions(designation_id, branch_id, status);
+      CREATE INDEX IF NOT EXISTS idx_hr_sal_struct_status
+        ON hr_salary_structure_versions(status, effective_from_iso);
+
+      CREATE TABLE IF NOT EXISTS hr_loan_schedule_installments (
+        id TEXT PRIMARY KEY,
+        hr_request_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        period_yyyymm TEXT NOT NULL,
+        amount_ngn INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        payroll_run_id TEXT,
+        applied_at_iso TEXT,
+        created_at_iso TEXT NOT NULL,
+        FOREIGN KEY (hr_request_id) REFERENCES hr_requests(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_loan_inst_request_period
+        ON hr_loan_schedule_installments(hr_request_id, period_yyyymm);
+      CREATE INDEX IF NOT EXISTS idx_hr_loan_inst_user_period
+        ON hr_loan_schedule_installments(user_id, period_yyyymm, status);
+
+      CREATE TABLE IF NOT EXISTS hr_assessment_reports (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL,
+        period_yyyymm TEXT NOT NULL,
+        due_date_iso TEXT NOT NULL,
+        status TEXT NOT NULL,
+        submitted_at_iso TEXT,
+        submitted_by_user_id TEXT,
+        created_at_iso TEXT NOT NULL,
+        updated_at_iso TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_assess_branch_period
+        ON hr_assessment_reports(branch_id, period_yyyymm);
+      CREATE INDEX IF NOT EXISTS idx_hr_assess_status_due
+        ON hr_assessment_reports(status, due_date_iso);
+
+      CREATE TABLE IF NOT EXISTS hr_assessment_report_lines (
+        id TEXT PRIMARY KEY,
+        report_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        attendance_summary TEXT,
+        punctuality_summary TEXT,
+        disciplinary_deduction_ngn INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (report_id) REFERENCES hr_assessment_reports(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_assess_line_report_user
+        ON hr_assessment_report_lines(report_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_hr_assess_line_user
+        ON hr_assessment_report_lines(user_id);
+    `);
+  } catch {
+    /* tables/indexes may already exist on MySQL hosts */
+  }
+
+  const lines = tableCols('hr_payroll_lines');
+  if (lines.size) {
+    if (!lines.has('salary_version_id')) {
+      db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN salary_version_id TEXT`);
+    }
+    if (!lines.has('loan_deduction_ngn')) {
+      db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN loan_deduction_ngn INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!lines.has('disciplinary_deduction_ngn')) {
+      db.exec(`ALTER TABLE hr_payroll_lines ADD COLUMN disciplinary_deduction_ngn INTEGER NOT NULL DEFAULT 0`);
+    }
+  }
+
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_hr_staff_branch_compliance ON hr_staff_profiles(branch_id, compliance_status)`);
+  } catch {
+    /* index optional until columns exist on host */
+  }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_hr_staff_bank_verification ON hr_staff_profiles(bank_verification_status)`);
+  } catch {
+    /* optional */
   }
 }

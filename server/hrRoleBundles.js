@@ -68,6 +68,7 @@ export const HR_ROLE_PERMISSION_BUNDLES = {
     'hr.payroll.view_sensitive',
     'hr.payroll.prepare',
     'hr.payroll.manage',
+    'hr.salary_structure.approve',
     'hr.discipline.manage',
     'hr.incidents.manage',
     'hr.incidents.view',

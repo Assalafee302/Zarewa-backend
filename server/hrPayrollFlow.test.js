@@ -107,8 +107,9 @@ describe.skipIf(!mysqlOk)('HR payroll flow (integration)', () => {
       housingAllowanceNgn: 10000,
       transportAllowanceNgn: 5000,
     });
-    expect(put.status).toBe(200);
-    expect(put.body.ok).toBe(true);
+    expect(put.status).toBe(409);
+    expect(put.body.ok).toBe(false);
+    expect(String(put.body.error || '')).toMatch(/no longer feeds payroll/i);
 
     const contrib = await agent.get('/api/hr/branch-contributions?periodYyyymm=202606');
     expect(contrib.status).toBe(200);

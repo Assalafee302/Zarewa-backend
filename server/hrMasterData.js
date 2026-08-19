@@ -3,12 +3,70 @@
  * @module server/hrMasterData
  */
 
+import { hasColumn } from './ap2ReceivedBasisOps.js';
+import { HR_STAFF_BANDS } from '../shared/lib/hrRoleCompliance.js';
+import { recomputeRoleComplianceForDesignation } from './hrRoleComplianceOps.js';
+
 function nowIso() {
   return new Date().toISOString();
 }
 
 function newId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function normalizeStaffBand(raw) {
+  const v = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!v) return null;
+  return HR_STAFF_BANDS.includes(v) ? v : undefined;
+}
+
+function nullableNumber(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function persistDesignationRoleRequirementColumns(db, id, body) {
+  const sets = [];
+  const params = [];
+  let prev = null;
+  try {
+    prev = db
+      .prepare(
+        `SELECT staff_band, min_qualification_rank, max_tenure_years FROM hr_designations WHERE id = ?`
+      )
+      .get(id);
+  } catch {
+    prev = null;
+  }
+
+  if (hasColumn(db, 'hr_designations', 'staff_band')) {
+    const input = body?.staffBand ?? body?.staff_band;
+    const band = input !== undefined ? normalizeStaffBand(input) : prev?.staff_band ?? null;
+    sets.push('staff_band = ?');
+    params.push(band ?? null);
+  }
+  if (hasColumn(db, 'hr_designations', 'min_qualification_rank')) {
+    const input = body?.minQualificationRank ?? body?.min_qualification_rank;
+    const rank = input !== undefined ? nullableNumber(input) : prev?.min_qualification_rank ?? null;
+    sets.push('min_qualification_rank = ?');
+    params.push(rank == null ? null : Math.round(rank));
+  }
+  if (hasColumn(db, 'hr_designations', 'max_tenure_years')) {
+    const input = body?.maxTenureYears ?? body?.max_tenure_years;
+    const years = input !== undefined ? nullableNumber(input) : prev?.max_tenure_years ?? null;
+    sets.push('max_tenure_years = ?');
+    params.push(years);
+  }
+  if (!sets.length) return { ok: true };
+  params.push(id);
+  db.prepare(`UPDATE hr_designations SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return { ok: true };
 }
 
 export function hrMasterDataTablesReady(db) {
@@ -111,6 +169,13 @@ export function upsertHrDesignation(db, body, actor) {
   if (!hrMasterDataTablesReady(db)) return { ok: false, error: 'HR master data not initialised.' };
   const title = String(body?.title || '').trim();
   if (!title) return { ok: false, error: 'Job title is required.' };
+  const bandInput = body?.staffBand ?? body?.staff_band;
+  if (bandInput !== undefined && bandInput !== null && String(bandInput).trim() && normalizeStaffBand(bandInput) === undefined) {
+    return {
+      ok: false,
+      error: 'staff_band must be director, manager, senior_staff, junior_staff, or entry_staff.',
+    };
+  }
   const id = String(body?.id || '').trim() || newId('desig');
   const ts = nowIso();
   const payload = {
@@ -164,6 +229,8 @@ export function upsertHrDesignation(db, body, actor) {
        @salary_range_note, @active, @created_at_iso, @updated_at_iso, @created_by_user_id, @updated_by_user_id)`
     ).run({ ...payload, created_at_iso: ts, created_by_user_id: actor?.id || null });
   }
+  persistDesignationRoleRequirementColumns(db, id, body);
+  recomputeRoleComplianceForDesignation(db, id);
   return { ok: true, designation: getHrDesignation(db, id) };
 }
 
@@ -276,6 +343,9 @@ function mapDesignationRow(row) {
     skillsRequired: row.skills_required,
     workingConditions: row.working_conditions,
     salaryRangeNote: row.salary_range_note,
+    staffBand: row.staff_band || null,
+    minQualificationRank: row.min_qualification_rank != null ? Number(row.min_qualification_rank) : null,
+    maxTenureYears: row.max_tenure_years != null ? Number(row.max_tenure_years) : null,
     staffCount: Number(row.staffCount) || 0,
     active: Boolean(row.active),
     createdAtIso: row.created_at_iso,

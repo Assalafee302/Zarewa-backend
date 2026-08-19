@@ -12095,7 +12095,7 @@ export function registerHttpApi(app, db) {
         res.json(listed);
       } catch (e) {
         console.error(e);
-        res.status(500).json({ ok: false, error: 'Failed to load transferable credit' });
+        res.status(500).json({ ok: false, error: 'Failed to load refund fund' });
       }
     }
   );
@@ -12176,16 +12176,18 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const customerID = String(req.query.customerID || '').trim();
+        const targetQuotationRef = String(req.query.targetQuotationRef || req.query.quotationRef || '').trim();
         const branchScope = resolveBootstrapBranchScope(req);
         const rows = refundCreditApplyOps.listRefundCreditApplications(
           db,
           customerID,
-          branchScope === 'ALL' ? 'ALL' : branchScope
+          branchScope === 'ALL' ? 'ALL' : branchScope,
+          { targetQuotationRef }
         );
         res.json({ ok: true, applications: rows });
       } catch (e) {
         console.error(e);
-        res.status(500).json({ ok: false, error: 'Failed to list credit applications' });
+        res.status(500).json({ ok: false, error: 'Failed to list refund fund applications' });
       }
     }
   );

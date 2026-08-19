@@ -7,6 +7,8 @@ import { normalizeRefundReasonCategoriesForApi } from '../refundConstants.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 
 export const REFUND_CREDIT_CONFIRMATION_STATUS = 'Credit confirmation';
+/** Ledger `bank_reference` prefix for refund-fund apply (not same-quote OVERPAY_APPLY). */
+export const REFUND_CREDIT_LEDGER_REF_PREFIX = 'CREDIT_APPLY:';
 
 /**
  * @param {unknown} reasonCategory
@@ -83,7 +85,7 @@ export function planRefundCreditApplyAmount({ targetDueNgn, availableNgn, reques
     availableNgn: available,
     remainderDueNgn: Math.max(0, due - applyNgn),
     leftoverCreditNgn: Math.max(0, available - applyNgn),
-    error: applyNgn > 0 ? null : 'No transferable credit to apply against this quotation balance.',
+    error: applyNgn > 0 ? null : 'No refund fund to apply against this quotation balance.',
   };
 }
 

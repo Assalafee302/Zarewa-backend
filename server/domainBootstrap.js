@@ -55,6 +55,7 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import { userHasPermission } from './auth.js';
 import { buildExpenseCategoryMonthlyAlert, buildExpenseCategoryBranchCoachAlert } from './expenseCategoryReportOps.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { listRefundCreditApplications } from './refundCreditApplyOps.js';
 import {
   canReadCoilAndMovements,
   canReadFinanceDomain,
@@ -122,6 +123,16 @@ function domainFlags(db, opts = {}) {
   };
 }
 
+function snapshotRefundCreditApplications(db, f) {
+  if (!(f.refundsOk || f.ledgerOk)) return [];
+  try {
+    return listRefundCreditApplications(db, '', f.branchScope === 'ALL' ? 'ALL' : f.branchScope);
+  } catch (e) {
+    console.error('[domainBootstrap] refundCreditApplications', e);
+    return [];
+  }
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {{ user?: object | null; branchScope?: 'ALL' | string }} opts
@@ -150,6 +161,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     customerDashboard,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     ledgerEntries: ledgerOk ? ledgerRows : [],
+    refundCreditApplications: snapshotRefundCreditApplications(db, f),
   };
 }
 
@@ -288,6 +300,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
+    refundCreditApplications: snapshotRefundCreditApplications(db, f),
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
     poTransportCatchUp: procOk || finOk ? listPoTransportCatchUp(db, branchScope) : [],

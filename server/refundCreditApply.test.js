@@ -3,6 +3,7 @@ import { createDatabase } from './db.js';
 import {
   applyRefundCreditToQuotation,
   listEligibleRefundCredits,
+  listRefundCreditApplications,
 } from './refundCreditApplyOps.js';
 import {
   insertLedgerRows,
@@ -110,6 +111,13 @@ describe('apply refund credit to new quotation (integration)', () => {
 
     const leftover = overpayCreditRemainingOnQuotationDb(db, 'CUS-RC', 'QT-OLD');
     expect(leftover).toBe(40_000);
+
+    const listedApps = listRefundCreditApplications(db, 'CUS-RC', 'ALL', {
+      targetQuotationRef: 'QT-NEW',
+    });
+    expect(listedApps.length).toBeGreaterThan(0);
+    expect(listedApps.every((a) => a.targetQuotationRef === 'QT-NEW')).toBe(true);
+    expect(listedApps.reduce((s, a) => s + a.amountNgn, 0)).toBe(80_000);
 
     // No sales_receipt for the credit — not for bank clearance
     const rcpt = db

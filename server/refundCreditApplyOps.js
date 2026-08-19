@@ -1,12 +1,13 @@
 /**
- * Apply transferable customer credit (overpay / eligible refund) onto a new quotation.
- * Applied amounts become OVERPAY_APPLIED on the target (counts as paid, no sales receipt → no clearance).
- * Leftover stays on the source for normal refund payout.
+ * Apply refund fund (overpay / eligible refund) onto a new quotation.
+ * Applied amounts become OVERPAY_APPLIED on the target (counts as paid, no sales receipt → no bank clearance).
+ * That slice is not refundable again. Leftover stays on the source for normal refund payout.
  */
 
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
+  REFUND_CREDIT_LEDGER_REF_PREFIX,
   allocateRefundCreditAcrossSources,
   planRefundCreditApplyAmount,
   refundCategoriesAreOverpaymentOnly,
@@ -141,9 +142,9 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
         status: rf.status,
         overpaymentOnly: overpayOnly,
         label: overpayOnly
-          ? `Overpayment refund ${rf.refundID} on ${qid}`
+          ? `Refund fund ${rf.refundID} on ${qid}`
           : `Approved refund ${rf.refundID} on ${qid}`,
-        recommendation: `Apply up to ${open.toLocaleString('en-NG')} from ${rf.refundID}; leftover stays refundable on ${qid}.`,
+        recommendation: `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${rf.refundID}; leftover stays refundable on ${qid}.`,
       });
     }
 
@@ -161,8 +162,8 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
         requiresApproval: false,
         status: null,
         overpaymentOnly: true,
-        label: `Overpayment credit on ${qid}`,
-        recommendation: `Apply up to ${overpayRem.toLocaleString('en-NG')} overpay from ${qid}; leftover stays refundable there.`,
+        label: `Refund fund (overpayment) on ${qid}`,
+        recommendation: `Use up to ₦${overpayRem.toLocaleString('en-NG')} from refund fund on ${qid}; leftover stays refundable there.`,
       });
     }
   }
@@ -213,7 +214,7 @@ export function applyRefundCreditToQuotation(db, payload) {
   const listed = listEligibleRefundCredits(db, cid, target, { branchId: payload.branchId });
   if (!listed.ok) return listed;
   if (!listed.sources.length || listed.totalAvailableNgn <= 0) {
-    return { ok: false, error: 'No transferable credit available for this customer.' };
+    return { ok: false, error: 'No refund fund available for this customer.' };
   }
 
   let sources = listed.sources;
@@ -285,7 +286,7 @@ export function applyRefundCreditToQuotation(db, payload) {
         if (amt <= 0) continue;
 
         const appId = nextApplicationId();
-        const refToken = `CREDIT_APPLY:${appId}`;
+        const refToken = `${REFUND_CREDIT_LEDGER_REF_PREFIX}${appId}`;
         const sourceQ = String(src.sourceQuotationRef || '').trim();
 
         if (src.kind === 'refund' && src.refundId) {
@@ -473,13 +474,18 @@ export function applyRefundCreditToQuotation(db, payload) {
  * @param {string} [customerId]
  * @param {string | 'ALL'} [branchScope]
  */
-export function listRefundCreditApplications(db, customerId = '', branchScope = 'ALL') {
+export function listRefundCreditApplications(db, customerId = '', branchScope = 'ALL', opts = {}) {
   const cid = String(customerId || '').trim();
+  const target = String(opts.targetQuotationRef || '').trim();
   const args = [];
   let sql = `SELECT * FROM refund_credit_applications WHERE 1=1`;
   if (cid) {
     sql += ` AND customer_id = ?`;
     args.push(cid);
+  }
+  if (target) {
+    sql += ` AND target_quotation_ref = ?`;
+    args.push(target);
   }
   if (branchScope && branchScope !== 'ALL') {
     sql += ` AND branch_id = ?`;

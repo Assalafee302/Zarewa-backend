@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
   allocateRefundCreditAcrossSources,
+  planCashierRefundOffset,
   planRefundCreditApplyAmount,
   refundCategoriesAreOverpaymentOnly,
   refundCreditOpenAmountNgn,
@@ -80,5 +81,14 @@ describe('refundCreditApply pure helpers', () => {
       { id: 'b', amountNgn: 30_000, leftoverOnSourceNgn: 40_000 },
     ]);
     expect(REFUND_CREDIT_CONFIRMATION_STATUS).toBe('Credit confirmation');
+  });
+
+  it('plans cashier receipt offset against refund fund', () => {
+    expect(planCashierRefundOffset({ receiptCashNgn: 80_000, availableNgn: 50_000 })).toEqual({
+      offsetNgn: 50_000,
+      cashToConfirmNgn: 30_000,
+      leftoverRefundNgn: 0,
+    });
+    expect(planCashierRefundOffset({ receiptCashNgn: 20_000, availableNgn: 50_000 }).cashToConfirmNgn).toBe(0);
   });
 });

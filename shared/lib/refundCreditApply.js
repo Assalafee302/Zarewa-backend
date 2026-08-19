@@ -90,6 +90,22 @@ export function planRefundCreditApplyAmount({ targetDueNgn, availableNgn, reques
 }
 
 /**
+ * Cashier confirm: offset usable refund fund against an unconfirmed receipt’s cash.
+ * Quote due may already be 0 because Sales posted the receipt — offset against receipt cash instead.
+ * @param {{ receiptCashNgn?: number, availableNgn?: number }} p
+ */
+export function planCashierRefundOffset({ receiptCashNgn, availableNgn }) {
+  const receipt = Math.max(0, Math.round(Number(receiptCashNgn) || 0));
+  const available = Math.max(0, Math.round(Number(availableNgn) || 0));
+  const offsetNgn = Math.min(receipt, available);
+  return {
+    offsetNgn,
+    cashToConfirmNgn: Math.max(0, receipt - offsetNgn),
+    leftoverRefundNgn: Math.max(0, available - offsetNgn),
+  };
+}
+
+/**
  * Allocate applyNgn across sources (FIFO as given). Remainder stays on older sources.
  * @param {Array<{ id: string, availableNgn: number }>} sources
  * @param {number} applyNgn

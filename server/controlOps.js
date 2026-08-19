@@ -4605,30 +4605,100 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
   return { maxNgn: amountNgn, warnings };
 }
 
-/** Full production previews allowed while building the refund quotation pick list. */
-export const MAX_ELIGIBLE_REFUND_LIST_PREVIEWS = 6;
+const UNPRODUCED_LIST_METRES_FLOOR = 0.02;
+
+/**
+ * Cheap pick-list hint — never runs {@link previewRefundRequest}. Selecting a row still loads the full preview.
+ * @returns {{ categories: string[], suggestedPreviewAmountNgn: number } | null}
+ */
+function refundPickerListHint(db, row, jobs, { overpayExcess, remainingNgn, hasActiveRefunds }) {
+  const remaining = roundMoney(remainingNgn);
+  if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
+
+  if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hasActiveRefunds) {
+    return {
+      categories: ['Overpayment'],
+      suggestedPreviewAmountNgn: Math.min(overpayExcess, remaining),
+    };
+  }
+
+  const isVoid = String(row.status || '').trim().toLowerCase() === 'void';
+  const closedJobs = Array.isArray(jobs) ? jobs : [];
+  const hasCancelledJob = closedJobs.some(
+    (j) => String(j.status || '').trim().toLowerCase() === 'cancelled'
+  );
+  if (isVoid || hasCancelledJob) {
+    return {
+      categories: ['Order cancellation'],
+      suggestedPreviewAmountNgn: remaining,
+    };
+  }
+
+  let linesPayload = {};
+  try {
+    linesPayload = JSON.parse(String(row.lines_json || '{}'));
+  } catch {
+    linesPayload = {};
+  }
+  let stoneMeterQuote = false;
+  try {
+    stoneMeterQuote = isStoneMeterQuotationLinesJson(db, linesPayload);
+  } catch {
+    stoneMeterQuote = false;
+  }
+  const fulfillment = buildRefundProductionFulfillmentSummary(db, row, closedJobs, {
+    isStoneMeterQuote: stoneMeterQuote,
+  });
+  if (fulfillment.unproducedMetres > UNPRODUCED_LIST_METRES_FLOOR) {
+    return {
+      categories: ['Unproduced meterage'],
+      suggestedPreviewAmountNgn: remaining,
+    };
+  }
+  return null;
+}
+
+function closedProductionJobsByQuotationRef(db, quoteIds) {
+  const map = new Map();
+  const ids = (Array.isArray(quoteIds) ? quoteIds : []).map((id) => String(id || '').trim()).filter(Boolean);
+  if (!ids.length) return map;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM production_jobs
+       WHERE quotation_ref IN (${placeholders})
+         AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')`
+    )
+    .all(...ids);
+  for (const job of rows) {
+    const qid = String(job.quotation_ref || '').trim();
+    if (!qid) continue;
+    if (!map.has(qid)) map.set(qid, []);
+    map.get(qid).push(job);
+  }
+  return map;
+}
 
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Obvious overpayments with no prior active refunds use a cheap eligibility result; other candidates may
- * run {@link previewRefundRequest} (capped by {@link MAX_ELIGIBLE_REFUND_LIST_PREVIEWS}) so quotations
- * with preview total ≥ {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear.
+ * The pick list never runs {@link previewRefundRequest}. Obvious overpayments, void/cancelled jobs, and
+ * unproduced metres (quoted vs produced) are classified cheaply so finished under-produced jobs stay visible.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
- * Listing path batches cash-in for all SQL candidates (avoids ~7 queries per row) and never scans
+ * Listing path batches cash-in and closed production jobs for SQL candidates and never scans
  * an unbounded quotation table — candidate pool is hard-capped even when limits are omitted.
  * @param {{ candidateLimit?: number; resultLimit?: number }} [opts]
  */
 export function getEligibleRefundQuotations(db, opts = {}) {
-  const candidateLimit = Math.max(0, Math.min(120, Math.floor(Number(opts.candidateLimit) || 0)));
+  const candidateLimit = Math.max(0, Math.min(250, Math.floor(Number(opts.candidateLimit) || 0)));
   const resultLimit = Math.max(0, Math.min(200, Math.floor(Number(opts.resultLimit) || 0)));
   // Always bound the candidate scan — unlimited used to walk every paid closed quote and was very slow.
-  const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 120;
+  const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 250;
   const sql = `
     SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
-           q.handled_by, q.branch_id,
+           q.handled_by, q.branch_id, q.lines_json,
            q.bm_price_exception_approved_at_iso, q.price_exception_md_review_required,
            q.price_exception_md_confirmed_at_iso, q.md_price_exception_approved_at_iso,
            q.refunds_blocked_at_iso, q.refunds_blocked_reason,
@@ -4683,9 +4753,12 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     db,
     candidates.map((r) => r.id)
   );
+  const jobsByRef = closedProductionJobsByQuotationRef(
+    db,
+    candidates.map((r) => r.id)
+  );
 
   const out = [];
-  let listPreviewsRun = 0;
   for (const row of candidates) {
     const cash = cashByRef.get(row.id) || emptyQuotationPaymentCashBreakdown();
     const cashInNgn = roundMoney(cash.cashInNgn);
@@ -4698,44 +4771,17 @@ export function getEligibleRefundQuotations(db, opts = {}) {
 
     const quoteTotalNgn = roundMoney(row.total_ngn);
     const overpayExcess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-    // Overpayment excess is cash-in minus quote total — it does not subtract prior refunds.
-    // Only take the cheap path when no active refunds exist yet; otherwise preview must
-    // apply refundedCategories (so already-refunded Overpayment does not stay on the pick list).
     const hasActiveRefunds = totalRefundedNgn > 0;
-    let categories;
-    let suggestedPreviewAmountNgn;
-    if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hasActiveRefunds) {
-      // Avoid the expensive full production/refund preview for the common, unambiguous case.
-      // Selecting the quotation still runs previewRefundRequest and reveals any additional categories.
-      categories = ['Overpayment'];
-      suggestedPreviewAmountNgn = Math.min(overpayExcess, remainingNgn);
-    } else {
-      if (listPreviewsRun >= MAX_ELIGIBLE_REFUND_LIST_PREVIEWS) continue;
-      listPreviewsRun += 1;
-      const preview = previewRefundRequest(db, { quotationRef: row.id });
-      if (!preview?.ok) continue;
-      categories = Array.isArray(preview.preview?.eligibleRefundCategories)
-        ? preview.preview.eligibleRefundCategories.map((x) => String(x || '').trim()).filter(Boolean)
-        : [];
-      suggestedPreviewAmountNgn = Math.round(Number(preview.preview?.suggestedAmountNgn) || 0);
-      const productionFulfillment = preview.preview?.productionFulfillment;
-      const previewOverpayExcess = Math.round(Number(preview.preview?.overpaymentExcessNgn) || 0);
-      const autoSuggestedPositive = (preview.preview?.suggestedLines || []).some(
-        (l) => roundMoney(l.amountNgn) > 0
-      );
-      if (
-        productionFulfillment?.fullyProducedRoofing &&
-        previewOverpayExcess <= 0 &&
-        !autoSuggestedPositive &&
-        suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
-      ) {
-        continue;
-      }
-    }
+    const hint = refundPickerListHint(db, row, jobsByRef.get(row.id) || [], {
+      overpayExcess,
+      remainingNgn,
+      hasActiveRefunds,
+    });
+    if (!hint) continue;
     const pickRow = {
       ...row,
-      eligible_refund_categories: categories,
-      suggested_preview_amount_ngn: suggestedPreviewAmountNgn,
+      eligible_refund_categories: hint.categories,
+      suggested_preview_amount_ngn: hint.suggestedPreviewAmountNgn,
       cash_in_ngn: cashInNgn,
       remaining_ngn: remainingNgn,
     };

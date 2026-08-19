@@ -9414,11 +9414,10 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/refunds/eligible-quotations', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
-      // Default 50. Keep the candidate scan modest — full refund preview is expensive and
-      // only a handful of non-overpay quotes are previewed for the pick list.
+      // Default 50. The pick list uses cheap overpay / unproduced / cancelled hints — not full preview.
       const requestedLimit = Math.floor(Number(req.query.limit) || 50);
       const resultLimit = Math.max(1, Math.min(100, requestedLimit));
-      const candidateLimit = Math.min(120, Math.max(resultLimit * 2, 60));
+      const candidateLimit = Math.min(250, Math.max(resultLimit * 4, 80));
       const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
       res.json({ ok: true, quotations: rows });
     } catch (e) {

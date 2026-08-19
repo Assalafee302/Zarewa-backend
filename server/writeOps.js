@@ -126,6 +126,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
@@ -10131,7 +10132,10 @@ export function applyFinanceConfirmedReceiptBookAmountTx(
 ) {
   const id = String(receiptId || '').trim();
   const confirmed = roundMoney(confirmedAmountNgn);
-  if (!id || confirmed <= 0) return { ok: true, changed: false };
+  const allowZero = Boolean(options.allowZeroConfirmed);
+  if (!id) return { ok: false, error: 'Receipt id required.' };
+  if (confirmed < 0) return { ok: false, error: 'Confirmed amount cannot be negative.' };
+  if (confirmed <= 0 && !allowZero) return { ok: true, changed: false };
 
   const rec = db.prepare(`SELECT * FROM sales_receipts WHERE id = ?`).get(id);
   if (!rec) return { ok: false, error: 'Receipt not found.' };
@@ -10349,8 +10353,18 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     }
     nextBankReceived = correctionsSum;
   }
+
+  const creditPayload = payload?.refundCreditApply && typeof payload.refundCreditApply === 'object'
+    ? payload.refundCreditApply
+    : null;
+  const creditApplyNgn = roundMoney(creditPayload?.amountNgn);
+  const creditSourceIds = Array.isArray(creditPayload?.sourceIds)
+    ? creditPayload.sourceIds.map((s) => String(s || '').trim()).filter(Boolean)
+    : null;
+  const applyingRefundFund = creditApplyNgn > 0;
+
   const bankAmtResolved = nextBankReceived != null && nextBankReceived > 0;
-  if (!finalized && !bankAmtResolved) {
+  if (!finalized && !bankAmtResolved && !applyingRefundFund) {
     return {
       ok: false,
       code: 'BANK_RECEIVED_REQUIRED',
@@ -10358,42 +10372,70 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
         'Enter the amount actually received in bank or cash before clearing this receipt. Finance must confirm the payment matches real money.',
     };
   }
+  if (applyingRefundFund && nextBankReceived == null) {
+    nextBankReceived = 0;
+  }
 
   const now = new Date().toISOString();
   const uid = actor?.id ?? null;
+  let creditResult = null;
 
   try {
     db.transaction(() => {
-      for (const c of corrections) {
-        const mid = String(c?.movementId || '').trim();
-        if (!mid) continue;
-        const postedAtISO =
-          c?.postedAtISO != null && String(c.postedAtISO).trim() !== ''
-            ? String(c.postedAtISO).trim()
-            : undefined;
-        const noteTrim = c?.note != null ? String(c.note).trim() : '';
-        const pl = {
-          amountNgn: roundMoney(c?.amountNgn),
-          treasuryAccountId: Number(c?.treasuryAccountId),
-          ...(postedAtISO ? { postedAtISO } : {}),
-          ...(noteTrim ? { note: noteTrim } : {}),
-        };
-        const r = ledgerReceiptTreasuryMovementCorrectTx(db, mid, pl, actor, {
-          bypassReceiptLock: true,
-          receiptId: id,
-        });
-        if (!r.ok) {
-          throw new Error(r.error || 'Payment line correction failed.');
+      if (nextBankReceived > 0) {
+        for (const c of corrections) {
+          const mid = String(c?.movementId || '').trim();
+          if (!mid) continue;
+          const postedAtISO =
+            c?.postedAtISO != null && String(c.postedAtISO).trim() !== ''
+              ? String(c.postedAtISO).trim()
+              : undefined;
+          const noteTrim = c?.note != null ? String(c.note).trim() : '';
+          const pl = {
+            amountNgn: roundMoney(c?.amountNgn),
+            treasuryAccountId: Number(c?.treasuryAccountId),
+            ...(postedAtISO ? { postedAtISO } : {}),
+            ...(noteTrim ? { note: noteTrim } : {}),
+          };
+          const r = ledgerReceiptTreasuryMovementCorrectTx(db, mid, pl, actor, {
+            bypassReceiptLock: true,
+            receiptId: id,
+          });
+          if (!r.ok) {
+            throw new Error(r.error || 'Payment line correction failed.');
+          }
         }
       }
 
-      if (bankAmtResolved) {
-        const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived, actor, {
-          skipTreasurySync: corrections.length > 0,
+      if (bankAmtResolved || applyingRefundFund) {
+        const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived || 0, actor, {
+          skipTreasurySync: corrections.length > 0 && nextBankReceived > 0,
+          allowZeroConfirmed: applyingRefundFund,
         });
         if (!bookSync.ok) {
           throw new Error(bookSync.error || 'Could not align receipt amount with confirmed bank total.');
         }
+      }
+
+      if (applyingRefundFund) {
+        const cid = String(row.customer_id || '').trim();
+        const qref = String(row.quotation_ref || '').trim();
+        if (!cid || !qref) {
+          throw new Error('Receipt is missing customer or quotation for refund fund offset.');
+        }
+        const applied = applyRefundCreditToQuotation(db, {
+          customerID: cid,
+          targetQuotationRef: qref,
+          amountNgn: creditApplyNgn,
+          sourceIds: creditSourceIds,
+          actor,
+          branchId: row.branch_id,
+          dateISO: String(row.date_iso || '').trim().slice(0, 10) || undefined,
+        });
+        if (!applied?.ok) {
+          throw new Error(applied?.error || 'Could not apply refund fund to this receipt.');
+        }
+        creditResult = applied;
       }
 
       db.prepare(
@@ -10435,9 +10477,14 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
       bookAmountNgn: row.amount_ngn,
       clearForDelivery,
       paymentLineCorrectionCount: corrections.length,
+      refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
     },
   });
-  return { ok: true };
+  return {
+    ok: true,
+    refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
+    refundCreditLeftoverNgn: creditResult?.leftoverCreditNgn ?? null,
+  };
 }
 
 /**

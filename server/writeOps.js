@@ -10431,6 +10431,7 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           actor,
           branchId: row.branch_id,
           dateISO: String(row.date_iso || '').trim().slice(0, 10) || undefined,
+          alreadyInTransaction: true,
         });
         if (!applied?.ok) {
           throw new Error(applied?.error || 'Could not apply refund fund to this receipt.');

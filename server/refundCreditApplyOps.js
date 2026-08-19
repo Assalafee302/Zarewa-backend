@@ -303,7 +303,7 @@ export function applyRefundCreditToQuotation(db, payload) {
   const actor = payload.actor || null;
 
   try {
-    const result = db.transaction(() => {
+    const runApply = () => {
       const appliedRows = [];
       let appliedTotal = 0;
       const allowRefundQuotes = new Set();
@@ -484,7 +484,8 @@ export function applyRefundCreditToQuotation(db, payload) {
         targetPaymentStatus: qAfter?.payment_status || null,
         remainderDueNgn: Math.max(0, roundMoney(qAfter?.total_ngn) - roundMoney(qAfter?.paid_ngn)),
       };
-    })();
+    };
+    const result = payload.alreadyInTransaction ? runApply() : db.transaction(runApply)();
 
     return {
       ok: true,

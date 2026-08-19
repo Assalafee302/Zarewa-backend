@@ -48,6 +48,7 @@ function parseRefundCats(row) {
     amountNgn: roundMoney(row.amount_ngn),
     approvedAmountNgn: roundMoney(row.approved_amount_ngn),
     paidAmountNgn: roundMoney(row.paid_amount_ngn),
+    creditAppliedNgn: roundMoney(row.credit_applied_ngn),
   };
 }
 
@@ -377,19 +378,36 @@ export function applyRefundCreditToQuotation(db, payload) {
             shape.calculationLines
           );
           const paidFresh = roundMoney(fresh.paid_amount_ngn);
-          const nextPaid = paidFresh + amt;
+          const priorApplied = roundMoney(fresh.credit_applied_ngn);
+          const nextCredit = priorApplied + amt;
+          const requested = roundMoney(fresh.amount_ngn);
+          const leftoverAfter = Math.max(0, requested - nextCredit);
+          const wasPending = String(fresh.status) === 'Pending';
+          let nextPaid = paidFresh;
           let approvedFresh = roundMoney(fresh.approved_amount_ngn);
-          if (overpayOnly && String(fresh.status) === 'Pending' && approvedFresh <= 0) {
-            approvedFresh = roundMoney(fresh.amount_ngn);
+          let nextStatus;
+          if (wasPending) {
+            // Confirmation may use pending overpay fund; leftover stays Pending for the manager.
+            nextPaid = paidFresh;
+            approvedFresh = leftoverAfter <= 0 ? nextCredit : 0;
+            nextStatus = leftoverAfter <= 0 ? 'Paid' : 'Pending';
+            if (leftoverAfter <= 0) nextPaid = nextCredit;
+          } else {
+            nextPaid = paidFresh + amt;
+            if (overpayOnly && approvedFresh <= 0) {
+              approvedFresh = requested;
+            }
+            if (approvedFresh <= 0) {
+              approvedFresh = requested;
+            }
+            nextStatus = nextPaid >= approvedFresh ? 'Paid' : 'Approved';
           }
-          if (approvedFresh <= 0) {
-            approvedFresh = roundMoney(fresh.amount_ngn);
-          }
-          const fullySettled = nextPaid >= approvedFresh;
-          const noteBit = `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}`;
+          const noteBit =
+            leftoverAfter > 0 && wasPending
+              ? `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}. ₦${leftoverAfter.toLocaleString('en-NG')} still awaits approval for cash payout.`
+              : `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}`;
           const prevNote = String(fresh.payment_note || '').trim();
           const paymentNote = prevNote ? `${prevNote} · ${noteBit}` : noteBit;
-          const priorApplied = roundMoney(fresh.credit_applied_ngn);
 
           db.prepare(
             `UPDATE customer_refunds
@@ -405,14 +423,14 @@ export function applyRefundCreditToQuotation(db, payload) {
                  credit_confirmation_status = ?
              WHERE refund_id = ?`
           ).run(
-            fullySettled ? 'Paid' : 'Approved',
+            nextStatus,
             approvedFresh,
             nextPaid,
-            atIso,
-            actorName(actor),
-            actorId(actor),
+            leftoverAfter <= 0 || !wasPending ? atIso : fresh.paid_at_iso,
+            leftoverAfter <= 0 || !wasPending ? actorName(actor) : fresh.paid_by,
+            leftoverAfter <= 0 || !wasPending ? actorId(actor) : fresh.paid_by_user_id,
             paymentNote,
-            priorApplied + amt,
+            nextCredit,
             target,
             REFUND_CREDIT_CONFIRMATION_STATUS,
             src.refundId

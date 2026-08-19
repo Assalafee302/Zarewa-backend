@@ -7,6 +7,7 @@ import {
   refundCategoriesAreOverpaymentOnly,
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
+  refundLeftoverAwaitingApprovalNgn,
 } from './refundCreditApply.js';
 
 describe('refundCreditApply pure helpers', () => {
@@ -67,6 +68,22 @@ describe('refundCreditApply pure helpers', () => {
     expect(plan.applyNgn).toBe(80_000);
     expect(plan.remainderDueNgn).toBe(0);
     expect(plan.leftoverCreditNgn).toBe(40_000);
+
+    expect(
+      refundCreditOpenAmountNgn({
+        status: 'Pending',
+        reasonCategory: 'Overpayment',
+        amountNgn: 40_000,
+        paidAmountNgn: 0,
+        creditAppliedNgn: 30_000,
+      })
+    ).toBe(10_000);
+    expect(
+      refundLeftoverAwaitingApprovalNgn({
+        amountNgn: 40_000,
+        creditAppliedNgn: 30_000,
+      })
+    ).toBe(10_000);
 
     const alloc = allocateRefundCreditAcrossSources(
       [

@@ -45,20 +45,33 @@ export function refundIsEligibleCreditSource(refund) {
   return refundCreditOpenAmountNgn(refund) > 0;
 }
 
+export function refundCreditAppliedNgn(refund) {
+  return Math.max(0, Math.round(Number(refund?.creditAppliedNgn ?? refund?.credit_applied_ngn) || 0));
+}
+
 /**
- * Open transferable amount on a refund (requested for Pending overpay; approved−paid otherwise).
- * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number }} refund
+ * Requested cash still waiting on the manager after refund fund was used on a receipt.
+ */
+export function refundLeftoverAwaitingApprovalNgn(refund) {
+  const requested = Math.round(Number(refund?.amountNgn) || 0);
+  return Math.max(0, requested - refundCreditAppliedNgn(refund));
+}
+
+/**
+ * Open transferable amount on a refund (requested minus paid and fund already applied, for Pending overpay).
+ * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number, creditAppliedNgn?: number }} refund
  */
 export function refundCreditOpenAmountNgn(refund) {
   const status = String(refund?.status || '').trim();
   const paid = Math.round(Number(refund?.paidAmountNgn) || 0);
+  const creditApplied = refundCreditAppliedNgn(refund);
   const overpayOnly = refundCategoriesAreOverpaymentOnly(
     refund?.reasonCategory,
     refund?.calculationLines
   );
   if (status === 'Pending' && overpayOnly) {
     const requested = Math.round(Number(refund?.amountNgn) || 0);
-    return Math.max(0, requested - paid);
+    return Math.max(0, requested - paid - creditApplied);
   }
   const approved =
     Math.round(Number(refund?.approvedAmountNgn) || 0) ||

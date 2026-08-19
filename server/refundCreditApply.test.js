@@ -140,7 +140,7 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(apps.every((a) => a.status === REFUND_CREDIT_CONFIRMATION_STATUS)).toBe(true);
   });
 
-  it('consumes Pending overpayment refund without manager approval and leaves unpaid refund balance', () => {
+  it('consumes Pending overpayment refund without manager approval and leaves leftover Pending', () => {
     // Fresh quotes for refund path
     const lines = JSON.stringify({
       products: [{ name: 'Roof', qty: 5, unitPrice: 10000 }],
@@ -213,12 +213,14 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(applied.appliedNgn).toBe(30_000);
 
     const rf = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = 'RF-OVER-1'`).get();
-    expect(rf.status).toBe('Approved'); // partial — still open for cash refund of leftover
-    expect(Number(rf.paid_amount_ngn)).toBe(30_000);
+    expect(rf.status).toBe('Pending');
+    expect(Number(rf.paid_amount_ngn)).toBe(0);
+    expect(Number(rf.approved_amount_ngn) || 0).toBe(0);
     expect(Number(rf.credit_applied_ngn)).toBe(30_000);
     expect(rf.credit_confirmation_status).toBe(REFUND_CREDIT_CONFIRMATION_STATUS);
     expect(rf.credit_applied_to_quotation_ref).toBe('QT-RF-DST');
-    expect(Number(rf.approved_amount_ngn) - Number(rf.paid_amount_ngn)).toBe(10_000);
+    expect(String(rf.payment_note || '')).toMatch(/30,000/);
+    expect(String(rf.payment_note || '')).toMatch(/awaits approval/i);
 
     const leftoverOverpay = overpayCreditRemainingOnQuotationDb(db, 'CUS-RC', 'QT-RF-SRC');
     expect(leftoverOverpay).toBe(10_000);

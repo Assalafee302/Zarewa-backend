@@ -2966,11 +2966,37 @@ export function decideRefundRequest(db, refundID, payload, actor) {
     return { ok: false, error: 'Decision status must be Approved or Rejected.' };
   }
   const actedAtISO = String(payload.approvalDate ?? '').trim() || nowIso().slice(0, 10);
-  const comment = String(payload.managerComments ?? payload.note ?? '').trim();
+  const requestedAmountNgn = roundMoney(row.amount_ngn);
+  const creditAppliedNgn = roundMoney(row.credit_applied_ngn);
+  const leftoverAfterCreditNgn = Math.max(0, requestedAmountNgn - creditAppliedNgn);
+  const creditDest = String(row.credit_applied_to_quotation_ref || '').trim();
+  const defaultApproveNgn = creditAppliedNgn > 0 ? leftoverAfterCreditNgn : requestedAmountNgn;
   const approvedAmountNgn =
     status === 'Approved'
-      ? roundMoney(payload.approvedAmountNgn ?? row.amount_ngn)
+      ? roundMoney(payload.approvedAmountNgn ?? defaultApproveNgn)
       : 0;
+  if (status === 'Approved' && creditAppliedNgn > 0 && leftoverAfterCreditNgn <= 0) {
+    return {
+      ok: false,
+      error: creditDest
+        ? `₦${creditAppliedNgn.toLocaleString('en-NG')} was already applied to ${creditDest}. Nothing is left to approve for cash payout.`
+        : `₦${creditAppliedNgn.toLocaleString('en-NG')} was already applied to a receipt. Nothing is left to approve for cash payout.`,
+    };
+  }
+  if (status === 'Approved' && creditAppliedNgn > 0 && approvedAmountNgn > leftoverAfterCreditNgn) {
+    return {
+      ok: false,
+      error: `₦${creditAppliedNgn.toLocaleString('en-NG')} was already applied${
+        creditDest ? ` to ${creditDest}` : ' to a receipt'
+      }. Approve at most ₦${leftoverAfterCreditNgn.toLocaleString('en-NG')} leftover.`,
+    };
+  }
+  let comment = String(payload.managerComments ?? payload.note ?? '').trim();
+  if (!comment && status === 'Approved' && creditAppliedNgn > 0) {
+    comment = `₦${creditAppliedNgn.toLocaleString('en-NG')} was already applied${
+      creditDest ? ` to ${creditDest}` : ' to a receipt'
+    }. Approving leftover cash of ₦${approvedAmountNgn.toLocaleString('en-NG')}.`;
+  }
   if (status === 'Approved' && approvedAmountNgn <= 0) {
     return { ok: false, error: 'Approved refund amount must be positive.' };
   }
@@ -3003,14 +3029,23 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       };
     }
     const lineSumApprove = sumIncludedRefundCalculationLinesNgn(linesForGuard);
-    if (Math.abs(lineSumApprove - approvedAmountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+    const lineMatchesApproved =
+      Math.abs(lineSumApprove - approvedAmountNgn) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN;
+    const lineMatchesRequestedWithCredit =
+      creditAppliedNgn > 0 &&
+      Math.abs(lineSumApprove - requestedAmountNgn) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN;
+    if (!lineMatchesApproved && !lineMatchesRequestedWithCredit) {
       return {
         ok: false,
         error: `Approved amount (₦${approvedAmountNgn.toLocaleString(
           'en-NG'
         )}) must match the sum of included breakdown lines (₦${lineSumApprove.toLocaleString(
           'en-NG'
-        )}).`,
+        )})${
+          creditAppliedNgn > 0
+            ? `, or the original request (₦${requestedAmountNgn.toLocaleString('en-NG')}) after refund fund was used.`
+            : '.'
+        }`,
       };
     }
     const decisionCats = resolveRefundReasonCategoriesForDecision(
@@ -3032,7 +3067,6 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       if (!financial.ok) return financial;
     }
   }
-  const requestedAmountNgn = roundMoney(row.amount_ngn);
   if (status === 'Approved' && approvedAmountNgn > requestedAmountNgn) {
     return {
       ok: false,
@@ -3177,7 +3211,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         entityKind: 'refund',
         entityId: refundID,
         note: comment || `Refund ${status.toLowerCase()}`,
-        details: { status, approvedAmountNgn },
+        details: { status, approvedAmountNgn, creditAppliedNgn, leftoverAfterCreditNgn, creditDest },
       });
       if (approvalAlignmentAckJson && approvalAlignmentOverrideIsNew) {
         try {

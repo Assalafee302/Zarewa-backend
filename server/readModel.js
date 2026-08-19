@@ -529,7 +529,8 @@ export function listManagementItems(db, branchScope = 'ALL') {
 
   // 4. Refund Requests
   const pendingRefunds = db.prepare(`
-    SELECT refund_id, customer_name, quotation_ref, amount_ngn, requested_at_iso, reason_category, branch_id
+    SELECT refund_id, customer_name, quotation_ref, amount_ngn, requested_at_iso, reason_category, branch_id,
+           credit_applied_ngn, credit_applied_to_quotation_ref, credit_confirmation_status, payment_note
     FROM customer_refunds
     WHERE status = 'Pending'
       ${bRef.sql}
@@ -756,7 +757,8 @@ export function listManagerQuotationAudit(db, quotationRef) {
     .prepare(
       `SELECT refund_id, product, reason_category, amount_ngn, status, requested_at_iso, requested_by,
         approval_date, approved_by, approved_amount_ngn, paid_amount_ngn, paid_by, paid_at_iso,
-        reason, calculation_notes, cutting_list_ref, manager_comments
+        reason, calculation_notes, cutting_list_ref, manager_comments,
+        credit_applied_ngn, credit_applied_to_quotation_ref, credit_confirmation_status, payment_note
        FROM customer_refunds
        WHERE quotation_ref = ?
        ORDER BY requested_at_iso DESC`
@@ -2301,7 +2303,8 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
     branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
       ? { sql: '', args: [] }
       : { sql: ` AND ta.branch_id = ?`, args: [branchScope] };
-  const sql = `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no
+  const sql = `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no,
+            ta.bank_name AS bank_name
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
        WHERE 1=1${scopeSql.sql}
@@ -2318,6 +2321,7 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
       accountName: row.account_name ?? '',
       accountType: row.account_type ?? '',
       accountNo: row.account_no ?? '',
+      bankName: row.bank_name ?? '',
       amountNgn: row.amount_ngn,
       reference: row.reference ?? '',
       counterpartyKind: row.counterparty_kind ?? '',

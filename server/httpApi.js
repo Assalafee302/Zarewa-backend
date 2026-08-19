@@ -9414,12 +9414,11 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/refunds/eligible-quotations', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
-      // Default 50 — unbounded lists used to scan every paid closed quote and were very slow.
+      // Default 50. Keep the candidate scan modest — full refund preview is expensive and
+      // only a handful of non-overpay quotes are previewed for the pick list.
       const requestedLimit = Math.floor(Number(req.query.limit) || 50);
       const resultLimit = Math.max(1, Math.min(100, requestedLimit));
-      // Scan a wider pool than the result size — eligibility filters out most rows, and
-      // capping candidates at resultLimit hid real unrefunded quotes behind false positives.
-      const candidateLimit = Math.min(500, Math.max(resultLimit * 10, 150));
+      const candidateLimit = Math.min(120, Math.max(resultLimit * 2, 60));
       const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
       res.json({ ok: true, quotations: rows });
     } catch (e) {
@@ -9436,7 +9435,9 @@ export function registerHttpApi(app, db) {
         return res.status(400).json({ ok: false, error: 'quotationRef query parameter is required (exact quotation id, e.g. QT-…).' });
       }
       const meets = quotationMeetsRefundEligibility(db, quotationRef);
-      const preview = previewRefundRequest(db, { quotationRef });
+      const preview = meets.ok
+        ? previewRefundRequest(db, { quotationRef })
+        : { ok: false, preview: null, error: meets.error };
       const categories =
         preview?.ok && Array.isArray(preview?.preview?.eligibleRefundCategories)
           ? preview.preview.eligibleRefundCategories

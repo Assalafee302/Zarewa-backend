@@ -245,6 +245,10 @@ describe('apply refund credit to new quotation (integration)', () => {
     `);
     const listed = listEligibleRefundCredits(db, 'CUS-RC', 'QT-NP-DST');
     expect(listed.sources.some((s) => s.refundId === 'RF-METRE-1')).toBe(false);
+    expect(listed.unavailableSources.some((s) => s.refundId === 'RF-METRE-1')).toBe(true);
+    expect(listed.unavailableSources.find((s) => s.refundId === 'RF-METRE-1')?.reason).toMatch(
+      /approval/i
+    );
 
     db.prepare(
       `UPDATE customer_refunds SET status = 'Approved', approved_amount_ngn = 15000 WHERE refund_id = 'RF-METRE-1'`
@@ -278,5 +282,76 @@ describe('apply refund credit to new quotation (integration)', () => {
       dateISO: '2026-07-04',
     });
     expect(again.ok).toBe(false);
+  });
+
+  it('lists a same-quote pending overpay refund so Add payment can show it', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 5, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-SAME', 'Same Quote Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-SAME-OP', 'CUS-SAME', 'Same Quote Customer', 50000, 80000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-SAME-DUE', 'CUS-SAME', 'Same Quote Customer', 20000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-SAME',
+          customerName: 'Same Quote Customer',
+          amountNgn: 50_000,
+          quotationRef: 'QT-SAME-OP',
+          atISO: '2026-08-01T12:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-SAME',
+          customerName: 'Same Quote Customer',
+          amountNgn: 30_000,
+          quotationRef: 'QT-SAME-OP',
+          atISO: '2026-08-01T12:00:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+         refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+         amount_ngn, status, requested_by, requested_at_iso, paid_amount_ngn, branch_id,
+         calculation_lines_json
+       ) VALUES (
+         'RF-SAME-1', 'CUS-SAME', 'Same Quote Customer', 'QT-SAME-OP', '["Overpayment"]', 'Overpaid',
+         30000, 'Pending', 'Sales One', '2026-08-01T13:00:00.000Z', 0, '${DEFAULT_BRANCH_ID}',
+         '${JSON.stringify([{ category: 'Overpayment', amountNgn: 30000, label: 'Overpay' }]).replace(/'/g, "''")}'
+       );
+    `);
+
+    const listedOnDue = listEligibleRefundCredits(db, 'CUS-SAME', 'QT-SAME-DUE');
+    expect(listedOnDue.sources.some((s) => s.refundId === 'RF-SAME-1')).toBe(true);
+    expect(listedOnDue.recommendedApplyNgn).toBe(20_000);
+
+    const listedOnSame = listEligibleRefundCredits(db, 'CUS-SAME', 'QT-SAME-OP');
+    expect(listedOnSame.sources.some((s) => s.refundId === 'RF-SAME-1')).toBe(true);
+    expect(listedOnSame.sources.find((s) => s.refundId === 'RF-SAME-1')?.sameQuotation).toBe(true);
+    expect(listedOnSame.recommendedApplyNgn).toBe(0);
+    expect(listedOnSame.totalAvailableNgn).toBe(30_000);
+    expect(listedOnSame.targetDueNgn).toBe(0);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-SAME',
+      targetQuotationRef: 'QT-SAME-DUE',
+      sourceIds: ['refund:RF-SAME-1'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-08-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(20_000);
   });
 });

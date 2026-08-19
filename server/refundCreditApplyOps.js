@@ -92,10 +92,10 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
   const quotes = db
     .prepare(
       `SELECT id, total_ngn, paid_ngn, date_iso FROM quotations
-       WHERE customer_id = ? AND id != ?
+       WHERE customer_id = ?
        ORDER BY date_iso ASC, id ASC`
     )
-    .all(cid, target);
+    .all(cid);
 
   const refunds = db
     .prepare(
@@ -105,54 +105,75 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
     )
     .all(cid);
 
+  /** @type {Array<object>} */
+  const sources = [];
+  /** @type {Array<object>} */
+  const unavailableSources = [];
+
   const refundsByQuote = new Map();
   for (const row of refunds) {
     const qref = String(row.quotation_ref || '').trim();
-    if (!qref || qref === target) continue;
+    if (!qref) continue;
     if (!refundsByQuote.has(qref)) refundsByQuote.set(qref, []);
     refundsByQuote.get(qref).push(row);
+
+    const shape = mapRefundRowToCreditShape(row);
+    const open = refundCreditOpenAmountNgn(shape);
+    const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
+    const eligible = refundIsEligibleCreditSource(shape) && open > 0;
+    if (eligible) {
+      sources.push({
+        id: `refund:${shape.refundID}`,
+        kind: 'refund',
+        refundId: shape.refundID,
+        sourceQuotationRef: qref,
+        availableNgn: open,
+        requiresApproval: false,
+        status: shape.status,
+        overpaymentOnly: overpayOnly,
+        sameQuotation: qref === target,
+        label: overpayOnly
+          ? `Refund fund ${shape.refundID} on ${qref}`
+          : `Approved refund ${shape.refundID} on ${qref}`,
+        recommendation:
+          qref === target
+            ? `Use up to ₦${open.toLocaleString('en-NG')} from this quotation’s refund fund; leftover stays refundable here.`
+            : `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${shape.refundID}; leftover stays refundable on ${qref}.`,
+      });
+    } else {
+      let reason = 'Not available to cover a receipt yet.';
+      if (String(shape.status) === 'Pending' && !overpayOnly) {
+        reason = 'Needs manager approval before it can cover a receipt.';
+      } else if (open <= 0) {
+        reason = 'Already used or paid out.';
+      }
+      unavailableSources.push({
+        id: `refund:${shape.refundID || qref}`,
+        refundId: shape.refundID,
+        sourceQuotationRef: qref,
+        availableNgn: open,
+        status: shape.status,
+        overpaymentOnly: overpayOnly,
+        reason,
+      });
+    }
   }
 
-  /** @type {Array<object>} */
-  const sources = [];
+  const quoteIdsWithUsableOverpayRefund = new Set(
+    sources.filter((s) => s.kind === 'refund' && s.overpaymentOnly).map((s) => s.sourceQuotationRef)
+  );
 
   for (const q of quotes) {
     const qid = String(q.id || '').trim();
     const active = refundsByQuote.get(qid) || [];
-    const eligibleRefunds = active
-      .map(mapRefundRowToCreditShape)
-      .filter(refundIsEligibleCreditSource);
     const blockingOtherPending = active.some((row) => {
       const shape = mapRefundRowToCreditShape(row);
       if (String(row.status) !== 'Pending') return false;
       return !refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
     });
 
-    for (const rf of eligibleRefunds) {
-      const open = refundCreditOpenAmountNgn(rf);
-      if (open <= 0) continue;
-      const overpayOnly = refundCategoriesAreOverpaymentOnly(rf.reasonCategory, rf.calculationLines);
-      sources.push({
-        id: `refund:${rf.refundID}`,
-        kind: 'refund',
-        refundId: rf.refundID,
-        sourceQuotationRef: qid,
-        availableNgn: open,
-        requiresApproval: false,
-        status: rf.status,
-        overpaymentOnly: overpayOnly,
-        label: overpayOnly
-          ? `Refund fund ${rf.refundID} on ${qid}`
-          : `Approved refund ${rf.refundID} on ${qid}`,
-        recommendation: `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${rf.refundID}; leftover stays refundable on ${qid}.`,
-      });
-    }
-
-    const coveredByOverpayRefund = eligibleRefunds.some((rf) =>
-      refundCategoriesAreOverpaymentOnly(rf.reasonCategory, rf.calculationLines)
-    );
     const overpayRem = overpayCreditRemainingOnQuotationDb(db, cid, qid);
-    if (overpayRem > 0 && !coveredByOverpayRefund && !blockingOtherPending) {
+    if (overpayRem > 0 && !quoteIdsWithUsableOverpayRefund.has(qid) && !blockingOtherPending) {
       sources.push({
         id: `overpay:${qid}`,
         kind: 'overpay',
@@ -162,6 +183,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
         requiresApproval: false,
         status: null,
         overpaymentOnly: true,
+        sameQuotation: qid === target,
         label: `Refund fund (overpayment) on ${qid}`,
         recommendation: `Use up to ₦${overpayRem.toLocaleString('en-NG')} from refund fund on ${qid}; leftover stays refundable there.`,
       });
@@ -186,6 +208,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, op
     remainderDueAfterRecommendNgn: plan.remainderDueNgn,
     leftoverCreditAfterRecommendNgn: plan.leftoverCreditNgn,
     sources,
+    unavailableSources,
     statusReportLabel: REFUND_CREDIT_CONFIRMATION_STATUS,
   };
 }
@@ -252,15 +275,21 @@ export function applyRefundCreditToQuotation(db, payload) {
   if (targetGate?.manager_flagged_at_iso) {
     return { ok: false, error: `Quotation ${target} is flagged by manager for review and is closed for further payments.` };
   }
-  const targetActiveRefund = db
+  const targetActiveRefunds = db
     .prepare(
       `SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`
     )
-    .get(target);
-  if (targetActiveRefund) {
+    .all(target);
+  const consumingRefundIds = new Set(
+    sources.filter((s) => s.kind === 'refund' && s.refundId).map((s) => String(s.refundId))
+  );
+  const blockingTargetRefund = targetActiveRefunds.find(
+    (row) => !consumingRefundIds.has(String(row.refund_id))
+  );
+  if (blockingTargetRefund) {
     return {
       ok: false,
-      error: `Quotation ${target} has an active refund request (${targetActiveRefund.refund_id}) and cannot receive credit apply.`,
+      error: `Quotation ${target} has an active refund request (${blockingTargetRefund.refund_id}) and cannot receive credit from another job.`,
     };
   }
 

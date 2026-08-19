@@ -4605,13 +4605,16 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
   return { maxNgn: amountNgn, warnings };
 }
 
+/** Full production previews allowed while building the refund quotation pick list. */
+export const MAX_ELIGIBLE_REFUND_LIST_PREVIEWS = 6;
+
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * Obvious overpayments with no prior active refunds use a cheap eligibility result; other candidates run
- * {@link previewRefundRequest} so only quotations with preview total ≥
- * {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear (same rules as eligibility-check picklist).
+ * Obvious overpayments with no prior active refunds use a cheap eligibility result; other candidates may
+ * run {@link previewRefundRequest} (capped by {@link MAX_ELIGIBLE_REFUND_LIST_PREVIEWS}) so quotations
+ * with preview total ≥ {@link MIN_REFUND_QUOTATION_REMAINING_NGN} appear.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
  * Listing path batches cash-in for all SQL candidates (avoids ~7 queries per row) and never scans
@@ -4619,10 +4622,10 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
  * @param {{ candidateLimit?: number; resultLimit?: number }} [opts]
  */
 export function getEligibleRefundQuotations(db, opts = {}) {
-  const candidateLimit = Math.max(0, Math.min(500, Math.floor(Number(opts.candidateLimit) || 0)));
+  const candidateLimit = Math.max(0, Math.min(120, Math.floor(Number(opts.candidateLimit) || 0)));
   const resultLimit = Math.max(0, Math.min(200, Math.floor(Number(opts.resultLimit) || 0)));
   // Always bound the candidate scan — unlimited used to walk every paid closed quote and was very slow.
-  const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 500;
+  const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 120;
   const sql = `
     SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
            q.handled_by, q.branch_id,
@@ -4682,6 +4685,7 @@ export function getEligibleRefundQuotations(db, opts = {}) {
   );
 
   const out = [];
+  let listPreviewsRun = 0;
   for (const row of candidates) {
     const cash = cashByRef.get(row.id) || emptyQuotationPaymentCashBreakdown();
     const cashInNgn = roundMoney(cash.cashInNgn);
@@ -4706,6 +4710,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       categories = ['Overpayment'];
       suggestedPreviewAmountNgn = Math.min(overpayExcess, remainingNgn);
     } else {
+      if (listPreviewsRun >= MAX_ELIGIBLE_REFUND_LIST_PREVIEWS) continue;
+      listPreviewsRun += 1;
       const preview = previewRefundRequest(db, { quotationRef: row.id });
       if (!preview?.ok) continue;
       categories = Array.isArray(preview.preview?.eligibleRefundCategories)

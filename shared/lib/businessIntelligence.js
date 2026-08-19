@@ -1032,10 +1032,11 @@ export function computeSalesAnalytics(data, opts = {}) {
   const outstandingReceivablesNgn = Object.values(aging).reduce((s, v) => s + v, 0);
 
   const trendKeys = [];
-  const d0 = new Date(`${asOfISO}T12:00:00`);
+  const d0 = new Date(`${toIsoDate(asOfISO)}T12:00:00`);
+  const trendBase = Number.isNaN(d0.getTime()) ? new Date() : d0;
   for (let i = 5; i >= 0; i -= 1) {
-    const x = new Date(d0.getFullYear(), d0.getMonth() - i, 1);
-    trendKeys.push(x.toISOString().slice(0, 7));
+    const x = new Date(trendBase.getFullYear(), trendBase.getMonth() - i, 1);
+    trendKeys.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`);
   }
   const revenueTrend = trendKeys.map((key) => {
     const mStart = `${key}-01`;
@@ -1586,11 +1587,12 @@ export function computeExpenseAnalysis(data, sales, opts = {}) {
   const periodChangePct =
     priorTotal > 0 ? Math.round(((periodTotal - priorTotal) / priorTotal) * 1000) / 10 : null;
 
-  const d0 = new Date(`${asOfISO}T12:00:00`);
+  const d0 = new Date(`${toIsoDate(asOfISO)}T12:00:00`);
+  const trendBase = Number.isNaN(d0.getTime()) ? new Date() : d0;
   const monthlyTrend = [];
   for (let i = 5; i >= 0; i -= 1) {
-    const x = new Date(d0.getFullYear(), d0.getMonth() - i, 1);
-    const key = x.toISOString().slice(0, 7);
+    const x = new Date(trendBase.getFullYear(), trendBase.getMonth() - i, 1);
+    const key = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;
     const mStart = `${key}-01`;
     const mEnd = key === monthKey(asOfISO) ? asOfISO : `${key}-31`;
     let sum = 0;

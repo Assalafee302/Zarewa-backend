@@ -31,14 +31,21 @@ describe('execDashboardOps', () => {
   it('resolveExecDashboardPeriod maps today, week, and last_month with custom BI bounds', () => {
     const today = resolveExecDashboardPeriod({ periodKey: 'today' });
     expect(today.key).toBe('today');
+    expect(today.startISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(today.startISO).toBe(today.endISO);
     expect(today.biPeriodKey).toBe('custom');
     expect(today.kpiPeriodAware).toBe(true);
 
     const week = resolveExecDashboardPeriod({ periodKey: 'week' });
     expect(week.key).toBe('week');
+    expect(week.startISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(week.endISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(week.startISO <= week.endISO).toBe(true);
     expect(week.biPeriodKey).toBe('custom');
+
+    const month = resolveExecDashboardPeriod({ periodKey: 'month' });
+    expect(month.startISO).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(month.endISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     const lm = resolveExecDashboardPeriod({ periodKey: 'last_month' });
     expect(lm.key).toBe('last_month');

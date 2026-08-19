@@ -67,7 +67,16 @@ const PRODUCTIVE_EXPENSE_CATEGORIES = new Set([
 ]);
 
 function isoDateOnly(s) {
-  return String(s || '').trim().slice(0, 10);
+  if (s instanceof Date) {
+    if (Number.isNaN(s.getTime())) return '';
+    const y = s.getFullYear();
+    const m = String(s.getMonth() + 1).padStart(2, '0');
+    const day = String(s.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  const raw = String(s || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  return '';
 }
 
 function addDaysISO(iso, delta) {

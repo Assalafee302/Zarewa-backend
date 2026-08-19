@@ -20,6 +20,11 @@ describe('legacyAccountsAccess', () => {
     expect(resolveLegacyAccountsRedirect(bm)?.to).toBe('/manager');
   });
 
+  it('cashier role can open Finance desk even without desk permission keys', () => {
+    expect(userMayAccessLegacyAccountsRoute({ roleKey: 'cashier', permissions: [] })).toBe(true);
+    expect(resolveLegacyAccountsRedirect({ roleKey: 'cashier', permissions: [] })).toBeNull();
+  });
+
   it('cashier can access route with desk tab but not audit', () => {
     expect(userMayAccessLegacyAccountsRoute(cashier)).toBe(true);
     expect(getAllowedLegacyAccountTabs(cashier)).toContain('desk');

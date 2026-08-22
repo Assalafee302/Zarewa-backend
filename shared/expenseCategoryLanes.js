@@ -89,6 +89,7 @@ const CATEGORY_TO_LANE = Object.freeze({
   Interest: 'finance_compliance',
   'Staff loan': 'special',
   'Chairman withdrawal': 'special',
+  'Chairman loan': 'special',
   'Closing stock': 'special',
   Sales: 'revenue',
   Refund: 'revenue',

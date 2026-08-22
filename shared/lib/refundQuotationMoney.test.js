@@ -4,6 +4,8 @@ import {
   quotationActualCashInNgn,
   quotationIndependentRefundLinesSumNgn,
   quotationOverpaymentExcessNgn,
+  quotationOverpaymentResidualNgn,
+  overpaymentAlreadyRefundedNgn,
   quotationRefundHardCapNgn,
   quotationRemainingRefundableNgn,
   validateRefundCalculationLinesNgn,
@@ -53,6 +55,39 @@ describe('refundQuotationMoney', () => {
         suggestedLines: [],
       })
     ).toBe(33_000);
+  });
+
+  it('overpayment residual is zero when prior overpay refunds already cover excess', () => {
+    expect(
+      quotationOverpaymentResidualNgn({
+        cashInNgn: 1_132_400,
+        quoteTotalNgn: 981_070,
+        overpaymentAlreadyRefundedNgn: 174_830,
+      })
+    ).toBe(0);
+    expect(
+      overpaymentAlreadyRefundedNgn(
+        [
+          {
+            refundID: 'RF-9490',
+            status: 'Paid',
+            amountNgn: 174_830,
+            paidAmountNgn: 174_830,
+            reasonCategory: 'Overpayment',
+          },
+          {
+            refundID: 'RF-9505',
+            status: 'Approved',
+            amountNgn: 151_330,
+            approvedAmountNgn: 128_300,
+            creditAppliedNgn: 23_030,
+            reasonCategory: 'Overpayment',
+            calculationLines: [{ category: 'Overpayment', amountNgn: 151_330 }],
+          },
+        ],
+        'RF-9505'
+      )
+    ).toBe(174_830);
   });
 
   it('hard cap limits total when overpay excess plus independent lines exceed cash received', () => {
@@ -141,6 +176,18 @@ describe('refundQuotationMoney', () => {
       categorySuggestedMaxNgn: caps,
     });
     expect(r.ok).toBe(true);
+  });
+
+  it('rejects an overpayment line that exceeds residual after prior overpay refunds', () => {
+    const r = validateRefundCalculationLinesNgn({
+      cashInNgn: 1_132_400,
+      quoteTotalNgn: 981_070,
+      totalRefundedNgn: 174_830,
+      overpaymentAlreadyRefundedNgn: 174_830,
+      calculationLines: [{ category: 'Overpayment', amountNgn: 151_330, include: true }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/cannot exceed/i);
   });
 
   it('full receipt on quote counts all cash for refund cap (no split companion)', () => {

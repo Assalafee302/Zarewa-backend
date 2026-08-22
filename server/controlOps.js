@@ -103,8 +103,11 @@ import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfil
 import {
   buildRefundCategorySuggestedMaxNgn,
   quotationOverpaymentExcessNgn,
+  quotationOverpaymentResidualNgn,
+  overpaymentAlreadyRefundedNgn,
   quotationRefundHardCapNgn,
   quotationRemainingRefundableNgn,
+  sumRefundCalculationLinesByCategoryNgn,
   validateRefundCalculationLinesNgn,
   validateRefundCategorySuggestedCapsNgn,
   validateRefundSameRequestOverlapCategoriesNgn,
@@ -138,6 +141,10 @@ import {
 } from './refundProductionAlignment.js';
 import { loadActiveRefundShortfallCaps } from './refundPaidProductionEditGate.js';
 import { QUANTITY_NETTED_REFUND_CATEGORIES } from '../shared/lib/refundPaidProductionCaps.js';
+import {
+  creditRefundToPartnerWalletTx,
+  voidPartnerWalletCreditsForRefundTx,
+} from './finance/partnerWalletCredit.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -540,6 +547,23 @@ export function validateRefundFinancialGuards(db, opts = {}) {
     toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   });
   if (!capCheck.ok) return capCheck;
+
+  const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(lines).Overpayment);
+  const overpayResidualRaw = preview.preview?.overpaymentResidualNgn;
+  const overpayResidual =
+    overpayResidualRaw != null
+      ? roundMoney(overpayResidualRaw)
+      : roundMoney(preview.preview?.overpaymentExcessNgn);
+  if (overpayOnThis > 0 && overpayOnThis > overpayResidual + REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+    return {
+      ok: false,
+      code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
+      error:
+        overpayResidual <= 0
+          ? 'Overpayment on this quotation is already fully refunded. Paying or approving this amount would double-pay the customer.'
+          : `Only ₦${overpayResidual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
+    };
+  }
 
   const lineArithmetic = validateRefundCalculationLineArithmetic(
     lines,
@@ -2553,6 +2577,106 @@ function quotationHasUnclearedReceipts(db, quotationRef) {
   return Number(row?.c) > 0;
 }
 
+function normalizeRefundSplitRows(input) {
+  const rows = Array.isArray(input) ? input : [];
+  return rows
+    .map((r) => {
+      const kindRaw = String(r?.recipientKind ?? r?.recipient_kind ?? '').trim().toLowerCase();
+      const staffId = String(
+        r?.recipientAssociatedStaffID ?? r?.recipient_associated_staff_id ?? ''
+      ).trim();
+      const customerId = String(
+        r?.recipientCustomerID ?? r?.recipient_customer_id ?? r?.recipientId ?? ''
+      ).trim();
+      const amountNgn = roundMoney(r?.amountNgn ?? r?.amount_ngn);
+      const note = String(r?.note ?? '').trim();
+      const asStaff =
+        kindRaw === 'associated_staff' ||
+        kindRaw === 'staff' ||
+        (Boolean(staffId) && !customerId);
+      if (asStaff) {
+        const id = staffId || customerId;
+        return {
+          recipientKind: 'associated_staff',
+          recipientAssociatedStaffID: id,
+          recipientCustomerID: '',
+          amountNgn,
+          note,
+        };
+      }
+      return {
+        recipientKind: 'customer',
+        recipientCustomerID: customerId,
+        recipientAssociatedStaffID: '',
+        amountNgn,
+        note,
+      };
+    })
+    .filter(
+      (r) =>
+        r.amountNgn > 0 &&
+        ((r.recipientKind === 'associated_staff' && r.recipientAssociatedStaffID) ||
+          (r.recipientKind === 'customer' && r.recipientCustomerID))
+    );
+}
+
+function savedCustomerPayoutAccount(db, customerId) {
+  const cid = String(customerId || '').trim();
+  if (!cid) return null;
+  const row = db
+    .prepare(
+      `SELECT name, bank_account_name, bank_name, bank_account_no
+       FROM customers WHERE customer_id = ?`
+    )
+    .get(cid);
+  if (!row) return null;
+  const bankAccountNo = String(row.bank_account_no || '').trim();
+  const bankName = String(row.bank_name || '').trim();
+  const bankAccountName = String(row.bank_account_name || '').trim();
+  if (!bankAccountNo || !bankName) return null;
+  return {
+    partyKind: 'customer',
+    partyId: cid,
+    partyName: String(row.name || '').trim(),
+    payeeName: bankAccountName || String(row.name || '').trim(),
+    payeeAccountNo: bankAccountNo,
+    payeeBankName: bankName,
+  };
+}
+
+function savedAssociatedStaffPayoutAccount(db, staffId) {
+  const id = String(staffId || '').trim();
+  if (!id) return null;
+  const row = db
+    .prepare(
+      `SELECT id, name, staff_type, status, bank_account_name, bank_name, bank_account_no
+       FROM associated_staff WHERE id = ?`
+    )
+    .get(id);
+  if (!row) return null;
+  if (String(row.status || 'Active').trim().toLowerCase() !== 'active') return null;
+  const bankAccountNo = String(row.bank_account_no || '').trim();
+  const bankName = String(row.bank_name || '').trim();
+  const bankAccountName = String(row.bank_account_name || '').trim();
+  if (!bankAccountNo || !bankName) return null;
+  return {
+    partyKind: 'associated_staff',
+    partyId: id,
+    partyName: String(row.name || '').trim(),
+    payeeName: bankAccountName || String(row.name || '').trim(),
+    payeeAccountNo: bankAccountNo,
+    payeeBankName: bankName,
+    staffType: String(row.staff_type || '').trim(),
+  };
+}
+
+function resolveRefundSplitPayoutAccount(db, split) {
+  if (String(split?.recipientKind || '').trim() === 'associated_staff') {
+    return savedAssociatedStaffPayoutAccount(db, split.recipientAssociatedStaffID);
+  }
+  return savedCustomerPayoutAccount(db, split.recipientCustomerID);
+}
+
 export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   const amountNgn = roundMoney(payload.amountNgn);
@@ -2571,13 +2695,92 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       return { ok: false, error: 'Select at least one refund reason category.' };
     }
 
-    const payeeName = String(payload.payeeName ?? payload.payee_name ?? '').trim();
-    const payeeAccountNo = String(payload.payeeAccountNo ?? payload.payee_account_no ?? '').trim();
-    const payeeBankName = String(payload.payeeBankName ?? payload.payee_bank_name ?? '').trim();
+    const requestedSplits = normalizeRefundSplitRows(payload.refundSplits ?? payload.splitDistributions);
+    const splitTotalNgn = requestedSplits.reduce((s, r) => s + roundMoney(r.amountNgn), 0);
+    if (requestedSplits.length > 0 && Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+      return {
+        ok: false,
+        error: `Split total (₦${splitTotalNgn.toLocaleString('en-NG')}) must equal refund amount (₦${amountNgn.toLocaleString('en-NG')}).`,
+      };
+    }
+    const associatedStaffPolicyEnabled = /^(1|true|yes|on)$/i.test(
+      String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')
+    );
+    const providedPayeeName = String(payload.payeeName ?? payload.payee_name ?? '').trim();
+    const providedPayeeAccountNo = String(payload.payeeAccountNo ?? payload.payee_account_no ?? '').trim();
+    const providedPayeeBankName = String(payload.payeeBankName ?? payload.payee_bank_name ?? '').trim();
+    const customerSavedPayee = savedCustomerPayoutAccount(db, customerID);
+
+    const resolvedSplits = [];
+    for (const split of requestedSplits) {
+      const acct = resolveRefundSplitPayoutAccount(db, split);
+      if (!acct) {
+        const who =
+          split.recipientKind === 'associated_staff'
+            ? `Associated staff ${split.recipientAssociatedStaffID || ''}`
+            : `Customer ${split.recipientCustomerID || ''}`;
+        return {
+          ok: false,
+          error: `${who.trim()} has no saved bank details. Update that profile before allocating payout.`,
+        };
+      }
+      resolvedSplits.push({ ...split, payoutAccount: acct });
+    }
+
+    // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.
+    if (!customerSavedPayee) {
+      if (resolvedSplits.length === 0) {
+        return {
+          ok: false,
+          error:
+            'Customer has no bank on file. Allocate transport/installation to associated staff and any remainder to claiming staff (profiles with bank details).',
+        };
+      }
+      if (Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+        return {
+          ok: false,
+          error: `When the customer has no bank, payout allocation (₦${splitTotalNgn.toLocaleString('en-NG')}) must equal the refund amount (₦${amountNgn.toLocaleString('en-NG')}).`,
+        };
+      }
+    } else if (
+      associatedStaffPolicyEnabled &&
+      resolvedSplits.length > 0 &&
+      Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN
+    ) {
+      return {
+        ok: false,
+        error: `Split total (₦${splitTotalNgn.toLocaleString('en-NG')}) must equal refund amount (₦${amountNgn.toLocaleString('en-NG')}).`,
+      };
+    }
+
+    const primaryPayee =
+      resolvedSplits.length > 0 ? resolvedSplits[0].payoutAccount : customerSavedPayee;
+    let payeeName = String(primaryPayee?.payeeName || '').trim();
+    let payeeAccountNo = String(primaryPayee?.payeeAccountNo || '').trim();
+    let payeeBankName = String(primaryPayee?.payeeBankName || '').trim();
+    if (!resolvedSplits.length && !customerSavedPayee) {
+      payeeName = providedPayeeName;
+      payeeAccountNo = providedPayeeAccountNo;
+      payeeBankName = providedPayeeBankName;
+    }
     if (!payeeName || !payeeAccountNo || !payeeBankName) {
       return {
         ok: false,
-        error: 'Pay to: enter beneficiary name, account number, and bank name so finance can pay the refund.',
+        error:
+          'Pay to: beneficiary bank details required — save them on the customer profile, or allocate to staff with bank details.',
+      };
+    }
+    if (
+      customerSavedPayee &&
+      !resolvedSplits.length &&
+      (providedPayeeName || providedPayeeAccountNo || providedPayeeBankName) &&
+      (providedPayeeName !== customerSavedPayee.payeeName ||
+        providedPayeeAccountNo !== customerSavedPayee.payeeAccountNo ||
+        providedPayeeBankName !== customerSavedPayee.payeeBankName)
+    ) {
+      return {
+        ok: false,
+        error: 'Payee must match the customer account saved in company records.',
       };
     }
 
@@ -2650,6 +2853,38 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         return {
           ok: false,
           error: 'Order cancellation is not allowed after material has been delivered for this quotation.',
+        };
+      }
+      if (
+        requestedCats.includes('Order cancellation') &&
+        requestedCats.includes('Overpayment')
+      ) {
+        return {
+          ok: false,
+          error:
+            'Overpayment and Order cancellation cannot appear on the same refund request — they double-count cash received.',
+        };
+      }
+      if (
+        requestedCats.includes('Order cancellation') &&
+        requestedCats.includes('Unproduced meterage')
+      ) {
+        return {
+          ok: false,
+          error:
+            'Order cancellation and Unproduced meterage cannot appear together — cancellation already covers unpaid product.',
+        };
+      }
+      if (
+        requestedCats.includes('Order cancellation') &&
+        (requestedCats.includes('Transport issue') ||
+          requestedCats.includes('Installation issue') ||
+          requestedCats.includes('Additional services'))
+      ) {
+        return {
+          ok: false,
+          error:
+            'Order cancellation already covers the job. Remove transport/installation/additional services, or remove Order cancellation to claim those lines only.',
         };
       }
       if (requestedCats.includes('Unproduced meterage') && quotationHasCompletedDelivery(db, quotationRef)) {
@@ -2882,10 +3117,10 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       db.prepare(
         `INSERT INTO customer_refunds (
           refund_id, customer_id, customer_name, quotation_ref, cutting_list_ref, product, reason_category, reason,
-          amount_ngn, calculation_lines_json, suggested_lines_json, preview_snapshot_json, production_alignment_ack_json, calculation_notes, status, requested_by, requested_by_user_id, requested_at_iso,
+          amount_ngn, calculation_lines_json, split_distributions_json, suggested_lines_json, preview_snapshot_json, production_alignment_ack_json, calculation_notes, status, requested_by, requested_by_user_id, requested_at_iso,
           approval_date, approved_by, approved_amount_ngn, manager_comments, paid_amount_ngn, paid_at_iso, paid_by, payment_note,
           payee_name, payee_account_no, payee_bank_name, branch_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(
         refundID,                                                                                                  // refund_id
         customerID,                                                                                                // customer_id
@@ -2897,6 +3132,25 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         String(payload.reason ?? '').trim(),                                                                       // reason
         amountNgn,                                                                                                 // amount_ngn
         JSON.stringify(payload.calculationLines || []),                                                            // calculation_lines_json
+        JSON.stringify(
+          resolvedSplits.length > 0
+            ? resolvedSplits.map((r) => ({
+                recipientKind: r.recipientKind,
+                recipientCustomerID: r.recipientCustomerID || undefined,
+                recipientAssociatedStaffID: r.recipientAssociatedStaffID || undefined,
+                amountNgn: roundMoney(r.amountNgn),
+                note: r.note,
+                payoutAccount: {
+                  payeeName: r.payoutAccount.payeeName,
+                  payeeBankName: r.payoutAccount.payeeBankName,
+                  payeeAccountNo: r.payoutAccount.payeeAccountNo,
+                  partyKind: r.payoutAccount.partyKind,
+                  partyId: r.payoutAccount.partyId,
+                  partyName: r.payoutAccount.partyName,
+                },
+              }))
+            : []
+        ),                                                                                                         // split_distributions_json
         JSON.stringify(payload.suggestedLines || payload.calculationLines || []),                                  // suggested_lines_json
         previewSnapshotJson,                                                                                       // preview_snapshot_json
         productionAlignmentAckJson,                                                                                // production_alignment_ack_json
@@ -3266,6 +3520,29 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           });
         }
       }
+      if (status === 'Approved' && approvedAmountNgn > 0) {
+        const freshForWallet = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundID);
+        const walletCredit = creditRefundToPartnerWalletTx(db, freshForWallet || row, {
+          approvedAmountNgn,
+          actor,
+        });
+        if (!walletCredit.ok) {
+          throw new Error(walletCredit.error || 'Partner wallet credit failed.');
+        }
+        if (!walletCredit.skipped && Array.isArray(walletCredit.credits) && walletCredit.credits.length) {
+          appendAuditLog(db, {
+            actor,
+            action: 'partner_wallet.credit',
+            entityKind: 'refund',
+            entityId: refundID,
+            note: `Refund ${refundID} credited to partner wallet for cashier withdrawal.`,
+            details: {
+              credits: walletCredit.credits,
+              approvedAmountNgn,
+            },
+          });
+        }
+      }
     })();
     return { ok: true, warnings: refundWarnings };
   } catch (e) {
@@ -3288,6 +3565,8 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
   try {
     assertPeriodOpen(db, actedAtISO, 'Refund cancellation date');
     db.transaction(() => {
+      const voided = voidPartnerWalletCreditsForRefundTx(db, refundID);
+      if (!voided.ok) throw new Error(voided.error || 'Could not void partner wallet credits.');
       db.prepare(
         `UPDATE customer_refunds
          SET status = 'Cancelled',
@@ -3555,6 +3834,21 @@ export function previewRefundRequest(db, payload) {
   const receiptCashNgn = cashBreakdown?.receiptCashNgn ?? paidOnQuoteNgn;
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
   const pricingAsAtIso = quotationPricingAsAtIso(quote);
+  const excludeRefundIdForOverpay = String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
+  const overpayAlreadyRefundedNgn = overpaymentAlreadyRefundedNgn(
+    existingRefunds,
+    excludeRefundIdForOverpay
+  );
+  const overpaymentResidualNgn = quotationOverpaymentResidualNgn({
+    cashInNgn,
+    quoteTotalNgn,
+    overpaymentAlreadyRefundedNgn: overpayAlreadyRefundedNgn,
+  });
+  if (overpaymentResidualNgn <= 0) {
+    hardBlockedCategories.add('Overpayment');
+  } else {
+    hardBlockedCategories.delete('Overpayment');
+  }
 
   let linesPayloadForUnproduced = {};
   try {
@@ -3654,11 +3948,17 @@ export function previewRefundRequest(db, payload) {
   }
 
   // 1. Overpayment Auto-detection (RECEIPT total + OVERPAY_ADVANCE from split-till posting)
+  // Cancelled jobs use Order cancellation for the full cash path — do not also suggest
+  // Overpayment (same cash headroom; stacking exceeds the hard cap).
   const overpaymentExcessNgn = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-  if (!hardBlockedCategories.has('Overpayment') && overpaymentExcessNgn > 0) {
+  if (
+    !hasCancelledProductionJob &&
+    !hardBlockedCategories.has('Overpayment') &&
+    overpaymentResidualNgn > 0
+  ) {
     suggestedLines.push({
       label: `Overpayment on ${quotationRef || 'quotation'}`,
-      amountNgn: overpaymentExcessNgn,
+      amountNgn: overpaymentResidualNgn,
       category: 'Overpayment',
     });
   }
@@ -4093,7 +4393,12 @@ export function previewRefundRequest(db, payload) {
     }
   }
 
-  if (quotationRef && overpaymentExcessNgn > 0 && quoteTotalNgn > 0) {
+  if (
+    quotationRef &&
+    overpaymentExcessNgn > 0 &&
+    quoteTotalNgn > 0 &&
+    !hasCancelledProductionJob
+  ) {
     warnings.push(
       `Overpayment (₦${overpaymentExcessNgn.toLocaleString('en-NG')}) is payment received above the quote total. Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
     );
@@ -4370,21 +4675,64 @@ export function previewRefundRequest(db, payload) {
   if (
     hasCancelledProductionJob &&
     !hardBlockedCategories.has('Order cancellation') &&
-    orderCancelDerivedCap > 0 &&
-    !finalSuggestedLines.some(
-      (l) => String(l.category || '').trim() === 'Order cancellation' && roundMoney(l.amountNgn) > 0
-    )
+    orderCancelDerivedCap > 0
   ) {
-    finalSuggestedLines.push({
-      label: 'Order cancellation (capped after economic floor)',
-      amountNgn: orderCancelDerivedCap,
-      category: 'Order cancellation',
-    });
+    // Cancelled jobs: Order cancellation is the whole-job cash path. Do not also auto-suggest
+    // overpayment / unproduced / quoted services — that double-counts the same paid headroom.
+    const orderCancelExcludes = new Set([
+      'Overpayment',
+      'Unproduced meterage',
+      'Transport issue',
+      'Installation issue',
+      'Additional services',
+      'Accessory shortfall',
+      'Stone flatsheet shortfall',
+      'Substitution Difference',
+    ]);
+    const removed = finalSuggestedLines.filter((l) =>
+      orderCancelExcludes.has(String(l.category || '').trim())
+    );
+    finalSuggestedLines = finalSuggestedLines.filter(
+      (l) => !orderCancelExcludes.has(String(l.category || '').trim())
+    );
+    const cancelIdx = finalSuggestedLines.findIndex(
+      (l) => String(l.category || '').trim() === 'Order cancellation'
+    );
+    if (cancelIdx >= 0) {
+      // Full cash path after stripping overpayment/itemized lines.
+      finalSuggestedLines[cancelIdx] = {
+        ...finalSuggestedLines[cancelIdx],
+        label: 'Order cancellation (capped after economic floor)',
+        amountNgn: orderCancelDerivedCap,
+        category: 'Order cancellation',
+      };
+    } else {
+      finalSuggestedLines.push({
+        label: 'Order cancellation (capped after economic floor)',
+        amountNgn: orderCancelDerivedCap,
+        category: 'Order cancellation',
+      });
+    }
+    if (removed.some((l) => roundMoney(l.amountNgn) > 0) || overpaymentResidualNgn > 0) {
+      warnings.push(
+        'Cancelled production on this quotation: preview uses Order cancellation only (full refundable cash, including any overpayment above quote). Overpayment and itemized unproduced/transport/installation/service lines were omitted to avoid double-counting — add them manually only if you are not claiming full cancellation.'
+      );
+    }
   }
   const finalSuggestedAmountNgn = finalSuggestedLines.reduce(
     (sum, line) => sum + roundMoney(line.amountNgn),
     0
   );
+
+  const openProductionJobRow = quotationRef ? quotationHasOpenProductionJob(db, quotationRef) : null;
+  const refundEligibility =
+    quotationRef && quote ? quotationMeetsRefundEligibility(db, quotationRef, quote) : { ok: false };
+  if (openProductionJobRow) {
+    const openMsg = `Finish or cancel production job ${openProductionJobRow.job_id} (${openProductionJobRow.st}) before submitting a refund.`;
+    if (!warnings.some((w) => String(w).includes(openProductionJobRow.job_id))) {
+      warnings.unshift(openMsg);
+    }
+  }
 
   return {
     ok: true,
@@ -4398,6 +4746,8 @@ export function previewRefundRequest(db, payload) {
       quotationCashInNgn: cashInNgn,
       receiptCashNgn,
       overpaymentExcessNgn,
+      overpaymentResidualNgn,
+      overpaymentAlreadyRefundedNgn: overpayAlreadyRefundedNgn,
       remainingRefundableNgn,
       refundHardCapNgn,
       quotedMeters,
@@ -4424,6 +4774,14 @@ export function previewRefundRequest(db, payload) {
       productionSuggestedCategories,
       productionAlignmentIssues: alignmentIssues,
       economicFloor,
+      hasCancelledProductionJob,
+      openProductionJob: openProductionJobRow
+        ? { jobId: openProductionJobRow.job_id, status: openProductionJobRow.st }
+        : null,
+      refundEligibilityOk: Boolean(refundEligibility.ok),
+      refundEligibilityError: refundEligibility.ok
+        ? null
+        : String(refundEligibility.error || '').trim() || null,
       ...(substitutionDiagnosis ? { substitutionDiagnosis } : {}),
     },
   };

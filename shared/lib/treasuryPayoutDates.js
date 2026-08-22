@@ -1,5 +1,6 @@
 /**
  * Per-line payout dates become treasury movement posted_at_iso (statements, reports, period locks).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/treasuryPayoutDates.js
  */
 
 export function payoutLinePostedDay(line, fallbackDay = '') {

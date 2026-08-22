@@ -1,0 +1,25 @@
+---
+description: Where new backend files belong — stop growing the flat server/ root
+alwaysApply: true
+---
+
+# Backend file placement
+
+`server/` is already too flat. New modules go in a domain folder. Do not add new `server/fooOps.js` files at the root.
+
+| Kind | Put it here |
+|------|-------------|
+| HTTP route registration | `server/http/` (composer stays `server/httpApi.js` until split) |
+| Auth / sessions / RBAC | `server/auth/` (existing `auth.js` stays until a dedicated move) |
+| Sales, customers, quotations, refunds | `server/sales/` |
+| Finance, GL, treasury, accounting | `server/finance/` |
+| HR | `server/hr/` (existing `hr*.js` stay until a dedicated move) |
+| Procurement / suppliers / POs | `server/procurement/` |
+| Production / coils / inventory | `server/operations/` |
+| Office / work items / filing | `server/office/` |
+| Workspace search / rooms / inbox | `server/workspace/` |
+| Isomorphic domain math | `shared/lib/` (frontend copies via sync script) |
+
+When moving a file: `git mv`, update imports, keep tests beside the module (`*.test.js`). Prefer a thin re-export at the old path only if many test/e2e imports would break in the same PR.
+
+Do not move files that already have unrelated uncommitted edits. Do not split `httpApi.js` / `writeOps.js` / `readModel.js` without keeping tests green.

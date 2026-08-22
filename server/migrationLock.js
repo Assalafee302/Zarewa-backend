@@ -1,5 +1,22 @@
 const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
 
+/** MySQL GET_LOCK names are capped at 64 characters. */
+export function migrationLockNameForDatabase(databaseName) {
+  const db = String(databaseName || '').trim();
+  if (!db) return MIGRATION_LOCK_NAME;
+  const raw = `zarewa_mig_${db}`;
+  return raw.length <= 64 ? raw : raw.slice(0, 64);
+}
+
+function resolveMigrationLockName(db) {
+  try {
+    const row = db.prepare('SELECT DATABASE() AS n').get();
+    return migrationLockNameForDatabase(row?.n);
+  } catch {
+    return MIGRATION_LOCK_NAME;
+  }
+}
+
 /** Remote / production boots can take 15+ minutes; keep tests fast-fail at 120s. */
 export function defaultMigrationLockWaitSec() {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') return 120;
@@ -45,13 +62,14 @@ export function withDeadlockRetry(fn, opts = {}) {
  */
 export function withMigrationLock(db, fn) {
   let acquired = false;
+  const lockName = resolveMigrationLockName(db);
   try {
     const waitSec = migrationLockWaitSec();
-    const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(MIGRATION_LOCK_NAME, waitSec);
+    const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(lockName, waitSec);
     acquired = Number(row?.got) === 1;
     if (!acquired) {
       throw new Error(
-        `Could not acquire migration lock "${MIGRATION_LOCK_NAME}" within ${waitSec}s. ` +
+        `Could not acquire migration lock "${lockName}" within ${waitSec}s. ` +
           'Another Zarewa process may be migrating the same database — wait and retry, or stop duplicate instances.'
       );
     }
@@ -59,7 +77,7 @@ export function withMigrationLock(db, fn) {
   } finally {
     if (acquired) {
       try {
-        db.prepare(`SELECT RELEASE_LOCK(?)`).run(MIGRATION_LOCK_NAME);
+        db.prepare(`SELECT RELEASE_LOCK(?)`).run(lockName);
       } catch {
         /* lock may already be released on connection drop */
       }

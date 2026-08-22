@@ -1,5 +1,6 @@
 /**
  * Workspace response sanitizers — strip or redact sensitive fields before client/cache/Zare.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceSanitize.js
  */
 import {
   RESTRICTED_WORK_ITEM_PLACEHOLDER,

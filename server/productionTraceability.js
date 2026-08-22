@@ -73,10 +73,8 @@ function roundWholeKg(n) {
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
 import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
-import {
-  persistProductionConversionVarianceReason,
-  validateConversionVarianceReason,
-} from '../shared/productionConversionReasons.js';
+import { validateConversionVarianceReason } from '../shared/productionConversionReasons.js';
+import { persistProductionConversionVarianceReason } from './operations/productionConversionVariancePersist.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 
 function nextId(prefix) {

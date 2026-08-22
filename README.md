@@ -1,6 +1,6 @@
 # Zarewa Backend
 
-Backend API for **Zarewa** — an integrated operations platform for sales, procurement, production, inventory, customer finance (ledger, advances, refunds), general ledger, treasury controls, office workflows, HR, and executive reporting. This service is a **Node.js** application built with **Express 5** and **SQLite** (`better-sqlite3`), exposing a JSON **REST API** under `/api`.
+Backend API for **Zarewa** — an integrated operations platform for sales, procurement, production, inventory, customer finance (ledger, advances, refunds), general ledger, treasury controls, office workflows, HR, and executive reporting. This service is a **Node.js** application built with **Express 5** and **MySQL 8**, exposing a JSON **REST API** under `/api`.
 
 ---
 
@@ -28,12 +28,12 @@ Backend API for **Zarewa** — an integrated operations platform for sales, proc
 | Layer | Technology |
 |--------|------------|
 | HTTP server | Express 5 (`server/app.js`, `server/index.js`) |
-| Persistence | SQLite with WAL, foreign keys (`server/db.js`) |
-| Schema | Applied from `server/schemaSql.js`, evolved via migrations (`server/migrate.js`) |
+| Persistence | MySQL 8 (`server/db.js`, `server/mysqlDatabase.js`) |
+| Schema | Applied from `server/schemaSql.js`, evolved via named migrations (`server/migrate.js`) with a MySQL advisory lock (`server/migrationLock.js`) |
 | Auth | Cookie-backed sessions + CSRF for mutating requests; optional Firebase ID token login (`server/auth.js`) |
 | AI (optional) | OpenAI-compatible chat when API keys are set (`server/aiAssist.js`) |
 
-On startup the process creates the database file if needed, runs migrations, seeds baseline data (unless empty-seed mode), and optionally ensures a legacy demo pack for development. Static assets: if `dist/index.html` exists (or `ZAREWA_STATIC_DIR` points at a built SPA), the same process can serve the frontend and API on one origin.
+On startup the process connects to MySQL, runs migrations, seeds baseline data (unless empty-seed mode), and optionally ensures a legacy demo pack for development. If MySQL is unreachable, the API still listens in **degraded** mode (health JSON reports `ok: false`). Static assets: if `dist/index.html` exists (or `ZAREWA_STATIC_DIR` points at a built SPA), the same process can serve the frontend and API on one origin.
 
 **Shared domain logic** used by both the API and the SPA lives under [`shared/`](shared/) (ledger math, notifications helpers, refund stores, etc.). Dev and release tooling still expects a **sibling `frontend/`** package for Vite and `npm run verify:complete` — see [Repository layout vs. monorepo](#repository-layout-vs-monorepo).
 
@@ -41,9 +41,9 @@ On startup the process creates the database file if needed, runs migrations, see
 
 ## Prerequisites
 
-- **Node.js** — Use a current LTS (production docs target **Node 20**; align with your CI or host image).
+- **Node.js** — Use a current LTS (CI uses **Node 22**; production docs also mention Node 20).
 - **npm** — For installing dependencies and running scripts.
-- **Native build toolchain** — `better-sqlite3` may compile on install; on Linux you may need `build-essential` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+- **MySQL 8** — Local XAMPP/MariaDB-compatible 8.x, or the MySQL service used in GitHub Actions. Create an empty schema (default name `zarewa_db`) before first boot.
 
 ---
 
@@ -56,7 +56,7 @@ npm install
 npm run server
 ```
 
-The server listens on **`http://127.0.0.1:8787`** by default (`PORT` overrides this). The default database file is **`data/zarewa.sqlite`** (created automatically).
+The server listens on **`http://127.0.0.1:8787`** by default (`PORT` overrides this). It connects to MySQL using `ZAREWA_MYSQL_*` (defaults: `127.0.0.1:3306`, user `root`, database `zarewa_db`).
 
 **Smoke check:** `GET /api/health` returns **`200`** with **`ok: true`** when the database connected. If startup failed (for example MySQL not reachable), the API listens in **degraded** mode: **`/api/health`** still returns **`200`** but with **`ok: false`**, **`degraded: true`**, and **`bootError`** / **`mysqlTarget`** in the JSON; other `/api/*` routes return **`503`** until fixed.
 
@@ -68,7 +68,7 @@ Environment variables are documented in **[`docs/ENVIRONMENT.md`](docs/ENVIRONME
 
 | Concern | Variables (examples) |
 |--------|------------------------|
-| Database | `ZAREWA_DB` — path to SQLite file or `:memory:` for tests |
+| Database | `ZAREWA_MYSQL_HOST`, `ZAREWA_MYSQL_PORT`, `ZAREWA_MYSQL_USER`, `ZAREWA_MYSQL_PASSWORD`, `ZAREWA_MYSQL_DATABASE` (tests: `ZAREWA_MYSQL_TEST_DATABASE`) |
 | Listen | `PORT`, optional `ZAREWA_LISTEN_HOST` (e.g. `0.0.0.0` for LAN) |
 | CORS / cookies | `CORS_ORIGIN`, `NODE_ENV`, `COOKIE_SECURE`, `ZAREWA_COOKIE_SAMESITE` |
 | Static SPA | `ZAREWA_STATIC_DIR` — folder containing built `index.html` |
@@ -84,18 +84,19 @@ Do not commit secrets; use your host environment or a local `.env` loaded by you
 
 | Path | Role |
 |------|------|
-| [`server/`](server/) | Express app, HTTP routes (`httpApi.js`), auth, migrations, domain modules, `index.js` entry |
+| [`server/`](server/) | Express app, HTTP composer (`httpApi.js`), domain modules, `index.js` entry |
+| [`server/http/`](server/http/) | Extracted route groups (`livenessRoutes.js`, `financeDiagnosticRoutes.js`; more domains follow) |
 | [`shared/`](shared/) | Isomorphic helpers and constants shared with the frontend package |
 | [`scripts/`](scripts/) | Dev stack, DB utilities, imports, stress tests, deploy helpers |
 | [`e2e/`](e2e/) | Playwright end-to-end specs |
-| [`data/`](data/) | Default SQLite path (`zarewa.sqlite`); often gitignored for real data |
+| [`data/`](data/) | Local artifacts (imports, logs); not the production database |
 | [`docs/`](docs/) | Environment, access control, deployment, finance, HR, and runbooks |
 
 ---
 
 ## HTTP API overview
 
-All application routes are prefixed with **`/api`**. Implementation is centralized in [`server/httpApi.js`](server/httpApi.js). The surface area is large; below is a **domain-oriented** map (not an exhaustive path list).
+All application routes are prefixed with **`/api`**. Implementation is composed in [`server/httpApi.js`](server/httpApi.js), with extracted groups under [`server/http/`](server/http/). The surface area is large; below is a **domain-oriented** map (not an exhaustive path list).
 
 ### Public / bootstrap
 
@@ -160,12 +161,13 @@ For deep behavior (refunds, accounting policies, office runbooks), use the [docu
 
 ## Database
 
-- **Default file:** `data/zarewa.sqlite` (override with `ZAREWA_DB`).
-- **Modes:** WAL journaling, foreign keys enabled.
+- **Engine:** MySQL 8 (`server/mysqlDatabase.js`). Connection from `ZAREWA_MYSQL_*` env vars.
+- **Schema:** `server/schemaSql.js` (indexes included) transformed for MySQL, then **named migrations** in `server/migrate.js`. Concurrent boots take a MySQL `GET_LOCK`.
 - **Migrations:** Run automatically on open; manual CLI: **`npm run db:migrate`**.
-- **Wipe local DB:** **`npm run db:wipe`** (destructive; development).
-- **Empty-client seed:** after wipe, **`ZAREWA_EMPTY_SEED=1`** with a fresh DB gives minimal data — see `docs/ENVIRONMENT.md`.
-- **Backups:** For production, schedule file-level backups of the SQLite file (and `-wal`/`-shm` sidecars if present).
+- **Wipe local DB:** **`npm run db:wipe`** (drops tables in the configured MySQL schema; development).
+- **Empty-client seed:** after wipe, **`ZAREWA_EMPTY_SEED=1`** with a fresh schema gives minimal data — see `docs/ENVIRONMENT.md`.
+- **Tests:** Vitest uses `ZAREWA_MYSQL_TEST_DATABASE` (default `zarewa_test`) and isolates forks with a per-worker schema suffix.
+- **Backups:** Use MySQL dumps / host snapshots (not a SQLite file). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
@@ -205,9 +207,9 @@ Use **`npm run start:lan`** or set `ZAREWA_LISTEN_HOST=0.0.0.0` so phones on the
 | **`npm run test:e2e`** | Playwright — starts API + UI via `scripts/e2e-web.mjs` and runs `e2e/` |
 | **`npm run test:all`** | Vitest + Playwright |
 
-Focused suites (examples from `package.json`): `test:transactions`, `test:operations`, `test:financial`, `test:critical-workflows`, `verify:ci` (lint + transaction tests).
+Focused suites (examples from `package.json`): `test:transactions`, `test:operations`, `test:financial`, `test:critical-workflows`, `verify:ci` (lint + critical workflows). GitHub Actions: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and [`audit-ci.yml`](.github/workflows/audit-ci.yml).
 
-**E2E database:** Playwright uses `data/playwright.sqlite` by default. Reset only that file: **`npm run wipe:e2e-db`**. Port conflicts: set `E2E_UI_PORT` / `E2E_API_PORT` per `docs/ENVIRONMENT.md`.
+**E2E database:** Playwright uses MySQL schema `zarewa_e2e` (`ZAREWA_MYSQL_E2E_DATABASE`). Reset: **`npm run wipe:e2e-db`**. Port conflicts: set `E2E_UI_PORT` / `E2E_API_PORT` per `docs/ENVIRONMENT.md`.
 
 **Full release gate (requires sibling frontend):** **`npm run verify:complete`** — production frontend build, full Vitest, full Playwright.
 

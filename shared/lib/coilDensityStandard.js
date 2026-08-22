@@ -1,6 +1,7 @@
 /**
  * Single source of truth for coil strip density standards used by
  * procurement catalog, material pricing workbook, and related UIs.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/coilDensityStandard.js
  */
 
 /** @type {readonly string[]} */

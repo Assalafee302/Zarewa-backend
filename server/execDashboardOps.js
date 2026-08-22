@@ -209,11 +209,8 @@ export function buildScopedExecutiveCounts(db, branchScope) {
       isAll ? 'company' : 'branch'
     );
   } catch {
-    pendingPaymentRequests = countRow(
-      `SELECT COUNT(*) AS c FROM payment_requests WHERE TRIM(IFNULL(approval_status,'')) IN ('Pending','Submitted','Awaiting approval','')`,
-      [],
-      'company'
-    );
+    // Never widen to company-wide when branch scoping fails — overstates payables.
+    pendingPaymentRequests = { count: 0, scopeBasis: isAll ? 'company' : 'branch' };
   }
 
   let payrollDraftsAwaitingMd = { count: 0, scopeBasis: 'company' };

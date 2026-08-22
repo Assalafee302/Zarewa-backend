@@ -19,7 +19,7 @@ Use this every time, even when the UI looks “obvious.”
    - **Produced metres** and **delivery / cutting lists** match the customer’s story (cancellation after delivery is blocked by design).
    - **Accessories**: ordered vs supplied matches any accessory shortfall claim.
 3. **System flags**
-   - Read **System audit flags** and **Logic & integrity warnings** in the refund modal; bundled transport/installation often needs a **manual split** of amounts.
+   - Read **Attention** notes and **Logic & integrity warnings** in the refund modal; bundled transport/installation often needs a **manual split** of amounts.
    - **Substitution** credits need correct FG product, gauge/colour, and price list; missing data triggers warnings—do not approve blind.
 4. **Arithmetic**
    - **Calculated total** (line items) should align with **requested** / **approved** amount; use **Apply total** then adjust if policy allows.
@@ -40,10 +40,17 @@ Run these in a **non-production** database before go-live or after major changes
 | Transport / installation | Single bundled line: warning appears; partial refund amounts are manually adjusted. |
 | Calculation error | Header total vs line sum mismatch surfaced when applicable. |
 | Order cancellation after delivery | Category blocked; create request returns error. |
+| **Cancelled job + overpayment** | Preview uses **Order cancellation only** for full refundable cash (overpay is context, not a second line). Quick overpay disabled. Lab: `npm run preview:refund-lab`. |
+| **Overpayment + Order cancellation (same request)** | Submit blocked — cannot stack both categories on the same cash. |
+| **Partner wallet split payout** | No customer bank → split to staff wallets; finance releases via **Partner withdrawals** desk (requires `ZAREWA_PARTNER_WALLET_V1=1`). |
 | Duplicate category | Second refund **same category** on same quote rejected; different category allowed. |
 | Lifecycle | Pending → approved → finance payout; payout cannot exceed approved balance; staged payouts OK. |
 
-**Automated coverage:** `server/refundSecurity.test.js`, `server/api.test.js` (refund sections), `e2e/sales-refund-finance-checklist.spec.js`, `e2e/refund-risk-api.spec.js`.
+**Automated coverage:** `server/refundSecurity.test.js`, `server/refundCancelledOverpayPreview.test.js`, `server/refundPartnerWalletSplit.test.js`, `server/api.test.js` (refund sections), `e2e/sales-refund-finance-checklist.spec.js`, `e2e/refund-risk-api.spec.js`.
+
+**Pre-deploy gate (backend):** `npm run test:refund-live` then `npm run preview:refund-lab`. **Frontend modal:** `npx vitest run src/components/sales/RefundModal.test.jsx` in the frontend repo.
+
+**Historical overlap audit:** place `zarewa-entered-data (1).xlsx` in the backend root, then `npm run report:refund-overlap-review` — review paid rows in `refund-overlap-review.json` (no auto-reversal).
 
 ---
 
@@ -72,6 +79,21 @@ Document named signatories in [STAFF_APPROVALS.md](./STAFF_APPROVALS.md) if you 
 
 ---
 
-## 5. Keyboard and accessibility
+## 5. Go-live smoke (production, ~10 minutes)
+
+1. **Sales** — open refund on a **cancelled job with overpay** (demo `QT-KD-26-0029` if seeded): expect **Full refund**, **Order cancellation ≈ full cash**, overpay shown as reference only.
+2. **Sales** — plain overpayment quote: **Quick overpay** available when preview is overpayment-only.
+3. **Finance** — **Partner withdrawals** panel shows open balances after an approved split refund; release one partial withdrawal and confirm treasury movement.
+4. **Manager** — attempt to approve a refund with both Overpayment and Order cancellation on one request — must be blocked in UI and API.
+
+Set in production env (see `.env.example`):
+
+- `ZAREWA_ASSOCIATED_STAFF_POLICY_V1=1`
+- `ZAREWA_PARTNER_WALLET_V1=1`
+- `ENFORCE_DUAL_CONTROL_PAYMENTS=1` when approve and pay roles are separate
+
+---
+
+## 6. Keyboard and accessibility
 
 Refund modals use **Radix Dialog**: **Escape** closes the dialog; focus is trapped while open. There are no custom global hotkeys inside the refund form.

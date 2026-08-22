@@ -4,6 +4,7 @@ import {
   applyRefundCreditToQuotation,
   listEligibleRefundCredits,
   listRefundCreditApplications,
+  reverseRefundCreditApplication,
 } from './refundCreditApplyOps.js';
 import {
   insertLedgerRows,
@@ -224,6 +225,35 @@ describe('apply refund credit to new quotation (integration)', () => {
 
     const leftoverOverpay = overpayCreditRemainingOnQuotationDb(db, 'CUS-RC', 'QT-RF-SRC');
     expect(leftoverOverpay).toBe(10_000);
+  });
+
+  it('reverses a mistaken apply and restores the refund and target quote', () => {
+    const apps = listRefundCreditApplications(db, 'CUS-RC', 'ALL', { targetQuotationRef: 'QT-RF-DST' });
+    const app = apps.find((a) => a.refundId === 'RF-OVER-1' && a.status === REFUND_CREDIT_CONFIRMATION_STATUS);
+    expect(app).toBeTruthy();
+
+    const dstBefore = db.prepare(`SELECT paid_ngn FROM quotations WHERE id = 'QT-RF-DST'`).get();
+    expect(Number(dstBefore?.paid_ngn)).toBe(30_000);
+
+    const reversed = reverseRefundCreditApplication(db, app.applicationId, { actor });
+    expect(reversed.ok).toBe(true);
+    expect(reversed.amountNgn).toBe(30_000);
+
+    const rf = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = 'RF-OVER-1'`).get();
+    expect(rf.status).toBe('Pending');
+    expect(Number(rf.credit_applied_ngn)).toBe(0);
+    expect(rf.credit_applied_to_quotation_ref).toBeFalsy();
+    expect(Number(rf.paid_amount_ngn)).toBe(0);
+
+    const dstAfter = db.prepare(`SELECT paid_ngn, payment_status FROM quotations WHERE id = 'QT-RF-DST'`).get();
+    expect(Number(dstAfter?.paid_ngn)).toBe(0);
+
+    const leftoverOverpay = overpayCreditRemainingOnQuotationDb(db, 'CUS-RC', 'QT-RF-SRC');
+    expect(leftoverOverpay).toBe(40_000);
+
+    const again = reverseRefundCreditApplication(db, app.applicationId, { actor });
+    expect(again.ok).toBe(false);
+    expect(again.code).toBe('ALREADY_REVERSED');
   });
 
   it('rejects Pending non-overpayment refunds until approved', () => {

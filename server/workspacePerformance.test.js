@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { buildWorkspaceRevision } from './workspaceRevision.js';
-import { buildSalesDomainSnapshot } from './domainBootstrap.js';
+import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
 
 function mysqlAvailable() {
@@ -40,6 +40,16 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.domain).toBe('sales');
     expect(Array.isArray(snap.customers)).toBe(true);
     expect(snap).not.toHaveProperty('productionJobs');
+    db.close();
+  });
+
+  it('finance domain snapshot includes receipts for cashier confirmation', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    const snap = buildFinanceDomainSnapshot(db, { user: null, branchScope: 'ALL' });
+    expect(snap.ok).toBe(true);
+    expect(snap.domain).toBe('finance');
+    expect(Array.isArray(snap.receipts)).toBe(true);
+    expect(Array.isArray(snap.cuttingLists)).toBe(true);
     db.close();
   });
 });

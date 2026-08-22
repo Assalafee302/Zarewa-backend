@@ -3,6 +3,7 @@
  */
 export {
   PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN,
+  canApproveProductionGate,
   productionGateApprovalLevelForActor,
   productionGateOverrideDeniedMessage,
   productionGateOverrideEffective,

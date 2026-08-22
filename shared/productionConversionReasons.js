@@ -1,3 +1,9 @@
+/**
+ * Storekeeper High/Low conversion-reason presets and isomorphic validation.
+ * SQLite persist lives in `server/operations/productionConversionVariancePersist.js`.
+ * Frontend copies via `npm run sync:shared` → src/shared/productionConversionReasons.js
+ */
+
 /** @typedef {{ code: string; label: string; requiresText?: boolean }} ConversionReasonOption */
 
 /** @type {ConversionReasonOption[]} */
@@ -110,19 +116,4 @@ export function validateConversionVarianceReason(payload, alertBand) {
     }
   }
   return { ok: true, code, band, text: String(payload?.conversionVarianceReasonText ?? '').trim() || null };
-}
-
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} jobID
- * @param {{ code: string; band: string; text?: string|null }} reason
- */
-export function persistProductionConversionVarianceReason(db, jobID, reason) {
-  const cols = db.prepare(`PRAGMA table_info(production_jobs)`).all();
-  if (!cols.some((c) => c.name === 'conversion_variance_reason_code')) return;
-  db.prepare(
-    `UPDATE production_jobs
-     SET conversion_variance_reason_code = ?, conversion_variance_reason_text = ?, conversion_variance_band = ?
-     WHERE job_id = ?`
-  ).run(reason.code, reason.text || null, reason.band, jobID);
 }

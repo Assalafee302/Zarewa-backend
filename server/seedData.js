@@ -2,7 +2,7 @@
  * Initial DB seed — mirrors `src/Data/mockData.js` (kept separate so Node can load without Vite resolution).
  */
 
-import { LAGACY_LINES_JSON } from './lagacyCuttingListSeed.js';
+import { LEGACY_LINES_JSON } from './legacyCuttingListSeed.js';
 
 export const CUSTOMERS_SEED = [
   {
@@ -229,6 +229,6 @@ export const QUOTATIONS_SEED = [
     customerFeedback: '',
     handledBy: 'Auwal Idris',
     projectName: '38 REG COURSE LEGACY PROJECT',
-    linesJson: JSON.stringify(LAGACY_LINES_JSON),
+    linesJson: JSON.stringify(LEGACY_LINES_JSON),
   },
 ];

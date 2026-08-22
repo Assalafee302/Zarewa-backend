@@ -3,6 +3,7 @@
  * the customer was offered on the quotation header or any product line against
  * physical coil / produced gauge. Mirrors sales UI where header gauge can differ
  * from line-level defaults.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/quotedGaugeForSubstitution.js
  */
 
 export function firstGaugeMmFromLabel(label) {
@@ -17,6 +18,28 @@ export function gaugeLabelFromQuotationJsonNode(node) {
     node.materialGauge ?? node.material_gauge ?? node.gauge ?? node.gaugeLabel ?? ''
   ).trim();
   return g;
+}
+
+/**
+ * Build lines_json-shaped object from a workspace quotation row for gauge helpers.
+ * @param {object | null | undefined} q
+ * @returns {object | null}
+ */
+export function quotationLinesJsonShapeForGauge(q) {
+  if (!q) return null;
+  const ql = q.quotationLines;
+  if (ql && typeof ql === 'object') {
+    return {
+      materialGauge: q.materialGauge ?? q.material_gauge,
+      materialColor: q.materialColor ?? q.material_color,
+      materialDesign: q.materialDesign ?? q.material_design,
+      materialTypeId: q.materialTypeId ?? q.material_type_id,
+      products: ql.products || [],
+      accessories: ql.accessories || [],
+      services: ql.services || [],
+    };
+  }
+  return null;
 }
 
 /**

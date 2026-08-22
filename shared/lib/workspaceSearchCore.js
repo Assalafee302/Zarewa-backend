@@ -1,4 +1,7 @@
-/** Shared workspace quick-search scoring, merge, grouping, and navigation commands. */
+/**
+ * Shared workspace quick-search scoring, merge, grouping, and navigation commands.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceSearchCore.js
+ */
 
 /** @typedef {{ kind: string, id: string, label: string, sublabel?: string, path: string, state?: object, _score?: number }} WorkspaceSearchHit */
 
@@ -359,7 +362,7 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
     label: 'Executive Office',
     sublabel: 'Executive overview',
     path: '/exec',
-    keywords: ['exec', 'executive', 'command', 'md', 'ceo'],
+    keywords: ['exec', 'executive', 'command', 'md', 'ceo', 'office'],
     permissions: ['exec.dashboard.view'],
   },
 ];

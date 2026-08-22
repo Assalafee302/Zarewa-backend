@@ -55,6 +55,88 @@ export function quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }) {
   return cashIn - quoteTotal;
 }
 
+function refundCalculationLinesFromRecord(refund) {
+  if (Array.isArray(refund?.calculationLines)) return refund.calculationLines;
+  const raw = refund?.calculation_lines_json ?? refund?.calculationLinesJson;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function refundReasonLooksLikeOverpayment(refund) {
+  const raw = refund?.reasonCategory ?? refund?.reason_category;
+  const tokens = [];
+  if (Array.isArray(raw)) {
+    for (const c of raw) tokens.push(String(c || ''));
+  } else {
+    const s = String(raw || '').trim();
+    if (s.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          for (const c of parsed) tokens.push(String(c || ''));
+        } else {
+          tokens.push(s);
+        }
+      } catch {
+        tokens.push(s);
+      }
+    } else if (s) {
+      tokens.push(s);
+    }
+  }
+  return tokens.some((c) => c.toLowerCase().includes('overpay'));
+}
+
+/**
+ * How much overpayment this refund has already taken (paid, applied as credit, or reserved).
+ * Rejected/cancelled do not consume.
+ */
+export function overpaymentReservedOnRefund(refund) {
+  const status = String(refund?.status || '').trim().toLowerCase();
+  if (status === 'rejected' || status === 'cancelled') return 0;
+  const lines = refundCalculationLinesFromRecord(refund);
+  const overpayFromLines = roundRefundMoney(sumRefundCalculationLinesByCategoryNgn(lines).Overpayment);
+  const isOverpay = overpayFromLines > 0 || refundReasonLooksLikeOverpayment(refund);
+  if (!isOverpay) return 0;
+  const requested = roundRefundMoney(refund?.amountNgn ?? refund?.amount_ngn);
+  const paid = roundRefundMoney(refund?.paidAmountNgn ?? refund?.paid_amount_ngn);
+  const credit = roundRefundMoney(refund?.creditAppliedNgn ?? refund?.credit_applied_ngn);
+  const economic = overpayFromLines > 0 ? overpayFromLines : requested;
+  if (paid > 0 || status === 'paid') {
+    return Math.min(economic, Math.max(paid, credit));
+  }
+  return economic;
+}
+
+export function overpaymentAlreadyRefundedNgn(refunds, excludeRefundId = null) {
+  const exclude = String(excludeRefundId || '').trim();
+  return (Array.isArray(refunds) ? refunds : []).reduce((sum, r) => {
+    const id = String(r?.refundID || r?.refund_id || '').trim();
+    if (exclude && id === exclude) return sum;
+    return sum + overpaymentReservedOnRefund(r);
+  }, 0);
+}
+
+/**
+ * Overpayment still available after prior overpayment refunds (and credit applied as payout).
+ */
+export function quotationOverpaymentResidualNgn({
+  cashInNgn,
+  quoteTotalNgn,
+  overpaymentAlreadyRefundedNgn = 0,
+} = {}) {
+  const excess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
+  return Math.max(0, excess - roundRefundMoney(overpaymentAlreadyRefundedNgn));
+}
+
 /**
  * Sum of non-overpayment suggested/entered lines (independent category entitlements).
  * @param {Array<{ category?: string, amountNgn?: number }>} suggestedLines
@@ -221,6 +303,7 @@ export function validateRefundCalculationLinesNgn({
   calculationLines,
   categorySuggestedMaxNgn,
   derivedCategoryMaxNgn,
+  overpaymentAlreadyRefundedNgn = 0,
   toleranceNgn = 1,
 }) {
   const lines = Array.isArray(calculationLines) ? calculationLines : [];
@@ -228,7 +311,11 @@ export function validateRefundCalculationLinesNgn({
   const quoteTotal = roundRefundMoney(quoteTotalNgn);
   const refunded = roundRefundMoney(totalRefundedNgn);
   const hardCap = quotationRefundHardCapNgn({ cashInNgn: cashIn, totalRefundedNgn: refunded });
-  const overpayMax = quotationOverpaymentExcessNgn({ cashInNgn: cashIn, quoteTotalNgn: quoteTotal });
+  const overpayMax = quotationOverpaymentResidualNgn({
+    cashInNgn: cashIn,
+    quoteTotalNgn: quoteTotal,
+    overpaymentAlreadyRefundedNgn,
+  });
 
   const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);
   if (!overlapCheck.ok) return overlapCheck;

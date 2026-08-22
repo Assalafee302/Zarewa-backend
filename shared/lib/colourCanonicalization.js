@@ -1,6 +1,6 @@
 /**
  * Canonical coil / quotation colour names — merges abbreviations, grey/gray spellings, and typos.
- * Keep in sync with frontend `src/lib/colourCanonicalization.js`.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/colourCanonicalization.js
  */
 
 /** Preferred setup_colours ids for aluminium / aluzinc (migrateCoilAluzincColours2026). */

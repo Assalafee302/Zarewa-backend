@@ -1,4 +1,4 @@
-/** Mirrors `src/Data/lagacyCuttingListDemo.js` for Node seed (no Vite). */
+/** Mirrors `src/Data/legacyCuttingListDemo.js` for Node seed (no Vite). */
 
 const ROOF = [
   [9.9, 30],
@@ -35,7 +35,7 @@ const ROOF = [
   [3.2, 1],
 ];
 
-export const LAGACY_LINES_JSON = {
+export const LEGACY_LINES_JSON = {
   materialGauge: '0.70mm',
   materialColor: 'P Red',
   materialDesign: 'Longspan (Indus6)',
@@ -73,12 +73,12 @@ function buildCuttingLines() {
   return lines;
 }
 
-export const LAGACY_CUTTING_LINES = buildCuttingLines();
+export const LEGACY_CUTTING_LINES = buildCuttingLines();
 
-const sheetsSum = LAGACY_CUTTING_LINES.reduce((s, l) => s + l.sheets, 0);
-const metersSum = LAGACY_CUTTING_LINES.reduce((s, l) => s + l.totalM, 0);
+const sheetsSum = LEGACY_CUTTING_LINES.reduce((s, l) => s + l.sheets, 0);
+const metersSum = LEGACY_CUTTING_LINES.reduce((s, l) => s + l.totalM, 0);
 
-export const LAGACY_CUTTING_LIST_SEED = {
+export const LEGACY_CUTTING_LIST_SEED = {
   id: 'CL-2026-1592',
   customerID: 'CUS-NDA',
   customer: 'NDA',
@@ -96,5 +96,5 @@ export const LAGACY_CUTTING_LIST_SEED = {
   productionRegistered: false,
   productionRegisterRef: '',
   handledBy: 'Auwal Idris',
-  lines: LAGACY_CUTTING_LINES,
+  lines: LEGACY_CUTTING_LINES,
 };

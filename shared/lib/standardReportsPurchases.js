@@ -1,5 +1,6 @@
 /**
  * Purchases standard reports — three cuts (received / ordered / paid).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/standardReportsPurchases.js
  */
 
 import { displayCoilNumber, displayDocNumber } from './reportDisplayFormat.js';

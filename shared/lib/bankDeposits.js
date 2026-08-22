@@ -1,4 +1,6 @@
-/** Shared bank-deposit pool statuses (unlinked bank payments). */
+/** Shared bank-deposit pool statuses (unlinked bank payments).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/bankDeposits.js
+ */
 export const BANK_DEPOSIT_STATUS_OPEN = 'OPEN';
 export const BANK_DEPOSIT_STATUS_RESERVED = 'RESERVED';
 export const BANK_DEPOSIT_STATUS_PARTIAL = 'PARTIAL';
@@ -28,6 +30,13 @@ export const BANK_DEPOSIT_RECLASS_KINDS = new Set([
   BANK_DEPOSIT_RECLASS_REFUND_OUT,
   BANK_DEPOSIT_RECLASS_EXPENSE_OFFSET,
 ]);
+
+export const BANK_DEPOSIT_RECLASS_OPTIONS = [
+  { value: BANK_DEPOSIT_RECLASS_OTHER_INCOME, label: 'Other income' },
+  { value: BANK_DEPOSIT_RECLASS_INTER_BRANCH, label: 'Inter-branch transfer' },
+  { value: BANK_DEPOSIT_RECLASS_REFUND_OUT, label: 'Refund / return out' },
+  { value: BANK_DEPOSIT_RECLASS_EXPENSE_OFFSET, label: 'Expense offset' },
+];
 
 /** Reservation TTL when Sales opens a deposit for linking (ms). */
 export const BANK_DEPOSIT_RESERVE_MS = 15 * 60 * 1000;
@@ -178,9 +187,16 @@ export function bankDepositStatusLabel(status) {
 
 export function bankDepositReclassKindLabel(kind) {
   const k = String(kind || '').trim().toUpperCase();
-  if (k === BANK_DEPOSIT_RECLASS_OTHER_INCOME) return 'Other income';
-  if (k === BANK_DEPOSIT_RECLASS_INTER_BRANCH) return 'Inter-branch transfer';
-  if (k === BANK_DEPOSIT_RECLASS_REFUND_OUT) return 'Refund / return out';
-  if (k === BANK_DEPOSIT_RECLASS_EXPENSE_OFFSET) return 'Expense offset';
-  return k || '—';
+  const hit = BANK_DEPOSIT_RECLASS_OPTIONS.find((o) => o.value === k);
+  return hit?.label || k || '—';
+}
+
+/** Open / partial unlinked deposits from workspace snapshot. */
+export function openBankDepositsFromSnapshot(snapshot) {
+  const rows = Array.isArray(snapshot?.bankDeposits) ? snapshot.bankDeposits : [];
+  return rows.filter((d) => {
+    const remaining = bankDepositRemainingNgn(d);
+    const st = String(d?.status || '').toUpperCase();
+    return remaining > 0 && BANK_DEPOSIT_LINKABLE_STATUSES.has(st);
+  });
 }

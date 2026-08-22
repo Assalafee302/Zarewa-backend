@@ -2,6 +2,7 @@
  * Read-only finance/cashier/accounting aggregates (SELECT only). No PII in output.
  */
 import mysql from 'mysql2/promise';
+import crypto from 'node:crypto';
 import { refundPayableQuotationWhereSql } from '../shared/lib/quotationRefundsBlocked.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv, databaseLabel } from './mysqlDatabase.js';
@@ -607,5 +608,9 @@ export function financeProfileTokenMatches(req) {
   const expected = String(process.env.ZAREWA_FINANCE_PROFILE_TOKEN || '').trim();
   if (!expected) return false;
   const got = String(req.headers['x-finance-profile-token'] || '').trim();
-  return got.length > 0 && got === expected;
+  if (!got) return false;
+  const left = Buffer.from(got, 'utf8');
+  const right = Buffer.from(expected, 'utf8');
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }

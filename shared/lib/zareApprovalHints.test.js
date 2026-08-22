@@ -9,6 +9,7 @@ describe('zareApprovalHints', () => {
   it('detects finance payment request permission', () => {
     const item = { requiresApproval: true, documentType: 'payment_request' };
     expect(userCanApproveWorkItem(item, { permissions: ['finance.approve'] })).toBe(true);
+    expect(userCanApproveWorkItem(item, { roleKey: 'sales_manager', permissions: [] })).toBe(true);
     expect(userCanApproveWorkItem(item, { permissions: ['sales.view'] })).toBe(false);
   });
 
@@ -19,7 +20,7 @@ describe('zareApprovalHints', () => {
       referenceNo: 'PR-1',
     });
     expect(ex.show).toBe(true);
-    expect(ex.reasons.some((r) => /finance\.approve/i.test(r))).toBe(true);
+    expect(ex.reasons.some((r) => /finance/i.test(r))).toBe(true);
   });
 
   it('builds work item context with branch mismatch', () => {

@@ -1,6 +1,6 @@
 /**
  * HR staff cohorts — branch employees vs scholarship, domestic, HQ, and mining.
- * Keep frontend copy in sync (src/shared/hrStaffCohorts.js).
+ * Frontend copies via `npm run sync:shared` → src/shared/hrStaffCohorts.js
  */
 
 export const HR_PAYROLL_GROUPS = {
@@ -44,7 +44,7 @@ export const PAYROLL_GROUP_LABELS = {
   [HR_PAYROLL_GROUPS.MINING]: 'Mining division',
   [HR_PAYROLL_GROUPS.HQ_ADMIN]: 'HQ administrative',
   [HR_PAYROLL_GROUPS.SCHOLARSHIP]: 'Executive family',
-  [HR_PAYROLL_GROUPS.DOMESTIC]: 'Domestic staff',
+  [HR_PAYROLL_GROUPS.DOMESTIC]: 'Household staff',
 };
 
 /** @param {string | null | undefined} payrollGroup */

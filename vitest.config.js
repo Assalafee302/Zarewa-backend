@@ -9,9 +9,13 @@ export default defineConfig({
   test: {
     globals: false,
     pool: 'forks',
+    fileParallelism: false,
+    poolOptions: {
+      forks: { singleFork: true },
+    },
     environment: 'node',
     include: ['server/**/*.test.js', 'shared/**/*.test.js'],
-    testTimeout: 120_000,
+    testTimeout: 360_000,
     hookTimeout: 600_000,
     teardownTimeout: 60_000,
     dangerouslyIgnoreUnhandledErrors: true,

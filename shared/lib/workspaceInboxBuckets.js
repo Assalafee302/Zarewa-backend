@@ -1,3 +1,7 @@
+/**
+ * Workspace File / In-tray grouping for unified work items.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceInboxBuckets.js
+ */
 import { workItemIsPersonalForUser, workItemShowsOnWorkspaceUnifiedInbox } from './workItemPersonalInbox.js';
 
 /**
@@ -30,10 +34,12 @@ export function fileTrayCategoryLabel(item) {
   if (sk === 'office_thread' || String(item?.linkedThreadId || '').trim()) {
     return 'Correspondence & memos';
   }
-  if (dt.startsWith('hr_')) return 'HR & people';
+  if (dt.startsWith('hr_')) return 'Internal';
+  if (dt === 'staff_purchase_credit') return 'Internal';
   if (
     dt === 'payment_request' ||
     dt === 'refund_request' ||
+    dt === 'register_settlement' ||
     dt === 'bank_recon_exceptions' ||
     dt === 'po_transport_payment'
   ) {

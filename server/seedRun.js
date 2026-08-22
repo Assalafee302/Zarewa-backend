@@ -297,6 +297,19 @@ export function seedEverything(db) {
           DEFAULT_BRANCH_ID
         );
       }
+      /* Seed receipts must be Finance-cleared so refunds, delivery, and cutting stay in sync with live gates. */
+      const seedReceiptIds = receiptsSeed.map((r) => String(r.id || '').trim()).filter(Boolean);
+      if (seedReceiptIds.length) {
+        const ph = seedReceiptIds.map(() => '?').join(',');
+        db.prepare(
+          `UPDATE sales_receipts
+           SET status = 'Cleared',
+               bank_received_amount_ngn = amount_ngn,
+               finance_reconciliation_saved_at_iso = CONCAT(COALESCE(NULLIF(TRIM(date_iso), ''), '2026-03-28'), 'T12:00:00Z'),
+               bank_confirmed_at_iso = CONCAT(COALESCE(NULLIF(TRIM(date_iso), ''), '2026-03-28'), 'T12:00:00Z')
+           WHERE id IN (${ph})`
+        ).run(...seedReceiptIds);
+      }
       for (const c of cuttingListsSeed) {
         insCl.run(
           c.id,

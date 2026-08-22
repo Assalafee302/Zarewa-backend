@@ -1,5 +1,6 @@
 /**
  * Below-floor quotation price exceptions: MD or administrator approves before cutting list / production.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/quotationPriceException.js
  */
 
 /**

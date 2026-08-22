@@ -1,6 +1,7 @@
 /**
  * Customer identity keys for duplicate detection within a branch.
- * Used by server writes and optional client-side checks — keep in sync.
+ * Used by server writes and optional client-side checks.
+ * Frontend copies via `npm run sync:shared` → src/shared/customerPhoneKey.js
  */
 
 /** Digits-only; last 10 digits when longer (local mobile vs +234). */

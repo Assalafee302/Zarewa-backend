@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createDatabase } from './db.js';
 import { applyAdminDataReset, ADMIN_DATA_RESET_CONFIRM_PHRASE } from './adminDataResetOps.js';
+import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   legacyDemoPackActive,
   POLICY_KEY_SUPPRESS_LEGACY_DEMO,
@@ -48,6 +49,7 @@ describe('legacyDemoPackPolicy', () => {
     );
     const r = applyAdminDataReset(db, ['operations_core'], ADMIN_DATA_RESET_CONFIRM_PHRASE, {
       actorId: 'u-test',
+      branchId: DEFAULT_BRANCH_ID,
     });
     expect(r.ok).toBe(true);
     expect(legacyDemoPackActive(db)).toBe(false);

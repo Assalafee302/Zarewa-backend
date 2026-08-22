@@ -1,6 +1,6 @@
 import { CUSTOMERS_SEED, QUOTATIONS_SEED } from './seedData.js';
 import { SALES_RECEIPTS_SEED } from './seedExtra.js';
-import { LAGACY_CUTTING_LIST_SEED } from './lagacyCuttingListSeed.js';
+import { LEGACY_CUTTING_LIST_SEED } from './legacyCuttingListSeed.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   DEMO_CL_ID,
@@ -8,6 +8,7 @@ import {
   DEMO_QUOTE_ID,
   DEMO_RECEIPT_ID,
 } from './legacyDemoPackPolicy.js';
+import { ensurePlantRegisterDemo } from './operations/plantRegisterSeed.js';
 
 /**
  * Ensures the legacy factory demo pack exists in the SQLite file even when the DB was
@@ -19,7 +20,7 @@ export function ensureLegacyDemoPack(db) {
   const customer = CUSTOMERS_SEED.find((c) => c.customerID === DEMO_CUSTOMER_ID);
   const quotation = QUOTATIONS_SEED.find((q) => q.id === DEMO_QUOTE_ID);
   const receipt = SALES_RECEIPTS_SEED.find((r) => r.id === DEMO_RECEIPT_ID);
-  const cutting = LAGACY_CUTTING_LIST_SEED;
+  const cutting = LEGACY_CUTTING_LIST_SEED;
 
   if (!customer || !quotation || !receipt || !cutting || cutting.id !== DEMO_CL_ID) {
     console.warn('[zarewa] Legacy demo pack: seed entries missing; skip ensure.');
@@ -173,6 +174,11 @@ export function ensureLegacyDemoPack(db) {
         inserted += insClLine.run(cutting.id, sortOrder, sheets, lengthM, totalM, line.lineType || 'Roof').changes;
       }
     }
+  });
+
+  step('plant-register', () => {
+    const created = ensurePlantRegisterDemo(db);
+    if (created > 0) inserted += created;
   });
 
   if (inserted > 0) {

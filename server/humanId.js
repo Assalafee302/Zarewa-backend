@@ -29,6 +29,8 @@ const SAFE_TABLES = new Set([
   'customer_crm_interactions',
   'customer_complaints',
   'customer_refunds',
+  'partner_wallet_entries',
+  'partner_wallet_withdrawal_allocations',
   'payment_requests',
   'accounting_register_settlements',
   'gl_journal_entries',
@@ -65,6 +67,13 @@ function escRe(s) {
 }
 
 export function ensureHumanIdSequencesTable(db) {
+  /* Skip DDL when table exists — CREATE inside an outer MySQL transaction breaks savepoints. */
+  try {
+    db.prepare(`SELECT 1 FROM human_id_sequences LIMIT 1`).get();
+    return;
+  } catch {
+    /* table missing */
+  }
   /* `last_value` — MySQL treats LAST_VALUE as a reserved window name. */
   db.exec(`
     CREATE TABLE IF NOT EXISTS human_id_sequences (
@@ -100,12 +109,26 @@ export function getBranchCodeUpper(db, branchId) {
 
 export function bumpHumanSerial(db, scope) {
   ensureHumanIdSequencesTable(db);
-  db.prepare(
-    `INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, 1)
-     ON CONFLICT(scope) DO UPDATE SET \`last_value\` = human_id_sequences.\`last_value\` + 1`
-  ).run(scope);
-  const row = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
-  return row.last_value;
+  // Upsert + read must be atomic so concurrent callers cannot collide on last_value.
+  const run = () => {
+    db.prepare(
+      `INSERT INTO human_id_sequences (scope, \`last_value\`) VALUES (?, 1)
+       ON CONFLICT(scope) DO UPDATE SET \`last_value\` = human_id_sequences.\`last_value\` + 1`
+    ).run(scope);
+    const row = db.prepare(`SELECT \`last_value\` FROM human_id_sequences WHERE scope = ?`).get(scope);
+    return row.last_value;
+  };
+  if (db.inTransaction) return run();
+  if (typeof db.transaction === 'function') {
+    return db.transaction(run)();
+  }
+  return run();
+}
+
+function assertSafeIdColumn(idColumn) {
+  if (!/^[a-z][a-z0-9_]*$/i.test(String(idColumn || ''))) {
+    throw new Error(`humanId: disallowed id column ${idColumn}`);
+  }
 }
 
 /**
@@ -116,6 +139,7 @@ export function bumpHumanSerial(db, scope) {
  */
 function maxMatchFromColumn(db, table, idColumn, patterns) {
   assertSafeTable(table);
+  assertSafeIdColumn(idColumn);
   let rows;
   try {
     rows = db.prepare(`SELECT ${idColumn} AS id FROM ${table} WHERE ${idColumn} IS NOT NULL`).all();

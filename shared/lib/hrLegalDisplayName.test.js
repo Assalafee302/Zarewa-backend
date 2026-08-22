@@ -29,4 +29,24 @@ describe('hrLegalDisplayName', () => {
     expect(validateEmployeeProfileSubmit(staff).ok).toBe(true);
     expect(validateEmployeeProfileSubmit({}).ok).toBe(false);
   });
+
+  it('accepts dateOfBirth when dateOfBirthIso is absent', () => {
+    const staff = {
+      gender: 'female',
+      dateOfBirth: '1990-01-01',
+      ninNumber: '12345678901',
+      bvnNumber: '10987654321',
+      minimumQualification: 'B.Sc',
+      profileExtra: {
+        personal: {
+          firstName: 'Ada',
+          surname: 'Bello',
+          phone: '08012345678',
+          residentialAddress: '12 Main St',
+        },
+      },
+      nextOfKin: { name: 'Mama Bello', phone: '08098765432', relationship: 'Mother' },
+    };
+    expect(validateEmployeeProfileSubmit(staff).ok).toBe(true);
+  });
 });

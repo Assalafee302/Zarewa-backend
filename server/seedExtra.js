@@ -1,6 +1,6 @@
 /** Extended seed rows (Node-safe). Stock levels from REFERENCE_STOCK_CALIBRATION. */
 
-import { LAGACY_CUTTING_LIST_SEED } from './lagacyCuttingListSeed.js';
+import { LEGACY_CUTTING_LIST_SEED } from './legacyCuttingListSeed.js';
 
 export const SUPPLIERS_SEED = [
   {
@@ -314,7 +314,7 @@ export const SALES_RECEIPTS_SEED = [
 ];
 
 /** Empty so new cutting lists can be created against seeded quotations in tests and fresh DBs. */
-export const CUTTING_LISTS_SEED = [LAGACY_CUTTING_LIST_SEED];
+export const CUTTING_LISTS_SEED = [LEGACY_CUTTING_LIST_SEED];
 
 export const REFUNDS_SEED = [
   {

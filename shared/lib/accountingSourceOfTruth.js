@@ -1,6 +1,7 @@
 /**
  * Register-first accounting: which module owns each GL control account at cutover and ongoing.
  * Used by Opening Pack builders and control tie-out (see docs/ACCOUNTING_SYSTEM_ARCHITECTURE.md).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/accountingSourceOfTruth.js
  */
 
 /** @typedef {'creditors' | 'debtors' | 'fixed_assets' | 'stock_register' | 'treasury' | 'inter_branch' | 'payroll' | 'ap2_diagnostic' | 'manual' | 'computed'} AccountingSourceModule */

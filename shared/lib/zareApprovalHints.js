@@ -1,7 +1,15 @@
 /**
  * Plain-language approval blocker explanations for Zare UI hints.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/zareApprovalHints.js
  */
 import { hasPermissionInList } from './moduleAccess.js';
+import { userMayReviewPaymentRequests } from '../workspaceGovernance.js';
+
+function canApproveStaffPurchaseCredit(roleKey, permissions) {
+  const rk = String(roleKey || '').toLowerCase();
+  if (rk === 'md') return true;
+  return hasPermissionInList(permissions, 'hr.payroll.md_approve') || hasPermissionInList(permissions, '*');
+}
 
 /**
  * @param {object} ctx
@@ -15,7 +23,9 @@ export function userCanApproveWorkItem(item, ctx = {}) {
   const dt = String(item?.documentType || '').trim().toLowerCase();
   const roleKey = String(ctx.roleKey || '').trim().toLowerCase();
 
-  if (dt === 'payment_request') return hasPermissionInList(permissions, 'finance.approve');
+  if (dt === 'payment_request') {
+    return userMayReviewPaymentRequests({ roleKey, permissions }, (perm) => hasPermissionInList(permissions, perm));
+  }
   if (dt === 'refund_request') {
     return (
       hasPermissionInList(permissions, 'refunds.approve') ||
@@ -40,7 +50,13 @@ export function userCanApproveWorkItem(item, ctx = {}) {
     return hasPermissionInList(permissions, 'purchase_orders.manage');
   }
   if (dt === 'material_incident') {
-    return ['admin', 'ceo', 'md', 'branch_manager', 'operations_manager'].includes(roleKey);
+    return (
+      hasPermissionInList(permissions, 'material_incidents.approve') ||
+      ['admin', 'ceo', 'md', 'branch_manager', 'operations_manager', 'sales_manager'].includes(roleKey)
+    );
+  }
+  if (dt === 'staff_purchase_credit') {
+    return canApproveStaffPurchaseCredit(roleKey, permissions);
   }
 
   return ['admin', 'ceo', 'md', 'branch_manager', 'finance_manager', 'sales_manager'].includes(roleKey);
@@ -107,13 +123,15 @@ export function explainApprovalBlock(ctx = {}) {
     reasons.push(ctx.missingPermission);
   } else if (ctx.canApprove === false) {
     if (documentType === 'payment_request') {
-      reasons.push('Finance approval permission (finance.approve) is required.');
+      reasons.push('Branch manager, Finance, or MD approval authority is required for this payment request.');
     } else if (documentType === 'refund_request') {
       reasons.push('Refund approval permission (refunds.approve or finance.approve) is required.');
     } else if (documentType === 'purchase_order' || documentType === 'procurement_po') {
       reasons.push('Purchase order management permission (purchase_orders.manage) is required.');
     } else if (documentType === 'edit_approval') {
       reasons.push('A designated manager must approve this edit using the edit-approval workflow.');
+    } else if (documentType === 'staff_purchase_credit') {
+      reasons.push('Only the Managing Director can approve staff purchase credit.');
     } else {
       reasons.push('Your role does not include approval authority for this item type.');
     }

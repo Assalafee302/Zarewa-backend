@@ -4,7 +4,7 @@
  * @module server/aiProviders/routes/providerRoutes
  */
 
-import { requireAuth } from '../../auth.js';
+import { requireAuth, requirePermission } from '../../auth.js';
 import { healthCheckProviders } from '../healthCheck.js';
 import { getUsageSummary } from '../costController.js';
 import { readProviderConfig } from '../config/providerConfig.js';
@@ -13,7 +13,11 @@ import { readProviderConfig } from '../config/providerConfig.js';
  * @param {import('express').Application} app
  */
 export function registerAiProviderRoutes(app) {
-  app.get('/api/ai/providers/status', requireAuth, async (_req, res) => {
+  app.get(
+    '/api/ai/providers/status',
+    requireAuth,
+    requirePermission(['settings.manage', 'settings.view']),
+    async (_req, res) => {
     try {
       const cfg = readProviderConfig();
       const health = await healthCheckProviders();
@@ -32,5 +36,6 @@ export function registerAiProviderRoutes(app) {
       console.error('[ai-provider] status error', e);
       res.status(500).json({ ok: false, error: 'Could not load provider status.' });
     }
-  });
+  }
+  );
 }

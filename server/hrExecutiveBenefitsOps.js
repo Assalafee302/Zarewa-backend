@@ -238,14 +238,14 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
   if (!usesExecutiveBenefitsMonthlyPay(pg)) return null;
 
   if (isScholarshipBeneficiary(pg)) {
-    const managePath = '/executive-hr/benefits?tab=stipends';
+    const managePath = '/chairman?tab=scholarships&benefitsTab=stipends';
     if (!hrTableExists(db, 'hr_executive_stipends')) {
       return {
         payChannel: 'executive_stipend',
         linked: false,
         managePath,
-        label: 'Monthly allowance (Executive benefits)',
-        note: 'Executive family beneficiaries are paid through Executive benefits → Monthly allowances, not branch payroll.',
+        label: 'Monthly allowance (Chairman Office)',
+        note: 'Executive family beneficiaries are paid through Chairman Office → Scholarships, not branch payroll.',
       };
     }
     const extra = staff.profileExtra && typeof staff.profileExtra === 'object' ? staff.profileExtra : {};
@@ -272,7 +272,7 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
       linked: Boolean(stipend && stipend.status === 'active'),
       managePath,
       label: 'Monthly allowance (Executive benefits)',
-      note: 'This register is the personnel file. Monthly pay is the allowance in Executive benefits.',
+      note: 'This register is the personnel file. Monthly pay is the allowance in Chairman Office.',
       monthlyAmountNgn: stipend?.monthlyAmountNgn ?? null,
       lastPaidPeriod: stipend?.lastPaidPeriod ?? null,
       paymentFrequency: stipend?.paymentFrequency ?? 'monthly',
@@ -282,14 +282,14 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
   }
 
   if (isDomesticStaff(pg)) {
-    const managePath = '/executive-hr/benefits?tab=domestic';
+    const managePath = '/chairman?tab=household&benefitsTab=domestic';
     if (!hrTableExists(db, 'hr_domestic_staff_profiles')) {
       return {
         payChannel: 'executive_domestic',
         linked: false,
         managePath,
-        label: 'Monthly salary (Executive benefits)',
-        note: 'Household staff are paid through Executive benefits → Household staff, not branch payroll.',
+        label: 'Monthly salary (Chairman Office)',
+        note: 'Household staff are paid through Chairman Office → Household, not branch payroll.',
       };
     }
     const uid = String(staff.userId || '').trim();
@@ -308,8 +308,8 @@ export function getExecutiveBenefitsPayrollForStaff(db, staff) {
       payChannel: 'executive_domestic',
       linked: Boolean(domestic && domestic.status === 'active'),
       managePath,
-      label: 'Monthly salary (Executive benefits)',
-      note: 'This register is the personnel file. Monthly pay is managed in Executive benefits household staff.',
+      label: 'Monthly salary (Chairman Office)',
+      note: 'This register is the personnel file. Monthly pay is managed in Chairman Office household staff.',
       monthlyAmountNgn: domestic?.salaryAmountNgn ?? null,
       domesticProfileId: domestic?.id ?? null,
       assignedExecutive: domestic?.assignedExecutive ?? null,
@@ -492,7 +492,7 @@ export function submitExecutiveSchoolFee(db, actor, feeId) {
     kind: 'executive_school_fee_pending',
     title: 'School fee pending approval',
     body: `${row.child_name || 'Beneficiary'} — ${row.school_name || 'school fee'}`,
-    routePath: '/executive-hr/benefits?tab=school-fees',
+    routePath: '/chairman?tab=scholarships&benefitsTab=school-fees',
     entityKind: 'hr_executive_school_fee',
     entityId: feeId,
   });
@@ -544,6 +544,11 @@ export function listExecutiveStipends(db, filters = {}) {
   if (!hrTableExists(db, 'hr_executive_stipends')) return [];
   let sql = `SELECT * FROM hr_executive_stipends WHERE 1=1`;
   const args = [];
+  const execFilter = String(filters.linkedExecutive || filters.assignedExecutive || '').trim();
+  if (execFilter) {
+    sql += ` AND linked_executive = ?`;
+    args.push(execFilter);
+  }
   if (filters.status) {
     sql += ` AND status = ?`;
     args.push(filters.status);
@@ -670,6 +675,89 @@ export function upsertDomesticStaffProfile(db, actor, data = {}) {
 
 // ── Payments workflow ─────────────────────────────────────────
 
+function resolvePaymentLinkedExecutive(db, payment) {
+  const kind = String(payment?.sourceKind || payment?.source_kind || '').trim();
+  const id = String(payment?.sourceId || payment?.source_id || '').trim();
+  if (!id) return '';
+  try {
+    if (kind === 'school_fee' && hrTableExists(db, 'hr_chairman_school_fees')) {
+      return String(db.prepare(`SELECT linked_executive FROM hr_chairman_school_fees WHERE id=?`).get(id)?.linked_executive || '');
+    }
+    if (kind === 'stipend' && hrTableExists(db, 'hr_executive_stipends')) {
+      return String(db.prepare(`SELECT linked_executive FROM hr_executive_stipends WHERE id=?`).get(id)?.linked_executive || '');
+    }
+    if (kind === 'domestic_staff' && hrTableExists(db, 'hr_domestic_staff_profiles')) {
+      return String(db.prepare(`SELECT assigned_executive FROM hr_domestic_staff_profiles WHERE id=?`).get(id)?.assigned_executive || '');
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+export function isHouseholdPayment(payment) {
+  const kind = String(payment?.sourceKind || '').toLowerCase();
+  const type = String(payment?.paymentType || '').toLowerCase();
+  return kind === 'domestic_staff' || type.includes('domestic');
+}
+
+const PENDING_BENEFIT_STATUSES = new Set(['submitted', 'finance_review', 'md_review', 'approved', 'exported']);
+
+/**
+ * Paid / pending totals from HR payment rows (not GL). Paid amounts use paidAtIso.
+ * @param {Array<object>} payments
+ * @param {{ periodYyyymm?: string; yearPrefix?: string }} [opts]
+ */
+export function summarizePaymentRows(payments, { periodYyyymm, yearPrefix } = {}) {
+  const period = String(periodYyyymm || '').trim();
+  const year = String(yearPrefix || period.slice(0, 4) || '').trim();
+  let householdPaidMonthNgn = 0;
+  let scholarshipPaidMonthNgn = 0;
+  let householdPaidYtdNgn = 0;
+  let scholarshipPaidYtdNgn = 0;
+  let pendingBenefitPaymentsNgn = 0;
+  let pendingBenefitPaymentCount = 0;
+
+  const paidMonthKey = (p) => String(p.paidAtIso || '').slice(0, 7);
+  const paidYearKey = (p) => String(p.paidAtIso || '').slice(0, 4);
+
+  for (const p of payments || []) {
+    const amt = Math.round(Number(p.amountNgn) || 0);
+    const status = String(p.status || '').toLowerCase();
+    if (PENDING_BENEFIT_STATUSES.has(status)) {
+      pendingBenefitPaymentsNgn += amt;
+      pendingBenefitPaymentCount += 1;
+    }
+    if (status !== 'paid') continue;
+    const inMonth = Boolean(period) && paidMonthKey(p) === period;
+    const inYear = Boolean(year) && paidYearKey(p) === year;
+    if (isHouseholdPayment(p)) {
+      if (inMonth) householdPaidMonthNgn += amt;
+      if (inYear) householdPaidYtdNgn += amt;
+    } else {
+      if (inMonth) scholarshipPaidMonthNgn += amt;
+      if (inYear) scholarshipPaidYtdNgn += amt;
+    }
+  }
+
+  return {
+    householdPaidMonthNgn,
+    scholarshipPaidMonthNgn,
+    householdPaidYtdNgn,
+    scholarshipPaidYtdNgn,
+    pendingBenefitPaymentsNgn,
+    pendingBenefitPaymentCount,
+  };
+}
+
+/**
+ * Paid / pending executive-benefit cash for one executive (Chairman, CEO, …).
+ * Uses HR payment rows — not GL — until mark-paid posts treasury.
+ */
+export function summarizeExecutivePaymentsForExecutive(db, { linkedExecutive, periodYyyymm, yearPrefix } = {}) {
+  return summarizePaymentRows(listExecutivePayments(db, { linkedExecutive }), { periodYyyymm, yearPrefix });
+}
+
 export function listExecutivePayments(db, filters = {}) {
   if (!hrTableExists(db, 'hr_executive_payments')) return [];
   let sql = `SELECT * FROM hr_executive_payments WHERE 1=1`;
@@ -682,8 +770,21 @@ export function listExecutivePayments(db, filters = {}) {
     sql += ` AND payment_type = ?`;
     args.push(filters.paymentType);
   }
+  if (filters.sourceKind) {
+    sql += ` AND source_kind = ?`;
+    args.push(filters.sourceKind);
+  }
+  if (filters.excludeSourceKind) {
+    sql += ` AND source_kind <> ?`;
+    args.push(filters.excludeSourceKind);
+  }
   sql += ` ORDER BY created_at_iso DESC LIMIT 500`;
-  return db.prepare(sql).all(...args).map(mapPaymentRow);
+  let rows = db.prepare(sql).all(...args).map(mapPaymentRow);
+  const execFilter = String(filters.linkedExecutive || filters.assignedExecutive || '').trim();
+  if (execFilter) {
+    rows = rows.filter((p) => linkedExecutiveMatchesFilter(resolvePaymentLinkedExecutive(db, p), execFilter));
+  }
+  return rows;
 }
 
 export function getExecutivePayment(db, paymentId) {

@@ -1,5 +1,19 @@
 /**
- * Resolve org manager targets with branch + quarter dimensions (shared with frontend).
+ * Resolve org manager targets with optional branch + quarter dimensions.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/managerOrgTargets.js
+ *
+ * Blob shape (org.manager_targets.v1 / manager_targets):
+ * {
+ *   nairaTargetPerMonth, meterTargetPerMonth,  // company monthly defaults
+ *   byBranch: { [branchId]: { nairaTargetPerMonth, meterTargetPerMonth } },
+ *   byQuarter: { [YYYY-Qn]: { nairaTargetPerMonth, meterTargetPerMonth } },
+ *   byBranchQuarter: { [`branchId:YYYY-Qn`]: { nairaTargetPerMonth, meterTargetPerMonth } }
+ * }
+ */
+
+/**
+ * @param {Date} [d]
+ * @returns {string} e.g. 2026-Q3
  */
 export function quarterKeyFromDate(d = new Date()) {
   const y = d.getFullYear();
@@ -7,6 +21,12 @@ export function quarterKeyFromDate(d = new Date()) {
   return `${y}-Q${q}`;
 }
 
+/**
+ * Merge branch/quarter patches into the targets blob without wiping company defaults.
+ * Empty branch/quarter layers are not written (would clobber a prior layer with `{}`).
+ * @param {object} prev
+ * @param {object} body
+ */
 export function mergeManagerTargetsBlob(prev, body) {
   const next = { ...(prev && typeof prev === 'object' ? prev : {}) };
   if (Object.prototype.hasOwnProperty.call(body, 'nairaTargetPerMonth')) {
@@ -45,6 +65,10 @@ export function mergeManagerTargetsBlob(prev, body) {
   return next;
 }
 
+/**
+ * @param {object | null | undefined} targets
+ * @param {{ branchId?: string, quarterKey?: string }} [scope]
+ */
 export function resolveManagerTargets(targets, scope = {}) {
   const t = targets && typeof targets === 'object' ? targets : {};
   const branchId = String(scope.branchId || '').trim();

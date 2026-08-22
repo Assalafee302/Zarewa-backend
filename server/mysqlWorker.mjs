@@ -1,25 +1,12 @@
 import mysql from 'mysql2/promise';
 import { runAsWorker } from 'synckit';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sqliteDdlToMysql } from './schemaMysqlTransform.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEBUG_LOG = path.resolve(__dirname, '..', 'debug-5f8d6a.log');
-
-function agentLog(entry) {
-  const line = JSON.stringify({ sessionId: '5f8d6a', timestamp: Date.now(), ...entry });
-  try {
-    fs.appendFileSync(DEBUG_LOG, `${line}\n`, 'utf8');
-  } catch {
-    /* ignore */
-  }
-}
 import { adaptSqlForMysql, adaptExecSqlForMysql } from './mysqlSqlAdapt.js';
 
 /** @type {import('mysql2/promise').Pool | null} */
 let pool = null;
+/** Database name for GET_LOCK serialization of wipe + SCHEMA_SQL. */
+let activeDbName = '';
 /** @type {import('mysql2/promise').PoolConnection | null} */
 let txConn = null;
 let txDepth = 0;
@@ -144,7 +131,45 @@ function isDeadlockError(e) {
 }
 
 function deadlockBackoffMs(attempt) {
-  return Math.min(40 * attempt, 200);
+  return Math.min(80 * attempt, 800);
+}
+
+function schemaLockName() {
+  const db = String(activeDbName || '').replace(/`/g, '').trim();
+  const raw = db ? `zarewa_mig_${db}` : 'zarewa_run_migrations';
+  return raw.length <= 64 ? raw : raw.slice(0, 64);
+}
+
+/**
+ * Hold GET_LOCK on one connection for wipe + bootstrap so concurrent Vitest
+ * processes cannot interleave DROP TABLE with CREATE TABLE.
+ * @template T
+ * @param {(conn: import('mysql2/promise').PoolConnection) => Promise<T>} fn
+ */
+async function withSchemaLock(fn) {
+  if (!pool) throw new Error('MySQL pool not initialized');
+  const conn = await pool.getConnection();
+  const lockName = schemaLockName();
+  let acquired = false;
+  try {
+    const [rows] = await conn.query('SELECT GET_LOCK(?, ?) AS got', [lockName, 120]);
+    acquired = Number(/** @type {{ got?: number }[]} */ (rows)[0]?.got) === 1;
+    if (!acquired) {
+      throw new Error(
+        `Could not acquire schema lock "${lockName}" within 120s. Stop other Vitest/API processes using this database.`
+      );
+    }
+    return await fn(conn);
+  } finally {
+    if (acquired) {
+      try {
+        await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
+      } catch {
+        /* connection may already be gone */
+      }
+    }
+    conn.release();
+  }
 }
 
 /**
@@ -192,6 +217,7 @@ async function ensureDatabaseExists(cfg) {
 }
 
 async function ensurePool(cfg) {
+  activeDbName = String(cfg?.database || '').replace(/`/g, '');
   if (!pool) {
     pool = mysql.createPool({
       host: cfg.host,
@@ -214,64 +240,71 @@ function execTarget() {
 }
 
 /**
+ * @param {import('mysql2/promise').PoolConnection} conn
  * @param {string} ddl
  */
-async function execBootstrapDdl(ddl) {
+async function execBootstrapDdlOn(conn, ddl) {
   const transformed = sqliteDdlToMysql(ddl);
   const parts = transformed
     .split(/;\s*\n/)
     .map((x) => x.trim())
     .filter(Boolean);
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('SET NAMES utf8mb4');
-    /* Allow bootstrap DDL shapes mapped from SQLite (TEXT defaults stripped separately). */
-    await conn.query(`SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'`);
-    await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-    for (const part of parts) {
-      const stmt = part.endsWith(';') ? part : `${part};`;
+  await conn.query('SET NAMES utf8mb4');
+  /* Allow bootstrap DDL shapes mapped from SQLite (TEXT defaults stripped separately). */
+  await conn.query(`SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'`);
+  await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+  for (const part of parts) {
+    const stmt = part.endsWith(';') ? part : `${part};`;
+    let lastErr;
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
       try {
         await conn.query(stmt);
+        lastErr = null;
+        break;
       } catch (e) {
-        const errno = /** @type {{ errno?: number }} */ (e).errno;
-        const code = /** @type {{ code?: string }} */ (e).code;
-        if (isSkippableBootstrapIndexError(e, part)) continue;
-        agentLog({
-          hypothesisId: 'A',
-          location: 'mysqlWorker.mjs:execBootstrapDdl',
-          message: 'bootstrap DDL statement failed',
-          data: {
-            errno,
-            code,
-            err: String(e?.sqlMessage || e?.message || e),
-            stmt: String(part).slice(0, 280),
-          },
-        });
-        throw e;
+        lastErr = e;
+        if (isSkippableBootstrapIndexError(e, part)) {
+          lastErr = null;
+          break;
+        }
+        if (!isDeadlockError(e) || attempt === 8) {
+          throw e;
+        }
+        await new Promise((r) => setTimeout(r, deadlockBackoffMs(attempt)));
       }
     }
-    await conn.query('SET FOREIGN_KEY_CHECKS = 1');
-  } finally {
-    conn.release();
+    if (lastErr) throw lastErr;
   }
+  await conn.query('SET FOREIGN_KEY_CHECKS = 1');
 }
 
-async function wipeAllTables() {
-  const conn = await pool.getConnection();
-  try {
-    await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-    const [rows] = await conn.query(
-      'SELECT TABLE_NAME AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = ?',
-      ['BASE TABLE']
-    );
-    const names = /** @type {{ n: string }[]} */ (rows).map((r) => r.n);
-    for (const name of names) {
-      await conn.query(`DROP TABLE IF EXISTS \`${String(name).replace(/`/g, '')}\``);
+/**
+ * @param {import('mysql2/promise').PoolConnection} conn
+ */
+async function wipeAllTablesOn(conn) {
+  await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+  const [rows] = await conn.query(
+    'SELECT TABLE_NAME AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = ?',
+    ['BASE TABLE']
+  );
+  const names = /** @type {{ n: string }[]} */ (rows).map((r) => r.n);
+  for (const name of names) {
+    const table = String(name).replace(/`/g, '');
+    let lastErr;
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      try {
+        await conn.query(`DROP TABLE IF EXISTS \`${table}\``);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (!isDeadlockError(e) || attempt === 8) throw e;
+        await new Promise((r) => setTimeout(r, deadlockBackoffMs(attempt)));
+      }
     }
-    await conn.query('SET FOREIGN_KEY_CHECKS = 1');
-  } finally {
-    conn.release();
+    if (lastErr) throw lastErr;
   }
+  await conn.query('SET FOREIGN_KEY_CHECKS = 1');
 }
 
 async function execRaw(sql) {
@@ -313,17 +346,36 @@ async function runStatement(sql, args) {
 
 runAsWorker(async (payload) => {
   const op = payload?.op;
+  if (op === 'ping') {
+    const cfg = payload.config || {};
+    const conn = await mysql.createConnection({
+      host: cfg.host,
+      port: cfg.port,
+      user: cfg.user,
+      password: cfg.password,
+      connectTimeout: 8_000,
+    });
+    try {
+      await conn.query('SELECT 1');
+      return { ok: true };
+    } finally {
+      await conn.end();
+    }
+  }
+
   if (op === 'init') {
     const { config } = payload;
     if (pool) {
       await pool.end();
       pool = null;
     }
+    activeDbName = '';
     txConn = null;
     txDepth = 0;
     savepointStack = [];
     await ensureDatabaseExists(config);
     await ensurePool(config);
+    activeDbName = String(config?.database || '').replace(/`/g, '');
     return { ok: true };
   }
 
@@ -332,6 +384,7 @@ runAsWorker(async (payload) => {
       await pool.end();
       pool = null;
     }
+    activeDbName = '';
     txConn = null;
     txDepth = 0;
     savepointStack = [];
@@ -339,12 +392,20 @@ runAsWorker(async (payload) => {
   }
 
   if (op === 'wipeAllTables') {
-    await wipeAllTables();
+    await withSchemaLock((conn) => wipeAllTablesOn(conn));
     return { ok: true };
   }
 
   if (op === 'bootstrapSchema') {
-    await execBootstrapDdl(payload.ddl);
+    await withSchemaLock((conn) => execBootstrapDdlOn(conn, payload.ddl));
+    return { ok: true };
+  }
+
+  if (op === 'resetAndBootstrap') {
+    await withSchemaLock(async (conn) => {
+      await wipeAllTablesOn(conn);
+      await execBootstrapDdlOn(conn, payload.ddl);
+    });
     return { ok: true };
   }
 

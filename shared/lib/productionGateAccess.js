@@ -2,14 +2,26 @@
  * Production payment gate overrides:
  * - Some payment below branch threshold → Branch Manager or MD may approve.
  * - Zero payment → MD or admin only.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/productionGateAccess.js
+ *
+ * Callers may pass an actor object (API) or a role-key string (SPA), and paid amount
+ * as a number or `{ paidNgn }`.
  */
 
 export const PRODUCTION_GATE_OVERRIDE_NOTE_MIN_LEN = 8;
 
 /** @typedef {'branch_manager' | 'md' | 'admin'} ProductionGateApprovalLevel */
 
-function roleKey(actor) {
-  return String(actor?.roleKey || actor?.role || '').trim().toLowerCase();
+function roleKey(actorOrRoleKey) {
+  if (actorOrRoleKey && typeof actorOrRoleKey === 'object') {
+    return String(actorOrRoleKey.roleKey || actorOrRoleKey.role || '').trim().toLowerCase();
+  }
+  return String(actorOrRoleKey || '').trim().toLowerCase();
+}
+
+function paidNgnFromArg(paidOrOpts) {
+  if (paidOrOpts != null && typeof paidOrOpts === 'object') return paidOrOpts.paidNgn;
+  return paidOrOpts;
 }
 
 /**
@@ -20,10 +32,18 @@ export function quotationHasRecordedPayment(paidNgn) {
 }
 
 /**
- * @param {{ roleKey?: string; role?: string; permissions?: string[] } | null | undefined} actor
+ * @param {string | { roleKey?: string; role?: string; permissions?: string[] } | null | undefined} actorOrRoleKey
  * @returns {ProductionGateApprovalLevel | null}
  */
-export function productionGateApprovalLevelForActor(actor) {
+export function productionGateApprovalLevelForActor(actorOrRoleKey) {
+  if (typeof actorOrRoleKey === 'string') {
+    const rk = roleKey(actorOrRoleKey);
+    if (rk === 'admin') return 'admin';
+    if (rk === 'md') return 'md';
+    if (rk === 'sales_manager' || rk === 'branch_manager') return 'branch_manager';
+    return null;
+  }
+  const actor = actorOrRoleKey;
   if (!actor) return null;
   const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
   if (perms.includes('*')) return 'admin';
@@ -35,17 +55,23 @@ export function productionGateApprovalLevelForActor(actor) {
 }
 
 /**
- * @param {{ roleKey?: string; role?: string; permissions?: string[] } | null | undefined} actor
- * @param {number | string | null | undefined} [paidNgn]
+ * @param {string | { roleKey?: string; role?: string; permissions?: string[] } | null | undefined} actorOrRoleKey
+ * @param {number | string | { paidNgn?: number | null } | null | undefined} [paidOrOpts]
  */
-export function userMayApproveProductionGate(actor, paidNgn = null) {
-  const level = productionGateApprovalLevelForActor(actor);
+export function userMayApproveProductionGate(actorOrRoleKey, paidOrOpts = null) {
+  const paidNgn = paidNgnFromArg(paidOrOpts);
+  const level = productionGateApprovalLevelForActor(actorOrRoleKey);
   if (!level) return false;
   if (level === 'admin' || level === 'md') return true;
   if (level === 'branch_manager') {
     return quotationHasRecordedPayment(paidNgn);
   }
   return false;
+}
+
+/** SPA alias — same gate as {@link userMayApproveProductionGate}. */
+export function canApproveProductionGate(actorOrRoleKey, paidOrOpts = null) {
+  return userMayApproveProductionGate(actorOrRoleKey, paidOrOpts);
 }
 
 /**

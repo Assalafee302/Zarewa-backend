@@ -1,3 +1,8 @@
+/**
+ * Office / expense approval step list for memos and payment requests.
+ * Thresholds live in `shared/workspaceGovernance.js`.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/officeApprovalRouting.js
+ */
 import {
   EXPENSE_MD_APPROVAL_THRESHOLD_NGN,
   isBranchExpenseApproverRoleKey,

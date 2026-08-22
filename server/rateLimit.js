@@ -27,6 +27,17 @@ export function allowRateLimit(buckets, key, maxEvents, windowMs) {
   return b.count <= maxEvents;
 }
 
+/**
+ * True when the key is already at/over the limit (does not increment).
+ * Use before expensive work (e.g. bcrypt), then call allowRateLimit only on failure.
+ */
+export function isRateLimited(buckets, key, maxEvents, _windowMs) {
+  const now = Date.now();
+  const b = buckets.get(key);
+  if (!b || now > b.resetAt) return false;
+  return b.count >= maxEvents;
+}
+
 export const skipAuthedRateLimit =
   process.env.VITEST === 'true' ||
   process.env.NODE_ENV === 'test' ||

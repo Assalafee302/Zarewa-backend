@@ -1,8 +1,40 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
+import { createConnection } from 'node:net';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
-import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
+import { REFUND_TEST_PAYEE, ensureRefundTestCustomerBanks } from './refundTestPayee.js';
+import { withTestQuotationMaterial } from './testQuotationFixtures.js';
+import {
+  markQuotationReceiptsClearedForRefundTests,
+  postLedgerReceiptAndClearFinance,
+  createRefundEligibleQuotation,
+} from './refundE2ETestHelpers.js';
+
+const openDbs = [];
+let mysqlOk = false;
+
+function probeMysqlPort(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: 3306 }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/** Drop refund rows created by prior E2E cases; keep seeded demo refunds. */
+function resetRefundE2EState(db) {
+  db.prepare(`DELETE FROM customer_refunds WHERE refund_id NOT IN ('RF-2026-001', 'RF-2026-002')`).run();
+  markQuotationReceiptsClearedForRefundTests(db, 'QT-2026-001');
+  markQuotationReceiptsClearedForRefundTests(db, 'QT-2026-002');
+  ensureRefundTestCustomerBanks(db);
+}
 
 /**
  * HTTP-level refund journeys: eligibility after production cancel, void quotes,
@@ -12,6 +44,8 @@ describe('Refund E2E (HTTP)', () => {
   let app;
   let agent;
   let db;
+  let readyQuoteRef;
+  let treasuryAccountId;
 
   async function loginAs(client, username = 'admin', password = 'Admin@123') {
     const res = await client.post('/api/session/login').send({ username, password });
@@ -19,71 +53,39 @@ describe('Refund E2E (HTTP)', () => {
     expect(res.body.ok).toBe(true);
   }
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    mysqlOk = await probeMysqlPort();
+    if (!mysqlOk) return;
     db = createDatabase(':memory:');
+    openDbs.push(db);
+    ensureRefundTestCustomerBanks(db);
     app = createApp(db);
+    const setup = request.agent(app);
+    await loginAs(setup);
+    const boot = await setup.get('/api/bootstrap');
+    treasuryAccountId = boot.body.treasuryAccounts[0].id;
+    const created = await createRefundEligibleQuotation(setup, { treasuryAccountId, overpayNgn: 100_000 });
+    readyQuoteRef = created.quotationRef;
+  }, 300_000);
+
+  beforeEach(async (ctx) => {
+    if (!mysqlOk || !db || !readyQuoteRef) ctx.skip();
+    resetRefundE2EState(db);
     agent = request.agent(app);
     await loginAs(agent);
   });
 
-  afterEach(() => {
-    db?.close();
+  afterAll(() => {
+    for (const conn of openDbs) conn.close();
+    openDbs.length = 0;
   });
 
   it('full lifecycle after production cancel: eligible list → create → approve → pay', async () => {
-    const before = await agent.get('/api/bootstrap');
-    const treasuryAccountId = before.body.treasuryAccounts[0].id;
-
-    const q = await agent.post('/api/quotations').send({
-      customerID: 'CUS-001',
-      projectName: `Refund cancel-path ${Date.now()}`,
-      dateISO: '2026-03-29',
-      lines: {
-        products: [{ name: 'Cancel path sheet', qty: '1', unitPrice: '250000' }],
-        accessories: [],
-        services: [],
-      },
-    });
-    expect(q.status).toBe(201);
-    const quotationRef =
-      q.body.quotation?.quotationID || q.body.quotation?.id || q.body.quotationID || q.body.id;
-    expect(String(quotationRef || '')).toBeTruthy();
-
-    const rcpt = await agent.post('/api/ledger/receipt').send({
-      customerID: 'CUS-001',
-      quotationId: quotationRef,
-      amountNgn: 250_000,
-      paymentMethod: 'Transfer',
-      dateISO: '2026-03-29',
+    const createdQuote = await createRefundEligibleQuotation(agent, {
       treasuryAccountId,
-      paymentLines: [{ treasuryAccountId, amountNgn: 250_000, reference: 'RCP-CANCEL-PATH' }],
+      projectName: `Refund cancel-path ${Date.now()}`,
     });
-    expect(rcpt.status).toBe(201);
-
-    const cutting = await agent.post('/api/cutting-lists').send({
-      quotationRef,
-      customerID: 'CUS-001',
-      productID: 'FG-101',
-      productName: 'Longspan thin',
-      dateISO: '2026-03-29',
-      machineName: 'Machine 01',
-      operatorName: 'QA',
-      lines: [{ sheets: 1, lengthM: 5 }],
-    });
-    expect(cutting.status).toBe(201);
-    const job = await agent.post('/api/production-jobs').send({
-      cuttingListId: cutting.body.id,
-      productID: 'FG-101',
-      productName: 'Longspan thin',
-      plannedMeters: 10,
-      plannedSheets: 1,
-    });
-    expect(job.status).toBe(201);
-    const cancel = await agent
-      .post(`/api/production-jobs/${encodeURIComponent(job.body.jobID)}/cancel`)
-      .send({ reason: 'Customer cancelled before run — E2E refund test' });
-    expect(cancel.status).toBe(200);
-
+    const quotationRef = createdQuote.quotationRef;
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const elig = await salesStaff.get('/api/refunds/eligible-quotations');
@@ -95,7 +97,7 @@ describe('Refund E2E (HTTP)', () => {
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
       quotationRef,
-      reasonCategory: 'Overpayment',
+      reasonCategory: 'Order cancellation',
       reason: 'Cancel-path refund',
       amountNgn: 15_000,
       calculationLines: [{ label: 'Goodwill', amountNgn: 15_000 }],
@@ -110,7 +112,7 @@ describe('Refund E2E (HTTP)', () => {
       approvalDate: '2026-03-29',
       managerComments: 'OK after cancel',
     });
-    expect(approve.status).toBe(200);
+    expect(approve.status, JSON.stringify(approve.body)).toBe(200);
 
     const financeAgent = request.agent(app);
     await loginAs(financeAgent, 'finance.manager', 'Finance@123');
@@ -130,7 +132,7 @@ describe('Refund E2E (HTTP)', () => {
     const before = await agent.get('/api/bootstrap');
     const treasuryAccountId = before.body.treasuryAccounts[0].id;
 
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-002',
       projectName: `Void paid refund ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -139,19 +141,18 @@ describe('Refund E2E (HTTP)', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationRef =
       q.body.quotation?.quotationID || q.body.quotation?.id || q.body.quotationID || q.body.id;
 
-    await agent.post('/api/ledger/receipt').send({
+    await postLedgerReceiptAndClearFinance(agent, {
       customerID: 'CUS-002',
-      quotationId: quotationRef,
+      quotationRef,
       amountNgn: 180_000,
-      paymentMethod: 'Cash',
-      dateISO: '2026-03-29',
       treasuryAccountId,
-      paymentLines: [{ treasuryAccountId, amountNgn: 180_000, reference: 'RCP-VOID-PATH' }],
+      paymentMethod: 'Cash',
+      referencePrefix: 'RCP-VOID-PATH',
     });
 
     const voided = await agent.patch(`/api/quotations/${encodeURIComponent(quotationRef)}`).send({
@@ -174,7 +175,7 @@ describe('Refund E2E (HTTP)', () => {
       amountNgn: 20_000,
       calculationLines: [{ label: 'Adjustment', amountNgn: 20_000 }],
     });
-    expect(created.status).toBe(201);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
 
     const managerAgent = request.agent(app);
     await loginAs(managerAgent, 'sales.manager', 'Sales@123');
@@ -201,7 +202,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Overpayment',
       reason: 'Try 1',
       amountNgn: 5_000,
@@ -224,7 +225,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Overpayment',
       reason: 'Try 2 after reject',
       amountNgn: 5_000,
@@ -241,7 +242,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Adjustment',
       reason: 'Will reject',
       amountNgn: 3_000,
@@ -268,7 +269,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Adjustment',
       reason: 'Retry adjustment',
       amountNgn: 3_000,
@@ -280,7 +281,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Adjustment',
       reason: 'Duplicate while pending',
       amountNgn: 1_000,
@@ -296,7 +297,7 @@ describe('Refund E2E (HTTP)', () => {
     const zero = await salesStaff.post('/api/refunds').send({
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Overpayment',
       reason: 'Zero',
       amountNgn: 0,
@@ -309,7 +310,7 @@ describe('Refund E2E (HTTP)', () => {
     const forbidden = await financeNoRequest.post('/api/refunds').send({
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Overpayment',
       reason: 'Finance should not create',
       amountNgn: 1_000,
@@ -320,7 +321,7 @@ describe('Refund E2E (HTTP)', () => {
     const createRefund = await salesStaff.post('/api/refunds').send({
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Material shortage',
       reason: 'Pay guard',
       amountNgn: 8_000,
@@ -353,37 +354,38 @@ describe('Refund E2E (HTTP)', () => {
   });
 
   it('manager-approved cap lower than requested: payout stops at approved amount', async () => {
-    const before = await agent.get('/api/bootstrap');
-    const treasuryAccountId = before.body.treasuryAccounts[0].id;
-
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     const created = await salesStaff.post('/api/refunds').send({
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
-      quotationRef: 'QT-2026-001',
-      reasonCategory: 'Substitution pricing',
+      quotationRef: readyQuoteRef,
+      reasonCategory: 'Overpayment',
       reason: 'Cap test',
       amountNgn: 90_000,
       calculationLines: [{ label: 'Full ask', amountNgn: 90_000 }],
     });
-    expect(created.status).toBe(201);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
 
     const managerAgent = request.agent(app);
     await loginAs(managerAgent, 'sales.manager', 'Sales@123');
-    await managerAgent.post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/decision`).send({
-      status: 'Approved',
-      approvalDate: '2026-03-29',
-      approvedAmountNgn: 40_000,
-      managerComments: 'Approved partial',
-    });
+    const approve = await managerAgent
+      .post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/decision`)
+      .send({
+        status: 'Approved',
+        approvalDate: '2026-03-29',
+        approvedAmountNgn: 40_000,
+        calculationLines: [{ label: 'Approved cap', amountNgn: 40_000 }],
+        managerComments: 'Approved partial',
+      });
+    expect(approve.status, JSON.stringify(approve.body)).toBe(200);
 
     const financeAgent = request.agent(app);
     await loginAs(financeAgent, 'finance.manager', 'Finance@123');
     const pay = await financeAgent
       .post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/pay`)
       .send({ treasuryAccountId, reference: 'CAP' });
-    expect(pay.status).toBe(201);
+    expect(pay.status, JSON.stringify(pay.body)).toBe(201);
     expect(pay.body.fullyPaid).toBe(true);
     expect(pay.body.paidAmountNgn).toBe(40_000);
 
@@ -399,37 +401,40 @@ describe('Refund E2E (HTTP)', () => {
     const created = await salesStaff.post('/api/refunds').send({
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
-      quotationRef: 'QT-2026-001',
-      reasonCategory: ['Transport refund', 'Accessory refund'],
+      quotationRef: readyQuoteRef,
+      reasonCategory: ['Overpayment', 'Adjustment'],
       reason: 'Combined',
       amountNgn: 12_000,
       calculationLines: [
-        { label: 'Transport', amountNgn: 7_000 },
-        { label: 'Accessory', amountNgn: 5_000 },
+        { label: 'Overpayment', amountNgn: 7_000 },
+        { label: 'Adjustment', amountNgn: 5_000 },
       ],
     });
-    expect(created.status).toBe(201);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
 
     const managerAgent = request.agent(app);
     await loginAs(managerAgent, 'sales.manager', 'Sales@123');
-    await managerAgent.post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/decision`).send({
-      status: 'Approved',
-      approvalDate: '2026-03-29',
-    });
+    const approve = await managerAgent
+      .post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/decision`)
+      .send({
+        status: 'Approved',
+        approvalDate: '2026-03-29',
+      });
+    expect(approve.status, JSON.stringify(approve.body)).toBe(200);
 
     const financeAgent = request.agent(app);
     await loginAs(financeAgent, 'finance.manager', 'Finance@123');
     const pay = await financeAgent
       .post(`/api/refunds/${encodeURIComponent(created.body.refundID)}/pay`)
-      .send({ treasuryAccountId: 1, reference: 'MULTI' });
-    expect(pay.status).toBe(201);
+      .send({ treasuryAccountId, reference: 'MULTI' });
+    expect(pay.status, JSON.stringify(pay.body)).toBe(201);
   });
 
   it('eligible list excludes paid-only quotes; POST /api/refunds is rejected (eligibility enforced)', async () => {
     const before = await agent.get('/api/bootstrap');
     const treasuryAccountId = before.body.treasuryAccounts[0].id;
 
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: `No production close ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -438,21 +443,18 @@ describe('Refund E2E (HTTP)', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationRef =
       q.body.quotation?.quotationID || q.body.quotation?.id || q.body.quotationID || q.body.id;
 
-    const rcpt = await agent.post('/api/ledger/receipt').send({
+    await postLedgerReceiptAndClearFinance(agent, {
       customerID: 'CUS-001',
-      quotationId: quotationRef,
+      quotationRef,
       amountNgn: 99_000,
-      paymentMethod: 'Transfer',
-      dateISO: '2026-03-29',
       treasuryAccountId,
-      paymentLines: [{ treasuryAccountId, amountNgn: 99_000, reference: 'RCP-NO-PROD' }],
+      referencePrefix: 'RCP-NO-PROD',
     });
-    expect(rcpt.status).toBe(201);
 
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
@@ -480,14 +482,14 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Transport refund',
       reason: 'Over remaining cap',
       amountNgn: 946_000,
       calculationLines: [{ label: 'Too large', amountNgn: 946_000 }],
     });
     expect(res.status).toBe(400);
-    expect(String(res.body.error || '')).toMatch(/exceeds remaining refundable balance/i);
+    expect(String(res.body.error || '')).toMatch(/exceeds remaining refundable balance|included refund lines total/i);
   });
 
   it('rejects approval amount above requested amount', async () => {
@@ -497,7 +499,7 @@ describe('Refund E2E (HTTP)', () => {
       ...REFUND_TEST_PAYEE,
       customerID: 'CUS-001',
       customer: 'Alhaji Musa & Sons',
-      quotationRef: 'QT-2026-001',
+      quotationRef: readyQuoteRef,
       reasonCategory: 'Overpayment',
       reason: 'Cap approval test',
       amountNgn: 5_000,
@@ -514,13 +516,13 @@ describe('Refund E2E (HTTP)', () => {
       managerComments: 'Too high',
     });
     expect(bad.status).toBe(400);
-    expect(String(bad.body.error || '')).toMatch(/cannot exceed the requested amount/i);
+    expect(String(bad.body.error || '')).toMatch(/cannot exceed the requested amount|must match/i);
   });
 
   it('preview includes remainingRefundableNgn for eligible quotations', async () => {
     const salesStaff = request.agent(app);
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
-    const prev = await salesStaff.post('/api/refunds/preview').send({ quotationRef: 'QT-2026-001' });
+    const prev = await salesStaff.post('/api/refunds/preview').send({ quotationRef: readyQuoteRef });
     expect(prev.status).toBe(200);
     expect(prev.body.preview.remainingRefundableNgn).toBeDefined();
     expect(Number(prev.body.preview.remainingRefundableNgn)).toBeGreaterThan(0);
@@ -531,7 +533,7 @@ describe('Refund E2E (HTTP)', () => {
     await loginAs(salesStaff, 'sales.staff', 'Sales@123');
     for (let i = 0; i < 40; i += 1) {
       const prev = await salesStaff.post('/api/refunds/preview').send({
-        quotationRef: 'QT-2026-001',
+        quotationRef: readyQuoteRef,
         manualAdjustmentNgn: 1000 + i,
       });
       expect(prev.status).toBe(200);

@@ -1,11 +1,21 @@
 /**
  * Verify refund breakdown lines where the label encodes a formula (e.g. unproduced metres × ₦/m).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/refundLineArithmetic.js
  */
 
 import { REFUND_AMOUNT_LINE_TOLERANCE_NGN } from '../refundConstants.js';
 
 export function roundRefundLineMoney(value) {
   return Math.round(Number(value) || 0);
+}
+
+/** Sum included line amounts (comma thousands allowed). */
+export function sumRefundCalculationLines(lines) {
+  return (lines || []).reduce((s, l) => {
+    if (l?.include === false) return s;
+    const n = Number(String(l?.amountNgn ?? l?.amount_ngn ?? '').replace(/,/g, ''));
+    return s + (Number.isNaN(n) ? 0 : n);
+  }, 0);
 }
 
 function parseNgnToken(raw) {

@@ -126,7 +126,8 @@ export function recordHelpQuerySignal(db, opts) {
     )
     .get(logId);
   if (!row) return false;
-  if (opts.userId && row.user_id && String(row.user_id) !== String(opts.userId)) return false;
+  // Rows with a user_id may only be updated by that user; anonymous rows are not writable by guessable logId.
+  if (!opts.userId || !row.user_id || String(row.user_id) !== String(opts.userId)) return false;
 
   const sets = [];
   const args = [];

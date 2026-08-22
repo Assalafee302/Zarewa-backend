@@ -42,7 +42,7 @@ import {
   listSalesReceipts,
   listSuppliers,
 } from './readModel.js';
-import { quotationHasUnclearedReceipts } from './writeOps.js';
+import { quotationIdsWithUnclearedReceipts } from './writeOps.js';
 
 function branchScopeFromOpts(opts = {}) {
   const raw = String(opts.branchId || opts.branch || '').trim();
@@ -197,14 +197,17 @@ function buildCustomerDepositQuoteItemSegments(db, branchScope) {
   const registeredClRefs = registeredCuttingListQuotationRefSet(db, branchScope);
   const activeJobRefs = activeProductionLineJobRefSet(productionJobs);
   const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
+  const quoteIds = quotations.map((q) => q.id);
+  const staffPurchaseBlocked = quotationIdsWithActiveStaffPurchaseCredit(db, quoteIds);
+  const unclearedReceipts = quotationIdsWithUnclearedReceipts(db, quoteIds);
   const onLine = [];
   const backlog = [];
   for (const q of quotations) {
     if (quotationRefundsBlocked(q)) continue;
-    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
+    if (staffPurchaseBlocked.has(q.id)) continue;
     if (quotationPaymentPolicyPhase(q.id, productionJobs) !== 'pre_production') continue;
     if (quotationIsCommerciallyDeadForDeposit(q, productionJobs)) continue;
-    if (quotationHasUnclearedReceipts(db, q.id)) continue;
+    if (unclearedReceipts.has(q.id)) continue;
     const onProductionLine = quotationIsOnProductionLine(q.id, registeredClRefs, activeJobRefs);
     const row = buildCustomerDepositQuoteItemRow(db, q, customers, onProductionLine);
     if (!row) continue;
@@ -722,25 +725,39 @@ function buildStaffPurchaseReceivableItems(db, branchScope) {
   return buildStaffObligationCreditorItems(db, branchScope, OBLIGATION_KIND.PURCHASE);
 }
 
-function quotationHasActiveStaffPurchaseCredit(db, quotationRef) {
-  if (!staffObligationTablesReady(db)) return false;
-  if (!hasColumn(db, 'quotations', 'is_staff_purchase')) return false;
-  const q = db.prepare(`SELECT is_staff_purchase, staff_purchase_credit_id FROM quotations WHERE id = ?`).get(quotationRef);
-  if (!q || !Number(q.is_staff_purchase)) return false;
-  const acctId = String(q.staff_purchase_credit_id || '').trim();
-  if (!acctId) return false;
-  const acct = db.prepare(`SELECT status FROM hr_staff_obligation_accounts WHERE id = ?`).get(acctId);
-  return acct && ['active', 'pending_approval'].includes(String(acct.status));
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} quotationIds
+ * @returns {Set<string>}
+ */
+function quotationIdsWithActiveStaffPurchaseCredit(db, quotationIds) {
+  if (!staffObligationTablesReady(db)) return new Set();
+  if (!hasColumn(db, 'quotations', 'is_staff_purchase')) return new Set();
+  const ids = [...new Set((quotationIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT q.id AS qid FROM quotations q
+       INNER JOIN hr_staff_obligation_accounts a ON a.id = q.staff_purchase_credit_id
+       WHERE q.id IN (${ph})
+         AND q.is_staff_purchase = 1
+         AND a.status IN ('active', 'pending_approval')`
+    )
+    .all(...ids);
+  return new Set(rows.map((r) => String(r.qid || '').trim()).filter(Boolean));
 }
 
 function buildCustomerReceivableItems(db, branchScope) {
   const quotations = listQuotations(db, branchScope);
   const productionJobs = listProductionJobs(db, branchScope);
   const customers = new Map(listCustomers(db, branchScope).map((c) => [c.customerID, c]));
+  const quoteIds = quotations.map((q) => q.id);
+  const staffPurchaseBlocked = quotationIdsWithActiveStaffPurchaseCredit(db, quoteIds);
   const byCustomer = new Map();
 
   for (const q of quotations) {
-    if (quotationHasActiveStaffPurchaseCredit(db, q.id)) continue;
+    if (staffPurchaseBlocked.has(q.id)) continue;
     const due = receivableDueOnQuotationFromEntries([], q, productionJobs);
     if (due <= 0) continue;
     const cid = String(q.customerID || q.customerId || '').trim();
@@ -1133,9 +1150,13 @@ function economicOverpayExcessSumForCustomer(db, customerID, branchScope) {
   const quotes = db
     .prepare(`SELECT id, total_ngn FROM quotations WHERE customer_id = ?${b.sql}`)
     .all(cid, ...b.args);
+  const uncleared = quotationIdsWithUnclearedReceipts(
+    db,
+    quotes.map((q) => q.id)
+  );
   let sum = 0;
   for (const q of quotes) {
-    if (quotationHasUnclearedReceipts(db, q.id)) continue;
+    if (uncleared.has(q.id)) continue;
     const cash = quotationPaymentCashBreakdown(db, q.id);
     sum += quotationOverpaymentExcessNgn({
       cashInNgn: cash.cashInNgn,

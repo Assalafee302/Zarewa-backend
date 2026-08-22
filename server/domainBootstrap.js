@@ -4,6 +4,7 @@ import {
   listLedgerEntries,
   listSuppliers,
   listTransportAgents,
+  listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
   listCoilLots,
@@ -11,8 +12,7 @@ import {
   listStockMovements,
   getWipByProduct,
   listDeliveries,
-  listSalesReceipts,
-  enrichSalesReceiptRowsWithCashFromLedger,
+  listSalesReceiptsForDesk,
   listCuttingLists,
   listRefunds,
   listTreasuryAccounts,
@@ -46,9 +46,12 @@ import { listProductionConversionChecks, listProductionJobCoils, repairProductio
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
+import {
+  listPartnerWalletBalancesDue,
+  partnerWalletEnabled,
+} from './finance/partnerWalletCredit.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
-import { buildCreditorsRegister, buildDebtorsRegister } from './accountingSubledgerOps.js';
 import { listFixedAssets } from './accountingPhase2Ops.js';
 import { userMayViewAccountingSubledger } from './financeDeskAccess.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
@@ -79,7 +82,12 @@ import {
   listMaintenanceWorkOrders,
   listMaterialRequests,
 } from './workItems.js';
-import { financeHistoryListOpts, productionHistoryListOpts, salesCustomersListOpts } from './listQueryOpts.js';
+import {
+  financeHistoryListOpts,
+  productionHistoryListOpts,
+  receiptsHistoryListOpts,
+  salesCustomersListOpts,
+} from './listQueryOpts.js';
 
 const MAX_PROD_ROWS = Math.min(
   5000,
@@ -150,7 +158,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
     quotations: salesOk ? listQuotations(db, branchScope) : [],
     receipts: salesOk
-      ? enrichSalesReceiptRowsWithCashFromLedger(listSalesReceipts(db, branchScope), ledgerRows)
+      ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
       : [],
     refunds: refundsOk ? listRefunds(db, branchScope) : [],
     cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
@@ -233,7 +241,9 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
 }
 
 /**
- * Precomputed accounting registers — same payloads as /api/accounting/* for instant desk tables.
+ * Accounting snapshot fields for finance domain bootstrap.
+ * Creditors/debtors registers are expensive (full subledger rebuild) — loaded on demand via
+ * `/api/accounting/creditors|debtors` when the Accounting tab opens (see useAccountingSubledger).
  * @param {import('better-sqlite3').Database} db
  * @param {object | null} user
  * @param {'ALL' | string} branchScope
@@ -246,26 +256,13 @@ function buildAccountingRegisterSnapshotFields(db, user, branchScope) {
       accountingAssets: null,
     };
   }
-  const registerOpts = { branchId: branchScope === 'ALL' ? 'ALL' : branchScope };
-  let accountingCreditors = null;
-  let accountingDebtors = null;
   let accountingAssets = null;
-  try {
-    accountingCreditors = buildCreditorsRegister(db, registerOpts);
-  } catch (e) {
-    console.error('[domainBootstrap] accountingCreditors', e);
-  }
-  try {
-    accountingDebtors = buildDebtorsRegister(db, registerOpts);
-  } catch (e) {
-    console.error('[domainBootstrap] accountingDebtors', e);
-  }
   try {
     accountingAssets = listFixedAssets(db, branchScope);
   } catch (e) {
     console.error('[domainBootstrap] accountingAssets', e);
   }
-  return { accountingCreditors, accountingDebtors, accountingAssets };
+  return { accountingCreditors: null, accountingDebtors: null, accountingAssets };
 }
 
 /**
@@ -274,8 +271,18 @@ function buildAccountingRegisterSnapshotFields(db, user, branchScope) {
  */
 export function buildFinanceDomainSnapshot(db, opts = {}) {
   const f = domainFlags(db, opts);
-  const { branchScope, finOk, treasuryMovementsOk, ledgerOk, ledgerRows, treasuryOk, refundsOk, payReqOk, procOk } =
-    f;
+  const {
+    branchScope,
+    salesOk,
+    finOk,
+    treasuryMovementsOk,
+    ledgerOk,
+    ledgerRows,
+    treasuryOk,
+    refundsOk,
+    payReqOk,
+    procOk,
+  } = f;
   const expensesSnapshotOk = f.expensesSnapshotOk;
   const user = opts.user ?? null;
   const canSeeCategoryAlert =
@@ -290,6 +297,14 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     domain: 'finance',
     ...accountingRegisters,
     ledgerEntries: ledgerOk ? ledgerRows : [],
+    receipts:
+      salesOk || finOk || treasuryMovementsOk
+        ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
+        : [],
+    cuttingLists:
+      salesOk || finOk || treasuryMovementsOk
+        ? listCuttingLists(db, branchScope, productionHistoryListOpts())
+        : [],
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
     treasuryMovements: treasuryMovementsOk
@@ -313,6 +328,13 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     staffObligationsDue:
       finOk && staffObligationTablesReady(db)
         ? listStaffRepayableObligationsForCashier(db, branchScope)
+        : [],
+    partnerWalletPolicy: { enabled: partnerWalletEnabled() },
+    partnerWalletsDue:
+      finOk ||
+      (user &&
+        (userHasPermission(user, 'finance.pay') || userHasPermission(user, 'cashier.desk.view')))
+        ? listPartnerWalletBalancesDue(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')
@@ -358,6 +380,10 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     domain: 'procurement',
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
+    associatedStaff: procOk ? listAssociatedStaff(db, branchScope) : [],
+    associatedStaffPolicy: {
+      enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
+    },
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],

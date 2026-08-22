@@ -8892,7 +8892,9 @@ export function getHrReportsSummary(db, scope) {
 export function listDraftPayrollRunIds(db) {
   if (!hrTablesReady(db)) return [];
   return db
-    .prepare(`SELECT id, period_yyyymm, status FROM hr_payroll_runs WHERE status = 'draft' ORDER BY created_at_iso DESC`)
+    .prepare(
+      `SELECT id, period_yyyymm, status FROM hr_payroll_runs WHERE status = 'draft' ORDER BY created_at_iso DESC LIMIT 100`
+    )
     .all()
     .map((r) => ({ id: r.id, periodYyyymm: r.period_yyyymm, status: r.status }));
 }
@@ -8995,14 +8997,16 @@ export function listChairmanSchoolFees(db) {
 }
 export function upsertChairmanSchoolFee(db, actorUser, data) {
   const now = nowIso();
+  const feeAmountNgn = Math.round(Number(data.feeAmountNgn) || 0);
+  const amountPaidNgn = Math.round(Number(data.amountPaidNgn) || 0);
   if (data.id) {
     db.prepare(`UPDATE hr_chairman_school_fees SET child_name=?,school_name=?,term=?,academic_year=?,fee_amount_ngn=?,fee_type=?,payment_status=?,amount_paid_ngn=?,payment_date_iso=?,notes=?,updated_at_iso=? WHERE id=?`)
-      .run(data.childName,data.schoolName,data.term,data.academicYear,data.feeAmountNgn||0,data.feeType||'tuition',data.paymentStatus||'pending',data.amountPaidNgn||0,data.paymentDateIso||null,data.notes||null,now,data.id);
+      .run(data.childName,data.schoolName,data.term,data.academicYear,feeAmountNgn,data.feeType||'tuition',data.paymentStatus||'pending',amountPaidNgn,data.paymentDateIso||null,data.notes||null,now,data.id);
     return { ok:true, id:data.id };
   }
   const id = newId('CHSF');
   db.prepare(`INSERT INTO hr_chairman_school_fees (id,child_name,school_name,term,academic_year,fee_amount_ngn,fee_type,payment_status,amount_paid_ngn,payment_date_iso,notes,created_at_iso,created_by_user_id,updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id,data.childName,data.schoolName,data.term,data.academicYear,data.feeAmountNgn||0,data.feeType||'tuition',data.paymentStatus||'pending',data.amountPaidNgn||0,data.paymentDateIso||null,data.notes||null,now,actorUser.id,now);
+    .run(id,data.childName,data.schoolName,data.term,data.academicYear,feeAmountNgn,data.feeType||'tuition',data.paymentStatus||'pending',amountPaidNgn,data.paymentDateIso||null,data.notes||null,now,actorUser.id,now);
   return { ok:true, id };
 }
 export function deleteChairmanSchoolFee(db, id) {
@@ -9017,14 +9021,15 @@ export function listChairmanExpenses(db, periodYyyymm) {
 }
 export function upsertChairmanExpense(db, actorUser, data) {
   const now = nowIso();
+  const amountNgn = Math.round(Number(data.amountNgn) || 0);
   if (data.id) {
     db.prepare(`UPDATE hr_chairman_expenses SET expense_type=?,description=?,amount_ngn=?,quantity=?,unit=?,period_yyyymm=?,payment_status=?,payment_date_iso=?,vendor_name=?,notes=? WHERE id=?`)
-      .run(data.expenseType,data.description,data.amountNgn||0,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,data.id);
+      .run(data.expenseType,data.description,amountNgn,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,data.id);
     return { ok:true, id:data.id };
   }
   const id = newId('CHEX');
   db.prepare(`INSERT INTO hr_chairman_expenses (id,expense_type,description,amount_ngn,quantity,unit,period_yyyymm,payment_status,payment_date_iso,vendor_name,notes,created_at_iso,created_by_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id,data.expenseType,data.description,data.amountNgn||0,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,now,actorUser.id);
+    .run(id,data.expenseType,data.description,amountNgn,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,now,actorUser.id);
   return { ok:true, id };
 }
 export function deleteChairmanExpense(db, id) {

@@ -3,6 +3,7 @@
  * Used to avoid applying procurement_catalog rows from the wrong metal family
  * when coil_lots.material_type_name was corrected but product_id still points
  * at another SKU (e.g. Aluzinc product on an Aluminium coil lot).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/coilMaterialFamily.js
  */
 
 /** @param {string | null | undefined} label */

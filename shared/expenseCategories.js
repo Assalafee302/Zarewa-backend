@@ -40,6 +40,7 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
   // Corporate / other
   'HQ',
   'Chairman withdrawal',
+  'Chairman loan',
   'Truck & mining',
   'Staff loan',
   'Others',
@@ -181,6 +182,8 @@ export function mapLegacyExpenseCategoryToCanonical(value) {
   if (/(zakat|sallah|sadaqah)/i.test(s)) return 'Zakat & Sallah';
   if (/(depreciat)/i.test(s)) return 'Depreciation';
   if (/(chairman|director).*(draw|withdraw)/i.test(s)) return 'Chairman withdrawal';
+  if (/(chairman|director|owner).*(loan|advance)/i.test(s)) return 'Chairman loan';
+  if (/(non[- ]?staff).*(loan|advance)/i.test(s)) return 'Chairman loan';
   if (/\bhq\b|head\s*office/i.test(s)) return 'HQ';
 
   return FALLBACK;

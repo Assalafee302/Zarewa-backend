@@ -1,19 +1,14 @@
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
+import { pingMysqlServer } from './mysqlDatabase.js';
 
 /** @type {boolean | null} */
 let mysqlAvailableCache = null;
 
-/** Whether local MySQL (Vitest `:memory:` harness) is reachable — schema only, no demo seed. */
+/** Whether local MySQL is reachable. Does not wipe or seed a test schema. */
 export function isMysqlAvailableForTests() {
   if (mysqlAvailableCache != null) return mysqlAvailableCache;
-  try {
-    const db = createDatabase(':memory:', { seed: false });
-    db.close();
-    mysqlAvailableCache = true;
-  } catch {
-    mysqlAvailableCache = false;
-  }
+  mysqlAvailableCache = pingMysqlServer();
   return mysqlAvailableCache;
 }
 

@@ -1,0 +1,53 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: zarewa_ci
+          MYSQL_DATABASE: zarewa_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pzarewa_ci"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      ZAREWA_MYSQL_HOST: 127.0.0.1
+      ZAREWA_MYSQL_PORT: 3306
+      ZAREWA_MYSQL_USER: root
+      ZAREWA_MYSQL_PASSWORD: zarewa_ci
+      ZAREWA_MYSQL_DATABASE: zarewa_test
+      ZAREWA_MYSQL_TEST_DATABASE: zarewa_test
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: Critical workflow regression
+        run: npm run test:critical-workflows

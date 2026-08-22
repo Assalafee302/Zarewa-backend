@@ -1,6 +1,6 @@
 /**
  * Material pricing workbook → quotation (roofing sheet / flat sheet).
- * Keep frontend mirror in Zarewa-frontend-main/src/lib/materialWorkbookQuotationPrice.js in sync.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/materialWorkbookQuotationPrice.js
  */
 
 export function normPricingKey(s) {

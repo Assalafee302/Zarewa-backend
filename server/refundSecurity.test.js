@@ -4,7 +4,7 @@ import { createConnection } from 'node:net';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { getEligibleRefundQuotations } from './controlOps.js';
-import { REFUND_PAYEE } from './refundTestPayee.js';
+import { REFUND_PAYEE, ensureRefundTestCustomerBanks } from './refundTestPayee.js';
 
 const openDbs = [];
 let mysqlOk = false;
@@ -119,7 +119,7 @@ function seedData(db) {
 
   db.prepare(
     `INSERT OR REPLACE INTO production_jobs (job_id, quotation_ref, actual_meters, status, created_at_iso)
-     VALUES ('JOB-RFS-UNPR', 'QT-RFS-UNPR-001', 0, 'Cancelled', '2026-04-01T10:00:00Z')`
+     VALUES ('JOB-RFS-UNPR', 'QT-RFS-UNPR-001', 100, 'Completed', '2026-04-01T10:00:00Z')`
   ).run();
 
   db.prepare(
@@ -200,6 +200,8 @@ function seedData(db) {
       100, 0, 100, 10, 'Completed', '2026-04-01T10:00:00Z'
     )`
   ).run();
+
+  ensureRefundTestCustomerBanks(db);
 }
 
 function probeMysqlPort(timeoutMs = 5000) {

@@ -1,6 +1,7 @@
 /**
  * Shared confidential memo / work-item visibility rules.
  * Used by backend office/work-item modules and frontend defense-in-depth.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceConfidentialAccess.js
  */
 
 export const RESTRICTED_WORK_ITEM_PLACEHOLDER = {

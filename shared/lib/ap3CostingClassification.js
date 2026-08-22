@@ -49,6 +49,7 @@ const CANONICAL_TO_BUCKET = Object.freeze({
   'Marketing & advertising': 'selling_marketing',
   HQ: 'admin_office',
   'Chairman withdrawal': 'owner_drawings',
+  'Chairman loan': 'finance_bank',
   'Truck & mining': 'transport_landing',
   'Staff loan': 'finance_bank',
   Others: 'unclassified',

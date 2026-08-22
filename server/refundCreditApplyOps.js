@@ -8,6 +8,8 @@ import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
   REFUND_CREDIT_LEDGER_REF_PREFIX,
+  REFUND_CREDIT_REVERSED_STATUS,
+  REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX,
   allocateRefundCreditAcrossSources,
   planRefundCreditApplyAmount,
   refundCategoriesAreOverpaymentOnly,
@@ -68,7 +70,7 @@ function mapRefundRowToCreditShape(row) {
  * @param {string} targetQuotationRef
  * @param {{ branchId?: string }} [opts]
  */
-export function listEligibleRefundCredits(db, customerId, targetQuotationRef, opts = {}) {
+export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _opts = {}) {
   const cid = String(customerId || '').trim();
   const target = String(targetQuotationRef || '').trim();
   if (!cid || !target) {
@@ -512,6 +514,253 @@ export function applyRefundCreditToQuotation(db, payload) {
       customerID: cid,
       targetQuotationRef: target,
     };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+function refundTreasuryPaidNgn(db, refundId) {
+  const rid = String(refundId || '').trim();
+  if (!rid) return 0;
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(
+         CASE
+           WHEN type = 'REFUND_PAYOUT' THEN amount_ngn
+           WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -amount_ngn
+           ELSE 0
+         END
+       ), 0) AS s
+       FROM treasury_movements
+       WHERE source_kind = 'REFUND' AND source_id = ?`
+    )
+    .get(rid);
+  return Math.max(0, roundMoney(row?.s));
+}
+
+/**
+ * Undo a mistaken refund-fund apply: restore the source refund, take paid credit off the target quote.
+ * Requires finance.reverse. Does not reverse till/bank receipts.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} applicationId
+ * @param {{ actor?: object, note?: string, dateISO?: string, alreadyInTransaction?: boolean }} [payload]
+ */
+export function reverseRefundCreditApplication(db, applicationId, payload = {}) {
+  const appId = String(applicationId || '').trim();
+  if (!appId) return { ok: false, error: 'applicationId is required.' };
+
+  const app = db.prepare(`SELECT * FROM refund_credit_applications WHERE application_id = ?`).get(appId);
+  if (!app) return { ok: false, error: 'Refund fund application not found.' };
+  const status = String(app.status || '').trim();
+  if (status === REFUND_CREDIT_REVERSED_STATUS) {
+    return { ok: false, error: 'This refund fund apply has already been reversed.', code: 'ALREADY_REVERSED' };
+  }
+
+  const amt = roundMoney(app.amount_ngn);
+  if (amt <= 0) return { ok: false, error: 'Application amount is missing.' };
+
+  const postingDay =
+    String(payload.dateISO || '').trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, postingDay, 'Refund credit reverse date');
+  } catch (pe) {
+    return { ok: false, error: String(pe?.message || pe), code: 'PERIOD_LOCKED' };
+  }
+
+  const actor = payload.actor || null;
+  const atIso = `${postingDay}T12:00:00.000Z`;
+  const originalRef = String(app.ledger_bank_reference || '').trim();
+  const reverseRef = `${REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX}${appId}`;
+  const target = String(app.target_quotation_ref || '').trim();
+  const sourceQ = String(app.source_quotation_ref || '').trim();
+  const refundId = String(app.refund_id || '').trim();
+  const bid = String(app.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const noteBit = String(payload.note || '').trim();
+
+  const already = originalRef
+    ? db
+        .prepare(
+          `SELECT id FROM ledger_entries WHERE bank_reference = ? LIMIT 1`
+        )
+        .get(reverseRef)
+    : db.prepare(`SELECT id FROM ledger_entries WHERE bank_reference = ? LIMIT 1`).get(reverseRef);
+  if (already) {
+    return { ok: false, error: 'This refund fund apply has already been reversed.', code: 'ALREADY_REVERSED' };
+  }
+
+  try {
+    const runReverse = () => {
+      const originals = originalRef
+        ? db.prepare(`SELECT * FROM ledger_entries WHERE bank_reference = ? ORDER BY id ASC`).all(originalRef)
+        : [];
+      const customerName =
+        originals[0]?.customer_name ||
+        db.prepare(`SELECT name FROM customers WHERE customer_id = ?`).get(app.customer_id)?.name ||
+        null;
+
+      const compensating = [];
+      if (originals.length) {
+        for (const row of originals) {
+          compensating.push({
+            type: row.type,
+            customerID: row.customer_id,
+            customerName: row.customer_name || customerName,
+            amountNgn: -roundMoney(row.amount_ngn),
+            quotationRef: row.quotation_ref || '',
+            paymentMethod: row.payment_method || 'Internal',
+            bankReference: reverseRef,
+            createdByUserId: actorId(actor),
+            createdByName: actorName(actor),
+            note: `Reverse refund fund ${appId}: ₦${amt.toLocaleString('en-NG')} off ${target}${
+              noteBit ? ` — ${noteBit}` : ''
+            }.`,
+            atISO: atIso,
+          });
+        }
+      } else if (target) {
+        compensating.push({
+          type: 'OVERPAY_APPLIED',
+          customerID: app.customer_id,
+          customerName,
+          amountNgn: -amt,
+          quotationRef: target,
+          paymentMethod: 'Internal',
+          bankReference: reverseRef,
+          createdByUserId: actorId(actor),
+          createdByName: actorName(actor),
+          note: `Reverse refund fund ${appId}: ₦${amt.toLocaleString('en-NG')} off ${target}${
+            noteBit ? ` — ${noteBit}` : ''
+          }.`,
+          atISO: atIso,
+        });
+      }
+
+      if (compensating.length) {
+        insertLedgerRows(db, compensating, bid, { bypassQuotationPaymentLocks: true });
+      }
+
+      if (refundId) {
+        const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+        if (!fresh) throw new Error(`Refund ${refundId} not found.`);
+        const shape = mapRefundRowToCreditShape(fresh);
+        const overpayOnly = refundCategoriesAreOverpaymentOnly(
+          shape.reasonCategory,
+          shape.calculationLines
+        );
+        const requested = roundMoney(fresh.amount_ngn);
+        const priorCredit = roundMoney(fresh.credit_applied_ngn);
+        if (amt > priorCredit + 1) {
+          throw new Error(
+            `Refund ${refundId} only has ₦${priorCredit.toLocaleString('en-NG')} credit applied; cannot reverse ₦${amt.toLocaleString('en-NG')}.`
+          );
+        }
+        const nextCredit = Math.max(0, priorCredit - amt);
+        const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
+        const paidNow = roundMoney(fresh.paid_amount_ngn);
+        const creditSittingInPaid = Math.max(0, paidNow - treasuryPaid);
+        const nextPaid = treasuryPaid + Math.max(0, creditSittingInPaid - amt);
+        let nextApproved = roundMoney(fresh.approved_amount_ngn);
+        if (nextApproved > 0) {
+          nextApproved = Math.min(requested, nextApproved + amt);
+        }
+
+        let nextStatus;
+        if (nextPaid > 0 && nextApproved > 0 && nextPaid >= nextApproved) {
+          nextStatus = 'Paid';
+        } else if (nextApproved > 0 || String(fresh.status) === 'Approved' || String(fresh.status) === 'Paid') {
+          nextStatus = nextPaid > 0 && nextApproved <= 0 ? 'Approved' : nextApproved > 0 ? 'Approved' : 'Pending';
+          if (overpayOnly && nextApproved <= 0 && nextPaid <= 0) nextStatus = 'Pending';
+        } else {
+          nextStatus = 'Pending';
+        }
+        if (overpayOnly && nextPaid <= 0 && nextCredit <= 0 && nextApproved <= 0) {
+          nextStatus = 'Pending';
+        }
+
+        const remainingApps = db
+          .prepare(
+            `SELECT target_quotation_ref FROM refund_credit_applications
+             WHERE refund_id = ? AND application_id != ? AND TRIM(COALESCE(status, '')) != ?
+             ORDER BY created_at_iso DESC, application_id DESC`
+          )
+          .all(refundId, appId, REFUND_CREDIT_REVERSED_STATUS);
+        const nextDest =
+          nextCredit > 0 ? String(remainingApps[0]?.target_quotation_ref || '').trim() || null : null;
+
+        const reverseNote = `Reversed refund fund ${appId}: ₦${amt.toLocaleString('en-NG')} taken off ${target}.`;
+        const prevNote = String(fresh.payment_note || '').trim();
+        const paymentNote = prevNote ? `${prevNote} · ${reverseNote}` : reverseNote;
+
+        const clearPaidMeta = nextPaid <= 0;
+        db.prepare(
+          `UPDATE customer_refunds
+           SET status = ?,
+               approved_amount_ngn = ?,
+               paid_amount_ngn = ?,
+               paid_at_iso = ?,
+               paid_by = ?,
+               paid_by_user_id = ?,
+               payment_note = ?,
+               credit_applied_ngn = ?,
+               credit_applied_to_quotation_ref = ?,
+               credit_confirmation_status = ?
+           WHERE refund_id = ?`
+        ).run(
+          nextStatus,
+          nextApproved,
+          nextPaid,
+          clearPaidMeta ? null : fresh.paid_at_iso,
+          clearPaidMeta ? null : fresh.paid_by,
+          clearPaidMeta ? null : fresh.paid_by_user_id,
+          paymentNote,
+          nextCredit,
+          nextDest,
+          nextCredit > 0 ? REFUND_CREDIT_CONFIRMATION_STATUS : null,
+          refundId
+        );
+      }
+
+      db.prepare(`UPDATE refund_credit_applications SET status = ? WHERE application_id = ?`).run(
+        REFUND_CREDIT_REVERSED_STATUS,
+        appId
+      );
+
+      if (target) syncQuotationPaidFromLedger(db, target);
+      if (sourceQ && sourceQ !== target) syncQuotationPaidFromLedger(db, sourceQ);
+
+      appendAuditLog(db, {
+        actor,
+        action: 'ledger.reverse_refund_credit',
+        entityKind: 'refund_credit_application',
+        entityId: appId,
+        note: `Reversed ₦${amt.toLocaleString('en-NG')} refund fund off ${target}`,
+        details: {
+          customerID: app.customer_id,
+          targetQuotationRef: target,
+          sourceQuotationRef: sourceQ || null,
+          refundId: refundId || null,
+          amountNgn: amt,
+          note: noteBit || null,
+        },
+      });
+
+      const qAfter = target
+        ? db.prepare(`SELECT total_ngn, paid_ngn, payment_status FROM quotations WHERE id = ?`).get(target)
+        : null;
+      return {
+        applicationId: appId,
+        amountNgn: amt,
+        targetQuotationRef: target,
+        sourceQuotationRef: sourceQ || null,
+        refundId: refundId || null,
+        targetPaidNgn: roundMoney(qAfter?.paid_ngn),
+        targetPaymentStatus: qAfter?.payment_status || null,
+      };
+    };
+
+    const result = payload.alreadyInTransaction ? runReverse() : db.transaction(runReverse)();
+    return { ok: true, status: REFUND_CREDIT_REVERSED_STATUS, ...result };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   }

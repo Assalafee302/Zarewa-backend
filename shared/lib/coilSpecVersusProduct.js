@@ -1,3 +1,7 @@
+/**
+ * Coil vs quotation material spec (gauge / colour / type).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/coilSpecVersusProduct.js
+ */
 import { stockRowMatchesColourFilter } from './stockCheckMasterOptions.js';
 import {
   quotationHasCoilLine,

@@ -1,6 +1,6 @@
 /**
- * Purchase order line types — shared by server and frontend.
- * Keep in sync with Zarewa-frontend-main/src/lib/poLineTypes.js
+ * Purchase order line types — isomorphic (API + SPA).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/poLineTypes.js
  */
 
 export const PO_LINE_TYPES = [

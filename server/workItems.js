@@ -13,8 +13,10 @@ import {
   nextWorkItemDecisionHumanId,
   nextWorkItemHumanId,
 } from './humanId.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { filingCompletenessForWorkItem } from './filingCompleteness.js';
 import { listCoilRequests, listManagementItems, listPaymentRequests } from './readModel.js';
+import { normalizeMaintenanceWorkOrderKind } from '../shared/lib/maintenanceCostEnvelope.js';
 import { listHrRequests } from './hrOps.js';
 import { resolveResponsibleUserForOffice } from './hrOrgStaffOps.js';
 import { listHrTransferRequests } from './hrTransferRequests.js';
@@ -1753,7 +1755,9 @@ export function listMaterialRequests(db, scope) {
     sql += ` AND branch_id = ?`;
     args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
   }
-  sql += ` ORDER BY requested_at_iso DESC`;
+  const limit = resolveListLimit({ limit: scope?.limit });
+  sql += ` ORDER BY requested_at_iso DESC${sqlLimitClause(limit)}`;
+  if (limit > 0) args.push(limit);
   const lineStmt = db.prepare(
     `SELECT * FROM material_request_lines WHERE material_request_id = ? ORDER BY line_no ASC`
   );
@@ -2066,11 +2070,17 @@ export function listMachines(db, scope) {
     assetsByMachine.set(row.machine_id, list);
   }
   const latestMeterByMachine = new Map();
+  // One latest reading per machine — avoid loading the full meter log history.
   const meterRows = db
     .prepare(
-      `SELECT machine_id, reading_date_iso, output_meters
-       FROM machine_meter_logs
-       ORDER BY reading_date_iso DESC, created_at_iso DESC`
+      `SELECT m.machine_id, m.reading_date_iso, m.output_meters
+       FROM machine_meter_logs m
+       INNER JOIN (
+         SELECT machine_id, MAX(reading_date_iso) AS max_date
+         FROM machine_meter_logs
+         GROUP BY machine_id
+       ) latest ON latest.machine_id = m.machine_id AND latest.max_date = m.reading_date_iso
+       ORDER BY m.created_at_iso DESC`
     )
     .all();
   for (const row of meterRows) {
@@ -2213,8 +2223,8 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
         resolution, incident_date_iso, opened_at_iso, acknowledged_at_iso, approved_at_iso, closed_at_iso,
         opened_by_user_id, acknowledged_by_user_id, approved_by_user_id, closed_by_user_id, assigned_to_user_id,
         downtime_hours, vendor_id, vendor_name, replacement_required, related_material_request_id, related_payment_request_id,
-        related_work_item_id, data_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        related_work_item_id, estimated_cost_ngn, returned_to_production_at_iso, cost_closed_at_iso, data_json
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       id,
       referenceNo,
@@ -2223,7 +2233,7 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
       String(body?.planId || '').trim() || null,
       String(body?.status || 'open').trim() || 'open',
       String(body?.priority || 'normal').trim() || 'normal',
-      String(body?.kind || 'corrective').trim() || 'corrective',
+      normalizeMaintenanceWorkOrderKind(body?.kind),
       summary,
       String(body?.symptom || '').trim() || null,
       String(body?.diagnosis || '').trim() || null,
@@ -2245,8 +2255,18 @@ export function createMaintenanceWorkOrder(db, body, actor, workspaceBranchId = 
       String(body?.relatedMaterialRequestId || '').trim() || null,
       String(body?.relatedPaymentRequestId || '').trim() || null,
       null,
+      Math.max(0, Math.round(Number(body?.estimatedCostNgn) || 0)),
+      null,
+      null,
       body?.data != null ? JSON.stringify(body.data) : null
     );
+    const priorityNow = String(body?.priority || 'normal').trim().toLowerCase();
+    if (priorityNow === 'machine_down') {
+      db.prepare(
+        `UPDATE machines SET status = 'under_maintenance', updated_at_iso = ?, updated_by_user_id = ?
+         WHERE id = ? AND LOWER(COALESCE(status, 'active')) = 'active'`
+      ).run(openedAtIso, String(actor?.id || '').trim() || null, machineId);
+    }
     const workItem = createWorkItem(db, {
       actor,
       branchId,
@@ -2347,6 +2367,9 @@ export function listMaintenanceWorkOrders(db, scope) {
     relatedMaterialRequestId: row.related_material_request_id || '',
     relatedPaymentRequestId: row.related_payment_request_id || '',
     relatedWorkItemId: row.related_work_item_id || '',
+    estimatedCostNgn: Math.max(0, Math.round(Number(row.estimated_cost_ngn) || 0)),
+    returnedToProductionAtIso: row.returned_to_production_at_iso || '',
+    costClosedAtIso: row.cost_closed_at_iso || '',
     data: safeJsonParse(row.data_json, {}),
   }));
 }

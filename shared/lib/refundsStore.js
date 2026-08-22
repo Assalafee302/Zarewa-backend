@@ -89,6 +89,7 @@ export function normalizeRefund(r) {
 }
 
 export function isRefundPayable(r) {
+  if (Math.round(Number(r?.walletOpenNgn) || 0) > 0) return false;
   return (
     r?.status === 'Approved' &&
     refundOutstandingAmount(r) > 0 &&

@@ -1,3 +1,7 @@
+/**
+ * Receivable write-off policy (round-off vs settlement vs bad debt).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/receivableWriteOffPolicy.js
+ */
 import {
   isEffectivelyFullyPaid,
   outstandingToleranceNgn,

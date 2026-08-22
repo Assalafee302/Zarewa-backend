@@ -1,3 +1,7 @@
+/**
+ * In-transit PO visibility (line balances, not status alone).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/inTransitVisibility.js
+ */
 import { poLineIsOpenForReceiving } from './poLineTypes.js';
 
 export function normalizePoStatusKey(status) {

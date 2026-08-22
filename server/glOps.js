@@ -99,7 +99,11 @@ export function seedDefaultGlAccounts(db) {
 
 /** Ensures accounts added after first seed still exist (existing databases). */
 export function ensureSupplementalGlAccounts(db) {
-  ensureGlSchema(db);
+  try {
+    db.prepare(`SELECT 1 FROM gl_accounts LIMIT 1`).get();
+  } catch {
+    ensureGlSchema(db);
+  }
   const ins = db.prepare(
     `INSERT OR IGNORE INTO gl_accounts (id, code, name, type, is_active, sort_order) VALUES (?,?,?,?,1,?)`
   );
@@ -137,8 +141,13 @@ export function getGlAccountIdByCode(db, code) {
  * @param {import('better-sqlite3').Database} db
  */
 export function postBalancedJournalTx(db, payload) {
-  ensureGlSchema(db);
-  seedDefaultGlAccounts(db);
+  try {
+    db.prepare(`SELECT 1 FROM gl_journal_entries LIMIT 1`).get();
+  } catch {
+    ensureGlSchema(db);
+    seedDefaultGlAccounts(db);
+  }
+  ensureSupplementalGlAccounts(db);
   const lines = payload.lines || [];
   let deb = 0;
   let cred = 0;
@@ -1018,6 +1027,10 @@ export function listGlActivityLines(db, startDate, endDate, opts = {}) {
   const bp = glJournalBranchFilter(db, branchScope, 'j');
   const params = costCenter ? [sd, ed, costCenter] : [sd, ed];
   params.push(...bp.args);
+  const maxLines = Math.min(
+    50_000,
+    Math.max(500, Number(process.env.ZAREWA_GL_ACTIVITY_LIMIT) || 10_000)
+  );
   const rows = db
     .prepare(
       `SELECT j.entry_date_iso AS entryDateISO, j.id AS journalId, j.memo AS journalMemo,
@@ -1029,8 +1042,20 @@ export function listGlActivityLines(db, startDate, endDate, opts = {}) {
        JOIN gl_journal_entries j ON j.id = l.journal_id
        JOIN gl_accounts a ON a.id = l.account_id
        WHERE j.entry_date_iso >= ? AND j.entry_date_iso <= ?${ccSql}${bp.sql}
-       ORDER BY j.entry_date_iso, j.id, l.id`
+       ORDER BY j.entry_date_iso, j.id, l.id
+       LIMIT ?`
     )
-    .all(...params);
-  return { ok: true, lines: rows, startDate: sd, endDate: ed, costCenter: costCenter || null, branchScope };
+    .all(...params, maxLines + 1);
+  const truncated = rows.length > maxLines;
+  const lines = truncated ? rows.slice(0, maxLines) : rows;
+  return {
+    ok: true,
+    lines,
+    truncated,
+    limit: maxLines,
+    startDate: sd,
+    endDate: ed,
+    costCenter: costCenter || null,
+    branchScope,
+  };
 }

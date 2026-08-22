@@ -1,3 +1,8 @@
+/**
+ * HTTP route composer. Do not add new route groups here — extract them into
+ * `server/http/*Routes.js` (see docs/FILE_STRUCTURE_CAMPAIGN.md). Writes belong
+ * in *Ops modules; this file should only wire HTTP to ops.
+ */
 import {
   advanceBalanceFromEntries,
   overpayCreditBalanceFromEntries,
@@ -50,6 +55,8 @@ import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
 import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
 import {
+  ASSOCIATED_STAFF_MANAGE_PERMS,
+  ASSOCIATED_STAFF_READ_PERMS,
   CUSTOMER_AND_AR_READ_PERMS,
   canReadOperationsDomain,
   canReadSalesDomain,
@@ -107,26 +114,12 @@ import {
   openFinanceProfileMysqlConnection,
 } from './financeLiveProfileReadonly.js';
 import {
-  userMayViewFinanceTrialExceptions,
-  userMayViewAp1cDryRun,
-  userMayViewAp2SupplierDiagnostics,
-  userMayViewAp2ApRebuildPreview,
-  userMayApplyAp2ApRebuild,
   userMayViewAp3CostingReadiness,
   userMayViewAccountingSubledger,
   userMayManageAccountingSubledger,
 } from './financeDeskAccess.js';
 import { userMayAccessAccountingGlApis } from './legacyAccountsAccess.js';
 import { buildCustomPermissionOverrideAudit } from './customPermissionAudit.js';
-import { buildAp2SupplierDiagnosticsReport } from './ap2SupplierDiagnosticsOps.js';
-import { applyAp2ReceivedBasisRebuild, buildAp2ApRebuildPreview, logAp2RebuildPreviewed } from './ap2ApRebuildOps.js';
-import { buildSupplierAdvanceReport } from './ap2SupplierAdvanceOps.js';
-import { buildInventoryValuationReport } from './ap2InventoryValuationOps.js';
-import { buildApInventoryGlAlignmentReport } from './ap2GlAlignmentOps.js';
-import { buildAp3CostingReadinessReport } from './ap3CostingReadinessOps.js';
-import { buildAp3BranchPlReport } from './ap3BranchPlOps.js';
-import { buildPricingGovernancePack, proposeWorkbookCostRefresh } from './pricingGovernanceOps.js';
-import { buildAp3MaterialCostReport } from './ap3MaterialCostOps.js';
 import {
   buildCreditorsRegister,
   buildDebtorsRegister,
@@ -151,8 +144,7 @@ import {
 } from './accountingPhase2Ops.js';
 import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
-import { buildAp1cDryRunReport } from './ap1cDryRunOps.js';
-import { buildAp1cReclassPreview, postAp1cReclassBatch } from './ap1cReclassOps.js';
+import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
@@ -185,7 +177,7 @@ import {
   assertRefundIdInWorkspace,
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
-import { sendIdempotentReplayIfAny, storeIdempotentSuccess } from './idempotency.js';
+import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
 import { parseListQuery, sendPaginatedList, slicePage } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
@@ -235,7 +227,7 @@ import {
   unlockAccountingPeriod,
   upsertTreasuryAccount,
 } from './controlOps.js';
-import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
+import { listCustomerMasterQualityIssues } from './sales/customerMasterQualityOps.js';
 import { buildExpenseCategoryMetaForActor } from '../shared/expenseCategoryPolicy.js';
 import { userMayReviewPaymentRequests } from '../shared/workspaceGovernance.js';
 import { buildExpenseCategoryExceptionReport, buildExpenseCategoryExceptionCsv, buildExpenseCategoryMonthlyAlert, buildExpenseCategoryOthersTrendReport } from './expenseCategoryReportOps.js';
@@ -426,10 +418,10 @@ import {
 import {
   acknowledgeMaintenanceWorkOrder,
   assignMaintenanceWorkOrder,
+  attachWorkOrderFinance,
   createMaintenanceCostLine,
   getMaintenanceWorkOrder,
   linkWorkOrderPaymentRequest,
-  listMaintenanceCostLines,
   listOpenMaintenanceIssues,
   resolveMaintenanceWorkOrder,
 } from './maintenanceWorkOrderOps.js';
@@ -477,18 +469,22 @@ import {
   startProductionJob,
 } from './productionTraceability.js';
 import {
-  listCustomers,
   getCustomer,
   listQuotations,
+  listQuotationsForCustomer,
+  listProductionJobsForQuotationRefs,
   listQuotationIds,
   getQuotation,
   quotationLinkedToProductionContext,
   getCuttingList,
   listLedgerEntries,
+  countLedgerEntries,
   listLedgerEntriesForCustomer,
+  countLedgerEntriesForCustomer,
   listLedgerEntriesForQuotation,
   listSuppliers,
   listTransportAgents,
+  listAssociatedStaff,
   listRefunds,
   listExpenses,
   getRefundIntelligenceForQuotation,
@@ -685,7 +681,7 @@ import { RUNA_DESIGN_LIMITS } from '../shared/lib/helpDesignLimits.js';
 import { readRunaAiConfig } from './helpAiService.js';
 import { buildLoginSecuritySummary, listActiveSessions } from './sessionSecurityOps.js';
 import { HELP_ARTICLE_COUNT } from '../shared/lib/helpKnowledge.js';
-import { allowRateLimit, clientIp, skipAuthedRateLimit } from './rateLimit.js';
+import { allowRateLimit, clientIp, isRateLimited, skipAuthedRateLimit } from './rateLimit.js';
 const loginAttemptBuckets = new Map();
 const forgotPasswordBuckets = new Map();
 const ledgerPostBuckets = new Map();
@@ -943,9 +939,15 @@ function requireCoilSnapshotCapture(req, res, next) {
 
 /**
  * @param {import('express').Express} app
- * @param {import('better-sqlite3').Database} db
+ * @param {object} db MySQL adapter from `createDatabase`
  */
 import { registerMobileApi } from './mobileApi.js';
+import { registerLivenessRoutes } from './http/livenessRoutes.js';
+import { registerFinanceDiagnosticRoutes } from './http/financeDiagnosticRoutes.js';
+import { registerPartnerWalletRoutes } from './http/partnerWalletRoutes.js';
+import { registerWorkspaceListRoutes } from './http/workspaceListRoutes.js';
+import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
+import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -972,29 +974,7 @@ export function registerHttpApi(app, db) {
     fastProductionBoot: 'v1',
     ...accountingPolicyV1HealthCapabilities(readFinanceFeatureFlags()),
   };
-  const sendPublicLiveness = (_req, res) => {
-    res.json({
-      ok: true,
-      service: 'zarewa-api',
-      time: new Date().toISOString(),
-    });
-  };
-  const sendApiLiveness = (_req, res) => {
-    res.json({
-      ok: true,
-      service: 'zarewa-api',
-      time: new Date().toISOString(),
-      capabilities: livenessCapabilities,
-    });
-  };
-  const publicLivenessPaths = ['/health', '/healthz', '/livez', '/readyz', '/status'];
-  const apiLivenessPaths = ['/api/health', '/api/readyz', '/api/livez', '/api/status'];
-  for (const p of publicLivenessPaths) {
-    app.get(p, sendPublicLiveness);
-  }
-  for (const p of apiLivenessPaths) {
-    app.get(p, sendApiLiveness);
-  }
+  registerLivenessRoutes(app, { livenessCapabilities });
 
   /**
    * Read-only finance desk data profile (aggregates only, no PII).
@@ -1031,136 +1011,10 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  /**
-   * Phase B3a — trial exception counts & role adoption (no PII, SELECT only).
-   * Warnings only; strict RBAC flags remain off unless env enables them.
-   */
-  app.get('/api/finance/trial-exceptions', requireAuth, async (req, res) => {
-    try {
-      if (!userMayViewFinanceTrialExceptions(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view finance trial exceptions.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const summary = await buildFinanceTrialExceptionSummary(db, { branchId });
-      return res.json(summary);
-    } catch (e) {
-      console.error('[finance-trial-exceptions]', e);
-      return res.status(500).json({ ok: false, error: 'Trial exception summary failed.' });
-    }
-  });
-
-  /**
-   * AP2a — Supplier / GRN / payables diagnostics (read-only; no AP or GL mutations).
-   */
-  app.get('/api/finance/ap2-supplier-diagnostics', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view supplier payables diagnostics.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const period = String(req.query?.period || '').trim() || null;
-      const supplierId = String(req.query?.supplierId || '').trim() || null;
-      const status = String(req.query?.status || '').trim() || null;
-      const limitSamples = Number(req.query?.limitSamples) || undefined;
-      const report = buildAp2SupplierDiagnosticsReport(db, {
-        branchId,
-        period,
-        supplierId,
-        status,
-        limitSamples,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap2-supplier-diagnostics]', e);
-      return res.status(500).json({ ok: false, error: 'Supplier diagnostics failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap2-ap-rebuild-preview', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp2ApRebuildPreview(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to preview AP rebuild.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const period = String(req.query?.period || '').trim() || null;
-      const supplierId = String(req.query?.supplierId || '').trim() || null;
-      const status = String(req.query?.status || '').trim() || null;
-      const logPreview = String(req.query?.logPreview || '').trim() === '1';
-      const scope = { branchId, period, supplierId, status };
-      const report = logPreview
-        ? logAp2RebuildPreviewed(db, req.user, scope)
-        : buildAp2ApRebuildPreview(db, scope);
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap2-ap-rebuild-preview]', e);
-      return res.status(500).json({ ok: false, error: 'AP rebuild preview failed.' });
-    }
-  });
-
-  app.post('/api/finance/ap2-ap-rebuild', requireAuth, (req, res) => {
-    try {
-      if (!userMayApplyAp2ApRebuild(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to apply AP rebuild.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const body = req.body && typeof req.body === 'object' ? req.body : {};
-      const result = applyAp2ReceivedBasisRebuild(db, req.user, {
-        branchId: body.branchId,
-        period: body.period,
-        supplierId: body.supplierId,
-        status: body.status,
-        confirmPreviewHash: body.confirmPreviewHash,
-        approvalNote: body.approvalNote,
-        dryRunAccepted: body.dryRunAccepted === true,
-      });
-      if (!result.ok) {
-        const status = result.code === 'PREVIEW_STALE' ? 409 : 400;
-        return res.status(status).json(result);
-      }
-      return res.json(result);
-    } catch (e) {
-      console.error('[ap2-ap-rebuild]', e);
-      return res.status(500).json({ ok: false, error: 'AP rebuild failed.' });
-    }
-  });
-
-  app.get('/api/finance/supplier-advance-report', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
-        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildSupplierAdvanceReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-        supplierId: String(req.query?.supplierId || '').trim() || null,
-        status: String(req.query?.status || '').trim() || null,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[supplier-advance-report]', e);
-      return res.status(500).json({ ok: false, error: 'Supplier advance report failed.' });
-    }
-  });
+  registerFinanceDiagnosticRoutes(app, db);
+  registerPartnerWalletRoutes(app, db);
+  registerMaintenanceRoutes(app, db);
+  registerChairmanOfficeRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
   function accountingListBranchId(req) {
@@ -1351,6 +1205,13 @@ export function registerHttpApi(app, db) {
       }
       const result = getRegisterSettlement(db, req.params.settlementId);
       if (!result.ok) return res.status(404).json(result);
+      const lineId = String(result.settlement?.registerLineId || '').trim();
+      if (lineId) {
+        const lineGate = assertRegisterLineWorkspaceRead(req, lineId);
+        if (!lineGate.ok) {
+          return res.status(lineGate.status === 403 ? 403 : 404).json({ ok: false, error: lineGate.error });
+        }
+      }
       return res.json(result);
     } catch (e) {
       console.error('[accounting-settlement-get]', e);
@@ -1524,6 +1385,7 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/accounting/settlements/:settlementId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'register_settlement.pay')) return;
       const result = payRegisterSettlement(db, req.params.settlementId, {
         ...(req.body || {}),
         paidBy: req.user?.displayName,
@@ -1569,6 +1431,7 @@ export function registerHttpApi(app, db) {
           console.error('[register-settlement-pay-work-item-sync]', syncErr);
         }
       }
+      if (result.ok) storeIdempotentSuccess(db, req, 'register_settlement.pay', 201, result);
       return res.status(result.ok ? 201 : 400).json(result);
     } catch (e) {
       console.error('[accounting-settlement-pay]', e);
@@ -1654,228 +1517,6 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error('[accounting-asset-dispose]', e);
       return res.status(500).json({ ok: false, error: 'Could not dispose fixed asset.' });
-    }
-  });
-
-  app.get('/api/finance/inventory-valuation-report', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
-        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildInventoryValuationReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-        materialFamily: String(req.query?.materialFamily || '').trim() || undefined,
-        gauge: String(req.query?.gauge || '').trim() || undefined,
-        colour: String(req.query?.colour || '').trim() || undefined,
-        valuationBasis: String(req.query?.valuationBasis || '').trim() || undefined,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[inventory-valuation-report]', e);
-      return res.status(500).json({ ok: false, error: 'Inventory valuation report failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap-inventory-gl-alignment', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp2SupplierDiagnostics(req.user)) {
-        return res.status(403).json({ ok: false, error: 'Forbidden.', code: 'FORBIDDEN' });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildApInventoryGlAlignmentReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap-inventory-gl-alignment]', e);
-      return res.status(500).json({ ok: false, error: 'AP/GL alignment report failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap3-material-cost-report', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp3CostingReadiness(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view material cost reports.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildAp3MaterialCostReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-        materialFamily: String(req.query?.materialFamily || '').trim() || null,
-        gauge: String(req.query?.gauge || '').trim() || null,
-        colour: String(req.query?.colour || '').trim() || null,
-        trustFilter: String(req.query?.trustFilter || '').trim() || null,
-        limitJobs: Number(req.query?.limitJobs) || undefined,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap3-material-cost-report]', e);
-      return res.status(500).json({ ok: false, error: 'Material cost report failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap3-costing-readiness', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp3CostingReadiness(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view costing readiness.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildAp3CostingReadinessReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-        materialFamily: String(req.query?.materialFamily || '').trim() || null,
-        gauge: String(req.query?.gauge || '').trim() || null,
-        colour: String(req.query?.colour || '').trim() || null,
-        limitSamples: Number(req.query?.limitSamples) || undefined,
-      });
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap3-costing-readiness]', e);
-      return res.status(500).json({ ok: false, error: 'Costing readiness report failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap3-branch-pl', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp3CostingReadiness(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view branch P&L.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const report = buildAp3BranchPlReport(db, {
-        branchId,
-        period: String(req.query?.period || '').trim() || null,
-      });
-      if (!report.ok) return res.status(400).json(report);
-      return res.json(report);
-    } catch (e) {
-      console.error('[ap3-branch-pl]', e);
-      return res.status(500).json({ ok: false, error: 'Branch P&L report failed.' });
-    }
-  });
-
-  /** Phase 3 pricing governance — finance_manager and above (same gate as AP3 costing). */
-  app.get('/api/finance/pricing-governance', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp3CostingReadiness(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view pricing governance.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const pack = buildPricingGovernancePack(db, {
-        branchId,
-        limit: Number(req.query?.limit) || undefined,
-      });
-      return res.json(pack);
-    } catch (e) {
-      console.error('[pricing-governance]', e);
-      return res.status(500).json({ ok: false, error: 'Pricing governance pack failed.' });
-    }
-  });
-
-  app.post('/api/finance/pricing-governance/propose-cost-refresh', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp3CostingReadiness(req.user)) {
-        return res.status(403).json({ ok: false, error: 'You do not have permission to refresh workbook cost.', code: 'FORBIDDEN' });
-      }
-      const result = proposeWorkbookCostRefresh(db, req.body?.rowId, req.user);
-      return res.status(result.ok ? 200 : 400).json(result);
-    } catch (e) {
-      console.error('[pricing-governance-cost-refresh]', e);
-      return res.status(500).json({ ok: false, error: 'Could not refresh workbook cost.' });
-    }
-  });
-
-  app.get('/api/finance/ap1c-dry-run', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp1cDryRun(req.user)) {
-        return res.status(403).json({
-          ok: false,
-          error: 'You do not have permission to view AP1c dry-run diagnostics.',
-          code: 'FORBIDDEN',
-        });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const period = String(req.query?.period || '').trim() || null;
-      const limitSamples = Number(req.query?.limitSamples) || undefined;
-      const report = buildAp1cDryRunReport(db, { branchId, period, limitSamples });
-      const flags = readFinanceFeatureFlags();
-      return res.json({
-        ...report,
-        flags: {
-          accountingPolicyV1Diagnostics: flags.accountingPolicyV1Diagnostics,
-          accountingPolicyV1ReceiptGl: flags.accountingPolicyV1ReceiptGl,
-          accountingPolicyV1ProductionRelease: flags.accountingPolicyV1ProductionRelease,
-          accountingPolicyV1LegacyBridge: flags.accountingPolicyV1LegacyBridge,
-          reclassPreProductionReceipts: flags.reclassPreProductionReceipts,
-        },
-      });
-    } catch (e) {
-      console.error('[ap1c-dry-run]', e);
-      return res.status(500).json({ ok: false, error: 'AP1c dry-run failed.' });
-    }
-  });
-
-  app.get('/api/finance/ap1c-reclass-preview', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp1cDryRun(req.user)) {
-        return res.status(403).json({ ok: false, error: 'AP1c access required.', code: 'FORBIDDEN' });
-      }
-      const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const preview = buildAp1cReclassPreview(db, { branchId, limit: Number(req.query?.limit) || 200 });
-      return res.json(preview);
-    } catch (e) {
-      console.error('[ap1c-reclass-preview]', e);
-      return res.status(500).json({ ok: false, error: 'Could not build reclass preview.' });
-    }
-  });
-
-  app.post('/api/finance/ap1c-reclass', requireAuth, (req, res) => {
-    try {
-      if (!userMayViewAp1cDryRun(req.user)) {
-        return res.status(403).json({ ok: false, error: 'AP1c access required.', code: 'FORBIDDEN' });
-      }
-      if (!userHasPermission(req.user, 'finance.post')) {
-        return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
-      }
-      const body = req.body || {};
-      const branchRaw = String(body.branchId || '').trim();
-      const branchId = branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
-      const result = postAp1cReclassBatch(db, {
-        branchId,
-        createdByUserId: req.user?.id,
-        receiptIds: body.receiptIds,
-      });
-      if (!result.ok) return res.status(400).json(result);
-      return res.status(result.posted ? 201 : 200).json(result);
-    } catch (e) {
-      console.error('[ap1c-reclass-post]', e);
-      return res.status(500).json({ ok: false, error: 'Could not post reclass batch.' });
     }
   });
 
@@ -2029,7 +1670,7 @@ export function registerHttpApi(app, db) {
           return res.status(400).json({ ok: false, error: String(e.message || e) });
         }
         console.error('Help chat error', e);
-        return res.status(502).json({ ok: false, error: String(e.message || e) });
+        return res.status(502).json({ ok: false, error: 'Help assistant is temporarily unavailable.' });
       }
     }
   );
@@ -2873,7 +2514,13 @@ export function registerHttpApi(app, db) {
       }
       const status = String(req.query?.status || '').trim();
       const quotationRef = String(req.query?.quotationRef || '').trim();
-      const branchId = String(req.query?.branchId || req.query?.branch || '').trim();
+      // Force workspace branch; ignore client branchId unless view-all.
+      let branchId = '';
+      if (req.workspaceViewAll) {
+        branchId = String(req.query?.branchId || req.query?.branch || '').trim();
+      } else {
+        branchId = String(req.workspaceBranchId || '').trim();
+      }
       const rows = listCreditExceptions(db, {
         status: status || undefined,
         quotationRef: quotationRef || undefined,
@@ -3262,6 +2909,15 @@ export function registerHttpApi(app, db) {
     try {
       const ip = clientIp(req);
       const userKey = `${ip}:${String(req.body?.username || '').trim().toLowerCase()}`;
+      // Peek before bcrypt so attackers cannot burn CPU after the window is full.
+      if (isRateLimited(loginAttemptBuckets, userKey, 12, 30 * 60 * 1000)) {
+        await loginDelayMs();
+        return res.status(429).json({
+          ok: false,
+          code: 'RATE_LIMITED',
+          error: 'Too many sign-in attempts. Wait up to 30 minutes or try another network.',
+        });
+      }
       const { username, password } = req.body || {};
       const result = loginWithPassword(db, username, password);
       if (!result.ok) {
@@ -3682,6 +3338,7 @@ export function registerHttpApi(app, db) {
 
   app.use('/api', requireAuth, requireActivePassword);
 
+  registerWorkspaceListRoutes(app, db);
   registerHrApi(app, db);
   registerOtApi(app, db);
   registerAiKnowledgeCenterRoutes(app, db, aiKnowledgeBuckets);
@@ -4127,7 +3784,7 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  app.post('/api/admin/data-reset', requireAuth, (req, res) => {
+  app.post('/api/admin/data-reset', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
         return res.status(403).json({ ok: false, error: 'Admin only.' });
@@ -4167,7 +3824,7 @@ export function registerHttpApi(app, db) {
    * Rebuild sales_receipt mirrors from ledger RECEIPT rows and recalculate quotations.paid_ngn for all quotes
    * in the current workspace branch scope. Administrator only; does not alter ledger entries.
    */
-  app.post('/api/admin/reconcile-sales-derived', requireAuth, (req, res) => {
+  app.post('/api/admin/reconcile-sales-derived', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
         return res.status(403).json({
@@ -4211,7 +3868,7 @@ export function registerHttpApi(app, db) {
    * Re-apply finance-confirmed bank amounts to receipt rows, ledger RECEIPT/OVERPAY splits, and quotation paid.
    * Use when reconciled receipts still reflect stale sales-posted totals (e.g. mistaken overpayment entries).
    */
-  app.post('/api/admin/reapply-finance-reconciled-receipts', requireAuth, (req, res) => {
+  app.post('/api/admin/reapply-finance-reconciled-receipts', requireAuth, requirePermission('settings.manage'), (req, res) => {
     try {
       if (String(req.user?.roleKey || '').toLowerCase() !== 'admin') {
         return res.status(403).json({
@@ -4401,18 +4058,43 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'gl.journal.manual')) return;
+      const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+      if (lines.length > 20) {
+        return res.status(400).json({ ok: false, error: 'Too many journal lines (max 20).', code: 'GL_LINE_CAP' });
+      }
+      const idemKey = normalizeIdempotencyKey(req.get('Idempotency-Key') || req.get('idempotency-key'));
       const r = postBalancedJournal(db, {
         entryDateISO: req.body?.entryDateISO,
         memo: req.body?.memo,
-        sourceKind: req.body?.sourceKind,
-        sourceId: req.body?.sourceId,
+        sourceKind: 'MANUAL_JOURNAL',
+        sourceId: idemKey || undefined,
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         createdByUserId: req.user?.id,
-        lines: req.body?.lines || [],
+        lines,
       });
-      res.status(r.ok ? 201 : 400).json(r);
+      if (r.ok) {
+        const totalNgn = lines.reduce((sum, l) => {
+          const debit = Math.round(Number(l.debitNgn) || 0);
+          const credit = Math.round(Number(l.creditNgn) || 0);
+          return sum + debit + credit;
+        }, 0);
+        appendAuditLog(db, {
+          actor: req.user,
+          action: 'gl.manual_journal',
+          entityKind: 'gl_journal',
+          entityId: r.journalId,
+          amountNgn: totalNgn,
+          branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+          note: String(req.body?.memo || 'Manual journal').slice(0, 240),
+          details: { journalId: r.journalId, duplicate: Boolean(r.duplicate), lineCount: lines.length },
+        });
+        storeIdempotentSuccess(db, req, 'gl.journal.manual', r.duplicate ? 200 : 201, r);
+      }
+      res.status(r.ok ? (r.duplicate ? 200 : 201) : 400).json(r);
     } catch (e) {
-      res.status(500).json({ ok: false, error: String(e.message || e) });
+      console.error('[gl.manual_journal]', e);
+      res.status(500).json({ ok: false, error: 'Could not post journal.' });
     }
   });
 
@@ -4495,7 +4177,12 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_balance')) return;
       const body = req.body || {};
+      const lines = Array.isArray(body.lines) ? body.lines : [];
+      if (lines.length > 20) {
+        return res.status(400).json({ ok: false, error: 'Too many opening-balance lines (max 20).', code: 'GL_LINE_CAP' });
+      }
       const branchId = String(body.branchId || req.workspaceBranchId || '').trim() || null;
       const result = postOpeningBalanceJournal(db, {
         entryDateISO: body.entryDateISO || ACCOUNTING_OPENING_DATE_ISO,
@@ -4503,9 +4190,10 @@ export function registerHttpApi(app, db) {
         branchId,
         createdByUserId: req.user?.id,
         memo: body.memo || 'Opening balance cutover',
-        lines: body.lines || [],
+        lines,
       });
       if (!result.ok) return res.status(400).json(result);
+      storeIdempotentSuccess(db, req, 'finance.opening_balance', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-balance-post]', e);
@@ -4546,6 +4234,7 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_pack.post')) return;
       ensureArchitecturalGlAccounts(db);
       const body = req.body || {};
       const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
@@ -4556,6 +4245,7 @@ export function registerHttpApi(app, db) {
         createdByUserId: req.user?.id,
       });
       if (!result.ok) return res.status(400).json(result);
+      storeIdempotentSuccess(db, req, 'finance.opening_pack.post', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-pack-post]', e);
@@ -6667,6 +6357,16 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/associated-staff', requirePermission(ASSOCIATED_STAFF_READ_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json({ ok: true, associatedStaff: listAssociatedStaff(db, branchScope) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to load associated staff' });
+    }
+  });
+
   app.post('/api/suppliers', requirePermission('suppliers.manage'), (req, res) => {
     try {
       const id = write.insertSupplier(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
@@ -6730,6 +6430,40 @@ export function registerHttpApi(app, db) {
     const r = write.deleteTransportAgent(db, req.params.id, req.workspaceBranchId || DEFAULT_BRANCH_ID);
     res.status(r.ok ? 200 : 400).json(r);
   });
+
+  app.post(
+    '/api/associated-staff',
+    requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
+    (req, res) => {
+      try {
+        const id = write.insertAssociatedStaff(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+        res.status(201).json({ ok: true, id });
+      } catch (e) {
+        console.error(e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.patch(
+    '/api/associated-staff/:id',
+    requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
+    (req, res) => {
+      const aid = req.params.id;
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'associated_staff', aid, (stripped) =>
+        write.updateAssociatedStaff(db, aid, stripped, req.workspaceBranchId || DEFAULT_BRANCH_ID)
+      );
+    }
+  );
+
+  app.delete(
+    '/api/associated-staff/:id',
+    requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
+    (req, res) => {
+      const r = write.deleteAssociatedStaff(db, req.params.id, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      res.status(r.ok ? 200 : 400).json(r);
+    }
+  );
 
   app.get('/api/inventory/snapshot', requireAuth, (req, res) => {
     try {
@@ -6828,9 +6562,9 @@ export function registerHttpApi(app, db) {
     const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
     if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     const body = req.body || {};
-    const amt = Number(body.transportAmountNgn);
+    const amt = Math.round(Number(body.transportAmountNgn) || 0);
     const acct = Number(body.treasuryAccountId);
-    const needsTreasury = acct > 0 && !Number.isNaN(amt) && amt > 0;
+    const needsTreasury = acct > 0 && amt > 0;
     if (needsTreasury && !userHasPermission(req.user, 'finance.pay')) {
       return res.status(403).json({
         ok: false,
@@ -6858,8 +6592,8 @@ export function registerHttpApi(app, db) {
         transportReference,
         transportNote,
         transportFinanceAdvice,
-        transportAmountNgn,
-        transportAdvanceNgn,
+        transportAmountNgn: Math.round(Number(transportAmountNgn) || 0),
+        transportAdvanceNgn: Math.round(Number(transportAdvanceNgn) || 0),
         treasuryAccountId,
         dateISO,
         postedAtISO,
@@ -8633,7 +8367,7 @@ export function registerHttpApi(app, db) {
     const rk = String(user?.roleKey || user?.role_key || '')
       .trim()
       .toLowerCase();
-    return rk === 'admin' || rk === 'md' || rk === 'sales_manager' || rk === 'branch_manager';
+    return rk === 'admin' || rk === 'md' || rk === 'ceo' || rk === 'sales_manager' || rk === 'branch_manager';
   }
 
   app.get(
@@ -8806,7 +8540,8 @@ export function registerHttpApi(app, db) {
           normal: 'normal',
         };
         body.priority = priorityMap[priorityRaw] || priorityRaw || 'normal';
-        body.kind = 'corrective';
+        const kindRaw = String(body.kind || 'corrective').trim().toLowerCase();
+        body.kind = ['overhaul', 'preventive', 'corrective'].includes(kindRaw) ? kindRaw : 'corrective';
         body.status = body.status || 'open';
         if (!body.summary) {
           body.summary = String(body.symptom || '').trim().slice(0, 120) || 'Fault report';
@@ -8843,8 +8578,8 @@ export function registerHttpApi(app, db) {
       try {
         const wo = getMaintenanceWorkOrder(db, req.params.workOrderId);
         if (!wo) return res.status(404).json({ ok: false, error: 'Work order not found.' });
-        const costLines = listMaintenanceCostLines(db, wo.id);
-        res.json({ ok: true, workOrder: wo, costLines });
+        const pack = attachWorkOrderFinance(db, wo);
+        res.json({ ok: true, workOrder: pack, costLines: pack.costLines, envelope: pack.envelope });
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not load work order.' });
@@ -8915,7 +8650,8 @@ export function registerHttpApi(app, db) {
           db,
           req.params.workOrderId,
           req.body?.paymentRequestId || req.body?.requestId,
-          req.user
+          req.user,
+          { costKind: req.body?.costKind || req.body?.cost_kind }
         );
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -9069,6 +8805,7 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/transfer', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer')) return;
       const r = write.transferTreasuryFunds(db, {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9076,6 +8813,7 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
+      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9085,6 +8823,7 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/treasury/transfer/:batchId', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.update')) return;
       const r = write.updateTreasuryTransfer(db, String(req.params.batchId || '').trim(), {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9092,6 +8831,7 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
+      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.update', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9101,11 +8841,13 @@ export function registerHttpApi(app, db) {
 
   app.delete('/api/treasury/transfer/:batchId', requireAuth, (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.delete')) return;
       const r = write.deleteTreasuryTransfer(db, String(req.params.batchId || '').trim(), req.user, {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
         note: req.body?.note,
       });
+      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.delete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9952,7 +9694,21 @@ export function registerHttpApi(app, db) {
     try {
       if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.create')) return;
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
-      if (r.ok) storeIdempotentSuccess(db, req, 'payment_request.create', 201, r);
+      if (r.ok) {
+        const woId = String(req.body?.workOrderId || req.body?.maintenanceWorkOrderId || '').trim();
+        if (woId && r.requestID) {
+          const linked = linkWorkOrderPaymentRequest(db, woId, r.requestID, req.user, {
+            costKind: req.body?.costKind || req.body?.maintenanceCostKind,
+          });
+          if (!linked.ok) {
+            r.workOrderLinkError = linked.error;
+          } else {
+            r.workOrderId = woId;
+            r.costLineId = linked.costLineId || null;
+          }
+        }
+        storeIdempotentSuccess(db, req, 'payment_request.create', 201, r);
+      }
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -10317,6 +10073,7 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
+      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.pay')) return;
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),
@@ -10327,6 +10084,7 @@ export function registerHttpApi(app, db) {
         workspaceViewAll: Boolean(req.workspaceViewAll),
         actor: req.user,
       });
+      if (r.ok) storeIdempotentSuccess(db, req, 'payment_request.pay', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -10739,25 +10497,6 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
-    try {
-      const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req);
-      const all = listCustomers(db, branchScope, unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false });
-      const items = slicePage(all, offset, limit);
-      return sendPaginatedList(res, {
-        items,
-        total: all.length,
-        limit: unlimited ? 0 : limit,
-        offset,
-        key: 'customers',
-      });
-    } catch (e) {
-      console.error(e);
-      apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load customers.' });
-    }
-  });
-
   app.get('/api/customers/staff-link-options', requirePermission('customers.manage'), (req, res) => {
     try {
       if (!userMayLinkStaffSalesCustomer(req.user)) {
@@ -10771,6 +10510,20 @@ export function registerHttpApi(app, db) {
       return res.status(500).json({ ok: false, error: 'Could not load staff link options.' });
     }
   });
+
+  app.get(
+    '/api/customers/master-quality',
+    requirePermission(['customers.manage', 'settings.view', 'reports.view']),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        return res.json(listCustomerMasterQualityIssues(db, branchScope));
+      } catch (e) {
+        console.error(e);
+        return res.status(500).json({ ok: false, error: 'Could not scan customer master quality.' });
+      }
+    }
+  );
 
   app.put('/api/customers/:customerId/staff-link', requirePermission('customers.manage'), (req, res) => {
     try {
@@ -11324,13 +11077,16 @@ export function registerHttpApi(app, db) {
       const overpayCreditNgn = overpayCreditBalanceFromEntries(entries, id);
       const receiptTotalNgn = ledgerReceiptTotalFromEntries(entries, id);
 
-      const quotations = listQuotations(db, branchScope).filter((q) => q.customerID === id);
-      const ledgerScope = listLedgerEntries(db, branchScope);
-      const productionJobs = listProductionJobs(db, branchScope, productionHistoryListOpts());
+      const quotations = listQuotationsForCustomer(db, id, branchScope);
+      const productionJobs = listProductionJobsForQuotationRefs(
+        db,
+        quotations.map((q) => q.id),
+        branchScope
+      );
       const policyFlags = readFinanceFeatureFlags();
       const outstandingByQuotation = quotations.map((q) => {
         const paymentPolicy = quotationPaymentPolicySnapshot(q, productionJobs);
-        const legacyDue = amountDueOnQuotationFromEntries(ledgerScope, q);
+        const legacyDue = amountDueOnQuotationFromEntries(entries, q);
         return {
           quotationId: q.id,
           totalNgn: q.totalNgn,
@@ -11734,17 +11490,32 @@ export function registerHttpApi(app, db) {
       const customerId = req.query.customerId;
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
-      const entries = customerId
-        ? listLedgerEntriesForCustomer(db, String(customerId), branchScope)
-        : listLedgerEntries(
-            db,
-            branchScope,
-            unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false }
-          );
-      const page = slicePage(entries, offset, unlimited ? 0 : limit);
+      if (customerId) {
+        const cid = String(customerId);
+        const total = countLedgerEntriesForCustomer(db, cid, branchScope);
+        const entries = listLedgerEntriesForCustomer(
+          db,
+          cid,
+          branchScope,
+          unlimited ? { unlimited: true } : { limit, offset }
+        );
+        return sendPaginatedList(res, {
+          items: entries,
+          total,
+          limit: unlimited ? 0 : limit,
+          offset,
+          key: 'entries',
+        });
+      }
+      const total = countLedgerEntries(db, branchScope);
+      const entries = listLedgerEntries(
+        db,
+        branchScope,
+        unlimited ? { unlimited: true } : { limit, offset }
+      );
       return sendPaginatedList(res, {
-        items: page,
-        total: entries.length,
+        items: entries,
+        total,
         limit: unlimited ? 0 : limit,
         offset,
         key: 'entries',
@@ -12166,6 +11937,40 @@ export function registerHttpApi(app, db) {
           error: msg || 'Failed to apply refund credit',
           code: 'LEDGER_APPLY_REFUND_CREDIT_FAILED',
         });
+      }
+    }
+  );
+
+  app.post(
+    '/api/ledger/reverse-refund-credit',
+    requirePermission('finance.reverse'),
+    ledgerPostRateLimit(),
+    (req, res) => {
+      try {
+        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.reverse_refund_credit')) return;
+        const applicationId = String(req.body?.applicationId || req.body?.application_id || '').trim();
+        if (!applicationId) {
+          return res.status(400).json({ ok: false, error: 'applicationId is required' });
+        }
+        const reversed = refundCreditApplyOps.reverseRefundCreditApplication(db, applicationId, {
+          actor: req.user,
+          note: String(req.body?.note || '').trim(),
+          dateISO: req.body?.dateISO,
+        });
+        if (!reversed.ok) {
+          const status = reversed.code === 'PERIOD_LOCKED' ? 400 : 400;
+          return res.status(status).json(reversed);
+        }
+        const payload = { ok: true, ...reversed };
+        storeIdempotentSuccess(db, req, 'ledger.reverse_refund_credit', 200, payload);
+        res.json(payload);
+      } catch (e) {
+        console.error(e);
+        const msg = String(e?.message || e);
+        if (/falls in locked period|locked period/i.test(msg)) {
+          return res.status(400).json({ ok: false, error: msg, code: 'PERIOD_LOCKED' });
+        }
+        res.status(500).json({ ok: false, error: msg || 'Failed to reverse refund fund apply' });
       }
     }
   );
@@ -12730,7 +12535,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.get('/api/settings/integration-api-keys', requirePermission('settings.view'), (req, res) => {
+  app.get('/api/settings/integration-api-keys', requirePermission('settings.manage'), (req, res) => {
     try {
       const rows = db
         .prepare(

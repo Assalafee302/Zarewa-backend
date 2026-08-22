@@ -1,6 +1,12 @@
+import crypto from 'node:crypto';
 import { userHasPermission } from './auth.js';
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function newNoticeId() {
+  return `NOTICE-${crypto.randomUUID()}`;
 }
 
 const NOTICE_MANAGER_ROLE_KEYS = new Set(['md', 'admin', 'hr_admin', 'gmhr', 'ceo', 'chairman']);
@@ -23,7 +29,7 @@ export function createOfficialNotice(db, actor, body = {}) {
   const content = String(body.content || '').trim();
   if (!title || !content) return { ok: false, error: 'Title and content are required.' };
 
-  const id = `NOTICE-${Date.now()}`;
+  const id = newNoticeId();
   const targets = {
     allStaff: Boolean(body.targetAllStaff ?? true),
     branchIds: Array.isArray(body.branchIds) ? body.branchIds.map(String) : [],
@@ -50,7 +56,16 @@ export function createOfficialNotice(db, actor, body = {}) {
     nowIso()
   );
 
-  return { ok: true, notice: { id, title, content, targets, requiresAcknowledgement: Boolean(body.requiresAcknowledgement) } };
+  return {
+    ok: true,
+    notice: {
+      id,
+      title,
+      content,
+      targets,
+      requiresAcknowledgement: Boolean(body.requiresAcknowledgement),
+    },
+  };
 }
 
 /**

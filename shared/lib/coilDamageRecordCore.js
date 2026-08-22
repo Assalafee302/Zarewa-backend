@@ -1,3 +1,7 @@
+/**
+ * Coil damage record math (kg deducted, conversion variance, payload validation).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/coilDamageRecordCore.js
+ */
 import { conversionKgPerMFromMass, roundConv2 } from './conversionKgPerM.js';
 
 export const COIL_DAMAGE_INCIDENT_TYPES = new Set(['coil_stain', 'production_error']);

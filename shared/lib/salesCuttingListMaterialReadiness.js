@@ -1,3 +1,7 @@
+/**
+ * Sales cutting-list material readiness (coil match vs waiting lists).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/salesCuttingListMaterialReadiness.js
+ */
 import {
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,

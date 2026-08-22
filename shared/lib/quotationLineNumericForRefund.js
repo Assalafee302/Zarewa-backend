@@ -1,6 +1,7 @@
 /**
  * Parse qty / unit price from quotation `lines_json` product rows.
  * Matches writeOps / quotationJsonLineAmountNgn (comma thousands, alternate keys).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/quotationLineNumericForRefund.js
  */
 
 export function quotationLineQtyNumber(line) {

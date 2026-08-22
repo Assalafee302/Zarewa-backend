@@ -33,6 +33,7 @@ const CATEGORY_TO_GL = Object.freeze({
   'Truck & mining': '5050',
   'Staff loan': '1200',
   'Chairman withdrawal': '3200',
+  'Chairman loan': '1200',
   Depreciation: '6100',
   Sales: '4000',
   Refund: '2500',

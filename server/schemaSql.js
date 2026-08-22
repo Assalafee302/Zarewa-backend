@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL,
   phone_number TEXT,
   email TEXT,
+  customer_title TEXT,
+  role_tags_json TEXT,
+  bank_account_name TEXT,
+  bank_name TEXT,
+  bank_account_no TEXT,
   address_shipping TEXT,
   address_billing TEXT,
   status TEXT,
@@ -85,6 +90,8 @@ CREATE TABLE IF NOT EXISTS quotations (
   customer_feedback TEXT,
   handled_by TEXT,
   project_name TEXT,
+  agent_customer_id TEXT,
+  agent_customer_name TEXT,
   lines_json TEXT,
   manager_cleared_at_iso TEXT,
   manager_flagged_at_iso TEXT,
@@ -142,6 +149,19 @@ CREATE TABLE IF NOT EXISTS transport_agents (
   phone TEXT,
   branch_id TEXT NOT NULL,
   profile_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS associated_staff (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  staff_type TEXT NOT NULL,
+  phone TEXT,
+  status TEXT NOT NULL DEFAULT 'Active',
+  bank_account_name TEXT,
+  bank_name TEXT,
+  bank_account_no TEXT,
+  profile_json TEXT,
+  branch_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -616,6 +636,7 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   reason TEXT,
   amount_ngn INTEGER NOT NULL,
   calculation_lines_json TEXT,
+  split_distributions_json TEXT,
   suggested_lines_json TEXT,
   preview_snapshot_json TEXT,
   calculation_notes TEXT,
@@ -1026,6 +1047,7 @@ CREATE TABLE IF NOT EXISTS treasury_movements (
 
 CREATE INDEX IF NOT EXISTS idx_treasury_movements_account ON treasury_movements(treasury_account_id);
 CREATE INDEX IF NOT EXISTS idx_treasury_movements_source ON treasury_movements(source_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_treasury_movements_posted ON treasury_movements(posted_at_iso DESC);
 
 CREATE TABLE IF NOT EXISTS inter_branch_loans (
   loan_id TEXT PRIMARY KEY,
@@ -1081,6 +1103,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   reference TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_expenses_branch_date ON expenses(branch_id, date DESC);
+
 CREATE TABLE IF NOT EXISTS payment_requests (
   request_id TEXT PRIMARY KEY,
   expense_id TEXT,
@@ -1103,8 +1127,14 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   category_justification TEXT,
   payee_name TEXT,
   payee_account_no TEXT,
-  payee_bank_name TEXT
+  payee_bank_name TEXT,
+  maintenance_work_order_id TEXT,
+  maintenance_cost_kind TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_payment_requests_status_date ON payment_requests(approval_status, request_date DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_expense ON payment_requests(expense_id);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_mwo ON payment_requests(maintenance_work_order_id);
 
 CREATE TABLE IF NOT EXISTS accounts_payable (
   ap_id TEXT PRIMARY KEY,
@@ -1277,6 +1307,7 @@ CREATE TABLE IF NOT EXISTS gl_journal_entries (
 
 CREATE INDEX IF NOT EXISTS idx_gl_lines_journal ON gl_journal_lines(journal_id);
 CREATE INDEX IF NOT EXISTS idx_gl_lines_account ON gl_journal_lines(account_id);
+CREATE INDEX IF NOT EXISTS idx_gl_journal_entry_date ON gl_journal_entries(entry_date_iso, branch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gl_journal_source ON gl_journal_entries(source_kind, source_id)
   WHERE source_kind IS NOT NULL AND source_id IS NOT NULL;
 
@@ -1857,6 +1888,9 @@ CREATE TABLE IF NOT EXISTS maintenance_work_orders (
   related_material_request_id TEXT,
   related_payment_request_id TEXT,
   related_work_item_id TEXT,
+  estimated_cost_ngn INTEGER NOT NULL DEFAULT 0,
+  returned_to_production_at_iso TEXT,
+  cost_closed_at_iso TEXT,
   data_json TEXT,
   FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE,
   FOREIGN KEY (plan_id) REFERENCES maintenance_plans(id) ON DELETE SET NULL
@@ -2279,10 +2313,10 @@ CREATE TABLE IF NOT EXISTS hr_chairman_school_fees (
   school_name TEXT,
   term TEXT,
   academic_year TEXT,
-  fee_amount_ngn REAL,
+  fee_amount_ngn INTEGER,
   fee_type TEXT,
   payment_status TEXT,
-  amount_paid_ngn REAL DEFAULT 0,
+  amount_paid_ngn INTEGER DEFAULT 0,
   payment_date_iso TEXT,
   notes TEXT,
   created_at_iso TEXT,
@@ -2294,7 +2328,7 @@ CREATE TABLE IF NOT EXISTS hr_chairman_expenses (
   id TEXT PRIMARY KEY,
   expense_type TEXT,
   description TEXT,
-  amount_ngn REAL,
+  amount_ngn INTEGER,
   quantity INTEGER DEFAULT 1,
   unit TEXT,
   period_yyyymm TEXT,
@@ -2448,4 +2482,87 @@ CREATE TABLE IF NOT EXISTS ot_status_history (
 );
 CREATE INDEX IF NOT EXISTS idx_ot_status_history_request
   ON ot_status_history(request_id, at_iso ASC);
+
+CREATE TABLE IF NOT EXISTS partner_wallet_entries (
+  id TEXT PRIMARY KEY,
+  party_kind TEXT NOT NULL,
+  party_id TEXT NOT NULL,
+  party_name TEXT,
+  entry_type TEXT NOT NULL,
+  amount_ngn INTEGER NOT NULL,
+  open_ngn INTEGER NOT NULL DEFAULT 0,
+  source_kind TEXT,
+  source_id TEXT,
+  refund_id TEXT,
+  withdrawal_id TEXT,
+  branch_id TEXT,
+  payee_name TEXT,
+  payee_bank_name TEXT,
+  payee_account_no TEXT,
+  note TEXT,
+  created_at_iso TEXT NOT NULL,
+  created_by_user_id TEXT,
+  created_by_name TEXT,
+  treasury_movement_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_party
+  ON partner_wallet_entries(party_kind, party_id, entry_type);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_open
+  ON partner_wallet_entries(entry_type, open_ngn);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_refund
+  ON partner_wallet_entries(refund_id);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_withdrawal
+  ON partner_wallet_entries(withdrawal_id);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_branch
+  ON partner_wallet_entries(branch_id);
+
+CREATE TABLE IF NOT EXISTS partner_wallet_withdrawal_allocations (
+  id TEXT PRIMARY KEY,
+  withdrawal_id TEXT NOT NULL,
+  credit_entry_id TEXT NOT NULL,
+  refund_id TEXT,
+  amount_ngn INTEGER NOT NULL,
+  created_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_alloc_withdrawal
+  ON partner_wallet_withdrawal_allocations(withdrawal_id);
+CREATE INDEX IF NOT EXISTS idx_partner_wallet_alloc_credit
+  ON partner_wallet_withdrawal_allocations(credit_entry_id);
+
+CREATE TABLE IF NOT EXISTS chairman_office_loans (
+  id TEXT PRIMARY KEY,
+  borrower_kind TEXT NOT NULL,
+  borrower_name TEXT NOT NULL,
+  borrower_relationship TEXT,
+  amount_ngn INTEGER NOT NULL,
+  purpose TEXT NOT NULL,
+  repayment_months INTEGER,
+  repayment_method TEXT,
+  payee_name TEXT,
+  payee_bank_name TEXT,
+  payee_account_no TEXT,
+  payment_request_id TEXT,
+  created_by_user_id TEXT,
+  created_by_name TEXT,
+  created_at_iso TEXT NOT NULL,
+  updated_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chairman_office_loans_pr
+  ON chairman_office_loans(payment_request_id);
+CREATE INDEX IF NOT EXISTS idx_chairman_office_loans_kind
+  ON chairman_office_loans(borrower_kind, created_at_iso DESC);
+
+CREATE TABLE IF NOT EXISTS chairman_office_loan_events (
+  id TEXT PRIMARY KEY,
+  loan_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  amount_ngn INTEGER NOT NULL DEFAULT 0,
+  at_iso TEXT NOT NULL,
+  actor_user_id TEXT,
+  actor_name TEXT,
+  how TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chairman_office_loan_events_loan
+  ON chairman_office_loan_events(loan_id, at_iso ASC);
 `;

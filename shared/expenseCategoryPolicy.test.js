@@ -27,6 +27,7 @@ describe('expenseCategoryLanes', () => {
     expect(isExceptionExpenseCategory('Others')).toBe(true);
     expect(getExpenseCategoryLane('Sales')).toBe('revenue');
     expect(requiresElevatedApprovalLane('Chairman withdrawal')).toBe(true);
+    expect(requiresElevatedApprovalLane('Chairman loan')).toBe(true);
   });
 
   it('groups all canonical categories', () => {
@@ -44,6 +45,9 @@ describe('expenseCategoryPolicy', () => {
   it('blocks staff from chairman withdrawal', () => {
     expect(actorMaySelectExpenseCategory(staff, 'Chairman withdrawal')).toBe(false);
     expect(actorMaySelectExpenseCategory(finance, 'Chairman withdrawal', hasFinancePerm)).toBe(true);
+    expect(actorMaySelectExpenseCategory({ roleKey: 'chairman' }, 'Chairman withdrawal')).toBe(true);
+    expect(actorMaySelectExpenseCategory(staff, 'Chairman loan')).toBe(false);
+    expect(actorMaySelectExpenseCategory({ roleKey: 'chairman' }, 'Chairman loan')).toBe(true);
   });
 
   it('blocks revenue categories on payment requests', () => {
@@ -88,6 +92,7 @@ describe('expenseCategoryPolicy', () => {
   it('flags finance exception lanes for queue filtering', () => {
     expect(isFinanceExceptionExpenseItem('Others', 'exception')).toBe(true);
     expect(isFinanceExceptionExpenseItem('Chairman withdrawal', 'special')).toBe(true);
+    expect(isFinanceExceptionExpenseItem('Chairman loan', 'special')).toBe(true);
     expect(isFinanceExceptionExpenseItem('Office expenses', 'admin')).toBe(false);
   });
 
@@ -138,6 +143,9 @@ describe('expenseCategoryPolicy', () => {
     expect(
       validateSpecialLaneTreasuryPayout({ category: 'Staff loan', hasHrLoanLink: true }).ok
     ).toBe(true);
+    expect(validateSpecialLaneTreasuryPayout({ category: 'Chairman loan', hasHrLoanLink: false }).ok).toBe(
+      true
+    );
   });
 
   it('honours org Others min length on validation', () => {

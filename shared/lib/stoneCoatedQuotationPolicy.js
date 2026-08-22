@@ -1,6 +1,6 @@
 /**
- * Stone-coated (stone_meter) quotation rules — shared by server validation and mirrored on the client.
- * Keep in sync with Zarewa-frontend-main/src/lib/stoneCoatedQuotationPolicy.js
+ * Stone-coated (stone_meter) quotation rules — isomorphic (API + SPA).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/stoneCoatedQuotationPolicy.js
  */
 
 export const STONE_METER_INVENTORY_MODEL = 'stone_meter';

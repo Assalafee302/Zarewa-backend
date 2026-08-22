@@ -1,6 +1,7 @@
 /**
  * Accounting Policy v1 — read-only payment / receivable presentation (AP1a).
  * Does not change posting, gates, or ledger math.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/accountingPolicyV1.js
  */
 import {
   amountDueOnQuotationFromEntries,

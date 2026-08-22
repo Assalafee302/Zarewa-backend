@@ -8,6 +8,7 @@ import {
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { appendAuditLog } from './controlOps.js';
 import { nextInTransitLoadHumanId } from './humanId.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -45,16 +46,11 @@ function poLoadLines(db, poId) {
     .all(poId);
 }
 
-function listLoadRows(db, branchScope = 'ALL') {
-  const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
-  const args = useScope ? [branchScope] : [];
-  const sql = useScope
-    ? `SELECT * FROM in_transit_loads WHERE destination_branch_id = ? ORDER BY posted_at_iso DESC, id DESC`
-    : `SELECT * FROM in_transit_loads ORDER BY posted_at_iso DESC, id DESC`;
-  const lineStmt = db.prepare(
-    `SELECT * FROM in_transit_load_lines WHERE load_id = ? ORDER BY line_no ASC`
-  );
-  return db.prepare(sql).all(...args).map((row) => ({
+function mapLoadRow(db, row, lineStmt) {
+  const linesQuery =
+    lineStmt ||
+    db.prepare(`SELECT * FROM in_transit_load_lines WHERE load_id = ? ORDER BY line_no ASC`);
+  return {
     id: row.id,
     referenceNo: row.reference_no,
     branchId: row.branch_id,
@@ -78,7 +74,7 @@ function listLoadRows(db, branchScope = 'ALL') {
     treasuryMovementId: row.treasury_movement_id || '',
     relatedWorkItemId: row.related_work_item_id || '',
     data: safeJsonParse(row.data_json, {}),
-    lines: lineStmt.all(row.id).map((line) => ({
+    lines: linesQuery.all(row.id).map((line) => ({
       lineNo: line.line_no,
       purchaseOrderLineKey: line.purchase_order_line_key || '',
       materialRequestLineNo: line.material_request_line_no ?? null,
@@ -89,7 +85,30 @@ function listLoadRows(db, branchScope = 'ALL') {
       qtyReceived: Number(line.qty_received) || 0,
       shortLandedQty: Number(line.short_landed_qty) || 0,
     })),
-  }));
+  };
+}
+
+function listLoadRows(db, branchScope = 'ALL', listOpts = {}) {
+  const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
+  const limit = resolveListLimit(listOpts.unlimited ? { unlimited: true } : { limit: listOpts.limit, useDefaultLimit: true });
+  const limSql = sqlLimitClause(limit);
+  const args = useScope ? [branchScope] : [];
+  if (limit > 0) args.push(limit);
+  const sql = useScope
+    ? `SELECT * FROM in_transit_loads WHERE destination_branch_id = ? ORDER BY posted_at_iso DESC, id DESC${limSql}`
+    : `SELECT * FROM in_transit_loads ORDER BY posted_at_iso DESC, id DESC${limSql}`;
+  const lineStmt = db.prepare(
+    `SELECT * FROM in_transit_load_lines WHERE load_id = ? ORDER BY line_no ASC`
+  );
+  return db.prepare(sql).all(...args).map((row) => mapLoadRow(db, row, lineStmt));
+}
+
+function getLoadById(db, loadId) {
+  const id = String(loadId || '').trim();
+  if (!id || !inTransitTablesReady(db)) return null;
+  const row = db.prepare(`SELECT * FROM in_transit_loads WHERE id = ?`).get(id);
+  if (!row) return null;
+  return mapLoadRow(db, row);
 }
 
 export function listInTransitLoads(db, branchScope = 'ALL') {
@@ -263,7 +282,7 @@ export function syncInTransitLoadFromPoLink(db, poId, actor = null, opts = {}) {
     entityId: id,
     note: poId,
   });
-  return { ok: true, load: listLoadRows(db, 'ALL').find((row) => row.id === id) || null };
+  return { ok: true, load: getLoadById(db, id) };
 }
 
 export function syncInTransitLoadFromTransportPost(db, poId, actor = null, opts = {}) {
@@ -301,7 +320,7 @@ export function syncInTransitLoadFromTransportPost(db, poId, actor = null, opts 
     entityId: existing.id,
     note: poId,
   });
-  return { ok: true, load: listLoadRows(db, 'ALL').find((row) => row.id === existing.id) || null };
+  return { ok: true, load: getLoadById(db, existing.id) };
 }
 
 export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor = null) {
@@ -355,5 +374,5 @@ export function syncInTransitLoadFromGrn(db, poId, receivedEntries = [], actor =
     entityId: load.id,
     note: `${poId} → ${status}`,
   });
-  return { ok: true, load: listLoadRows(db, 'ALL').find((row) => row.id === load.id) || null };
+  return { ok: true, load: getLoadById(db, load.id) };
 }

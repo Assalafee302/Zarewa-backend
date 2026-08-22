@@ -1,6 +1,7 @@
 /**
  * Month-end stock register — pure row builders (server + client mirror).
  * Sections: aluminium coils, aluzinc coils, stone-coated (m), accessories, summary, in-transit.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/stockRegisterCore.js
  */
 
 import { displayCoilNumber, displayLast4 } from './reportDisplayFormat.js';

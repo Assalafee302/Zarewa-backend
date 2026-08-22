@@ -1,6 +1,12 @@
 /**
  * Permission-safe daily briefing lines for Zare (counts and categories only).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/helpZareBriefing.js
  */
+
+import {
+  buildLastUsedByCoilNo,
+  summarizeCriticalIdleForPromotion,
+} from './storeIdle.js';
 
 /**
  * @param {Record<string, unknown>|null|undefined} snapshot
@@ -33,6 +39,22 @@ export function buildZareDailyBriefing(snapshot, roleKey = '') {
     if (stuck > 0) lines.push(`${stuck} production job${stuck === 1 ? '' : 's'} may be delayed.`);
     const inTransit = Number(attn.crossModule?.openInTransitLoadCount) || 0;
     if (inTransit > 0) lines.push(`${inTransit} in-transit load${inTransit === 1 ? '' : 's'} open.`);
+  }
+
+  if (
+    role.includes('sales') ||
+    role.includes('manager') ||
+    role === 'admin' ||
+    role === 'md' ||
+    role === 'ceo'
+  ) {
+    const lastUsed = buildLastUsedByCoilNo(snapshot.movements || []);
+    const promo = summarizeCriticalIdleForPromotion(snapshot.coilLots || [], lastUsed);
+    if (promo.count > 0) {
+      lines.push(
+        `${promo.count} coil${promo.count === 1 ? '' : 's'} idle ≥${promo.thresholdDays}d — prefer on quotes / production.`
+      );
+    }
   }
 
   const metrics = snapshot.productionMetrics;

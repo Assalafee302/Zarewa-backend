@@ -7,6 +7,7 @@ import {
   REFUND_AMOUNT_LINE_TOLERANCE_NGN,
   refundAmountExceedsEconomicFloorCap,
   refundFloorGatedAmountNgn,
+  refundCategoryDisplayLabel,
 } from './refundConstants.js';
 
 describe('refundConstants', () => {
@@ -122,5 +123,10 @@ describe('refundConstants', () => {
         overpaymentExcessNgn: 2_320,
       })
     ).toBe(false);
+  });
+
+  it('maps canonical refund categories to SPA display labels', () => {
+    expect(refundCategoryDisplayLabel('Unproduced meterage')).toBe('Unproduced metres');
+    expect(refundCategoryDisplayLabel('Other')).toBe('Other');
   });
 });

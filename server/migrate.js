@@ -8,7 +8,6 @@ import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../s
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
 import { migrateMergeDuplicateHrStaffOnBoot } from './hrStaffDuplicateCleanupMigrate.js';
-import { debugBootLog } from './debugBootLog.js';
 import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
 import { migrateStockMovementsBranchId } from './stockMovementOps.js';
 import { withMigrationLock } from './migrationLock.js';
@@ -1057,6 +1056,34 @@ function runMigrationsUnlocked(db) {
   if (!customers.has('crm_profile_notes')) {
     db.exec(`ALTER TABLE customers ADD COLUMN crm_profile_notes TEXT`);
   }
+  if (!customers.has('customer_title')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN customer_title TEXT`);
+  }
+  if (!customers.has('role_tags_json')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN role_tags_json TEXT`);
+  }
+  if (!customers.has('bank_account_name')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN bank_account_name TEXT`);
+  }
+  if (!customers.has('bank_name')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN bank_name TEXT`);
+  }
+  if (!customers.has('bank_account_no')) {
+    db.exec(`ALTER TABLE customers ADD COLUMN bank_account_no TEXT`);
+  }
+
+  const quotations = tableCols('quotations');
+  if (!quotations.has('agent_customer_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN agent_customer_id TEXT`);
+  }
+  if (!quotations.has('agent_customer_name')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN agent_customer_name TEXT`);
+  }
+
+  const customerRefunds = tableCols('customer_refunds');
+  if (!customerRefunds.has('split_distributions_json')) {
+    db.exec(`ALTER TABLE customer_refunds ADD COLUMN split_distributions_json TEXT`);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS customer_crm_interactions (
@@ -1391,6 +1418,7 @@ function runMigrationsUnlocked(db) {
   migrateMaterialPricingWorkbook(db);
   migratePricingPolicy2026(db);
   migrateLedgerPerformanceIndexes(db);
+  migrateFinanceDeskPerformanceIndexes(db);
   migrateRefundCreditApplications(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
@@ -1431,19 +1459,7 @@ function runMigrationsUnlocked(db) {
   migrateInventoryCoilSnapshots(db);
   migrateStockRegister2026(db);
   migrateStockMovementsBranchId(db);
-  try {
-    debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents start' });
-    migrateMaterialIncidents(db);
-    debugBootLog({ hypothesisId: 'A', location: 'migrate.js', message: 'migrateMaterialIncidents ok' });
-  } catch (e) {
-    debugBootLog({
-      hypothesisId: 'A',
-      location: 'migrate.js',
-      message: 'migrateMaterialIncidents failed',
-      data: { err: String(e?.message || e), code: e?.code, errno: e?.errno },
-    });
-    throw e;
-  }
+  migrateMaterialIncidents(db);
   migrateHrAccountability2026(db);
   migrateStaffObligationLedger2026(db);
   migrateStaffPurchaseCredit2026(db);
@@ -1469,6 +1485,104 @@ function runMigrationsUnlocked(db) {
   migrateMaintenanceRegistry2026(db);
   migrateOtModule2026(db);
   migrateHrRoleComplianceLifecycle2026(db);
+  migratePartnerWallet2026(db);
+  migrateChairmanOfficeLoans2026(db);
+}
+
+/** Partner payable wallets — BM-approved refund credits; cashier withdrawals. */
+function migratePartnerWallet2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS partner_wallet_entries (
+      id TEXT PRIMARY KEY,
+      party_kind TEXT NOT NULL,
+      party_id TEXT NOT NULL,
+      party_name TEXT,
+      entry_type TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      open_ngn INTEGER NOT NULL DEFAULT 0,
+      source_kind TEXT,
+      source_id TEXT,
+      refund_id TEXT,
+      withdrawal_id TEXT,
+      branch_id TEXT,
+      payee_name TEXT,
+      payee_bank_name TEXT,
+      payee_account_no TEXT,
+      note TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      treasury_movement_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_party
+      ON partner_wallet_entries(party_kind, party_id, entry_type);
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_open
+      ON partner_wallet_entries(entry_type, open_ngn);
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_refund
+      ON partner_wallet_entries(refund_id);
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_withdrawal
+      ON partner_wallet_entries(withdrawal_id);
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_branch
+      ON partner_wallet_entries(branch_id);
+
+    CREATE TABLE IF NOT EXISTS partner_wallet_withdrawal_allocations (
+      id TEXT PRIMARY KEY,
+      withdrawal_id TEXT NOT NULL,
+      credit_entry_id TEXT NOT NULL,
+      refund_id TEXT,
+      amount_ngn INTEGER NOT NULL,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_alloc_withdrawal
+      ON partner_wallet_withdrawal_allocations(withdrawal_id);
+    CREATE INDEX IF NOT EXISTS idx_partner_wallet_alloc_credit
+      ON partner_wallet_withdrawal_allocations(credit_entry_id);
+  `);
+}
+
+/**
+ * Chairman Office loans — receivable to the company (GL 1200), not drawings.
+ * Borrower may be the Chairman or a named non-staff person.
+ */
+function migrateChairmanOfficeLoans2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chairman_office_loans (
+      id TEXT PRIMARY KEY,
+      borrower_kind TEXT NOT NULL,
+      borrower_name TEXT NOT NULL,
+      borrower_relationship TEXT,
+      amount_ngn INTEGER NOT NULL,
+      purpose TEXT NOT NULL,
+      repayment_months INTEGER,
+      repayment_method TEXT,
+      payee_name TEXT,
+      payee_bank_name TEXT,
+      payee_account_no TEXT,
+      payment_request_id TEXT,
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      created_at_iso TEXT NOT NULL,
+      updated_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chairman_office_loans_pr
+      ON chairman_office_loans(payment_request_id);
+    CREATE INDEX IF NOT EXISTS idx_chairman_office_loans_kind
+      ON chairman_office_loans(borrower_kind, created_at_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS chairman_office_loan_events (
+      id TEXT PRIMARY KEY,
+      loan_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      at_iso TEXT NOT NULL,
+      actor_user_id TEXT,
+      actor_name TEXT,
+      how TEXT,
+      note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_chairman_office_loan_events_loan
+      ON chairman_office_loan_events(loan_id, at_iso ASC);
+  `);
 }
 
 /**
@@ -1602,6 +1716,30 @@ function migrateMaintenanceRegistry2026(db) {
       `CREATE INDEX IF NOT EXISTS idx_maintenance_work_orders_vendor
        ON maintenance_work_orders(vendor_id)`
     );
+  }
+  if (!woCols.includes('estimated_cost_ngn')) {
+    db.exec(`ALTER TABLE maintenance_work_orders ADD COLUMN estimated_cost_ngn INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!woCols.includes('returned_to_production_at_iso')) {
+    db.exec(`ALTER TABLE maintenance_work_orders ADD COLUMN returned_to_production_at_iso TEXT`);
+  }
+  if (!woCols.includes('cost_closed_at_iso')) {
+    db.exec(`ALTER TABLE maintenance_work_orders ADD COLUMN cost_closed_at_iso TEXT`);
+  }
+
+  const prCols = db.prepare(`PRAGMA table_info(payment_requests)`).all().map((c) => c.name);
+  if (!prCols.includes('maintenance_work_order_id')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN maintenance_work_order_id TEXT`);
+  }
+  if (!prCols.includes('maintenance_cost_kind')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN maintenance_cost_kind TEXT`);
+  }
+  try {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_payment_requests_mwo ON payment_requests(maintenance_work_order_id)`
+    );
+  } catch {
+    /* index already present */
   }
 
   const hrCols = db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name);
@@ -2648,6 +2786,9 @@ function migrateOperationsMaintenanceWorkspace(db) {
       related_material_request_id TEXT,
       related_payment_request_id TEXT,
       related_work_item_id TEXT,
+      estimated_cost_ngn INTEGER NOT NULL DEFAULT 0,
+      returned_to_production_at_iso TEXT,
+      cost_closed_at_iso TEXT,
       data_json TEXT,
       FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE,
       FOREIGN KEY (plan_id) REFERENCES maintenance_plans(id) ON DELETE SET NULL
@@ -4072,10 +4213,10 @@ function migrateHrPhase9ExecutiveBenefits2026(db) {
       school_name TEXT,
       term TEXT,
       academic_year TEXT,
-      fee_amount_ngn REAL,
+      fee_amount_ngn INTEGER,
       fee_type TEXT,
       payment_status TEXT,
-      amount_paid_ngn REAL DEFAULT 0,
+      amount_paid_ngn INTEGER DEFAULT 0,
       payment_date_iso TEXT,
       notes TEXT,
       created_at_iso TEXT,
@@ -4087,7 +4228,7 @@ function migrateHrPhase9ExecutiveBenefits2026(db) {
       id TEXT PRIMARY KEY,
       expense_type TEXT,
       description TEXT,
-      amount_ngn REAL,
+      amount_ngn INTEGER,
       quantity INTEGER DEFAULT 1,
       unit TEXT,
       period_yyyymm TEXT,
@@ -5363,49 +5504,8 @@ function migrateUserProfileAndPasswordReset(db) {
   }
   if (users.size && !users.has('registered_password')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN registered_password TEXT`);
-    const defaultPasswordByUsername = [
-      ['admin', 'Admin@123'],
-      ['md', 'Md@1234567890!'],
-      ['finance.manager', 'Finance@123'],
-      ['cashier', 'Cashier@12345!'],
-      ['sales.manager', 'Sales@123'],
-      ['sales.staff', 'Sales@123'],
-      ['operations', 'Ops@123'],
-      ['ceo', 'Ceo@1234567890!'],
-      ['viewer', 'Viewer@123456!'],
-    ];
-    const backfill = db.prepare(
-      `UPDATE app_users
-       SET registered_password = ?
-       WHERE lower(trim(username)) = ?
-         AND (registered_password IS NULL OR trim(registered_password) = '')`
-    );
-    for (const [username, password] of defaultPasswordByUsername) {
-      backfill.run(password, username);
-    }
   }
-  if (users.size && users.has('registered_password')) {
-    const defaultPasswordByUsername = [
-      ['admin', 'Admin@123'],
-      ['md', 'Md@1234567890!'],
-      ['finance.manager', 'Finance@123'],
-      ['cashier', 'Cashier@12345!'],
-      ['sales.manager', 'Sales@123'],
-      ['sales.staff', 'Sales@123'],
-      ['operations', 'Ops@123'],
-      ['ceo', 'Ceo@1234567890!'],
-      ['viewer', 'Viewer@123456!'],
-    ];
-    const backfill = db.prepare(
-      `UPDATE app_users
-       SET registered_password = ?
-       WHERE lower(trim(username)) = ?
-         AND (registered_password IS NULL OR trim(registered_password) = '')`
-    );
-    for (const [username, password] of defaultPasswordByUsername) {
-      backfill.run(password, username);
-    }
-  }
+  // Do not backfill plaintext passwords into registered_password — column is legacy and wiped below.
   if (users.size && !users.has('training_completed_at_iso')) {
     db.exec(`ALTER TABLE app_users ADD COLUMN training_completed_at_iso TEXT NOT NULL DEFAULT ''`);
     db.prepare(
@@ -5946,6 +6046,26 @@ function migrateBranches(db) {
   if (transportAgentCols.size && !transportAgentCols.has('profile_json')) {
     db.exec(`ALTER TABLE transport_agents ADD COLUMN profile_json TEXT`);
   }
+  addBranch('associated_staff');
+  const associatedStaffCols = tableCols('associated_staff');
+  if (associatedStaffCols.size && !associatedStaffCols.has('profile_json')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN profile_json TEXT`);
+  }
+  if (associatedStaffCols.size && !associatedStaffCols.has('status')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'`);
+  }
+  if (associatedStaffCols.size && !associatedStaffCols.has('bank_account_name')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN bank_account_name TEXT`);
+  }
+  if (associatedStaffCols.size && !associatedStaffCols.has('bank_name')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN bank_name TEXT`);
+  }
+  if (associatedStaffCols.size && !associatedStaffCols.has('bank_account_no')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN bank_account_no TEXT`);
+  }
+  if (associatedStaffCols.size && !associatedStaffCols.has('staff_type')) {
+    db.exec(`ALTER TABLE associated_staff ADD COLUMN staff_type TEXT NOT NULL DEFAULT 'Driver'`);
+  }
   addBranch('products');
   addBranch('bank_reconciliation_lines');
   addBranch('bank_deposits');
@@ -5960,6 +6080,9 @@ function migrateBranches(db) {
   }
   if (tableCols('transport_agents').has('branch_id')) {
     db.prepare(`UPDATE transport_agents SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
+  }
+  if (tableCols('associated_staff').has('branch_id')) {
+    db.prepare(`UPDATE associated_staff SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
   }
 
   db.exec(`
@@ -6721,6 +6844,22 @@ function migrateLedgerPerformanceIndexes(db) {
     `);
   } catch {
     /* ignore — index may already exist under another name on some hosts */
+  }
+}
+
+/** Finance desk list filters (expenses, payouts, treasury, GL activity by date). */
+function migrateFinanceDeskPerformanceIndexes(db) {
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_expenses_branch_date ON expenses(branch_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_payment_requests_status_date ON payment_requests(approval_status, request_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_payment_requests_expense ON payment_requests(expense_id);
+      CREATE INDEX IF NOT EXISTS idx_treasury_movements_posted ON treasury_movements(posted_at_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_sales_receipts_branch_date ON sales_receipts(branch_id, date_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_gl_journal_entry_date ON gl_journal_entries(entry_date_iso, branch_id);
+    `);
+  } catch {
+    /* ignore — column may not exist on very old files until prior migrations run */
   }
 }
 

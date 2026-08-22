@@ -1,6 +1,7 @@
 /**
  * Purchase register — GRN receipts in period by material type and gauge,
  * with PO order qty, costing, and supplier payment / outstanding summary.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/purchaseReportCore.js
  */
 
 import { displayDocNumber, displayLast4, displayTxnDateShort } from './reportDisplayFormat.js';

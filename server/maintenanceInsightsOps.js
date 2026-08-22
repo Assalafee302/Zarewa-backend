@@ -5,6 +5,7 @@
 import { mapFixedAssetRow } from './accountingPhase2Ops.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { repairReplaceFlag, repairReplaceLabel } from '../shared/maintenanceRepairReplace.js';
+import { maintenanceDowntimeHours } from '../shared/lib/maintenanceCostEnvelope.js';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -86,11 +87,23 @@ export function buildMaintenanceMachineInsights(db, scope = {}) {
   const downtimeByMachine = new Map();
   const downtimeRows = db
     .prepare(
-      `SELECT machine_id, SUM(COALESCE(downtime_hours, 0)) AS downtime_hours
-       FROM maintenance_work_orders GROUP BY machine_id`
+      `SELECT machine_id, downtime_hours, opened_at_iso, incident_date_iso,
+              returned_to_production_at_iso, closed_at_iso
+       FROM maintenance_work_orders`
     )
     .all();
-  for (const r of downtimeRows) downtimeByMachine.set(String(r.machine_id), Number(r.downtime_hours) || 0);
+  for (const r of downtimeRows) {
+    const mid = String(r.machine_id || '');
+    if (!mid) continue;
+    const hours = maintenanceDowntimeHours({
+      downtimeHours: r.downtime_hours,
+      openedAtIso: r.opened_at_iso,
+      incidentDateIso: r.incident_date_iso,
+      returnedToProductionAtIso: r.returned_to_production_at_iso,
+      closedAtIso: r.closed_at_iso,
+    });
+    downtimeByMachine.set(mid, (downtimeByMachine.get(mid) || 0) + hours);
+  }
 
   const primaryAssetByMachine = new Map();
   const linkRows = db
@@ -180,22 +193,20 @@ export function buildMaintenanceMachineInsights(db, scope = {}) {
 export function buildMaintenanceVendorCostComparison(db, scope = {}) {
   const branchId = String(scope.branchId || '').trim();
   const viewAll = Boolean(scope.viewAll);
+  const cutoffMs = Date.now() - 90 * 24 * 36e5;
 
   let sql = `
     SELECT
-      COALESCE(NULLIF(TRIM(wo.vendor_id), ''), 'unassigned') AS vendor_key,
-      COALESCE(NULLIF(TRIM(wo.vendor_name), ''), v.name, 'Unassigned') AS vendor_name,
       wo.vendor_id AS vendor_id,
-      MAX(COALESCE(v.specialty, '')) AS specialty,
-      MAX(COALESCE(v.phone, '')) AS phone,
-      SUM(cl.amount_ngn) AS total_ngn,
-      SUM(CASE
-            WHEN DATE(COALESCE(cl.posted_at_iso, wo.opened_at_iso)) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-            THEN cl.amount_ngn ELSE 0
-          END) AS last90_ngn,
-      COUNT(*) AS line_count,
-      COUNT(DISTINCT wo.id) AS job_count,
-      COUNT(DISTINCT wo.machine_id) AS machine_count
+      wo.vendor_name AS vendor_name,
+      wo.id AS work_order_id,
+      wo.machine_id AS machine_id,
+      cl.amount_ngn AS amount_ngn,
+      cl.posted_at_iso AS posted_at_iso,
+      wo.opened_at_iso AS opened_at_iso,
+      v.name AS vendor_table_name,
+      v.specialty AS specialty,
+      v.phone AS phone
     FROM maintenance_cost_lines cl
     INNER JOIN maintenance_work_orders wo ON wo.id = cl.work_order_id
     LEFT JOIN maintenance_vendors v ON v.id = wo.vendor_id
@@ -207,33 +218,60 @@ export function buildMaintenanceVendorCostComparison(db, scope = {}) {
     sql += ` AND wo.branch_id = ?`;
     args.push(branchId);
   }
-  sql += `
-    GROUP BY vendor_key, vendor_name, wo.vendor_id
-    ORDER BY total_ngn DESC
-  `;
-  return db.prepare(sql).all(...args).map((r) => {
-    const totalNgn = Math.round(Number(r.total_ngn) || 0);
-    const last90Ngn = Math.round(Number(r.last90_ngn) || 0);
-    const jobCount = Number(r.job_count) || 0;
-    const avg = jobCount > 0 ? Math.round(totalNgn / jobCount) : 0;
-    return {
-      vendorId: r.vendor_id || r.vendor_key || '',
-      vendorKey: r.vendor_key,
-      vendorName: r.vendor_name || 'Unassigned',
-      name: r.vendor_name || 'Unassigned',
+  const lines = db.prepare(sql).all(...args);
+  const byKey = new Map();
+  for (const r of lines) {
+    const vendorId = String(r.vendor_id || '').trim();
+    const key = vendorId || 'unassigned';
+    const name =
+      String(r.vendor_name || '').trim() || String(r.vendor_table_name || '').trim() || 'Unassigned';
+    const amount = Math.round(Number(r.amount_ngn) || 0);
+    const postedMs = Date.parse(String(r.posted_at_iso || r.opened_at_iso || '').trim());
+    const inLast90 = Number.isFinite(postedMs) && postedMs >= cutoffMs;
+    const cur = byKey.get(key) || {
+      vendorId,
+      vendorKey: key,
+      vendorName: name,
       specialty: String(r.specialty || '').trim(),
       phone: String(r.phone || '').trim(),
-      totalNgn,
-      totalSpend: totalNgn,
-      last90Ngn,
-      last90Spend: last90Ngn,
-      lineCount: Number(r.line_count) || 0,
-      jobCount,
-      avgCostPerJobNgn: avg,
-      avgPerJob: avg,
-      machineCount: Number(r.machine_count) || 0,
+      totalNgn: 0,
+      last90Ngn: 0,
+      lineCount: 0,
+      jobs: new Set(),
+      machines: new Set(),
     };
-  });
+    cur.totalNgn += amount;
+    if (inLast90) cur.last90Ngn += amount;
+    cur.lineCount += 1;
+    if (r.work_order_id) cur.jobs.add(String(r.work_order_id));
+    if (r.machine_id) cur.machines.add(String(r.machine_id));
+    if (!cur.specialty && r.specialty) cur.specialty = String(r.specialty).trim();
+    if (!cur.phone && r.phone) cur.phone = String(r.phone).trim();
+    byKey.set(key, cur);
+  }
+  return [...byKey.values()]
+    .map((r) => {
+      const jobCount = r.jobs.size;
+      const avg = jobCount > 0 ? Math.round(r.totalNgn / jobCount) : 0;
+      return {
+        vendorId: r.vendorId || r.vendorKey,
+        vendorKey: r.vendorKey,
+        vendorName: r.vendorName,
+        name: r.vendorName,
+        specialty: r.specialty,
+        phone: r.phone,
+        totalNgn: r.totalNgn,
+        totalSpend: r.totalNgn,
+        last90Ngn: r.last90Ngn,
+        last90Spend: r.last90Ngn,
+        lineCount: r.lineCount,
+        jobCount,
+        avgCostPerJobNgn: avg,
+        avgPerJob: avg,
+        machineCount: r.machines.size,
+      };
+    })
+    .sort((a, b) => b.totalNgn - a.totalNgn);
 }
 
 /**

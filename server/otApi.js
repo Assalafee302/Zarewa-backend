@@ -123,8 +123,9 @@ function lookupQuotations(db, branchId, q, limit = 40) {
          LIMIT ${lim}`
       )
       .all(branchId);
-  } catch {
-    return [];
+  } catch (e) {
+    console.error('[otApi] lookupQuotations failed', e);
+    throw e;
   }
 }
 
@@ -153,8 +154,9 @@ function lookupPurchaseOrders(db, branchId, q, limit = 40) {
          LIMIT ${lim}`
       )
       .all(branchId);
-  } catch {
-    return [];
+  } catch (e) {
+    console.error('[otApi] lookupPurchaseOrders failed', e);
+    throw e;
   }
 }
 
@@ -185,8 +187,9 @@ function lookupProductionJobs(db, branchId, { q, quotationRef, limit = 40 } = {}
     }
     sql += ` ORDER BY j.job_id DESC LIMIT ${lim}`;
     return db.prepare(sql).all(...args);
-  } catch {
-    return [];
+  } catch (e) {
+    console.error('[otApi] lookupProductionJobs failed', e);
+    throw e;
   }
 }
 
@@ -422,7 +425,7 @@ export function registerOtApi(app, db) {
       res.json({ ok: true, rows });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: String(e.message || e) });
+      res.status(500).json({ ok: false, error: 'Could not look up quotations.' });
     }
   });
 
@@ -432,7 +435,7 @@ export function registerOtApi(app, db) {
       res.json({ ok: true, rows });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: String(e.message || e) });
+      res.status(500).json({ ok: false, error: 'Could not look up purchase orders.' });
     }
   });
 
@@ -446,7 +449,7 @@ export function registerOtApi(app, db) {
       res.json({ ok: true, rows });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: String(e.message || e) });
+      res.status(500).json({ ok: false, error: 'Could not look up production jobs.' });
     }
   });
 
@@ -456,7 +459,7 @@ export function registerOtApi(app, db) {
       res.json({ ok: true, rows });
     } catch (e) {
       console.error(e);
-      res.status(500).json({ ok: false, error: String(e.message || e) });
+      res.status(500).json({ ok: false, error: 'Could not look up staff.' });
     }
   });
 

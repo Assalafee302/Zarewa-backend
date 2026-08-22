@@ -1,6 +1,6 @@
 /**
  * Trim / ridge list price from material pricing workbook + ridge add-on policy.
- * Keep frontend mirror in Zarewa-frontend-main/src/lib/materialWorkbookTrimPrice.js in sync.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/materialWorkbookTrimPrice.js
  */
 
 import {

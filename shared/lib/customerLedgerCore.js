@@ -3,6 +3,7 @@ import { registerReceivableOutstandingNgn } from './receivableWriteOffPolicy.js'
 
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/customerLedgerCore.js
  * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_APPLIED'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
  */
 
@@ -71,6 +72,33 @@ export function overpayCreditBalanceFromEntries(entries, customerID) {
           return s;
       }
     }, 0);
+}
+
+/**
+ * Same balance as {@link overpayCreditBalanceFromEntries}, computed for every customer in one pass.
+ * @param {Array<{ customerID: string, type: string, amountNgn?: number }>} entries
+ * @returns {Map<string, number>} customerID → positive unapplied overpay credit (₦); zero/negative omitted
+ */
+export function overpayCreditNgnByCustomerIdFromEntries(entries) {
+  /** @type {Map<string, number>} */
+  const sums = new Map();
+  for (const e of entries || []) {
+    const id = String(e?.customerID || '').trim();
+    if (!id) continue;
+    const n = Number(e.amountNgn) || 0;
+    let delta = 0;
+    if (e.type === 'OVERPAY_ADVANCE') delta = n;
+    else if (e.type === 'OVERPAY_REVERSAL' || e.type === 'REFUND_OVERPAY') delta = -n;
+    else continue;
+    sums.set(id, (sums.get(id) || 0) + delta);
+  }
+  /** @type {Map<string, number>} */
+  const out = new Map();
+  for (const [id, sum] of sums) {
+    const rounded = Math.round(sum);
+    if (rounded > 0) out.set(id, rounded);
+  }
+  return out;
 }
 
 /**

@@ -17,6 +17,21 @@ export const PROCUREMENT_DOMAIN_PERMS = [
   'suppliers.manage',
 ];
 
+/** Installers, drivers — branch manager registers; procurement may still read */
+export const ASSOCIATED_STAFF_READ_PERMS = [
+  ...PROCUREMENT_DOMAIN_PERMS,
+  ...SALES_DOMAIN_PERMS,
+  'operations.view',
+  'manager.dashboard',
+];
+
+export const ASSOCIATED_STAFF_MANAGE_PERMS = [
+  'suppliers.manage',
+  'purchase_orders.manage',
+  'sales.manage',
+  'operations.manage',
+];
+
 /** Stock, production, deliveries, coil yard (operational) */
 export const OPERATIONS_DOMAIN_PERMS = [
   'operations.view',

@@ -1,6 +1,11 @@
+/**
+ * Workspace unified-inbox visibility (personal routing + role queues).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workItemPersonalInbox.js
+ */
 import { hasPermissionInList } from './moduleAccess.js';
 import { userCanApproveEditMutationsClient } from './editApprovalUi.js';
 import { isManagerInboxWorkItemDocType } from './managerInboxWorkItemTypes.js';
+import { userMayReviewPaymentRequests } from '../workspaceGovernance.js';
 
 function userMaySeeStaffPurchaseCreditQueue(roleKey, permissions) {
   const rk = String(roleKey || '').trim().toLowerCase();
@@ -14,11 +19,12 @@ function userMaySeeStaffPurchaseCreditQueue(roleKey, permissions) {
 
 /**
  * Mirrors server `canSeeManagementApprovalQueues` (workItems.js) for client-side inbox filtering.
+ * CEO is included so executive inbox filtering matches the SPA.
  */
 export function userMaySeeManagementApprovalQueues(roleKey, permissions) {
   if (hasPermissionInList(permissions, '*')) return true;
   const rk = String(roleKey || '').trim().toLowerCase();
-  if (rk === 'admin' || rk === 'md' || rk === 'sales_manager') return true;
+  if (rk === 'admin' || rk === 'ceo' || rk === 'md' || rk === 'sales_manager') return true;
   return hasPermissionInList(permissions, 'sales.manage');
 }
 
@@ -52,13 +58,33 @@ export function workItemIsPersonalForUser(item, userId) {
   return false;
 }
 
+function userMaySeeRegisterSettlement(item, permissions) {
+  const st = String(item?.status || '').trim().toLowerCase();
+  const awaitingPay = st === 'awaiting_payment' || st === 'approved_awaiting_pay';
+  if (awaitingPay) {
+    return (
+      hasPermissionInList(permissions, 'finance.pay') ||
+      hasPermissionInList(permissions, 'cashier.desk.view') ||
+      hasPermissionInList(permissions, 'finance.approve') ||
+      hasPermissionInList(permissions, '*')
+    );
+  }
+  return (
+    hasPermissionInList(permissions, 'refunds.approve') ||
+    hasPermissionInList(permissions, 'finance.approve') ||
+    hasPermissionInList(permissions, '*')
+  );
+}
+
 /**
  * Workspace home unified list:
  * - Personal routing (sent / assigned / To / Cc)
  * - Edit approvals for designated approvers
  * - Manager queues (clearance, production gate, flags, conversion review) for roles that see those queues
- * - Pending payment requests for finance.approve
+ * - Payment requests for branch / finance / executive reviewers
  * - Refund requests for refunds.approve / finance.approve
+ * - Register settlements for finance approve/pay (and cashier when awaiting payout)
+ * - Staff purchase credit for MD / HR loan managers
  */
 export function workItemShowsOnWorkspaceUnifiedInbox(item, { userId, roleKey, permissions }) {
   if (workItemIsPersonalForUser(item, userId)) return true;
@@ -73,12 +99,19 @@ export function workItemShowsOnWorkspaceUnifiedInbox(item, { userId, roleKey, pe
     return true;
   }
 
-  if (dt === 'payment_request' && hasPermissionInList(permissions, 'finance.approve')) {
+  if (
+    dt === 'payment_request' &&
+    userMayReviewPaymentRequests({ roleKey, permissions }, (perm) => hasPermissionInList(permissions, perm))
+  ) {
     return true;
   }
 
   if (dt === 'refund_request' && userMaySeeRefundApprovalQueue(permissions)) {
     return true;
+  }
+
+  if (dt === 'register_settlement') {
+    return userMaySeeRegisterSettlement(item, permissions);
   }
 
   if (dt === 'staff_purchase_credit' && userMaySeeStaffPurchaseCreditQueue(roleKey, permissions)) {

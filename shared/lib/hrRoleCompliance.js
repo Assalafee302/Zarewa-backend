@@ -1,6 +1,8 @@
 /**
  * Role-requirement compliance (qualification vs designation min, tenure vs max).
  * Distinct from handbook acknowledgement, profile completeness, and overdue review badges.
+ * Always render `label` (or `shortLabel` plus the "Role compliance" prefix) — never colour alone.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/hrRoleCompliance.js
  */
 
 export const HR_STAFF_BANDS = ['director', 'manager', 'senior_staff', 'junior_staff', 'entry_staff'];

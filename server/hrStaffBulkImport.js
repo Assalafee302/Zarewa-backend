@@ -22,7 +22,12 @@ import { getStaffNumberConfig } from './hrStaffNumbering.js';
 import { isBeneficiaryOnlyPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { BENEFICIARY_NO_LOGIN_ERROR } from './hrStaffAccessPolicy.js';
 
-export const BULK_IMPORT_DEFAULT_PASSWORD = 'Zarewa@123';
+export const BULK_IMPORT_DEFAULT_PASSWORD = ''; // no shared default — use env or one-time random
+
+/** One-time temp password for imported logins when ZAREWA_STAFF_IMPORT_PASSWORD is unset. */
+export function generateStaffImportTempPassword() {
+  return `Zw-${crypto.randomBytes(12).toString('base64url')}`;
+}
 
 /** Physical branch for HQ, scholarship, and chairman/domestic payroll groups. */
 export const BULK_IMPORT_HQ_BRANCH = { id: 'BR-KD', code: 'KD', name: 'Kaduna (HQ)' };
@@ -1206,7 +1211,9 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
 
   if (includeCredentials) {
     body.username = row.proposedUsername;
-    body.password = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || BULK_IMPORT_DEFAULT_PASSWORD).trim();
+    const fromEnv = String(process.env.ZAREWA_STAFF_IMPORT_PASSWORD || '').trim();
+    body.password = fromEnv || generateStaffImportTempPassword();
+    body.mustChangePassword = true;
     body.roleKey =
       row.roleKey ||
       row.resolvedRoleKey ||
@@ -1571,7 +1578,8 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
     createCount,
     staffToSuspend,
     titlesCorrected,
-    defaultPasswordNote: 'New accounts use Zarewa@123 and must change password on first login.',
+    defaultPasswordNote:
+      'New accounts get a one-time random password (or ZAREWA_STAFF_IMPORT_PASSWORD) and must change it on first login.',
     errors: flatErrors,
     needsCleanup: needsCleanupRows,
     titleMappings,

@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
+import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
 import { scheduleWorkspaceMaintenance } from './workspaceMaintenance.js';
@@ -40,6 +41,7 @@ export function createApp(db) {
     })
   );
   app.use(express.json({ limit: '4mb' }));
+  app.use(jsonParseErrorHandler);
 
   // Dev default: common Vite dev (5173/5174) + preview (4173) on localhost + 127.0.0.1.
   const corsOrigin =

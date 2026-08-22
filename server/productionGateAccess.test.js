@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canApproveProductionGate,
   productionGateOverrideDeniedMessage,
   productionGateOverrideEffective,
   productionGateOverrideNoteValid,
@@ -17,6 +18,12 @@ describe('productionGateAccess', () => {
   it('denies branch manager at zero payment', () => {
     expect(userMayApproveProductionGate({ roleKey: 'sales_manager' }, 0)).toBe(false);
     expect(userMayApproveProductionGate({ roleKey: 'sales_staff' }, 50_000)).toBe(false);
+  });
+
+  it('accepts SPA role-key string and { paidNgn } (alias canApproveProductionGate)', () => {
+    expect(canApproveProductionGate('sales_manager', { paidNgn: 200_000 })).toBe(true);
+    expect(canApproveProductionGate('sales_manager', { paidNgn: 0 })).toBe(false);
+    expect(userMayApproveProductionGate('md', { paidNgn: 0 })).toBe(true);
   });
 
   it('effective override at zero payment requires md or admin level', () => {

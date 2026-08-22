@@ -1,6 +1,7 @@
 /**
  * Detect duplicate quotations / double-posted payments (staff entry errors).
  * Pure helpers — safe for browser + server.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/customerPaymentIntegrity.js
  */
 
 export const SETTLED_QUOTE_OVERPAY_NOTE_SNIP = 'already settled in records';

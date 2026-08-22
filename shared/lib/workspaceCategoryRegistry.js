@@ -1,6 +1,7 @@
 /**
  * ERP-native workspace category registry for work items and inbox filtering.
  * Shared between backend mappers and frontend inbox UI.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/workspaceCategoryRegistry.js
  */
 
 /** @typedef {'all'|'sales'|'finance'|'procurement'|'production'|'inventory'|'operations'|'management'|'hr_admin'|'memos'|'system_alerts'} WorkspaceCategoryKey */

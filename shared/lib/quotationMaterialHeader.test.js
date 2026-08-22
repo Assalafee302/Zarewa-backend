@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validateQuotationMaterialHeaderRequired,
   assertQuotationMaterialHeaderRequired,
+  quotationMaterialHeaderErrorMessage,
   QUOTATION_MATERIAL_HEADER_CODE,
 } from './quotationMaterialHeader.js';
 
@@ -36,5 +37,15 @@ describe('quotationMaterialHeader', () => {
       expect(e.code).toBe(QUOTATION_MATERIAL_HEADER_CODE);
       expect(e.statusCode).toBe(422);
     }
+  });
+
+  it('quotationMaterialHeaderErrorMessage uses API error text for that code', () => {
+    expect(
+      quotationMaterialHeaderErrorMessage({
+        code: QUOTATION_MATERIAL_HEADER_CODE,
+        error: 'Quotation material header is incomplete — select profile.',
+      })
+    ).toBe('Quotation material header is incomplete — select profile.');
+    expect(quotationMaterialHeaderErrorMessage({ error: 'Nope' })).toBe('Nope');
   });
 });

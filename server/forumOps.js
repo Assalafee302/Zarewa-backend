@@ -1,6 +1,12 @@
+import crypto from 'node:crypto';
 import { userHasPermission } from './auth.js';
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function newForumId(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 /**
@@ -17,16 +23,26 @@ export function canCreateCompanyForumTopic(actor) {
   return userHasPermission(actor, 'notices.manage');
 }
 
+/** Branch topics still need office desk access — not any signed-in user. */
+export function canCreateBranchForumTopic(actor) {
+  if (!actor) return false;
+  if (canCreateCompanyForumTopic(actor)) return true;
+  return userHasPermission(actor, 'office.use') || userHasPermission(actor, 'notices.manage');
+}
+
 export function createForumTopic(db, actor, body = {}) {
   const scope = String(body.scope || 'branch').toLowerCase();
   if (scope === 'company' && !canCreateCompanyForumTopic(actor)) {
     return { ok: false, error: 'Only senior staff can open company-wide forum topics.' };
   }
+  if (scope !== 'company' && !canCreateBranchForumTopic(actor)) {
+    return { ok: false, error: 'Office desk access is required to open branch forum topics.' };
+  }
   const title = String(body.title || '').trim();
   const content = String(body.body || '').trim();
   if (!title || !content) return { ok: false, error: 'Title and message are required.' };
 
-  const id = `TOPIC-${Date.now()}`;
+  const id = newForumId('TOPIC');
   const branchId = scope === 'company' ? null : String(body.branchId || '').trim() || null;
 
   db.prepare(
@@ -37,7 +53,7 @@ export function createForumTopic(db, actor, body = {}) {
   db.prepare(
     `INSERT INTO forum_posts (id, topic_id, author_user_id, body, attachments_json, created_at_iso)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(`POST-${Date.now()}`, id, actor.id, content, JSON.stringify(body.attachments || []), nowIso());
+  ).run(newForumId('POST'), id, actor.id, content, JSON.stringify(body.attachments || []), nowIso());
 
   return { ok: true, topic: { id, title, scope, branchId } };
 }
@@ -77,7 +93,7 @@ export function addForumPost(db, topicId, actor, body = {}) {
   if (!topic) return { ok: false, error: 'Topic not found.' };
   const content = String(body.body || '').trim();
   if (!content) return { ok: false, error: 'Message is required.' };
-  const postId = `POST-${Date.now()}`;
+  const postId = newForumId('POST');
   db.prepare(
     `INSERT INTO forum_posts (id, topic_id, author_user_id, body, attachments_json, created_at_iso)
      VALUES (?, ?, ?, ?, ?, ?)`

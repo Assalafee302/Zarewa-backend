@@ -1,6 +1,6 @@
 /**
  * Smart Memo Composer — rule-based memo type detection, routing, and workflow hints.
- * Shared between backend and frontend (keep frontend copy in sync).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/smartMemoComposer.js
  */
 
 export const SMART_MEMO_TYPES = {
@@ -24,7 +24,7 @@ export const SMART_MEMO_TYPES = {
       /\bplant\b/i,
     ],
     expenseCategory: 'Maintenance',
-    nextAction: 'Route to Branch Manager or Operations for assessment and vendor quotation.',
+    nextAction: 'Route to Branch Manager. Store reports the fault from Operations; BM assigns the contractor on Approvals → Issues.',
     requiredAttachments: ['Photo of fault', 'Mechanic/vendor quotation if available'],
   },
   fuel_diesel: {

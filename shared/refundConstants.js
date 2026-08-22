@@ -1,5 +1,6 @@
 /**
  * Canonical refund reason categories (Sales UI, preview filters, duplicate checks).
+ * Frontend copies via `npm run sync:shared` → src/shared/refundConstants.js
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
 export const REFUND_PREVIEW_VERSION = 11;
@@ -190,6 +191,23 @@ export function refundAmountExceedsEconomicFloorCap({
     gated = Math.max(0, gated - Math.max(0, overpay - alreadyExempt));
   }
   return gated > cap + Math.round(Number(toleranceNgn) || 0);
+}
+
+/**
+ * UI-only labels for refund reason categories.
+ * Canonical `REFUND_REASON_CATEGORY_VALUES` stay unchanged for API / persistence.
+ */
+export const REFUND_CATEGORY_DISPLAY_LABELS = {
+  'Unproduced meterage': 'Unproduced metres',
+  'Stone flatsheet shortfall': 'Stone flat-sheet shortfall',
+  'Customer commission': 'Agent commission',
+};
+
+/** @param {unknown} canonical */
+export function refundCategoryDisplayLabel(canonical) {
+  const s = String(canonical ?? '').trim();
+  if (!s) return '';
+  return REFUND_CATEGORY_DISPLAY_LABELS[s] || s;
 }
 
 /** Map legacy / test strings to canonical categories (duplicate detection + preview). */

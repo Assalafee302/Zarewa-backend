@@ -6,6 +6,17 @@ import { SCHEMA_SQL } from './schemaSql.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'mysqlWorker.mjs');
 
+/** synckit caches the worker by path — first timeout wins for the process. */
+function mysqlSyncTimeoutMs() {
+  const envTimeout = Number(process.env.ZAREWA_MYSQL_SYNC_TIMEOUT_MS || 0);
+  if (envTimeout > 0) return envTimeout;
+  return process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' ? 300_000 : 900_000;
+}
+
+function mysqlSyncFn() {
+  return createSyncFn(workerPath, { timeout: mysqlSyncTimeoutMs() });
+}
+
 /**
  * @typedef {object} MysqlEnvConfig
  * @property {string} host
@@ -30,26 +41,45 @@ export function databaseLabel(cfg = mysqlConfigFromEnv()) {
   return `${cfg.host}:${cfg.port}/${cfg.database}`;
 }
 
+/** Reachability check — does not create, wipe, or migrate a schema. */
+export function pingMysqlServer(cfg = mysqlConfigFromEnv()) {
+  try {
+    mysqlSyncFn()({ op: 'ping', config: cfg });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {MysqlEnvConfig} cfg
  * @param {{ reset?: boolean }} opts reset = wipe all tables before bootstrap (for tests)
  */
 export function createMysqlDatabase(cfg, opts = {}) {
-  const envTimeout = Number(process.env.ZAREWA_MYSQL_SYNC_TIMEOUT_MS || 0);
-  const syncTimeout =
-    envTimeout > 0
-      ? envTimeout
-      : process.env.NODE_ENV === 'test' || process.env.VITEST === 'true'
-        ? 300_000
-        : 900_000;
-  const syncFn = createSyncFn(workerPath, { timeout: syncTimeout });
-  syncFn({ op: 'init', config: cfg });
-  if (opts.reset) {
-    syncFn({ op: 'wipeAllTables' });
+  const syncFn = mysqlSyncFn();
+  try {
+    syncFn({ op: 'init', config: cfg });
+    if (opts.reset) {
+      syncFn({ op: 'resetAndBootstrap', ddl: SCHEMA_SQL });
+    } else {
+      syncFn({ op: 'bootstrapSchema', ddl: SCHEMA_SQL });
+    }
+  } catch (e) {
+    try {
+      syncFn({ op: 'close' });
+    } catch {
+      /* worker may already be gone */
+    }
+    throw e;
   }
-  syncFn({ op: 'bootstrapSchema', ddl: SCHEMA_SQL });
+
+  let transactionDepth = 0;
 
   return {
+    /** True while a {@link db.transaction} callback is running (avoids nested SAVEPOINTs on MySQL). */
+    get inTransaction() {
+      return transactionDepth > 0;
+    },
     pragma(key, val) {
       const k = String(key || '').trim();
       if (k === 'journal_mode') return;
@@ -82,6 +112,7 @@ export function createMysqlDatabase(cfg, opts = {}) {
     transaction(fn) {
       return (...args) => {
         syncFn({ op: 'txBegin' });
+        transactionDepth += 1;
         try {
           const ret = fn(...args);
           syncFn({ op: 'txCommit' });
@@ -93,6 +124,8 @@ export function createMysqlDatabase(cfg, opts = {}) {
             /* ignore */
           }
           throw e;
+        } finally {
+          transactionDepth = Math.max(0, transactionDepth - 1);
         }
       };
     },

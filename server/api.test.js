@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createDatabase } from './db.js';
 import { createApp } from './app.js';
 import { REFUND_TEST_PAYEE } from './refundTestPayee.js';
+import { withTestQuotationMaterial } from './testQuotationFixtures.js';
 
 function mysqlAvailable() {
   try {
@@ -420,8 +421,25 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   it('GET /api/customers returns seeded customers', async () => {
     const res = await agent.get('/api/customers');
     expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
     expect(res.body.customers.length).toBeGreaterThanOrEqual(4);
     expect(res.body.customers.some((c) => c.customerID === 'CUS-001')).toBe(true);
+    expect(typeof res.body.total).toBe('number');
+    expect(res.body.total).toBeGreaterThanOrEqual(res.body.customers.length);
+  });
+
+  it('GET /api/expenses and GET /api/coil-lots return paginated lists', async () => {
+    const expenses = await agent.get('/api/expenses?limit=20');
+    expect(expenses.status).toBe(200);
+    expect(expenses.body.ok).toBe(true);
+    expect(Array.isArray(expenses.body.expenses)).toBe(true);
+    expect(typeof expenses.body.total).toBe('number');
+
+    const coils = await agent.get('/api/coil-lots?limit=20');
+    expect(coils.status).toBe(200);
+    expect(coils.body.ok).toBe(true);
+    expect(Array.isArray(coils.body.coilLots)).toBe(true);
+    expect(typeof coils.body.total).toBe('number');
   });
 
   it('PATCH /api/customers/:id updates customer and linked display names', async () => {
@@ -879,7 +897,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   it('POST /api/ledger/apply-advance applies deposit to quotation', async () => {
     const before = await agent.get('/api/bootstrap');
     const treasuryAccountId = before.body.treasuryAccounts[0].id;
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: `Advance apply ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -888,7 +906,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationRef = q.body.quotation?.quotationID || q.body.quotation?.id || q.body.quotationID || q.body.id;
     expect(String(quotationRef || '')).toBeTruthy();
@@ -938,7 +956,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it.skipIf(!mysqlOk)('POST /api/ledger/receipt rejects amendSalesReceiptId re-post', async () => {
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-002',
       projectName: `Amend block ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -947,7 +965,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationId = q.body.quotation?.id || q.body.quotationID || q.body.id;
     const receipt = await agent.post('/api/ledger/receipt').send({
@@ -973,7 +991,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it.skipIf(!mysqlOk)('POST /api/ledger/receipt requires confirm amount for large posts', async () => {
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-002',
       projectName: `Confirm amt ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -982,7 +1000,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationId = q.body.quotation?.id || q.body.quotationID || q.body.id;
     const bad = await agent.post('/api/ledger/receipt').send({
@@ -1008,7 +1026,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it.skipIf(!mysqlOk)('POST /api/ledger/reverse-receipt reverses a posted receipt', async () => {
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-002',
       projectName: `Reverse receipt ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -1017,7 +1035,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationId = q.body.quotation?.id || q.body.quotation?.quotationID || q.body.quotationID || q.body.id;
     expect(String(quotationId || '')).toBeTruthy();
@@ -1092,7 +1110,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('POST /api/quotations persists lines and totals', async () => {
-    const res = await agent.post('/api/quotations').send({
+    const res = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: 'North shed',
       dateISO: '2026-03-29',
@@ -1101,7 +1119,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(res.status).toBe(201);
     expect(res.body.quotationId).toMatch(/^QT-/);
     expect(res.body.quotation.totalNgn).toBe(50_000);
@@ -1109,7 +1127,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('PATCH /api/quotations updates persisted quotation', async () => {
-    const created = await agent.post('/api/quotations').send({
+    const created = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: 'North shed',
       dateISO: '2026-03-29',
@@ -1118,7 +1136,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     const patch = await agent.patch(`/api/quotations/${encodeURIComponent(created.body.quotationId)}`).send({
       customerFeedback: 'Approved on site',
       status: 'Approved',
@@ -1131,7 +1149,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   it('POST /api/quotations returns 422 when stone-coated quote has Coil without Flat sheet', async () => {
     const g = db.prepare(`SELECT label FROM setup_gauges WHERE active = 1 LIMIT 1`).get();
     const gaugeLabel = g?.label || '0.45mm';
-    const res = await agent.post('/api/quotations').send({
+    const res = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: 'Stone coil rule',
       dateISO: '2026-03-29',
@@ -1144,7 +1162,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('QUOTATION_MATERIAL_RULES');
     expect(res.body.details?.invalidProductNames).toContain('Coil');
@@ -1153,7 +1171,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   it('POST /api/quotations allows stone-coated Coil when Flat sheet present', async () => {
     const g = db.prepare(`SELECT label FROM setup_gauges WHERE active = 1 LIMIT 1`).get();
     const gaugeLabel = g?.label || '0.45mm';
-    const res = await agent.post('/api/quotations').send({
+    const res = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: 'Stone hybrid',
       dateISO: '2026-03-29',
@@ -1169,7 +1187,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [{ name: 'Stone nail', qty: '1', unitPrice: '100' }],
         services: [],
       },
-    });
+    }));
     expect(res.status).toBe(201);
     expect(res.body.quotationId).toMatch(/^QT-/);
   });
@@ -4097,7 +4115,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
   });
 
   it('POST /api/refunds/preview returns suggested lines from inputs', async () => {
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: `Refund preview ${Date.now()}`,
       dateISO: '2026-03-29',
@@ -4106,7 +4124,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const quotationRef = q.body.quotation?.quotationID || q.body.quotation?.id || q.body.quotationID || q.body.id;
     expect(String(quotationRef || '')).toBeTruthy();
@@ -4291,10 +4309,12 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(pl.status).toBe(201);
     expect(pl.body.ok).toBe(true);
 
-    const q = await agent.post('/api/quotations').send({
+    const q = await agent.post('/api/quotations').send(withTestQuotationMaterial({
       customerID: 'CUS-001',
       projectName: 'Pricing policy API test',
       dateISO: '2026-03-29',
+      materialGauge: '0.55mm',
+      materialDesign: 'milano',
       lines: {
         materialGauge: '0.55mm',
         materialDesign: 'milano',
@@ -4302,7 +4322,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
         accessories: [],
         services: [],
       },
-    });
+    }));
     expect(q.status).toBe(201);
     const qid = q.body.quotationId;
     const v = await staff.get(`/api/quotations/${encodeURIComponent(qid)}/pricing-violations`);

@@ -1,3 +1,8 @@
+/**
+ * Coil lot kg helpers (GRN received vs live on-hand).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/coilStockKg.js
+ */
+
 /** GRN received kg for a coil lot (book figure, not live on-hand). */
 export function coilReceivedKg(lot) {
   if (!lot || typeof lot !== 'object') return 0;

@@ -81,6 +81,13 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     });
     expect(snap.ok).toBe(true);
     expect(snap.movements.length).toBeLessThanOrEqual(2);
+    expect(snap.customers).toEqual([]);
+    expect(snap.expenses).toEqual([]);
+    expect(snap.coilLots).toEqual([]);
+    expect(snap.productionJobCoils).toEqual([]);
+    expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
+      expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils'])
+    );
     db.close();
   });
 });

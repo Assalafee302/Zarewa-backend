@@ -1,3 +1,7 @@
+/**
+ * Quoted roofing / coil sheet-pool metres for unproduced refunds.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/refundQuotationMetres.js
+ */
 import { isStoneFlatsheetQuotationLine } from './stoneCoatedQuotationPolicy.js';
 import { quotationLineQtyNumber } from './quotationLineNumericForRefund.js';
 import { quotedCuttingListSheetPoolMetresFromProducts } from './cuttingListBlankConsumption.js';

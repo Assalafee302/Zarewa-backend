@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   annotateExecWorkTrayApprovalTiers,
+  approvalTierChipClass,
   classifyExecWorkTrayApprovalTier,
   EXEC_APPROVAL_TIER_MD_ONLY,
   EXEC_APPROVAL_TIER_SHARED,
@@ -56,5 +57,9 @@ describe('execApprovalTier', () => {
     const sorted = sortExecWorkTrayByApprovalTier(rows);
     expect(sorted[0].id).toBe('b');
     expect(summarizeExecWorkTrayApprovalTiers(rows)).toEqual({ mdOnly: 1, shared: 1, total: 2 });
+  });
+
+  it('styles MD-only chip distinctly', () => {
+    expect(approvalTierChipClass(EXEC_APPROVAL_TIER_MD_ONLY)).toMatch(/violet/);
   });
 });

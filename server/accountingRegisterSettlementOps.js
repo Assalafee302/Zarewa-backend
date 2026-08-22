@@ -694,12 +694,20 @@ export function payRegisterSettlement(db, settlementId, payload) {
     })();
 
     appendAuditLog(db, {
+      actor,
       action: 'register_settlement.pay',
-      entityType: 'accounting_register_settlement',
+      entityKind: 'accounting_register_settlement',
       entityId: settlementId,
-      userId: actor?.id ? String(actor.id) : null,
-      userName: paidBy,
-      detail: `Paid ₦${result.payoutAmountNgn.toLocaleString('en-NG')} on ${row.register_line_id}`,
+      amountNgn: result.payoutAmountNgn,
+      branchId: row.branch_id || payload.workspaceBranchId || '',
+      note: `Paid ₦${result.payoutAmountNgn.toLocaleString('en-NG')} on ${row.register_line_id}`,
+      details: {
+        settlementId,
+        registerLineId: row.register_line_id,
+        payoutAmountNgn: result.payoutAmountNgn,
+        fullyPaid: result.fullyPaid,
+        partyName: row.party_name,
+      },
     });
 
     return { ok: true, settlement: getRegisterSettlement(db, settlementId).settlement, ...result };

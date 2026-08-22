@@ -4,6 +4,7 @@ import {
   bankDepositCloseAmountToleranceNgn,
   isBankDepositAmountClose,
   isBankDepositDateClose,
+  openBankDepositsFromSnapshot,
   scoreBankDepositMatch,
 } from './bankDeposits.js';
 
@@ -55,3 +56,16 @@ describe('bank deposit close match suggestions', () => {
     expect(exact.score).toBe(40 + 20);
   });
 });
+
+describe('openBankDepositsFromSnapshot', () => {
+  it('keeps linkable rows with remaining balance', () => {
+    const open = openBankDepositsFromSnapshot({
+      bankDeposits: [
+        { id: 'd1', status: 'OPEN', amountNgn: 10_000, allocatedNgn: 0 },
+        { id: 'd2', status: 'ALLOCATED', amountNgn: 10_000, allocatedNgn: 10_000 },
+      ],
+    });
+    expect(open.map((d) => d.id)).toEqual(['d1']);
+  });
+});
+

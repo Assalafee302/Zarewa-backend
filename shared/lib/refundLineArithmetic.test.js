@@ -4,6 +4,7 @@ import {
   expectedAmountFromRefundLineLabel,
   formatUnproducedMetresLabel,
   scaleRefundCalculationLinesToApprovedAmount,
+  sumRefundCalculationLines,
   validateRefundCalculationLineArithmetic,
 } from './refundLineArithmetic.js';
 
@@ -59,5 +60,15 @@ describe('refundLineArithmetic', () => {
     expect(scaled[0].amountNgn).toBe(19_500);
     expect(scaled[0].label).toBe(formatUnproducedMetresLabel(5, 3900));
     expect(expectedAmountFromRefundLineLabel(scaled[0].label, 'Unproduced meterage')).toBe(19_500);
+  });
+
+  it('sumRefundCalculationLines skips excluded lines', () => {
+    expect(
+      sumRefundCalculationLines([
+        { amountNgn: '1,000', include: true },
+        { amountNgn: 500, include: false },
+        { amount_ngn: 250 },
+      ])
+    ).toBe(1250);
   });
 });

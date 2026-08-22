@@ -4,6 +4,7 @@ import {
   planReceiptWithQuotation,
   pendingAdvanceDepositRowsFromEntries,
   advanceInRemainingNgnByIdFromEntries,
+  overpayCreditNgnByCustomerIdFromEntries,
 } from './customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from './refundQuotationMoney.js';
 
@@ -91,5 +92,19 @@ describe('companionOverpayNgnByReceiptId', () => {
       },
     ];
     expect(companionOverpayNgnByReceiptId(entries).get('R1')).toBe(50_000);
+  });
+});
+
+describe('overpayCreditNgnByCustomerIdFromEntries', () => {
+  it('maps positive unapplied overpay credit per customer', () => {
+    const entries = [
+      { customerID: 'C1', type: 'OVERPAY_ADVANCE', amountNgn: 50_000 },
+      { customerID: 'C1', type: 'OVERPAY_REVERSAL', amountNgn: 10_000 },
+      { customerID: 'C2', type: 'OVERPAY_ADVANCE', amountNgn: 5_000 },
+      { customerID: 'C2', type: 'REFUND_OVERPAY', amountNgn: 5_000 },
+    ];
+    const map = overpayCreditNgnByCustomerIdFromEntries(entries);
+    expect(map.get('C1')).toBe(40_000);
+    expect(map.has('C2')).toBe(false);
   });
 });

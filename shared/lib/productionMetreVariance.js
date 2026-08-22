@@ -1,4 +1,6 @@
-/** Planned vs actual metre variance warning threshold (Phase 11B). */
+/** Planned vs actual metre variance warning threshold (Phase 11B).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/productionMetreVariance.js
+ */
 export const PRODUCTION_METRE_VARIANCE_WARN_PCT = 5;
 
 /**

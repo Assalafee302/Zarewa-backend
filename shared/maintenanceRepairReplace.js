@@ -1,6 +1,6 @@
 /**
  * Repair-vs-replace thresholds (machine lifetime maintenance vs asset value).
- * Keep frontend mirror in sync: src/shared/maintenanceRepairReplace.js
+ * Frontend copies via `npm run sync:shared` → src/shared/maintenanceRepairReplace.js
  */
 
 /** Lifetime maint ≥ this % of purchase cost → watch. */

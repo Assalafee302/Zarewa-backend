@@ -5,6 +5,7 @@ import {
   listLedgerEntries,
   listSuppliers,
   listTransportAgents,
+  listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
   listCoilLots,
@@ -12,8 +13,7 @@ import {
   listStockMovements,
   getWipByProduct,
   listDeliveries,
-  listSalesReceipts,
-  enrichSalesReceiptRowsWithCashFromLedger,
+  listSalesReceiptsForDesk,
   listCuttingLists,
   listRefunds,
   listTreasuryAccounts,
@@ -91,10 +91,20 @@ import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
 import { listBankDeposits } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
+import {
+  listPartnerWalletBalancesDue,
+  partnerWalletEnabled,
+} from './finance/partnerWalletCredit.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
-import { financeHistoryListOpts, productionHistoryListOpts, rowListOpts, salesCustomersListOpts } from './listQueryOpts.js';
+import {
+  financeHistoryListOpts,
+  productionHistoryListOpts,
+  receiptsHistoryListOpts,
+  rowListOpts,
+  salesCustomersListOpts,
+} from './listQueryOpts.js';
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -147,12 +157,14 @@ function safeExpenseCategoryBranchCoachAlert(db, opts) {
  *   skipSideEffects?: boolean;
  *   skipWorkItemSync?: boolean;
  *   listLimits?: Record<string, number | undefined>;
+ *   omitDeskArrays?: Record<string, boolean>;
  * }} [opts]
  */
 export function buildBootstrap(db, opts = {}) {
   const branchScope = opts.branchScope ?? 'ALL';
   const skipSideEffects = Boolean(opts.skipSideEffects);
   const skipWorkItemSync = Boolean(opts.skipWorkItemSync) || skipSideEffects;
+  const omitDesk = opts.omitDeskArrays || {};
   const user = opts.user ?? opts.session?.user ?? null;
   const includeRegisteredPasswords = Boolean(opts.includeRegisteredPasswords);
   const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
@@ -272,17 +284,20 @@ export function buildBootstrap(db, opts = {}) {
       : financeHistoryListOpts();
   const customersHistoryOpts =
     opts.listLimits?.customers != null ? listOpts('customers') : salesCustomersListOpts();
+  const receiptsHistoryOpts =
+    opts.listLimits?.receipts != null ? listOpts('receipts') : receiptsHistoryListOpts();
   const productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
-  const productionJobCoilsList = prodRollupOk
-    ? repairProductionJobCoilIntegrity(
-        db,
-        productionJobsList,
-        // Coils must cover every loaded job — do not apply the conversion-check row cap here.
-        listProductionJobCoils(db, branchScope, { limit: 0 })
-      )
-    : [];
+  const productionJobCoilsList =
+    prodRollupOk && !omitDesk.productionJobCoils
+      ? repairProductionJobCoilIntegrity(
+          db,
+          productionJobsList,
+          // Coils must cover every loaded job — do not apply the conversion-check row cap here.
+          listProductionJobCoils(db, branchScope, { limit: 0 })
+        )
+      : [];
 
   return {
     ok: true,
@@ -290,7 +305,7 @@ export function buildBootstrap(db, opts = {}) {
     permissions: [...(session.permissions || [])],
     workspaceBranches: listBranches(db),
     branchScope,
-    customers: salesOk ? listCustomers(db, branchScope, customersHistoryOpts) : [],
+    customers: salesOk && !omitDesk.customers ? listCustomers(db, branchScope, customersHistoryOpts) : [],
     quotations: salesOk
       ? listQuotations(db, branchScope, rowListOpts(opts, 'quotations'))
       : prodRollupOk
@@ -300,20 +315,21 @@ export function buildBootstrap(db, opts = {}) {
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
+    associatedStaff: procOk || salesOk ? listAssociatedStaff(db, branchScope) : [],
+    associatedStaffPolicy: {
+      enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
+    },
     products: productsOk ? listProducts(db, branchScope) : [],
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, poListOpts) : [],
-    coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
+    coilLots: coilMovOk && !omitDesk.coilLots ? listCoilLots(db, branchScope) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
     movements: coilMovOk ? listStockMovements(db, branchScope, rowListOpts(opts, 'movements')) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     deliveries: opsOk ? listDeliveries(db, branchScope, listOpts('deliveries')) : [],
-    receipts: salesOk
-      ? enrichSalesReceiptRowsWithCashFromLedger(
-          listSalesReceipts(db, branchScope, listOpts('receipts')),
-          ledgerRows
-        )
+    receipts: salesOk || finOk || treasuryMovementsOk
+      ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryOpts)
       : [],
     cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, cuttingListHistoryOpts) : [],
     productionJobs: productionJobsList,
@@ -336,7 +352,7 @@ export function buildBootstrap(db, opts = {}) {
     treasuryMovements: treasuryMovementsOk
       ? listTreasuryMovements(db, branchScope, treasuryMovementsHistoryOpts)
       : [],
-    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, expensesHistoryOpts) : [],
+    expenses: expensesSnapshotOk && !omitDesk.expenses ? listExpenses(db, branchScope, expensesHistoryOpts) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, paymentRequestsHistoryOpts) : [],
     glJournalSearchSlice: finOk ? listGlJournalsForWorkspaceSearch(db, branchScope, { limit: 800 }) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
@@ -356,6 +372,13 @@ export function buildBootstrap(db, opts = {}) {
     staffObligationsDue:
       finOk && staffObligationTablesReady(db)
         ? listStaffRepayableObligationsForCashier(db, branchScope)
+        : [],
+    partnerWalletPolicy: { enabled: partnerWalletEnabled() },
+    partnerWalletsDue:
+      finOk ||
+      (user &&
+        (userHasPermission(user, 'finance.pay') || userHasPermission(user, 'cashier.desk.view')))
+        ? listPartnerWalletBalancesDue(db, branchScope)
         : [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')
@@ -442,7 +465,9 @@ export function buildBootstrap(db, opts = {}) {
           : Number(customersHistoryOpts.limit) || listLimit('customers'),
         deliveries: listLimit('deliveries'),
         refunds: listLimit('refunds'),
-        receipts: listLimit('receipts'),
+        receipts: receiptsHistoryOpts.unlimited
+          ? 0
+          : Number(receiptsHistoryOpts.limit) || listLimit('receipts'),
         expenses: expensesHistoryOpts.unlimited
           ? 0
           : Number(expensesHistoryOpts.limit) || listLimit('expenses'),
@@ -461,19 +486,21 @@ export function buildBootstrap(db, opts = {}) {
         ledgerEntries: ledgerRowLimit,
       },
       truncated: {
-        /** Only truncated when an explicit positive customers cap is configured. */
-        customers: salesOk && !customersHistoryOpts.unlimited,
+        /** Only truncated when an explicit positive customers cap is configured — or deferred on dashboard shell. */
+        customers: (salesOk && !customersHistoryOpts.unlimited) || Boolean(omitDesk.customers),
         deliveries: opsOk,
         refunds: refundsOk,
-        receipts: salesOk,
-        /** Only truncated when an explicit positive finance history cap is configured. */
-        expenses: expensesSnapshotOk && !expensesHistoryOpts.unlimited,
+        receipts: (salesOk || finOk || treasuryMovementsOk) && !receiptsHistoryOpts.unlimited,
+        /** Only truncated when an explicit positive finance history cap is configured — or deferred on dashboard shell. */
+        expenses: (expensesSnapshotOk && !expensesHistoryOpts.unlimited) || Boolean(omitDesk.expenses),
         paymentRequests: payReqOk && !paymentRequestsHistoryOpts.unlimited,
         treasuryMovements: treasuryMovementsOk && !treasuryMovementsHistoryOpts.unlimited,
         /** Only truncated when an explicit positive history cap is configured. */
         cuttingLists: (opsOk || salesOk) && !cuttingListHistoryOpts.unlimited,
         productionJobs: prodRollupOk && !productionJobsHistoryOpts.unlimited,
         ledgerEntries: ledgerOk,
+        coilLots: Boolean(omitDesk.coilLots),
+        productionJobCoils: Boolean(omitDesk.productionJobCoils),
       },
     },
   };
@@ -572,8 +599,9 @@ export function repairDashboardReceivablePurchaseOrders(full, partial) {
 }
 
 /**
- * Dashboard-focused snapshot: same shape as bootstrap, but trims heavy arrays.
- * Intended to make the initial dashboard render fast; the app can refresh full bootstrap later.
+ * Dashboard-focused snapshot: same shape as bootstrap, but defers desk-owned heavy arrays
+ * (customers, expenses, coilLots, productionJobCoils) so first paint stays fast.
+ * Desks refill via `/api/workspace/{domain}-snapshot` when opened.
  */
 export function buildDashboardBootstrap(db, opts = {}) {
   const limit = Math.min(5000, Math.max(200, Number(opts.limit) || 600));
@@ -581,6 +609,13 @@ export function buildDashboardBootstrap(db, opts = {}) {
     ...opts,
     skipSideEffects: true,
     skipWorkItemSync: true,
+    omitDeskArrays: {
+      customers: true,
+      expenses: true,
+      coilLots: true,
+      productionJobCoils: true,
+      ...(opts.omitDeskArrays || {}),
+    },
     listLimits: {
       quotations: limit,
       purchaseOrders: limit,
@@ -590,23 +625,15 @@ export function buildDashboardBootstrap(db, opts = {}) {
   });
   const partial = {
     ...full,
-    // Heavy arrays trimmed for dashboard charts/KPIs (SQL limits applied above where supported).
-    /** Full customer directory — trimming hid later alphabet names in QuotationModal. */
-    customers: full.customers,
     quotations: full.quotations,
-    receipts: take(full.receipts, limit),
-    /** Full production history — trimming hides older queue / closed records in Operations. */
+    /** Manager / production queues need cutting lists + jobs; coil join rows deferred to operations domain. */
     cuttingLists: full.cuttingLists,
     purchaseOrders: full.purchaseOrders,
     deliveries: take(full.deliveries, limit),
     refunds: take(full.refunds, limit),
-    /** Full finance register — trimming made Account look like only ~3 weeks of history. */
-    expenses: full.expenses,
     paymentRequests: full.paymentRequests,
     treasuryMovements: full.treasuryMovements,
     movements: take(full.movements, limit),
-    /** Full coil register — trimming hides coils (e.g. CL-26-2043) from Stock Management. */
-    coilLots: full.coilLots ?? [],
     coilControlEvents: take(full.coilControlEvents ?? [], limit),
     productionJobs: full.productionJobs,
     productionJobCoils: full.productionJobCoils,
@@ -620,8 +647,24 @@ export function buildDashboardBootstrap(db, opts = {}) {
     maintenanceWorkOrders: take(full.maintenanceWorkOrders, Math.min(limit, 120)),
     hrPerformanceReviews: take(full.hrPerformanceReviews, Math.min(limit, 120)),
     ledgerEntries: full.ledgerEntries,
+    /** Full receipts — trimming hid older Draft/pending rows so Sales counts diverged from Cashier desk. */
+    receipts: full.receipts,
   };
   repairDashboardProductionJoins(full, partial);
   repairDashboardReceivablePurchaseOrders(full, partial);
-  return partial;
+  const deferredDeskArrays = ['customers', 'expenses', 'coilLots', 'productionJobCoils'];
+  return {
+    ...partial,
+    bootstrapMeta: {
+      ...(partial.bootstrapMeta || {}),
+      deferredDeskArrays,
+      truncated: {
+        ...(partial.bootstrapMeta?.truncated || {}),
+        customers: true,
+        expenses: true,
+        coilLots: true,
+        productionJobCoils: true,
+      },
+    },
+  };
 }

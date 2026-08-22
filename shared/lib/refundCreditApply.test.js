@@ -48,6 +48,22 @@ describe('refundCreditApply pure helpers', () => {
         paidAmountNgn: 10_000,
       })
     ).toBe(true);
+    expect(
+      refundIsEligibleCreditSource({
+        status: 'Approved',
+        reasonCategory: 'Transport issue',
+        approvedAmountNgn: 40_000,
+        paidAmountNgn: 0,
+      })
+    ).toBe(false);
+    expect(
+      refundIsEligibleCreditSource({
+        status: 'Approved',
+        reasonCategory: 'Installation issue',
+        approvedAmountNgn: 25_000,
+        paidAmountNgn: 0,
+      })
+    ).toBe(false);
   });
 
   it('computes open credit and plans partial apply leaving remainder', () => {

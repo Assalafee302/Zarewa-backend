@@ -1,13 +1,15 @@
-/* eslint-disable no-undef */
 /**
- * Customer ledger — advances, receipts against quotations, applications, overpayments → advance.
+ * Customer ledger — deposits, receipts, advance applications, and overpayment credits (tracked separately).
  * Source of truth is the in-memory ledger snapshot replaced from bootstrap.
- * localStorage is write-through cache only (not read as authority).
+ * Do not persist AR/ledger rows to localStorage (shared PCs / XSS).
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/customerLedgerStore.js
  */
 import {
   sumForQuotationInEntries,
   amountDueOnQuotationFromEntries,
+  receivableDueOnQuotationFromEntries,
   advanceBalanceFromEntries,
+  overpayCreditBalanceFromEntries,
   ledgerReceiptTotalFromEntries,
   entriesForCustomerFromEntries,
   planAdvanceIn,
@@ -17,10 +19,22 @@ import {
   receiptResultFromSavedRows,
 } from './customerLedgerCore.js';
 
-const STORAGE_KEY = 'zarewa.customerLedger.v1';
+const LEGACY_STORAGE_KEY = 'zarewa.customerLedger.v1';
 let ledgerEntriesState = [];
+let clearedLegacyStorage = false;
 
-/** @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'REFUND_ADVANCE'} LedgerEntryType */
+function clearLegacyLedgerStorage() {
+  const storage = globalThis.localStorage;
+  if (clearedLegacyStorage || !storage) return;
+  clearedLegacyStorage = true;
+  try {
+    storage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'} LedgerEntryType */
 
 /**
  * @typedef {{
@@ -42,20 +56,16 @@ export function loadLedgerEntries() {
   return Array.isArray(ledgerEntriesState) ? ledgerEntriesState : [];
 }
 
-/** Replace ledger from server bootstrap (keeps UI + localStorage aligned with API). */
+/** Replace ledger from server bootstrap (memory only). */
 export function replaceLedgerEntries(entries) {
+  clearLegacyLedgerStorage();
   if (!Array.isArray(entries)) return;
   ledgerEntriesState = entries.map((row) => ({ ...row }));
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ledgerEntriesState));
-  }
 }
 
 function saveLedgerEntries(list) {
+  clearLegacyLedgerStorage();
   ledgerEntriesState = Array.isArray(list) ? list.map((row) => ({ ...row })) : [];
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ledgerEntriesState));
-  }
 }
 
 function nextId() {
@@ -88,9 +98,19 @@ export function amountDueOnQuotation(q) {
   return amountDueOnQuotationFromEntries(loadLedgerEntries(), q);
 }
 
-/** Customer advance / deposit balance (liability). */
+/** AR balance: due only when completed production exists on the quote. */
+export function receivableDueOnQuotation(q, productionJobs = []) {
+  return receivableDueOnQuotationFromEntries(loadLedgerEntries(), q, productionJobs);
+}
+
+/** Customer deposit advance balance (ADVANCE_IN, applications, refunds) — excludes quotation overpayments. */
 export function advanceBalanceNgn(customerID) {
   return advanceBalanceFromEntries(loadLedgerEntries(), customerID);
+}
+
+/** Credit from paying more than the quote balance (OVERPAY_ADVANCE); reduced by reversals and refund payouts. */
+export function overpayCreditBalanceNgn(customerID) {
+  return overpayCreditBalanceFromEntries(loadLedgerEntries(), customerID);
 }
 
 /** Sum of receipt-type revenue postings linked to quotations (this ledger only). */

@@ -3,25 +3,24 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
   outstandingToleranceNgn,
-  PAYMENT_EFFECTIVELY_FULL_FRACTION,
+  PAYMENT_OUTSTANDING_TOLERANCE_NGN,
 } from './paymentOutstandingTolerance.js';
 
 describe('paymentOutstandingTolerance', () => {
-  it('uses 99.5% as the effectively-full threshold', () => {
-    expect(PAYMENT_EFFECTIVELY_FULL_FRACTION).toBe(0.995);
+  it('uses a ₦1 absolute residual, not a percent of the invoice', () => {
+    expect(PAYMENT_OUTSTANDING_TOLERANCE_NGN).toBe(1);
+    expect(outstandingToleranceNgn(10_000_000)).toBe(1);
   });
 
-  it('treats residual up to 0.5% as zero outstanding', () => {
+  it('treats residual up to ₦1 as zero outstanding', () => {
     const total = 10_000_000;
-    const tol = outstandingToleranceNgn(total);
-    expect(tol).toBe(50_000);
-    expect(effectiveOutstandingNgn(total, total - 50_000)).toBe(0);
-    expect(effectiveOutstandingNgn(total, total - 50_001)).toBe(50_001);
+    expect(effectiveOutstandingNgn(total, total - 1)).toBe(0);
+    expect(effectiveOutstandingNgn(total, total - 2)).toBe(2);
   });
 
-  it('marks effectively fully paid at 99.5% or above', () => {
-    expect(isEffectivelyFullyPaid(995_000, 1_000_000)).toBe(true);
-    expect(isEffectivelyFullyPaid(994_999, 1_000_000)).toBe(false);
+  it('marks effectively fully paid within absolute tolerance', () => {
+    expect(isEffectivelyFullyPaid(999_999, 1_000_000)).toBe(true);
+    expect(isEffectivelyFullyPaid(999_998, 1_000_000)).toBe(false);
     expect(isEffectivelyFullyPaid(1_000_000, 1_000_000)).toBe(true);
   });
 });

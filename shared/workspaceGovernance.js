@@ -83,6 +83,17 @@ export function userMayBlockQuotationRefunds(actor) {
   return userMayReleaseQuotationPaymentHold(actor);
 }
 
+/**
+ * Override production metre alignment on refunds (branch manager / executive / admin).
+ * @param {string | null | undefined} roleKey
+ */
+export function userMayOverrideProductionAlignment(roleKey) {
+  const rk = String(roleKey || '').trim().toLowerCase();
+  if (rk === 'admin') return true;
+  if (isExecutiveRoleKey(rk)) return true;
+  return isBranchExpenseApproverRoleKey(rk);
+}
+
 /** Finance desk roles that may approve payment requests when they hold finance.approve. */
 export function isFinanceDeskApproverRoleKey(roleKey) {
   const rk = String(roleKey || '').trim().toLowerCase();

@@ -79,7 +79,22 @@ function seedCompletedJobsForRefundEligibleSeededQuotes(db) {
     );
     if (!job.ok) continue;
     markJobCompletedDemo(db, job.jobID, cl.id, 10);
+    markSeededReceiptsClearedForRefundEligibleQuote(db, qref);
   }
+}
+
+/** Finance-cleared receipts so seeded refund-eligible quotes pass POST /api/refunds clearance gate. */
+function markSeededReceiptsClearedForRefundEligibleQuote(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return;
+  db.prepare(
+    `UPDATE sales_receipts
+     SET finance_reconciliation_saved_at_iso = '2026-03-28T12:00:00Z',
+         bank_confirmed_at_iso = COALESCE(bank_confirmed_at_iso, '2026-03-28T12:00:00Z'),
+         status = 'Cleared'
+     WHERE quotation_ref = ?
+       AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+  ).run(qid);
 }
 
 function seedActiveJobForQuote003(db) {

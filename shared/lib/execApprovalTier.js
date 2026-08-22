@@ -1,12 +1,21 @@
 /**
  * Classify executive work-tray items: MD-only vs approvals others can also handle.
  * Used on Command Centre so the MD can prioritise items only they can clear.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/execApprovalTier.js
  */
 
 import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../workspaceGovernance.js';
 
 export const EXEC_APPROVAL_TIER_MD_ONLY = 'md_only';
 export const EXEC_APPROVAL_TIER_SHARED = 'shared';
+
+/** Tailwind chip classes for Command Centre / exec tray. */
+export function approvalTierChipClass(tier) {
+  if (tier === EXEC_APPROVAL_TIER_MD_ONLY) {
+    return 'bg-violet-100 text-violet-950 ring-violet-200';
+  }
+  return 'bg-sky-50 text-sky-900 ring-sky-200';
+}
 
 const MD_ONLY_KINDS = new Set([
   'price_exception',

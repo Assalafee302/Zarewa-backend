@@ -1,0 +1,26 @@
+---
+description: Comments, redundancy, and performance standards for Zarewa API
+alwaysApply: true
+---
+
+# Code quality
+
+## Comments
+
+Comment **invariants, permission gates, and money/stock side effects**. File header on modules over ~300 lines. JSDoc on exported ops. Do not narrate SQL line-by-line.
+
+## Redundancy
+
+- Route handlers should call ops modules (`*Ops.js`); do not copy SQL into `httpApi.js`.
+- Use `apiError` / `asyncRoute` from existing HTTP helpers instead of a new try/catch JSON shape.
+- Shared arithmetic belongs in `shared/lib/`, not a second copy in `server/`.
+
+## Performance
+
+- List endpoints must use `listQueryOpts` helpers. Do not `SELECT *` unbounded for a desk UI unless the helper documents why (history completeness) and has an env cap.
+- Hot bootstrap paths: keep domain snapshots behind `domainBootstrap.js` builders; do not add full-table dumps to the default bootstrap.
+- Add or extend an index in `schemaSql.js` / `migrate.js` when a new filter column is queried in production lists.
+
+## Professional bar
+
+One export style (ESM). Tests named `*.test.js` next to the module or in the same domain folder. No `debug-*.log` in git.

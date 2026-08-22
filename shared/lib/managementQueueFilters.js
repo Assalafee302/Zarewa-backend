@@ -1,5 +1,6 @@
 /**
- * Manager queue inclusion rules — keep in sync with frontend src/lib/managementQueueFilters.js
+ * Manager queue inclusion rules.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/managementQueueFilters.js
  */
 import { effectiveOutstandingNgn, isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from './customerLedgerCore.js';
@@ -16,7 +17,7 @@ export function quotationIsFlaggedForAudit(q) {
   return Boolean(q?.managerFlaggedAtISO ?? q?.manager_flagged_at_iso);
 }
 
-/** Draft cutting list blocked by the sub-70% payment rule (99.5% fully paid quotes are excluded). */
+/** Draft cutting list blocked by the sub-70% payment rule (₦1 residual counts as fully paid). */
 export function cuttingListInProductionGate(cl, q) {
   if (String(cl?.status || '').trim() !== 'Draft') return false;
   if (!q) return false;

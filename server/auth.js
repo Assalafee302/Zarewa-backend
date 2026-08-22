@@ -437,6 +437,14 @@ const DEFAULT_USERS = [
     password: 'Ceo@1234567890!',
   },
   {
+    id: 'USR-CHAIRMAN',
+    username: 'chairman',
+    displayName: 'Chairman',
+    roleKey: 'chairman',
+    department: 'chairman',
+    password: 'Chairman@1234567890!',
+  },
+  {
     id: 'USR-VIEW',
     username: 'viewer',
     displayName: 'Read-only Viewer',
@@ -1420,7 +1428,13 @@ function isLocalDevRequestHost(hostHeader) {
 
 /** @param {import('express').Request | null | undefined} [req] */
 function sessionCookieFlags(req) {
-  if (req && isLocalDevRequestHost(req.headers?.host)) {
+  // Host-based non-Secure override is for local http only — never in production
+  // (Host can be spoofed on some deployments).
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    req &&
+    isLocalDevRequestHost(req.headers?.host)
+  ) {
     // Production .env often sets Secure + cross-site Domain; browsers reject those on http://127.0.0.1.
     return '; SameSite=Lax';
   }
@@ -1968,6 +1982,7 @@ export function requireAuth(req, res, next) {
     return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
   }
 
+  // Bearer mobile sessions are not cookie CSRF; never set mobileAuth on cookie sessions.
   if (req.mobileAuth) {
     return next();
   }
@@ -1985,7 +2000,7 @@ export function requireAuth(req, res, next) {
     const cookieToken = req.csrfToken || null;
     const headerToken = String(req.headers['x-csrf-token'] || req.headers['X-CSRF-Token'] || '')
       .trim();
-    if (!cookieToken || !headerToken || headerToken !== cookieToken) {
+    if (!cookieToken || !headerToken || !csrfTokensEqual(cookieToken, headerToken)) {
       return res.status(403).json({
         ok: false,
         error: 'Your session expired. Please sign in again and retry.',
@@ -1996,19 +2011,32 @@ export function requireAuth(req, res, next) {
   return next();
 }
 
+/** Constant-time compare for CSRF double-submit tokens. */
+function csrfTokensEqual(a, b) {
+  const left = Buffer.from(String(a || ''), 'utf8');
+  const right = Buffer.from(String(b || ''), 'utf8');
+  if (left.length === 0 || left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+/**
+ * Auth + CSRF (via requireAuth) then permission check.
+ * Always use this for mutating routes — never permission-only without CSRF.
+ */
 export function requirePermission(required) {
   const perms = Array.isArray(required) ? required : [required];
   return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ ok: false, error: 'Sign in required.', code: 'AUTH_REQUIRED' });
-    }
-    if (perms.some((perm) => userHasPermission(req.user, perm))) {
-      return next();
-    }
-    return res.status(403).json({
-      ok: false,
-      error: 'You do not have permission for this action.',
-      code: 'FORBIDDEN',
+    requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      if (res.headersSent) return;
+      if (perms.some((perm) => userHasPermission(req.user, perm))) {
+        return next();
+      }
+      return res.status(403).json({
+        ok: false,
+        error: 'You do not have permission for this action.',
+        code: 'FORBIDDEN',
+      });
     });
   };
 }

@@ -1,5 +1,6 @@
 /**
  * Legal display name from HR personal name parts.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/hrLegalDisplayName.js
  * @param {{ firstName?: string; middleName?: string; surname?: string }} personal
  */
 export function composeLegalDisplayName(personal = {}) {

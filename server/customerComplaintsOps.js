@@ -1,22 +1,26 @@
 /**
  * Customer complaint cases (separate from freeform CRM notes).
+ * Enums/labels: `shared/customerComplaints.js`.
  */
 import { nextCustomerComplaintHumanId } from './humanId.js';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { appendAuditLog } from './controlOps.js';
+import {
+  COMPLAINT_CATEGORIES,
+  COMPLAINT_CHANNELS,
+  COMPLAINT_OPEN_STATUSES,
+  COMPLAINT_SEVERITIES,
+  COMPLAINT_STATUSES,
+} from '../shared/customerComplaints.js';
 
-export const COMPLAINT_CHANNELS = ['phone', 'whatsapp', 'in_person', 'email', 'delivery'];
-export const COMPLAINT_CATEGORIES = [
-  'product_quality',
-  'delivery_delay',
-  'billing_dispute',
-  'service',
-  'other',
-];
-export const COMPLAINT_SEVERITIES = ['low', 'high', 'urgent'];
-export const COMPLAINT_STATUSES = ['open', 'acknowledged', 'in_progress', 'resolved', 'closed'];
+export {
+  COMPLAINT_CATEGORIES,
+  COMPLAINT_CHANNELS,
+  COMPLAINT_SEVERITIES,
+  COMPLAINT_STATUSES,
+};
 
-const OPEN_STATUSES = new Set(['open', 'acknowledged', 'in_progress']);
+const OPEN_STATUSES = new Set(COMPLAINT_OPEN_STATUSES);
 
 function nowIso() {
   return new Date().toISOString();

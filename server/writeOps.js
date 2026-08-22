@@ -125,11 +125,17 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { partnerWalletEnabled, refundHasOpenWalletCredit } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
+import {
+  overpaymentAlreadyRefundedNgn,
+  quotationOverpaymentResidualNgn,
+  sumRefundCalculationLinesByCategoryNgn,
+} from '../shared/lib/refundQuotationMoney.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn } from './ap2ReceivedBasisOps.js';
 import {
   deliveryGateShouldBlockMutation,
@@ -177,6 +183,98 @@ function normalizeCrmTagsJson(row) {
   return '[]';
 }
 
+function normalizeRoleTagsJson(row) {
+  const toTags = (v) => {
+    if (Array.isArray(v)) {
+      return v.map((x) => String(x ?? '').trim()).filter(Boolean);
+    }
+    if (typeof v === 'string' && v.trim()) {
+      const s = v.trim();
+      if (s.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) {
+            return parsed.map((x) => String(x ?? '').trim()).filter(Boolean);
+          }
+        } catch {
+          /* fall through to comma split */
+        }
+      }
+      return s
+        .split(/[,;|]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+    return [];
+  };
+  const roleTags = toTags(row?.roleTags);
+  if (roleTags.length > 0) return JSON.stringify([...new Set(roleTags)]);
+  if (typeof row?.roleTagsJson === 'string' && row.roleTagsJson.trim()) {
+    const fromJson = toTags(row.roleTagsJson);
+    if (fromJson.length > 0) return JSON.stringify([...new Set(fromJson)]);
+    return row.roleTagsJson.trim();
+  }
+  return '[]';
+}
+
+function serviceNameForAssignment(name) {
+  return String(name ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function serviceNeedsDriverAssignment(name) {
+  const n = serviceNameForAssignment(name);
+  return n.includes('transport');
+}
+
+function serviceNeedsInstallerAssignment(name) {
+  const n = serviceNameForAssignment(name);
+  return n.includes('install');
+}
+
+function associatedStaffPolicyEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0'));
+}
+
+function assertServiceAssignments(db, linesJson) {
+  if (!associatedStaffPolicyEnabled()) return;
+  const services = Array.isArray(linesJson?.services) ? linesJson.services : [];
+  for (const line of services) {
+    const name = String(line?.name ?? '').trim();
+    if (!name) continue;
+    const qty = Number(String(line?.qty ?? '').replace(/,/g, '')) || 0;
+    const unitPrice = Number(String(line?.unitPrice ?? '').replace(/,/g, '')) || 0;
+    if (qty <= 0 || unitPrice <= 0) continue;
+    const staffId = String(line?.assigneeAssociatedStaffID ?? line?.assigneeCustomerID ?? '').trim();
+    if (serviceNeedsDriverAssignment(name) && !staffId) {
+      throw new Error(`Service assignment required: choose a transporter profile for "${name}".`);
+    }
+    if (serviceNeedsInstallerAssignment(name) && !staffId) {
+      throw new Error(`Service assignment required: choose an installer profile for "${name}".`);
+    }
+    if (staffId) {
+      const staffRow = db
+        .prepare(`SELECT id, staff_type, status FROM associated_staff WHERE id = ?`)
+        .get(staffId);
+      if (!staffRow) {
+        throw new Error(`Assigned associated staff "${staffId}" was not found.`);
+      }
+      const staffType = String(staffRow.staff_type || '').trim().toLowerCase();
+      const status = String(staffRow.status || 'Active').trim().toLowerCase();
+      if (status !== 'active') {
+        throw new Error(`Assigned associated staff "${staffId}" is inactive.`);
+      }
+      if (serviceNeedsDriverAssignment(name) && !staffType.includes('driver')) {
+        throw new Error(`"${name}" must be assigned to a Driver profile.`);
+      }
+      if (serviceNeedsInstallerAssignment(name) && !staffType.includes('install')) {
+        throw new Error(`"${name}" must be assigned to an Installer profile.`);
+      }
+    }
+  }
+}
+
 function normalizeIsoTimestamp(value) {
   if (!value) return new Date().toISOString();
   const s = String(value).trim();
@@ -211,7 +309,7 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
   /** No nested `db.transaction` here: httpApi and writeOps callers already wrap in an outer transaction. Nested tx breaks the MySQL worker SAVEPOINT stack (`SAVEPOINT sp_1 does not exist`). */
   const saved = [];
   for (const r of planRows) {
-    if (r.quotationRef) {
+    if (r.quotationRef && !opts.bypassQuotationPaymentLocks) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
       if (q) {
         if (q.manager_cleared_at_iso) {
@@ -919,12 +1017,14 @@ export function insertCustomer(db, row, branchId = DEFAULT_BRANCH_ID) {
     null
   );
   const tagsJson = normalizeCrmTagsJson(row);
+  const roleTagsJson = normalizeRoleTagsJson(row);
   db.prepare(
     `INSERT INTO customers (
       customer_id, name, phone_number, email, address_shipping, address_billing,
       status, tier, payment_terms, created_by, created_at_iso, last_activity_iso,
-      company_name, lead_source, preferred_contact, follow_up_iso, crm_tags_json, crm_profile_notes, branch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      company_name, lead_source, preferred_contact, follow_up_iso, crm_tags_json, crm_profile_notes,
+      customer_title, role_tags_json, bank_account_name, bank_name, bank_account_no, branch_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id,
     row.name,
@@ -944,6 +1044,11 @@ export function insertCustomer(db, row, branchId = DEFAULT_BRANCH_ID) {
     String(row.followUpISO ?? '').trim().slice(0, 10),
     tagsJson,
     String(row.crmProfileNotes ?? '').trim(),
+    String(row.customerTitle ?? '').trim(),
+    roleTagsJson,
+    String(row.bankAccountName ?? '').trim(),
+    String(row.bankName ?? '').trim(),
+    String(row.bankAccountNo ?? '').trim(),
     String(branchId || DEFAULT_BRANCH_ID).trim()
   );
   return id;
@@ -1177,6 +1282,10 @@ export function updateCustomer(db, customerID, row, branchId = DEFAULT_BRANCH_ID
     row.crmTags !== undefined || row.crmTagsJson !== undefined
       ? normalizeCrmTagsJson(row)
       : cur.crm_tags_json || '[]';
+  const roleTagsJson =
+    row.roleTags !== undefined || row.roleTagsJson !== undefined
+      ? normalizeRoleTagsJson(row)
+      : cur.role_tags_json || '[]';
   const profileNotes =
     row.crmProfileNotes !== undefined
       ? String(row.crmProfileNotes ?? '').trim()
@@ -1187,7 +1296,8 @@ export function updateCustomer(db, customerID, row, branchId = DEFAULT_BRANCH_ID
        SET name = ?, phone_number = ?, email = ?, address_shipping = ?, address_billing = ?,
            status = ?, tier = ?, payment_terms = ?, last_activity_iso = ?,
            company_name = ?, lead_source = ?, preferred_contact = ?, follow_up_iso = ?,
-           crm_tags_json = ?, crm_profile_notes = ?
+           crm_tags_json = ?, crm_profile_notes = ?, customer_title = ?, role_tags_json = ?,
+           bank_account_name = ?, bank_name = ?, bank_account_no = ?
        WHERE customer_id = ? AND branch_id = ?`
     )
     .run(
@@ -1206,6 +1316,11 @@ export function updateCustomer(db, customerID, row, branchId = DEFAULT_BRANCH_ID
       pick('followUpISO', 'follow_up_iso').slice(0, 10),
       tagsJson,
       profileNotes,
+      pick('customerTitle', 'customer_title'),
+      roleTagsJson,
+      pick('bankAccountName', 'bank_account_name'),
+      pick('bankName', 'bank_name'),
+      pick('bankAccountNo', 'bank_account_no'),
       customerID,
       bid
     );
@@ -4716,7 +4831,6 @@ export function addCoilRequest(db, payload) {
       requestedByDisplay: String(payload?.requestedByDisplay || '').trim() || '',
       unit,
       ...payload,
-      unit,
     },
   };
 }
@@ -5006,6 +5120,115 @@ export function updateTransportAgent(db, id, row, _branchId = DEFAULT_BRANCH_ID)
 export function deleteTransportAgent(db, id, _branchId = DEFAULT_BRANCH_ID) {
   const r = db.prepare(`DELETE FROM transport_agents WHERE id = ?`).run(id);
   if (r.changes === 0) return { ok: false, error: 'Transport agent not found.' };
+  return { ok: true };
+}
+
+function nextAssociatedStaffIdFromDb(db) {
+  const rows = db.prepare(`SELECT id FROM associated_staff`).all();
+  const nums = rows
+    .map((r) => Number(String(r.id || '').replace(/^AS-?/i, '')))
+    .filter((n) => !Number.isNaN(n));
+  const n = nums.length ? Math.max(...nums) + 1 : 1;
+  return `AS-${String(n).padStart(3, '0')}`;
+}
+
+function stringifyAssociatedStaffProfile(row) {
+  const raw = row.profile ?? row.profileJson;
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'string') return raw.trim() || null;
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAssociatedStaffType(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s.includes('install') || s.includes('roof')) return 'Installer';
+  return 'Driver';
+}
+
+export function insertAssociatedStaff(db, row, _branchId = DEFAULT_BRANCH_ID) {
+  const name = String(row.name ?? '').trim();
+  if (!name) throw new Error('Associated staff name is required.');
+  const id = String(row.id ?? '').trim() || nextAssociatedStaffIdFromDb(db);
+  const profileJson = stringifyAssociatedStaffProfile(row);
+  const staffType = normalizeAssociatedStaffType(row.staffType ?? row.staff_type ?? row.type);
+  db.prepare(
+    `INSERT INTO associated_staff (
+      id, name, staff_type, phone, status, bank_account_name, bank_name, bank_account_no, profile_json, branch_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    name,
+    staffType,
+    String(row.phone ?? '').trim() || '',
+    String(row.status ?? 'Active').trim() || 'Active',
+    String(row.bankAccountName ?? row.bank_account_name ?? '').trim(),
+    String(row.bankName ?? row.bank_name ?? '').trim(),
+    String(row.bankAccountNo ?? row.bank_account_no ?? '').trim(),
+    profileJson,
+    GLOBAL_MASTER_DATA_BRANCH
+  );
+  return id;
+}
+
+export function updateAssociatedStaff(db, id, row, _branchId = DEFAULT_BRANCH_ID) {
+  const name = String(row.name ?? '').trim();
+  if (!name) return { ok: false, error: 'Associated staff name is required.' };
+  const staffType = normalizeAssociatedStaffType(row.staffType ?? row.staff_type ?? row.type);
+  const hasProfileKey =
+    row != null &&
+    (Object.prototype.hasOwnProperty.call(row, 'profile') ||
+      Object.prototype.hasOwnProperty.call(row, 'profileJson'));
+  let r;
+  if (hasProfileKey) {
+    const profileJson = stringifyAssociatedStaffProfile(row);
+    r = db
+      .prepare(
+        `UPDATE associated_staff
+         SET name = ?, staff_type = ?, phone = ?, status = ?, bank_account_name = ?, bank_name = ?, bank_account_no = ?, profile_json = ?
+         WHERE id = ?`
+      )
+      .run(
+        name,
+        staffType,
+        String(row.phone ?? '').trim() || '',
+        String(row.status ?? 'Active').trim() || 'Active',
+        String(row.bankAccountName ?? row.bank_account_name ?? '').trim(),
+        String(row.bankName ?? row.bank_name ?? '').trim(),
+        String(row.bankAccountNo ?? row.bank_account_no ?? '').trim(),
+        profileJson,
+        id
+      );
+  } else {
+    r = db
+      .prepare(
+        `UPDATE associated_staff
+         SET name = ?, staff_type = ?, phone = ?, status = ?, bank_account_name = ?, bank_name = ?, bank_account_no = ?
+         WHERE id = ?`
+      )
+      .run(
+        name,
+        staffType,
+        String(row.phone ?? '').trim() || '',
+        String(row.status ?? 'Active').trim() || 'Active',
+        String(row.bankAccountName ?? row.bank_account_name ?? '').trim(),
+        String(row.bankName ?? row.bank_name ?? '').trim(),
+        String(row.bankAccountNo ?? row.bank_account_no ?? '').trim(),
+        id
+      );
+  }
+  if (r.changes === 0) return { ok: false, error: 'Associated staff not found.' };
+  return { ok: true };
+}
+
+export function deleteAssociatedStaff(db, id, _branchId = DEFAULT_BRANCH_ID) {
+  const r = db
+    .prepare(`UPDATE associated_staff SET status = 'Inactive' WHERE id = ?`)
+    .run(id);
+  if (r.changes === 0) return { ok: false, error: 'Associated staff not found.' };
   return { ok: true };
 }
 
@@ -5792,15 +6015,28 @@ export function upsertSalesReceiptForLedgerEntry(db, entry, quotationRow, branch
 export function quotationHasUnclearedReceipts(db, quotationRef) {
   const qid = String(quotationRef || '').trim();
   if (!qid) return false;
-  const row = db
+  return quotationIdsWithUnclearedReceipts(db, [qid]).has(qid);
+}
+
+/**
+ * Batch variant — one query for many quotation refs (register build hot path).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} quotationIds
+ * @returns {Set<string>}
+ */
+export function quotationIdsWithUnclearedReceipts(db, quotationIds) {
+  const ids = [...new Set((quotationIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const ph = ids.map(() => '?').join(',');
+  const rows = db
     .prepare(
-      `SELECT COUNT(*) AS c FROM sales_receipts
-       WHERE quotation_ref = ?
+      `SELECT DISTINCT quotation_ref AS qid FROM sales_receipts
+       WHERE quotation_ref IN (${ph})
          AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
          AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     )
-    .get(qid);
-  return Number(row?.c) > 0;
+    .all(...ids);
+  return new Set(rows.map((r) => String(r.qid || '').trim()).filter(Boolean));
 }
 
 /** Map DB `ledger_entries` row to the camelCase shape expected by `upsertSalesReceiptForLedgerEntry`. */
@@ -8431,6 +8667,14 @@ export function payRefundEntry(db, refundId, payload) {
   if (String(row.status || '') !== 'Approved') {
     return { ok: false, error: 'Only approved refunds can be paid.' };
   }
+  if (partnerWalletEnabled() && refundHasOpenWalletCredit(db, refundId)) {
+    return {
+      ok: false,
+      error:
+        'This refund is on a partner wallet. Release full or partial balance from Finance Desk → Partner withdrawals (no extra approval).',
+      code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
+    };
+  }
   const qrefPay = String(row.quotation_ref ?? '').trim();
   if (qrefPay) {
     const qBlock = db
@@ -8514,6 +8758,37 @@ export function payRefundEntry(db, refundId, payload) {
       phase: 'pay',
     });
     if (!payoutGuard.ok) return payoutGuard;
+
+    const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(payoutLines).Overpayment);
+    const isOverpayPayout =
+      overpayOnThis > 0 ||
+      (Array.isArray(payoutCategories) &&
+        payoutCategories.some((c) => String(c || '').toLowerCase().includes('overpay')));
+    if (isOverpayPayout) {
+      const others = db
+        .prepare(
+          `SELECT * FROM customer_refunds
+           WHERE quotation_ref = ?
+             AND refund_id != ?
+             AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+        )
+        .all(qrefPay, refundId);
+      const residual = quotationOverpaymentResidualNgn({
+        cashInNgn: quotationCashInNgn(db, qrefPay),
+        quoteTotalNgn: roundMoney(db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qrefPay)?.total_ngn),
+        overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(others),
+      });
+      if (payoutAmountNgn > residual) {
+        return {
+          ok: false,
+          code: 'REFUND_OVERPAYMENT_ALREADY_SETTLED',
+          error:
+            residual <= 0
+              ? 'Overpayment on this quotation is already fully refunded. Paying this would double-pay the customer.'
+              : `Only ₦${residual.toLocaleString('en-NG')} overpayment remains after prior refunds on this quotation.`,
+        };
+      }
+    }
   }
 
   try {
@@ -8868,6 +9143,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
   assertQuotationMaterialHeaderRequired(linesJson);
   assertQuotationLineIntegrity(linesJson);
+  assertServiceAssignments(db, linesJson);
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -8894,6 +9170,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const status = payload.status || 'Pending';
   const handledBy = payload.handledBy || 'Sales';
   const projectName = String(payload.projectName ?? '').trim() || null;
+  // Customer on the quote is the agent account; project_name holds end-client display name.
   const linesStr = JSON.stringify(linesJson);
 
   db.transaction(() => {
@@ -8902,8 +9179,8 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
       INSERT INTO quotations (
         id, customer_id, customer_name, date_label, date_iso, due_date_iso,
         total_display, total_ngn, paid_ngn, payment_status, status, approval_date, customer_feedback, handled_by,
-        project_name, lines_json, branch_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        project_name, agent_customer_id, agent_customer_name, lines_json, branch_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `
     ).run(
       id,
@@ -8921,6 +9198,8 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
       payload.customerFeedback ?? '',
       handledBy,
       projectName,
+      null,
+      null,
       linesStr,
       bid
     );
@@ -9072,6 +9351,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   }
   if (payload.lines != null) {
     assertQuotationLineIntegrity(linesJson);
+    assertServiceAssignments(db, linesJson);
   }
   assertQuotationMaterialRules(db, linesJson);
 
@@ -9178,6 +9458,8 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
         customer_feedback = ?,
         handled_by = ?,
         project_name = ?,
+        agent_customer_id = ?,
+        agent_customer_name = ?,
         lines_json = ?
       WHERE id = ?
     `
@@ -9196,6 +9478,8 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
       customerFeedback ?? '',
       handledBy,
       projectName,
+      null,
+      null,
       linesStr,
       quotationId
     );

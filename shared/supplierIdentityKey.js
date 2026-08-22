@@ -1,6 +1,6 @@
 /**
  * Supplier identity keys for duplicate detection within a branch.
- * Keep in sync with server writes and optional client checks.
+ * Frontend copies via `npm run sync:shared` → src/shared/supplierIdentityKey.js
  */
 
 import { normalizeCustomerEmailKey, normalizeCustomerPhoneKey } from './customerPhoneKey.js';

@@ -85,7 +85,9 @@ export function buildOpsHealthAnalyticsPack(db, opts = {}) {
     ? db.prepare(
         `SELECT cl.id, cl.work_order_id FROM maintenance_cost_lines cl
          INNER JOIN maintenance_work_orders wo ON wo.id = cl.work_order_id
-         WHERE cl.source_kind IN ('payment_request', 'expense') AND TRIM(COALESCE(wo.vendor_id, '')) = ''${scoped ? ' AND wo.branch_id = ?' : ''}`
+         WHERE cl.source_kind IN ('payment_request', 'expense')
+           AND LOWER(COALESCE(cl.cost_kind, '')) IN ('vendor', 'contractor')
+           AND TRIM(COALESCE(wo.vendor_id, '')) = ''${scoped ? ' AND wo.branch_id = ?' : ''}`
       ).all(...(scoped ? [branchId] : [])).map((row) => ({ costLineId: row.id, workOrderId: row.work_order_id }))
     : [];
   const dq = { presentWithoutWorkedMinutes: missingWorkedMinutes, deliveredWithoutCsat, costLinesMissingVendor: missingVendorCostLines };

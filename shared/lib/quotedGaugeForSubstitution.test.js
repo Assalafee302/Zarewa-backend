@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { quotedGaugeLabelForSubstitutionComparison, firstGaugeMmFromLabel } from './quotedGaugeForSubstitution.js';
+import {
+  quotedGaugeLabelForSubstitutionComparison,
+  firstGaugeMmFromLabel,
+  quotationLinesJsonShapeForGauge,
+} from './quotedGaugeForSubstitution.js';
 
 describe('quotedGaugeForSubstitution', () => {
   it('picks thickest gauge when header and product lines disagree', () => {
@@ -44,5 +48,18 @@ describe('quotedGaugeForSubstitution', () => {
   it('firstGaugeMmFromLabel parses leading number', () => {
     expect(firstGaugeMmFromLabel('0.24mm')).toBeCloseTo(0.24, 5);
     expect(firstGaugeMmFromLabel('')).toBe(null);
+  });
+
+  it('quotationLinesJsonShapeForGauge maps workspace row + snake_case header', () => {
+    const shape = quotationLinesJsonShapeForGauge({
+      material_gauge: '0.26mm',
+      quotationLines: {
+        products: [{ name: 'Roof', materialGauge: '0.22mm' }],
+        accessories: [],
+        services: [],
+      },
+    });
+    expect(shape.materialGauge).toBe('0.26mm');
+    expect(quotedGaugeLabelForSubstitutionComparison(shape)).toBe('0.26mm');
   });
 });

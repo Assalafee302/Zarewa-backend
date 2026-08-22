@@ -1,5 +1,6 @@
 /**
  * Stock (coil) as-at report rows — dense display fields.
+ * Frontend copies via `npm run sync:shared` → src/shared/lib/standardReportsStock.js
  */
 
 import { displayCoilNumber, displayDocNumber } from './reportDisplayFormat.js';

@@ -7,8 +7,11 @@ import { normalizeRefundReasonCategoriesForApi } from '../refundConstants.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 
 export const REFUND_CREDIT_CONFIRMATION_STATUS = 'Credit confirmation';
+export const REFUND_CREDIT_REVERSED_STATUS = 'Reversed';
 /** Ledger `bank_reference` prefix for refund-fund apply (not same-quote OVERPAY_APPLY). */
 export const REFUND_CREDIT_LEDGER_REF_PREFIX = 'CREDIT_APPLY:';
+/** Compensating rows for {@link REFUND_CREDIT_LEDGER_REF_PREFIX} (finance.reverse). */
+export const REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX = 'CREDIT_APPLY_REVERSE:';
 
 /**
  * @param {unknown} reasonCategory
@@ -28,11 +31,31 @@ export function refundCategoriesAreOverpaymentOnly(reasonCategory, calculationLi
 }
 
 /**
+ * Service-fee refunds (transport, installation) are cash-out only — not transferable credit.
+ * @param {unknown} reasonCategory
+ * @param {Array<{ category?: string, label?: string }> | null | undefined} calculationLines
+ */
+function refundIncludesNonTransferableServiceCategory(reasonCategory, calculationLines) {
+  const blocked = ['transport', 'install'];
+  const matchesBlocked = (value) => {
+    const v = String(value || '').toLowerCase();
+    return blocked.some((b) => v.includes(b));
+  };
+  const cats = normalizeRefundReasonCategoriesForApi(reasonCategory);
+  if (cats.some((c) => matchesBlocked(c))) return true;
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  return lines.some((l) => matchesBlocked(l?.category) || matchesBlocked(l?.label));
+}
+
+/**
  * Whether this refund row may be used as transferable credit onto another quotation.
  * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number }} refund
  */
 export function refundIsEligibleCreditSource(refund) {
   const status = String(refund?.status || '').trim();
+  if (refundIncludesNonTransferableServiceCategory(refund?.reasonCategory, refund?.calculationLines)) {
+    return false;
+  }
   const overpayOnly = refundCategoriesAreOverpaymentOnly(
     refund?.reasonCategory,
     refund?.calculationLines

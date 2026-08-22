@@ -945,6 +945,7 @@ import { registerMobileApi } from './mobileApi.js';
 import { registerLivenessRoutes } from './http/livenessRoutes.js';
 import { registerFinanceDiagnosticRoutes } from './http/financeDiagnosticRoutes.js';
 import { registerPartnerWalletRoutes } from './http/partnerWalletRoutes.js';
+import { registerRefundClaimingStaffRoutes } from './http/refundClaimingStaffRoutes.js';
 import { registerWorkspaceListRoutes } from './http/workspaceListRoutes.js';
 import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
 import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
@@ -1013,6 +1014,7 @@ export function registerHttpApi(app, db) {
 
   registerFinanceDiagnosticRoutes(app, db);
   registerPartnerWalletRoutes(app, db);
+  registerRefundClaimingStaffRoutes(app, db);
   registerMaintenanceRoutes(app, db);
   registerChairmanOfficeRoutes(app, db);
 

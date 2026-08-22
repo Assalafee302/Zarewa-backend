@@ -5,6 +5,7 @@
 import { actorId, actorName } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { allocateHumanId } from '../humanId.js';
+import { savedCustomerPayoutAccount } from '../sales/customerPayoutAccount.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -114,24 +115,20 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             note: s.note || `Refund ${refundRow.refund_id} staff split`,
           };
         }
-        const cust = db
-          .prepare(
-            `SELECT name, bank_account_name, bank_name, bank_account_no FROM customers WHERE customer_id = ?`
-          )
-          .get(s.recipientCustomerID);
+        const resolved = savedCustomerPayoutAccount(db, s.recipientCustomerID);
         const payeeName =
-          String(s.payoutAccount?.payeeName || cust?.bank_account_name || cust?.name || '').trim() ||
+          String(s.payoutAccount?.payeeName || resolved?.payeeName || '').trim() ||
           String(refundRow.payee_name || '').trim();
         const payeeBankName =
-          String(s.payoutAccount?.payeeBankName || cust?.bank_name || '').trim() ||
+          String(s.payoutAccount?.payeeBankName || resolved?.payeeBankName || '').trim() ||
           String(refundRow.payee_bank_name || '').trim();
         const payeeAccountNo =
-          String(s.payoutAccount?.payeeAccountNo || cust?.bank_account_no || '').trim() ||
+          String(s.payoutAccount?.payeeAccountNo || resolved?.payeeAccountNo || '').trim() ||
           String(refundRow.payee_account_no || '').trim();
         return {
           partyKind: 'customer',
           partyId: s.recipientCustomerID,
-          partyName: String(cust?.name || payeeName || s.recipientCustomerID).trim(),
+          partyName: String(resolved?.partyName || payeeName || s.recipientCustomerID).trim(),
           amountNgn: share,
           payeeName,
           payeeBankName,
@@ -144,20 +141,16 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 
   const customerId = String(refundRow.customer_id || '').trim();
   if (!customerId) return [];
-  const cust = db
-    .prepare(
-      `SELECT name, bank_account_name, bank_name, bank_account_no FROM customers WHERE customer_id = ?`
-    )
-    .get(customerId);
+  const resolved = savedCustomerPayoutAccount(db, customerId);
   return [
     {
       partyKind: 'customer',
       partyId: customerId,
-      partyName: String(cust?.name || refundRow.customer_name || customerId).trim(),
+      partyName: String(resolved?.partyName || refundRow.customer_name || customerId).trim(),
       amountNgn: approved,
-      payeeName: String(refundRow.payee_name || cust?.bank_account_name || cust?.name || '').trim(),
-      payeeBankName: String(refundRow.payee_bank_name || cust?.bank_name || '').trim(),
-      payeeAccountNo: String(refundRow.payee_account_no || cust?.bank_account_no || '').trim(),
+      payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
+      payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
+      payeeAccountNo: String(refundRow.payee_account_no || resolved?.payeeAccountNo || '').trim(),
       note: `Refund ${refundRow.refund_id} approved`,
     },
   ];

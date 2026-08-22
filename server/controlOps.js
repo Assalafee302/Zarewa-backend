@@ -145,6 +145,7 @@ import {
   creditRefundToPartnerWalletTx,
   voidPartnerWalletCreditsForRefundTx,
 } from './finance/partnerWalletCredit.js';
+import { savedCustomerPayoutAccount } from './sales/customerPayoutAccount.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -2618,30 +2619,6 @@ function normalizeRefundSplitRows(input) {
         ((r.recipientKind === 'associated_staff' && r.recipientAssociatedStaffID) ||
           (r.recipientKind === 'customer' && r.recipientCustomerID))
     );
-}
-
-function savedCustomerPayoutAccount(db, customerId) {
-  const cid = String(customerId || '').trim();
-  if (!cid) return null;
-  const row = db
-    .prepare(
-      `SELECT name, bank_account_name, bank_name, bank_account_no
-       FROM customers WHERE customer_id = ?`
-    )
-    .get(cid);
-  if (!row) return null;
-  const bankAccountNo = String(row.bank_account_no || '').trim();
-  const bankName = String(row.bank_name || '').trim();
-  const bankAccountName = String(row.bank_account_name || '').trim();
-  if (!bankAccountNo || !bankName) return null;
-  return {
-    partyKind: 'customer',
-    partyId: cid,
-    partyName: String(row.name || '').trim(),
-    payeeName: bankAccountName || String(row.name || '').trim(),
-    payeeAccountNo: bankAccountNo,
-    payeeBankName: bankName,
-  };
 }
 
 function savedAssociatedStaffPayoutAccount(db, staffId) {

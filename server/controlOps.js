@@ -117,7 +117,7 @@ import {
   mergeRefundCategoryCapsNgn,
 } from '../shared/lib/refundCategoryDerivedCaps.js';
 import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
-import { validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
+import { buildUnproducedMetresRefundLine, validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import {
   emptyQuotationPaymentCashBreakdown,
@@ -3995,9 +3995,10 @@ export function previewRefundRequest(db, payload) {
       !hardBlockedCategories.has('Unproduced meterage') &&
       !materialDelivered
     ) {
+      const unproducedLine = buildUnproducedMetresRefundLine(unproducedPotential, pricePerMeter);
       suggestedLines.push({
-        label: `Unproduced metres (${unproducedPotential.toFixed(2)}m @ ₦${Math.round(pricePerMeter).toLocaleString()})`,
-        amountNgn: Math.round(unproducedPotential * pricePerMeter),
+        label: unproducedLine.label,
+        amountNgn: unproducedLine.amountNgn,
         category: 'Unproduced meterage',
       });
     }
@@ -4023,9 +4024,10 @@ export function previewRefundRequest(db, payload) {
       trimUnproducedM = 0;
     }
     if (trimUnproducedM > 0.001) {
+      const trimLine = buildUnproducedMetresRefundLine(trimUnproducedM, trimPricePerMeter, { trim: true });
       suggestedLines.push({
-        label: `Unproduced trim metres (${trimUnproducedM.toFixed(2)} m finished @ ₦${Math.round(trimPricePerMeter).toLocaleString()})`,
-        amountNgn: Math.round(trimUnproducedM * trimPricePerMeter),
+        label: trimLine.label,
+        amountNgn: trimLine.amountNgn,
         category: 'Unproduced meterage',
       });
     }

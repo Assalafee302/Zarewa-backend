@@ -170,6 +170,12 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     ledgerEntries: ledgerOk ? ledgerRows : [],
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
+    // Refund payout allocation (transport/install/claiming staff) reads this on the sales desk.
+    associatedStaff: salesOk ? listAssociatedStaff(db, branchScope) : [],
+    associatedStaffPolicy: {
+      enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
+    },
+    partnerWalletPolicy: { enabled: partnerWalletEnabled() },
   };
 }
 

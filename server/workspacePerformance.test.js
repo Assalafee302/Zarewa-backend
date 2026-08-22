@@ -33,12 +33,14 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     db.close();
   });
 
-  it('sales domain snapshot omits operations-only fields', () => {
+  it('sales domain snapshot includes associated staff for refund payout allocation', () => {
     const db = createDatabase(':memory:', { seed: false });
     const snap = buildSalesDomainSnapshot(db, { user: null, branchScope: 'ALL' });
     expect(snap.ok).toBe(true);
     expect(snap.domain).toBe('sales');
     expect(Array.isArray(snap.customers)).toBe(true);
+    expect(Array.isArray(snap.associatedStaff)).toBe(true);
+    expect(snap.associatedStaffPolicy).toEqual({ enabled: false });
     expect(snap).not.toHaveProperty('productionJobs');
     db.close();
   });

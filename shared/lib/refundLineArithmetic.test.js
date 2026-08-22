@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   auditRefundCalculationLineArithmetic,
+  buildUnproducedMetresRefundLine,
   expectedAmountFromRefundLineLabel,
   formatUnproducedMetresLabel,
   scaleRefundCalculationLinesToApprovedAmount,
@@ -12,6 +13,23 @@ describe('refundLineArithmetic', () => {
   it('parses unproduced metres label and expected amount', () => {
     const label = 'Unproduced metres (2.30m @ ₦3,900)';
     expect(expectedAmountFromRefundLineLabel(label, 'Unproduced meterage')).toBe(8970);
+  });
+
+  it('passes when amount is below label-implied (blended ₦/m rounding)', () => {
+    const r = validateRefundCalculationLineArithmetic([
+      {
+        label: 'Unproduced metres (21.80m @ ₦5,806)',
+        category: 'Unproduced meterage',
+        amountNgn: 126_563,
+      },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('buildUnproducedMetresRefundLine aligns label with blended quote ₦/m', () => {
+    const line = buildUnproducedMetresRefundLine(21.8, 5805.64220183486);
+    expect(line.amountNgn).toBe(126_563);
+    expect(expectedAmountFromRefundLineLabel(line.label, 'Unproduced meterage')).toBe(126_563);
   });
 
   it('flags amount that does not match label formula', () => {

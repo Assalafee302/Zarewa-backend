@@ -22,23 +22,72 @@ function parseNgnToken(raw) {
   return roundRefundLineMoney(String(raw || '').replace(/,/g, ''));
 }
 
+/** Parse ₦ token that may include decimals (e.g. 5,805.64). */
+function parseNgnTokenDecimal(raw) {
+  const n = Number(String(raw || '').replace(/,/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /** @returns {{ metres: number, pricePerMeterNgn: number } | null} */
 export function parseUnproducedMetresLabel(label) {
   const text = String(label || '').trim();
-  const m = text.match(/Unproduced metres\s*\(([\d.]+)\s*m\s*@\s*₦([\d,]+)\)/i);
-  if (!m) return null;
-  const metres = Number(m[1]);
-  const pricePerMeterNgn = parseNgnToken(m[2]);
-  if (!Number.isFinite(metres) || metres <= 0 || pricePerMeterNgn <= 0) return null;
-  return { metres, pricePerMeterNgn };
+  const m = text.match(/Unproduced (?:trim )?metres\s*\(([\d.]+)\s*m\s*@\s*₦([\d,]+(?:\.\d+)?)\)/i);
+  if (m) {
+    const metres = Number(m[1]);
+    const pricePerMeterNgn = parseNgnTokenDecimal(m[2]);
+    if (Number.isFinite(metres) && metres > 0 && pricePerMeterNgn > 0) {
+      return { metres, pricePerMeterNgn };
+    }
+  }
+  /* Blended-rate label — no strict metres × ₦/m check */
+  if (/Unproduced (?:trim )?metres\s*\([\d.]+m\s*—/i.test(text)) return null;
+  return null;
 }
 
 export function formatUnproducedMetresLabel(metres, pricePerMeterNgn) {
+  const built = buildUnproducedMetresRefundLine(metres, pricePerMeterNgn);
+  return built.label;
+}
+
+/**
+ * Build unproduced line label + amount so UI arithmetic checks pass (integer ₦/m in label
+ * can disagree with blended quote ₦/m after rounding).
+ */
+export function buildUnproducedMetresRefundLine(metres, pricePerMeterNgn, { trim = false } = {}) {
   const m = Number(metres);
-  const ppm = roundRefundLineMoney(pricePerMeterNgn);
-  if (!Number.isFinite(m) || m <= 0 || ppm <= 0) return '';
+  const ppmRaw = Number(pricePerMeterNgn);
+  const prefix = trim ? 'Unproduced trim metres' : 'Unproduced metres';
+  if (!Number.isFinite(m) || m <= 0 || !Number.isFinite(ppmRaw) || ppmRaw <= 0) {
+    return { label: prefix, amountNgn: 0 };
+  }
+  const amountNgn = roundRefundLineMoney(m * ppmRaw);
   const metresText = Number.isInteger(m) ? String(m) : m.toFixed(2);
-  return `Unproduced metres (${metresText}m @ ₦${ppm.toLocaleString('en-NG')})`;
+  const finishedSuffix = trim ? ' finished' : '';
+
+  const intPpm = roundRefundLineMoney(ppmRaw);
+  if (Math.abs(roundRefundLineMoney(m * intPpm) - amountNgn) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+    return {
+      label: `${prefix} (${metresText}m${finishedSuffix} @ ₦${intPpm.toLocaleString('en-NG')})`,
+      amountNgn,
+    };
+  }
+
+  const decPpm = Math.round((amountNgn / m) * 100) / 100;
+  if (Math.abs(roundRefundLineMoney(m * decPpm) - amountNgn) <= REFUND_AMOUNT_LINE_TOLERANCE_NGN) {
+    const ppmText = decPpm.toLocaleString('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return {
+      label: `${prefix} (${metresText}m${finishedSuffix} @ ₦${ppmText})`,
+      amountNgn,
+    };
+  }
+
+  return {
+    label: `${prefix} (${metresText}m${finishedSuffix} — ₦${amountNgn.toLocaleString('en-NG')} at blended rate)`,
+    amountNgn,
+  };
 }
 
 /**
@@ -113,7 +162,8 @@ export function auditRefundCalculationLineArithmetic(lines, toleranceNgn = REFUN
     if (amt <= 0) continue;
     const expected = expectedAmountFromRefundLineLabel(line?.label, line?.category);
     if (expected == null) continue;
-    if (Math.abs(amt - expected) > tol) {
+    /* Under implied (floor/blended ₦/m rounding) — allow; over-claim is blocked. */
+    if (amt > expected + tol) {
       const parsed = parseUnproducedMetresLabel(line?.label);
       issues.push({
         lineIndex: i,

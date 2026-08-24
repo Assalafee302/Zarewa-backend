@@ -1,9 +1,10 @@
 /**
  * Demo plant register so Report a fault has machines on a fresh legacy pack.
  * Seeds per branch when that branch has no machines (does not overwrite a live register).
- * Also seeds one contractor and a floor technician so BM Issues can assign.
+ * Also seeds one contractor, a floor technician, and service plans for demo gen/forklift.
  */
 import { DEFAULT_BRANCH_ID } from '../branches.js';
+import { defaultServiceIntervalDays } from '../../shared/maintenanceRegistry.js';
 import {
   seedTechniciansFromDesignations,
   updateStaffTechnicianFlags,
@@ -30,6 +31,13 @@ const DEMO_PLANT_MACHINES = Object.freeze([
     machineCode: 'GEN-1',
     machineType: 'generator',
     lineName: 'Power house',
+  },
+  {
+    id: 'MACH-DEMO-FL1',
+    name: 'Yard forklift',
+    machineCode: 'FL-1',
+    machineType: 'forklift',
+    lineName: 'Yard',
   },
 ]);
 
@@ -116,6 +124,69 @@ function seedDemoTechnician(db) {
   return r.ok ? 1 : 0;
 }
 
+function addDaysIso(days) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function seedDemoFuelServicePlans(db) {
+  let machines;
+  try {
+    machines = db
+      .prepare(
+        `SELECT id, branch_id, name, machine_type
+         FROM machines
+         WHERE id LIKE 'MACH-DEMO-GEN%' OR id LIKE 'MACH-DEMO-FL%'`
+      )
+      .all();
+  } catch {
+    return 0;
+  }
+  let created = 0;
+  const now = new Date().toISOString();
+  let ins;
+  try {
+    ins = db.prepare(`
+      INSERT OR IGNORE INTO maintenance_plans (
+        id, reference_no, branch_id, machine_id, status, plan_kind, summary, calendar_interval_days,
+        next_due_date_iso, approval_required, responsible_office_key, notes, created_at_iso, updated_at_iso
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `);
+  } catch {
+    return 0;
+  }
+  for (const m of machines) {
+    const existing = tableCount(
+      db,
+      `SELECT COUNT(*) AS c FROM maintenance_plans WHERE machine_id = ? AND LOWER(COALESCE(status, 'active')) = 'active'`,
+      m.id
+    );
+    if (existing > 0) continue;
+    const interval = defaultServiceIntervalDays(m.machine_type);
+    const kind = String(m.machine_type || '').toLowerCase() === 'forklift' ? 'forklift' : 'generator';
+    const summary = kind === 'forklift' ? 'Forklift service (oil, filters, hydraulics)' : 'Generator service (oil, filters, coolant)';
+    const id = `MPL-DEMO-${m.id}`;
+    created += ins.run(
+      id,
+      id,
+      m.branch_id,
+      m.id,
+      'active',
+      'preventive',
+      summary,
+      interval,
+      addDaysIso(7),
+      1,
+      'operations',
+      'Demo service plan — Branch Manager opens a job from Shift → Preventive maintenance due.',
+      now,
+      now
+    ).changes;
+  }
+  return created;
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @returns {number} rows inserted (machines + vendor + technician flags)
@@ -160,5 +231,6 @@ export function ensurePlantRegisterDemo(db) {
 
   created += seedDemoVendor(db, branchIds);
   created += seedDemoTechnician(db);
+  created += seedDemoFuelServicePlans(db);
   return created;
 }

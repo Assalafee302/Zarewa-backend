@@ -390,6 +390,10 @@ export function nextMaintenanceCostLineHumanId(db, branchId) {
   return allocateHumanId(db, 'MCL', branchId, { table: 'maintenance_cost_lines', idColumn: 'id' });
 }
 
+export function nextMachineFuelLogHumanId(db, branchId) {
+  return allocateHumanId(db, 'MFL', branchId, { table: 'machine_fuel_logs', idColumn: 'id' });
+}
+
 export function nextHrPerformanceReviewHumanId(db, branchId) {
   return allocateHumanId(db, 'PRV', branchId, { table: 'hr_performance_reviews', idColumn: 'id' });
 }

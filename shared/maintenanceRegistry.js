@@ -44,6 +44,7 @@ export const MACHINE_TYPES = Object.freeze([
   'slitter',
   'cut_to_length',
   'generator',
+  'forklift',
   'crane',
   'compressor',
   'other',
@@ -55,10 +56,41 @@ export const MACHINE_TYPE_LABELS = Object.freeze({
   slitter: 'Slitter',
   cut_to_length: 'Cut-to-length',
   generator: 'Generator',
+  forklift: 'Forklift',
   crane: 'Crane',
   compressor: 'Compressor',
   other: 'Other',
 });
+
+/** Plant files that take diesel (or petrol) requests from the store desk. */
+export const FUEL_CONSUMING_MACHINE_TYPES = Object.freeze(['generator', 'forklift']);
+
+/**
+ * @param {unknown} raw
+ * @returns {boolean}
+ */
+export function isFuelConsumingMachineType(raw) {
+  const s = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
+  return FUEL_CONSUMING_MACHINE_TYPES.includes(s);
+}
+
+/**
+ * Default calendar service interval when seeding a plan for a fuel plant file.
+ * @param {unknown} machineType
+ * @returns {number}
+ */
+export function defaultServiceIntervalDays(machineType) {
+  const s = String(machineType || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
+  if (s === 'generator') return 30;
+  if (s === 'forklift') return 90;
+  return 90;
+}
 
 export const MACHINE_STATUSES = Object.freeze(['active', 'under_maintenance', 'decommissioned']);
 

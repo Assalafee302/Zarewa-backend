@@ -17,6 +17,10 @@ vi.mock('./workItems.js', () => ({
   listMaintenanceWorkOrders: () => [],
 }));
 
+vi.mock('./operations/maintenancePlanOps.js', () => ({
+  stampPlanServiceFromWorkOrder: () => ({ ok: true, skipped: true }),
+}));
+
 vi.mock('./maintenanceVendorsOps.js', () => ({
   getMaintenanceVendor: () => ({ id: 'MVN-1', name: 'FixCo', status: 'active' }),
 }));

@@ -19,6 +19,8 @@ describe('maintenanceCostEnvelope', () => {
     expect(maintenanceCostKindRequiresVendor('feeding')).toBe(false);
     expect(normalizeMaintenanceCostKind('Lodging')).toBe('other');
     expect(normalizeMaintenanceCostKind('accommodation')).toBe('accommodation');
+    expect(normalizeMaintenanceCostKind('diesel')).toBe('fuel');
+    expect(maintenanceCostKindRequiresVendor('fuel')).toBe(false);
   });
 
   it('builds estimate vs spent with separate shop-floor and money clocks', () => {

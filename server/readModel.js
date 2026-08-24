@@ -2618,11 +2618,12 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
   const useScope = branchScope !== 'ALL' && String(branchScope || '').trim();
   const scopeSql = useScope ? ` AND e.branch_id = ?` : '';
   const scopeArgs = useScope ? [branchScope] : [];
+  const prHasMachine = hasColumn(db, 'payment_requests', 'maintenance_machine_id');
   const sql = `SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.approval_status,
               pr.description, pr.approved_by, pr.approved_at_iso, pr.approval_note, pr.paid_amount_ngn, pr.paid_at_iso,
               pr.paid_by, pr.payment_note, pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_mime,
               pr.category_justification, pr.payee_name, pr.payee_account_no, pr.payee_bank_name,
-              pr.maintenance_work_order_id, pr.maintenance_cost_kind,
+              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''},
               (CASE WHEN LENGTH(COALESCE(pr.attachment_data_b64, '')) > 0 THEN 1 ELSE 0 END) AS attachment_present,
               e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
@@ -2671,6 +2672,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
         payeeBankName: row.payee_bank_name ?? '',
         maintenanceWorkOrderId: row.maintenance_work_order_id ?? '',
         maintenanceCostKind: row.maintenance_cost_kind ?? '',
+        maintenanceMachineId: row.maintenance_machine_id ?? '',
       };
     });
 }
@@ -2725,6 +2727,7 @@ export function getPaymentRequestDetail(db, requestId) {
     payeeBankName: row.payee_bank_name ?? '',
     maintenanceWorkOrderId: row.maintenance_work_order_id ?? '',
     maintenanceCostKind: row.maintenance_cost_kind ?? '',
+    maintenanceMachineId: row.maintenance_machine_id ?? '',
   };
 }
 

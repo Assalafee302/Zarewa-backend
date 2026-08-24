@@ -21,6 +21,9 @@ import {
   patchWorkOrderEnvelope,
   returnWorkOrderToProduction,
 } from '../maintenanceWorkOrderOps.js';
+import { createMaintenancePlan } from '../workItems.js';
+import { createMachineFuelRequest } from '../operations/machineFuelOps.js';
+import { openWorkOrderFromPlan, stampPlanService } from '../operations/maintenancePlanOps.js';
 
 function mayEditMachines(user) {
   const rk = String(user?.roleKey || user?.role_key || '')
@@ -169,6 +172,91 @@ export function registerMaintenanceRoutes(app, db) {
         res.status(r.ok ? 200 : 400).json(r);
       },
       { context: 'maintenance.wo.closeCosts', fallbackMessage: 'Could not close maintenance costs.' }
+    )
+  );
+
+  app.post(
+    '/api/maintenance/fuel-requests',
+    requireAuth,
+    requirePermission(['operations.manage', 'expenses.create']),
+    asyncRoute(
+      (req, res) => {
+        const r = createMachineFuelRequest(
+          db,
+          req.body || {},
+          req.user,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID
+        );
+        res.status(r.ok ? 201 : 400).json(r);
+      },
+      { context: 'maintenance.fuel', fallbackMessage: 'Could not submit the diesel request.' }
+    )
+  );
+
+  app.post(
+    '/api/maintenance/plans',
+    requireAuth,
+    asyncRoute(
+      (req, res) => {
+        if (!mayEditMachines(req.user)) {
+          return apiError(res, {
+            status: 403,
+            code: 'FORBIDDEN',
+            error: 'Only Branch Manager or above can create service plans.',
+          });
+        }
+        const r = createMaintenancePlan(
+          db,
+          req.body || {},
+          req.user,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID
+        );
+        res.status(r.ok ? 201 : 400).json(r);
+      },
+      { context: 'maintenance.plan.create', fallbackMessage: 'Could not create the service plan.' }
+    )
+  );
+
+  app.post(
+    '/api/maintenance/plans/:planId/open-work-order',
+    requireAuth,
+    asyncRoute(
+      (req, res) => {
+        if (!mayEditMachines(req.user)) {
+          return apiError(res, {
+            status: 403,
+            code: 'FORBIDDEN',
+            error: 'Only Branch Manager or above can open a service job.',
+          });
+        }
+        const r = openWorkOrderFromPlan(
+          db,
+          req.params.planId,
+          req.user,
+          req.workspaceBranchId || DEFAULT_BRANCH_ID
+        );
+        res.status(r.ok ? 201 : 400).json(r);
+      },
+      { context: 'maintenance.plan.openWo', fallbackMessage: 'Could not open the service job.' }
+    )
+  );
+
+  app.post(
+    '/api/maintenance/plans/:planId/complete-service',
+    requireAuth,
+    asyncRoute(
+      (req, res) => {
+        if (!mayEditMachines(req.user)) {
+          return apiError(res, {
+            status: 403,
+            code: 'FORBIDDEN',
+            error: 'Only Branch Manager or above can stamp a service as done.',
+          });
+        }
+        const r = stampPlanService(db, req.params.planId, req.body || {}, req.user);
+        res.status(r.ok ? 200 : 400).json(r);
+      },
+      { context: 'maintenance.plan.complete', fallbackMessage: 'Could not record the service.' }
     )
   );
 }

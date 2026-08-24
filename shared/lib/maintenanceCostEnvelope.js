@@ -10,6 +10,7 @@ export const MAINTENANCE_COST_KINDS = Object.freeze([
   'accommodation',
   'transport',
   'contractor',
+  'fuel',
   'other',
 ]);
 
@@ -20,6 +21,7 @@ export const MAINTENANCE_COST_KIND_LABELS = Object.freeze({
   accommodation: 'Accommodation',
   transport: 'Transport',
   contractor: 'Contractor / vendor',
+  fuel: 'Diesel / fuel',
   other: 'Other',
 });
 
@@ -77,6 +79,7 @@ export function normalizeMaintenanceCostKind(raw) {
     .trim()
     .toLowerCase();
   if (s === 'vendor') return 'contractor';
+  if (s === 'diesel') return 'fuel';
   if (MAINTENANCE_COST_KINDS.includes(s)) return s;
   return 'other';
 }

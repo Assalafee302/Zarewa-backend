@@ -1734,6 +1734,9 @@ function migrateMaintenanceRegistry2026(db) {
   if (!prCols.includes('maintenance_cost_kind')) {
     db.exec(`ALTER TABLE payment_requests ADD COLUMN maintenance_cost_kind TEXT`);
   }
+  if (!prCols.includes('maintenance_machine_id')) {
+    db.exec(`ALTER TABLE payment_requests ADD COLUMN maintenance_machine_id TEXT`);
+  }
   try {
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_payment_requests_mwo ON payment_requests(maintenance_work_order_id)`
@@ -1741,6 +1744,32 @@ function migrateMaintenanceRegistry2026(db) {
   } catch {
     /* index already present */
   }
+  try {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_payment_requests_machine ON payment_requests(maintenance_machine_id)`
+    );
+  } catch {
+    /* index already present */
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS machine_fuel_logs (
+      id TEXT PRIMARY KEY,
+      machine_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      fuel_kind TEXT NOT NULL DEFAULT 'diesel',
+      litres REAL NOT NULL DEFAULT 0,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      payment_request_id TEXT,
+      payee_name TEXT,
+      note TEXT,
+      posted_at_iso TEXT NOT NULL,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_machine_fuel_logs_machine
+      ON machine_fuel_logs(machine_id, posted_at_iso DESC);
+  `);
 
   const hrCols = db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name);
   if (!hrCols.includes('is_technician')) {
@@ -2730,6 +2759,24 @@ function migrateOperationsMaintenanceWorkspace(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_machine_meter_logs_machine
       ON machine_meter_logs(machine_id, reading_date_iso DESC);
+
+    CREATE TABLE IF NOT EXISTS machine_fuel_logs (
+      id TEXT PRIMARY KEY,
+      machine_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      fuel_kind TEXT NOT NULL DEFAULT 'diesel',
+      litres REAL NOT NULL DEFAULT 0,
+      amount_ngn INTEGER NOT NULL DEFAULT 0,
+      payment_request_id TEXT,
+      payee_name TEXT,
+      note TEXT,
+      posted_at_iso TEXT NOT NULL,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_machine_fuel_logs_machine
+      ON machine_fuel_logs(machine_id, posted_at_iso DESC);
 
     CREATE TABLE IF NOT EXISTS maintenance_plans (
       id TEXT PRIMARY KEY,

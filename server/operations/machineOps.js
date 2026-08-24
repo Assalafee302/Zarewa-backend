@@ -5,6 +5,8 @@ import { appendAuditLog } from '../controlOps.js';
 import { createMachine, linkMachineAsset, listMachineLinkableAssets, listMachines } from '../workItems.js';
 import { buildMaintenanceMachineInsights } from '../maintenanceInsightsOps.js';
 import { attachWorkOrderFinance, listMaintenanceEventsForMachine, listWorkOrdersForMachine } from '../maintenanceWorkOrderOps.js';
+import { listMachineFuelLogs } from './machineFuelOps.js';
+import { listPlansForMachine } from './maintenancePlanOps.js';
 import { MACHINE_STATUSES, MACHINE_TYPES } from '../../shared/maintenanceRegistry.js';
 
 function nowIso() {
@@ -223,12 +225,16 @@ export function getMachineDossier(db, machineId, scope = {}) {
     flagLabel: fromInsights.flagLabel || fromInsights.flag || 'OK',
   };
   const currentFaults = workOrders.filter(workOrderStillActive);
+  const fuelLogs = listMachineFuelLogs(db, machine.id);
+  const servicePlans = listPlansForMachine(db, machine.id);
   return {
     ok: true,
     machine,
     insight,
     workOrders,
     currentFaults,
+    fuelLogs,
+    servicePlans,
     events: events.slice(0, 80),
     nextActions: buildMachineDossierNextActions(machine, workOrders),
     costByKind,

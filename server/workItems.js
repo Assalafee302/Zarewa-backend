@@ -2180,17 +2180,23 @@ export function createMaintenancePlan(db, body, actor, workspaceBranchId = DEFAU
 
 export function listMaintenancePlans(db, scope) {
   const args = [];
-  let sql = `SELECT * FROM maintenance_plans WHERE 1=1`;
+  let sql = `SELECT p.*, m.name AS machine_name, m.machine_code AS machine_code, m.machine_type AS machine_type
+             FROM maintenance_plans p
+             LEFT JOIN machines m ON m.id = p.machine_id
+             WHERE 1=1`;
   if (!scope?.viewAll) {
-    sql += ` AND branch_id = ?`;
+    sql += ` AND p.branch_id = ?`;
     args.push(String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID);
   }
-  sql += ` ORDER BY next_due_date_iso ASC, next_due_meter ASC, updated_at_iso DESC`;
+  sql += ` ORDER BY p.next_due_date_iso ASC, p.next_due_meter ASC, p.updated_at_iso DESC`;
   return db.prepare(sql).all(...args).map((row) => ({
     id: row.id,
     referenceNo: row.reference_no,
     branchId: row.branch_id,
     machineId: row.machine_id,
+    machineName: row.machine_name || '',
+    machineCode: row.machine_code || '',
+    machineType: row.machine_type || '',
     status: row.status,
     planKind: row.plan_kind,
     summary: row.summary,

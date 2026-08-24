@@ -16,6 +16,7 @@ import {
   normalizeMaintenanceWorkOrderKind,
   sumCostLinesByKind,
 } from '../shared/lib/maintenanceCostEnvelope.js';
+import { stampPlanServiceFromWorkOrder } from './operations/maintenancePlanOps.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -475,6 +476,13 @@ export function returnWorkOrderToProduction(db, workOrderId, body, actor) {
     actor
   );
   if (!ev.ok) return ev;
+  if (wo.planId && String(wo.kind || '').toLowerCase() === 'preventive') {
+    try {
+      stampPlanServiceFromWorkOrder(db, wo.planId, atIso, actor);
+    } catch {
+      /* plan stamp best-effort — shop floor already returned */
+    }
+  }
   return { ok: true, workOrder: getMaintenanceWorkOrder(db, wo.id), eventId: ev.eventId };
 }
 

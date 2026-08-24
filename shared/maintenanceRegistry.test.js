@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultServiceIntervalDays,
+  isFuelConsumingMachineType,
+  MACHINE_TYPES,
   normalizeMaintenanceSpecialty,
   userMayEditMachines,
   userMayEditMaintenanceVendors,
@@ -39,5 +42,14 @@ describe('maintenanceRegistry', () => {
     expect(userMayEditMachines('branch_manager')).toBe(true);
     expect(userMayEditMachines('md')).toBe(true);
     expect(userMayEditMachines('storekeeper')).toBe(false);
+  });
+
+  it('treats generator and forklift as diesel plant files', () => {
+    expect(MACHINE_TYPES).toContain('forklift');
+    expect(isFuelConsumingMachineType('generator')).toBe(true);
+    expect(isFuelConsumingMachineType('Forklift')).toBe(true);
+    expect(isFuelConsumingMachineType('corrugation')).toBe(false);
+    expect(defaultServiceIntervalDays('generator')).toBe(30);
+    expect(defaultServiceIntervalDays('forklift')).toBe(90);
   });
 });

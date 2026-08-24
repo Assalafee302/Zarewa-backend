@@ -103,6 +103,7 @@ export function savedCustomerPayoutAccount(db, customerId) {
 
 /**
  * Directory for refund “claiming staff” picker (masked bank only).
+ * Avoid decrypting every HR account — that made the refund form hang.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL'|string} [branchScope]
  */
@@ -125,7 +126,8 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
        JOIN app_users u ON u.id = p.user_id
        JOIN customers c ON trim(IFNULL(c.customer_id, '')) = trim(IFNULL(p.sales_customer_id, ''))
        WHERE trim(IFNULL(p.sales_customer_id, '')) != ''${branchSql}
-       ORDER BY u.display_name`
+       ORDER BY u.display_name
+       LIMIT 500`
     )
     .all(...args);
 
@@ -138,12 +140,10 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
 
       const customerID = trim(row.sales_customer_id);
       const bankName = trim(row.bank_name);
-      const plain = trim(decryptBankAccount(row.bank_account_no) || '');
-      const hasBank = Boolean(bankName && plain);
-      const masked =
-        trim(row.bank_account_no_masked) ||
-        (plain ? storedBankToMasked(row.bank_account_no) : '') ||
-        '';
+      const masked = trim(row.bank_account_no_masked);
+      const encPresent = Boolean(trim(row.bank_account_no));
+      // Fast hasBank: name + (masked or encrypted blob). Decrypt only at payout submit.
+      const hasBank = Boolean(bankName && (masked || encPresent));
       const name =
         trim(row.display_name || row.username || row.customer_name) || customerID;
 
@@ -153,7 +153,7 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
         name,
         employeeNo: trim(row.employee_no),
         bankName: hasBank ? bankName : '',
-        bankAccountNoMasked: hasBank ? masked : '',
+        bankAccountNoMasked: hasBank ? masked || '****' : '',
         hasBank,
         branchId: trim(row.branch_id),
       };

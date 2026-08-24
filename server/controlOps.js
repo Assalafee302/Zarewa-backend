@@ -5289,7 +5289,7 @@ export function getEligibleRefundQuotations(db, opts = {}) {
   const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 250;
   const sql = `
     SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
-           q.handled_by, q.branch_id, q.lines_json,
+           q.handled_by, q.agent_customer_id, q.agent_customer_name, q.branch_id, q.lines_json,
            q.bm_price_exception_approved_at_iso, q.price_exception_md_review_required,
            q.price_exception_md_confirmed_at_iso, q.md_price_exception_approved_at_iso,
            q.refunds_blocked_at_iso, q.refunds_blocked_reason,

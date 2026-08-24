@@ -29,10 +29,54 @@ export function usernameSuffixPenalty(username, employeeNo = '') {
   return 0;
 }
 
+/** Username identity: drop numeric import suffixes (okoro.51 → okoro), keep john.doe. */
+export function usernameIdentityStem(username) {
+  const u = String(username || '').trim().toLowerCase();
+  const m = u.match(/^(.+)\.(\d+)$/);
+  return m ? m[1] : u;
+}
+
+export function normalizePersonName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/** Stub file created by linking a login — no job, join date, or pay. */
+export function isThinHrStaffRow(row) {
+  const job = String(row?.jobTitle || '').trim();
+  const joined = String(row?.dateJoinedIso || '').trim();
+  const salary = Number(row?.baseSalaryNgn) || 0;
+  const dept = String(row?.department || '').trim();
+  return !job && !joined && salary <= 0 && !dept;
+}
+
 /**
- * Pick the best account to keep when several share the same employee number.
+ * Keep the login people actually use when two accounts share a display name.
+ * Profile fields from the other account are merged onto this login.
  * @param {object[]} candidates
  */
+export function pickCanonicalLoginForNameDuplicate(candidates) {
+  if (!candidates?.length) return null;
+  if (candidates.length === 1) return candidates[0];
+  return [...candidates].sort((a, b) => {
+    const aActive = String(a.status || '') === 'active' ? 1 : 0;
+    const bActive = String(b.status || '') === 'active' ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+    const aLogin = String(a.lastLoginAtIso || '').trim() ? 1 : 0;
+    const bLogin = String(b.lastLoginAtIso || '').trim() ? 1 : 0;
+    if (bLogin !== aLogin) return bLogin - aLogin;
+    const aCreated = Date.parse(a.createdAtIso || '') || Number.POSITIVE_INFINITY;
+    const bCreated = Date.parse(b.createdAtIso || '') || Number.POSITIVE_INFINITY;
+    if (aCreated !== bCreated) return aCreated - bCreated;
+    const aPen = usernameSuffixPenalty(a.username, a.employeeNo);
+    const bPen = usernameSuffixPenalty(b.username, b.employeeNo);
+    if (aPen !== bPen) return aPen - bPen;
+    return Number(isThinHrStaffRow(a)) - Number(isThinHrStaffRow(b));
+  })[0];
+}
+
 export function pickCanonicalStaffMember(candidates) {
   if (!candidates?.length) return null;
   if (candidates.length === 1) return candidates[0];
@@ -58,18 +102,22 @@ export function pickCanonicalStaffMember(candidates) {
 
 function listStaffJoinRows(db) {
   if (!hrTablesReady(db)) return [];
-  return db
-    .prepare(
-      `SELECT u.id AS userId, u.username, u.display_name AS displayName, u.status, u.email,
+  const base = `SELECT u.id AS userId, u.username, u.display_name AS displayName, u.status, u.email,
               u.role_key AS roleKey, u.created_at_iso AS createdAtIso,
               p.employee_no AS employeeNo, p.job_title AS jobTitle, p.branch_id AS branchId,
+              p.department AS department,
               p.base_salary_ngn AS baseSalaryNgn, p.date_joined_iso AS dateJoinedIso,
               p.updated_at_iso AS profileUpdatedAtIso
        FROM app_users u
        LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
-       WHERE u.role_key NOT IN ('admin', 'md')`
-    )
-    .all();
+       WHERE u.role_key NOT IN ('admin', 'md')`;
+  try {
+    return db
+      .prepare(`SELECT u.last_login_at_iso AS lastLoginAtIso, ${base.replace(/^SELECT /, '')}`)
+      .all();
+  } catch {
+    return db.prepare(base).all();
+  }
 }
 
 /**
@@ -134,7 +182,7 @@ export function scanHrStaffDuplicates(db) {
 
   const byDisplayName = new Map();
   for (const r of withProfile) {
-    const dn = String(r.displayName || '').trim().toLowerCase();
+    const dn = normalizePersonName(r.displayName);
     if (!dn) continue;
     if (!byDisplayName.has(dn)) byDisplayName.set(dn, []);
     byDisplayName.get(dn).push(r);
@@ -147,8 +195,12 @@ export function scanHrStaffDuplicates(db) {
   for (const [displayName, members] of byDisplayName.entries()) {
     if (members.length < 2) continue;
     const uniqueEmpNos = new Set(members.map((m) => String(m.employeeNo || '').trim()).filter(Boolean));
-    if (uniqueEmpNos.size === members.length) continue;
-    const keep = pickCanonicalStaffMember(members);
+    const hasThin = members.some(isThinHrStaffRow);
+    const stems = members.map((m) => usernameIdentityStem(m.username)).filter(Boolean);
+    const stemDup = stems.length >= 2 && new Set(stems).size < stems.length;
+    // Two complete files with different employee numbers and unrelated usernames are likely different people.
+    if (uniqueEmpNos.size === members.length && !hasThin && !stemDup) continue;
+    const keep = pickCanonicalLoginForNameDuplicate(members);
     const remove = members
       .filter((m) => m.userId !== keep?.userId && !employeeNoDupIds.has(m.userId))
       .map((m) => ({

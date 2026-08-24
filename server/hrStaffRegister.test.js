@@ -73,6 +73,33 @@ describe('registerNewStaffWithProfile beneficiary policy', () => {
     expect(r.ok).toBe(true);
     expect(r.userId).toBeTruthy();
   });
+
+  it('refuses a second login when the display name already exists', () => {
+    const first = registerNewStaffWithProfile(db, actorId, {
+      username: 'staff.one',
+      displayName: 'Amina Bello',
+      password: 'Zarewa@123',
+      roleKey: 'sales_staff',
+      payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS,
+      branchId: 'BR-KD',
+      employeeNo: 'ZAPKD504',
+      jobTitle: 'Sales Officer',
+    });
+    expect(first.ok).toBe(true);
+    const second = registerNewStaffWithProfile(db, actorId, {
+      username: 'staff.two',
+      displayName: 'Amina Bello',
+      password: 'Zarewa@123',
+      roleKey: 'sales_staff',
+      payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS,
+      branchId: 'BR-KD',
+      employeeNo: 'ZAPKD505',
+      jobTitle: 'Sales Officer',
+    });
+    expect(second.ok).toBe(false);
+    expect(second.code).toBe('DUPLICATE_DISPLAY_NAME');
+    expect(second.existingUserId).toBe(first.userId);
+  });
 });
 
 describe('registerExistingUserWithProfile', () => {

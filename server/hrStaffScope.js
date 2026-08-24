@@ -12,7 +12,12 @@ export function isStaffUserIdInHrScope(db, scope, subjectUserId) {
   const uid = String(subjectUserId || '').trim();
   if (!uid) return false;
   if (scope?.actorUserId && uid === String(scope.actorUserId).trim()) return true;
-  const roster = listHrStaff(db, scope, { includeInactive: true });
+  const orgWide = Boolean(scope?.viewAll) || scope?.scopeMode === 'org';
+  if (orgWide) {
+    const row = db.prepare(`SELECT id FROM app_users WHERE id = ?`).get(uid);
+    return Boolean(row);
+  }
+  const roster = listHrStaff(db, scope, { includeInactive: true, userId: uid });
   return roster.some((s) => String(s.userId) === uid);
 }
 

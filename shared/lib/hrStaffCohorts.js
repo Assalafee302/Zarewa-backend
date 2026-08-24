@@ -11,8 +11,12 @@ export const HR_PAYROLL_GROUPS = {
   DOMESTIC: 'chairman_staffs',
 };
 
-/** Listed in the main Employees directory (branch operations). */
-export const EMPLOYEE_DIRECTORY_GROUPS = [HR_PAYROLL_GROUPS.BRANCH_OPS];
+/** Listed in the main Employees directory (ERP logins: branch, HQ, and mining). */
+export const EMPLOYEE_DIRECTORY_GROUPS = [
+  HR_PAYROLL_GROUPS.BRANCH_OPS,
+  HR_PAYROLL_GROUPS.HQ_ADMIN,
+  HR_PAYROLL_GROUPS.MINING,
+];
 
 export const SCHOLARSHIP_GROUPS = [HR_PAYROLL_GROUPS.SCHOLARSHIP];
 

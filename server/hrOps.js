@@ -50,7 +50,7 @@ import {
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 import { purgeHrStaffUser } from './hrStaffDuplicateCleanup.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
-import { buildHrOrgChart, buildHrOrgDataQuality, hrStaffReportingContext, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
+import { buildHrOrgChart, buildHrOrgDataQuality, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
 import {
   notifyAppraisalFormOpened,
   notifyHrRequestOutcome,
@@ -307,9 +307,12 @@ function buildStaffDerived(row, complianceByUserId = new Map()) {
   const criticalMissing = [];
   if (!String(row.employeeNo || '').trim()) criticalMissing.push('employeeNo');
   if (!String(row.dateJoinedIso || '').trim()) criticalMissing.push('dateJoinedIso');
-  if (!String(row.jobTitle || '').trim()) criticalMissing.push('jobTitle');
+  const jobTitle = String(row.jobTitle || '').trim();
+  if (!jobTitle || /^pending hr setup$/i.test(jobTitle)) criticalMissing.push('jobTitle');
   if (!String(row.department || '').trim()) criticalMissing.push('department');
-  if (!String(row.branchId || '').trim()) criticalMissing.push('branchId');
+  if (!String(row.branchId || '').trim() && !isNonBranchStaff(row.payrollGroup)) {
+    criticalMissing.push('branchId');
+  }
   const compliance = complianceByUserId.get(row.userId) || null;
   const complianceBadges = {
     handbookAcknowledged: Boolean(compliance?.handbookAcknowledged),
@@ -458,6 +461,11 @@ export function listHrStaff(db, scope, opts = {}) {
   if (!includeInactive) {
     sql += ` AND u.status = 'active'`;
   }
+  const onlyUserId = String(opts.userId || '').trim();
+  if (onlyUserId) {
+    sql += ` AND u.id = ?`;
+    args.push(onlyUserId);
+  }
   const cohortKey = opts.cohort;
   const cohortGroups =
     cohortKey !== undefined && cohortKey !== null && String(cohortKey).trim() !== ''
@@ -465,11 +473,11 @@ export function listHrStaff(db, scope, opts = {}) {
       : null;
   if (cohortGroups) {
     const ph = cohortGroups.map(() => '?').join(',');
-    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') IN (${ph})`;
+    sql += ` AND COALESCE(NULLIF(TRIM(p.payroll_group), ''), 'branch_ops') IN (${ph})`;
     args.push(...cohortGroups);
   }
   if (opts.attendanceEligibleOnly) {
-    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') = 'branch_ops'`;
+    sql += ` AND COALESCE(NULLIF(TRIM(p.payroll_group), ''), 'branch_ops') = 'branch_ops'`;
   }
   if (!orgWide) {
     const actorUserId = scope.actorUserId;
@@ -487,7 +495,7 @@ export function listHrStaff(db, scope, opts = {}) {
         args.push(actorUserId);
       }
     } else if (includeUnassigned) {
-      sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL)`;
+      sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL OR TRIM(p.branch_id) = '')`;
       args.push(branchId);
     } else {
       sql += ` AND p.branch_id = ?`;
@@ -660,7 +668,7 @@ function buildHrStaffDirectoryFilterSql(db, scope, opts = {}) {
       : null;
   if (cohortGroups) {
     const ph = cohortGroups.map(() => '?').join(',');
-    sql += ` AND COALESCE(p.payroll_group, 'branch_ops') IN (${ph})`;
+    sql += ` AND COALESCE(NULLIF(TRIM(p.payroll_group), ''), 'branch_ops') IN (${ph})`;
     args.push(...cohortGroups);
   }
   if (!orgWide) {
@@ -679,7 +687,7 @@ function buildHrStaffDirectoryFilterSql(db, scope, opts = {}) {
         args.push(actorUserId);
       }
     } else if (scope.includeUnassigned) {
-      sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL)`;
+      sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL OR TRIM(p.branch_id) = '')`;
       args.push(scope.branchId);
     } else {
       sql += ` AND p.branch_id = ?`;
@@ -1205,19 +1213,65 @@ export function applyHrDataCleanupAction(db, actor, body = {}) {
 }
 
 /**
+ * Line manager and direct reports without loading the full staff roster.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ userId?: string, lineManagerUserId?: string }} staff
+ */
+function hrStaffReportingForOne(db, staff) {
+  const uid = String(staff?.userId || '').trim();
+  if (!uid) return { lineManager: null, directReports: [] };
+  const mgrId = String(staff.lineManagerUserId || '').trim();
+  let lineManager = null;
+  if (mgrId) {
+    const mgr = db
+      .prepare(
+        `SELECT u.id AS userId, u.display_name AS displayName, p.job_title AS jobTitle
+         FROM app_users u
+         LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+         WHERE u.id = ?`
+      )
+      .get(mgrId);
+    if (mgr) {
+      lineManager = {
+        userId: mgr.userId,
+        displayName: mgr.displayName || mgr.userId,
+        jobTitle: mgr.jobTitle || null,
+      };
+    }
+  }
+  const directReports = db
+    .prepare(
+      `SELECT u.id AS userId, u.display_name AS displayName, p.job_title AS jobTitle
+       FROM hr_staff_profiles p
+       JOIN app_users u ON u.id = p.user_id
+       WHERE p.line_manager_user_id = ?
+       ORDER BY u.display_name ASC`
+    )
+    .all(uid)
+    .map((s) => ({
+      userId: s.userId,
+      displayName: s.displayName || s.userId,
+      jobTitle: s.jobTitle || null,
+    }));
+  return { lineManager, directReports };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
  */
 export function getHrStaffOne(db, userId) {
   if (!hrTablesReady(db)) return null;
+  const uid = String(userId || '').trim();
+  if (!uid) return null;
   const list = listHrStaff(
     db,
     { viewAll: true, branchId: DEFAULT_BRANCH_ID, includeUnassigned: true },
-    { includeInactive: true }
+    { includeInactive: true, userId: uid }
   );
-  const staff = list.find((s) => s.userId === userId) ?? null;
+  const staff = list.find((s) => String(s.userId) === uid) ?? list[0] ?? null;
   if (!staff) return null;
-  const reporting = hrStaffReportingContext(list, userId);
+  const reporting = hrStaffReportingForOne(db, staff);
   const enriched = enrichStaffWithLifecycle(enrichStaffWithOnboarding(db, staff, staff.avatarUrl));
   const [withDocExpiry] = attachDocExpirySummary(db, [enriched]);
   return {
@@ -1429,6 +1483,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     body?.payrollGroup !== undefined
       ? String(body.payrollGroup || '').trim() || null
       : prevRow?.payroll_group ?? null;
+  // Always persist a concrete group — empty string would fail directory cohort IN (...) filters.
   const normalizedPayrollGroup = normalizePayrollGroup(payrollGroup);
   if (isBeneficiaryOnlyPayrollGroup(normalizedPayrollGroup)) {
     if (existing) suspendLoginForBeneficiaryPayrollGroup(db, userId);
@@ -1763,7 +1818,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     self_service_eligible: selfServiceEligible,
     line_manager_user_id: lineManagerUserId,
     leave_entitlement_band: resolvedLeaveBand,
-    payroll_group: payrollGroup,
+    payroll_group: normalizedPayrollGroup,
     salary_level: resolvedSalaryLevel,
     salary_step: resolvedSalaryStep,
     // New Phase 10 fields
@@ -8578,6 +8633,7 @@ export function ensureHrStaffProfileForUser(db, actorUserId, userId, extras = {}
     String(extras.branchId || u.branchId || '').trim() ||
     (isNonBranchStaff(payrollGroup) ? null : DEFAULT_BRANCH_ID);
   const resolvedEmployeeNo = resolveRegisterEmployeeNo(db, {}, { autoAssignEmployeeNo: true }, branchId || DEFAULT_BRANCH_ID);
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   const up = upsertHrStaffProfile(
     db,
@@ -8587,6 +8643,9 @@ export function ensureHrStaffProfileForUser(db, actorUserId, userId, extras = {}
       employeeNo: resolvedEmployeeNo,
       payrollGroup,
       branchId,
+      // Searchable stub so Linked logins show under Incomplete profiles, not as blank rows.
+      jobTitle: String(extras.jobTitle || '').trim() || 'Pending HR setup',
+      dateJoinedIso: String(extras.dateJoinedIso || '').trim() || todayIso,
       employmentType: 'permanent',
       baseSalaryNgn: 0,
       housingAllowanceNgn: 0,
@@ -8759,6 +8818,23 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   const usernameInput = String(username || '').trim().toLowerCase();
   const effectiveUsername = employeeNumberToUsername(resolvedEmployeeNo) || usernameInput;
   if (!effectiveUsername) return { ok: false, error: 'Employee ID or username is required.' };
+  const nameNeedle = String(displayName || '').trim();
+  if (nameNeedle) {
+    const sameName = db
+      .prepare(
+        `SELECT id, username, display_name AS displayName FROM app_users
+         WHERE lower(trim(display_name)) = lower(trim(?)) LIMIT 1`
+      )
+      .get(nameNeedle);
+    if (sameName) {
+      return {
+        ok: false,
+        error: `A login named "${sameName.displayName}" already exists (${sameName.username}). Use Register existing user instead of creating a second account.`,
+        code: 'DUPLICATE_DISPLAY_NAME',
+        existingUserId: sameName.id,
+      };
+    }
+  }
   const created = createAppUserRecord(db, {
     username: effectiveUsername,
     displayName,

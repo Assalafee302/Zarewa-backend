@@ -592,6 +592,23 @@ export function registerHrApi(app, db) {
     });
   });
 
+  /** Same org-wide rule as GET /api/hr/staff/directory so Open profile matches the list. */
+  function applyMainHrListViewAll(req, scope) {
+    if (hrUserHas(req.user, 'hr.team.view') && !userCanAccessHrModule(req.user)) {
+      scope.viewAll = false;
+      return scope;
+    }
+    if (
+      userCanAccessMainHrWorkspace(req.user) &&
+      (hrUserHas(req.user, 'hr.staff.manage') || hrUserHas(req.user, 'hr.directory.view'))
+    ) {
+      scope.viewAll = true;
+    } else if (userCanAccessScholarshipDomesticExecutive(req.user)) {
+      scope.viewAll = true;
+    }
+    return scope;
+  }
+
   /** @returns {boolean} false when response already sent */
   function staffScopeGate(req, res, userId) {
     const uid = String(userId || '').trim();
@@ -600,7 +617,7 @@ export function registerHrApi(app, db) {
       return false;
     }
     if (uid === String(req.user?.id || '').trim()) return true;
-    const scope = hrListScope(req);
+    const scope = applyMainHrListViewAll(req, hrListScope(req));
     if (
       userCanAccessScholarshipDomesticExecutive(req.user) &&
       !userCanAccessMainHrWorkspace(req.user) &&
@@ -633,7 +650,13 @@ export function registerHrApi(app, db) {
     const uid = String(userId || '').trim();
     if (!uid) return false;
     if (uid === String(req.user?.id || '').trim()) return true;
-    if (hrUserHas(req.user, 'hr.directory.view') || hrUserHas(req.user, 'hr.team.view')) return true;
+    if (
+      hrUserHas(req.user, 'hr.directory.view') ||
+      hrUserHas(req.user, 'hr.team.view') ||
+      hrUserHas(req.user, 'hr.staff.manage')
+    ) {
+      return true;
+    }
     return (
       userCanViewScholarshipDomesticRegisters(req.user) && staffUserIsScholarshipOrDomestic(db, uid)
     );

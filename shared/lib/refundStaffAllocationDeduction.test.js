@@ -75,6 +75,25 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.payoutHeldForUnclearedReceipts).toBe(true);
   });
 
+  it('allows Admin/MD to waive company cut while still offsetting uncleared receipts', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'associated_staff',
+        recipientAssociatedStaffID: 'AS-1',
+        amountNgn: 10_000,
+        companyCutWaived: true,
+        companyCutWaiverNote: 'MD waived transporter cut',
+      },
+      'CUS-QUOTE',
+      { deductionRate: 0.2, unclearedReceiptHoldNgn: 1_500 }
+    );
+    expect(row.companyCutWaived).toBe(true);
+    expect(row.companyDeductionNgn).toBe(0);
+    expect(row.deductionRate).toBe(0);
+    expect(row.unclearedReceiptOffsetNgn).toBe(1_500);
+    expect(row.netPayoutNgn).toBe(8_500);
+  });
+
   it('deducts for associated staff and claiming staff', () => {
     const rows = applyRefundStaffAllocationDeductions(
       [

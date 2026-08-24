@@ -2598,6 +2598,12 @@ function normalizeRefundSplitRows(input) {
       ).trim();
       const amountNgn = roundMoney(r?.amountNgn ?? r?.amount_ngn);
       const note = String(r?.note ?? '').trim();
+      const companyCutWaived = Boolean(
+        r?.companyCutWaived === true || r?.company_cut_waived === true || r?.waiveCompanyCut === true
+      );
+      const companyCutWaiverNote = String(
+        r?.companyCutWaiverNote ?? r?.company_cut_waiver_note ?? ''
+      ).trim();
       const asStaff =
         kindRaw === 'associated_staff' ||
         kindRaw === 'staff' ||
@@ -2610,6 +2616,8 @@ function normalizeRefundSplitRows(input) {
           recipientCustomerID: '',
           amountNgn,
           note,
+          companyCutWaived,
+          companyCutWaiverNote,
         };
       }
       return {
@@ -2618,6 +2626,8 @@ function normalizeRefundSplitRows(input) {
         recipientAssociatedStaffID: '',
         amountNgn,
         note,
+        companyCutWaived,
+        companyCutWaiverNote,
       };
     })
     .filter(
@@ -2711,14 +2721,34 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       resolvedSplits.push({ ...split, payoutAccount: acct });
     }
 
-    const splitsForStore = applyRefundStaffAllocationDeductions(resolvedSplits, customerID, {
+    const mayWaiveStaffCut = actorMayBypassIncompleteRefundFloor(actor);
+    const splitsWithWaiverAuth = resolvedSplits.map((s) => {
+      if (!s.companyCutWaived) return { ...s, companyCutWaived: false, companyCutWaiverNote: '' };
+      if (!mayWaiveStaffCut) {
+        return { ...s, companyCutWaived: false, companyCutWaiverNote: '' };
+      }
+      const note = String(s.companyCutWaiverNote || '').trim();
+      if (note.length < 8) {
+        return {
+          __waiverError: true,
+          error:
+            'Admin/MD company-cut waiver requires a short reason (at least 8 characters) on each waived staff/transporter/installer line.',
+        };
+      }
+      return { ...s, companyCutWaived: true, companyCutWaiverNote: note };
+    });
+    const waiverErr = splitsWithWaiverAuth.find((s) => s?.__waiverError);
+    if (waiverErr) return { ok: false, error: waiverErr.error };
+
+    const splitsForStore = applyRefundStaffAllocationDeductions(splitsWithWaiverAuth, customerID, {
       deductionRate: getRefundStaffAllocationDeductionRate(db),
       unclearedByCustomerId: unclearedTotalsMap(
         unclearedReceiptFloatBySalesCustomerIds(
           db,
-          resolvedSplits.map((s) => s.recipientCustomerID).filter(Boolean)
+          splitsWithWaiverAuth.map((s) => s.recipientCustomerID).filter(Boolean)
         )
       ),
+      honorCompanyCutWaiver: true,
     });
 
     // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.
@@ -3139,6 +3169,8 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
                 unclearedReceiptHoldNgn: roundMoney(r.unclearedReceiptHoldNgn),
                 unclearedReceiptOffsetNgn: roundMoney(r.unclearedReceiptOffsetNgn),
                 payoutHeldForUnclearedReceipts: Boolean(r.payoutHeldForUnclearedReceipts),
+                companyCutWaived: Boolean(r.companyCutWaived),
+                companyCutWaiverNote: String(r.companyCutWaiverNote || '').trim() || undefined,
                 note: r.note,
                 payoutAccount: {
                   payeeName: r.payoutAccount.payeeName,
@@ -5007,18 +5039,138 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
 
 const UNPRODUCED_LIST_METRES_FLOOR = 0.02;
 
+function parseRefundReasonCategoriesLocal(reasonCategory) {
+  try {
+    const cats = JSON.parse(reasonCategory || '[]');
+    if (Array.isArray(cats)) {
+      return cats.map((c) => String(c || '').trim()).filter(Boolean);
+    }
+  } catch {
+    /* plain string */
+  }
+  const s = String(reasonCategory || '').trim();
+  return s ? [s] : [];
+}
+
+/**
+ * Categories that preview would hard-block for a new request (paid/open non–qty-netted claims).
+ * @param {Array<object>} refunds
+ */
+function hardBlockedRefundCategoriesFromPrior(refunds) {
+  const refundedCategories = new Set();
+  const openRefundedCategories = new Set();
+  for (const r of Array.isArray(refunds) ? refunds : []) {
+    const status = String(r.status || '')
+      .trim()
+      .toLowerCase();
+    if (status === 'rejected' || status === 'cancelled') continue;
+    const isOpen = status === 'pending' || status === 'approved';
+    for (const c of parseRefundReasonCategoriesLocal(r.reason_category ?? r.reasonCategory)) {
+      refundedCategories.add(c);
+      if (isOpen) openRefundedCategories.add(c);
+    }
+  }
+  const hardBlocked = new Set();
+  for (const cat of refundedCategories) {
+    if (QUANTITY_NETTED_REFUND_CATEGORIES.has(cat)) {
+      if (openRefundedCategories.has(cat)) hardBlocked.add(cat);
+    } else {
+      hardBlocked.add(cat);
+    }
+  }
+  return hardBlocked;
+}
+
+/** Batch prior active refunds for pick-list residual / category blocks. */
+function activeRefundRowsByQuotationRef(db, quoteIds) {
+  const map = new Map();
+  const ids = (Array.isArray(quoteIds) ? quoteIds : []).map((id) => String(id || '').trim()).filter(Boolean);
+  for (const id of ids) map.set(id, []);
+  if (!ids.length) return map;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT quotation_ref, refund_id, reason_category, amount_ngn, paid_amount_ngn,
+              credit_applied_ngn, calculation_lines_json, status
+       FROM customer_refunds
+       WHERE quotation_ref IN (${placeholders})
+         AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
+    )
+    .all(...ids);
+  for (const r of rows) {
+    const qid = String(r.quotation_ref || '').trim();
+    if (!map.has(qid)) map.set(qid, []);
+    map.get(qid).push(r);
+  }
+  return map;
+}
+
+/** Quotations with completed / posted delivery — order cancellation & unproduced are blocked. */
+function deliveredQuotationIdSet(db, quoteIds) {
+  const out = new Set();
+  const ids = (Array.isArray(quoteIds) ? quoteIds : []).map((id) => String(id || '').trim()).filter(Boolean);
+  if (!ids.length) return out;
+  const placeholders = ids.map(() => '?').join(',');
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT quotation_ref AS id FROM deliveries
+         WHERE quotation_ref IN (${placeholders})
+           AND (
+             TRIM(COALESCE(delivered_date_iso, '')) != ''
+             OR LOWER(TRIM(COALESCE(status, ''))) IN ('delivered', 'completed')
+             OR COALESCE(fulfillment_posted, 0) = 1
+           )`
+      )
+      .all(...ids);
+    for (const r of rows) {
+      const id = String(r.id || '').trim();
+      if (id) out.add(id);
+    }
+  } catch {
+    /* deliveries table optional in some test stubs */
+  }
+  return out;
+}
+
 /**
  * Cheap pick-list hint — never runs {@link previewRefundRequest}. Selecting a row still loads the full preview.
+ * Honours overpayment residual, already-claimed categories, and delivered-material blocks so paid /
+ * exhausted quotes do not linger in the Sales refund search list.
  * @returns {{ categories: string[], suggestedPreviewAmountNgn: number } | null}
  */
-function refundPickerListHint(db, row, jobs, { overpayExcess, remainingNgn, hasActiveRefunds }) {
+function refundPickerListHint(db, row, jobs, {
+  overpayExcess,
+  remainingNgn,
+  cashInNgn = null,
+  quoteTotalNgn = null,
+  priorRefunds = [],
+  materialDelivered = false,
+}) {
   const remaining = roundMoney(remainingNgn);
   if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
 
-  if (overpayExcess >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hasActiveRefunds) {
+  const hardBlocked = hardBlockedRefundCategoriesFromPrior(priorRefunds);
+  if (materialDelivered) {
+    hardBlocked.add('Order cancellation');
+    hardBlocked.add('Unproduced meterage');
+  }
+
+  const quoteTotal = roundMoney(quoteTotalNgn != null ? quoteTotalNgn : row.total_ngn);
+  const cashIn =
+    cashInNgn != null && Number.isFinite(Number(cashInNgn))
+      ? roundMoney(cashInNgn)
+      : roundMoney(overpayExcess) + quoteTotal;
+  const overpayResidual = quotationOverpaymentResidualNgn({
+    cashInNgn: cashIn,
+    quoteTotalNgn: quoteTotal,
+    overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(priorRefunds),
+  });
+  // Prefer residual overpay when still available (works after other-category refunds too).
+  if (overpayResidual >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hardBlocked.has('Overpayment')) {
     return {
       categories: ['Overpayment'],
-      suggestedPreviewAmountNgn: Math.min(overpayExcess, remaining),
+      suggestedPreviewAmountNgn: Math.min(overpayResidual, remaining),
     };
   }
 
@@ -5027,12 +5179,14 @@ function refundPickerListHint(db, row, jobs, { overpayExcess, remainingNgn, hasA
   const hasCancelledJob = closedJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'cancelled'
   );
-  if (isVoid || hasCancelledJob) {
+  if ((isVoid || hasCancelledJob) && !hardBlocked.has('Order cancellation')) {
     return {
       categories: ['Order cancellation'],
       suggestedPreviewAmountNgn: remaining,
     };
   }
+  // Cancelled / void quotes with Order cancellation already claimed have no other cheap claim.
+  if (isVoid || hasCancelledJob) return null;
 
   let linesPayload = {};
   try {
@@ -5049,7 +5203,11 @@ function refundPickerListHint(db, row, jobs, { overpayExcess, remainingNgn, hasA
   const fulfillment = buildRefundProductionFulfillmentSummary(db, row, closedJobs, {
     isStoneMeterQuote: stoneMeterQuote,
   });
-  if (fulfillment.unproducedMetres > UNPRODUCED_LIST_METRES_FLOOR) {
+  if (
+    fulfillment.unproducedMetres > UNPRODUCED_LIST_METRES_FLOOR &&
+    !fulfillment.fullyProducedRoofing &&
+    !hardBlocked.has('Unproduced meterage')
+  ) {
     return {
       categories: ['Unproduced meterage'],
       suggestedPreviewAmountNgn: remaining,
@@ -5083,8 +5241,9 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
- * The pick list never runs {@link previewRefundRequest}. Obvious overpayments, void/cancelled jobs, and
- * unproduced metres (quoted vs produced) are classified cheaply so finished under-produced jobs stay visible.
+ * The pick list never runs {@link previewRefundRequest}. Obvious overpayments (residual), void/cancelled jobs
+ * (when Order cancellation is not already claimed), and unproduced metres are classified cheaply so finished
+ * under-produced jobs stay visible. Quotes with only exhausted / delivered-blocked claims are omitted.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
  * Listing path batches cash-in and closed production jobs for SQL candidates and never scans
@@ -5157,6 +5316,14 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     db,
     candidates.map((r) => r.id)
   );
+  const priorRefundsByRef = activeRefundRowsByQuotationRef(
+    db,
+    candidates.map((r) => r.id)
+  );
+  const deliveredIds = deliveredQuotationIdSet(
+    db,
+    candidates.map((r) => r.id)
+  );
 
   const out = [];
   for (const row of candidates) {
@@ -5171,11 +5338,13 @@ export function getEligibleRefundQuotations(db, opts = {}) {
 
     const quoteTotalNgn = roundMoney(row.total_ngn);
     const overpayExcess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-    const hasActiveRefunds = totalRefundedNgn > 0;
     const hint = refundPickerListHint(db, row, jobsByRef.get(row.id) || [], {
       overpayExcess,
       remainingNgn,
-      hasActiveRefunds,
+      cashInNgn,
+      quoteTotalNgn,
+      priorRefunds: priorRefundsByRef.get(row.id) || [],
+      materialDelivered: deliveredIds.has(String(row.id || '').trim()),
     });
     if (!hint) continue;
     const pickRow = {

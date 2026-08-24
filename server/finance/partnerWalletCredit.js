@@ -79,6 +79,12 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         amountNgn: roundMoney(s?.amountNgn),
         payoutAccount: s?.payoutAccount && typeof s.payoutAccount === 'object' ? s.payoutAccount : null,
         note: String(s?.note || '').trim(),
+        companyCutWaived: Boolean(
+          s?.companyCutWaived === true || s?.company_cut_waived === true || s?.waiveCompanyCut === true
+        ),
+        companyCutWaiverNote: String(
+          s?.companyCutWaiverNote ?? s?.company_cut_waiver_note ?? ''
+        ).trim(),
       };
     })
     .filter(
@@ -113,12 +119,15 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             unclearedReceiptHoldNgn: unclearedByCustomerId.get(
               String(s.recipientCustomerID || '').trim()
             ),
+            honorCompanyCutWaiver: true,
           }
         );
         const creditAmount = roundMoney(withDeduction.netPayoutNgn ?? share);
         const cutPct = Math.round((Number(withDeduction.deductionRate) || 0) * 100);
         const noteParts = [];
-        if (withDeduction.companyDeductionNgn > 0) {
+        if (withDeduction.companyCutWaived) {
+          noteParts.push('company cut waived (Admin/MD)');
+        } else if (withDeduction.companyDeductionNgn > 0) {
           noteParts.push(`net after ${cutPct}% company cut`);
         }
         if (withDeduction.unclearedReceiptOffsetNgn > 0) {

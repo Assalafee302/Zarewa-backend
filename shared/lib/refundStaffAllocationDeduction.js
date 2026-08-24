@@ -82,23 +82,39 @@ export function refundStaffAllocationDeductionAmounts(
 /**
  * Enrich a split row with deduction + optional uncleared-receipt offset.
  * Amount on the split remains the gross allocation.
+ * Admin/MD may set companyCutWaived to skip the company % (uncleared offset still applies).
  *
  * @param {object} split
  * @param {string} [quoteCustomerId]
  * @param {{
  *   deductionRate?: number,
  *   unclearedReceiptHoldNgn?: number,
+ *   honorCompanyCutWaiver?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '', opts = {}) {
   const amountNgn = roundRefundStaffMoney(split?.amountNgn ?? split?.amount_ngn);
-  const deductionRate = normalizeRefundStaffAllocationDeductionRate(
-    opts.deductionRate ?? split?.deductionRate ?? REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+  const honorWaiver = opts.honorCompanyCutWaiver !== false;
+  const waiverRequested = Boolean(
+    split?.companyCutWaived === true ||
+      split?.company_cut_waived === true ||
+      split?.waiveCompanyCut === true
   );
+  const companyCutWaived = honorWaiver && waiverRequested;
+  const waiverNote = String(
+    split?.companyCutWaiverNote ?? split?.company_cut_waiver_note ?? ''
+  ).trim();
+  const deductionRate = companyCutWaived
+    ? 0
+    : normalizeRefundStaffAllocationDeductionRate(
+        opts.deductionRate ?? split?.deductionRate ?? REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+      );
   const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
   const base = {
     ...split,
     amountNgn,
+    companyCutWaived,
+    companyCutWaiverNote: companyCutWaived ? waiverNote : '',
   };
   if (!refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
     return {
@@ -107,6 +123,8 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
       companyDeductionNgn: 0,
       netPayoutNgn: amountNgn,
       deductionRate: 0,
+      companyCutWaived: false,
+      companyCutWaiverNote: '',
       unclearedReceiptHoldNgn: 0,
       unclearedReceiptOffsetNgn: 0,
       payoutHeldForUnclearedReceipts: false,
@@ -134,6 +152,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
  * @param {{
  *   deductionRate?: number,
  *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
+ *   honorCompanyCutWaiver?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
@@ -149,6 +168,7 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
     applyRefundStaffAllocationDeduction(s, quoteCustomerId, {
       deductionRate: rate,
       unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
+      honorCompanyCutWaiver: opts.honorCompanyCutWaiver,
     })
   );
 }

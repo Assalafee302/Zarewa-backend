@@ -338,6 +338,59 @@ describe('Inventory scenarios (simulated flows)', () => {
     expect(Number(coil?.qtyRemaining)).toBeCloseTo(4800, 2);
   });
 
+  it('S1c-paper — GRN qty on paperwork can exceed weighbridge kg; line still closes and coil uses weight', async () => {
+    const app = makeApp();
+    const agent = request.agent(app);
+    await loginAs(agent);
+    const sup = await agent.post('/api/suppliers').send({ name: 'Paper-qty Mill', city: 'Kano' });
+    expect(sup.status).toBe(201);
+    const po = await agent.post('/api/purchase-orders').send({
+      supplierID: sup.body.supplierID,
+      supplierName: 'Paper-qty Mill',
+      orderDateISO: '2026-04-02',
+      status: 'Approved',
+      lines: [
+        {
+          lineKey: 'L-PAPER',
+          productID: 'COIL-ALU',
+          productName: 'Aluminium coil (kg)',
+          color: 'TB',
+          gauge: '0.22',
+          qtyOrdered: 5000,
+          unitPricePerKgNgn: 100,
+          unitPriceNgn: 100,
+          qtyReceived: 0,
+        },
+      ],
+    });
+    expect(po.status).toBe(201);
+    const grn = await agent.post(`/api/purchase-orders/${encodeURIComponent(po.body.poID)}/grn`).send({
+      entries: [
+        {
+          lineKey: 'L-PAPER',
+          productID: 'COIL-ALU',
+          qtyReceived: 5000,
+          weightKg: 4800,
+          coilNo: 'CL-INV-PAPER',
+          location: 'Bay',
+        },
+      ],
+      supplierID: sup.body.supplierID,
+      supplierName: 'Paper-qty Mill',
+    });
+    expect(grn.status).toBe(200);
+    expect(grn.body.ok).toBe(true);
+    expect(grn.body.mdShortReceiptAlerts.length).toBeGreaterThan(0);
+
+    const boot = await agent.get('/api/bootstrap');
+    const poRow = boot.body.purchaseOrders.find((p) => p.poID === po.body.poID);
+    expect(poRow?.status).toBe('Received');
+    const line = poRow?.lines?.find((l) => l.lineKey === 'L-PAPER');
+    expect(Number(line?.qtyReceived)).toBe(5000);
+    const coil = boot.body.coilLots.find((c) => c.coilNo === 'CL-INV-PAPER');
+    expect(Number(coil?.weightKg ?? coil?.qtyReceived)).toBeCloseTo(4800, 2);
+  });
+
   it('S1 — GRN: coil remaining and COIL-ALU stock increase together', async () => {
     const app = makeApp();
     const agent = request.agent(app);

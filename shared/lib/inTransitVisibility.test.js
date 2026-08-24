@@ -22,10 +22,20 @@ describe('inTransitVisibility', () => {
       poID: 'PO-KD-26-00013',
       status: 'In Transit',
       supplierName: 'Test Sup',
-      lines: [{ productID: 'COIL-ALU', qtyOrdered: 1000, qtyReceived: 400 }],
+      lines: [{ productID: 'COIL-ALU', qtyOrdered: 1000, qtyReceived: 0 }],
     };
     expect(shouldShowPoInTransit(po)).toBe(true);
     expect(buildTransitDisplayRows({ purchaseOrders: [po], inTransitLoads: [] })).toHaveLength(1);
+  });
+
+  it('hides PO from receiving after a short coil GRN', () => {
+    const po = {
+      poID: 'PO-KD-26-00014',
+      status: 'In Transit',
+      supplierName: 'Test Sup',
+      lines: [{ productID: 'COIL-ALU', qtyOrdered: 5000, qtyReceived: 4800 }],
+    };
+    expect(shouldShowPoInTransit(po)).toBe(false);
   });
 
   it('treats coil short-land within tolerance as fully received', () => {

@@ -18,6 +18,7 @@ import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligat
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
 import { recomputeAllStaffRoleCompliance } from './hrRoleComplianceOps.js';
+import { closeHangingCoilShortReceipts } from './procurement/coilShortReceiptCloseOps.js';
 import {
   SCHEMA_MIGRATION_FTS,
   ensureWorkspaceSearchFtsSchema,
@@ -26,6 +27,7 @@ import {
 
 const SCHEMA_MIGRATION_PO_LINE_TYPE = 'po-line-type-migrate-v4';
 const SCHEMA_MIGRATION_PROCUREMENT_KIND = 'procurement-order-kind-v2';
+const SCHEMA_MIGRATION_COIL_SHORT_CLOSE = 'coil-short-receipt-close-v1';
 const MIGRATION_RUN_BATCH = 400;
 
 /** @param {import('better-sqlite3').Database} db */
@@ -1487,6 +1489,14 @@ function runMigrationsUnlocked(db) {
   migrateHrRoleComplianceLifecycle2026(db);
   migratePartnerWallet2026(db);
   migrateChairmanOfficeLoans2026(db);
+  try {
+    if (!schemaMigrationDone(db, SCHEMA_MIGRATION_COIL_SHORT_CLOSE)) {
+      closeHangingCoilShortReceipts(db);
+      markSchemaMigrationDone(db, SCHEMA_MIGRATION_COIL_SHORT_CLOSE);
+    }
+  } catch (e) {
+    console.warn('[migrate] hanging coil short receipts close skipped:', e?.message || e);
+  }
 }
 
 /** Partner payable wallets — BM-approved refund credits; cashier withdrawals. */

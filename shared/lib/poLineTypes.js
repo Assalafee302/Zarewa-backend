@@ -138,7 +138,8 @@ export function coilReceiptShortToleranceKg(qtyOrdered) {
 }
 
 /**
- * Open quantity still receivable on a PO line (0 when coil short-land is within tolerance).
+ * Open quantity still receivable on a PO line.
+ * Coil lines: any GRN (including weighbridge short) closes receiving — leftover kg is supplier variance.
  * @param {{ lineType?: string; productID?: string; qtyOrdered?: number; qtyReceived?: number }} line
  * @param {PoLineType} [lineType]
  */
@@ -150,6 +151,8 @@ export function poLineOpenQtyForReceiving(line, lineType) {
   const gap = Math.max(0, ordered - received);
   if (gap <= 0) return 0;
   if (lt === 'coil_kg' || lt === 'coil_meter') {
+    // Any GRN on the coil line closes receiving. Short kg is supplier variance, not leftover to receive.
+    if (received > 0) return 0;
     if (gap <= coilReceiptShortToleranceKg(ordered)) return 0;
   }
   return gap;
@@ -282,4 +285,34 @@ export function deriveProcurementKindFromPoLines(lines) {
     inferLineTypeFromProduct(l.productID ?? l.product_id, null, l)
   );
   return deriveProcurementKindFromLineTypes(types);
+}
+
+/** Unit price used for PO value: `unitPriceNgn`, else `unitPricePerKgNgn` (coil kg). */
+export function poLineUnitPriceNgn(line) {
+  const up = Math.round(
+    Number(line?.unitPriceNgn ?? line?.unitPriceNgn ?? line?.unit_price_ngn) || 0
+  );
+  const upkg = Math.round(
+    Number(line?.unitPricePerKgNgn ?? line?.unitPricePerKgNgn ?? line?.unit_price_per_kg_ngn) || 0
+  );
+  if (up > 0) return up;
+  if (upkg > 0) return upkg;
+  return 0;
+}
+
+/** Remaining receivable value on a line (0 when coil short-land is within tolerance or snapped closed). */
+export function poLineOpenCommitmentNgn(line) {
+  return Math.round(poLineOpenQtyForReceiving(line) * poLineUnitPriceNgn(line));
+}
+
+const CLOSED_PO_STATUSES = new Set(['received', 'rejected', 'cancelled', 'canceled', 'closed']);
+
+/**
+ * Open purchase commitment for a PO: remaining receivable qty × unit price.
+ * Fully received / short-closed coil lines do not hang.
+ */
+export function purchaseOrderOpenCommitmentNgn(po) {
+  const st = String(po?.status || '').trim().toLowerCase();
+  if (CLOSED_PO_STATUSES.has(st)) return 0;
+  return (po?.lines || []).reduce((sum, line) => sum + poLineOpenCommitmentNgn(line), 0);
 }

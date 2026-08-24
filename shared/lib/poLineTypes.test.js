@@ -11,6 +11,7 @@ import {
   poLineOpenQtyForReceiving,
   poLineIsOpenForReceiving,
   coilReceiptShortToleranceKg,
+  purchaseOrderOpenCommitmentNgn,
 } from './poLineTypes.js';
 
 describe('poLineTypes', () => {
@@ -104,9 +105,41 @@ describe('poLineTypes', () => {
     expect(poLineIsOpenForReceiving(line)).toBe(false);
     expect(
       poLineOpenQtyForReceiving(
-        { lineType: 'coil_kg', productID: 'COIL-ALU', qtyOrdered: 3140, qtyReceived: 3000 },
+        { lineType: 'coil_kg', productID: 'COIL-ALU', qtyOrdered: 5000, qtyReceived: 4800 },
         'coil_kg'
       )
-    ).toBe(140);
+    ).toBe(0);
+    expect(
+      poLineIsOpenForReceiving({
+        lineType: 'coil_kg',
+        productID: 'COIL-ALU',
+        qtyOrdered: 5000,
+        qtyReceived: 0,
+      })
+    ).toBe(true);
+  });
+
+  it('drops short-closed coil lines from open commitment', () => {
+    const po = {
+      status: 'In Transit',
+      lines: [
+        {
+          lineType: 'coil_kg',
+          productID: 'COIL-ALU',
+          qtyOrdered: 5000,
+          qtyReceived: 5000,
+          unitPricePerKgNgn: 100,
+        },
+        {
+          lineType: 'coil_kg',
+          productID: 'COIL-ALU',
+          qtyOrdered: 2000,
+          qtyReceived: 0,
+          unitPricePerKgNgn: 100,
+        },
+      ],
+    };
+    expect(purchaseOrderOpenCommitmentNgn(po)).toBe(2000 * 100);
+    expect(purchaseOrderOpenCommitmentNgn({ ...po, status: 'Received' })).toBe(0);
   });
 });

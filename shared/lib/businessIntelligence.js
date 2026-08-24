@@ -12,6 +12,7 @@ import {
 } from './liveAnalytics.js';
 import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { receiptEffectiveCashNgn } from './receiptClearance.js';
+import { poLineOpenQtyForReceiving } from './poLineTypes.js';
 
 const ALU_PRODUCT_IDS = new Set(['COIL-ALU', 'MAT-001']);
 const ALUZ_PRODUCT_IDS = new Set(['PRD-102', 'MAT-002']);
@@ -659,10 +660,9 @@ export function computeMaterialPerformance(data, opts = {}) {
 }
 
 function poLineOpenValueNgn(line) {
-  const ordered = Number(line.qtyOrdered) || 0;
-  const received = Number(line.qtyReceived) || 0;
+  const openQty = poLineOpenQtyForReceiving(line);
   const unit = Number(line.unitPricePerKgNgn || line.unitPriceNgn) || 0;
-  return Math.max(0, ordered - received) * unit;
+  return openQty * unit;
 }
 
 /**

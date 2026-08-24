@@ -2619,7 +2619,8 @@ export function confirmGrn(
         econ.landedCostNgn,
         econ.unitCostNgnPerKg
       );
-      const creditQty = w != null ? Math.max(qty, w) : qty;
+      const meterBasisLine = isMeterBasisCoilPoLine(line);
+      const creditQty = !meterBasisLine && w != null ? w : qty;
       const orderedKg = Number(line.qty_ordered) || 0;
       const priorReceivedKg = Number(line.qty_received) || 0;
       const totalReceivedKg = priorReceivedKg + creditQty;

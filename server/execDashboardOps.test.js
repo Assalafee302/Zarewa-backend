@@ -9,8 +9,10 @@ import {
   buildQueueSummaryTray,
   buildScopedExecutiveCounts,
   classifyCustomerDebtRisk,
+  quotationHasPaymentForMdBelowFloorQueue,
   resolveExecDashboardBranchScope,
   resolveExecDashboardPeriod,
+  SQL_MD_BELOW_FLOOR_QUEUE,
   topCustomersByDebt,
 } from './execDashboardOps.js';
 import { createDatabase } from './db.js';
@@ -257,6 +259,13 @@ describe('execDashboardOps', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('keeps unpaid below-floor quotes off the MD approval queue', () => {
+    expect(quotationHasPaymentForMdBelowFloorQueue(0)).toBe(false);
+    expect(quotationHasPaymentForMdBelowFloorQueue(null)).toBe(false);
+    expect(quotationHasPaymentForMdBelowFloorQueue(50_000)).toBe(true);
+    expect(SQL_MD_BELOW_FLOOR_QUEUE).toMatch(/IFNULL\(paid_ngn,\s*0\)\s*>\s*0/);
   });
 
   it('topCustomersByDebt row shape includes debt risk and drill routes', () => {

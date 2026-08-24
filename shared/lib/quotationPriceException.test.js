@@ -3,6 +3,7 @@ import {
   quotationBelowFloorExceptionApproved,
   quotationBelowFloorPendingMdApproval,
   quotationBmPriceExceptionApproved,
+  quotationHasPaymentForMdBelowFloorQueue,
   quotationRefundBlockedPendingMdPriceConfirm,
 } from './quotationPriceException.js';
 
@@ -39,6 +40,14 @@ describe('quotationPriceException', () => {
     };
     expect(quotationBelowFloorPendingMdApproval(q)).toBe(true);
     expect(quotationRefundBlockedPendingMdPriceConfirm(q)).toBe(true);
+  });
+
+  it('treats any posted receipt as paid for the MD below-floor queue', () => {
+    expect(quotationHasPaymentForMdBelowFloorQueue(0)).toBe(false);
+    expect(quotationHasPaymentForMdBelowFloorQueue(null)).toBe(false);
+    expect(quotationHasPaymentForMdBelowFloorQueue({ paidNgn: 0 })).toBe(false);
+    expect(quotationHasPaymentForMdBelowFloorQueue(50_000)).toBe(true);
+    expect(quotationHasPaymentForMdBelowFloorQueue({ paid_ngn: 1 })).toBe(true);
   });
 
   it('MD approval clears pending state', () => {

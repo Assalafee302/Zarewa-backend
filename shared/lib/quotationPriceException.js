@@ -25,6 +25,19 @@ export function quotationBmPriceExceptionApproved(q) {
 }
 
 /**
+ * True when a receipt has been posted (`paidNgn` / `paid_ngn` > 0).
+ * Unpaid below-floor quotes stay off the MD Command Centre queue until money is in.
+ * Partial payment counts.
+ * @param {number | string | null | undefined | { paidNgn?: unknown, paid_ngn?: unknown }} paidNgnOrQuote
+ */
+export function quotationHasPaymentForMdBelowFloorQueue(paidNgnOrQuote) {
+  if (paidNgnOrQuote != null && typeof paidNgnOrQuote === 'object') {
+    return Math.round(Number(paidNgnOrQuote.paidNgn ?? paidNgnOrQuote.paid_ngn) || 0) > 0;
+  }
+  return Math.round(Number(paidNgnOrQuote) || 0) > 0;
+}
+
+/**
  * Quote is flagged below floor and still needs MD/admin approval.
  * @param {{
  *   priceExceptionMdReviewRequired?: boolean | number | null;

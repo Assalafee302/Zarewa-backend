@@ -27,6 +27,7 @@ import { listMdAttentionInbox } from './mdAttentionOps.js';
 import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitOps.js';
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { quotationHasPaymentForMdBelowFloorQueue } from '../shared/lib/quotationPriceException.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
 import { listUnifiedWorkItems, workRegistryTablesReady } from './workItems.js';
@@ -86,7 +87,16 @@ function addDaysISO(iso, delta) {
   return d.toISOString().slice(0, 10);
 }
 
-/** @param {number} year full year @param {number} monthIndex0 0-based month */
+export { quotationHasPaymentForMdBelowFloorQueue };
+
+/** SQL predicate: flagged below-floor, not yet MD-approved, and paid. */
+export const SQL_MD_BELOW_FLOOR_QUEUE = `
+  price_exception_md_review_required = 1
+  AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
+  AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
+  AND IFNULL(paid_ngn, 0) > 0
+`;
+
 function lastDayOfMonth(year, monthIndex0) {
   const y = Number(year);
   const m = Number(monthIndex0);
@@ -245,9 +255,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
     const bQuo = branchWhere(db, 'quotations', scope);
     priceExceptionsPendingMd = countRow(
       `SELECT COUNT(*) AS c FROM quotations
-       WHERE price_exception_md_review_required = 1
-         AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
-         AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')${bQuo.sql}`,
+       WHERE ${SQL_MD_BELOW_FLOOR_QUEUE}${bQuo.sql}`,
       bQuo.args,
       isAll ? 'company' : 'branch'
     );
@@ -692,16 +700,15 @@ function listExecutiveExtras(db, branchScope) {
     const bQuo = branchWhere(db, 'quotations', branchScope);
     const priceRows = db
       .prepare(
-        `SELECT id, customer_name, total_ngn, date_iso, branch_id
+        `SELECT id, customer_name, total_ngn, paid_ngn, date_iso, branch_id
          FROM quotations
-         WHERE price_exception_md_review_required = 1
-           AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
-           AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')
+         WHERE ${SQL_MD_BELOW_FLOOR_QUEUE}
            ${bQuo.sql}
          ORDER BY date_iso DESC LIMIT 20`
       )
       .all(...bQuo.args);
     for (const r of priceRows) {
+      if (!quotationHasPaymentForMdBelowFloorQueue(r.paid_ngn)) continue;
       extras.push({
         id: `price:${r.id}`,
         kind: 'price_exception',
@@ -717,7 +724,7 @@ function listExecutiveExtras(db, branchScope) {
         quotationRef: r.id,
         reviewContext: {
           quotationRef: r.id,
-          reasons: ['Below-floor pricing — MD approval required'],
+          reasons: ['Below-floor pricing after payment — MD approval required'],
           subtitle: r.customer_name || '',
           row: r,
         },

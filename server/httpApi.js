@@ -9765,7 +9765,8 @@ export function registerHttpApi(app, db) {
         userHasPermission(req.user, 'finance.post') ||
         userHasPermission(req.user, 'finance.approve') ||
         userHasPermission(req.user, 'finance.pay') ||
-        userHasPermission(req.user, 'expenses.create');
+        userHasPermission(req.user, 'expenses.create') ||
+        userHasPermission(req.user, 'cashier.desk.view');
       if (!can) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
@@ -9799,7 +9800,8 @@ export function registerHttpApi(app, db) {
         userHasPermission(req.user, 'finance.post') ||
         userHasPermission(req.user, 'finance.approve') ||
         userHasPermission(req.user, 'finance.pay') ||
-        userHasPermission(req.user, 'expenses.create');
+        userHasPermission(req.user, 'expenses.create') ||
+        userHasPermission(req.user, 'cashier.desk.view');
       if (!can) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;

@@ -9,6 +9,11 @@ import { savedCustomerPayoutAccount } from '../sales/customerPayoutAccount.js';
 import {
   applyRefundStaffAllocationDeduction,
 } from '../../shared/lib/refundStaffAllocationDeduction.js';
+import {
+  unclearedReceiptFloatBySalesCustomerIds,
+  unclearedTotalsMap,
+} from '../sales/refundClaimingStaffUnclearedReceipts.js';
+import { getRefundStaffAllocationDeductionRate } from '../orgPolicy.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -84,6 +89,13 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 
   if (usable.length > 0) {
     const quoteCustomerId = String(refundRow.customer_id || '').trim();
+    const deductionRate = getRefundStaffAllocationDeductionRate(db);
+    const unclearedByCustomerId = unclearedTotalsMap(
+      unclearedReceiptFloatBySalesCustomerIds(
+        db,
+        usable.map((s) => s.recipientCustomerID).filter(Boolean)
+      )
+    );
     const splitSum = usable.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
     return usable
@@ -95,9 +107,29 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         allocated += share;
         const withDeduction = applyRefundStaffAllocationDeduction(
           { ...s, amountNgn: share },
-          quoteCustomerId
+          quoteCustomerId,
+          {
+            deductionRate,
+            unclearedReceiptHoldNgn: unclearedByCustomerId.get(
+              String(s.recipientCustomerID || '').trim()
+            ),
+          }
         );
         const creditAmount = roundMoney(withDeduction.netPayoutNgn ?? share);
+        const cutPct = Math.round((Number(withDeduction.deductionRate) || 0) * 100);
+        const noteParts = [];
+        if (withDeduction.companyDeductionNgn > 0) {
+          noteParts.push(`net after ${cutPct}% company cut`);
+        }
+        if (withDeduction.unclearedReceiptOffsetNgn > 0) {
+          noteParts.push(
+            `−₦${roundMoney(withDeduction.unclearedReceiptOffsetNgn).toLocaleString('en-NG')} uncleared receipts`
+          );
+        }
+        if (withDeduction.payoutHeldForUnclearedReceipts) {
+          noteParts.push('held until cashier clears receipts');
+        }
+        const detailNote = noteParts.length ? ` (${noteParts.join('; ')})` : '';
         if (s.recipientKind === 'associated_staff') {
           const staff = db
             .prepare(
@@ -120,14 +152,11 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             amountNgn: creditAmount,
             grossNgn: share,
             companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
+            unclearedReceiptOffsetNgn: roundMoney(withDeduction.unclearedReceiptOffsetNgn),
             payeeName,
             payeeBankName,
             payeeAccountNo,
-            note:
-              s.note ||
-              (withDeduction.companyDeductionNgn > 0
-                ? `Refund ${refundRow.refund_id} staff split (net after 20% company cut)`
-                : `Refund ${refundRow.refund_id} staff split`),
+            note: s.note || `Refund ${refundRow.refund_id} staff split${detailNote}`,
           };
         }
         const resolved = savedCustomerPayoutAccount(db, s.recipientCustomerID);
@@ -147,17 +176,14 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           amountNgn: creditAmount,
           grossNgn: share,
           companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
+          unclearedReceiptOffsetNgn: roundMoney(withDeduction.unclearedReceiptOffsetNgn),
           payeeName,
           payeeBankName,
           payeeAccountNo,
-          note:
-            s.note ||
-            (withDeduction.companyDeductionNgn > 0
-              ? `Refund ${refundRow.refund_id} split (net after 20% company cut)`
-              : `Refund ${refundRow.refund_id} split`),
+          note: s.note || `Refund ${refundRow.refund_id} split${detailNote}`,
         };
       })
-      .filter((t) => t.amountNgn > 0);
+      .filter((t) => t.amountNgn > 0 || roundMoney(t.companyDeductionNgn) > 0 || roundMoney(t.unclearedReceiptOffsetNgn) > 0);
   }
 
   const customerId = String(refundRow.customer_id || '').trim();
@@ -199,7 +225,8 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   if (!targets.length) {
     return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
   }
-  for (const t of targets) {
+  const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
+  for (const t of creditTargets) {
     if (!t.payeeName || !t.payeeBankName || !t.payeeAccountNo) {
       return {
         ok: false,
@@ -218,7 +245,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       created_at_iso, created_by_user_id, created_by_name, treasury_movement_id
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
-  for (const t of targets) {
+  for (const t of creditTargets) {
     const id = nextWalletEntryId(db, branchId);
     ins.run(
       id,
@@ -248,29 +275,56 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       amountNgn: t.amountNgn,
       grossNgn: t.grossNgn != null ? t.grossNgn : t.amountNgn,
       companyDeductionNgn: roundMoney(t.companyDeductionNgn),
+      unclearedReceiptOffsetNgn: roundMoney(t.unclearedReceiptOffsetNgn),
     });
   }
 
-  // Company 20% cut is retained at approval — bump paid so wallet nets can finish the refund.
-  const companyRetentionNgn = credits.reduce((s, c) => s + roundMoney(c.companyDeductionNgn), 0);
-  if (companyRetentionNgn > 0) {
+  // Company cut + uncleared-receipt offset settled at approval (not paid to staff wallet).
+  const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
+  const unclearedOffsetNgn = targets.reduce(
+    (s, t) => s + roundMoney(t.unclearedReceiptOffsetNgn),
+    0
+  );
+  const settledAtApprovalNgn = companyRetentionNgn + unclearedOffsetNgn;
+  if (settledAtApprovalNgn > 0) {
     const paidNow = roundMoney(refundRow.paid_amount_ngn);
+    const nextPaid = paidNow + settledAtApprovalNgn;
+    const approved = roundMoney(approvedAmountNgn || refundRow.approved_amount_ngn || refundRow.amount_ngn);
+    const noteParts = [];
+    if (companyRetentionNgn > 0) {
+      noteParts.push(
+        `company cut ₦${companyRetentionNgn.toLocaleString('en-NG')}`
+      );
+    }
+    if (unclearedOffsetNgn > 0) {
+      noteParts.push(
+        `uncleared receipts offset ₦${unclearedOffsetNgn.toLocaleString('en-NG')}`
+      );
+    }
+    const paymentNote = `Settled at approval: ${noteParts.join('; ')}.`;
     db.prepare(
       `UPDATE customer_refunds
        SET paid_amount_ngn = ?,
+           status = CASE WHEN ? >= ? THEN 'Paid' ELSE status END,
            payment_note = CASE
              WHEN TRIM(COALESCE(payment_note, '')) = '' THEN ?
              ELSE payment_note
            END
        WHERE refund_id = ?`
-    ).run(
-      paidNow + companyRetentionNgn,
-      `Company retained ₦${companyRetentionNgn.toLocaleString('en-NG')} (20% staff allocation cut).`,
-      refundId
-    );
+    ).run(nextPaid, nextPaid, approved, paymentNote, refundId);
   }
 
-  return { ok: true, credits, companyRetentionNgn };
+  if (!credits.length && settledAtApprovalNgn <= 0) {
+    return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
+  }
+
+  return {
+    ok: true,
+    credits,
+    companyRetentionNgn,
+    unclearedOffsetNgn,
+    settledAtApprovalNgn,
+  };
 }
 
 /** Void open credits for a cancelled refund (no withdrawals yet). */

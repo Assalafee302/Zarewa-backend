@@ -87,7 +87,7 @@ import {
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
-import { getOrgGovernanceLimits } from './orgPolicy.js';
+import { getOrgGovernanceLimits, getRefundStaffAllocationDeductionRate } from './orgPolicy.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
@@ -115,6 +115,10 @@ import {
 import {
   applyRefundStaffAllocationDeductions,
 } from '../shared/lib/refundStaffAllocationDeduction.js';
+import {
+  unclearedReceiptFloatBySalesCustomerIds,
+  unclearedTotalsMap,
+} from './sales/refundClaimingStaffUnclearedReceipts.js';
 import {
   buildDerivedRefundCategoryCapsNgn,
   mergeRefundCategoryCapsNgn,
@@ -2707,7 +2711,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       resolvedSplits.push({ ...split, payoutAccount: acct });
     }
 
-    const splitsForStore = applyRefundStaffAllocationDeductions(resolvedSplits, customerID);
+    const splitsForStore = applyRefundStaffAllocationDeductions(resolvedSplits, customerID, {
+      deductionRate: getRefundStaffAllocationDeductionRate(db),
+      unclearedByCustomerId: unclearedTotalsMap(
+        unclearedReceiptFloatBySalesCustomerIds(
+          db,
+          resolvedSplits.map((s) => s.recipientCustomerID).filter(Boolean)
+        )
+      ),
+    });
 
     // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.
     if (!customerSavedPayee) {
@@ -3124,6 +3136,9 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
                 companyDeductionNgn: roundMoney(r.companyDeductionNgn),
                 netPayoutNgn: roundMoney(r.netPayoutNgn ?? r.amountNgn),
                 deductionRate: Number(r.deductionRate) || 0,
+                unclearedReceiptHoldNgn: roundMoney(r.unclearedReceiptHoldNgn),
+                unclearedReceiptOffsetNgn: roundMoney(r.unclearedReceiptOffsetNgn),
+                payoutHeldForUnclearedReceipts: Boolean(r.payoutHeldForUnclearedReceipts),
                 note: r.note,
                 payoutAccount: {
                   payeeName: r.payoutAccount.payeeName,

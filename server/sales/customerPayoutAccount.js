@@ -6,6 +6,7 @@
 import { decryptBankAccount, storedBankToMasked } from '../hrBankCrypto.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { staffPurchaseCreditColumnsReady } from '../staffPurchaseCreditOps.js';
+import { unclearedReceiptFloatBySalesCustomerIds } from './refundClaimingStaffUnclearedReceipts.js';
 
 function trim(v) {
   return String(v ?? '').trim();
@@ -131,7 +132,7 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
     )
     .all(...args);
 
-  return rows
+  const staffRows = rows
     .map((row) => {
       const userStatus = trim(row.user_status || 'active').toLowerCase();
       if (userStatus && userStatus !== 'active') return null;
@@ -159,4 +160,17 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
       };
     })
     .filter(Boolean);
+
+  const floatMap = unclearedReceiptFloatBySalesCustomerIds(
+    db,
+    staffRows.map((r) => r.customerID)
+  );
+  return staffRows.map((row) => {
+    const info = floatMap.get(row.customerID);
+    return {
+      ...row,
+      unclearedReceiptFloatNgn: info ? Math.round(Number(info.totalNgn) || 0) : 0,
+      unclearedReceiptCount: info ? Number(info.receiptCount) || 0 : 0,
+    };
+  });
 }

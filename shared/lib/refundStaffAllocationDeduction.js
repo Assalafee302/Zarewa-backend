@@ -1,12 +1,35 @@
 /**
  * Company cut on refund allocations paid to associated / claiming staff (not the quote customer).
- * Gross allocation stays on the refund for headroom; net (80%) is what Finance pays out.
+ * Gross allocation stays on the refund for headroom; net after company cut (and any uncleared
+ * receipt offset) is what Finance pays out.
  */
 
 export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.2;
 
+/** Default percent for Settings / org policy (Admin/MD). */
+export const REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT = 20;
+
 export function roundRefundStaffMoney(value) {
   return Math.round(Number(value) || 0);
+}
+
+/**
+ * Normalize Admin/MD percent (0–99) or legacy rate (0–1) into a deduction rate.
+ * 0 disables the company cut. 100 is rejected (use 99 max).
+ */
+export function normalizeRefundStaffAllocationDeductionRate(raw) {
+  if (raw == null || raw === '') return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+  if (n === 0) return 0;
+  if (n > 0 && n < 1) return n;
+  if (n >= 1 && n <= 99) return n / 100;
+  return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+}
+
+export function refundStaffAllocationDeductionPctFromRate(rate) {
+  const r = normalizeRefundStaffAllocationDeductionRate(rate);
+  return Math.round(r * 100);
 }
 
 /**
@@ -37,8 +60,7 @@ export function refundStaffAllocationDeductionAmounts(
   rate = REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
 ) {
   const gross = Math.max(0, roundRefundStaffMoney(grossNgn));
-  const r = Number(rate);
-  const deductionRate = Number.isFinite(r) && r > 0 && r < 1 ? r : 0;
+  const deductionRate = normalizeRefundStaffAllocationDeductionRate(rate);
   if (gross <= 0 || deductionRate <= 0) {
     return {
       grossNgn: gross,
@@ -58,10 +80,22 @@ export function refundStaffAllocationDeductionAmounts(
 }
 
 /**
- * Enrich a split row with deduction fields. Amount on the split remains the gross allocation.
+ * Enrich a split row with deduction + optional uncleared-receipt offset.
+ * Amount on the split remains the gross allocation.
+ *
+ * @param {object} split
+ * @param {string} [quoteCustomerId]
+ * @param {{
+ *   deductionRate?: number,
+ *   unclearedReceiptHoldNgn?: number,
+ * }} [opts]
  */
-export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '') {
+export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '', opts = {}) {
   const amountNgn = roundRefundStaffMoney(split?.amountNgn ?? split?.amount_ngn);
+  const deductionRate = normalizeRefundStaffAllocationDeductionRate(
+    opts.deductionRate ?? split?.deductionRate ?? REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+  );
+  const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
   const base = {
     ...split,
     amountNgn,
@@ -69,33 +103,66 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '')
   if (!refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
     return {
       ...base,
+      grossNgn: amountNgn,
       companyDeductionNgn: 0,
       netPayoutNgn: amountNgn,
       deductionRate: 0,
+      unclearedReceiptHoldNgn: 0,
+      unclearedReceiptOffsetNgn: 0,
+      payoutHeldForUnclearedReceipts: false,
     };
   }
-  const calc = refundStaffAllocationDeductionAmounts(amountNgn);
+  const calc = refundStaffAllocationDeductionAmounts(amountNgn, deductionRate);
+  const afterCut = calc.netPayoutNgn;
+  const unclearedReceiptOffsetNgn = Math.min(afterCut, unclearedHoldNgn);
+  const netPayoutNgn = Math.max(0, afterCut - unclearedReceiptOffsetNgn);
   return {
     ...base,
+    grossNgn: calc.grossNgn,
     companyDeductionNgn: calc.companyDeductionNgn,
-    netPayoutNgn: calc.netPayoutNgn,
+    netPayoutNgn,
     deductionRate: calc.deductionRate,
+    unclearedReceiptHoldNgn: unclearedHoldNgn,
+    unclearedReceiptOffsetNgn,
+    payoutHeldForUnclearedReceipts: unclearedHoldNgn > 0 && netPayoutNgn <= 0 && afterCut > 0,
   };
 }
 
 /**
  * @param {Array<object>} splits
  * @param {string} [quoteCustomerId]
+ * @param {{
+ *   deductionRate?: number,
+ *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
+ * }} [opts]
  */
-export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '') {
+export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
+  const rate = opts.deductionRate;
+  const byCust = opts.unclearedByCustomerId;
+  const getHold = (customerId) => {
+    const id = String(customerId || '').trim();
+    if (!id || !byCust) return 0;
+    if (byCust instanceof Map) return roundRefundStaffMoney(byCust.get(id));
+    return roundRefundStaffMoney(byCust[id]);
+  };
   return (Array.isArray(splits) ? splits : []).map((s) =>
-    applyRefundStaffAllocationDeduction(s, quoteCustomerId)
+    applyRefundStaffAllocationDeduction(s, quoteCustomerId, {
+      deductionRate: rate,
+      unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
+    })
   );
 }
 
 export function sumRefundStaffCompanyDeductionNgn(splits) {
   return (Array.isArray(splits) ? splits : []).reduce(
     (sum, s) => sum + roundRefundStaffMoney(s?.companyDeductionNgn),
+    0
+  );
+}
+
+export function sumRefundStaffUnclearedOffsetNgn(splits) {
+  return (Array.isArray(splits) ? splits : []).reduce(
+    (sum, s) => sum + roundRefundStaffMoney(s?.unclearedReceiptOffsetNgn),
     0
   );
 }

@@ -518,6 +518,9 @@ function canActOnWorkItemKind(user, kind) {
     const rk = String(user?.roleKey || '').toLowerCase();
     return rk === 'md' || rk === 'admin' || userHasPermission(user, '*');
   }
+  if (k === 'overtime' || k === 'ot_request') {
+    return userHasPermission(user, 'ot.approve');
+  }
   if (k === 'stock_register') {
     const rk = String(user?.roleKey || '').toLowerCase();
     return (
@@ -549,6 +552,8 @@ function workItemRoute(kind, row = {}) {
   if (k === 'price_exception') return '/exec';
   if (k === 'conversions') return '/exec';
   if (k === 'office_memo' || k === 'work_item') return '/office';
+  if (k === 'overtime' || k === 'ot_request') return '/exec?tab=decide';
+  if (k === 'governance') return '/exec?tab=decide';
   if (k === 'clearance' || k === 'flagged' || k === 'production') {
     const ref = row.quotationRef || row.quotation_ref || row.title;
     return ref ? `/sales?quotation=${encodeURIComponent(ref)}` : '/manager';
@@ -594,6 +599,8 @@ function mapAttentionToWorkTray(db, attention, user, readOnly) {
         loanId: String(it.loanId || it.row?.loan_id || '').trim(),
         periodKey: String(it.row?.periodKey || it.row?.period_key || '').trim(),
         branchIdForRegister: String(it.branchId || it.row?.branch_id || branchId || '').trim(),
+        otRequestId: String(it.otRequestId || (kind === 'overtime' ? it.row?.id : '') || '').trim(),
+        integrityKind: String(it.integrityKind || it.row?.integrityKind || '').trim(),
         reasons: Array.isArray(it.reasons) ? it.reasons : [],
         subtitle: String(it.subtitle || '').trim(),
         row: it.row || {},
@@ -715,44 +722,6 @@ function listExecutiveExtras(db, branchScope) {
           row: r,
         },
       });
-    }
-  } catch {
-    /* optional */
-  }
-
-  try {
-    const branchIds =
-      branchScope === 'ALL'
-        ? db
-            .prepare(`SELECT id FROM branches WHERE active = 1 ORDER BY id`)
-            .all()
-            .map((r) => r.id)
-        : [branchScope];
-    for (const bid of branchIds) {
-      const inbox = listStockRegisterInbox(db, bid, 'md');
-      for (const row of inbox.items || []) {
-        const periodKey = row.periodKey || row.period_key || '—';
-        extras.push({
-          id: `stockreg:${bid}:${periodKey}`,
-          kind: 'stock_register',
-          priority: 'medium',
-          title: `Stock register ${periodKey}`,
-          branchId: bid,
-          branchName: branchName(db, bid),
-          amountNgn: null,
-          requestedBy: 'Procurement',
-          ageLabel: '—',
-          status: 'MD approval on register',
-          route: '/exec?tab=decide',
-          reviewContext: {
-            branchIdForRegister: bid,
-            periodKey,
-            reasons: ['Month-end stock register awaiting MD approval'],
-            subtitle: branchName(db, bid),
-            row: { ...row, branch_id: bid, periodKey },
-          },
-        });
-      }
     }
   } catch {
     /* optional */
@@ -890,7 +859,7 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
       ageLabel: daysSinceLabel(t.updatedAtIso),
       status: String(t.status || 'open'),
       route: '/office',
-      reviewContext: { threadId: t.id, subject: t.subject || '' },
+      reviewContext: { threadId: t.id, relatedWorkItemId: t.relatedWorkItemId || '', subject: t.subject || '' },
       summaryOnly: false,
       canAct: !readOnly && userHasPermission(user, 'office.use'),
     });
@@ -898,14 +867,26 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
 
   for (const it of listExecutiveUnifiedTrayItems(db, branchScope, user)) {
     const docKind = String(it.documentType || it.type || 'work_item').toLowerCase();
-    const kind = docKind === 'memo' ? 'office_memo' : docKind === 'refund_request' ? 'refunds' : docKind;
+    const kind =
+      docKind === 'memo'
+        ? 'office_memo'
+        : docKind === 'refund_request'
+          ? 'refunds'
+          : docKind === 'payment_request' || docKind === 'expense'
+            ? 'payments'
+            : docKind === 'ot_request' || docKind === 'overtime'
+              ? 'overtime'
+              : docKind;
     const settlementId =
       docKind === 'register_settlement' ? String(it.sourceId || '').trim() : '';
+    const requestId = kind === 'payments' ? String(it.sourceId || it.data?.request_id || '').trim() : '';
+    const refundId = kind === 'refunds' ? String(it.sourceId || it.data?.refund_id || '').trim() : '';
+    const otRequestId = kind === 'overtime' ? String(it.sourceId || it.data?.id || '').trim() : '';
     add({
       id: `work:${it.id}`,
       kind: kind === 'memo' ? 'office_memo' : kind,
       priority: priorityBand(70),
-      title: it.title || settlementId || it.id,
+      title: it.title || settlementId || requestId || it.id,
       branchId: it.branchId || '',
       branchName: branchName(db, it.branchId),
       amountNgn: it.amountNgn != null ? Math.round(Number(it.amountNgn) || 0) : null,
@@ -916,8 +897,23 @@ function appendExecutiveWorkTraySources(db, branchScope, user, readOnly, baseIte
       settlementId: settlementId || undefined,
       reviewContext: {
         settlementId,
-        row: settlementId ? { settlementId, ...(it.data || {}) } : it.data || {},
-        reasons: settlementId ? ['Pending register withdrawal approval'] : [],
+        requestId,
+        refundId,
+        otRequestId,
+        threadId: String(it.threadId || it.data?.threadId || '').trim(),
+        relatedWorkItemId: String(it.id || '').trim(),
+        row: settlementId
+          ? { settlementId, ...(it.data || {}) }
+          : requestId
+            ? { request_id: requestId, ...(it.data || {}) }
+            : refundId
+              ? { refund_id: refundId, ...(it.data || {}) }
+              : it.data || {},
+        reasons: settlementId
+          ? ['Pending register withdrawal approval']
+          : requestId
+            ? ['Pending payment approval']
+            : [],
         subtitle: String(it.summary || '').trim(),
       },
       summaryOnly: false,

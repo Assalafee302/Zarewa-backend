@@ -81,6 +81,13 @@ describe('operations_officer role aliases', () => {
     expect(cashier).not.toContain('ot.approve');
   });
 
+  it('lets MD approve overtime from Command Centre', () => {
+    const md = permissionsForRole('md');
+    expect(md).toContain('ot.approve');
+    expect(md).toContain('ot.view_branch');
+    expect(md).not.toContain('ot.pay');
+  });
+
   it('includes HR self-service so floor staff can use My Profile', () => {
     const ops = permissionsForRole('operations_officer');
     expect(ops).toContain('hr.self');

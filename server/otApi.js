@@ -72,7 +72,12 @@ function otActor(req) {
   return req.user;
 }
 
+function hqMayCrossBranchOt(user) {
+  return userHasPermission(user, '*') || userHasPermission(user, 'hq.view_all_branches');
+}
+
 function branchOpts(req) {
+  if (hqMayCrossBranchOt(req.user)) return {};
   return { branchId: workspaceBranch(req) };
 }
 
@@ -316,7 +321,7 @@ export function registerOtApi(app, db) {
       const r = getOtRequest(db, req.params.id);
       if (!r.ok) return sendOtResult(res, r);
       const branchId = workspaceBranch(req);
-      if (r.request.branchId !== branchId && !userHasPermission(req.user, '*')) {
+      if (r.request.branchId !== branchId && !hqMayCrossBranchOt(req.user)) {
         return res.status(403).json({
           ok: false,
           error: 'OT request is outside your branch scope.',

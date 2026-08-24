@@ -208,6 +208,8 @@ export const ROLE_DEFINITIONS = {
       'inventory.receive',
       'inventory.adjust',
       'material_incidents.approve',
+      'ot.approve',
+      'ot.view_branch',
       ...HR_ROLE_PERMISSION_BUNDLES.mdExecutive,
       'hr.payroll.md_approve',
       'treasury.reserve_policy.manage',

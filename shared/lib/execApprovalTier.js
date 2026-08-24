@@ -109,6 +109,10 @@ export function classifyExecWorkTrayApprovalTier(item, limits = {}) {
     return { tier: EXEC_APPROVAL_TIER_SHARED, label: 'BM or MD' };
   }
 
+  if (kind === 'overtime' || kind === 'ot_request') {
+    return { tier: EXEC_APPROVAL_TIER_SHARED, label: 'BM or MD' };
+  }
+
   if (kind === 'material') {
     return { tier: EXEC_APPROVAL_TIER_SHARED, label: 'Operations / BM' };
   }

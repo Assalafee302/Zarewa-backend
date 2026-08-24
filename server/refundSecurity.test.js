@@ -316,8 +316,8 @@ describe('Refund Security & Substitution Logic', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-PRICE-027',
       reasonCategory: ['Calculation error'],
-      amountNgn: 100,
-      calculationLines: [{ label: 'Header vs lines', amountNgn: 100, category: 'Calculation error' }],
+      amountNgn: 1000,
+      calculationLines: [{ label: 'Header vs lines', amountNgn: 1000, category: 'Calculation error' }],
       ...REFUND_PAYEE,
     });
     expect(create.status).toBe(201);
@@ -327,7 +327,7 @@ describe('Refund Security & Substitution Logic', () => {
     await loginAs(md, 'md', 'Md@1234567890!');
     const approve = await md.post(`/api/refunds/${refundID}/decision`).send({
       status: 'Approved',
-      approvedAmountNgn: 100,
+      approvedAmountNgn: 1000,
       note: 'MD approval',
     });
     expect(approve.status).toBe(200);
@@ -662,8 +662,8 @@ describe('Refund Security & Substitution Logic', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Overpayment'],
-      amountNgn: 700,
-      calculationLines: [{ label: 'Overpayment', amountNgn: 700, category: 'Overpayment' }],
+      amountNgn: 1000,
+      calculationLines: [{ label: 'Overpayment', amountNgn: 1000, category: 'Overpayment' }],
       ...REFUND_PAYEE,
     });
     expect(first.status).toBe(201);
@@ -672,9 +672,9 @@ describe('Refund Security & Substitution Logic', () => {
       customerID: 'CUS-001',
       customer: 'John Doe',
       quotationRef: 'QT-RFS-DUP-001',
-      reasonCategory: ['Other'],
-      amountNgn: 500,
-      calculationLines: [{ label: 'Other adjustment', amountNgn: 500, category: 'Other' }],
+      reasonCategory: ['Order cancellation'],
+      amountNgn: 1000,
+      calculationLines: [{ label: 'Order cancellation', amountNgn: 1000, category: 'Order cancellation' }],
       ...REFUND_PAYEE,
     });
     expect(second.status, `second refund failed: ${JSON.stringify(second.body)}`).toBe(201);
@@ -882,7 +882,7 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBeGreaterThanOrEqual(1000);
   });
 
-  it('GET /api/refunds/eligibility-check: ₦0 automatic preview but otherwise valid → manualEntryRefundAllowed; excluded from pick list', async () => {
+  it('GET /api/refunds/eligibility-check: below-floor automatic preview → excluded; no manual bypass', async () => {
     const linesJson = JSON.stringify({
       products: [{ name: 'Roofing', qty: 10, unitPrice: 5000 }],
       accessories: [],
@@ -906,7 +906,7 @@ describe('Refund Security & Substitution Logic', () => {
 
     const previewRes = await agent.post('/api/refunds/preview').send({ quotationRef: 'QT-RFS-MAN-ZERO' });
     expect(previewRes.status).toBe(200);
-    // Overpayment below picker floor (₦1,000) → manual entry path, not dropdown.
+    // Overpayment below picker floor (₦1,000) → not eligible.
     expect(previewRes.body.preview.suggestedAmountNgn).toBe(500);
     expect(previewRes.body.preview.suggestedAmountNgn).toBeLessThan(1000);
 
@@ -916,11 +916,12 @@ describe('Refund Security & Substitution Logic', () => {
     expect(res.body.meetsBackendRules).toBe(true);
     expect(res.body.previewOk).toBe(true);
     expect(res.body.wouldAppearInRefundQuotationDropdown).toBe(false);
-    expect(res.body.manualEntryRefundAllowed).toBe(true);
+    expect(res.body.manualEntryRefundAllowed).toBe(false);
+    expect(String(res.body.blockingReasons || []).join(' ')).toMatch(/below|at least|1,?000/i);
     expect(res.body.diagnostics.suggestedPreviewAmountNgn).toBe(500);
     expect(Array.isArray(res.body.eligibleRefundCategories)).toBe(true);
     expect(res.body.eligibleRefundCategories.length).toBeGreaterThan(0);
-    expect(res.body.blockingReasons.some((r) => /automatic preview|preview total/i.test(String(r)))).toBe(
+    expect(res.body.blockingReasons.some((r) => /automatic preview|preview total|below|1,?000/i.test(String(r)))).toBe(
       true
     );
 
@@ -1083,8 +1084,8 @@ describe('Refund Phase 11A controls', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-DUP-001',
       reasonCategory: ['Other'],
-      amountNgn: 500,
-      calculationLines: [{ label: 'Adjustment', amountNgn: 500, category: 'Other' }],
+      amountNgn: 1000,
+      calculationLines: [{ label: 'Adjustment', amountNgn: 1000, category: 'Other' }],
       ...REFUND_PAYEE,
     });
     expect(create.status).toBe(201);
@@ -1092,13 +1093,13 @@ describe('Refund Phase 11A controls', () => {
 
     const approve = await admin.post(`/api/refunds/${refundID}/decision`).send({
       status: 'Approved',
-      approvedAmountNgn: 500,
+      approvedAmountNgn: 1000,
     });
     expect(approve.status).toBe(200);
 
     const pay = await admin.post(`/api/refunds/${refundID}/pay`).send({
       treasuryAccountId,
-      amountNgn: 500,
+      amountNgn: 1000,
     });
     expect(pay.status).toBe(201);
 
@@ -1171,8 +1172,8 @@ describe('Refund Phase 11A controls', () => {
       customer: 'John Doe',
       quotationRef: 'QT-RFS-PRICE-027',
       reasonCategory: ['Calculation error'],
-      amountNgn: 100,
-      calculationLines: [{ label: 'Fix', amountNgn: 100, category: 'Calculation error' }],
+      amountNgn: 1000,
+      calculationLines: [{ label: 'Fix', amountNgn: 1000, category: 'Calculation error' }],
       ...REFUND_PAYEE,
     });
     expect(create.status).toBe(201);
@@ -1181,7 +1182,7 @@ describe('Refund Phase 11A controls', () => {
     await loginAs(cashier, 'cashier', 'Cashier@12345!');
     const approve = await cashier.post(`/api/refunds/${encodeURIComponent(create.body.refundID)}/decision`).send({
       status: 'Approved',
-      approvedAmountNgn: 100,
+      approvedAmountNgn: 1000,
     });
     expect(approve.status).toBe(400);
     expect(String(approve.body.error || '')).toMatch(/cashiers may only pay/i);

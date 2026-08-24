@@ -2676,6 +2676,12 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
   const amountNgn = roundMoney(payload.amountNgn);
   if (!customerID) return { ok: false, error: 'Customer is required.' };
   if (amountNgn <= 0) return { ok: false, error: 'Refund amount must be positive.' };
+  if (amountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) {
+    return {
+      ok: false,
+      error: `Refund amount must be at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} (got ₦${amountNgn.toLocaleString('en-NG')}).`,
+    };
+  }
   const refundID = nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
   const requestedAtISO = String(payload.requestedAtISO ?? '').trim() || nowIso();
   let submitAlignmentResult = null;
@@ -5137,6 +5143,7 @@ function deliveredQuotationIdSet(db, quoteIds) {
  * Cheap pick-list hint — never runs {@link previewRefundRequest}. Selecting a row still loads the full preview.
  * Honours overpayment residual, already-claimed categories, and delivered-material blocks so paid /
  * exhausted quotes do not linger in the Sales refund search list.
+ * Suggested amount is the estimated claim (not cash headroom), and must meet {@link MIN_REFUND_QUOTATION_REMAINING_NGN}.
  * @returns {{ categories: string[], suggestedPreviewAmountNgn: number } | null}
  */
 function refundPickerListHint(db, row, jobs, {
@@ -5166,13 +5173,6 @@ function refundPickerListHint(db, row, jobs, {
     quoteTotalNgn: quoteTotal,
     overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(priorRefunds),
   });
-  // Prefer residual overpay when still available (works after other-category refunds too).
-  if (overpayResidual >= MIN_REFUND_QUOTATION_REMAINING_NGN && !hardBlocked.has('Overpayment')) {
-    return {
-      categories: ['Overpayment'],
-      suggestedPreviewAmountNgn: Math.min(overpayResidual, remaining),
-    };
-  }
 
   const isVoid = String(row.status || '').trim().toLowerCase() === 'void';
   const closedJobs = Array.isArray(jobs) ? jobs : [];
@@ -5187,6 +5187,15 @@ function refundPickerListHint(db, row, jobs, {
   }
   // Cancelled / void quotes with Order cancellation already claimed have no other cheap claim.
   if (isVoid || hasCancelledJob) return null;
+
+  /** @type {{ category: string, amountNgn: number }[]} */
+  const claimParts = [];
+  if (overpayResidual > 0 && !hardBlocked.has('Overpayment')) {
+    claimParts.push({
+      category: 'Overpayment',
+      amountNgn: Math.min(overpayResidual, remaining),
+    });
+  }
 
   let linesPayload = {};
   try {
@@ -5208,12 +5217,35 @@ function refundPickerListHint(db, row, jobs, {
     !fulfillment.fullyProducedRoofing &&
     !hardBlocked.has('Unproduced meterage')
   ) {
-    return {
-      categories: ['Unproduced meterage'],
-      suggestedPreviewAmountNgn: remaining,
-    };
+    const pricePerMeter =
+      quotedRoofingSheetAmountPerMeter(row.lines_json) ?? quotedAmountPerMeter(row.lines_json);
+    if (pricePerMeter && pricePerMeter > 0) {
+      const unproducedLine = buildUnproducedMetresRefundLine(
+        fulfillment.unproducedMetres,
+        pricePerMeter
+      );
+      const unproducedClaim = Math.min(roundMoney(unproducedLine.amountNgn), remaining);
+      if (unproducedClaim > 0) {
+        claimParts.push({
+          category: 'Unproduced meterage',
+          amountNgn: unproducedClaim,
+        });
+      }
+    }
   }
-  return null;
+
+  if (!claimParts.length) return null;
+  const suggestedPreviewAmountNgn = Math.min(
+    remaining,
+    claimParts.reduce((s, p) => s + roundMoney(p.amountNgn), 0)
+  );
+  // Tiny residuals (e.g. ₦260 overpay + ₦580 unproduced) must not clutter the picker.
+  if (suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
+
+  return {
+    categories: claimParts.map((p) => p.category),
+    suggestedPreviewAmountNgn,
+  };
 }
 
 function closedProductionJobsByQuotationRef(db, quoteIds) {

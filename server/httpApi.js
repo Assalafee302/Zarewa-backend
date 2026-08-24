@@ -9230,7 +9230,7 @@ export function registerHttpApi(app, db) {
         suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
       ) {
         blockingReasons.push(
-          `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — the quotation picker only lists sales where the preview sums to at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} (use Use quotation id when manual entry is allowed).`
+          `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — refunds below ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} are not accepted.`
         );
       }
       if (meets.ok && totalBooked > 0 && !isOrderFullySettledForPicker) {
@@ -9249,14 +9249,18 @@ export function registerHttpApi(app, db) {
         suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         isOrderFullySettledForPicker === true;
-      /** Valid sale + categories, but automatic preview total below picker floor — excluded from pick list; manual entry when allowed. */
-      const manualEntryRefundAllowed =
+      /** Below-floor automatic previews are not eligible — do not allow paste/manual bypass. */
+      const manualEntryRefundAllowed = false;
+      if (
         meets.ok &&
-        Boolean(preview?.ok) &&
         categories.length > 0 &&
         suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        isOrderFullySettledForPicker === true;
+        !blockingReasons.some((r) => String(r).includes('Automatic refund preview total'))
+      ) {
+        blockingReasons.push(
+          `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — refunds below ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} are not accepted.`
+        );
+      }
       res.json({
         ok: true,
         quotationRef,

@@ -322,4 +322,69 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(rows[0].eligible_refund_categories).toEqual(['Unproduced meterage']);
     expect(rows[0].suggested_preview_amount_ngn).toBeGreaterThanOrEqual(1000);
   });
+
+  it('excludes tiny unproduced + overpay claims below the ₦1,000 picker floor', () => {
+    // Mirrors QT-KD-26-1096 style: ₦260 overpay + ~₦580 unproduced = ₦840 < floor.
+    const quote = {
+      id: 'QT-TINY-1',
+      customer_id: 'CUS-1',
+      customer_name: 'Tiny Claim',
+      date_iso: '2026-08-18',
+      total_ngn: 30_740,
+      paid_ngn: 31_000,
+      status: 'Finished',
+      refunds_blocked_at_iso: null,
+      total_refunded: 0,
+      lines_json: JSON.stringify({
+        products: [{ name: 'Roofing sheet', qty: 5.3, unitPrice: 5800 }],
+        accessories: [],
+        services: [],
+      }),
+    };
+    const job = {
+      job_id: 'JOB-TINY-1',
+      quotation_ref: 'QT-TINY-1',
+      actual_meters: 5.2,
+      status: 'Completed',
+    };
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        return {
+          all() {
+            if (text.includes('FROM quotations q')) return [quote];
+            if (text.includes('FROM sales_receipts')) {
+              return [
+                {
+                  id: 'RCT-TINY-1',
+                  quotation_ref: 'QT-TINY-1',
+                  amount_ngn: 31_000,
+                  ledger_entry_id: null,
+                  finance_reconciliation_saved_at_iso: null,
+                  bank_received_amount_ngn: null,
+                  status: 'Confirmed',
+                },
+              ];
+            }
+            if (text.includes('FROM production_jobs') && text.includes('IN (')) return [job];
+            if (text.includes('FROM customer_refunds')) return [];
+            if (text.includes('FROM deliveries')) return [];
+            if (text.includes('FROM ledger_entries')) return [];
+            if (text.includes('FROM production_jobs')) return [];
+            return [];
+          },
+          get() {
+            if (text.includes('FROM customer_refunds')) return { s: 0 };
+            if (text.includes('FROM production_job_coils')) return { s: 0 };
+            if (text.includes('FROM production_jobs') && text.includes('NOT IN')) return undefined;
+            if (text.includes('FROM production_jobs')) return { 1: 1 };
+            if (text.includes('FROM ledger_entries')) return { s: 0 };
+            if (text.includes('FROM quotations')) return quote;
+            return undefined;
+          },
+        };
+      },
+    };
+    expect(getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 })).toHaveLength(0);
+  });
 });

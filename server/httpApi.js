@@ -108,6 +108,7 @@ import {
   listZeroAuditUserCandidates,
   ZERO_AUDIT_BULK_DELETE_CONFIRM_PHRASE,
 } from './userZeroAuditCleanup.js';
+import { ensureHrStaffProfileForUser, ensureHrStaffProfilesForUnlinkedUsers } from './hrOps.js';
 import {
   buildFinanceLiveProfileReport,
   financeProfileTokenMatches,
@@ -3569,6 +3570,17 @@ export function registerHttpApi(app, db) {
         db.prepare(`UPDATE app_users SET workspace_branch_id = ? WHERE id = ?`).run(branchId, r.userId);
       }
 
+      const linked = ensureHrStaffProfileForUser(db, req.user?.id, r.userId, { branchId, skipEnrichedReturn: true });
+      if (!linked.ok && linked.code !== 'HR_NOT_READY') {
+        try {
+          db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(r.userId);
+          db.prepare(`DELETE FROM app_users WHERE id = ?`).run(r.userId);
+        } catch {
+          /* best-effort rollback so a login is never left without an HR file */
+        }
+        return res.status(400).json(linked);
+      }
+
       appendAuditLog(db, {
         actor: req.user,
         action: 'user.create',
@@ -3576,10 +3588,32 @@ export function registerHttpApi(app, db) {
         entityId: r.userId,
         note: `Created user ${body.username}`,
       });
-      res.status(201).json(r);
+      res.status(201).json({ ...r, hrProfileCreated: Boolean(linked.created) });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/users/ensure-hr-profiles', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const r = ensureHrStaffProfilesForUnlinkedUsers(db, req.user?.id);
+      if (!r.ok && r.code === 'HR_NOT_READY') return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not link HR profiles.' });
+    }
+  });
+
+  app.post('/api/users/:id/ensure-hr-profile', requirePermission('settings.manage'), (req, res) => {
+    try {
+      const r = ensureHrStaffProfileForUser(db, req.user?.id, req.params.id, { skipEnrichedReturn: true });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not create HR profile.' });
     }
   });
 

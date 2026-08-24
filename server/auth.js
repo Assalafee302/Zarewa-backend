@@ -2052,7 +2052,8 @@ export function listAllAppUsers(db) {
     rows = db
       .prepare(
         `SELECT u.*,
-          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id
+          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id,
+          CASE WHEN p.user_id IS NULL THEN 0 ELSE 1 END AS has_hr_profile
          FROM app_users u
          LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
          ORDER BY u.username ASC`
@@ -2065,7 +2066,8 @@ export function listAllAppUsers(db) {
     const u = publicUserFromRow(r);
     const bid = String(r.hr_branch_id ?? r.HR_BRANCH_ID ?? '').trim();
     const registeredPassword = resolveRegisteredPasswordDisplay(db, r);
-    return { ...u, branchId: bid || null, registeredPassword, ...accountLockMetaFromRow(r) };
+    const hasHrProfile = Number(r.has_hr_profile ?? r.HAS_HR_PROFILE ?? 0) === 1;
+    return { ...u, branchId: bid || null, hasHrProfile, registeredPassword, ...accountLockMetaFromRow(r) };
   });
 }
 

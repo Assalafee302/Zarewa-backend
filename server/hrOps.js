@@ -27,6 +27,7 @@ import {
 import { provisionStaffLoanForFinanceQueue, insertTreasuryMovementTx } from './writeOps.js';
 import { tryPostPayrollAccrualGlTx, tryPostPayrollNetPaymentGlTx } from './payrollGlOps.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import {
   activeObligationBreakdownForPayroll,
   OBLIGATION_STATUS,
@@ -92,6 +93,7 @@ import {
 import {
   defaultRoleKeyForPayrollGroup,
   enforcePortalOnlyRole,
+  HR_PORTAL_ONLY_ROLE_KEY,
   suspendLoginForBeneficiaryPayrollGroup,
   validatePayrollGroupMayHaveLogin,
   validateStaffRoleForPayrollGroup,
@@ -106,6 +108,7 @@ import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } fr
 import { countOpenIncidents } from './hrAccountabilityOps.js';
 import { hrTransferRequestsTableReady } from './hrTransferRequests.js';
 import {
+  HR_PAYROLL_GROUPS,
   isBeneficiaryOnlyPayrollGroup,
   isDomesticStaff,
   isErpAccessRestrictedPayrollGroup,
@@ -8478,8 +8481,248 @@ export function deleteHrRequestDraft(db, requestId, userId) {
   return { ok: true };
 }
 
+/**
+ * ERP logins without an HR file — used when registering a profile onto an existing user.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ q?: string; limit?: number }} [opts]
+ */
+export function listHrUnlinkedAppUsers(db, opts = {}) {
+  if (!hrTablesReady(db)) return [];
+  const q = String(opts.q || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[%_]/g, '');
+  const limit = resolveListLimit({ limit: opts.limit, useDefaultLimit: true });
+  const branchSelect = hasColumn(db, 'app_users', 'workspace_branch_id')
+    ? 'u.workspace_branch_id AS branchId'
+    : 'NULL AS branchId';
+  let sql = `
+    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email,
+           u.role_key AS roleKey, u.status, ${branchSelect}
+    FROM app_users u
+    LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+    WHERE p.user_id IS NULL
+  `;
+  const args = [];
+  if (!opts.includeInactive) {
+    sql += ` AND u.status = 'active'`;
+  }
+  if (q) {
+    sql += ` AND (lower(u.username) LIKE ? OR lower(IFNULL(u.display_name, '')) LIKE ? OR lower(IFNULL(u.email, '')) LIKE ?)`;
+    const like = `%${q}%`;
+    args.push(like, like, like);
+  }
+  sql += ` ORDER BY u.display_name ASC, u.username ASC`;
+  sql += sqlLimitClause(limit);
+  if (limit > 0) args.push(limit);
+  return db.prepare(sql).all(...args).map((row) => ({
+    userId: row.userId,
+    username: row.username,
+    displayName: row.displayName,
+    email: row.email || '',
+    roleKey: row.roleKey,
+    roleLabel: roleLabel(row.roleKey),
+    branchId: row.branchId || '',
+    status: row.status,
+  }));
+}
+
+function resolveRegisterEmployeeNo(db, profileFields, opts, branchId) {
+  const staffNumberConfig = readStaffNumberConfig(db);
+  let resolvedEmployeeNo = String(profileFields?.employeeNo ?? '').trim();
+  if (resolvedEmployeeNo) {
+    resolvedEmployeeNo = normalizeEmployeeNumberForSave(resolvedEmployeeNo, staffNumberConfig, { branchId, db });
+  } else if (opts.autoAssignEmployeeNo !== false) {
+    resolvedEmployeeNo = allocateNextEmployeeNumber(db, staffNumberConfig, { branchId, db });
+  }
+  return resolvedEmployeeNo;
+}
+
+/**
+ * Default payroll group for an ERP login so every user can have an HR file.
+ * Mining portal-only stays mining; all other logins are branch staff until HR reclassifies.
+ * @param {string | null | undefined} roleKey
+ */
+export function payrollGroupForAppRole(roleKey) {
+  return String(roleKey || '').trim() === HR_PORTAL_ONLY_ROLE_KEY
+    ? HR_PAYROLL_GROUPS.MINING
+    : HR_PAYROLL_GROUPS.BRANCH_OPS;
+}
+
+/**
+ * Create a stub HR staff profile when a login has none. Idempotent — never duplicates.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null} actorUserId
+ * @param {string} userId
+ * @param {{ branchId?: string; payrollGroup?: string; skipEnrichedReturn?: boolean }} [extras]
+ */
+export function ensureHrStaffProfileForUser(db, actorUserId, userId, extras = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.', code: 'HR_NOT_READY' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'userId is required.' };
+  const existing = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
+  if (existing) return { ok: true, userId: uid, created: false };
+
+  const branchCol = hasColumn(db, 'app_users', 'workspace_branch_id') ? ', workspace_branch_id AS branchId' : '';
+  const u = db
+    .prepare(
+      `SELECT id, display_name AS displayName, role_key AS roleKey, status ${branchCol} FROM app_users WHERE id = ?`
+    )
+    .get(uid);
+  if (!u) return { ok: false, error: 'User not found.' };
+
+  const payrollGroup = normalizePayrollGroup(extras.payrollGroup || payrollGroupForAppRole(u.roleKey));
+  const loginCheck = validatePayrollGroupMayHaveLogin(payrollGroup);
+  if (!loginCheck.ok) return loginCheck;
+  const branchId =
+    String(extras.branchId || u.branchId || '').trim() ||
+    (isNonBranchStaff(payrollGroup) ? null : DEFAULT_BRANCH_ID);
+  const resolvedEmployeeNo = resolveRegisterEmployeeNo(db, {}, { autoAssignEmployeeNo: true }, branchId || DEFAULT_BRANCH_ID);
+
+  const up = upsertHrStaffProfile(
+    db,
+    actorUserId,
+    {
+      userId: uid,
+      employeeNo: resolvedEmployeeNo,
+      payrollGroup,
+      branchId,
+      employmentType: 'permanent',
+      baseSalaryNgn: 0,
+      housingAllowanceNgn: 0,
+      transportAllowanceNgn: 0,
+      selfServiceEligible: true,
+    },
+    { skipEnrichedReturn: extras.skipEnrichedReturn !== false, allowInactive: true }
+  );
+  if (!up.ok) return up;
+  return { ok: true, userId: uid, created: true, profile: up.profile };
+}
+
+/**
+ * Open an HR file for every login that still has none.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null} actorUserId
+ */
+export function ensureHrStaffProfilesForUnlinkedUsers(db, actorUserId) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.', code: 'HR_NOT_READY' };
+  const users = listHrUnlinkedAppUsers(db, { includeInactive: true, limit: 5000 });
+  let created = 0;
+  let skipped = 0;
+  const failed = [];
+  for (const u of users) {
+    const r = ensureHrStaffProfileForUser(db, actorUserId, u.userId, {
+      branchId: u.branchId,
+      skipEnrichedReturn: true,
+    });
+    if (!r.ok) failed.push({ userId: u.userId, username: u.username, error: r.error });
+    else if (r.created) created += 1;
+    else skipped += 1;
+  }
+  return { ok: true, created, skipped, failed, total: users.length };
+}
+
+/**
+ * Attach an HR staff profile to an existing ERP login. Never creates a second account
+ * and never deletes the login if the profile insert fails.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string | null} actorUserId
+ * @param {object} body
+ * @param {{ skipProfileFetch?: boolean; autoAssignEmployeeNo?: boolean }} [opts]
+ */
+export function registerExistingUserWithProfile(db, actorUserId, body, opts = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const existingUserId = String(body?.existingUserId || '').trim();
+  if (!existingUserId) return { ok: false, error: 'Select an existing login.' };
+
+  const u = db
+    .prepare(
+      `SELECT id, username, display_name AS displayName, role_key AS roleKey, status FROM app_users WHERE id = ?`
+    )
+    .get(existingUserId);
+  if (!u) return { ok: false, error: 'User not found.' };
+  if (String(u.status || '') !== 'active') {
+    return { ok: false, error: 'That login is not active. Reactivate it in Settings → Team & access first.' };
+  }
+  const already = db.prepare(`SELECT user_id FROM hr_staff_profiles WHERE user_id = ?`).get(existingUserId);
+  if (already) {
+    return {
+      ok: false,
+      error: 'This login already has an HR profile. Open it from the staff directory.',
+      code: 'HR_PROFILE_EXISTS',
+    };
+  }
+
+  const {
+    displayName,
+    roleKey,
+    skipProfileFetch: _skipInBody,
+    payrollGroup: bodyPayrollGroup,
+    existingUserId: _existingUserId,
+    username: _username,
+    password: _password,
+    workspaceDepartment: _workspaceDepartment,
+    applicantId: _applicantId,
+    ...profileFields
+  } = body || {};
+  const skipProfileFetch = Boolean(opts.skipProfileFetch || _skipInBody);
+  const payrollGroup = normalizePayrollGroup(bodyPayrollGroup || profileFields?.payrollGroup);
+  const loginCheck = validatePayrollGroupMayHaveLogin(payrollGroup);
+  if (!loginCheck.ok) return loginCheck;
+
+  const currentRoleKey = String(u.roleKey || '').trim();
+  const requestedRoleKey = String(roleKey || '').trim();
+  let effectiveRoleKey = currentRoleKey;
+  if (requestedRoleKey && requestedRoleKey !== currentRoleKey) {
+    effectiveRoleKey = requestedRoleKey;
+    const roleCheck = validateStaffRoleForPayrollGroup(effectiveRoleKey, payrollGroup);
+    if (!roleCheck.ok) {
+      if (isErpAccessRestrictedPayrollGroup(payrollGroup)) {
+        effectiveRoleKey = defaultRoleKeyForPayrollGroup(payrollGroup) || currentRoleKey;
+      } else {
+        return roleCheck;
+      }
+    }
+    const actorUser = publicUserFromId(db, actorUserId);
+    const assignCheck = assertActorMayAssignRoleKey(actorUser, effectiveRoleKey);
+    if (!assignCheck.ok) return assignCheck;
+  }
+
+  const branchId = String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID;
+  const resolvedEmployeeNo = resolveRegisterEmployeeNo(db, profileFields, opts, branchId);
+  const nextDisplayName = String(displayName || '').trim();
+  if (nextDisplayName && nextDisplayName !== String(u.displayName || '').trim()) {
+    db.prepare(`UPDATE app_users SET display_name = ? WHERE id = ?`).run(nextDisplayName, existingUserId);
+  }
+  if (requestedRoleKey && effectiveRoleKey && effectiveRoleKey !== currentRoleKey) {
+    db.prepare(`UPDATE app_users SET role_key = ? WHERE id = ?`).run(effectiveRoleKey, existingUserId);
+  }
+
+  const up = upsertHrStaffProfile(
+    db,
+    actorUserId,
+    {
+      ...profileFields,
+      userId: existingUserId,
+      employeeNo: resolvedEmployeeNo || profileFields?.employeeNo,
+      payrollGroup,
+      branchId,
+      employmentType: profileFields?.employmentType || 'permanent',
+      baseSalaryNgn: profileFields?.baseSalaryNgn ?? 0,
+      housingAllowanceNgn: profileFields?.housingAllowanceNgn ?? 0,
+      transportAllowanceNgn: profileFields?.transportAllowanceNgn ?? 0,
+    },
+    { skipEnrichedReturn: skipProfileFetch }
+  );
+  if (!up.ok) return up;
+  return { ok: true, userId: existingUserId, profile: up.profile, attachedExisting: true };
+}
+
 export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  if (String(body?.existingUserId || '').trim()) {
+    return registerExistingUserWithProfile(db, actorUserId, body, opts);
+  }
   const {
     username,
     displayName,
@@ -8489,6 +8732,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     applicantId: _applicantId,
     skipProfileFetch: _skipInBody,
     payrollGroup: bodyPayrollGroup,
+    existingUserId: _existingUserId,
     ...profileFields
   } = body || {};
   const skipProfileFetch = Boolean(opts.skipProfileFetch || _skipInBody);
@@ -8511,13 +8755,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   const assignCheck = assertActorMayAssignRoleKey(actorUser, effectiveRoleKey);
   if (!assignCheck.ok) return assignCheck;
   const branchId = String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID;
-  const staffNumberConfig = readStaffNumberConfig(db);
-  let resolvedEmployeeNo = String(profileFields?.employeeNo ?? '').trim();
-  if (resolvedEmployeeNo) {
-    resolvedEmployeeNo = normalizeEmployeeNumberForSave(resolvedEmployeeNo, staffNumberConfig, { branchId, db });
-  } else if (opts.autoAssignEmployeeNo !== false) {
-    resolvedEmployeeNo = allocateNextEmployeeNumber(db, staffNumberConfig, { branchId, db });
-  }
+  const resolvedEmployeeNo = resolveRegisterEmployeeNo(db, profileFields, opts, branchId);
   const usernameInput = String(username || '').trim().toLowerCase();
   const effectiveUsername = employeeNumberToUsername(resolvedEmployeeNo) || usernameInput;
   if (!effectiveUsername) return { ok: false, error: 'Employee ID or username is required.' };

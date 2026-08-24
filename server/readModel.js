@@ -2863,8 +2863,9 @@ export function listAppUsers(db, opts = {}) {
   try {
     rows = db
       .prepare(
-        `SELECT u.*,
-          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id
+         `SELECT u.*,
+          COALESCE(NULLIF(trim(u.workspace_branch_id), ''), p.branch_id) AS hr_branch_id,
+          CASE WHEN p.user_id IS NULL THEN 0 ELSE 1 END AS has_hr_profile
          FROM app_users u
          LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
          ORDER BY u.display_name COLLATE NOCASE, u.username COLLATE NOCASE`
@@ -2900,6 +2901,7 @@ export function listAppUsers(db, opts = {}) {
       permissions: u.permissions,
       hasCustomPermissions,
       branchId,
+      hasHrProfile: Number(row.has_hr_profile ?? row.HAS_HR_PROFILE ?? 0) === 1,
       lastLoginAtISO: u.lastLoginAtISO || '',
       createdAtISO: u.createdAtISO || row.created_at_iso || '',
     };

@@ -110,6 +110,9 @@ import {
   patchPayrollRun,
   putHrPublicHoliday,
   recomputeHrLeaveBalances,
+  listHrUnlinkedAppUsers,
+  ensureHrStaffProfileForUser,
+  ensureHrStaffProfilesForUnlinkedUsers,
   registerNewStaffWithProfile,
   salaryWelfareSnapshot,
   submitHrRequest,
@@ -1277,6 +1280,41 @@ export function registerHrApi(app, db) {
       return res.json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Could not delete view.');
+    }
+  });
+
+  app.get('/api/hr/staff/unlinked-users', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const users = listHrUnlinkedAppUsers(db, {
+        q: req.query?.q,
+        limit: req.query?.limit,
+      });
+      return res.json({ ok: true, users });
+    } catch (e) {
+      return hrApiFail(res, e, 'Could not list users without HR profiles.');
+    }
+  });
+
+  app.post('/api/hr/staff/ensure-unlinked', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = ensureHrStaffProfilesForUnlinkedUsers(db, req.user?.id);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      return hrApiFail(res, e, 'Could not link missing HR profiles.');
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/ensure-profile', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const r = ensureHrStaffProfileForUser(db, req.user?.id, req.params.userId, { skipEnrichedReturn: true });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      return hrApiFail(res, e, 'Could not create HR profile.');
     }
   });
 

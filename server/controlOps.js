@@ -113,6 +113,9 @@ import {
   validateRefundSameRequestOverlapCategoriesNgn,
 } from '../shared/lib/refundQuotationMoney.js';
 import {
+  applyRefundStaffAllocationDeductions,
+} from '../shared/lib/refundStaffAllocationDeduction.js';
+import {
   buildDerivedRefundCategoryCapsNgn,
   mergeRefundCategoryCapsNgn,
 } from '../shared/lib/refundCategoryDerivedCaps.js';
@@ -2704,9 +2707,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       resolvedSplits.push({ ...split, payoutAccount: acct });
     }
 
+    const splitsForStore = applyRefundStaffAllocationDeductions(resolvedSplits, customerID);
+
     // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.
     if (!customerSavedPayee) {
-      if (resolvedSplits.length === 0) {
+      if (splitsForStore.length === 0) {
         return {
           ok: false,
           error:
@@ -2721,7 +2726,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       }
     } else if (
       associatedStaffPolicyEnabled &&
-      resolvedSplits.length > 0 &&
+      splitsForStore.length > 0 &&
       Math.abs(splitTotalNgn - amountNgn) > REFUND_AMOUNT_LINE_TOLERANCE_NGN
     ) {
       return {
@@ -2731,7 +2736,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     }
 
     const primaryPayee =
-      resolvedSplits.length > 0 ? resolvedSplits[0].payoutAccount : customerSavedPayee;
+      splitsForStore.length > 0 ? splitsForStore[0].payoutAccount : customerSavedPayee;
     let payeeName = String(primaryPayee?.payeeName || '').trim();
     let payeeAccountNo = String(primaryPayee?.payeeAccountNo || '').trim();
     let payeeBankName = String(primaryPayee?.payeeBankName || '').trim();
@@ -3110,12 +3115,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         amountNgn,                                                                                                 // amount_ngn
         JSON.stringify(payload.calculationLines || []),                                                            // calculation_lines_json
         JSON.stringify(
-          resolvedSplits.length > 0
-            ? resolvedSplits.map((r) => ({
+          splitsForStore.length > 0
+            ? splitsForStore.map((r) => ({
                 recipientKind: r.recipientKind,
                 recipientCustomerID: r.recipientCustomerID || undefined,
                 recipientAssociatedStaffID: r.recipientAssociatedStaffID || undefined,
                 amountNgn: roundMoney(r.amountNgn),
+                companyDeductionNgn: roundMoney(r.companyDeductionNgn),
+                netPayoutNgn: roundMoney(r.netPayoutNgn ?? r.amountNgn),
+                deductionRate: Number(r.deductionRate) || 0,
                 note: r.note,
                 payoutAccount: {
                   payeeName: r.payoutAccount.payeeName,
@@ -4378,9 +4386,15 @@ export function previewRefundRequest(db, payload) {
     quoteTotalNgn > 0 &&
     !hasCancelledProductionJob
   ) {
-    warnings.push(
-      `Overpayment (₦${overpaymentExcessNgn.toLocaleString('en-NG')}) is payment received above the quote total. Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
-    );
+    if (overpaymentResidualNgn <= 0) {
+      warnings.push(
+        `Original overpayment was ₦${overpaymentExcessNgn.toLocaleString('en-NG')}, but it is already fully covered by prior refunds on this quotation (residual ₦0). Do not create another Overpayment refund.`
+      );
+    } else {
+      warnings.push(
+        `Overpayment (₦${overpaymentResidualNgn.toLocaleString('en-NG')} still refundable of ₦${overpaymentExcessNgn.toLocaleString('en-NG')} cash above quote). Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
+      );
+    }
   }
 
   const cappedSuggestedLines = suggestedLines;

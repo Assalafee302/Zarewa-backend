@@ -6,6 +6,9 @@ import { actorId, actorName } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { allocateHumanId } from '../humanId.js';
 import { savedCustomerPayoutAccount } from '../sales/customerPayoutAccount.js';
+import {
+  applyRefundStaffAllocationDeduction,
+} from '../../shared/lib/refundStaffAllocationDeduction.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -80,6 +83,7 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     );
 
   if (usable.length > 0) {
+    const quoteCustomerId = String(refundRow.customer_id || '').trim();
     const splitSum = usable.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
     return usable
@@ -89,6 +93,11 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           ? Math.max(0, approved - allocated)
           : roundMoney((approved * s.amountNgn) / splitSum);
         allocated += share;
+        const withDeduction = applyRefundStaffAllocationDeduction(
+          { ...s, amountNgn: share },
+          quoteCustomerId
+        );
+        const creditAmount = roundMoney(withDeduction.netPayoutNgn ?? share);
         if (s.recipientKind === 'associated_staff') {
           const staff = db
             .prepare(
@@ -108,11 +117,17 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             partyKind: 'associated_staff',
             partyId: s.recipientAssociatedStaffID,
             partyName: String(staff?.name || payeeName || s.recipientAssociatedStaffID).trim(),
-            amountNgn: share,
+            amountNgn: creditAmount,
+            grossNgn: share,
+            companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
             payeeName,
             payeeBankName,
             payeeAccountNo,
-            note: s.note || `Refund ${refundRow.refund_id} staff split`,
+            note:
+              s.note ||
+              (withDeduction.companyDeductionNgn > 0
+                ? `Refund ${refundRow.refund_id} staff split (net after 20% company cut)`
+                : `Refund ${refundRow.refund_id} staff split`),
           };
         }
         const resolved = savedCustomerPayoutAccount(db, s.recipientCustomerID);
@@ -129,11 +144,17 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           partyKind: 'customer',
           partyId: s.recipientCustomerID,
           partyName: String(resolved?.partyName || payeeName || s.recipientCustomerID).trim(),
-          amountNgn: share,
+          amountNgn: creditAmount,
+          grossNgn: share,
+          companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
           payeeName,
           payeeBankName,
           payeeAccountNo,
-          note: s.note || `Refund ${refundRow.refund_id} split`,
+          note:
+            s.note ||
+            (withDeduction.companyDeductionNgn > 0
+              ? `Refund ${refundRow.refund_id} split (net after 20% company cut)`
+              : `Refund ${refundRow.refund_id} split`),
         };
       })
       .filter((t) => t.amountNgn > 0);
@@ -221,9 +242,35 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       actorName(actor),
       null
     );
-    credits.push({ id, partyId: t.partyId, amountNgn: t.amountNgn });
+    credits.push({
+      id,
+      partyId: t.partyId,
+      amountNgn: t.amountNgn,
+      grossNgn: t.grossNgn != null ? t.grossNgn : t.amountNgn,
+      companyDeductionNgn: roundMoney(t.companyDeductionNgn),
+    });
   }
-  return { ok: true, credits };
+
+  // Company 20% cut is retained at approval — bump paid so wallet nets can finish the refund.
+  const companyRetentionNgn = credits.reduce((s, c) => s + roundMoney(c.companyDeductionNgn), 0);
+  if (companyRetentionNgn > 0) {
+    const paidNow = roundMoney(refundRow.paid_amount_ngn);
+    db.prepare(
+      `UPDATE customer_refunds
+       SET paid_amount_ngn = ?,
+           payment_note = CASE
+             WHEN TRIM(COALESCE(payment_note, '')) = '' THEN ?
+             ELSE payment_note
+           END
+       WHERE refund_id = ?`
+    ).run(
+      paidNow + companyRetentionNgn,
+      `Company retained ₦${companyRetentionNgn.toLocaleString('en-NG')} (20% staff allocation cut).`,
+      refundId
+    );
+  }
+
+  return { ok: true, credits, companyRetentionNgn };
 }
 
 /** Void open credits for a cancelled refund (no withdrawals yet). */

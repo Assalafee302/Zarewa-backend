@@ -29,6 +29,7 @@ import {
   getHrStaffAppraisalSummary,
   getHrStaffActivitySummary,
   bulkUpdateHrStaff,
+  bulkDeleteHrStaffAccounts,
   listHrStaffDirectory,
   listHrStaffDirectoryViews,
   upsertHrStaffDirectoryView,
@@ -1523,6 +1524,25 @@ export function registerHrApi(app, db) {
       return res.json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Bulk staff update failed.');
+    }
+  });
+
+  app.post('/api/hr/staff/bulk-delete', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const scope = hrListScope(req);
+      const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+      for (const uid of userIds) {
+        if (uid === String(req.user?.id || '').trim()) continue;
+        const gate = assertStaffUserIdInHrScope(db, scope, uid);
+        if (!gate.ok) return res.status(gate.status || 403).json(gate);
+      }
+      const r = bulkDeleteHrStaffAccounts(db, req.user, { ...req.body, userIds });
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error('[hr/staff/bulk-delete]', e);
+      return hrApiFail(res, e, 'Could not delete selected staff.');
     }
   });
 

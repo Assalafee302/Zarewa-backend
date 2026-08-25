@@ -49,6 +49,7 @@ import {
 } from '../shared/lib/hrEmployeeNumber.js';
 import { enrichStaffWithOnboarding } from './hrStaffDocuments.js';
 import { purgeHrStaffUser } from './hrStaffDuplicateCleanup.js';
+import { assertStaffIdentityUnique } from './hr/staffIdentityUniqueness.js';
 import { enrichStaffWithLifecycle } from './hrStaffLifecycle.js';
 import { buildHrOrgChart, buildHrOrgDataQuality, summarizeHrOrgChart } from '../shared/lib/hrOrgChart.js';
 import {
@@ -1665,6 +1666,42 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     }
   }
 
+  const identityFields = { userId };
+  if (body?.ninNumber !== undefined) identityFields.ninNumber = body.ninNumber;
+  if (body?.bvnNumber !== undefined) identityFields.bvnNumber = body.bvnNumber;
+  if (body?.phone !== undefined) identityFields.phone = body.phone;
+  if (body?.personalEmail !== undefined) identityFields.email = body.personalEmail;
+  else if (body?.email !== undefined) identityFields.email = body.email;
+  if (body?.bankAccountNo !== undefined) identityFields.bankAccountNo = body.bankAccountNo;
+  if (resolvedEmployeeNo) identityFields.employeeNo = resolvedEmployeeNo;
+  const composedName = [body?.firstName, body?.surname].filter(Boolean).join(' ').trim();
+  if (composedName || body?.displayName !== undefined || body?.firstName !== undefined || body?.surname !== undefined) {
+    identityFields.displayName =
+      composedName ||
+      String(body?.displayName || '').trim() ||
+      db.prepare(`SELECT display_name AS displayName FROM app_users WHERE id = ?`).get(userId)?.displayName ||
+      '';
+  }
+  const identityTouched =
+    !existing ||
+    body?.ninNumber !== undefined ||
+    body?.bvnNumber !== undefined ||
+    body?.phone !== undefined ||
+    body?.personalEmail !== undefined ||
+    body?.email !== undefined ||
+    body?.bankAccountNo !== undefined ||
+    body?.employeeNo !== undefined ||
+    body?.firstName !== undefined ||
+    body?.surname !== undefined ||
+    body?.displayName !== undefined;
+  /** @type {{ field?: string; message: string }[]} */
+  let identityNameWarnings = [];
+  if (identityTouched) {
+    const identityCheck = assertStaffIdentityUnique(db, identityFields);
+    if (!identityCheck.ok) return identityCheck;
+    identityNameWarnings = identityCheck.nameWarnings || [];
+  }
+
   const resolvedDateJoinedIso =
     body?.dateJoinedIso !== undefined
       ? String(body?.dateJoinedIso ?? '').trim() || null
@@ -2080,7 +2117,12 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   return {
     ok: true,
     profile: opts.skipEnrichedReturn ? null : getHrStaffOne(db, userId),
-    warnings: [...(orgValidation.warnings || []), ...(tenureValidation.warnings || []), ...(compensationResolved.warnings || [])],
+    warnings: [
+      ...(orgValidation.warnings || []),
+      ...(tenureValidation.warnings || []),
+      ...(compensationResolved.warnings || []),
+      ...identityNameWarnings.map((w) => w.message),
+    ],
     roleKeyHints,
     compensation: {
       matrixApplied: compensationResolved.matrixApplied,
@@ -2696,16 +2738,22 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
   const actorId = actor?.id || userId;
 
   if (field === 'ninNumber') {
+    const next = String(payload.requestedValue || '').trim() || null;
+    const identityCheck = assertStaffIdentityUnique(db, { userId, ninNumber: next });
+    if (!identityCheck.ok) return identityCheck;
     db.prepare(
       `UPDATE hr_staff_profiles SET nin_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
-    ).run(String(payload.requestedValue || '').trim() || null, now, actorId, userId);
+    ).run(next, now, actorId, userId);
     return { ok: true };
   }
 
   if (field === 'bvnNumber') {
+    const next = String(payload.requestedValue || '').trim() || null;
+    const identityCheck = assertStaffIdentityUnique(db, { userId, bvnNumber: next });
+    if (!identityCheck.ok) return identityCheck;
     db.prepare(
       `UPDATE hr_staff_profiles SET bvn_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
-    ).run(String(payload.requestedValue || '').trim() || null, now, actorId, userId);
+    ).run(next, now, actorId, userId);
     return { ok: true };
   }
 
@@ -2720,6 +2768,10 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
   if (field === 'bankDetails') {
     const v = payload.requestedValue && typeof payload.requestedValue === 'object' ? payload.requestedValue : {};
     const acct = String(v.bankAccountNo || '').replace(/\s/g, '');
+    if (acct) {
+      const identityCheck = assertStaffIdentityUnique(db, { userId, bankAccountNo: acct });
+      if (!identityCheck.ok) return identityCheck;
+    }
     const masked = acct ? maskBankAccount(acct) : null;
     const encrypted = acct ? encryptBankAccount(acct) : null;
     const bankCode =
@@ -8408,22 +8460,16 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
 }
 
 /**
- * Permanently remove a staff login and HR profile (not reversible).
+ * Permanently remove a staff login and HR profile after validation.
  * Prefer separation/deactivate for leavers — use this for mistaken registrations and test accounts.
  * @param {import('better-sqlite3').Database} db
  * @param {object} actor
  * @param {string} userId
- * @param {{ reason?: string; confirmUsername?: string }} body
+ * @param {string} reason
  */
-export function deleteHrStaffAccount(db, actor, userId, body = {}) {
-  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+function deleteHrStaffAccountCore(db, actor, userId, reason) {
   const uid = String(userId || '').trim();
   if (!uid) return { ok: false, error: 'Staff id required.' };
-
-  const reason = String(body.reason || '').trim();
-  if (reason.length < 3) {
-    return { ok: false, error: 'Enter a short reason for permanent deletion (at least 3 characters).' };
-  }
 
   const row = db
     .prepare(
@@ -8435,12 +8481,6 @@ export function deleteHrStaffAccount(db, actor, userId, body = {}) {
     )
     .get(uid);
   if (!row) return { ok: false, error: 'Staff account not found.' };
-
-  const confirm = String(body.confirmUsername || '').trim().toLowerCase();
-  const expected = String(row.username || '').trim().toLowerCase();
-  if (!confirm || confirm !== expected) {
-    return { ok: false, error: `Type the login username "${row.username}" exactly to confirm permanent deletion.` };
-  }
 
   const directReports =
     db.prepare(`SELECT COUNT(*) AS c FROM hr_staff_profiles WHERE line_manager_user_id = ?`).get(uid)?.c || 0;
@@ -8470,6 +8510,94 @@ export function deleteHrStaffAccount(db, actor, userId, body = {}) {
   });
 
   return { ok: true, userId: uid, username: result.username, displayName: row.displayName };
+}
+
+/**
+ * Permanently remove a staff login and HR profile (not reversible).
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {string} userId
+ * @param {{ reason?: string; confirmUsername?: string }} body
+ */
+export function deleteHrStaffAccount(db, actor, userId, body = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const uid = String(userId || '').trim();
+  if (!uid) return { ok: false, error: 'Staff id required.' };
+
+  const reason = String(body.reason || '').trim();
+  if (reason.length < 3) {
+    return { ok: false, error: 'Enter a short reason for permanent deletion (at least 3 characters).' };
+  }
+
+  const row = db.prepare(`SELECT username FROM app_users WHERE id = ?`).get(uid);
+  if (!row) return { ok: false, error: 'Staff account not found.' };
+
+  const confirm = String(body.confirmUsername || '').trim().toLowerCase();
+  const expected = String(row.username || '').trim().toLowerCase();
+  if (!confirm || confirm !== expected) {
+    return { ok: false, error: `Type the login username "${row.username}" exactly to confirm permanent deletion.` };
+  }
+
+  return deleteHrStaffAccountCore(db, actor, uid, reason);
+}
+
+/**
+ * Permanently delete several staff accounts. Type DELETE (not per-username) plus a reason.
+ * Same guards as single delete: cannot remove self, MD/admin, or anyone who still has direct reports.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} actor
+ * @param {{ userIds?: string[]; reason?: string; confirmPhrase?: string }} body
+ */
+export function bulkDeleteHrStaffAccounts(db, actor, body = {}) {
+  if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
+  const userIds = [
+    ...new Set((Array.isArray(body.userIds) ? body.userIds : []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  if (!userIds.length) return { ok: false, error: 'Select at least one staff member.' };
+  if (userIds.length > 100) return { ok: false, error: 'Maximum 100 staff per bulk delete.' };
+
+  const reason = String(body.reason || '').trim();
+  if (reason.length < 3) {
+    return { ok: false, error: 'Enter a short reason for permanent deletion (at least 3 characters).' };
+  }
+
+  const confirm = String(body.confirmPhrase || '').trim().toUpperCase();
+  if (confirm !== 'DELETE') {
+    return { ok: false, error: 'Type DELETE to confirm permanent deletion of the selected staff.' };
+  }
+
+  /** @type {{ userId: string; username?: string; displayName?: string }[]} */
+  const deleted = [];
+  /** @type {{ userId: string; error: string }[]} */
+  const errors = [];
+
+  for (const uid of userIds) {
+    const r = deleteHrStaffAccountCore(db, actor, uid, reason);
+    if (r.ok) deleted.push({ userId: r.userId, username: r.username, displayName: r.displayName });
+    else errors.push({ userId: uid, error: r.error || 'Could not delete staff account.' });
+  }
+
+  appendHrAuditEvent(db, {
+    actorUserId: actor?.id || null,
+    actorDisplayName: actor?.displayName || actor?.username || null,
+    action: 'hr.staff.bulk_permanent_delete',
+    entityKind: 'hr_staff_profile',
+    entityId: userIds.join(','),
+    reason,
+    details: {
+      deleted: deleted.length,
+      failed: errors.length,
+      userIds,
+    },
+  });
+
+  return {
+    ok: true,
+    deleted: deleted.length,
+    failed: errors.length,
+    deletedStaff: deleted,
+    errors,
+  };
 }
 
 export function runHrScheduledJobs(db) {

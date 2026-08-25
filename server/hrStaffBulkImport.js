@@ -21,6 +21,14 @@ import {
 import { getStaffNumberConfig } from './hrStaffNumbering.js';
 import { isBeneficiaryOnlyPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { BENEFICIARY_NO_LOGIN_ERROR } from './hrStaffAccessPolicy.js';
+import { listStaffIdentityRows } from './hr/staffIdentityUniqueness.js';
+import {
+  namesLookSuspicious,
+  normalizeStaffAccountKey,
+  normalizeStaffEmailKey,
+  normalizeStaffNinKey,
+  normalizeStaffPhoneKey,
+} from '../shared/lib/hrStaffIdentity.js';
 
 export const BULK_IMPORT_DEFAULT_PASSWORD = ''; // no shared default — use env or one-time random
 
@@ -1016,25 +1024,20 @@ function isBlankImportRow(row) {
   return !Object.values(row).some((v) => String(v ?? '').trim());
 }
 
-function collectExistingPhones(db) {
-  const phones = new Set();
+function collectExistingIdentityOwners(db) {
   const phoneToUserId = new Map();
-  const rows = db
-    .prepare(`SELECT user_id, profile_extra_json FROM hr_staff_profiles WHERE profile_extra_json IS NOT NULL AND trim(profile_extra_json) != ''`)
-    .all();
-  for (const row of rows) {
-    try {
-      const extra = JSON.parse(row.profile_extra_json);
-      const phone = String(extra?.personal?.phone || '').trim();
-      if (phone) {
-        phones.add(phone);
-        phoneToUserId.set(phone, row.user_id);
-      }
-    } catch {
-      /* ignore malformed profile JSON */
-    }
+  const emailToUserId = new Map();
+  const ninToUserId = new Map();
+  const accountToUserId = new Map();
+  const nameRows = [];
+  for (const row of listStaffIdentityRows(db)) {
+    if (row.keys.phone) phoneToUserId.set(row.keys.phone, row.userId);
+    if (row.keys.email) emailToUserId.set(row.keys.email, row.userId);
+    if (row.keys.nin) ninToUserId.set(row.keys.nin, row.userId);
+    if (row.keys.account) accountToUserId.set(row.keys.account, row.userId);
+    nameRows.push({ userId: row.userId, displayName: row.displayName, employeeNo: row.employeeNo, nameForMatch: row.nameForMatch });
   }
-  return { phones, phoneToUserId };
+  return { phoneToUserId, emailToUserId, ninToUserId, accountToUserId, nameRows };
 }
 
 function normalizeImportMode(mode) {
@@ -1185,6 +1188,7 @@ function rowToProfileBody(db, row, scope, { userId, includeCredentials = true } 
     hrInternalNotes: row.hrInternalNotes || undefined,
     bankName: row.bankName || undefined,
     bankAccountName: row.accountName || undefined,
+    bankAccountNo: row.accountNumber || undefined,
     bankAccountNoMasked: row.accountNumber ? `****${String(row.accountNumber).slice(-4)}` : undefined,
     nextOfKin: hasNextOfKin ? { name: row.nextOfKinName || null, phone: row.nextOfKinPhone || null } : undefined,
     selfServiceEligible: true,
@@ -1286,15 +1290,45 @@ function validateRow(db, row, rowNum, existingKeys, designationIndex, usedUserna
     }
   }
 
-  const email = String(row.email || '').trim().toLowerCase();
+  const email = normalizeStaffEmailKey(row.email);
   if (email) {
     const owner = existingKeys.emailToUserId?.get(email);
     if (owner && owner !== existingUserId) errors.push({ field: 'email', message: 'Duplicate email' });
+    if (existingKeys.emailsInFile?.has(email)) errors.push({ field: 'email', message: 'Duplicate email in this file' });
   }
-  const phone = String(row.phoneNumber || '').trim();
+  const phone = normalizeStaffPhoneKey(row.phoneNumber);
   if (phone) {
     const owner = existingKeys.phoneToUserId?.get(phone);
     if (owner && owner !== existingUserId) errors.push({ field: 'phoneNumber', message: 'Duplicate phone' });
+    if (existingKeys.phonesInFile?.has(phone)) errors.push({ field: 'phoneNumber', message: 'Duplicate phone in this file' });
+  }
+  const nin = normalizeStaffNinKey(row.nin);
+  if (nin) {
+    const owner = existingKeys.ninToUserId?.get(nin);
+    if (owner && owner !== existingUserId) errors.push({ field: 'nin', message: 'Duplicate NIN' });
+    if (existingKeys.ninsInFile?.has(nin)) errors.push({ field: 'nin', message: 'Duplicate NIN in this file' });
+  }
+  const account = normalizeStaffAccountKey(row.accountNumber);
+  if (account) {
+    const owner = existingKeys.accountToUserId?.get(account);
+    if (owner && owner !== existingUserId) errors.push({ field: 'accountNumber', message: 'Duplicate account number' });
+    if (existingKeys.accountsInFile?.has(account)) {
+      errors.push({ field: 'accountNumber', message: 'Duplicate account number in this file' });
+    }
+  }
+  if (displayName && Array.isArray(existingKeys.nameRows)) {
+    for (const other of existingKeys.nameRows) {
+      if (other.userId === existingUserId) continue;
+      const hit = namesLookSuspicious(displayName, other.nameForMatch || other.displayName);
+      if (!hit) continue;
+      warnings.push({
+        field: 'displayName',
+        message: `Name looks similar to ${other.displayName || other.userId}${
+          other.employeeNo ? ` (${other.employeeNo})` : ''
+        } — confirm this is not the same person`,
+      });
+      break;
+    }
   }
   const branchId = resolveBranchId(db, row, {});
   if (!branchId) {
@@ -1417,8 +1451,13 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   const existingEmails = new Set(
     db.prepare(`SELECT lower(trim(email)) AS e FROM app_users WHERE email IS NOT NULL`).all().map((r) => r.e).filter(Boolean)
   );
-  const { phones: existingPhones, phoneToUserId } = collectExistingPhones(db);
+  const identityOwners = collectExistingIdentityOwners(db);
   const emailToUserId = buildEmailToUserIdMap(db);
+  for (const [k, v] of identityOwners.emailToUserId) emailToUserId.set(k, v);
+  const phoneToUserId = identityOwners.phoneToUserId;
+  const ninToUserId = identityOwners.ninToUserId;
+  const accountToUserId = identityOwners.accountToUserId;
+  const nameRows = identityOwners.nameRows;
   const usernameToUserId = buildUsernameToUserIdMap(db);
   const existingUsernames = new Set(
     db.prepare(`SELECT lower(trim(username)) AS u FROM app_users`).all().map((r) => r.u).filter(Boolean)
@@ -1431,6 +1470,10 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
   });
   const usedUsernames = new Set(importMode === 'replace' ? [] : existingUsernames);
   const employeeNosInFile = new Set();
+  const emailsInFile = new Set();
+  const phonesInFile = new Set();
+  const ninsInFile = new Set();
+  const accountsInFile = new Set();
   const preview = [];
   let valid = 0;
   let failed = 0;
@@ -1457,10 +1500,16 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
       employeeNoToUserId,
       userIdToUsername,
       emails: importMode === 'replace' ? new Set() : existingEmails,
-      emailToUserId,
+      emailToUserId: importMode === 'replace' ? new Map() : emailToUserId,
       usernameToUserId,
-      phones: importMode === 'replace' ? new Set() : existingPhones,
-      phoneToUserId,
+      phoneToUserId: importMode === 'replace' ? new Map() : phoneToUserId,
+      ninToUserId: importMode === 'replace' ? new Map() : ninToUserId,
+      accountToUserId: importMode === 'replace' ? new Map() : accountToUserId,
+      nameRows: importMode === 'replace' ? [] : nameRows,
+      emailsInFile,
+      phonesInFile,
+      ninsInFile,
+      accountsInFile,
       usernames: importMode === 'replace' ? new Set() : existingUsernames,
       staffNumberConfig,
       employeeNumberAllocator,
@@ -1511,8 +1560,15 @@ export function previewBulkStaffImport(db, buffer, scope = {}) {
     const empNo = String(mapped.employeeNumber || '').trim();
     if (empNo) employeeNosInFile.add(empNo);
     if (importMode !== 'replace' && empNo) existingNos.add(empNo);
+    const emailKey = normalizeStaffEmailKey(mapped.email);
+    if (emailKey) emailsInFile.add(emailKey);
+    const phoneKey = normalizeStaffPhoneKey(mapped.phoneNumber);
+    if (phoneKey) phonesInFile.add(phoneKey);
+    const ninKey = normalizeStaffNinKey(mapped.nin);
+    if (ninKey) ninsInFile.add(ninKey);
+    const accountKey = normalizeStaffAccountKey(mapped.accountNumber);
+    if (accountKey) accountsInFile.add(accountKey);
     if (mapped.email) existingEmails.add(String(mapped.email).trim().toLowerCase());
-    if (mapped.phoneNumber) existingPhones.add(String(mapped.phoneNumber).trim());
     if (proposedUsername) usedUsernames.add(proposedUsername);
   }
   const totalRows = preview.length;

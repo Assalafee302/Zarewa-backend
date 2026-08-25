@@ -7,6 +7,7 @@ import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { purgeUserHrOperationalData } from './hrUserOperationalCleanup.js';
+import { scanStaffIdentityDuplicates } from './hr/staffIdentityUniqueness.js';
 
 const PROTECTED_ROLES = new Set(['admin', 'md']);
 
@@ -226,6 +227,10 @@ export function scanHrStaffDuplicates(db) {
     });
   }
 
+  const identityScan = scanStaffIdentityDuplicates(db);
+  const identityGroups = identityScan.ok ? identityScan.identityGroups || [] : [];
+  const nameSuspicions = identityScan.ok ? identityScan.nameSuspicions || [] : [];
+
   const toRemove = new Map();
   for (const o of orphans) toRemove.set(o.userId, o);
   for (const g of employeeNoDuplicates) {
@@ -234,6 +239,29 @@ export function scanHrStaffDuplicates(db) {
   for (const g of displayNameDuplicates) {
     for (const m of g.remove) toRemove.set(m.userId, m);
   }
+  for (const g of identityGroups) {
+    const keep = pickCanonicalStaffMember(
+      g.members.map((m) => ({
+        ...m,
+        jobTitle: '',
+        dateJoinedIso: '',
+        baseSalaryNgn: 0,
+      }))
+    );
+    for (const m of g.members) {
+      if (m.userId === keep?.userId) continue;
+      if (toRemove.has(m.userId)) continue;
+      toRemove.set(m.userId, {
+        userId: m.userId,
+        username: m.username,
+        displayName: m.displayName,
+        employeeNo: m.employeeNo,
+        status: m.status,
+        reason: `duplicate_${g.field}`,
+        matchValue: g.value,
+      });
+    }
+  }
 
   return {
     ok: true,
@@ -241,12 +269,16 @@ export function scanHrStaffDuplicates(db) {
       orphanLogins: orphans.length,
       duplicateEmployeeNos: employeeNoDuplicates.length,
       duplicateDisplayNames: displayNameDuplicates.length,
+      identityGroups: identityGroups.length,
+      nameSuspicions: nameSuspicions.length,
       proposedRemovals: toRemove.size,
       activeStaffWithProfile: withProfile.filter((r) => String(r.employeeNo || '').trim()).length,
     },
     orphans,
     employeeNoDuplicates,
     displayNameDuplicates,
+    identityGroups,
+    nameSuspicions,
     proposedRemovals: [...toRemove.values()],
   };
 }

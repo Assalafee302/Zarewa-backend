@@ -1491,6 +1491,7 @@ function runMigrationsUnlocked(db) {
   migrateOtModule2026(db);
   migrateHrRoleComplianceLifecycle2026(db);
   migratePartnerWallet2026(db);
+  migrateRefundCompanyRetention2026(db);
   migrateChairmanOfficeLoans2026(db);
   try {
     if (!schemaMigrationDone(db, SCHEMA_MIGRATION_COIL_SHORT_CLOSE)) {
@@ -1550,6 +1551,60 @@ function migratePartnerWallet2026(db) {
       ON partner_wallet_withdrawal_allocations(withdrawal_id);
     CREATE INDEX IF NOT EXISTS idx_partner_wallet_alloc_credit
       ON partner_wallet_withdrawal_allocations(credit_entry_id);
+  `);
+}
+
+/** Accumulated refund staff company cuts — hold period, then BM-approved withdrawal. */
+function migrateRefundCompanyRetention2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS refund_company_retention_entries (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT,
+      entry_type TEXT NOT NULL,
+      amount_ngn INTEGER NOT NULL,
+      open_ngn INTEGER NOT NULL DEFAULT 0,
+      source_kind TEXT,
+      source_id TEXT,
+      refund_id TEXT,
+      available_after_iso TEXT,
+      withdrawal_id TEXT,
+      note TEXT,
+      created_at_iso TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_by_name TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_rcr_branch_open
+      ON refund_company_retention_entries(branch_id, entry_type, open_ngn);
+    CREATE INDEX IF NOT EXISTS idx_rcr_refund
+      ON refund_company_retention_entries(refund_id);
+    CREATE INDEX IF NOT EXISTS idx_rcr_available
+      ON refund_company_retention_entries(available_after_iso);
+
+    CREATE TABLE IF NOT EXISTS refund_company_retention_withdrawals (
+      id TEXT PRIMARY KEY,
+      branch_id TEXT,
+      amount_ngn INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      payee_name TEXT,
+      payee_bank_name TEXT,
+      payee_account_no TEXT,
+      note TEXT,
+      requested_by_user_id TEXT,
+      requested_by_name TEXT,
+      requested_at_iso TEXT NOT NULL,
+      approved_by_user_id TEXT,
+      approved_by_name TEXT,
+      approved_at_iso TEXT,
+      approval_note TEXT,
+      rejected_reason TEXT,
+      paid_by_user_id TEXT,
+      paid_by_name TEXT,
+      paid_at_iso TEXT,
+      treasury_movement_id TEXT,
+      treasury_account_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_rcw_branch_status
+      ON refund_company_retention_withdrawals(branch_id, status);
   `);
 }
 

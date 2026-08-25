@@ -14,6 +14,10 @@ import {
   unclearedTotalsMap,
 } from '../sales/refundClaimingStaffUnclearedReceipts.js';
 import { getRefundStaffAllocationDeductionRate } from '../orgPolicy.js';
+import {
+  creditCompanyRetentionFromRefundTx,
+  voidCompanyRetentionForRefundTx,
+} from './refundCompanyRetentionLedger.js';
 
 function roundMoney(value) {
   const n = Number(value);
@@ -289,11 +293,26 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   }
 
   // Company cut + uncleared-receipt offset settled at approval (not paid to staff wallet).
+  // Company cut accumulates in the branch retention ledger for later BM-approved withdrawal.
   const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
   const unclearedOffsetNgn = targets.reduce(
     (s, t) => s + roundMoney(t.unclearedReceiptOffsetNgn),
     0
   );
+  let retentionCredit = null;
+  if (companyRetentionNgn > 0) {
+    try {
+      retentionCredit = creditCompanyRetentionFromRefundTx(db, {
+        refundId,
+        branchId,
+        amountNgn: companyRetentionNgn,
+        actor,
+        note: `Company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} from refund ${refundId}`,
+      });
+    } catch (e) {
+      console.warn('[partnerWallet] company retention credit failed', e?.message || e);
+    }
+  }
   const settledAtApprovalNgn = companyRetentionNgn + unclearedOffsetNgn;
   if (settledAtApprovalNgn > 0) {
     const paidNow = roundMoney(refundRow.paid_amount_ngn);
@@ -302,7 +321,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     const noteParts = [];
     if (companyRetentionNgn > 0) {
       noteParts.push(
-        `company cut ₦${companyRetentionNgn.toLocaleString('en-NG')}`
+        `company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} → retention ledger`
       );
     }
     if (unclearedOffsetNgn > 0) {
@@ -333,6 +352,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     companyRetentionNgn,
     unclearedOffsetNgn,
     settledAtApprovalNgn,
+    retentionCredit,
   };
 }
 
@@ -359,6 +379,8 @@ export function voidPartnerWalletCreditsForRefundTx(db, refundId) {
     `UPDATE partner_wallet_entries SET open_ngn = 0, note = COALESCE(note,'') || ' [voided on refund cancel]'
      WHERE entry_type = 'credit' AND refund_id = ?`
   ).run(rid);
+  const retentionVoid = voidCompanyRetentionForRefundTx(db, rid);
+  if (!retentionVoid.ok) return retentionVoid;
   return { ok: true };
 }
 

@@ -108,7 +108,7 @@ export function savedCustomerPayoutAccount(db, customerId) {
 
 /**
  * Directory for refund “claiming staff” picker (masked bank only).
- * Includes every active HR login — not only those already linked to a sales customer.
+ * Includes active HR logins for the workspace branch — not only those already linked to a sales customer.
  * Avoid decrypting every HR account — that made the refund form hang.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL'|string} [branchScope]
@@ -118,14 +118,22 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
   if (!hasColumn(db, 'hr_staff_profiles', 'bank_account_no')) return [];
 
   const scope = trim(branchScope);
+  const hasUserBranch = hasColumn(db, 'app_users', 'workspace_branch_id');
   const branchSql =
     scope && scope !== 'ALL'
-      ? ` AND (
-           trim(IFNULL(p.branch_id, '')) = ?
-           OR trim(IFNULL(p.branch_id, '')) = ''
-         )`
+      ? hasUserBranch
+        ? ` AND (
+             trim(IFNULL(p.branch_id, '')) = ?
+             OR trim(IFNULL(p.branch_id, '')) = ''
+             OR trim(IFNULL(u.workspace_branch_id, '')) = ?
+           )`
+        : ` AND (
+             trim(IFNULL(p.branch_id, '')) = ?
+             OR trim(IFNULL(p.branch_id, '')) = ''
+           )`
       : '';
-  const args = scope && scope !== 'ALL' ? [scope] : [];
+  const args =
+    scope && scope !== 'ALL' ? (hasUserBranch ? [scope, scope] : [scope]) : [];
 
   const rows = db
     .prepare(
@@ -418,8 +426,8 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
         ? `Matched prepared-by “${handledByLabel}” to ${payee.name} (HR bank).`
         : 'Quotation maker / handled-by staff (HR bank).'
       : handledByLabel
-        ? `Could not link prepared-by “${handledByLabel}” to an exact HR login — pick that person under Company staff (all HR staff are listed), or fix their display name on the user profile.`
-        : 'Quotation has no handled-by user id — pick company staff, or re-save the quotation with Handled by set.',
+        ? `Could not link prepared-by “${handledByLabel}” to an exact HR login — pick that person under Branch staff, or fix their display name on the user profile.`
+        : 'Quotation has no handled-by user id — pick branch staff, or re-save the quotation with Handled by set.',
   };
 }
 

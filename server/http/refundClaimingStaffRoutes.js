@@ -17,14 +17,17 @@ import { hasColumn } from '../ap2ReceivedBasisOps.js';
  * @param {object} db
  */
 export function registerRefundClaimingStaffRoutes(app, db) {
-  /** Company-wide HR-linked staff — branch filter used to hide the quote maker. */
+  /** Branch-scoped HR staff for refund payout picker (quotation default payee may still pin outside). */
   app.get(
     '/api/refunds/claiming-staff',
     requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']),
     (req, res) => {
       try {
-        const claimingStaff = listClaimingStaffForRefunds(db, 'ALL');
-        res.json({ ok: true, claimingStaff });
+        const branchScope =
+          String(req.query.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID).trim() ||
+          DEFAULT_BRANCH_ID;
+        const claimingStaff = listClaimingStaffForRefunds(db, branchScope);
+        res.json({ ok: true, branchId: branchScope, claimingStaff });
       } catch (e) {
         console.error('[refunds/claiming-staff]', e);
         res.status(500).json({ ok: false, error: 'Failed to load claiming staff.' });

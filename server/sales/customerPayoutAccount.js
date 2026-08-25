@@ -5,7 +5,11 @@
  */
 import { decryptBankAccount, storedBankToMasked } from '../hrBankCrypto.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
-import { staffPurchaseCreditColumnsReady } from '../staffPurchaseCreditOps.js';
+import {
+  ensureStaffSalesCustomer,
+  getStaffSalesCustomerId,
+  staffPurchaseCreditColumnsReady,
+} from '../staffPurchaseCreditOps.js';
 import { unclearedReceiptFloatBySalesCustomerIds } from './refundClaimingStaffUnclearedReceipts.js';
 
 function trim(v) {
@@ -179,4 +183,22 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
       unclearedReceiptCount: info ? Number(info.receiptCount) || 0 : 0,
     };
   });
+}
+
+/**
+ * Resolve HR claiming-staff payee for a login user (quotation maker / handled-by).
+ * Uses the linked sales customer — no separate refund-staff table.
+ */
+export function claimingStaffPayeeForUserId(db, userId) {
+  const uid = trim(userId);
+  if (!uid) return null;
+  try {
+    ensureStaffSalesCustomer(db, uid);
+  } catch {
+    /* profile may lack HR row */
+  }
+  const cid = getStaffSalesCustomerId(db, uid);
+  if (!cid) return null;
+  const rows = listClaimingStaffForRefunds(db, 'ALL');
+  return rows.find((r) => String(r.customerID || '').trim() === cid) || null;
 }

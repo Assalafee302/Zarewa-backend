@@ -9120,6 +9120,61 @@ function syncQuotationLineRows(db, quotationId, linesJson) {
   }
 }
 
+/**
+ * Quote maker / selected “handled by” staff → HR sales customer for refund bank defaults.
+ * Explicit agentCustomerID on the payload still wins when provided.
+ * Uses a local HR lookup only (avoid circular import with staffPurchaseCreditOps).
+ */
+function resolveQuotationHandledByStaffLink(db, payload, existing = null) {
+  const handledBy =
+    String(payload?.handledBy ?? existing?.handled_by ?? 'Sales').trim() || 'Sales';
+  let handledByUserId = String(
+    payload?.handledByUserId ?? payload?.handled_by_user_id ?? existing?.handled_by_user_id ?? ''
+  ).trim();
+  if (!handledByUserId && handledBy && handledBy !== 'Sales') {
+    const u = db
+      .prepare(
+        `SELECT id FROM app_users
+         WHERE LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(?)
+            OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(?)
+         LIMIT 1`
+      )
+      .get(handledBy, handledBy);
+    if (u?.id) handledByUserId = String(u.id).trim();
+  }
+
+  const explicitAgent = String(
+    payload?.agentCustomerID ?? payload?.agent_customer_id ?? ''
+  ).trim();
+  let agentCustomerId = null;
+  let agentCustomerName = null;
+  if (explicitAgent) {
+    agentCustomerId = explicitAgent;
+    agentCustomerName =
+      String(payload?.agentCustomerName ?? payload?.agent_customer_name ?? '').trim() || handledBy;
+  } else if (
+    handledByUserId &&
+    hasColumn(db, 'hr_staff_profiles', 'sales_customer_id')
+  ) {
+    const prof = db
+      .prepare(`SELECT sales_customer_id FROM hr_staff_profiles WHERE user_id = ?`)
+      .get(handledByUserId);
+    const cid = String(prof?.sales_customer_id || '').trim();
+    if (cid) {
+      agentCustomerId = cid;
+      const cust = db.prepare(`SELECT name FROM customers WHERE customer_id = ?`).get(cid);
+      agentCustomerName = String(cust?.name || handledBy).trim() || handledBy;
+    }
+  }
+
+  return {
+    handledBy,
+    handledByUserId: handledByUserId || null,
+    agentCustomerId,
+    agentCustomerName,
+  };
+}
+
 export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   const customerID = String(payload.customerID ?? '').trim();
   if (!customerID) throw new Error('customerID is required.');
@@ -9169,41 +9224,79 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
     else paymentStatus = 'Partial';
   }
   const status = payload.status || 'Pending';
-  const handledBy = payload.handledBy || 'Sales';
+  const staffLink = resolveQuotationHandledByStaffLink(db, payload);
+  const handledBy = staffLink.handledBy;
+  const handledByUserId = staffLink.handledByUserId;
+  const agentCustomerId = staffLink.agentCustomerId;
+  const agentCustomerName = staffLink.agentCustomerName;
   const projectName = String(payload.projectName ?? '').trim() || null;
-  // Customer on the quote is the agent account; project_name holds end-client display name.
+  // Handled-by staff (login) links to HR sales customer for refund bank defaults.
   const linesStr = JSON.stringify(linesJson);
+  const persistHandlerUserId = hasColumn(db, 'quotations', 'handled_by_user_id');
 
   db.transaction(() => {
-    db.prepare(
-      `
+    if (persistHandlerUserId) {
+      db.prepare(
+        `
+      INSERT INTO quotations (
+        id, customer_id, customer_name, date_label, date_iso, due_date_iso,
+        total_display, total_ngn, paid_ngn, payment_status, status, approval_date, customer_feedback, handled_by,
+        handled_by_user_id, project_name, agent_customer_id, agent_customer_name, lines_json, branch_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `
+      ).run(
+        id,
+        customerID,
+        cust.name,
+        dateLabel,
+        dateISO,
+        dueDateISO,
+        totalDisplay,
+        totalNgn,
+        paidNgn,
+        paymentStatus,
+        status,
+        payload.approvalDate ?? '',
+        payload.customerFeedback ?? '',
+        handledBy,
+        handledByUserId,
+        projectName,
+        agentCustomerId,
+        agentCustomerName,
+        linesStr,
+        bid
+      );
+    } else {
+      db.prepare(
+        `
       INSERT INTO quotations (
         id, customer_id, customer_name, date_label, date_iso, due_date_iso,
         total_display, total_ngn, paid_ngn, payment_status, status, approval_date, customer_feedback, handled_by,
         project_name, agent_customer_id, agent_customer_name, lines_json, branch_id
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `
-    ).run(
-      id,
-      customerID,
-      cust.name,
-      dateLabel,
-      dateISO,
-      dueDateISO,
-      totalDisplay,
-      totalNgn,
-      paidNgn,
-      paymentStatus,
-      status,
-      payload.approvalDate ?? '',
-      payload.customerFeedback ?? '',
-      handledBy,
-      projectName,
-      null,
-      null,
-      linesStr,
-      bid
-    );
+      ).run(
+        id,
+        customerID,
+        cust.name,
+        dateLabel,
+        dateISO,
+        dueDateISO,
+        totalDisplay,
+        totalNgn,
+        paidNgn,
+        paymentStatus,
+        status,
+        payload.approvalDate ?? '',
+        payload.customerFeedback ?? '',
+        handledBy,
+        projectName,
+        agentCustomerId,
+        agentCustomerName,
+        linesStr,
+        bid
+      );
+    }
     syncQuotationLineRows(db, id, linesJson);
   })();
 
@@ -9434,16 +9527,81 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   const approvalDate = payload.approvalDate !== undefined ? payload.approvalDate : existing.approval_date;
   const customerFeedback =
     payload.customerFeedback !== undefined ? payload.customerFeedback : existing.customer_feedback;
-  const handledBy = payload.handledBy ?? existing.handled_by;
+  const staffLink = resolveQuotationHandledByStaffLink(
+    db,
+    {
+      handledBy: payload.handledBy !== undefined ? payload.handledBy : existing.handled_by,
+      handledByUserId:
+        payload.handledByUserId !== undefined
+          ? payload.handledByUserId
+          : payload.handled_by_user_id !== undefined
+            ? payload.handled_by_user_id
+            : existing.handled_by_user_id,
+      agentCustomerID: payload.agentCustomerID ?? payload.agent_customer_id,
+      agentCustomerName: payload.agentCustomerName ?? payload.agent_customer_name,
+    },
+    existing
+  );
+  const handledBy = staffLink.handledBy;
+  const handledByUserId = staffLink.handledByUserId;
+  const agentCustomerId = staffLink.agentCustomerId;
+  const agentCustomerName = staffLink.agentCustomerName;
   const projectName =
     payload.projectName !== undefined
       ? String(payload.projectName ?? '').trim() || null
       : existing.project_name;
   const linesStr = JSON.stringify(linesJson);
+  const persistHandlerUserId = hasColumn(db, 'quotations', 'handled_by_user_id');
 
   db.transaction(() => {
-    db.prepare(
-      `
+    if (persistHandlerUserId) {
+      db.prepare(
+        `
+      UPDATE quotations SET
+        customer_id = ?,
+        customer_name = ?,
+        date_label = ?,
+        date_iso = ?,
+        due_date_iso = ?,
+        total_display = ?,
+        total_ngn = ?,
+        paid_ngn = ?,
+        payment_status = ?,
+        status = ?,
+        approval_date = ?,
+        customer_feedback = ?,
+        handled_by = ?,
+        handled_by_user_id = ?,
+        project_name = ?,
+        agent_customer_id = ?,
+        agent_customer_name = ?,
+        lines_json = ?
+      WHERE id = ?
+    `
+      ).run(
+        customerID,
+        customerName,
+        dateLabel,
+        dateISO,
+        dueDateISO ?? '',
+        totalDisplay,
+        totalNgn,
+        paidNgn,
+        paymentStatus,
+        status,
+        approvalDate ?? '',
+        customerFeedback ?? '',
+        handledBy,
+        handledByUserId,
+        projectName,
+        agentCustomerId,
+        agentCustomerName,
+        linesStr,
+        quotationId
+      );
+    } else {
+      db.prepare(
+        `
       UPDATE quotations SET
         customer_id = ?,
         customer_name = ?,
@@ -9464,26 +9622,27 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
         lines_json = ?
       WHERE id = ?
     `
-    ).run(
-      customerID,
-      customerName,
-      dateLabel,
-      dateISO,
-      dueDateISO ?? '',
-      totalDisplay,
-      totalNgn,
-      paidNgn,
-      paymentStatus,
-      status,
-      approvalDate ?? '',
-      customerFeedback ?? '',
-      handledBy,
-      projectName,
-      null,
-      null,
-      linesStr,
-      quotationId
-    );
+      ).run(
+        customerID,
+        customerName,
+        dateLabel,
+        dateISO,
+        dueDateISO ?? '',
+        totalDisplay,
+        totalNgn,
+        paidNgn,
+        paymentStatus,
+        status,
+        approvalDate ?? '',
+        customerFeedback ?? '',
+        handledBy,
+        projectName,
+        agentCustomerId,
+        agentCustomerName,
+        linesStr,
+        quotationId
+      );
+    }
     if (basisAfterTotalIncrease != null) {
       db.prepare(`UPDATE quotations SET payment_gate_basis_total_ngn = ? WHERE id = ?`).run(
         basisAfterTotalIncrease,

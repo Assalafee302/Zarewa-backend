@@ -350,6 +350,7 @@ function mapQuotationRow(db, row) {
     approvalDate: row.approval_date,
     customerFeedback: row.customer_feedback,
     handledBy: row.handled_by,
+    handledByUserId: row.handled_by_user_id ?? '',
     agentCustomerID: row.agent_customer_id ?? '',
     agentCustomerName: row.agent_customer_name ?? '',
     projectName: row.project_name || '',

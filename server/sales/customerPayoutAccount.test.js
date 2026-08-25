@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../db.js';
 import { encryptBankAccount } from '../hrBankCrypto.js';
 import {
+  claimingStaffPayeeForUserId,
   listClaimingStaffForRefunds,
   savedCustomerPayoutAccount,
 } from './customerPayoutAccount.js';
@@ -108,6 +109,13 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(hit.customerName).toBe('Staff Claim Customer');
     expect(hit.userId).toBe(staffUserId);
     expect(typeof hit.roleKey).toBe('string');
+  });
+
+  it('claimingStaffPayeeForUserId resolves via HR sales customer link', () => {
+    const hit = claimingStaffPayeeForUserId(db, staffUserId);
+    expect(hit).toBeTruthy();
+    expect(hit.customerID).toBe('CUS-HR-CLAIM');
+    expect(hit.userId).toBe(staffUserId);
   });
 
   it('partner wallet credit resolves HR bank when split omits payoutAccount', () => {

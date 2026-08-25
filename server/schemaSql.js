@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS quotations (
   approval_date TEXT,
   customer_feedback TEXT,
   handled_by TEXT,
+  handled_by_user_id TEXT,
   project_name TEXT,
   agent_customer_id TEXT,
   agent_customer_name TEXT,

@@ -1081,6 +1081,9 @@ function runMigrationsUnlocked(db) {
   if (!quotations.has('agent_customer_name')) {
     db.exec(`ALTER TABLE quotations ADD COLUMN agent_customer_name TEXT`);
   }
+  if (!quotations.has('handled_by_user_id')) {
+    db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);
+  }
 
   const customerRefunds = tableCols('customer_refunds');
   if (!customerRefunds.has('split_distributions_json')) {

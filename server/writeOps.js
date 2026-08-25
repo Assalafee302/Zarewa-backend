@@ -138,6 +138,10 @@ import {
 } from '../shared/lib/refundQuotationMoney.js';
 import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn } from './ap2ReceivedBasisOps.js';
 import {
+  resolveAppUserIdFromHandledByLabel,
+} from './sales/customerPayoutAccount.js';
+import { isBranchManagerPreparedByLabel } from '../shared/lib/preparedByRoleAlias.js';
+import {
   deliveryGateShouldBlockMutation,
   evaluateDeliveryPaymentRelease,
 } from './deliveryReleaseGate.js';
@@ -9126,21 +9130,16 @@ function syncQuotationLineRows(db, quotationId, linesJson) {
  * Uses a local HR lookup only (avoid circular import with staffPurchaseCreditOps).
  */
 function resolveQuotationHandledByStaffLink(db, payload, existing = null) {
-  const handledBy =
+  let handledBy =
     String(payload?.handledBy ?? existing?.handled_by ?? 'Sales').trim() || 'Sales';
   let handledByUserId = String(
     payload?.handledByUserId ?? payload?.handled_by_user_id ?? existing?.handled_by_user_id ?? ''
   ).trim();
+  const branchId = String(
+    payload?.branchId ?? payload?.branch_id ?? existing?.branch_id ?? ''
+  ).trim();
   if (!handledByUserId && handledBy && handledBy !== 'Sales') {
-    const u = db
-      .prepare(
-        `SELECT id FROM app_users
-         WHERE LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(?)
-            OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(?)
-         LIMIT 1`
-      )
-      .get(handledBy, handledBy);
-    if (u?.id) handledByUserId = String(u.id).trim();
+    handledByUserId = resolveAppUserIdFromHandledByLabel(db, handledBy, { branchId });
   }
 
   const explicitAgent = String(
@@ -9163,7 +9162,15 @@ function resolveQuotationHandledByStaffLink(db, payload, existing = null) {
     if (cid) {
       agentCustomerId = cid;
       const cust = db.prepare(`SELECT name FROM customers WHERE customer_id = ?`).get(cid);
-      agentCustomerName = String(cust?.name || handledBy).trim() || handledBy;
+      const u = db
+        .prepare(`SELECT display_name, username FROM app_users WHERE id = ?`)
+        .get(handledByUserId);
+      const personName = String(u?.display_name || u?.username || '').trim();
+      agentCustomerName = String(cust?.name || personName || handledBy).trim() || handledBy;
+      // Persist person name when quote still says "Branch Manager".
+      if (isBranchManagerPreparedByLabel(handledBy) && personName) {
+        handledBy = personName;
+      }
     }
   }
 

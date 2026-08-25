@@ -11,6 +11,11 @@ import {
   staffPurchaseCreditColumnsReady,
 } from '../staffPurchaseCreditOps.js';
 import { unclearedReceiptFloatBySalesCustomerIds } from './refundClaimingStaffUnclearedReceipts.js';
+import {
+  isBranchManagerPreparedByLabel,
+  preparedByRoleTitleAgreesWithPayee,
+  roleKeysForPreparedByLabel,
+} from '../../shared/lib/preparedByRoleAlias.js';
 
 function trim(v) {
   return String(v ?? '').trim();
@@ -217,9 +222,13 @@ export function claimingStaffPayeeForUserId(db, userId) {
 
 /**
  * Resolve a prepared-by / handled-by display label to an active app_users.id.
- * Exact match only (display name or username) — fuzzy matching wrongly pinned Suleiman/Abdulrahman.
+ * Exact display/username first; legacy role titles (Branch Manager) map to the
+ * unique BM login for the quotation branch.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} label
+ * @param {{ branchId?: string }} [opts]
  */
-export function resolveAppUserIdFromHandledByLabel(db, label) {
+export function resolveAppUserIdFromHandledByLabel(db, label, opts = {}) {
   const name = trim(label);
   if (!name || name.toLowerCase() === 'sales') return '';
 
@@ -255,7 +264,44 @@ export function resolveAppUserIdFromHandledByLabel(db, label) {
     seen.add(id);
     unique.push(id);
   }
-  return unique.length === 1 ? unique[0] : '';
+  if (unique.length === 1) return unique[0];
+
+  const roleKeys = roleKeysForPreparedByLabel(name);
+  if (!roleKeys.length) return '';
+
+  const branchId = trim(opts.branchId);
+  const hasHrBranch = hasColumn(db, 'hr_staff_profiles', 'branch_id');
+  const hasUserBranch = hasColumn(db, 'app_users', 'workspace_branch_id');
+  const rolePlaceholders = roleKeys.map(() => '?').join(', ');
+  let sql = `SELECT u.id
+             FROM app_users u
+             LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
+             WHERE LOWER(TRIM(COALESCE(u.status, 'active'))) = 'active'
+               AND LOWER(TRIM(COALESCE(u.role_key, ''))) IN (${rolePlaceholders})`;
+  const args = [...roleKeys];
+  if (branchId && branchId !== 'ALL' && (hasHrBranch || hasUserBranch)) {
+    const parts = [];
+    if (hasHrBranch) {
+      parts.push(`trim(IFNULL(p.branch_id, '')) = ?`);
+      args.push(branchId);
+    }
+    if (hasUserBranch) {
+      parts.push(`trim(IFNULL(u.workspace_branch_id, '')) = ?`);
+      args.push(branchId);
+    }
+    sql += ` AND (${parts.join(' OR ')})`;
+  }
+  sql += ` ORDER BY u.display_name COLLATE NOCASE LIMIT 5`;
+  const roleRows = db.prepare(sql).all(...args);
+  const roleIds = [];
+  const roleSeen = new Set();
+  for (const row of roleRows) {
+    const id = trim(row.id);
+    if (!id || roleSeen.has(id)) continue;
+    roleSeen.add(id);
+    roleIds.push(id);
+  }
+  return roleIds.length === 1 ? roleIds[0] : '';
 }
 
 function namesEqualForPayee(a, b) {
@@ -294,16 +340,36 @@ function namesAgreeForHandledBy(a, b) {
   return shorter.every((t) => longer.includes(t));
 }
 
+function handledByLabelAgreesWithPayee(label, payee) {
+  if (!label || String(label).trim().toLowerCase() === 'sales') return true;
+  if (namesAgreeForHandledBy(payee?.name, label)) return true;
+  if (preparedByRoleTitleAgreesWithPayee(label, payee)) return true;
+  return false;
+}
+
 function backfillQuotationHandlerLink(db, { hasHandlerCol, ref, userId, payee, handledByLabel }) {
   if (!hasHandlerCol || !userId || !payee?.customerID) return;
+  const displayName = trim(payee.name) || trim(handledByLabel);
   try {
+    // When legacy label was a role title, rewrite handled_by to the person's real name.
+    if (isBranchManagerPreparedByLabel(handledByLabel) && displayName) {
+      db.prepare(
+        `UPDATE quotations
+         SET handled_by = ?,
+             handled_by_user_id = ?,
+             agent_customer_id = ?,
+             agent_customer_name = ?
+         WHERE id = ?`
+      ).run(displayName, userId, payee.customerID, displayName, ref);
+      return;
+    }
     db.prepare(
       `UPDATE quotations
        SET handled_by_user_id = ?,
            agent_customer_id = ?,
            agent_customer_name = ?
        WHERE id = ?`
-    ).run(userId, payee.customerID, payee.name || handledByLabel, ref);
+    ).run(userId, payee.customerID, displayName || handledByLabel, ref);
   } catch {
     /* best-effort */
   }
@@ -334,6 +400,7 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
   const handledByLabel = trim(q.handled_by);
   const agentCustomerId = trim(q.agent_customer_id);
   const agentCustomerName = trim(q.agent_customer_name);
+  const quoteBranchId = trim(q.branch_id);
 
   let payee = null;
   let source = '';
@@ -342,16 +409,26 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
   if (handledByUserId) {
     const byUser = claimingStaffPayeeForUserId(db, handledByUserId);
     if (byUser) {
-      const agrees =
-        !handledByLabel ||
-        handledByLabel.toLowerCase() === 'sales' ||
-        namesAgreeForHandledBy(byUser.name, handledByLabel);
+      const agrees = handledByLabelAgreesWithPayee(handledByLabel, byUser);
       if (agrees) {
         payee = byUser;
         source = 'handled_by_user_id';
+        // Rewrite legacy "Branch Manager" label to the person's real display name.
+        if (isBranchManagerPreparedByLabel(handledByLabel) && payee.name) {
+          backfillQuotationHandlerLink(db, {
+            hasHandlerCol,
+            ref,
+            userId: handledByUserId,
+            payee,
+            handledByLabel,
+          });
+          source = 'handled_by_role_title';
+        }
       } else {
-        // Stale backfill (often Suleiman/Abdulrahman) — try Prepared by text, else discard.
-        const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel);
+        // Stale backfill (wrong person) — try Prepared by text, else discard.
+        const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel, {
+          branchId: quoteBranchId,
+        });
         if (fromLabel && fromLabel !== handledByUserId) {
           const relinked = claimingStaffPayeeForUserId(db, fromLabel);
           if (relinked) {
@@ -377,12 +454,16 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
   }
 
   if (!payee && handledByLabel) {
-    const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel);
+    const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel, {
+      branchId: quoteBranchId,
+    });
     if (fromLabel) {
       resolvedUserId = fromLabel;
       payee = claimingStaffPayeeForUserId(db, fromLabel);
       if (payee) {
-        source = 'handled_by_name';
+        source = isBranchManagerPreparedByLabel(handledByLabel)
+          ? 'handled_by_role_title'
+          : 'handled_by_name';
         backfillQuotationHandlerLink(db, {
           hasHandlerCol,
           ref,
@@ -401,10 +482,10 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
     const byAgent = rows.find((r) => String(r.customerID || '').trim() === agentCustomerId) || null;
     if (byAgent) {
       const agrees =
-        !handledByLabel ||
-        handledByLabel.toLowerCase() === 'sales' ||
-        namesAgreeForHandledBy(byAgent.name, handledByLabel) ||
-        namesAgreeForHandledBy(agentCustomerName, handledByLabel);
+        handledByLabelAgreesWithPayee(handledByLabel, byAgent) ||
+        namesAgreeForHandledBy(agentCustomerName, handledByLabel) ||
+        (isBranchManagerPreparedByLabel(handledByLabel) &&
+          isBranchManagerPreparedByLabel(agentCustomerName));
       if (agrees) {
         payee = byAgent;
         source = 'agent_customer_id';
@@ -415,14 +496,14 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
   return {
     ok: true,
     quotationRef: ref,
-    handledBy: handledByLabel,
+    handledBy: payee?.name && isBranchManagerPreparedByLabel(handledByLabel) ? payee.name : handledByLabel,
     handledByUserId: handledByUserId || resolvedUserId || '',
     agentCustomerId: payee?.customerID || '',
     source,
     payee,
     unresolved: !payee,
     hint: payee
-      ? source.startsWith('handled_by_name')
+      ? source.startsWith('handled_by_name') || source === 'handled_by_role_title'
         ? `Matched prepared-by “${handledByLabel}” to ${payee.name} (HR bank).`
         : 'Quotation maker / handled-by staff (HR bank).'
       : handledByLabel

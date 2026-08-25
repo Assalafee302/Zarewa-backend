@@ -121,7 +121,7 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
     .prepare(
       `SELECT p.user_id, p.employee_no, p.sales_customer_id, p.bank_account_name, p.bank_name,
               p.bank_account_no, p.bank_account_no_masked, p.branch_id,
-              u.display_name, u.username, u.status AS user_status,
+              u.display_name, u.username, u.role_key, u.status AS user_status,
               c.name AS customer_name, c.status AS customer_status
        FROM hr_staff_profiles p
        JOIN app_users u ON u.id = p.user_id
@@ -145,13 +145,19 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
       const encPresent = Boolean(trim(row.bank_account_no));
       // Fast hasBank: name + (masked or encrypted blob). Decrypt only at payout submit.
       const hasBank = Boolean(bankName && (masked || encPresent));
-      const name =
-        trim(row.display_name || row.username || row.customer_name) || customerID;
+      const displayName = trim(row.display_name);
+      const username = trim(row.username);
+      const customerName = trim(row.customer_name);
+      const name = displayName || username || customerName || customerID;
 
       return {
         customerID,
         userId: trim(row.user_id),
         name,
+        /** Previous quote labels may still use sales-customer name after display_name changes. */
+        customerName,
+        username,
+        roleKey: trim(row.role_key).toLowerCase(),
         employeeNo: trim(row.employee_no),
         bankName: hasBank ? bankName : '',
         bankAccountNoMasked: hasBank ? masked || '****' : '',

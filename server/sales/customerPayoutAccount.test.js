@@ -104,6 +104,10 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(hit.bankName).toBe('Access Bank');
     expect(String(hit.bankAccountNoMasked || '')).toMatch(/8899$/);
     expect(String(hit.bankAccountNoMasked || '')).not.toContain('556677');
+    expect(hit.name).toBe('Amina Staff');
+    expect(hit.customerName).toBe('Staff Claim Customer');
+    expect(hit.userId).toBe(staffUserId);
+    expect(typeof hit.roleKey).toBe('string');
   });
 
   it('partner wallet credit resolves HR bank when split omits payoutAccount', () => {

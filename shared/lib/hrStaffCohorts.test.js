@@ -3,6 +3,8 @@ import {
   HR_PAYROLL_GROUPS,
   HQ_CASHIER_BRANCH_ID,
   isBeneficiaryOnlyPayrollGroup,
+  isChairmanOfficePayrollGroup,
+  isCompanyHrPayrollGroup,
   isErpAccessRestrictedPayrollGroup,
   isPayrollRunEligible,
   isRefundClaimingStaffEligiblePayrollGroup,
@@ -23,16 +25,36 @@ describe('hrStaffCohorts payroll rules', () => {
     expect(isStatutoryPayrollExempt(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
   });
 
-  it('HQ admin and mining are included in HQ payroll runs with PAYE and pension', () => {
-    for (const g of [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN]) {
-      expect(isPayrollRunEligible(g)).toBe(true);
-      expect(requiresPaye(g)).toBe(true);
-      expect(requiresEmployeePensionDeduction(g)).toBe(true);
-      expect(isStatutoryPayrollExempt(g)).toBe(false);
-    }
+  it('HQ admin is included in HQ payroll runs with PAYE and pension', () => {
+    expect(isPayrollRunEligible(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+    expect(requiresPaye(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+    expect(requiresEmployeePensionDeduction(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+    expect(isStatutoryPayrollExempt(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(false);
   });
 
-  it('scholarship and domestic are exempt from HQ payroll runs', () => {
+  it('mining stays on HQ payroll runs but is not company HR', () => {
+    expect(isPayrollRunEligible(HR_PAYROLL_GROUPS.MINING)).toBe(true);
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.MINING)).toBe(false);
+    expect(isChairmanOfficePayrollGroup(HR_PAYROLL_GROUPS.MINING)).toBe(true);
+  });
+
+  it('scholarship and domestic are Chairman Office, not company HR', () => {
+    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
+      expect(isCompanyHrPayrollGroup(g)).toBe(false);
+      expect(isChairmanOfficePayrollGroup(g)).toBe(true);
+    }
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+  });
+
+  it('scholarship and domestic are Chairman Office, not company HR', () => {
+    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
+      expect(isCompanyHrPayrollGroup(g)).toBe(false);
+      expect(isChairmanOfficePayrollGroup(g)).toBe(true);
+    }
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+  });
     for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
       expect(isPayrollRunEligible(g)).toBe(false);
       expect(requiresPaye(g)).toBe(false);

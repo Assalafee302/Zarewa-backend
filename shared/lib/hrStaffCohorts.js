@@ -1,5 +1,6 @@
 /**
- * HR staff cohorts — branch employees vs scholarship, domestic, HQ, and mining.
+ * HR staff cohorts — company employees vs Chairman Office people.
+ * Household, mining, and scholarships are not company HR; they live on Chairman Office.
  * Frontend copies via `npm run sync:shared` → src/shared/hrStaffCohorts.js
  */
 
@@ -11,16 +12,24 @@ export const HR_PAYROLL_GROUPS = {
   DOMESTIC: 'chairman_staffs',
 };
 
-/** Listed in the main Employees directory (ERP logins: branch, HQ, and mining). */
+/** Company HR Employees directory — branch and HQ only. */
 export const EMPLOYEE_DIRECTORY_GROUPS = [
   HR_PAYROLL_GROUPS.BRANCH_OPS,
   HR_PAYROLL_GROUPS.HQ_ADMIN,
-  HR_PAYROLL_GROUPS.MINING,
 ];
 
 export const SCHOLARSHIP_GROUPS = [HR_PAYROLL_GROUPS.SCHOLARSHIP];
 
 export const DOMESTIC_GROUPS = [HR_PAYROLL_GROUPS.DOMESTIC];
+
+export const MINING_GROUPS = [HR_PAYROLL_GROUPS.MINING];
+
+/** Chairman Office people — not listed or managed as company HR. */
+export const CHAIRMAN_OFFICE_GROUPS = [
+  HR_PAYROLL_GROUPS.DOMESTIC,
+  HR_PAYROLL_GROUPS.SCHOLARSHIP,
+  HR_PAYROLL_GROUPS.MINING,
+];
 
 /** Executive family and household staff — HR records only; no ERP login. */
 export const BENEFICIARY_ONLY_PAYROLL_GROUPS = [
@@ -41,7 +50,7 @@ export const REFUND_CLAIMING_EXCLUDED_PAYROLL_GROUPS = [
   HR_PAYROLL_GROUPS.MINING,
 ];
 
-export const HQ_SPECIAL_GROUPS = [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN];
+export const HQ_SPECIAL_GROUPS = [HR_PAYROLL_GROUPS.HQ_ADMIN];
 
 /** Not tied to a branch; excluded from daily attendance roll. */
 export const NON_BRANCH_PAYROLL_GROUPS = [
@@ -94,6 +103,20 @@ export function isScholarshipBeneficiary(payrollGroup) {
 /** @param {string | null | undefined} payrollGroup */
 export function isDomesticStaff(payrollGroup) {
   return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.DOMESTIC;
+}
+
+export function isMiningStaff(payrollGroup) {
+  return normalizePayrollGroup(payrollGroup) === HR_PAYROLL_GROUPS.MINING;
+}
+
+/** Company Employees / org chart / HR dashboard. */
+export function isCompanyHrPayrollGroup(payrollGroup) {
+  return EMPLOYEE_DIRECTORY_GROUPS.includes(normalizePayrollGroup(payrollGroup));
+}
+
+/** Household, scholarships, and mining — Chairman Office, not company HR. */
+export function isChairmanOfficePayrollGroup(payrollGroup) {
+  return CHAIRMAN_OFFICE_GROUPS.includes(normalizePayrollGroup(payrollGroup));
 }
 
 /** @param {string | null | undefined} payrollGroup */
@@ -185,7 +208,7 @@ export function payrollGroupLabel(payrollGroup) {
 }
 
 /**
- * @param {'employees' | 'scholarship' | 'domestic' | 'hq_special' | 'all'} cohort
+ * @param {'employees' | 'scholarship' | 'domestic' | 'mining' | 'hq_special' | 'chairman_office' | 'all'} cohort
  * @returns {string[] | null} payroll groups to include, or null for all
  */
 export function payrollGroupsForCohort(cohort) {
@@ -193,6 +216,8 @@ export function payrollGroupsForCohort(cohort) {
   if (c === 'all') return null;
   if (c === 'scholarship') return [...SCHOLARSHIP_GROUPS];
   if (c === 'domestic') return [...DOMESTIC_GROUPS];
+  if (c === 'mining' || c === 'mining_div') return [...MINING_GROUPS];
+  if (c === 'chairman_office' || c === 'chairman') return [...CHAIRMAN_OFFICE_GROUPS];
   if (c === 'hq_special' || c === 'hq-special') return [...HQ_SPECIAL_GROUPS];
   return [...EMPLOYEE_DIRECTORY_GROUPS];
 }

@@ -342,7 +342,7 @@ import {
   listBulkImportRuns,
   previewBulkStaffImport,
 } from './hrStaffBulkImport.js';
-import { cleanupHrStaffDuplicates, scanHrStaffDuplicates } from './hrStaffDuplicateCleanup.js';
+import { cleanupHrStaffDuplicates, mergeHrStaffUserInto, scanHrStaffDuplicates } from './hrStaffDuplicateCleanup.js';
 import {
   approveExecutivePayment,
   buildExecutiveBeneficiaryBankExport,
@@ -1543,6 +1543,32 @@ export function registerHrApi(app, db) {
     } catch (e) {
       console.error('[hr/staff/bulk-delete]', e);
       return hrApiFail(res, e, 'Could not delete selected staff.');
+    }
+  });
+
+  app.post('/api/hr/staff/merge', requireHrAny('hr.staff.manage'), (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      const fromUserId = String(req.body?.fromUserId || '').trim();
+      const toUserId = String(req.body?.toUserId || '').trim();
+      if (!fromUserId || !toUserId) {
+        return res.status(400).json({ ok: false, error: 'Select the extra login and the login to keep.' });
+      }
+      const scope = hrListScope(req);
+      const fromGate = assertStaffUserIdInHrScope(db, scope, fromUserId);
+      if (!fromGate.ok) return res.status(fromGate.status || 403).json(fromGate);
+      const toRole = db.prepare(`SELECT role_key AS roleKey FROM app_users WHERE id = ?`).get(toUserId)?.roleKey;
+      const keepIsProtected = toRole === 'admin' || toRole === 'md';
+      if (!keepIsProtected) {
+        const toGate = assertStaffUserIdInHrScope(db, scope, toUserId);
+        if (!toGate.ok) return res.status(toGate.status || 403).json(toGate);
+      }
+      const r = mergeHrStaffUserInto(db, fromUserId, toUserId, req.user?.id);
+      if (!r.ok) return res.status(400).json(r);
+      return res.json(r);
+    } catch (e) {
+      console.error('[hr/staff/merge]', e);
+      return hrApiFail(res, e, 'Could not merge staff logins.');
     }
   });
 

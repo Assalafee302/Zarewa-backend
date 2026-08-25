@@ -386,9 +386,13 @@ function mergeStaffProfileFields(db, winnerId, loserId) {
   if (!hrTableExists(db, 'hr_staff_profiles')) return;
   const winner = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(winnerId);
   const loser = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(loserId);
-  if (!winner || !loser) return;
+  if (!loser) return;
+  if (!winner) {
+    db.prepare(`UPDATE hr_staff_profiles SET user_id = ? WHERE user_id = ?`).run(winnerId, loserId);
+    return;
+  }
 
-  const skip = new Set(['user_id', 'employee_no']);
+  const skip = new Set(['user_id']);
   const patch = {};
   for (const [key, val] of Object.entries(loser)) {
     if (skip.has(key)) continue;
@@ -404,6 +408,13 @@ function mergeStaffProfileFields(db, winnerId, loserId) {
         (typeof lVal === 'number' && lVal !== 0) ||
         typeof lVal !== 'string');
     if (wEmpty && lPresent) patch[key] = lVal;
+  }
+
+  const winnerIsStub =
+    String(winner.job_title || '').trim() === 'Pending HR setup' ||
+    (!String(winner.job_title || '').trim() && !(Number(winner.base_salary_ngn) > 0));
+  if (winnerIsStub && String(loser.employee_no || '').trim()) {
+    patch.employee_no = loser.employee_no;
   }
 
   if (winner.profile_extra_json || loser.profile_extra_json) {
@@ -435,7 +446,7 @@ function mergeStaffProfileFields(db, winnerId, loserId) {
 }
 
 /** @param {import('better-sqlite3').Database} db */
-function mergeAppUserFields(db, winnerId, loserId) {
+function mergeAppUserFields(db, winnerId, loserId, { preferLoserDisplayName = false } = {}) {
   const winner = db
     .prepare(`SELECT email, avatar_url, display_name FROM app_users WHERE id = ?`)
     .get(winnerId);
@@ -445,8 +456,12 @@ function mergeAppUserFields(db, winnerId, loserId) {
   if (!winner || !loser) return;
   const email = String(winner.email || '').trim() || String(loser.email || '').trim() || null;
   const avatar = String(winner.avatar_url || '').trim() || String(loser.avatar_url || '').trim() || null;
-  const displayName =
-    String(winner.display_name || '').trim() || String(loser.display_name || '').trim() || null;
+  const winnerName = String(winner.display_name || '').trim();
+  const loserName = String(loser.display_name || '').trim();
+  const genericKeep = /^(admin|administrator|md|system)$/i.test(winnerName);
+  const displayName = preferLoserDisplayName && loserName && (genericKeep || !winnerName)
+    ? loserName
+    : winnerName || loserName || null;
   db.prepare(`UPDATE app_users SET email = ?, avatar_url = ?, display_name = ? WHERE id = ?`).run(
     email,
     avatar,
@@ -473,13 +488,13 @@ export function mergeHrStaffUserInto(db, fromUserId, toUserId, actorUserId) {
   const fromRow = db.prepare(`SELECT id, username, role_key AS roleKey FROM app_users WHERE id = ?`).get(fromId);
   const toRow = db.prepare(`SELECT id, username, role_key AS roleKey FROM app_users WHERE id = ?`).get(toId);
   if (!fromRow || !toRow) return { ok: false, error: 'User not found.' };
-  if (PROTECTED_ROLES.has(fromRow.roleKey) || PROTECTED_ROLES.has(toRow.roleKey)) {
-    return { ok: false, error: 'Protected system account.' };
+  if (PROTECTED_ROLES.has(fromRow.roleKey)) {
+    return { ok: false, error: 'The admin/MD system login cannot be absorbed into another account.' };
   }
 
   try {
     db.transaction(() => {
-      mergeAppUserFields(db, toId, fromId);
+      mergeAppUserFields(db, toId, fromId, { preferLoserDisplayName: PROTECTED_ROLES.has(toRow.roleKey) });
       mergeStaffProfileFields(db, toId, fromId);
       for (const [table, column] of STAFF_SUBJECT_USER_COLUMNS) {
         repointUserColumn(db, table, column, fromId, toId);
@@ -494,6 +509,22 @@ export function mergeHrStaffUserInto(db, fromUserId, toUserId, actorUserId) {
       }
       db.prepare(`DELETE FROM app_users WHERE id = ?`).run(fromId);
     })();
+    try {
+      appendHrAuditEvent(db, {
+        actorUserId: actorUserId || null,
+        action: 'hr.staff.merge',
+        entityKind: 'hr_staff_profile',
+        entityId: toId,
+        details: {
+          fromUserId: fromId,
+          fromUsername: fromRow.username,
+          toUsername: toRow.username,
+          keptProtectedLogin: PROTECTED_ROLES.has(toRow.roleKey),
+        },
+      });
+    } catch {
+      /* audit table optional */
+    }
     return {
       ok: true,
       fromUserId: fromId,

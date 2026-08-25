@@ -946,7 +946,7 @@ import { registerMobileApi } from './mobileApi.js';
 import { registerLivenessRoutes } from './http/livenessRoutes.js';
 import { registerFinanceDiagnosticRoutes } from './http/financeDiagnosticRoutes.js';
 import { registerPartnerWalletRoutes } from './http/partnerWalletRoutes.js';
-import { registerRefundClaimingStaffRoutes } from './http/refundClaimingStaffRoutes.js';
+import { registerRefundClaimingStaffRoutes, ensureQuotationHandlerSalesCustomer } from './http/refundClaimingStaffRoutes.js';
 import { registerWorkspaceListRoutes } from './http/workspaceListRoutes.js';
 import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
 import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
@@ -11259,6 +11259,7 @@ export function registerHttpApi(app, db) {
       }
       const id = write.insertQuotation(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       syncQuotationStaffPurchaseFlag(db, id);
+      ensureQuotationHandlerSalesCustomer(db, id);
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
@@ -11363,6 +11364,7 @@ export function registerHttpApi(app, db) {
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
         const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
         syncQuotationStaffPurchaseFlag(db, qid);
+        ensureQuotationHandlerSalesCustomer(db, qid);
         const quotation = getQuotation(db, qid);
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);

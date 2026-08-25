@@ -202,3 +202,97 @@ export function claimingStaffPayeeForUserId(db, userId) {
   const rows = listClaimingStaffForRefunds(db, 'ALL');
   return rows.find((r) => String(r.customerID || '').trim() === cid) || null;
 }
+
+/**
+ * Default refund sales staff for a quotation: handled_by_user_id → HR bank.
+ * Falls back to agent_customer_id when user id is missing (legacy quotes).
+ */
+export function defaultRefundPayeeForQuotation(db, quotationRef) {
+  const ref = trim(quotationRef);
+  if (!ref) return { ok: false, error: 'quotationRef is required.' };
+
+  const hasHandlerCol = hasColumn(db, 'quotations', 'handled_by_user_id');
+  const q = db
+    .prepare(
+      hasHandlerCol
+        ? `SELECT id, handled_by, handled_by_user_id, agent_customer_id, agent_customer_name, branch_id
+           FROM quotations WHERE id = ?`
+        : `SELECT id, handled_by, agent_customer_id, agent_customer_name, branch_id
+           FROM quotations WHERE id = ?`
+    )
+    .get(ref);
+  if (!q) return { ok: false, error: 'Quotation not found.' };
+
+  const handledByUserId = trim(q.handled_by_user_id);
+  const handledByLabel = trim(q.handled_by);
+  const agentCustomerId = trim(q.agent_customer_id);
+
+  let payee = null;
+  let source = '';
+  if (handledByUserId) {
+    payee = claimingStaffPayeeForUserId(db, handledByUserId);
+    if (payee) source = 'handled_by_user_id';
+  }
+  if (!payee && agentCustomerId) {
+    const rows = listClaimingStaffForRefunds(db, 'ALL');
+    payee = rows.find((r) => String(r.customerID || '').trim() === agentCustomerId) || null;
+    if (payee) source = 'agent_customer_id';
+  }
+
+  return {
+    ok: true,
+    quotationRef: ref,
+    handledBy: handledByLabel,
+    handledByUserId: handledByUserId || '',
+    agentCustomerId: agentCustomerId || '',
+    source,
+    payee,
+    unresolved: !payee,
+    hint: payee
+      ? 'Quotation maker / handled-by staff (HR bank).'
+      : handledByUserId
+        ? 'Handled-by user has no HR sales-customer / bank link yet — pick company staff or add HR bank.'
+        : 'Quotation has no handled-by user id — pick company staff, or re-save the quotation with Handled by set.',
+  };
+}
+
+/**
+ * Active logins with HR profiles for quotation “Handled by” (not settings-gated).
+ */
+export function listHandledByStaffForQuotations(db, opts = {}) {
+  const branchId = trim(opts.branchId);
+  if (!hasColumn(db, 'hr_staff_profiles', 'user_id')) return [];
+
+  const branchSql =
+    branchId && branchId !== 'ALL'
+      ? ` AND (
+           trim(IFNULL(p.branch_id, '')) = ?
+           OR trim(IFNULL(p.branch_id, '')) = ''
+           OR trim(IFNULL(u.workspace_branch_id, '')) = ?
+         )`
+      : '';
+  const args = branchId && branchId !== 'ALL' ? [branchId, branchId] : [];
+
+  const rows = db
+    .prepare(
+      `SELECT u.id AS user_id, u.display_name, u.username, u.role_key, u.status AS user_status,
+              p.employee_no, p.branch_id AS hr_branch_id, p.sales_customer_id
+       FROM app_users u
+       JOIN hr_staff_profiles p ON p.user_id = u.id
+       WHERE LOWER(TRIM(COALESCE(u.status, 'active'))) = 'active'
+         ${branchSql}
+       ORDER BY u.display_name COLLATE NOCASE
+       LIMIT 400`
+    )
+    .all(...args);
+
+  return rows.map((row) => ({
+    id: trim(row.user_id),
+    name: trim(row.display_name || row.username || row.user_id),
+    username: trim(row.username),
+    roleKey: trim(row.role_key).toLowerCase(),
+    employeeNo: trim(row.employee_no),
+    branchId: trim(row.hr_branch_id),
+    hasSalesCustomer: Boolean(trim(row.sales_customer_id)),
+  }));
+}

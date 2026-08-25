@@ -23,6 +23,9 @@ export const ASSOCIATED_STAFF_READ_PERMS = [
   ...SALES_DOMAIN_PERMS,
   'operations.view',
   'manager.dashboard',
+  'refunds.request',
+  'refunds.approve',
+  'finance.approve',
 ];
 
 export const ASSOCIATED_STAFF_MANAGE_PERMS = [

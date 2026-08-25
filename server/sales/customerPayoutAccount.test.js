@@ -6,6 +6,7 @@ import { createDatabase } from '../db.js';
 import { encryptBankAccount } from '../hrBankCrypto.js';
 import {
   claimingStaffPayeeForUserId,
+  defaultRefundPayeeForQuotation,
   listClaimingStaffForRefunds,
   savedCustomerPayoutAccount,
 } from './customerPayoutAccount.js';
@@ -116,6 +117,26 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(hit).toBeTruthy();
     expect(hit.customerID).toBe('CUS-HR-CLAIM');
     expect(hit.userId).toBe(staffUserId);
+  });
+
+  it('defaultRefundPayeeForQuotation uses handled_by_user_id', () => {
+    const hasCol = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'handled_by_user_id');
+    if (!hasCol) {
+      db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);
+    }
+    db.prepare(
+      `INSERT INTO quotations (
+         id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status,
+         handled_by, handled_by_user_id, branch_id, lines_json
+       ) VALUES (
+         'QT-HB-1', 'CUS-HR-CLAIM', 'Staff Claim Customer', '2026-01-01', 1000, 1000, 'Paid', 'Approved',
+         'Amina Staff', ?, 'BR-KD', '{}'
+       )`
+    ).run(staffUserId);
+    const r = defaultRefundPayeeForQuotation(db, 'QT-HB-1');
+    expect(r.ok).toBe(true);
+    expect(r.payee?.customerID).toBe('CUS-HR-CLAIM');
+    expect(r.source).toBe('handled_by_user_id');
   });
 
   it('partner wallet credit resolves HR bank when split omits payoutAccount', () => {

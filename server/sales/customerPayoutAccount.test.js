@@ -139,6 +139,36 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(r.source).toBe('handled_by_user_id');
   });
 
+  it('defaultRefundPayeeForQuotation resolves legacy handled_by name', () => {
+    const hasCol = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'handled_by_user_id');
+    if (!hasCol) {
+      db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);
+    }
+    db.prepare(`UPDATE app_users SET display_name = 'Suleiman Abdullahi Liman' WHERE id = ?`).run(staffUserId);
+    db.prepare(
+      `INSERT INTO quotations (
+         id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status,
+         handled_by, handled_by_user_id, branch_id, lines_json
+       ) VALUES (
+         'QT-HB-NAME', 'CUS-OTHER', 'Other', '2026-01-01', 1000, 1000, 'Paid', 'Approved',
+         'Suleiman Abdullahi Liman', NULL, 'BR-KD', '{}'
+       )`
+    ).run();
+    if (!db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get('CUS-OTHER')) {
+      db.prepare(
+        `INSERT INTO customers (customer_id, name, branch_id, status) VALUES ('CUS-OTHER', 'Other', 'BR-KD', 'Active')`
+      ).run();
+    }
+    const r = defaultRefundPayeeForQuotation(db, 'QT-HB-NAME');
+    expect(r.ok).toBe(true);
+    expect(r.payee?.userId).toBe(staffUserId);
+    expect(r.source).toBe('handled_by_name');
+    const backfilled = db
+      .prepare(`SELECT handled_by_user_id FROM quotations WHERE id = ?`)
+      .get('QT-HB-NAME');
+    expect(String(backfilled?.handled_by_user_id || '')).toBe(String(staffUserId));
+  });
+
   it('partner wallet credit resolves HR bank when split omits payoutAccount', () => {
     const splitJson = JSON.stringify([
       {

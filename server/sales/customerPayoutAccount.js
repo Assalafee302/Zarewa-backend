@@ -204,8 +204,83 @@ export function claimingStaffPayeeForUserId(db, userId) {
 }
 
 /**
+ * Resolve a prepared-by / handled-by display label to an active app_users.id.
+ * Legacy quotes only stored the name string (e.g. "Suleiman Abdullahi Liman").
+ */
+export function resolveAppUserIdFromHandledByLabel(db, label) {
+  const name = trim(label);
+  if (!name || name.toLowerCase() === 'sales') return '';
+
+  const exact = db
+    .prepare(
+      `SELECT id FROM app_users
+       WHERE LOWER(TRIM(COALESCE(status, 'active'))) = 'active'
+         AND (
+           LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(?)
+           OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(?)
+         )
+       ORDER BY display_name COLLATE NOCASE
+       LIMIT 2`
+    )
+    .all(name, name);
+  if (exact.length === 1) return trim(exact[0].id);
+  if (exact.length > 1) return trim(exact[0].id);
+
+  const rows = db
+    .prepare(
+      `SELECT id, display_name, username FROM app_users
+       WHERE LOWER(TRIM(COALESCE(status, 'active'))) = 'active'
+       ORDER BY display_name COLLATE NOCASE
+       LIMIT 800`
+    )
+    .all();
+
+  const norm = (s) =>
+    String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[.,]/g, ' ')
+      .replace(/\s+/g, ' ');
+  const target = norm(name);
+  const targetParts = target.split(' ').filter((p) => p.length > 1);
+  if (!targetParts.length) return '';
+
+  const scored = [];
+  for (const row of rows) {
+    const display = norm(row.display_name);
+    const username = norm(row.username);
+    if (!display && !username) continue;
+    if (display === target || username === target) {
+      scored.push({ id: trim(row.id), score: 100 });
+      continue;
+    }
+    // All quote-name tokens appear in display name (order-independent), unique preferred.
+    const displayParts = display.split(' ').filter((p) => p.length > 1);
+    if (
+      targetParts.length >= 2 &&
+      targetParts.every((p) => displayParts.includes(p))
+    ) {
+      scored.push({ id: trim(row.id), score: 80 + Math.min(targetParts.length, 10) });
+      continue;
+    }
+    if (
+      displayParts.length >= 2 &&
+      displayParts.every((p) => targetParts.includes(p))
+    ) {
+      scored.push({ id: trim(row.id), score: 70 + Math.min(displayParts.length, 10) });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  if (!scored.length) return '';
+  if (scored.length === 1) return scored[0].id;
+  // Ambiguous only if top scores tie.
+  if (scored[0].score > scored[1].score) return scored[0].id;
+  return '';
+}
+
+/**
  * Default refund sales staff for a quotation: handled_by_user_id → HR bank.
- * Falls back to agent_customer_id when user id is missing (legacy quotes).
+ * Legacy quotes: resolve handled_by name → login → ensure HR sales customer, and backfill user id.
  */
 export function defaultRefundPayeeForQuotation(db, quotationRef) {
   const ref = trim(quotationRef);
@@ -223,16 +298,45 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
     .get(ref);
   if (!q) return { ok: false, error: 'Quotation not found.' };
 
-  const handledByUserId = trim(q.handled_by_user_id);
+  let handledByUserId = trim(q.handled_by_user_id);
   const handledByLabel = trim(q.handled_by);
   const agentCustomerId = trim(q.agent_customer_id);
 
   let payee = null;
   let source = '';
+  let resolvedUserId = handledByUserId;
+
   if (handledByUserId) {
     payee = claimingStaffPayeeForUserId(db, handledByUserId);
     if (payee) source = 'handled_by_user_id';
   }
+
+  // Legacy quotes: "Prepared by Suleiman…" is only a name — map to the login + HR bank.
+  if (!payee && handledByLabel) {
+    const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel);
+    if (fromLabel) {
+      resolvedUserId = fromLabel;
+      payee = claimingStaffPayeeForUserId(db, fromLabel);
+      if (payee) {
+        source = 'handled_by_name';
+        if (hasHandlerCol && !handledByUserId) {
+          try {
+            db.prepare(
+              `UPDATE quotations
+               SET handled_by_user_id = ?,
+                   agent_customer_id = COALESCE(NULLIF(trim(agent_customer_id), ''), ?),
+                   agent_customer_name = COALESCE(NULLIF(trim(agent_customer_name), ''), ?)
+               WHERE id = ?`
+            ).run(fromLabel, payee.customerID, payee.name || handledByLabel, ref);
+            handledByUserId = fromLabel;
+          } catch {
+            /* backfill best-effort */
+          }
+        }
+      }
+    }
+  }
+
   if (!payee && agentCustomerId) {
     const rows = listClaimingStaffForRefunds(db, 'ALL');
     payee = rows.find((r) => String(r.customerID || '').trim() === agentCustomerId) || null;
@@ -243,15 +347,17 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
     ok: true,
     quotationRef: ref,
     handledBy: handledByLabel,
-    handledByUserId: handledByUserId || '',
-    agentCustomerId: agentCustomerId || '',
+    handledByUserId: handledByUserId || resolvedUserId || '',
+    agentCustomerId: agentCustomerId || payee?.customerID || '',
     source,
     payee,
     unresolved: !payee,
     hint: payee
-      ? 'Quotation maker / handled-by staff (HR bank).'
-      : handledByUserId
-        ? 'Handled-by user has no HR sales-customer / bank link yet — pick company staff or add HR bank.'
+      ? source === 'handled_by_name'
+        ? `Matched prepared-by “${handledByLabel}” to ${payee.name} (HR bank).`
+        : 'Quotation maker / handled-by staff (HR bank).'
+      : handledByLabel
+        ? `Could not link prepared-by “${handledByLabel}” to an HR staff login with a sales customer — pick them under Company staff, or ensure their HR profile is linked.`
         : 'Quotation has no handled-by user id — pick company staff, or re-save the quotation with Handled by set.',
   };
 }

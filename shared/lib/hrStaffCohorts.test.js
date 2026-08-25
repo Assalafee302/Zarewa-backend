@@ -42,25 +42,13 @@ describe('hrStaffCohorts payroll rules', () => {
     for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
       expect(isCompanyHrPayrollGroup(g)).toBe(false);
       expect(isChairmanOfficePayrollGroup(g)).toBe(true);
-    }
-    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
-    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
-  });
-
-  it('scholarship and domestic are Chairman Office, not company HR', () => {
-    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
-      expect(isCompanyHrPayrollGroup(g)).toBe(false);
-      expect(isChairmanOfficePayrollGroup(g)).toBe(true);
-    }
-    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
-    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
-  });
-    for (const g of [HR_PAYROLL_GROUPS.SCHOLARSHIP, HR_PAYROLL_GROUPS.DOMESTIC]) {
       expect(isPayrollRunEligible(g)).toBe(false);
       expect(requiresPaye(g)).toBe(false);
       expect(requiresEmployeePensionDeduction(g)).toBe(false);
       expect(isStatutoryPayrollExempt(g)).toBe(true);
     }
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
+    expect(isCompanyHrPayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
   });
 
   it('scholarship and domestic use executive benefits monthly pay', () => {

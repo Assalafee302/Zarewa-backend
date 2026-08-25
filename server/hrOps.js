@@ -1302,7 +1302,7 @@ export function getHrOrgChart(db, scope) {
       dataQuality: buildHrOrgDataQuality([], empty),
     };
   }
-  const staff = listHrStaff(db, scope, { includeInactive: false });
+  const staff = listHrStaff(db, scope, { includeInactive: false, cohort: 'employees' });
   const chart = buildHrOrgChart(staff);
   return {
     ...chart,
@@ -9313,7 +9313,7 @@ export function listRecentOrgSalaryChanges(db, scope, limit = 30) {
 }
 
 export function getHrReportsSummary(db, scope) {
-  const staff = listHrStaff(db, scope, { includeInactive: false });
+  const staff = listHrStaff(db, scope, { includeInactive: false, cohort: 'employees' });
   const runs = listPayrollRuns(db).filter(() => !scope?.viewAll || true);
   const byStatus = {};
   for (const run of runs) {

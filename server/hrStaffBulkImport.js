@@ -19,7 +19,7 @@ import {
   normalizeStaffNumberConfig,
 } from '../shared/lib/hrEmployeeNumber.js';
 import { getStaffNumberConfig } from './hrStaffNumbering.js';
-import { isBeneficiaryOnlyPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
+import { EMPLOYEE_DIRECTORY_GROUPS, isBeneficiaryOnlyPayrollGroup, normalizePayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { BENEFICIARY_NO_LOGIN_ERROR } from './hrStaffAccessPolicy.js';
 import { listStaffIdentityRows } from './hr/staffIdentityUniqueness.js';
 import {
@@ -783,9 +783,8 @@ function sanitizeAccountNumber(v) {
 }
 
 function sanitizePayrollGroup(v) {
-  const s = String(v || '').trim().toLowerCase();
-  const allowed = new Set(['branch_ops', 'hq_admin', 'mining_div', 'scholarship', 'chairman_staffs']);
-  return allowed.has(s) ? s : '';
+  const s = normalizePayrollGroup(v);
+  return EMPLOYEE_DIRECTORY_GROUPS.includes(s) ? s : '';
 }
 
 function sanitizePosInt(v) {

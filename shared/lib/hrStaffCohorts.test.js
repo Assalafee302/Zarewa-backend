@@ -5,6 +5,7 @@ import {
   isBeneficiaryOnlyPayrollGroup,
   isErpAccessRestrictedPayrollGroup,
   isPayrollRunEligible,
+  isRefundClaimingStaffEligiblePayrollGroup,
   isStatutoryPayrollExempt,
   payrollGroupMayHaveLogin,
   requiresEmployeePensionDeduction,
@@ -44,6 +45,15 @@ describe('hrStaffCohorts payroll rules', () => {
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(true);
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(true);
     expect(usesExecutiveBenefitsMonthlyPay(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(false);
+  });
+
+  it('excludes chairman, scholarship, and mining from refund claiming staff', () => {
+    expect(isRefundClaimingStaffEligiblePayrollGroup(HR_PAYROLL_GROUPS.BRANCH_OPS)).toBe(true);
+    expect(isRefundClaimingStaffEligiblePayrollGroup(HR_PAYROLL_GROUPS.HQ_ADMIN)).toBe(true);
+    expect(isRefundClaimingStaffEligiblePayrollGroup(HR_PAYROLL_GROUPS.DOMESTIC)).toBe(false);
+    expect(isRefundClaimingStaffEligiblePayrollGroup(HR_PAYROLL_GROUPS.SCHOLARSHIP)).toBe(false);
+    expect(isRefundClaimingStaffEligiblePayrollGroup(HR_PAYROLL_GROUPS.MINING)).toBe(false);
+    expect(isRefundClaimingStaffEligiblePayrollGroup('scholaship')).toBe(false);
   });
 
   it('beneficiary payroll groups cannot have ERP logins', () => {

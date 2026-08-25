@@ -31,6 +31,16 @@ export const BENEFICIARY_ONLY_PAYROLL_GROUPS = [
 /** Mining staff may log in but are limited to HR portal (no sales/finance/operations). */
 export const ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS = [HR_PAYROLL_GROUPS.MINING];
 
+/**
+ * Not eligible as refund claiming / sales-staff payout recipients.
+ * Chairman household, scholarship beneficiaries, and mining stay off the refund staff picker.
+ */
+export const REFUND_CLAIMING_EXCLUDED_PAYROLL_GROUPS = [
+  HR_PAYROLL_GROUPS.DOMESTIC,
+  HR_PAYROLL_GROUPS.SCHOLARSHIP,
+  HR_PAYROLL_GROUPS.MINING,
+];
+
 export const HQ_SPECIAL_GROUPS = [HR_PAYROLL_GROUPS.MINING, HR_PAYROLL_GROUPS.HQ_ADMIN];
 
 /** Not tied to a branch; excluded from daily attendance roll. */
@@ -53,8 +63,12 @@ export const PAYROLL_GROUP_LABELS = {
 
 /** @param {string | null | undefined} payrollGroup */
 export function normalizePayrollGroup(payrollGroup) {
-  const g = String(payrollGroup || HR_PAYROLL_GROUPS.BRANCH_OPS).trim();
-  return g || HR_PAYROLL_GROUPS.BRANCH_OPS;
+  const g = String(payrollGroup || HR_PAYROLL_GROUPS.BRANCH_OPS).trim().toLowerCase();
+  if (!g) return HR_PAYROLL_GROUPS.BRANCH_OPS;
+  if (g === 'scholaship' || g === 'scholarship_beneficiary') return HR_PAYROLL_GROUPS.SCHOLARSHIP;
+  if (g === 'chairman_staff' || g === 'domestic' || g === 'domestic_staff') return HR_PAYROLL_GROUPS.DOMESTIC;
+  if (g === 'mining' || g === 'mining_staff') return HR_PAYROLL_GROUPS.MINING;
+  return g;
 }
 
 /** @param {string | null | undefined} payrollGroup */
@@ -95,6 +109,11 @@ export function payrollGroupMayHaveLogin(payrollGroup) {
 /** Mining staff must not receive ERP operational roles. */
 export function isErpAccessRestrictedPayrollGroup(payrollGroup) {
   return ERP_ACCESS_RESTRICTED_PAYROLL_GROUPS.includes(normalizePayrollGroup(payrollGroup));
+}
+
+/** Branch / HQ admin may appear on refund claiming-staff lists; chairman, scholarship, mining may not. */
+export function isRefundClaimingStaffEligiblePayrollGroup(payrollGroup) {
+  return !REFUND_CLAIMING_EXCLUDED_PAYROLL_GROUPS.includes(normalizePayrollGroup(payrollGroup));
 }
 
 /** Included in HQ monthly payroll runs (not scholarship or domestic — those use Executive benefits). */

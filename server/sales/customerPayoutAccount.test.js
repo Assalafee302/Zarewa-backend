@@ -112,6 +112,23 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(typeof hit.roleKey).toBe('string');
   });
 
+  it('excludes chairman, scholarship, and mining payroll groups from claiming staff list', () => {
+    const hasPg = db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().some((c) => c.name === 'payroll_group');
+    if (!hasPg) return;
+
+    db.prepare(`UPDATE hr_staff_profiles SET payroll_group = 'mining_div' WHERE user_id = ?`).run(staffUserId);
+    expect(listClaimingStaffForRefunds(db, 'ALL').some((r) => r.userId === staffUserId)).toBe(false);
+
+    db.prepare(`UPDATE hr_staff_profiles SET payroll_group = 'scholarship' WHERE user_id = ?`).run(staffUserId);
+    expect(listClaimingStaffForRefunds(db, 'ALL').some((r) => r.userId === staffUserId)).toBe(false);
+
+    db.prepare(`UPDATE hr_staff_profiles SET payroll_group = 'chairman_staffs' WHERE user_id = ?`).run(staffUserId);
+    expect(listClaimingStaffForRefunds(db, 'ALL').some((r) => r.userId === staffUserId)).toBe(false);
+
+    db.prepare(`UPDATE hr_staff_profiles SET payroll_group = 'branch_ops' WHERE user_id = ?`).run(staffUserId);
+    expect(listClaimingStaffForRefunds(db, 'ALL').some((r) => r.userId === staffUserId)).toBe(true);
+  });
+
   it('claimingStaffPayeeForUserId resolves via HR sales customer link', () => {
     const hit = claimingStaffPayeeForUserId(db, staffUserId);
     expect(hit).toBeTruthy();
@@ -199,6 +216,8 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
     expect(String(row?.handled_by_user_id || '')).toBe(String(staffUserId));
     expect(String(row?.handled_by || '')).toBe('Suleiman Abdullahi Liman');
   });
+
+  it('defaultRefundPayeeForQuotation prefers Prepared by name over stale handled_by_user_id', () => {
     const hasCol = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'handled_by_user_id');
     if (!hasCol) {
       db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);

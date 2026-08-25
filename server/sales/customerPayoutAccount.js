@@ -16,6 +16,7 @@ import {
   preparedByRoleTitleAgreesWithPayee,
   roleKeysForPreparedByLabel,
 } from '../../shared/lib/preparedByRoleAlias.js';
+import { isRefundClaimingStaffEligiblePayrollGroup } from '../../shared/lib/hrStaffCohorts.js';
 
 function trim(v) {
   return String(v ?? '').trim();
@@ -140,10 +141,12 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
   const args =
     scope && scope !== 'ALL' ? (hasUserBranch ? [scope, scope] : [scope]) : [];
 
+  const hasPayrollGroup = hasColumn(db, 'hr_staff_profiles', 'payroll_group');
   const rows = db
     .prepare(
       `SELECT p.user_id, p.employee_no, p.sales_customer_id, p.bank_account_name, p.bank_name,
               p.bank_account_no, p.bank_account_no_masked, p.branch_id,
+              ${hasPayrollGroup ? 'p.payroll_group' : `'branch_ops' AS payroll_group`},
               u.display_name, u.username, u.role_key, u.status AS user_status,
               c.name AS customer_name, c.status AS customer_status
        FROM hr_staff_profiles p
@@ -157,6 +160,7 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
 
   const staffRows = rows
     .map((row) => {
+      if (!isRefundClaimingStaffEligiblePayrollGroup(row.payroll_group)) return null;
       const userStatus = trim(row.user_status || 'active').toLowerCase();
       if (userStatus && userStatus !== 'active') return null;
       const customerStatus = trim(row.customer_status || 'Active').toLowerCase();
@@ -181,6 +185,7 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
         username,
         roleKey: trim(row.role_key).toLowerCase(),
         employeeNo: trim(row.employee_no),
+        payrollGroup: trim(row.payroll_group) || 'branch_ops',
         bankName: hasBank ? bankName : '',
         bankAccountNoMasked: hasBank ? masked || '****' : '',
         hasBank,

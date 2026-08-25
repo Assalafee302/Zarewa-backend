@@ -87,6 +87,29 @@ export function registerRefundClaimingStaffRoutes(app, db) {
       }
     }
   );
+
+  /** Ensure an HR login has a sales-customer link so they can receive a refund allocation. */
+  app.post(
+    '/api/refunds/claiming-staff/ensure',
+    requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']),
+    (req, res) => {
+      try {
+        const userId = String(req.body?.userId || '').trim();
+        if (!userId) return res.status(400).json({ ok: false, error: 'userId is required.' });
+        const payee = claimingStaffPayeeForUserId(db, userId);
+        if (!payee?.customerID) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Could not link this login to an HR sales customer. Check the staff HR profile.',
+          });
+        }
+        res.json({ ok: true, payee });
+      } catch (e) {
+        console.error('[refunds/claiming-staff/ensure]', e);
+        res.status(500).json({ ok: false, error: 'Failed to ensure claiming staff link.' });
+      }
+    }
+  );
 }
 
 /** After quote save: ensure handled-by user has an HR sales customer for refunds. */
@@ -111,8 +134,8 @@ export function ensureQuotationHandlerSalesCustomer(db, quotationId) {
     const label = String(u?.display_name || u?.username || '').trim();
     db.prepare(
       `UPDATE quotations
-       SET agent_customer_id = COALESCE(NULLIF(trim(agent_customer_id), ''), ?),
-           agent_customer_name = COALESCE(NULLIF(trim(agent_customer_name), ''), ?)
+       SET agent_customer_id = ?,
+           agent_customer_name = ?
        WHERE id = ?`
     ).run(salesCid, label || null, qid);
   } catch (e) {

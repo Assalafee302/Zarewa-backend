@@ -145,6 +145,11 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
       db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);
     }
     db.prepare(`UPDATE app_users SET display_name = 'Suleiman Abdullahi Liman' WHERE id = ?`).run(staffUserId);
+    if (!db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get('CUS-OTHER')) {
+      db.prepare(
+        `INSERT INTO customers (customer_id, name, branch_id, status) VALUES ('CUS-OTHER', 'Other', 'BR-KD', 'Active')`
+      ).run();
+    }
     db.prepare(
       `INSERT INTO quotations (
          id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status,
@@ -154,11 +159,6 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
          'Suleiman Abdullahi Liman', NULL, 'BR-KD', '{}'
        )`
     ).run();
-    if (!db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get('CUS-OTHER')) {
-      db.prepare(
-        `INSERT INTO customers (customer_id, name, branch_id, status) VALUES ('CUS-OTHER', 'Other', 'BR-KD', 'Active')`
-      ).run();
-    }
     const r = defaultRefundPayeeForQuotation(db, 'QT-HB-NAME');
     expect(r.ok).toBe(true);
     expect(r.payee?.userId).toBe(staffUserId);
@@ -167,6 +167,58 @@ describe.skipIf(!mysqlOk)('customerPayoutAccount HR bank', () => {
       .prepare(`SELECT handled_by_user_id FROM quotations WHERE id = ?`)
       .get('QT-HB-NAME');
     expect(String(backfilled?.handled_by_user_id || '')).toBe(String(staffUserId));
+  });
+
+  it('defaultRefundPayeeForQuotation discards stale handled_by_user_id that disagrees with Prepared by', () => {
+    const hasCol = db.prepare(`PRAGMA table_info(quotations)`).all().some((c) => c.name === 'handled_by_user_id');
+    if (!hasCol) {
+      db.exec(`ALTER TABLE quotations ADD COLUMN handled_by_user_id TEXT`);
+    }
+    const otherUserId = 'usr-other-handler';
+    const cols = db.prepare(`PRAGMA table_info(app_users)`).all().map((c) => c.name);
+    const insertCols = ['id', 'username', 'display_name', 'role_key', 'status'];
+    const insertVals = [otherUserId, 'other.sales', 'Fatima Musa', 'sales', 'active'];
+    if (cols.includes('password_hash')) {
+      insertCols.push('password_hash');
+      insertVals.push('x');
+    }
+    db.prepare(
+      `INSERT INTO app_users (${insertCols.join(', ')}) VALUES (${insertCols.map(() => '?').join(', ')})`
+    ).run(...insertVals);
+    const enc = encryptBankAccount('9988776655');
+    db.prepare(
+      `INSERT INTO hr_staff_profiles (
+         user_id, branch_id, employee_no, sales_customer_id,
+         bank_account_name, bank_name, bank_account_no, bank_account_no_masked,
+         base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn
+       ) VALUES (?, 'BR-KD', 'EMP-F', 'CUS-FATIMA', 'Fatima Musa', 'Zenith Bank', ?, '****1234', 0, 0, 0)`
+    ).run(otherUserId, enc);
+    if (!db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get('CUS-FATIMA')) {
+      db.prepare(
+        `INSERT INTO customers (customer_id, name, branch_id, status)
+         VALUES ('CUS-FATIMA', 'Fatima Musa', 'BR-KD', 'Active')`
+      ).run();
+    }
+    if (!db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get('CUS-OTHER')) {
+      db.prepare(
+        `INSERT INTO customers (customer_id, name, branch_id, status) VALUES ('CUS-OTHER', 'Other', 'BR-KD', 'Active')`
+      ).run();
+    }
+    db.prepare(`UPDATE app_users SET display_name = 'Suleiman Abdullahi Liman' WHERE id = ?`).run(staffUserId);
+    db.prepare(
+      `INSERT INTO quotations (
+         id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status,
+         handled_by, handled_by_user_id, agent_customer_id, agent_customer_name, branch_id, lines_json
+       ) VALUES (
+         'QT-HB-STALE', 'CUS-OTHER', 'Other', '2026-01-01', 1000, 1000, 'Paid', 'Approved',
+         'Fatima Musa', ?, 'CUS-HR-CLAIM', 'Suleiman Abdullahi Liman', 'BR-KD', '{}'
+       )`
+    ).run(staffUserId);
+    const r = defaultRefundPayeeForQuotation(db, 'QT-HB-STALE');
+    expect(r.ok).toBe(true);
+    expect(r.payee?.userId).toBe(otherUserId);
+    expect(r.payee?.customerID).toBe('CUS-FATIMA');
+    expect(r.source).toBe('handled_by_name_override');
   });
 
   it('partner wallet credit resolves HR bank when split omits payoutAccount', () => {

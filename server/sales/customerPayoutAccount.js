@@ -108,6 +108,7 @@ export function savedCustomerPayoutAccount(db, customerId) {
 
 /**
  * Directory for refund “claiming staff” picker (masked bank only).
+ * Includes every active HR login — not only those already linked to a sales customer.
  * Avoid decrypting every HR account — that made the refund form hang.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL'|string} [branchScope]
@@ -118,7 +119,12 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
 
   const scope = trim(branchScope);
   const branchSql =
-    scope && scope !== 'ALL' ? ` AND trim(IFNULL(p.branch_id, '')) = ?` : '';
+    scope && scope !== 'ALL'
+      ? ` AND (
+           trim(IFNULL(p.branch_id, '')) = ?
+           OR trim(IFNULL(p.branch_id, '')) = ''
+         )`
+      : '';
   const args = scope && scope !== 'ALL' ? [scope] : [];
 
   const rows = db
@@ -129,8 +135,8 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
               c.name AS customer_name, c.status AS customer_status
        FROM hr_staff_profiles p
        JOIN app_users u ON u.id = p.user_id
-       JOIN customers c ON trim(IFNULL(c.customer_id, '')) = trim(IFNULL(p.sales_customer_id, ''))
-       WHERE trim(IFNULL(p.sales_customer_id, '')) != ''${branchSql}
+       LEFT JOIN customers c ON trim(IFNULL(c.customer_id, '')) = trim(IFNULL(p.sales_customer_id, ''))
+       WHERE 1=1${branchSql}
        ORDER BY u.display_name
        LIMIT 500`
     )
@@ -141,24 +147,23 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
       const userStatus = trim(row.user_status || 'active').toLowerCase();
       if (userStatus && userStatus !== 'active') return null;
       const customerStatus = trim(row.customer_status || 'Active').toLowerCase();
-      if (customerStatus && customerStatus !== 'active') return null;
+      // If linked customer exists and is inactive, skip; unlinked HR staff still listed.
+      if (trim(row.sales_customer_id) && customerStatus && customerStatus !== 'active') return null;
 
       const customerID = trim(row.sales_customer_id);
       const bankName = trim(row.bank_name);
       const masked = trim(row.bank_account_no_masked);
       const encPresent = Boolean(trim(row.bank_account_no));
-      // Fast hasBank: name + (masked or encrypted blob). Decrypt only at payout submit.
       const hasBank = Boolean(bankName && (masked || encPresent));
       const displayName = trim(row.display_name);
       const username = trim(row.username);
       const customerName = trim(row.customer_name);
-      const name = displayName || username || customerName || customerID;
+      const name = displayName || username || customerName || customerID || trim(row.user_id);
 
       return {
         customerID,
         userId: trim(row.user_id),
         name,
-        /** Previous quote labels may still use sales-customer name after display_name changes. */
         customerName,
         username,
         roleKey: trim(row.role_key).toLowerCase(),
@@ -166,17 +171,16 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
         bankName: hasBank ? bankName : '',
         bankAccountNoMasked: hasBank ? masked || '****' : '',
         hasBank,
+        needsSalesCustomer: !customerID,
         branchId: trim(row.branch_id),
       };
     })
     .filter(Boolean);
 
-  const floatMap = unclearedReceiptFloatBySalesCustomerIds(
-    db,
-    staffRows.map((r) => r.customerID)
-  );
+  const linkedIds = staffRows.map((r) => r.customerID).filter(Boolean);
+  const floatMap = unclearedReceiptFloatBySalesCustomerIds(db, linkedIds);
   return staffRows.map((row) => {
-    const info = floatMap.get(row.customerID);
+    const info = row.customerID ? floatMap.get(row.customerID) : null;
     return {
       ...row,
       unclearedReceiptFloatNgn: info ? Math.round(Number(info.totalNgn) || 0) : 0,
@@ -205,82 +209,102 @@ export function claimingStaffPayeeForUserId(db, userId) {
 
 /**
  * Resolve a prepared-by / handled-by display label to an active app_users.id.
- * Legacy quotes only stored the name string (e.g. "Suleiman Abdullahi Liman").
+ * Exact match only (display name or username) — fuzzy matching wrongly pinned Suleiman/Abdulrahman.
  */
 export function resolveAppUserIdFromHandledByLabel(db, label) {
   const name = trim(label);
   if (!name || name.toLowerCase() === 'sales') return '';
 
-  const exact = db
-    .prepare(
-      `SELECT id FROM app_users
-       WHERE LOWER(TRIM(COALESCE(status, 'active'))) = 'active'
-         AND (
-           LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(?)
-           OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(?)
-         )
-       ORDER BY display_name COLLATE NOCASE
-       LIMIT 2`
-    )
-    .all(name, name);
-  if (exact.length === 1) return trim(exact[0].id);
-  if (exact.length > 1) return trim(exact[0].id);
+  const norm = (s) =>
+    String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+  const target = norm(name);
 
   const rows = db
     .prepare(
       `SELECT id, display_name, username FROM app_users
        WHERE LOWER(TRIM(COALESCE(status, 'active'))) = 'active'
+         AND (
+           LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(?)
+           OR LOWER(REPLACE(TRIM(COALESCE(display_name, '')), '  ', ' ')) = ?
+           OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(?)
+         )
        ORDER BY display_name COLLATE NOCASE
-       LIMIT 800`
+       LIMIT 5`
     )
-    .all();
+    .all(name, target, name);
 
-  const norm = (s) =>
-    String(s || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[.,]/g, ' ')
-      .replace(/\s+/g, ' ');
-  const target = norm(name);
-  const targetParts = target.split(' ').filter((p) => p.length > 1);
-  if (!targetParts.length) return '';
-
-  const scored = [];
+  const unique = [];
+  const seen = new Set();
   for (const row of rows) {
+    const id = trim(row.id);
+    if (!id || seen.has(id)) continue;
     const display = norm(row.display_name);
     const username = norm(row.username);
-    if (!display && !username) continue;
-    if (display === target || username === target) {
-      scored.push({ id: trim(row.id), score: 100 });
-      continue;
-    }
-    // All quote-name tokens appear in display name (order-independent), unique preferred.
-    const displayParts = display.split(' ').filter((p) => p.length > 1);
-    if (
-      targetParts.length >= 2 &&
-      targetParts.every((p) => displayParts.includes(p))
-    ) {
-      scored.push({ id: trim(row.id), score: 80 + Math.min(targetParts.length, 10) });
-      continue;
-    }
-    if (
-      displayParts.length >= 2 &&
-      displayParts.every((p) => targetParts.includes(p))
-    ) {
-      scored.push({ id: trim(row.id), score: 70 + Math.min(displayParts.length, 10) });
-    }
+    if (display !== target && username !== target) continue;
+    seen.add(id);
+    unique.push(id);
   }
-  scored.sort((a, b) => b.score - a.score);
-  if (!scored.length) return '';
-  if (scored.length === 1) return scored[0].id;
-  // Ambiguous only if top scores tie.
-  if (scored[0].score > scored[1].score) return scored[0].id;
-  return '';
+  return unique.length === 1 ? unique[0] : '';
+}
+
+function namesEqualForPayee(a, b) {
+  const left = String(a || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  const right = String(b || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return Boolean(left && right && left === right);
+}
+
+/**
+ * Same person allowing optional middle names (e.g. "Suleiman Liman" ↔ "Suleiman Abdullahi Liman").
+ * Requires ≥2 shared tokens of the shorter name — never single-token fuzzy (that pinned wrong BMs).
+ */
+function namesAgreeForHandledBy(a, b) {
+  if (namesEqualForPayee(a, b)) return true;
+  const left = String(a || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+  const right = String(b || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+  if (!left.length || !right.length) return false;
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  if (shorter.length < 2) return false;
+  return shorter.every((t) => longer.includes(t));
+}
+
+function backfillQuotationHandlerLink(db, { hasHandlerCol, ref, userId, payee, handledByLabel }) {
+  if (!hasHandlerCol || !userId || !payee?.customerID) return;
+  try {
+    db.prepare(
+      `UPDATE quotations
+       SET handled_by_user_id = ?,
+           agent_customer_id = ?,
+           agent_customer_name = ?
+       WHERE id = ?`
+    ).run(userId, payee.customerID, payee.name || handledByLabel, ref);
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**
  * Default refund sales staff for a quotation: handled_by_user_id → HR bank.
- * Legacy quotes: resolve handled_by name → login → ensure HR sales customer, and backfill user id.
+ * Legacy quotes: exact handled_by name → login → ensure HR sales customer, and backfill user id.
+ * Never keep a stale handled_by_user_id / agent_customer_id that does not match Prepared by.
  */
 export function defaultRefundPayeeForQuotation(db, quotationRef) {
   const ref = trim(quotationRef);
@@ -301,17 +325,49 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
   let handledByUserId = trim(q.handled_by_user_id);
   const handledByLabel = trim(q.handled_by);
   const agentCustomerId = trim(q.agent_customer_id);
+  const agentCustomerName = trim(q.agent_customer_name);
 
   let payee = null;
   let source = '';
   let resolvedUserId = handledByUserId;
 
   if (handledByUserId) {
-    payee = claimingStaffPayeeForUserId(db, handledByUserId);
-    if (payee) source = 'handled_by_user_id';
+    const byUser = claimingStaffPayeeForUserId(db, handledByUserId);
+    if (byUser) {
+      const agrees =
+        !handledByLabel ||
+        handledByLabel.toLowerCase() === 'sales' ||
+        namesAgreeForHandledBy(byUser.name, handledByLabel);
+      if (agrees) {
+        payee = byUser;
+        source = 'handled_by_user_id';
+      } else {
+        // Stale backfill (often Suleiman/Abdulrahman) — try Prepared by text, else discard.
+        const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel);
+        if (fromLabel && fromLabel !== handledByUserId) {
+          const relinked = claimingStaffPayeeForUserId(db, fromLabel);
+          if (relinked) {
+            payee = relinked;
+            resolvedUserId = fromLabel;
+            source = 'handled_by_name_override';
+            backfillQuotationHandlerLink(db, {
+              hasHandlerCol,
+              ref,
+              userId: fromLabel,
+              payee: relinked,
+              handledByLabel,
+            });
+            handledByUserId = fromLabel;
+          }
+        }
+        if (!payee) {
+          resolvedUserId = '';
+          handledByUserId = '';
+        }
+      }
+    }
   }
 
-  // Legacy quotes: "Prepared by Suleiman…" is only a name — map to the login + HR bank.
   if (!payee && handledByLabel) {
     const fromLabel = resolveAppUserIdFromHandledByLabel(db, handledByLabel);
     if (fromLabel) {
@@ -319,28 +375,33 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
       payee = claimingStaffPayeeForUserId(db, fromLabel);
       if (payee) {
         source = 'handled_by_name';
-        if (hasHandlerCol && !handledByUserId) {
-          try {
-            db.prepare(
-              `UPDATE quotations
-               SET handled_by_user_id = ?,
-                   agent_customer_id = COALESCE(NULLIF(trim(agent_customer_id), ''), ?),
-                   agent_customer_name = COALESCE(NULLIF(trim(agent_customer_name), ''), ?)
-               WHERE id = ?`
-            ).run(fromLabel, payee.customerID, payee.name || handledByLabel, ref);
-            handledByUserId = fromLabel;
-          } catch {
-            /* backfill best-effort */
-          }
-        }
+        backfillQuotationHandlerLink(db, {
+          hasHandlerCol,
+          ref,
+          userId: fromLabel,
+          payee,
+          handledByLabel,
+        });
+        handledByUserId = fromLabel;
       }
     }
   }
 
+  // agent_customer_id only when it agrees with Prepared by (or Prepared by is blank).
   if (!payee && agentCustomerId) {
     const rows = listClaimingStaffForRefunds(db, 'ALL');
-    payee = rows.find((r) => String(r.customerID || '').trim() === agentCustomerId) || null;
-    if (payee) source = 'agent_customer_id';
+    const byAgent = rows.find((r) => String(r.customerID || '').trim() === agentCustomerId) || null;
+    if (byAgent) {
+      const agrees =
+        !handledByLabel ||
+        handledByLabel.toLowerCase() === 'sales' ||
+        namesAgreeForHandledBy(byAgent.name, handledByLabel) ||
+        namesAgreeForHandledBy(agentCustomerName, handledByLabel);
+      if (agrees) {
+        payee = byAgent;
+        source = 'agent_customer_id';
+      }
+    }
   }
 
   return {
@@ -348,16 +409,16 @@ export function defaultRefundPayeeForQuotation(db, quotationRef) {
     quotationRef: ref,
     handledBy: handledByLabel,
     handledByUserId: handledByUserId || resolvedUserId || '',
-    agentCustomerId: agentCustomerId || payee?.customerID || '',
+    agentCustomerId: payee?.customerID || '',
     source,
     payee,
     unresolved: !payee,
     hint: payee
-      ? source === 'handled_by_name'
+      ? source.startsWith('handled_by_name')
         ? `Matched prepared-by “${handledByLabel}” to ${payee.name} (HR bank).`
         : 'Quotation maker / handled-by staff (HR bank).'
       : handledByLabel
-        ? `Could not link prepared-by “${handledByLabel}” to an HR staff login with a sales customer — pick them under Company staff, or ensure their HR profile is linked.`
+        ? `Could not link prepared-by “${handledByLabel}” to an exact HR login — pick that person under Company staff (all HR staff are listed), or fix their display name on the user profile.`
         : 'Quotation has no handled-by user id — pick company staff, or re-save the quotation with Handled by set.',
   };
 }

@@ -6,7 +6,7 @@
 import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-import { purgeUserHrOperationalData } from './hrUserOperationalCleanup.js';
+import { purgeUserHrOperationalData, detachAppUserReferences } from './hrUserOperationalCleanup.js';
 import { scanStaffIdentityDuplicates } from './hr/staffIdentityUniqueness.js';
 
 const PROTECTED_ROLES = new Set(['admin', 'md']);
@@ -326,6 +326,7 @@ const STAFF_SUBJECT_USER_COLUMNS = [
   ['hr_feedback_notes', 'subject_user_id'],
   ['office_memo_drafts', 'user_id'],
   ['hr_payroll_line_loans', 'user_id'],
+  ['ot_staff_lines', 'staff_user_id'],
 ];
 
 /** Columns where the duplicate user may be referenced (manager, assignee). */
@@ -503,6 +504,7 @@ export function mergeHrStaffUserInto(db, fromUserId, toUserId, actorUserId) {
         repointUserColumn(db, table, column, fromId, toId);
       }
       mergePayrollAndLeaveRows(db, fromId, toId);
+      detachAppUserReferences(db, fromId, { reassignToUserId: toId });
       db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(fromId);
       if (hrTableExists(db, 'hr_staff_profiles')) {
         db.prepare(`DELETE FROM hr_staff_profiles WHERE user_id = ?`).run(fromId);
@@ -594,7 +596,7 @@ export function purgeHrStaffUser(db, userId, actorUserId) {
 
   try {
     db.transaction(() => {
-      purgeUserHrOperationalData(db, uid);
+      purgeUserHrOperationalData(db, uid, { fallbackActorUserId: actorUserId });
       db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(uid);
       db.prepare(`DELETE FROM app_users WHERE id = ?`).run(uid);
     })();

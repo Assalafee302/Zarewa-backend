@@ -1,6 +1,7 @@
 /**
  * Shared HR operational row cleanup — single source of truth for column names and delete order.
- * Used by branch HR reset, staff duplicate purge, and zero-audit login removal.
+ * Used by branch HR reset, staff duplicate purge, login merge, and zero-audit login removal.
+ * Before DELETE FROM app_users, actor FKs without ON DELETE CASCADE must be reassigned or nulled.
  * @module server/hrUserOperationalCleanup
  */
 
@@ -24,6 +25,20 @@ function isIgnorableUnknownColumnError(e) {
     code === 'ER_BAD_FIELD_ERROR' ||
     msg.includes('Unknown column') ||
     msg.includes('1054')
+  );
+}
+
+function isIgnorableNotNullError(e) {
+  const msg = String(e?.message || e || '');
+  const code = String(e?.code || '');
+  const errno = Number(e?.errno);
+  return (
+    code === 'ER_BAD_NULL_ERROR' ||
+    code === 'ER_NO_DEFAULT_FOR_FIELD' ||
+    errno === 1048 ||
+    errno === 1364 ||
+    /cannot be null/i.test(msg) ||
+    /SQLITE_CONSTRAINT_NOTNULL/i.test(msg)
   );
 }
 
@@ -79,21 +94,97 @@ export const USER_HR_SUBJECT_DELETE_SPECS = [
   { table: 'office_memo_drafts', column: 'user_id' },
   { table: 'workspace_read_state', column: 'user_id' },
   { table: 'office_thread_reads', column: 'user_id' },
+  { table: 'ot_staff_lines', column: 'staff_user_id' },
 ];
 
-/** Nullable FK columns on other rows that reference this user. */
-const USER_REFERENCE_NULL_SPECS = [
+/**
+ * Actor/history columns that reference app_users without ON DELETE CASCADE.
+ * Merge reassigns these to the kept login; purge sets NULL (or the actor if NOT NULL).
+ */
+export const USER_REFERENCE_NULL_SPECS = [
   { table: 'hr_staff_profiles', column: 'line_manager_user_id' },
+  { table: 'hr_staff_profiles', column: 'updated_by_user_id' },
   { table: 'hr_grievances', column: 'assigned_to_user_id' },
   { table: 'hr_departments', column: 'head_user_id' },
   { table: 'hr_requests', column: 'hr_reviewer_user_id' },
   { table: 'hr_requests', column: 'manager_reviewer_user_id' },
+  { table: 'hr_requests', column: 'gm_hr_reviewer_user_id' },
   { table: 'hr_policy_acknowledgements', column: 'accepted_by_user_id' },
   { table: 'hr_policy_acknowledgements', column: 'witness_user_id' },
+  { table: 'hr_employment_letters', column: 'issued_by_user_id' },
   { table: 'accounting_period_locks', column: 'locked_by_user_id' },
   { table: 'approval_actions', column: 'acted_by_user_id' },
+  { table: 'audit_log', column: 'actor_user_id' },
+  { table: 'hr_audit_events', column: 'actor_user_id' },
   { table: 'workspace_bulk_action_log', column: 'actor_user_id' },
+  { table: 'office_threads', column: 'created_by_user_id' },
+  { table: 'workspace_rooms', column: 'created_by_user_id' },
 ];
+
+const APP_USER_IDENTITY_COLUMNS = new Set([
+  'user_sessions.user_id',
+  'hr_staff_profiles.user_id',
+  'hr_discipline_cases.user_id',
+  ...USER_HR_SUBJECT_DELETE_SPECS.map((s) => `${s.table}.${s.column}`),
+]);
+
+function specKey(table, column) {
+  return `${String(table || '').trim().toLowerCase()}.${String(column || '').trim().toLowerCase()}`;
+}
+
+function isIdentityAppUserColumn(table, column) {
+  return APP_USER_IDENTITY_COLUMNS.has(specKey(table, column));
+}
+
+/**
+ * Production MySQL may have extra FKs that schemaSql does not list.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {Array<{ table: string; column: string }>}
+ */
+function listMysqlRestrictAppUserForeignKeys(db) {
+  try {
+    return db
+      .prepare(
+        `SELECT kcu.TABLE_NAME AS tableName, kcu.COLUMN_NAME AS columnName
+         FROM information_schema.KEY_COLUMN_USAGE kcu
+         INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+           ON rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA
+          AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+          AND rc.TABLE_NAME = kcu.TABLE_NAME
+         WHERE kcu.TABLE_SCHEMA = DATABASE()
+           AND kcu.REFERENCED_TABLE_NAME = 'app_users'
+           AND kcu.REFERENCED_COLUMN_NAME = 'id'
+           AND UPPER(IFNULL(rc.DELETE_RULE, 'RESTRICT')) NOT IN ('CASCADE', 'SET NULL')`
+      )
+      .all()
+      .map((row) => ({
+        table: String(row.tableName ?? row.TABLE_NAME ?? '').trim(),
+        column: String(row.columnName ?? row.COLUMN_NAME ?? '').trim(),
+      }))
+      .filter((s) => s.table && s.column);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @returns {Array<{ table: string; column: string }>}
+ */
+export function collectAppUserDetachSpecs(db) {
+  const seen = new Set();
+  const out = [];
+  function add(table, column) {
+    if (isIdentityAppUserColumn(table, column)) return;
+    const key = specKey(table, column);
+    if (!key || key === '.' || seen.has(key)) return;
+    seen.add(key);
+    out.push({ table: String(table).trim(), column: String(column).trim() });
+  }
+  for (const spec of USER_REFERENCE_NULL_SPECS) add(spec.table, spec.column);
+  for (const spec of listMysqlRestrictAppUserForeignKeys(db)) add(spec.table, spec.column);
+  return out;
+}
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -133,16 +224,71 @@ export function deleteRowsForUsers(db, table, column, userIds) {
   }
 }
 
+function updateUserFkColumn(db, table, column, fromUserId, toUserId) {
+  try {
+    db.prepare(`UPDATE \`${table}\` SET \`${column}\` = ? WHERE \`${column}\` = ?`).run(toUserId, fromUserId);
+    return true;
+  } catch (e) {
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e)) return false;
+    throw e;
+  }
+}
+
+function nullUserFkColumn(db, table, column, userId) {
+  try {
+    db.prepare(`UPDATE \`${table}\` SET \`${column}\` = NULL WHERE \`${column}\` = ?`).run(userId);
+    return true;
+  } catch (e) {
+    if (isIgnorableMissingTableError(e) || isIgnorableUnknownColumnError(e) || isIgnorableNotNullError(e)) {
+      return false;
+    }
+    throw e;
+  }
+}
+
 /**
+ * Reassign actor/history FKs from one login to another so the extra app_users row can be deleted.
  * @param {import('better-sqlite3').Database} db
  */
-export function nullUserReferences(db, userId) {
+export function reassignUserReferences(db, fromUserId, toUserId) {
+  const fromId = String(fromUserId || '').trim();
+  const toId = String(toUserId || '').trim();
+  if (!fromId || !toId || fromId === toId) return;
+  for (const { table, column } of collectAppUserDetachSpecs(db)) {
+    updateUserFkColumn(db, table, column, fromId, toId);
+  }
+}
+
+/**
+ * Clear actor/history FKs. NOT NULL columns stay put unless `fallbackActorUserId` is set.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function nullUserReferences(db, userId, { fallbackActorUserId } = {}) {
   const uid = String(userId || '').trim();
   if (!uid) return;
-  for (const { table, column } of USER_REFERENCE_NULL_SPECS) {
-    if (!hrTableExists(db, table) || !tableHasColumn(db, table, column)) continue;
-    safeDelete(db, `UPDATE \`${table}\` SET \`${column}\` = NULL WHERE \`${column}\` = ?`, [uid]);
+  const fallback = String(fallbackActorUserId || '').trim();
+  for (const { table, column } of collectAppUserDetachSpecs(db)) {
+    const cleared = nullUserFkColumn(db, table, column, uid);
+    if (!cleared && fallback && fallback !== uid) {
+      updateUserFkColumn(db, table, column, uid, fallback);
+    }
   }
+}
+
+/**
+ * Detach non-CASCADE app_users FKs before DELETE FROM app_users.
+ * Merge must reassign; purge nulls (or reassigns leftover NOT NULL columns to the actor).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} userId
+ * @param {{ reassignToUserId?: string; fallbackActorUserId?: string }} [opts]
+ */
+export function detachAppUserReferences(db, userId, opts = {}) {
+  const keep = String(opts.reassignToUserId || '').trim();
+  if (keep) {
+    reassignUserReferences(db, userId, keep);
+    return;
+  }
+  nullUserReferences(db, userId, { fallbackActorUserId: opts.fallbackActorUserId });
 }
 
 /**
@@ -294,12 +440,13 @@ export function deleteDisciplineSubgraphForUsers(db, userIds) {
  * Remove all HR operational rows for one login (does not delete app_users).
  * @param {import('better-sqlite3').Database} db
  * @param {string} userId
+ * @param {{ fallbackActorUserId?: string }} [opts]
  */
-export function purgeUserHrOperationalData(db, userId) {
+export function purgeUserHrOperationalData(db, userId, opts = {}) {
   const uid = String(userId || '').trim();
   if (!uid) return;
 
-  nullUserReferences(db, uid);
+  detachAppUserReferences(db, uid, { fallbackActorUserId: opts.fallbackActorUserId });
   deleteRequestDetailsForUser(db, uid);
   deleteBenefitPaymentsForUser(db, uid);
   deleteExitPropertyForUser(db, uid);

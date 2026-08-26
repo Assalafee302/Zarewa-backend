@@ -3,7 +3,7 @@ import { createDatabase } from './db.js';
 import { runMigrations } from './migrate.js';
 import { createAppUserRecord } from './auth.js';
 import { registerNewStaffWithProfile } from './hrOps.js';
-import { mergeHrStaffUserInto } from './hrStaffDuplicateCleanup.js';
+import { mergeHrStaffUserInto, purgeHrStaffUser } from './hrStaffDuplicateCleanup.js';
 import { HR_PAYROLL_GROUPS } from '../shared/lib/hrStaffCohorts.js';
 
 describe('merge named staff into admin login', () => {
@@ -69,6 +69,40 @@ describe('merge named staff into admin login', () => {
     expect(profile?.jobTitle).toBe('Sales Officer');
   });
 
+  it('repoints approval history so the extra login can be deleted', () => {
+    const admin = createAppUserRecord(db, {
+      username: 'admin',
+      displayName: 'admin',
+      password: 'Admin@12345',
+      roleKey: 'admin',
+    });
+    const named = registerNamed('885');
+    expect(admin.ok).toBe(true);
+    expect(named.ok).toBe(true);
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO approval_actions (
+        id, entity_kind, entity_id, action, status, note, acted_at_iso, acted_by_user_id, acted_by_name
+      ) VALUES (?, 'refund', 'R-1', 'review', 'approved', '', ?, ?, ?)`
+    ).run('AA-MERGE-1', now, named.userId, 'Amina 885');
+    db.prepare(
+      `INSERT INTO audit_log (
+        id, occurred_at_iso, actor_user_id, actor_name, action, entity_kind, entity_id, status, note
+      ) VALUES (?, ?, ?, ?, 'refund.request', 'refund', 'R-1', 'ok', '')`
+    ).run('AUD-MERGE-1', now, named.userId, 'Amina 885');
+
+    const r = mergeHrStaffUserInto(db, named.userId, admin.userId, admin.userId);
+    expect(r.ok, r.error).toBe(true);
+    expect(db.prepare(`SELECT 1 FROM app_users WHERE id = ?`).get(named.userId)).toBeUndefined();
+    const action = db
+      .prepare(`SELECT acted_by_user_id AS actorId, acted_by_name AS actorName FROM approval_actions WHERE id = ?`)
+      .get('AA-MERGE-1');
+    expect(action.actorId).toBe(admin.userId);
+    expect(action.actorName).toBe('Amina 885');
+    const audit = db.prepare(`SELECT actor_user_id AS actorId FROM audit_log WHERE id = ?`).get('AUD-MERGE-1');
+    expect(audit.actorId).toBe(admin.userId);
+  });
+
   it('refuses to absorb the admin login into a named staff file', () => {
     const admin = createAppUserRecord(db, {
       username: 'admin.keep',
@@ -92,5 +126,25 @@ describe('merge named staff into admin login', () => {
     expect(other.ok).toBe(true);
     const r = mergeHrStaffUserInto(db, named.userId, other.userId, named.userId);
     expect(r.ok).toBe(false);
+  });
+
+  it('clears approval history when permanently deleting a staff login', () => {
+    const named = registerNamed('886');
+    expect(named.ok).toBe(true);
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO approval_actions (
+        id, entity_kind, entity_id, action, status, note, acted_at_iso, acted_by_user_id, acted_by_name
+      ) VALUES (?, 'refund', 'R-2', 'review', 'approved', '', ?, ?, ?)`
+    ).run('AA-PURGE-1', now, named.userId, 'Amina 886');
+
+    const r = purgeHrStaffUser(db, named.userId, actor.id);
+    expect(r.ok, r.error).toBe(true);
+    expect(db.prepare(`SELECT 1 FROM app_users WHERE id = ?`).get(named.userId)).toBeUndefined();
+    const action = db
+      .prepare(`SELECT acted_by_user_id AS actorId, acted_by_name AS actorName FROM approval_actions WHERE id = ?`)
+      .get('AA-PURGE-1');
+    expect(action.actorId).toBeNull();
+    expect(action.actorName).toBe('Amina 886');
   });
 });

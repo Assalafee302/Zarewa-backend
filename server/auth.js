@@ -5,6 +5,7 @@ import { HR_PERMISSION_KEYS } from './hrPermissionKeys.js';
 import { HR_ROLE_PERMISSION_BUNDLES } from './hrRoleBundles.js';
 import { payrollGroupMayHaveLogin } from '../shared/lib/hrStaffCohorts.js';
 import { hrTableExists } from './hrTableChecks.js';
+import { detachAppUserReferences } from './hrUserOperationalCleanup.js';
 import { validateStaffRoleForPayrollGroup } from './hrStaffAccessPolicy.js';
 
 function appUsersHasColumn(db, name) {
@@ -2345,6 +2346,7 @@ export function deleteAppUser(db, targetUserId, opts = {}) {
   }
   try {
     db.transaction(() => {
+      detachAppUserReferences(db, tid, { fallbackActorUserId: actorUserId });
       db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(tid);
       db.prepare(`DELETE FROM app_users WHERE id = ?`).run(tid);
     })();

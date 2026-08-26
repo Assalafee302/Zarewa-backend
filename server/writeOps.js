@@ -126,7 +126,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
-import { partnerWalletEnabled, refundHasOpenWalletCredit } from './finance/partnerWalletCredit.js';
+import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
@@ -8660,7 +8660,7 @@ export function payAccountsPayable(db, apId, payload) {
 }
 
 export function payRefundEntry(db, refundId, payload) {
-  const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+  let row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };
   const branchGate = assertEntityBranchForWorkspaceWrite(
     payload.actor,
@@ -8671,6 +8671,15 @@ export function payRefundEntry(db, refundId, payload) {
   if (!branchGate.ok) return { ok: false, error: branchGate.error };
   if (String(row.status || '') !== 'Approved') {
     return { ok: false, error: 'Only approved refunds can be paid.' };
+  }
+  // Backfill company cut / uncleared offsets if approval did not settle them (e.g. wallet flag was off).
+  if (!/settled at approval/i.test(String(row.payment_note || ''))) {
+    const settle = creditRefundToPartnerWalletTx(db, row, {
+      approvedAmountNgn: roundMoney(row.approved_amount_ngn || row.amount_ngn),
+      actor: payload.actor,
+    });
+    if (!settle.ok) return { ok: false, error: settle.error || 'Could not settle staff company cut.' };
+    row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId) || row;
   }
   if (partnerWalletEnabled() && refundHasOpenWalletCredit(db, refundId)) {
     return {

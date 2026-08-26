@@ -217,88 +217,105 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 }
 
 /**
- * Credit partner wallets when a refund is BM-approved (call inside the approval transaction).
+ * Apply company cut + uncleared offsets at BM approval.
+ * Always settles the company % into retention + paid_amount_ngn (so cashier only pays net),
+ * even when partner-wallet credits are disabled.
+ * When the wallet flag is on, also credits net amounts to partner wallets for cashier release.
  */
 export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn, actor } = {}) {
-  if (!partnerWalletEnabled() || !partnerWalletTablesReady(db)) {
-    return { ok: true, skipped: true };
-  }
   const refundId = String(refundRow?.refund_id || '').trim();
   if (!refundId) return { ok: false, error: 'Refund id required for wallet credit.' };
-  const existing = db
-    .prepare(
-      `SELECT id FROM partner_wallet_entries
-       WHERE entry_type = 'credit' AND source_kind = 'REFUND' AND source_id = ? AND amount_ngn > 0`
-    )
-    .all(refundId);
-  if (existing.length) {
-    return { ok: true, skipped: true, reason: 'already_credited' };
-  }
-  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
-  if (!targets.length) {
-    return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
-  }
-  const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
-  for (const t of creditTargets) {
-    if (!t.payeeName || !t.payeeBankName || !t.payeeAccountNo) {
-      return {
-        ok: false,
-        error: `Wallet credit blocked: ${t.partyName || t.partyId} needs complete bank details on profile.`,
-      };
+
+  const walletOn = partnerWalletEnabled() && partnerWalletTablesReady(db);
+  if (walletOn) {
+    const existing = db
+      .prepare(
+        `SELECT id FROM partner_wallet_entries
+         WHERE entry_type = 'credit' AND source_kind = 'REFUND' AND source_id = ? AND amount_ngn > 0`
+      )
+      .all(refundId);
+    if (existing.length) {
+      return { ok: true, skipped: true, reason: 'already_credited' };
     }
-  }
-  const branchId = String(refundRow.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
-  const at = new Date().toISOString();
-  const credits = [];
-  const ins = db.prepare(`
-    INSERT INTO partner_wallet_entries (
-      id, party_kind, party_id, party_name, entry_type, amount_ngn, open_ngn,
-      source_kind, source_id, refund_id, withdrawal_id, branch_id,
-      payee_name, payee_bank_name, payee_account_no, note,
-      created_at_iso, created_by_user_id, created_by_name, treasury_movement_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `);
-  for (const t of creditTargets) {
-    const id = nextWalletEntryId(db, branchId);
-    ins.run(
-      id,
-      t.partyKind,
-      t.partyId,
-      t.partyName,
-      'credit',
-      t.amountNgn,
-      t.amountNgn,
-      'REFUND',
-      refundId,
-      refundId,
-      null,
-      branchId,
-      t.payeeName,
-      t.payeeBankName,
-      t.payeeAccountNo,
-      t.note,
-      at,
-      actorId(actor),
-      actorName(actor),
-      null
-    );
-    credits.push({
-      id,
-      partyId: t.partyId,
-      amountNgn: t.amountNgn,
-      grossNgn: t.grossNgn != null ? t.grossNgn : t.amountNgn,
-      companyDeductionNgn: roundMoney(t.companyDeductionNgn),
-      unclearedReceiptOffsetNgn: roundMoney(t.unclearedReceiptOffsetNgn),
-    });
+  } else if (/settled at approval/i.test(String(refundRow?.payment_note || ''))) {
+    return { ok: true, skipped: true, reason: 'deductions_already_settled' };
   }
 
-  // Company cut + uncleared-receipt offset settled at approval (not paid to staff wallet).
-  // Company cut accumulates in the branch retention ledger for later BM-approved withdrawal.
+  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
   const unclearedOffsetNgn = targets.reduce(
     (s, t) => s + roundMoney(t.unclearedReceiptOffsetNgn),
     0
   );
+  const settledAtApprovalNgn = companyRetentionNgn + unclearedOffsetNgn;
+  const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
+
+  if (walletOn) {
+    if (!targets.length) {
+      return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
+    }
+    for (const t of creditTargets) {
+      if (!t.payeeName || !t.payeeBankName || !t.payeeAccountNo) {
+        return {
+          ok: false,
+          error: `Wallet credit blocked: ${t.partyName || t.partyId} needs complete bank details on profile.`,
+        };
+      }
+    }
+  } else if (!targets.length) {
+    return { ok: true, skipped: true, reason: 'no_split_targets' };
+  }
+
+  const branchId = String(refundRow.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const at = new Date().toISOString();
+  const credits = [];
+
+  if (walletOn) {
+    const ins = db.prepare(`
+      INSERT INTO partner_wallet_entries (
+        id, party_kind, party_id, party_name, entry_type, amount_ngn, open_ngn,
+        source_kind, source_id, refund_id, withdrawal_id, branch_id,
+        payee_name, payee_bank_name, payee_account_no, note,
+        created_at_iso, created_by_user_id, created_by_name, treasury_movement_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `);
+    for (const t of creditTargets) {
+      const id = nextWalletEntryId(db, branchId);
+      ins.run(
+        id,
+        t.partyKind,
+        t.partyId,
+        t.partyName,
+        'credit',
+        t.amountNgn,
+        t.amountNgn,
+        'REFUND',
+        refundId,
+        refundId,
+        null,
+        branchId,
+        t.payeeName,
+        t.payeeBankName,
+        t.payeeAccountNo,
+        t.note,
+        at,
+        actorId(actor),
+        actorName(actor),
+        null
+      );
+      credits.push({
+        id,
+        partyId: t.partyId,
+        amountNgn: t.amountNgn,
+        grossNgn: t.grossNgn != null ? t.grossNgn : t.amountNgn,
+        companyDeductionNgn: roundMoney(t.companyDeductionNgn),
+        unclearedReceiptOffsetNgn: roundMoney(t.unclearedReceiptOffsetNgn),
+      });
+    }
+  }
+
+  // Company cut + uncleared-receipt offset settled at approval (not paid out by cashier).
+  // Company cut accumulates in the branch retention ledger for later BM-approved withdrawal.
   let retentionCredit = null;
   if (companyRetentionNgn > 0) {
     try {
@@ -313,7 +330,6 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       console.warn('[partnerWallet] company retention credit failed', e?.message || e);
     }
   }
-  const settledAtApprovalNgn = companyRetentionNgn + unclearedOffsetNgn;
   if (settledAtApprovalNgn > 0) {
     const paidNow = roundMoney(refundRow.paid_amount_ngn);
     const nextPaid = paidNow + settledAtApprovalNgn;
@@ -342,7 +358,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     ).run(nextPaid, nextPaid, approved, paymentNote, refundId);
   }
 
-  if (!credits.length && settledAtApprovalNgn <= 0) {
+  if (walletOn && !credits.length && settledAtApprovalNgn <= 0) {
     return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
   }
 
@@ -353,6 +369,8 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     unclearedOffsetNgn,
     settledAtApprovalNgn,
     retentionCredit,
+    walletCredited: walletOn && credits.length > 0,
+    skippedWallet: !walletOn,
   };
 }
 

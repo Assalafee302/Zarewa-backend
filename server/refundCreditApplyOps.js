@@ -16,7 +16,9 @@ import {
   refundCategoriesAreOverpaymentOnly,
   refundCreditOpenAmountFromStoredRefund,
   refundCreditOpenAmountNgn,
+  refundCreditUnavailableReason,
   refundIsEligibleCreditSource,
+  refundIsEligibleCreditSourceKind,
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
@@ -104,11 +106,13 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
 
   const refunds = db
     .prepare(
-      `SELECT * FROM customer_refunds
-       WHERE customer_id = ? AND status IN ('Pending', 'Approved')
-       ORDER BY requested_at_iso ASC, refund_id ASC`
+      `SELECT cr.* FROM customer_refunds cr
+       LEFT JOIN quotations q ON q.id = cr.quotation_ref
+       WHERE (cr.customer_id = ? OR q.customer_id = ?)
+         AND cr.status IN ('Pending', 'Approved')
+       ORDER BY cr.requested_at_iso ASC, cr.refund_id ASC`
     )
-    .all(cid);
+    .all(cid, cid);
 
   /** @type {Array<object>} */
   const sources = [];
@@ -118,14 +122,26 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
   const refundsByQuote = new Map();
   for (const row of refunds) {
     const qref = String(row.quotation_ref || '').trim();
-    if (!qref) continue;
-    if (!refundsByQuote.has(qref)) refundsByQuote.set(qref, []);
-    refundsByQuote.get(qref).push(row);
-
     const shape = mapRefundRowToCreditShape(row);
     const open = refundCreditOpenAmountFromStoredRefund(row);
     const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
-    const eligible = refundIsEligibleCreditSource(shape) && open > 0;
+    if (!qref) {
+      unavailableSources.push({
+        id: `refund:${shape.refundID || 'missing-quote'}`,
+        refundId: shape.refundID,
+        sourceQuotationRef: '',
+        availableNgn: open,
+        status: shape.status,
+        overpaymentOnly: overpayOnly,
+        reason: 'Refund is not linked to a quotation — cannot apply as credit.',
+      });
+      continue;
+    }
+    if (!refundsByQuote.has(qref)) refundsByQuote.set(qref, []);
+    refundsByQuote.get(qref).push(row);
+
+    const kindEligible = refundIsEligibleCreditSourceKind(shape);
+    const eligible = kindEligible && open > 0;
     if (eligible) {
       sources.push({
         id: `refund:${shape.refundID}`,
@@ -146,12 +162,10 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
             : `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${shape.refundID}; leftover stays refundable on ${qref}.`,
       });
     } else {
-      let reason = 'Not available to cover a receipt yet.';
-      if (String(shape.status) === 'Pending' && !overpayOnly) {
-        reason = 'Needs manager approval before it can cover a receipt.';
-      } else if (open <= 0) {
-        reason = 'Already used or paid out.';
-      }
+      const reason =
+        !qref && shape.refundID
+          ? 'Refund is not linked to a quotation — cannot apply as credit.'
+          : refundCreditUnavailableReason(shape, open, kindEligible);
       unavailableSources.push({
         id: `refund:${shape.refundID || qref}`,
         refundId: shape.refundID,
@@ -164,9 +178,14 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     }
   }
 
-  const quoteIdsWithUsableOverpayRefund = new Set(
-    sources.filter((s) => s.kind === 'refund' && s.overpaymentOnly).map((s) => s.sourceQuotationRef)
-  );
+  /** Open overpay-refund credit already counted per source quotation (avoid double-counting ledger pool). */
+  const overpayRefundOpenByQuote = new Map();
+  for (const src of sources) {
+    if (src.kind !== 'refund' || !src.overpaymentOnly) continue;
+    const qid = String(src.sourceQuotationRef || '').trim();
+    if (!qid) continue;
+    overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + src.availableNgn));
+  }
 
   for (const q of quotes) {
     const qid = String(q.id || '').trim();
@@ -178,19 +197,21 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     });
 
     const overpayRem = overpayCreditRemainingOnQuotationDb(db, cid, qid);
-    if (overpayRem > 0 && !quoteIdsWithUsableOverpayRefund.has(qid) && !blockingOtherPending) {
+    const refundOpenOnQuote = overpayRefundOpenByQuote.get(qid) || 0;
+    const ledgerExcess = Math.max(0, overpayRem - refundOpenOnQuote);
+    if (ledgerExcess > 0 && !blockingOtherPending) {
       sources.push({
         id: `overpay:${qid}`,
         kind: 'overpay',
         refundId: null,
         sourceQuotationRef: qid,
-        availableNgn: overpayRem,
+        availableNgn: ledgerExcess,
         requiresApproval: false,
         status: null,
         overpaymentOnly: true,
         sameQuotation: qid === target,
         label: `Refund fund (overpayment) on ${qid}`,
-        recommendation: `Use up to ₦${overpayRem.toLocaleString('en-NG')} from refund fund on ${qid}; leftover stays refundable there.`,
+        recommendation: `Use up to ₦${ledgerExcess.toLocaleString('en-NG')} from refund fund on ${qid}; leftover stays refundable there.`,
       });
     }
   }

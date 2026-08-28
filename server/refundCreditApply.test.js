@@ -438,4 +438,96 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(Number(rfA.credit_applied_ngn)).toBe(30_000);
     expect(Number(rfB.credit_applied_ngn)).toBe(25_000);
   });
+
+  it('lists two overpay refunds when the second row has a mismatched customer_id but quotation matches', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 5, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES
+        ('CUS-MIX', 'Mixed Id Customer', '${DEFAULT_BRANCH_ID}'),
+        ('CUS-LEGACY', 'Legacy Row Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-MIX-A', 'CUS-MIX', 'Mixed Id Customer', 50000, 70000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-10-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-MIX-B', 'CUS-MIX', 'Mixed Id Customer', 50000, 70000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-10-02', '${DEFAULT_BRANCH_ID}'),
+        ('QT-MIX-DST', 'CUS-MIX', 'Mixed Id Customer', 40000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-10-03', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, branch_id, calculation_lines_json
+      ) VALUES
+        ('RF-MIX-A', 'CUS-MIX', 'Mixed Id Customer', 'QT-MIX-A', '["Overpayment"]', 'Overpay A',
+         15000, 'Pending', 'Sales One', '2026-10-01T10:00:00.000Z', '${DEFAULT_BRANCH_ID}',
+         '${JSON.stringify([{ category: 'Overpayment', amountNgn: 15000 }]).replace(/'/g, "''")}'),
+        ('RF-MIX-B', 'CUS-LEGACY', 'Mixed Id Customer', 'QT-MIX-B', '["Overpayment"]', 'Overpay B',
+         12000, 'Pending', 'Sales One', '2026-10-02T10:00:00.000Z', '${DEFAULT_BRANCH_ID}',
+         '${JSON.stringify([{ category: 'Overpayment', amountNgn: 12000 }]).replace(/'/g, "''")}');
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-MIX', 'QT-MIX-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.filter((s) => s.kind === 'refund')).toHaveLength(2);
+    expect(listed.totalAvailableNgn).toBe(27_000);
+  });
+
+  it('shows ledger overpay excess on a quote that already has a partial overpay refund', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 10, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-PART', 'Partial Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-PART-SRC', 'CUS-PART', 'Partial Overpay Customer', 100000, 150000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-11-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-PART-DST', 'CUS-PART', 'Partial Overpay Customer', 60000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-11-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-PART',
+          customerName: 'Partial Overpay Customer',
+          amountNgn: 100_000,
+          quotationRef: 'QT-PART-SRC',
+          atISO: '2026-11-01T10:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-PART',
+          customerName: 'Partial Overpay Customer',
+          amountNgn: 50_000,
+          quotationRef: 'QT-PART-SRC',
+          atISO: '2026-11-01T10:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, branch_id, calculation_lines_json
+      ) VALUES (
+        'RF-PART-1', 'CUS-PART', 'Partial Overpay Customer', 'QT-PART-SRC', '["Overpayment"]', 'Partial overpay refund',
+        30000, 'Pending', 'Sales One', '2026-11-01T11:00:00.000Z', '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 30000 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-PART', 'QT-PART-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'refund', refundId: 'RF-PART-1', availableNgn: 30_000 }),
+        expect.objectContaining({ kind: 'overpay', sourceQuotationRef: 'QT-PART-SRC', availableNgn: 20_000 }),
+      ])
+    );
+    expect(listed.totalAvailableNgn).toBe(50_000);
+  });
 });

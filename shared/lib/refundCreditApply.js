@@ -52,10 +52,10 @@ function refundIncludesNonTransferableServiceCategory(reasonCategory, calculatio
 }
 
 /**
- * Whether this refund row may be used as transferable credit onto another quotation.
- * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number }} refund
+ * Status/category gate only — does not check open balance (use with stored-row open helpers).
+ * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown }} refund
  */
-export function refundIsEligibleCreditSource(refund) {
+export function refundIsEligibleCreditSourceKind(refund) {
   const status = String(refund?.status || '').trim();
   if (refundIncludesNonTransferableServiceCategory(refund?.reasonCategory, refund?.calculationLines)) {
     return false;
@@ -65,11 +65,43 @@ export function refundIsEligibleCreditSource(refund) {
     refund?.calculationLines
   );
   if (overpayOnly) {
-    if (status !== 'Pending' && status !== 'Approved') return false;
-  } else if (status !== 'Approved') {
-    return false;
+    return status === 'Pending' || status === 'Approved';
   }
-  return refundCreditOpenAmountNgn(refund) > 0;
+  return status === 'Approved';
+}
+
+/**
+ * Whether this refund row may be used as transferable credit onto another quotation.
+ * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number }} refund
+ */
+export function refundIsEligibleCreditSource(refund) {
+  return refundIsEligibleCreditSourceKind(refund) && refundCreditOpenAmountNgn(refund) > 0;
+}
+
+/**
+ * Cashier / receipt UI hint when a refund row exists but cannot be pooled as credit.
+ * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown }} refund
+ * @param {number} openNgn transferable open from {@link refundCreditOpenAmountFromStoredRefund}
+ * @param {boolean} [kindEligible]
+ */
+export function refundCreditUnavailableReason(refund, openNgn, kindEligible = refundIsEligibleCreditSourceKind(refund)) {
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(
+    refund?.reasonCategory,
+    refund?.calculationLines
+  );
+  if (refundIncludesNonTransferableServiceCategory(refund?.reasonCategory, refund?.calculationLines)) {
+    return 'Transport/installation refunds are cash payout only.';
+  }
+  if (String(refund?.status || '').trim() === 'Pending' && !overpayOnly) {
+    return 'Needs manager approval before it can cover a receipt.';
+  }
+  if (openNgn <= 0 && kindEligible) {
+    return 'Already used, paid out, or no net balance left after company cut.';
+  }
+  if (openNgn <= 0) {
+    return 'Already used or paid out.';
+  }
+  return 'Not available to cover a receipt yet.';
 }
 
 export function refundCreditAppliedNgn(refund) {

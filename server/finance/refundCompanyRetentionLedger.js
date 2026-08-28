@@ -157,9 +157,11 @@ export function mapWithdrawalRow(r) {
 }
 
 export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
-  if (!refundCompanyRetentionTablesReady(db)) {
+  const tablesReady = refundCompanyRetentionTablesReady(db);
+  if (!tablesReady) {
     return {
       ok: true,
+      tablesReady: false,
       totalOpenNgn: 0,
       availableNgn: 0,
       heldNgn: 0,
@@ -214,6 +216,7 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
 
   return {
     ok: true,
+    tablesReady: true,
     totalOpenNgn,
     availableNgn,
     heldNgn,

@@ -4,6 +4,7 @@
 import { requirePermission } from '../auth.js';
 import { resolveBootstrapBranchScope } from '../branchScope.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
+import { backfillMissingRefundCompanyRetentionCredits } from '../finance/partnerWalletCredit.js';
 import {
   decideCompanyRetentionWithdrawal,
   getCompanyRetentionSummary,
@@ -22,6 +23,9 @@ export function registerRefundCompanyRetentionRoutes(app, db) {
     (req, res) => {
       try {
         const branchScope = resolveBootstrapBranchScope(req);
+        backfillMissingRefundCompanyRetentionCredits(db, branchScope, {
+          actor: req.user,
+        });
         const summary = getCompanyRetentionSummary(db, branchScope);
         res.json(summary);
       } catch (e) {

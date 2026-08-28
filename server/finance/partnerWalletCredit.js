@@ -16,6 +16,7 @@ import {
 import { getRefundStaffAllocationDeductionRate } from '../orgPolicy.js';
 import {
   creditCompanyRetentionFromRefundTx,
+  refundCompanyRetentionTablesReady,
   voidCompanyRetentionForRefundTx,
 } from './refundCompanyRetentionLedger.js';
 
@@ -217,6 +218,86 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 }
 
 /**
+ * Idempotent — credit company cut into retention when approval settled paid_amount but ledger insert was skipped.
+ */
+export function ensureRefundCompanyRetentionCreditTx(db, refundRow, { approvedAmountNgn, actor } = {}) {
+  const refundId = String(refundRow?.refund_id || refundRow?.refundID || '').trim();
+  if (!refundId) return { ok: true, skipped: true, reason: 'no_refund_id' };
+
+  const approved = roundMoney(
+    approvedAmountNgn ?? refundRow?.approved_amount_ngn ?? refundRow?.approvedAmountNgn ?? refundRow?.amount_ngn ?? refundRow?.amountNgn
+  );
+  const targets = resolveCreditTargets(db, refundRow, approved);
+  const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
+  if (companyRetentionNgn <= 0) {
+    return { ok: true, skipped: true, reason: 'no_company_cut' };
+  }
+
+  const branchId = String(refundRow.branch_id || refundRow.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  try {
+    return creditCompanyRetentionFromRefundTx(db, {
+      refundId,
+      branchId,
+      amountNgn: companyRetentionNgn,
+      actor,
+      note: `Company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} from refund ${refundId}`,
+    });
+  } catch (e) {
+    console.warn('[partnerWallet] ensure company retention credit failed', e?.message || e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+/**
+ * Backfill retention credits for refunds whose payment note records a company cut but ledger row is missing.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [branchScope]
+ * @param {{ limit?: number, actor?: object }} [opts]
+ */
+export function backfillMissingRefundCompanyRetentionCredits(db, branchScope = 'ALL', opts = {}) {
+  const limit = Math.max(1, Math.min(200, Math.round(Number(opts.limit) || 50)));
+  if (!refundCompanyRetentionTablesReady(db)) {
+    return { ok: true, backfilled: 0, skipped: true, reason: 'tables_missing' };
+  }
+
+  const scope = trim(branchScope);
+  const branchSql =
+    scope && scope !== 'ALL' ? ` AND trim(IFNULL(r.branch_id, '')) = ?` : '';
+  const branchArgs = scope && scope !== 'ALL' ? [scope] : [];
+
+  const rows = db
+    .prepare(
+      `SELECT r.*
+       FROM customer_refunds r
+       LEFT JOIN refund_company_retention_entries e
+         ON e.entry_type = 'credit'
+        AND e.source_kind = 'REFUND_COMPANY_CUT'
+        AND e.source_id = r.refund_id
+       WHERE e.id IS NULL
+         AND LOWER(IFNULL(r.status, '')) IN ('approved', 'paid')
+         AND r.payment_note LIKE '%company cut%'
+         AND r.payment_note LIKE '%retention ledger%'${branchSql}
+       ORDER BY r.requested_at_iso DESC
+       LIMIT ?`
+    )
+    .all(...branchArgs, limit);
+
+  let backfilled = 0;
+  for (const row of rows) {
+    const result = ensureRefundCompanyRetentionCreditTx(db, row, {
+      approvedAmountNgn: row.approved_amount_ngn || row.amount_ngn,
+      actor: opts.actor,
+    });
+    if (result?.ok && !result?.skipped) backfilled += 1;
+  }
+  return { ok: true, backfilled, scanned: rows.length };
+}
+
+function trim(v) {
+  return String(v ?? '').trim();
+}
+
+/**
  * Apply company cut + uncleared offsets at BM approval.
  * Always settles the company % into retention + paid_amount_ngn (so cashier only pays net),
  * even when partner-wallet credits are disabled.
@@ -238,7 +319,16 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       .all(refundId);
     walletCreditsExist = existing.length > 0;
   } else if (alreadySettled) {
-    return { ok: true, skipped: true, reason: 'deductions_already_settled' };
+    const retentionCredit = ensureRefundCompanyRetentionCreditTx(db, refundRow, {
+      approvedAmountNgn,
+      actor,
+    });
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'deductions_already_settled',
+      retentionCredit,
+    };
   }
 
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
@@ -251,6 +341,10 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
 
   if (walletOn && walletCreditsExist && alreadySettled) {
+    const retentionCredit = ensureRefundCompanyRetentionCreditTx(db, refundRow, {
+      approvedAmountNgn,
+      actor,
+    });
     return {
       ok: true,
       skipped: true,
@@ -258,6 +352,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       companyRetentionNgn,
       unclearedOffsetNgn,
       settledAtApprovalNgn,
+      retentionCredit,
     };
   }
 

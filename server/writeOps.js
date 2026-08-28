@@ -126,7 +126,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
-import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx } from './finance/partnerWalletCredit.js';
+import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
@@ -8680,6 +8680,11 @@ export function payRefundEntry(db, refundId, payload) {
     });
     if (!settle.ok) return { ok: false, error: settle.error || 'Could not settle staff company cut.' };
     row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId) || row;
+  } else {
+    ensureRefundCompanyRetentionCreditTx(db, row, {
+      approvedAmountNgn: roundMoney(row.approved_amount_ngn || row.amount_ngn),
+      actor: payload.actor,
+    });
   }
   if (partnerWalletEnabled() && refundHasOpenWalletCredit(db, refundId)) {
     return {

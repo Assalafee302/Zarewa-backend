@@ -127,6 +127,28 @@ describe('refundCreditApply pure helpers', () => {
     expect(planCashierRefundOffset({ receiptCashNgn: 20_000, availableNgn: 50_000 }).cashToConfirmNgn).toBe(0);
   });
 
+  it('does not cap overpayment-only refund credit at staff split net pool', () => {
+    const row = {
+      status: 'Pending',
+      amount_ngn: 61_200,
+      paid_amount_ngn: 34_000,
+      credit_applied_ngn: 0,
+      reason_category: '["Overpayment"]',
+      calculation_lines_json: JSON.stringify([{ category: 'Overpayment', amountNgn: 61_200 }]),
+      split_distributions_json: JSON.stringify([
+        {
+          recipientKind: 'associated_staff',
+          recipientAssociatedStaffID: 'AST-1',
+          amountNgn: 61_200,
+          companyDeductionNgn: 12_240,
+          netPayoutNgn: 0,
+        },
+      ]),
+    };
+    expect(refundCreditOpenAmountFromStoredRefund(row)).toBe(27_200);
+    expect(refundCreditOpenAmountFromStoredRefund({ ...row, paid_amount_ngn: 0 })).toBe(61_200);
+  });
+
   it('caps open credit at net payout when staff company cut is not settled in paid_amount', () => {
     expect(
       refundCreditOpenAmountFromStoredRefund({

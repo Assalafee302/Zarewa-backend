@@ -177,6 +177,11 @@ export function refundCreditOpenAmountFromStoredRefund(row) {
   let open = refundCreditOpenAmountNgn(shape);
   if (!(open > 0)) return 0;
 
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
+  // Overpayment fund applied as credit is an internal customer transfer — staff split / company
+  // cut caps apply to treasury cash payout, not transferable credit on another quotation.
+  if (overpayOnly) return open;
+
   const splits = parseRefundSplitDistributions(
     row?.split_distributions_json ?? row?.splitDistributions ?? row?.refundSplits
   );

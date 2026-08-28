@@ -6,7 +6,7 @@
 import { actorId, actorName } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { allocateHumanId } from '../humanId.js';
-import { hasColumn } from '../ap2ReceivedBasisOps.js';
+import { hasColumn, tableExists } from '../ap2ReceivedBasisOps.js';
 
 export const REFUND_COMPANY_CUT_HOLD_DAYS_DEFAULT = 14;
 
@@ -27,6 +27,7 @@ export function refundCompanyCutHoldDays() {
 }
 
 export function refundCompanyRetentionTablesReady(db) {
+  if (!tableExists(db, 'refund_company_retention_entries')) return false;
   return hasColumn(db, 'refund_company_retention_entries', 'open_ngn');
 }
 

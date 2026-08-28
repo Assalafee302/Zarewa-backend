@@ -23,11 +23,12 @@ export function registerRefundCompanyRetentionRoutes(app, db) {
     (req, res) => {
       try {
         const branchScope = resolveBootstrapBranchScope(req);
-        backfillMissingRefundCompanyRetentionCredits(db, branchScope, {
+        const backfill = backfillMissingRefundCompanyRetentionCredits(db, 'ALL', {
           actor: req.user,
+          limit: 200,
         });
         const summary = getCompanyRetentionSummary(db, branchScope);
-        res.json(summary);
+        res.json({ ...summary, backfilled: backfill.backfilled ?? 0 });
       } catch (e) {
         console.error('[refund-company-retention]', e);
         res.status(500).json({ ok: false, error: 'Failed to load company retention balance.' });

@@ -275,8 +275,18 @@ export function backfillMissingRefundCompanyRetentionCredits(db, branchScope = '
         AND e.source_id = r.refund_id
        WHERE e.id IS NULL
          AND LOWER(IFNULL(r.status, '')) IN ('approved', 'paid')
-         AND r.payment_note LIKE '%company cut%'
-         AND r.payment_note LIKE '%retention ledger%'${branchSql}
+         AND (
+           r.payment_note LIKE '%company cut%'
+           OR r.payment_note LIKE '%settled at approval%'
+           OR (
+             COALESCE(r.paid_amount_ngn, 0) > 0
+             AND IFNULL(r.split_distributions_json, '') LIKE '%associated_staff%'
+           )
+           OR (
+             IFNULL(r.split_distributions_json, '') LIKE '%associated_staff%'
+             AND COALESCE(r.approved_amount_ngn, r.amount_ngn, 0) > 0
+           )
+         )${branchSql}
        ORDER BY r.requested_at_iso DESC
        LIMIT ?`
     )

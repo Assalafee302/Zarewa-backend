@@ -530,4 +530,60 @@ describe('apply refund credit to new quotation (integration)', () => {
     );
     expect(listed.totalAvailableNgn).toBe(50_000);
   });
+
+  it('lists approved overpay refund with partial treasury payout (open balance remains)', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 6, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-PARTIAL', 'Partial Pay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-PARTIAL-SRC', 'CUS-PARTIAL', 'Partial Pay Customer', 60000, 121000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-12-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-PARTIAL-DST', 'CUS-PARTIAL', 'Partial Pay Customer', 95200, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-12-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-PARTIAL',
+          customerName: 'Partial Pay Customer',
+          amountNgn: 60_000,
+          quotationRef: 'QT-PARTIAL-SRC',
+          atISO: '2026-12-01T10:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-PARTIAL',
+          customerName: 'Partial Pay Customer',
+          amountNgn: 61_000,
+          quotationRef: 'QT-PARTIAL-SRC',
+          atISO: '2026-12-01T10:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, approved_amount_ngn, paid_amount_ngn, branch_id,
+        calculation_lines_json
+      ) VALUES (
+        'RF-PARTIAL-61', 'CUS-PARTIAL', 'Partial Pay Customer', 'QT-PARTIAL-SRC', '["Overpayment"]', 'Overpay partial pay',
+        61000, 'Approved', 'Sales One', '2026-12-01T10:00:00.000Z', 61000, 34000, '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 61000 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-PARTIAL', 'QT-PARTIAL-DST');
+    expect(listed.ok).toBe(true);
+    const rf = listed.sources.find((s) => s.refundId === 'RF-PARTIAL-61');
+    expect(rf).toBeTruthy();
+    expect(rf.availableNgn).toBe(27_000);
+    expect(listed.totalAvailableNgn).toBeGreaterThanOrEqual(27_000);
+  });
 });

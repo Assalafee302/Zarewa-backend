@@ -92,4 +92,51 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
       .get('RF-CUT-WALLET-OFF');
     expect(Number(walletRows?.c || 0)).toBe(0);
   });
+
+  it('backfills paid_amount when wallet credits exist but company cut was not settled', () => {
+    process.env.ZAREWA_PARTNER_WALLET_V1 = '1';
+    process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 = '1';
+    const refundId = 'RF-CUT-WALLET-BACKFILL';
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+        approved_amount_ngn, paid_amount_ngn
+      ) VALUES (
+        '${refundId}', 'CUS-QUOTE', 'Quote Customer', 'QT-CUT-2',
+        '["Transport issue"]', 'Staff cut backfill',
+        10000, '[]',
+        '[{"recipientKind":"associated_staff","recipientAssociatedStaffID":"AST-CUT-1","amountNgn":10000,"note":"Transport"}]',
+        'Approved',
+        'Driver Payee', '1111222233', 'Test Bank', 'BR-KD', 'Sales', '2026-03-29T10:00:00.000Z',
+        10000, 0
+      );
+      INSERT INTO partner_wallet_entries (
+        id, party_kind, party_id, party_name, entry_type, amount_ngn, open_ngn,
+        source_kind, source_id, refund_id, branch_id,
+        payee_name, payee_bank_name, payee_account_no, note, created_at_iso
+      ) VALUES (
+        'PWL-BF-1', 'associated_staff', 'AST-CUT-1', 'Driver Cut', 'credit', 8000, 8000,
+        'REFUND', '${refundId}', '${refundId}', 'BR-KD',
+        'Driver Payee', 'Test Bank', '1111222233', 'net after 20% company cut', '2026-03-29T11:00:00.000Z'
+      );
+    `);
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+    const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+    const r = creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 10_000,
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.backfilledSettlement).toBe(true);
+    expect(r.companyRetentionNgn).toBe(2_000);
+
+    const updated = db.prepare(`SELECT paid_amount_ngn, payment_note FROM customer_refunds WHERE refund_id = ?`).get(
+      refundId
+    );
+    expect(Number(updated.paid_amount_ngn)).toBe(2_000);
+    expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
+    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(8_000);
+  });
 });

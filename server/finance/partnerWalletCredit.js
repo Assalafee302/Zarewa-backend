@@ -227,6 +227,8 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   if (!refundId) return { ok: false, error: 'Refund id required for wallet credit.' };
 
   const walletOn = partnerWalletEnabled() && partnerWalletTablesReady(db);
+  const alreadySettled = /settled at approval/i.test(String(refundRow?.payment_note || ''));
+  let walletCreditsExist = false;
   if (walletOn) {
     const existing = db
       .prepare(
@@ -234,10 +236,8 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
          WHERE entry_type = 'credit' AND source_kind = 'REFUND' AND source_id = ? AND amount_ngn > 0`
       )
       .all(refundId);
-    if (existing.length) {
-      return { ok: true, skipped: true, reason: 'already_credited' };
-    }
-  } else if (/settled at approval/i.test(String(refundRow?.payment_note || ''))) {
+    walletCreditsExist = existing.length > 0;
+  } else if (alreadySettled) {
     return { ok: true, skipped: true, reason: 'deductions_already_settled' };
   }
 
@@ -250,16 +250,29 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const settledAtApprovalNgn = companyRetentionNgn + unclearedOffsetNgn;
   const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
 
+  if (walletOn && walletCreditsExist && alreadySettled) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'already_credited',
+      companyRetentionNgn,
+      unclearedOffsetNgn,
+      settledAtApprovalNgn,
+    };
+  }
+
   if (walletOn) {
     if (!targets.length) {
       return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
     }
-    for (const t of creditTargets) {
-      if (!t.payeeName || !t.payeeBankName || !t.payeeAccountNo) {
-        return {
-          ok: false,
-          error: `Wallet credit blocked: ${t.partyName || t.partyId} needs complete bank details on profile.`,
-        };
+    if (!walletCreditsExist) {
+      for (const t of creditTargets) {
+        if (!t.payeeName || !t.payeeBankName || !t.payeeAccountNo) {
+          return {
+            ok: false,
+            error: `Wallet credit blocked: ${t.partyName || t.partyId} needs complete bank details on profile.`,
+          };
+        }
       }
     }
   } else if (!targets.length) {
@@ -270,7 +283,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const at = new Date().toISOString();
   const credits = [];
 
-  if (walletOn) {
+  if (walletOn && !walletCreditsExist) {
     const ins = db.prepare(`
       INSERT INTO partner_wallet_entries (
         id, party_kind, party_id, party_name, entry_type, amount_ngn, open_ngn,
@@ -330,8 +343,11 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       console.warn('[partnerWallet] company retention credit failed', e?.message || e);
     }
   }
-  if (settledAtApprovalNgn > 0) {
-    const paidNow = roundMoney(refundRow.paid_amount_ngn);
+  if (!alreadySettled && settledAtApprovalNgn > 0) {
+    const paidNow = roundMoney(
+      db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(refundId)
+        ?.paid_amount_ngn
+    );
     const nextPaid = paidNow + settledAtApprovalNgn;
     const approved = roundMoney(approvedAmountNgn || refundRow.approved_amount_ngn || refundRow.amount_ngn);
     const noteParts = [];
@@ -358,7 +374,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     ).run(nextPaid, nextPaid, approved, paymentNote, refundId);
   }
 
-  if (walletOn && !credits.length && settledAtApprovalNgn <= 0) {
+  if (walletOn && !walletCreditsExist && !credits.length && settledAtApprovalNgn <= 0) {
     return { ok: false, error: 'Could not resolve wallet payee for approved refund.' };
   }
 
@@ -371,6 +387,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     retentionCredit,
     walletCredited: walletOn && credits.length > 0,
     skippedWallet: !walletOn,
+    backfilledSettlement: walletCreditsExist && !alreadySettled && settledAtApprovalNgn > 0,
   };
 }
 

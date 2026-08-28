@@ -63,7 +63,9 @@ import {
 } from '../shared/workspaceGovernance.js';
 import {
   evaluateReceivableWriteOff,
+  isMinorReceivableForBranchManager,
   maxRoundOffWaiveNgn,
+  MAX_BRANCH_MANAGER_MINOR_RECEIVABLE_NGN,
   RECEIVABLE_WRITEOFF_NOTE_MIN_LEN,
 } from '../shared/lib/receivableWriteOffPolicy.js';
 import { tryPostReceivableWriteOffGl } from './accountingReceivableWriteOffOps.js';
@@ -5669,10 +5671,12 @@ export function reviewQuotation(db, quoteId, payload, actor) {
 
   if (decision === 'clear') {
     if (total > 0 && receivable > 0 && !isEffectivelyFullyPaid(paid, total)) {
-      return {
-        ok: false,
-        error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Customer must pay to at least 99.5% before clearance, or MD must write off the balance.`,
-      };
+      if (!isMinorReceivableForBranchManager(receivable, paid)) {
+        return {
+          ok: false,
+          error: `Cannot clear: quotation still has balance due (paid ₦${paid.toLocaleString('en-NG')} of ₦${total.toLocaleString('en-NG')}). Customer must pay in full, Branch Manager may clear minor balances under ₦${MAX_BRANCH_MANAGER_MINOR_RECEIVABLE_NGN.toLocaleString('en-NG')}, or MD must write off material balances.`,
+        };
+      }
     }
   }
 
@@ -5758,10 +5762,21 @@ export function reviewQuotation(db, quoteId, payload, actor) {
             : 'bad_debt';
         persistWaive(receivable, category, note);
       } else if (decision === 'clear') {
-        if (receivable > 0 && isEffectivelyFullyPaid(paid, total)) {
-          const autoWaive = maxRoundOffWaiveNgn(total, paid, priorWaived);
+        if (receivable > 0 && paid > 0) {
+          const autoWaive = isEffectivelyFullyPaid(paid, total)
+            ? maxRoundOffWaiveNgn(total, paid, priorWaived)
+            : isMinorReceivableForBranchManager(receivable, paid)
+              ? receivable
+              : 0;
           if (autoWaive > 0) {
-            persistWaive(autoWaive, 'round_off', note || 'Auto round-off on manager clearance');
+            persistWaive(
+              autoWaive,
+              'round_off',
+              note ||
+                (autoWaive === receivable && !isEffectivelyFullyPaid(paid, total)
+                  ? 'Minor receivable waived on manager clearance'
+                  : 'Auto round-off on manager clearance')
+            );
           }
         }
         db.prepare(

@@ -68,6 +68,17 @@ describe('reviewQuotation manager holds', () => {
     expect(row.manager_cleared_at_iso).toBeTruthy();
   });
 
+  it('allows manager clear when receivable is a minor balance under 1000 naira', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 1449200, total_ngn = 1450000 WHERE id = ?`).run('QT-PARTIAL');
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'clear', note: 'Minor rounding' }, actor);
+    expect(r.ok).toBe(true);
+    const row = db.prepare(
+      `SELECT manager_cleared_at_iso, payment_balance_waived_ngn FROM quotations WHERE id = ?`
+    ).get('QT-PARTIAL');
+    expect(row.manager_cleared_at_iso).toBeTruthy();
+    expect(row.payment_balance_waived_ngn).toBe(800);
+  });
+
   it('waive_balance clears accounting receivable for small round-off', () => {
     db.prepare(
       `UPDATE quotations SET paid_ngn = 1250000, total_ngn = 1250300, payment_balance_waived_ngn = 0 WHERE id = ?`

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   evaluateReceivableWriteOff,
+  isMinorReceivableForBranchManager,
   maxRoundOffWaiveNgn,
   registerReceivableOutstandingNgn,
   roundOffToleranceNgn,
@@ -15,6 +16,16 @@ describe('receivableWriteOffPolicy', () => {
   it('allows round-off only when effectively fully paid', () => {
     expect(maxRoundOffWaiveNgn(1_250_300, 1_250_000, 0)).toBe(300);
     expect(maxRoundOffWaiveNgn(1_000_000, 900_000, 0)).toBe(0);
+  });
+
+  it('allows branch manager to waive minor receivables under 1000 naira', () => {
+    expect(isMinorReceivableForBranchManager(800, 1_449_200)).toBe(true);
+    expect(maxRoundOffWaiveNgn(1_450_000, 1_449_200, 0)).toBe(800);
+    const minor = evaluateReceivableWriteOff(1_450_000, 1_449_200, 0);
+    expect(minor.kind).toBe('round_off');
+    expect(minor.requiresMd).toBe(false);
+    expect(isMinorReceivableForBranchManager(1_000, 500_000)).toBe(false);
+    expect(isMinorReceivableForBranchManager(500, 0)).toBe(false);
   });
 
   it('registerReceivableOutstandingNgn hides immaterial round-off', () => {

@@ -15,8 +15,11 @@ function strictReceivableOutstandingNgn(totalNgn, paidNgn, priorWaivedNgn = 0) {
   return Math.max(0, raw - waived);
 }
 
-/** Absolute cap on round-off waiver even when 99.5% tolerance would allow more. */
+/** Absolute cap on round-off waiver even when payment tolerance would allow more. */
 export const MAX_ROUND_OFF_WAIVE_NGN = 5_000;
+
+/** Receivable below this (with payment on file) may be waived/cleared by Branch Manager without MD. */
+export const MAX_BRANCH_MANAGER_MINOR_RECEIVABLE_NGN = 1_000;
 
 /** Minimum % paid before MD may approve settlement write-off (not round-off). */
 export const MIN_PAID_FRACTION_FOR_SETTLEMENT_WRITEOFF = 0.95;
@@ -34,7 +37,17 @@ export function roundOffToleranceNgn(totalNgn) {
 }
 
 /**
- * Max NGN a Branch Manager may waive as round-off (within 99.5% paid band).
+ * @param {number} receivableNgn
+ * @param {number} paidNgn
+ */
+export function isMinorReceivableForBranchManager(receivableNgn, paidNgn) {
+  const receivable = Math.round(Number(receivableNgn) || 0);
+  const paid = Math.round(Number(paidNgn) || 0);
+  return paid > 0 && receivable > 0 && receivable < MAX_BRANCH_MANAGER_MINOR_RECEIVABLE_NGN;
+}
+
+/**
+ * Max NGN a Branch Manager may waive as round-off (within payment tolerance or minor receivable band).
  * @param {number} totalNgn
  * @param {number} paidNgn
  * @param {number} [priorWaivedNgn]
@@ -42,7 +55,9 @@ export function roundOffToleranceNgn(totalNgn) {
 export function maxRoundOffWaiveNgn(totalNgn, paidNgn, priorWaivedNgn = 0) {
   const receivable = strictReceivableOutstandingNgn(totalNgn, paidNgn, priorWaivedNgn);
   if (receivable <= 0) return 0;
-  if (Math.round(Number(paidNgn) || 0) <= 0) return 0;
+  const paid = Math.round(Number(paidNgn) || 0);
+  if (paid <= 0) return 0;
+  if (isMinorReceivableForBranchManager(receivable, paid)) return receivable;
   if (!isEffectivelyFullyPaid(paidNgn, totalNgn)) return 0;
   return Math.min(receivable, roundOffToleranceNgn(totalNgn));
 }
@@ -89,13 +104,16 @@ export function evaluateReceivableWriteOff(totalNgn, paidNgn, priorWaivedNgn = 0
 
   const roundOffCap = maxRoundOffWaiveNgn(total, paid, priorWaivedNgn);
   if (roundOffCap >= receivable) {
+    const minor = isMinorReceivableForBranchManager(receivable, paid);
     return {
       kind: 'round_off',
       receivableNgn: receivable,
       waivableNgn: receivable,
       paidFraction,
       requiresMd: false,
-      message: 'Small round-off within the 99.5% payment tolerance — Branch Manager may waive.',
+      message: minor
+        ? `Minor receivable under ₦${MAX_BRANCH_MANAGER_MINOR_RECEIVABLE_NGN.toLocaleString('en-NG')} — Branch Manager may waive and clear.`
+        : 'Small round-off within the payment tolerance — Branch Manager may waive.',
     };
   }
 

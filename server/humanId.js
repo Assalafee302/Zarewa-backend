@@ -29,6 +29,8 @@ const SAFE_TABLES = new Set([
   'customer_crm_interactions',
   'customer_complaints',
   'customer_refunds',
+  'refund_company_retention_entries',
+  'refund_company_retention_withdrawals',
   'partner_wallet_entries',
   'partner_wallet_withdrawal_allocations',
   'payment_requests',

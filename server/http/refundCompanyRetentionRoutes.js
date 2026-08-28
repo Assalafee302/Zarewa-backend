@@ -28,7 +28,11 @@ export function registerRefundCompanyRetentionRoutes(app, db) {
           limit: 200,
         });
         const summary = getCompanyRetentionSummary(db, branchScope);
-        res.json({ ...summary, backfilled: backfill.backfilled ?? 0 });
+        res.json({
+          ...summary,
+          backfilled: backfill.backfilled ?? 0,
+          backfillScanned: backfill.scanned ?? 0,
+        });
       } catch (e) {
         console.error('[refund-company-retention]', e);
         res.status(500).json({ ok: false, error: 'Failed to load company retention balance.' });

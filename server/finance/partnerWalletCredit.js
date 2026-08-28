@@ -71,17 +71,23 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   }
   const usable = splits
     .map((s) => {
-      const kind = String(s?.recipientKind || s?.payoutAccount?.partyKind || 'customer')
+      const kind = String(
+        s?.recipientKind ?? s?.recipient_kind ?? s?.payoutAccount?.partyKind ?? 'customer'
+      )
         .trim()
         .toLowerCase();
-      const staffId = String(s?.recipientAssociatedStaffID || '').trim();
-      const customerId = String(s?.recipientCustomerID || '').trim();
+      const staffId = String(
+        s?.recipientAssociatedStaffID ?? s?.recipient_associated_staff_id ?? ''
+      ).trim();
+      const customerId = String(
+        s?.recipientCustomerID ?? s?.recipient_customer_id ?? ''
+      ).trim();
       const isStaff = kind === 'associated_staff' || kind === 'staff' || (staffId && !customerId);
       return {
         recipientKind: isStaff ? 'associated_staff' : 'customer',
         recipientAssociatedStaffID: isStaff ? staffId || customerId : '',
         recipientCustomerID: isStaff ? '' : customerId,
-        amountNgn: roundMoney(s?.amountNgn),
+        amountNgn: roundMoney(s?.amountNgn ?? s?.amount_ngn),
         payoutAccount: s?.payoutAccount && typeof s.payoutAccount === 'object' ? s.payoutAccount : null,
         note: String(s?.note || '').trim(),
         companyCutWaived: Boolean(
@@ -228,7 +234,12 @@ export function ensureRefundCompanyRetentionCreditTx(db, refundRow, { approvedAm
     approvedAmountNgn ?? refundRow?.approved_amount_ngn ?? refundRow?.approvedAmountNgn ?? refundRow?.amount_ngn ?? refundRow?.amountNgn
   );
   const targets = resolveCreditTargets(db, refundRow, approved);
-  const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
+  let companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
+  if (companyRetentionNgn <= 0) {
+    companyRetentionNgn = parseCompanyCutNgnFromPaymentNote(
+      refundRow?.payment_note ?? refundRow?.paymentNote
+    );
+  }
   if (companyRetentionNgn <= 0) {
     return { ok: true, skipped: true, reason: 'no_company_cut' };
   }
@@ -298,13 +309,35 @@ export function backfillMissingRefundCompanyRetentionCredits(db, branchScope = '
       approvedAmountNgn: row.approved_amount_ngn || row.amount_ngn,
       actor: opts.actor,
     });
-    if (result?.ok && !result?.skipped) backfilled += 1;
+    if (result?.ok && !result?.skipped) {
+      backfilled += 1;
+      continue;
+    }
+    const fromNote = parseCompanyCutNgnFromPaymentNote(row.payment_note);
+    if (fromNote > 0 && result?.reason === 'no_company_cut') {
+      const branchId = String(row.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+      const direct = creditCompanyRetentionFromRefundTx(db, {
+        refundId: row.refund_id,
+        branchId,
+        amountNgn: fromNote,
+        actor: opts.actor,
+        note: `Company cut ₦${fromNote.toLocaleString('en-NG')} from refund ${row.refund_id}`,
+      });
+      if (direct?.ok && !direct?.skipped) backfilled += 1;
+    }
   }
   return { ok: true, backfilled, scanned: rows.length };
 }
 
 function trim(v) {
   return String(v ?? '').trim();
+}
+
+function parseCompanyCutNgnFromPaymentNote(paymentNote) {
+  const note = String(paymentNote || '');
+  const match = note.match(/company cut\s*[₦N]?\s*([\d,]+)/i);
+  if (!match) return 0;
+  return roundMoney(String(match[1] || '').replace(/,/g, ''));
 }
 
 /**

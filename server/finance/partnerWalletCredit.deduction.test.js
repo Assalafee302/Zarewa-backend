@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from '../db.js';
-import { creditRefundToPartnerWalletTx } from './partnerWalletCredit.js';
+import { creditRefundToPartnerWalletTx, backfillMissingRefundCompanyRetentionCredits } from './partnerWalletCredit.js';
 
 const prevWallet = process.env.ZAREWA_PARTNER_WALLET_V1;
 const prevAssoc = process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1;
@@ -91,6 +91,14 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
       .prepare(`SELECT COUNT(*) AS c FROM partner_wallet_entries WHERE refund_id = ?`)
       .get('RF-CUT-WALLET-OFF');
     expect(Number(walletRows?.c || 0)).toBe(0);
+
+    const retention = db
+      .prepare(
+        `SELECT amount_ngn, open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`
+      )
+      .get('RF-CUT-WALLET-OFF');
+    expect(Number(retention?.amount_ngn)).toBe(2_000);
+    expect(Number(retention?.open_ngn)).toBe(2_000);
   });
 
   it('backfills paid_amount when wallet credits exist but company cut was not settled', () => {
@@ -138,5 +146,44 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     expect(Number(updated.paid_amount_ngn)).toBe(2_000);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
     expect(10_000 - Number(updated.paid_amount_ngn)).toBe(8_000);
+
+    const retention = db
+      .prepare(
+        `SELECT amount_ngn, open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`
+      )
+      .get(refundId);
+    expect(Number(retention?.amount_ngn)).toBe(2_000);
+  });
+
+  it('backfills retention from payment note when ledger row was missing at approval', () => {
+    const refundId = 'RF-CUT-NOTE-BF';
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+        approved_amount_ngn, paid_amount_ngn, payment_note
+      ) VALUES (
+        '${refundId}', 'CUS-QUOTE', 'Quote Customer', 'QT-CUT-3',
+        '["Overpayment"]', 'Note-only backfill',
+        89300, '[]', '[]',
+        'Approved',
+        'Payee', '1111222233', 'Test Bank', 'BR-KD', 'Sales', '2026-03-29T10:00:00.000Z',
+        89300, 14300,
+        'Settled at approval: company cut ₦2,860 → retention ledger; uncleared receipts offset ₦11,440.'
+      );
+    `);
+    const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+    const bf = backfillMissingRefundCompanyRetentionCredits(db, 'ALL', {
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    expect(bf.backfilled).toBeGreaterThanOrEqual(1);
+    const retention = db
+      .prepare(
+        `SELECT amount_ngn, open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`
+      )
+      .get(refundId);
+    expect(Number(retention?.amount_ngn)).toBe(2_860);
+    expect(Number(retention?.open_ngn)).toBe(2_860);
   });
 });

@@ -481,6 +481,14 @@ function runMigrationsUnlocked(db) {
     db.exec(`ALTER TABLE sales_receipts ADD COLUMN finance_reconciliation_saved_by_user_id TEXT`);
   }
 
+  const tm = tableCols('treasury_movements');
+  if (tm.size && !tm.has('finance_confirmed_at_iso')) {
+    db.exec(`ALTER TABLE treasury_movements ADD COLUMN finance_confirmed_at_iso TEXT`);
+  }
+  if (tm.size && !tm.has('finance_confirmed_by_user_id')) {
+    db.exec(`ALTER TABLE treasury_movements ADD COLUMN finance_confirmed_by_user_id TEXT`);
+  }
+
   // Backfill receipt registrar from the ledger posting actor (legacy rows stored handled_by as '—').
   if (r.size && db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_entries'`).get()) {
     try {

@@ -2583,6 +2583,8 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
       createdBy: row.created_by ?? '',
       reversesMovementId: row.reverses_movement_id ?? '',
       batchId: row.batch_id ?? '',
+      financeConfirmedAtISO: row.finance_confirmed_at_iso ?? null,
+      financeConfirmedByUserId: row.finance_confirmed_by_user_id ?? null,
     }));
 }
 

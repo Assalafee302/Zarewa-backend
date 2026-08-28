@@ -10757,9 +10757,62 @@ export function reapplyFinanceReconciledReceiptAmountsForBranchScope(db, branchS
   };
 }
 
+function receiptLedgerEntryIdsForTreasuryLookup(rec) {
+  return [...new Set([String(rec?.id || '').trim(), String(rec?.ledger_entry_id || '').trim()].filter(Boolean))];
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} receiptId */
+function listReceiptTreasurySplitMovementsDb(db, receiptId) {
+  const rec = db.prepare(`SELECT id, ledger_entry_id FROM sales_receipts WHERE id = ?`).get(receiptId);
+  if (!rec) return [];
+  const ids = receiptLedgerEntryIdsForTreasuryLookup(rec);
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `SELECT * FROM treasury_movements
+       WHERE source_kind = 'LEDGER_RECEIPT'
+         AND source_id IN (${placeholders})
+         AND type = 'RECEIPT_IN'
+         AND amount_ngn > 0
+       ORDER BY id ASC`
+    )
+    .all(...ids);
+}
+
+function cumulativeFinanceConfirmedSplitAmountNgn(db, receiptId) {
+  const splits = listReceiptTreasurySplitMovementsDb(db, receiptId);
+  return splits.reduce((sum, row) => {
+    const confirmed = row.finance_confirmed_at_iso != null && String(row.finance_confirmed_at_iso).trim() !== '';
+    return confirmed ? sum + roundMoney(row.amount_ngn) : sum;
+  }, 0);
+}
+
+function allReceiptTreasurySplitsFinanceConfirmedDb(db, receiptId) {
+  const splits = listReceiptTreasurySplitMovementsDb(db, receiptId);
+  if (!splits.length) return false;
+  return splits.every(
+    (row) => row.finance_confirmed_at_iso != null && String(row.finance_confirmed_at_iso).trim() !== ''
+  );
+}
+
+function markTreasuryMovementFinanceConfirmedDb(db, movementId, actor, atIso) {
+  const mid = String(movementId || '').trim();
+  if (!mid) return;
+  const uid = actor?.id != null ? String(actor.id) : null;
+  db.prepare(
+    `UPDATE treasury_movements
+     SET finance_confirmed_at_iso = COALESCE(finance_confirmed_at_iso, ?),
+         finance_confirmed_by_user_id = COALESCE(finance_confirmed_by_user_id, ?)
+     WHERE id = ?`
+  ).run(atIso, uid, mid);
+}
+
 /**
  * Finance: record amount actually received in bank, optional delivery clearance, optional batched
  * payment-line corrections, and mark reconciliation finalized (second edit needs manager token).
+ * Multi-split receipts may be confirmed one treasury movement at a time; the receipt finalizes when
+ * every split is finance-confirmed.
  * @param {import('better-sqlite3').Database} db
  * @param {string} receiptId
  * @param {{
@@ -10839,10 +10892,12 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
   const now = new Date().toISOString();
   const uid = actor?.id ?? null;
   let creditResult = null;
+  const splitRows = listReceiptTreasurySplitMovementsDb(db, id);
+  const usesSplitConfirm = splitRows.length > 1;
 
   try {
     db.transaction(() => {
-      if (nextBankReceived > 0) {
+      if (nextBankReceived > 0 || corrections.length > 0) {
         for (const c of corrections) {
           const mid = String(c?.movementId || '').trim();
           if (!mid) continue;
@@ -10864,16 +10919,34 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           if (!r.ok) {
             throw new Error(r.error || 'Payment line correction failed.');
           }
+          if (usesSplitConfirm && splitRows.some((s) => String(s.id) === mid)) {
+            markTreasuryMovementFinanceConfirmedDb(db, mid, actor, now);
+          }
         }
       }
 
-      if (bankAmtResolved || applyingRefundFund) {
+      if (usesSplitConfirm) {
+        nextBankReceived = cumulativeFinanceConfirmedSplitAmountNgn(db, id);
+      }
+
+      const finalizeReceipt =
+        !usesSplitConfirm || allReceiptTreasurySplitsFinanceConfirmedDb(db, id);
+
+      if ((bankAmtResolved || applyingRefundFund || (usesSplitConfirm && nextBankReceived > 0)) && finalizeReceipt) {
         const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived || 0, actor, {
           skipTreasurySync: corrections.length > 0 && nextBankReceived > 0,
           allowZeroConfirmed: applyingRefundFund,
         });
         if (!bookSync.ok) {
           throw new Error(bookSync.error || 'Could not align receipt amount with confirmed bank total.');
+        }
+      } else if (usesSplitConfirm && nextBankReceived > 0) {
+        const bookSync = applyFinanceConfirmedReceiptBookAmountTx(db, id, nextBankReceived, actor, {
+          skipTreasurySync: corrections.length > 0,
+          allowZeroConfirmed: false,
+        });
+        if (!bookSync.ok) {
+          throw new Error(bookSync.error || 'Could not align partial confirmed amount.');
         }
       }
 
@@ -10894,55 +10967,79 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           alreadyInTransaction: true,
         });
         if (!applied?.ok) {
-          throw new Error(applied?.error || 'Could not apply refund fund to this receipt.');
+          throw new Error(
+            applied?.error ||
+              (finalizeReceipt
+                ? 'Could not apply refund fund to this receipt.'
+                : 'Could not apply refund fund to this payment.')
+          );
         }
         creditResult = applied;
       }
 
-      db.prepare(
-        `UPDATE sales_receipts SET
-          bank_received_amount_ngn = ?,
-          finance_delivery_cleared_at_iso = ?,
-          finance_delivery_cleared_by_user_id = ?,
-          bank_confirmed_at_iso = ?,
-          bank_confirmed_by_user_id = ?,
-          finance_reconciliation_saved_at_iso = ?,
-          finance_reconciliation_saved_by_user_id = ?,
-          status = 'Cleared'
-         WHERE id = ?`
-      ).run(
-        nextBankReceived,
-        clearForDelivery ? now : null,
-        clearForDelivery ? uid : null,
-        now,
-        uid,
-        now,
-        uid,
-        id
-      );
+      if (finalizeReceipt) {
+        db.prepare(
+          `UPDATE sales_receipts SET
+            bank_received_amount_ngn = ?,
+            finance_delivery_cleared_at_iso = ?,
+            finance_delivery_cleared_by_user_id = ?,
+            bank_confirmed_at_iso = ?,
+            bank_confirmed_by_user_id = ?,
+            finance_reconciliation_saved_at_iso = ?,
+            finance_reconciliation_saved_by_user_id = ?,
+            status = 'Cleared'
+           WHERE id = ?`
+        ).run(
+          nextBankReceived,
+          clearForDelivery ? now : null,
+          clearForDelivery ? uid : null,
+          now,
+          uid,
+          now,
+          uid,
+          id
+        );
+      } else if (usesSplitConfirm) {
+        db.prepare(
+          `UPDATE sales_receipts SET
+            bank_received_amount_ngn = ?,
+            bank_confirmed_at_iso = ?,
+            bank_confirmed_by_user_id = ?
+           WHERE id = ?`
+        ).run(nextBankReceived, now, uid, id);
+      }
     })();
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
 
+  const finalizedNow = usesSplitConfirm
+    ? allReceiptTreasurySplitsFinanceConfirmedDb(db, id)
+    : true;
+
   appendAuditLog(db, {
     actor,
-    action: 'receipt.finance_settlement',
+    action: finalizedNow ? 'receipt.finance_settlement' : 'receipt.finance_settlement_partial',
     entityKind: 'sales_receipt',
     entityId: id,
-    note: clearForDelivery
-      ? `Reconciliation finalized; cleared for delivery; bank received ₦${nextBankReceived ?? row.amount_ngn}`
-      : `Reconciliation finalized; bank received ₦${nextBankReceived ?? row.amount_ngn}`,
+    note: finalizedNow
+      ? clearForDelivery
+        ? `Reconciliation finalized; cleared for delivery; bank received ₦${nextBankReceived ?? row.amount_ngn}`
+        : `Reconciliation finalized; bank received ₦${nextBankReceived ?? row.amount_ngn}`
+      : `Partial payment confirmed; ₦${nextBankReceived ?? 0} of receipt bank total so far`,
     details: {
       bankReceivedAmountNgn: nextBankReceived,
       bookAmountNgn: row.amount_ngn,
-      clearForDelivery,
+      clearForDelivery: finalizedNow ? clearForDelivery : false,
       paymentLineCorrectionCount: corrections.length,
       refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
+      partialSplitConfirm: usesSplitConfirm && !finalizedNow,
     },
   });
   return {
     ok: true,
+    partialSplitConfirm: usesSplitConfirm && !finalizedNow,
+    allSplitsConfirmed: finalizedNow,
     refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
     refundCreditLeftoverNgn: creditResult?.leftoverCreditNgn ?? null,
   };

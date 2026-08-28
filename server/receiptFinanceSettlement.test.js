@@ -15,6 +15,7 @@ describe('receipt finance settlement aligns paid amount', () => {
   beforeEach(() => {
     db = createDatabase(':memory:');
     db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id) VALUES ('CUS-1', 'Test Customer', 'BR-001');
       INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
       VALUES ('QT-146', 'CUS-1', 'Test Customer', 800000, 415350, 'Partial', 'Finished', '{}', '2026-05-20');
       INSERT INTO sales_receipts (
@@ -141,6 +142,67 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(again.changed).toBe(false);
     const second = db.prepare(`SELECT amount_ngn FROM sales_receipts WHERE id = ?`).get('LE-261');
     expect(second.amount_ngn).toBe(first.amount_ngn);
+  });
+
+  it('confirms multi-split receipts one treasury movement at a time', () => {
+    db.exec(`
+      UPDATE sales_receipts SET amount_ngn = 95200, amount_display = '₦95,200' WHERE id = 'LE-261';
+      UPDATE ledger_entries SET amount_ngn = 95200 WHERE id = 'LE-261';
+      UPDATE treasury_movements SET amount_ngn = 61200 WHERE id = 'TM-261';
+      INSERT INTO treasury_movements (
+        id, type, source_kind, source_id, treasury_account_id, amount_ngn, posted_at_iso, counterparty_kind
+      ) VALUES (
+        'TM-261-B', 'RECEIPT_IN', 'LEDGER_RECEIPT', 'LE-261', 1, 34000, '2026-05-20T12:00:00.000Z', 'CUSTOMER'
+      );
+    `);
+
+    const first = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      {
+        bankReceivedAmountNgn: 61_200,
+        paymentLineCorrections: [{ movementId: 'TM-261', amountNgn: 61_200, treasuryAccountId: 1 }],
+        clearForDelivery: true,
+      },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(first.ok).toBe(true);
+    expect(first.partialSplitConfirm).toBe(true);
+    expect(first.allSplitsConfirmed).toBe(false);
+
+    const mid = db
+      .prepare(
+        `SELECT status, bank_received_amount_ngn, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = 'LE-261'`
+      )
+      .get();
+    expect(String(mid.status)).toBe('Pending clearance');
+    expect(mid.bank_received_amount_ngn).toBe(61_200);
+    expect(mid.finance_reconciliation_saved_at_iso).toBeFalsy();
+
+    const tmA = db.prepare(`SELECT finance_confirmed_at_iso FROM treasury_movements WHERE id = 'TM-261'`).get();
+    expect(tmA.finance_confirmed_at_iso).toBeTruthy();
+
+    const second = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      {
+        bankReceivedAmountNgn: 34_000,
+        paymentLineCorrections: [{ movementId: 'TM-261-B', amountNgn: 34_000, treasuryAccountId: 1 }],
+        clearForDelivery: true,
+      },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(second.ok).toBe(true);
+    expect(second.allSplitsConfirmed).toBe(true);
+
+    const done = db
+      .prepare(
+        `SELECT status, bank_received_amount_ngn, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = 'LE-261'`
+      )
+      .get();
+    expect(String(done.status)).toBe('Cleared');
+    expect(done.bank_received_amount_ngn).toBe(95_200);
+    expect(done.finance_reconciliation_saved_at_iso).toBeTruthy();
   });
 });
 

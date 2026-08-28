@@ -1043,6 +1043,8 @@ CREATE TABLE IF NOT EXISTS treasury_movements (
   created_by TEXT,
   reverses_movement_id TEXT,
   batch_id TEXT,
+  finance_confirmed_at_iso TEXT,
+  finance_confirmed_by_user_id TEXT,
   FOREIGN KEY (treasury_account_id) REFERENCES treasury_accounts(id)
 );
 

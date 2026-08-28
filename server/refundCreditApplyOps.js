@@ -12,7 +12,9 @@ import {
   REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX,
   allocateRefundCreditAcrossSources,
   planRefundCreditApplyAmount,
+  refundBlocksExternalCreditOnQuotation,
   refundCategoriesAreOverpaymentOnly,
+  refundCreditOpenAmountFromStoredRefund,
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
 } from '../shared/lib/refundCreditApply.js';
@@ -121,7 +123,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     refundsByQuote.get(qref).push(row);
 
     const shape = mapRefundRowToCreditShape(row);
-    const open = refundCreditOpenAmountNgn(shape);
+    const open = refundCreditOpenAmountFromStoredRefund(row);
     const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
     const eligible = refundIsEligibleCreditSource(shape) && open > 0;
     if (eligible) {
@@ -287,7 +289,8 @@ export function applyRefundCreditToQuotation(db, payload) {
     sources.filter((s) => s.kind === 'refund' && s.refundId).map((s) => String(s.refundId))
   );
   const blockingTargetRefund = targetActiveRefunds.find(
-    (row) => !consumingRefundIds.has(String(row.refund_id))
+    (row) =>
+      !consumingRefundIds.has(String(row.refund_id)) && refundBlocksExternalCreditOnQuotation(row)
   );
   if (blockingTargetRefund) {
     return {
@@ -320,10 +323,7 @@ export function applyRefundCreditToQuotation(db, payload) {
         const appId = nextApplicationId();
         const refToken = `${REFUND_CREDIT_LEDGER_REF_PREFIX}${appId}`;
         const sourceQ = String(src.sourceQuotationRef || '').trim();
-
-        if (src.kind === 'refund' && src.refundId) {
-          allowRefundQuotes.add(sourceQ);
-        }
+        if (sourceQ) allowRefundQuotes.add(sourceQ);
 
         const ledgerRows = [];
         // Reduce per-quote overpay pool on the source when present (keeps leftover refundable math honest).
@@ -372,7 +372,7 @@ export function applyRefundCreditToQuotation(db, payload) {
           if (!refundIsEligibleCreditSource(shape)) {
             throw new Error(`Refund ${src.refundId} is no longer eligible for credit apply.`);
           }
-          const open = refundCreditOpenAmountNgn(shape);
+          const open = refundCreditOpenAmountFromStoredRefund(fresh);
           if (amt > open) throw new Error(`Refund ${src.refundId} open balance is only ₦${open.toLocaleString('en-NG')}.`);
 
           const overpayOnly = refundCategoriesAreOverpaymentOnly(

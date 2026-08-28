@@ -5,6 +5,10 @@
 
 import { normalizeRefundReasonCategoriesForApi } from '../refundConstants.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
+import {
+  sumRefundStaffCompanyDeductionNgn,
+  sumRefundStaffNetPayoutNgn,
+} from './refundStaffAllocationDeduction.js';
 
 export const REFUND_CREDIT_CONFIRMATION_STATUS = 'Credit confirmation';
 export const REFUND_CREDIT_REVERSED_STATUS = 'Reversed';
@@ -100,6 +104,99 @@ export function refundCreditOpenAmountNgn(refund) {
     Math.round(Number(refund?.approvedAmountNgn) || 0) ||
     (status === 'Approved' || status === 'Paid' ? Math.round(Number(refund?.amountNgn) || 0) : 0);
   return effectiveOutstandingNgn(approved, paid);
+}
+
+function parseRefundSplitDistributions(raw) {
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(String(raw || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Open transferable credit on a stored refund row, capping staff-split refunds at net payout
+ * after company cut (when gross approved/paid would overstate usable fund).
+ *
+ * @param {object} row DB or API refund row
+ */
+export function refundCreditOpenAmountFromStoredRefund(row) {
+  const shape = {
+    status: row?.status,
+    reasonCategory: row?.reason_category ?? row?.reasonCategory,
+    calculationLines:
+      row?.calculationLines ??
+      (typeof row?.calculation_lines_json === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(row.calculation_lines_json || '[]');
+            } catch {
+              return [];
+            }
+          })()
+        : []),
+    amountNgn: row?.amount_ngn ?? row?.amountNgn,
+    approvedAmountNgn: row?.approved_amount_ngn ?? row?.approvedAmountNgn,
+    paidAmountNgn: row?.paid_amount_ngn ?? row?.paidAmountNgn,
+    creditAppliedNgn: row?.credit_applied_ngn ?? row?.creditAppliedNgn,
+  };
+  let open = refundCreditOpenAmountNgn(shape);
+  if (!(open > 0)) return 0;
+
+  const splits = parseRefundSplitDistributions(
+    row?.split_distributions_json ?? row?.splitDistributions ?? row?.refundSplits
+  );
+  if (!splits.length) return open;
+
+  const netPool = sumRefundStaffNetPayoutNgn(splits);
+  const companyCut = sumRefundStaffCompanyDeductionNgn(splits);
+  if (!(netPool > 0) && !(companyCut > 0)) return open;
+
+  const paid = Math.round(Number(shape.paidAmountNgn) || 0);
+  const creditApplied = refundCreditAppliedNgn(shape);
+  const settledCut = Math.min(companyCut, paid);
+  const cashPaid = Math.max(0, paid - settledCut);
+  const netOpen = Math.max(0, netPool - cashPaid - creditApplied);
+  return Math.min(open, netOpen);
+}
+
+/**
+ * True when an active refund on the payment target should block credit from other quotations.
+ * Pending overpay-only refunds do not block — they can be applied explicitly or ignored.
+ *
+ * @param {object} row customer_refunds row
+ */
+export function refundBlocksExternalCreditOnQuotation(row) {
+  const shape = {
+    status: row?.status,
+    reasonCategory: row?.reason_category ?? row?.reasonCategory,
+    calculationLines:
+      typeof row?.calculation_lines_json === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(row.calculation_lines_json || '[]');
+            } catch {
+              return [];
+            }
+          })()
+        : row?.calculationLines,
+    amountNgn: row?.amount_ngn ?? row?.amountNgn,
+    approvedAmountNgn: row?.approved_amount_ngn ?? row?.approvedAmountNgn,
+    paidAmountNgn: row?.paid_amount_ngn ?? row?.paidAmountNgn,
+    creditAppliedNgn: row?.credit_applied_ngn ?? row?.creditAppliedNgn,
+  };
+  const status = String(shape.status || '').trim();
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
+  if (status === 'Pending') {
+    return !overpayOnly;
+  }
+  if (status === 'Approved') {
+    if (overpayOnly) return false;
+    return refundCreditOpenAmountFromStoredRefund(row) > 0;
+  }
+  return false;
 }
 
 /**

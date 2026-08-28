@@ -4,7 +4,9 @@ import {
   allocateRefundCreditAcrossSources,
   planCashierRefundOffset,
   planRefundCreditApplyAmount,
+  refundBlocksExternalCreditOnQuotation,
   refundCategoriesAreOverpaymentOnly,
+  refundCreditOpenAmountFromStoredRefund,
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
   refundLeftoverAwaitingApprovalNgn,
@@ -123,5 +125,44 @@ describe('refundCreditApply pure helpers', () => {
       leftoverRefundNgn: 0,
     });
     expect(planCashierRefundOffset({ receiptCashNgn: 20_000, availableNgn: 50_000 }).cashToConfirmNgn).toBe(0);
+  });
+
+  it('caps open credit at net payout when staff company cut is not settled in paid_amount', () => {
+    expect(
+      refundCreditOpenAmountFromStoredRefund({
+        status: 'Approved',
+        approved_amount_ngn: 10_000,
+        paid_amount_ngn: 0,
+        amount_ngn: 10_000,
+        reason_category: '["Transport issue"]',
+        split_distributions_json: JSON.stringify([
+          {
+            recipientKind: 'associated_staff',
+            recipientAssociatedStaffID: 'AST-1',
+            amountNgn: 10_000,
+            companyDeductionNgn: 2_000,
+            netPayoutNgn: 8_000,
+          },
+        ]),
+      })
+    ).toBe(8_000);
+  });
+
+  it('does not block external credit when target only has a pending overpay refund', () => {
+    expect(
+      refundBlocksExternalCreditOnQuotation({
+        status: 'Pending',
+        reason_category: '["Overpayment"]',
+        amount_ngn: 20_000,
+        calculation_lines_json: JSON.stringify([{ category: 'Overpayment', amountNgn: 20_000 }]),
+      })
+    ).toBe(false);
+    expect(
+      refundBlocksExternalCreditOnQuotation({
+        status: 'Pending',
+        reason_category: '["Unproduced meterage"]',
+        amount_ngn: 15_000,
+      })
+    ).toBe(true);
   });
 });

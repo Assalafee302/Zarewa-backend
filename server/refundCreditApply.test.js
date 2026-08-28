@@ -386,4 +386,56 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(applied.ok).toBe(true);
     expect(applied.appliedNgn).toBe(20_000);
   });
+
+  it('lists and applies credit from two approved overpay refunds on different quotations', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 8, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-TWO', 'Two Refund Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-TWO-A', 'CUS-TWO', 'Two Refund Customer', 60000, 90000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-TWO-B', 'CUS-TWO', 'Two Refund Customer', 50000, 80000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-09-02', '${DEFAULT_BRANCH_ID}'),
+        ('QT-TWO-DST', 'CUS-TWO', 'Two Refund Customer', 70000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-09-03', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, approved_amount_ngn, paid_amount_ngn, branch_id,
+        calculation_lines_json
+      ) VALUES
+        ('RF-TWO-A', 'CUS-TWO', 'Two Refund Customer', 'QT-TWO-A', '["Overpayment"]', 'Overpay A',
+         30000, 'Approved', 'Sales One', '2026-09-01T10:00:00.000Z', 30000, 0, '${DEFAULT_BRANCH_ID}',
+         '${JSON.stringify([{ category: 'Overpayment', amountNgn: 30000, label: 'Overpay A' }]).replace(/'/g, "''")}'),
+        ('RF-TWO-B', 'CUS-TWO', 'Two Refund Customer', 'QT-TWO-B', '["Overpayment"]', 'Overpay B',
+         25000, 'Approved', 'Sales One', '2026-09-02T10:00:00.000Z', 25000, 0, '${DEFAULT_BRANCH_ID}',
+         '${JSON.stringify([{ category: 'Overpayment', amountNgn: 25000, label: 'Overpay B' }]).replace(/'/g, "''")}');
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-TWO', 'QT-TWO-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.filter((s) => s.kind === 'refund')).toHaveLength(2);
+    expect(listed.totalAvailableNgn).toBe(55_000);
+    expect(listed.recommendedApplyNgn).toBe(55_000);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-TWO',
+      targetQuotationRef: 'QT-TWO-DST',
+      amountNgn: 55_000,
+      sourceIds: ['refund:RF-TWO-A', 'refund:RF-TWO-B'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-09-04',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(55_000);
+    expect(applied.applications).toHaveLength(2);
+
+    const rfA = db.prepare(`SELECT credit_applied_ngn FROM customer_refunds WHERE refund_id = 'RF-TWO-A'`).get();
+    const rfB = db.prepare(`SELECT credit_applied_ngn FROM customer_refunds WHERE refund_id = 'RF-TWO-B'`).get();
+    expect(Number(rfA.credit_applied_ngn)).toBe(30_000);
+    expect(Number(rfB.credit_applied_ngn)).toBe(25_000);
+  });
 });

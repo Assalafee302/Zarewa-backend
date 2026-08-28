@@ -2450,79 +2450,7 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
-  return rows.map((row) => {
-      let calculationLines = [];
-      let suggestedLines = [];
-      try {
-        calculationLines = JSON.parse(row.calculation_lines_json || '[]');
-      } catch {
-        /* ignore */
-      }
-      try {
-        suggestedLines = JSON.parse(row.suggested_lines_json || '[]');
-      } catch {
-        /* ignore */
-      }
-      let previewSnapshot = null;
-      let splitDistributions = [];
-      try {
-        previewSnapshot = JSON.parse(row.preview_snapshot_json || 'null');
-      } catch {
-        previewSnapshot = null;
-      }
-      try {
-        splitDistributions = JSON.parse(row.split_distributions_json || '[]');
-        if (!Array.isArray(splitDistributions)) splitDistributions = [];
-      } catch {
-        splitDistributions = [];
-      }
-      const approvedAmountNgn = row.approved_amount_ngn != null ? Number(row.approved_amount_ngn) || 0 : 0;
-      const paidAmountNgn = Number(row.paid_amount_ngn) || 0;
-      const finalApprovedAmountNgn =
-        row.status === 'Approved' || row.status === 'Paid'
-          ? approvedAmountNgn || Number(row.amount_ngn) || 0
-          : approvedAmountNgn;
-      const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
-      const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
-      return {
-        refundID: row.refund_id,
-        customerID: row.customer_id,
-        customer: row.customer_name,
-        quotationRef: row.quotation_ref,
-        cuttingListRef: row.cutting_list_ref,
-        product: row.product,
-        reasonCategory: row.reason_category,
-        reason: row.reason,
-        amountNgn: row.amount_ngn,
-        calculationLines,
-        suggestedLines,
-        previewSnapshot,
-        splitDistributions,
-        calculationNotes: row.calculation_notes,
-        status: row.status,
-        requestedBy: row.requested_by,
-        requestedAtISO: row.requested_at_iso,
-        approvalDate: row.approval_date,
-        approvedBy: row.approved_by,
-        approvedAmountNgn: finalApprovedAmountNgn,
-        managerComments: row.manager_comments,
-        paidAmountNgn,
-        paidAtISO: row.paid_at_iso,
-        paidBy: row.paid_by,
-        paymentNote: row.payment_note ?? '',
-        payeeName: row.payee_name ?? '',
-        payeeAccountNo: row.payee_account_no ?? '',
-        payeeBankName: row.payee_bank_name ?? '',
-        payoutHistory,
-        walletOpenNgn,
-        branchId: row.branch_id ?? '',
-        creditAppliedNgn: Number(row.credit_applied_ngn) || 0,
-        creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',
-        creditConfirmationStatus: row.credit_confirmation_status ?? '',
-        quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,
-        quotationRefundsBlockedReason: row.quotation_refunds_blocked_reason ?? '',
-      };
-    });
+  return rows.map((row) => mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId));
 }
 
 export function listTreasuryAccounts(db, branchScope = 'ALL') {
@@ -2734,11 +2662,98 @@ export function getPaymentRequestDetail(db, requestId) {
   };
 }
 
-/** Full refund row for review/detail UIs. */
+/** Full refund row for review/detail UIs (mapped like listRefunds). */
 export function getCustomerRefundDetail(db, refundId) {
   const id = String(refundId || '').trim();
   if (!id) return null;
-  return db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(id) || null;
+  const row = db
+    .prepare(
+      `SELECT cr.*,
+              q.refunds_blocked_at_iso AS quotation_refunds_blocked_at_iso,
+              q.refunds_blocked_reason AS quotation_refunds_blocked_reason
+       FROM customer_refunds cr
+       LEFT JOIN quotations q ON q.id = cr.quotation_ref
+       WHERE cr.refund_id = ?`
+    )
+    .get(id);
+  if (!row) return null;
+  const payoutByRefundId = refundPayoutHistoryByIds(db, [id]);
+  const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, [id]);
+  return mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId);
+}
+
+function mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId) {
+  let calculationLines = [];
+  let suggestedLines = [];
+  try {
+    calculationLines = JSON.parse(row.calculation_lines_json || '[]');
+  } catch {
+    /* ignore */
+  }
+  try {
+    suggestedLines = JSON.parse(row.suggested_lines_json || '[]');
+  } catch {
+    /* ignore */
+  }
+  let previewSnapshot = null;
+  let splitDistributions = [];
+  try {
+    previewSnapshot = JSON.parse(row.preview_snapshot_json || 'null');
+  } catch {
+    previewSnapshot = null;
+  }
+  try {
+    splitDistributions = JSON.parse(row.split_distributions_json || '[]');
+    if (!Array.isArray(splitDistributions)) splitDistributions = [];
+  } catch {
+    splitDistributions = [];
+  }
+  const approvedAmountNgn = row.approved_amount_ngn != null ? Number(row.approved_amount_ngn) || 0 : 0;
+  const paidAmountNgn = Number(row.paid_amount_ngn) || 0;
+  const finalApprovedAmountNgn =
+    row.status === 'Approved' || row.status === 'Paid'
+      ? approvedAmountNgn || Number(row.amount_ngn) || 0
+      : approvedAmountNgn;
+  const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
+  const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
+  return {
+    refundID: row.refund_id,
+    customerID: row.customer_id,
+    customer: row.customer_name,
+    quotationRef: row.quotation_ref,
+    cuttingListRef: row.cutting_list_ref,
+    product: row.product,
+    reasonCategory: row.reason_category,
+    reason: row.reason,
+    amountNgn: row.amount_ngn,
+    calculationLines,
+    suggestedLines,
+    previewSnapshot,
+    splitDistributions,
+    calculationNotes: row.calculation_notes,
+    status: row.status,
+    requestedBy: row.requested_by,
+    requestedAtISO: row.requested_at_iso,
+    approvalDate: row.approval_date,
+    approvedBy: row.approved_by,
+    approvedAmountNgn: finalApprovedAmountNgn,
+    managerComments: row.manager_comments,
+    paidAmountNgn,
+    paidAtISO: row.paid_at_iso,
+    paidBy: row.paid_by,
+    paymentNote: row.payment_note ?? '',
+    payeeName: row.payee_name ?? '',
+    payeeAccountNo: row.payee_account_no ?? '',
+    payeeBankName: row.payee_bank_name ?? '',
+    payoutHistory,
+    walletOpenNgn,
+    branchId: row.branch_id ?? '',
+    creditAppliedNgn: Number(row.credit_applied_ngn) || 0,
+    creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',
+    creditConfirmationStatus: row.credit_confirmation_status ?? '',
+    quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,
+    quotationRefundsBlockedReason: row.quotation_refunds_blocked_reason ?? '',
+  };
 }
 
 export function listAccountsPayable(db, branchScope = 'ALL') {

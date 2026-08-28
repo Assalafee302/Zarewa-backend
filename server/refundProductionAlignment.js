@@ -14,6 +14,29 @@ import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundPro
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { refundCuttingListQuotationMetreIssues, assessQuotationCuttingListConsumptionForRef } from './cuttingListQuotationConsumptionOps.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
+
+/**
+ * Preview/submit alignment: use explicit categories when provided; otherwise infer Overpayment-only
+ * from a single positive suggested line so metre/production checks do not block quick overpay.
+ *
+ * @param {unknown} reasonCategory
+ * @param {Array<{ category?: string, amountNgn?: number }>} suggestedLines
+ */
+export function resolveRefundAlignmentCategories(reasonCategory, suggestedLines) {
+  const explicit = normalizeRefundReasonCategoriesForApi(reasonCategory);
+  if (explicit.length) return explicit;
+  const cats = [
+    ...new Set(
+      (Array.isArray(suggestedLines) ? suggestedLines : [])
+        .filter((l) => Math.round(Number(l?.amountNgn) || 0) > 0)
+        .map((l) => String(l?.category || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  if (cats.length === 1 && cats[0] === 'Overpayment') return ['Overpayment'];
+  return [];
+}
 
 /** @type {Record<string, 'block' | 'acknowledge' | 'info'>} */
 const SUBMIT_ACTION_BY_CODE = {

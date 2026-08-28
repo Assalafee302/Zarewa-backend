@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   refundProductionAlignmentWarnings,
+  resolveRefundAlignmentCategories,
   suggestRefundCategoriesFromProduction,
   validateRefundProductionAlignmentAtSubmit,
   actorMayOverrideProductionAlignmentBlock,
@@ -438,5 +439,20 @@ describe('refundProductionAlignment', () => {
       }
     );
     expect(cats).toEqual(['Unproduced meterage']);
+  });
+
+  it('infers Overpayment-only alignment when preview has a single overpay suggested line', () => {
+    expect(resolveRefundAlignmentCategories(null, [{ category: 'Overpayment', amountNgn: 1760 }])).toEqual([
+      'Overpayment',
+    ]);
+    expect(
+      resolveRefundAlignmentCategories(['Overpayment'], [{ category: 'Overpayment', amountNgn: 1760 }])
+    ).toEqual(['Overpayment']);
+    expect(
+      resolveRefundAlignmentCategories(null, [
+        { category: 'Overpayment', amountNgn: 1000 },
+        { category: 'Transport issue', amountNgn: 500 },
+      ])
+    ).toEqual([]);
   });
 });

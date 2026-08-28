@@ -145,6 +145,7 @@ import {
   parseStoredProductionAlignmentAck,
   refundProductionAlignmentWarnings,
   resolveRefundReasonCategoriesForDecision,
+  resolveRefundAlignmentCategories,
   suggestRefundCategoriesFromProduction,
   validateRefundProductionAlignmentAtSubmit,
 } from './refundProductionAlignment.js';
@@ -4638,16 +4639,22 @@ export function previewRefundRequest(db, payload) {
         ...refundSubstitutionDataQualityIssues(db, quotationRef),
         ...refundPaymentIntegrityIssues(db, quotationRef),
         ...refundCuttingListQuotationMetreIssues(db, quotationRef),
-        ...refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory, {
-          excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
-        }),
+        ...refundProductionAlignmentWarnings(
+          db,
+          quotationRef,
+          resolveRefundAlignmentCategories(payload.reasonCategory, suggestedLines),
+          {
+            excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
+          }
+        ),
       ]),
     };
   }
 
   const productionSuggestedCategories = suggestRefundCategoriesFromProduction(db, quotationRef);
+  const alignmentCategories = resolveRefundAlignmentCategories(payload.reasonCategory, suggestedLines);
   const alignmentIssues = enrichProductionAlignmentIssuesForSubmit(
-    refundProductionAlignmentWarnings(db, quotationRef, payload.reasonCategory, {
+    refundProductionAlignmentWarnings(db, quotationRef, alignmentCategories, {
       excludeRefundId: String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null,
     })
   );

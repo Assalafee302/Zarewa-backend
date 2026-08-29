@@ -130,6 +130,7 @@ import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerW
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import {
   refundCashOutstandingNgn,
+  refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
@@ -8675,8 +8676,8 @@ export function payRefundEntry(db, refundId, payload) {
     Boolean(payload.workspaceViewAll)
   );
   if (!branchGate.ok) return { ok: false, error: branchGate.error };
-  if (String(row.status || '') !== 'Approved') {
-    return { ok: false, error: 'Only approved refunds can be paid.' };
+  if (!refundStatusAllowsTreasuryPayout(row.status)) {
+    return { ok: false, error: 'Only approved refunds awaiting payout can be paid.' };
   }
   // Backfill company cut / uncleared offsets if approval did not settle them (e.g. wallet flag was off).
   if (!/settled at approval/i.test(String(row.payment_note || ''))) {
@@ -8823,8 +8824,8 @@ export function payRefundEntry(db, refundId, payload) {
     const result = db.transaction(() => {
       const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
       if (!fresh) throw new Error('Refund not found.');
-      if (String(fresh.status || '') !== 'Approved') {
-        throw new Error('Only approved refunds can be paid.');
+      if (!refundStatusAllowsTreasuryPayout(fresh.status)) {
+        throw new Error('Only approved refunds awaiting payout can be paid.');
       }
       const approvedFresh = roundMoney(fresh.approved_amount_ngn || fresh.amount_ngn);
       const paidFresh = roundMoney(fresh.paid_amount_ngn);
@@ -10327,7 +10328,10 @@ export function expenseOutflowTreasuryMovementCorrectTx(db, movementId, payload,
         );
         let nextPaid = roundMoney(prevPaid + (oldAmt - nextAmt));
         if (nextPaid < 0) nextPaid = 0;
-        const nextStatus = approvedAmt > 0 && nextPaid >= approvedAmt ? 'Paid' : 'Approved';
+        const nextStatus =
+          approvedAmt > 0 && nextPaid >= approvedAmt
+            ? resolveRefundStatus(db, { ...refundRow, paid_amount_ngn: nextPaid, approved_amount_ngn: approvedAmt })
+            : 'Approved';
         db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = ?, status = ? WHERE refund_id = ?`).run(
           nextPaid,
           nextStatus,

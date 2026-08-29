@@ -108,4 +108,65 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(resolveRefundStatus(db, after)).toBe('Approved');
     expect(refundCashOutstandingNgn(db, after)).toBe(48_960);
   });
+
+  it('marks Partially paid when treasury paid some but not all net cash due', () => {
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+    creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 61_200,
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    const acct = db.prepare(`SELECT id FROM treasury_accounts LIMIT 1`).get();
+    expect(acct?.id).toBeTruthy();
+    db.prepare(
+      `INSERT INTO treasury_movements (
+        id, posted_at_iso, type, treasury_account_id, amount_ngn,
+        source_kind, source_id, note, created_by
+      ) VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(
+      'TM-RF-PARTIAL-1',
+      '2026-08-29T12:00:00.000Z',
+      'REFUND_PAYOUT',
+      acct.id,
+      20_000,
+      'REFUND',
+      REFUND_ID,
+      'Partial staff payout',
+      'Finance'
+    );
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 32240 WHERE refund_id = ?`).run(REFUND_ID);
+    const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    expect(resolveRefundStatus(db, row)).toBe('Partially paid');
+    expect(refundCashOutstandingNgn(db, row)).toBe(28_960);
+  });
+
+  it('marks Paid when treasury covers full net cash due without wallet', () => {
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+    creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 61_200,
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    const acct = db.prepare(`SELECT id FROM treasury_accounts LIMIT 1`).get();
+    db.prepare(
+      `INSERT INTO treasury_movements (
+        id, posted_at_iso, type, treasury_account_id, amount_ngn,
+        source_kind, source_id, note, created_by
+      ) VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(
+      'TM-RF-FULL-1',
+      '2026-08-29T12:00:00.000Z',
+      'REFUND_PAYOUT',
+      acct.id,
+      48_960,
+      'REFUND',
+      REFUND_ID,
+      'Full staff payout',
+      'Finance'
+    );
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 61200 WHERE refund_id = ?`).run(REFUND_ID);
+    const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    expect(resolveRefundStatus(db, row)).toBe('Paid');
+    expect(refundCashOutstandingNgn(db, row)).toBe(0);
+  });
 });

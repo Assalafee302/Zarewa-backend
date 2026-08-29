@@ -2713,7 +2713,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   const approvedAmountNgn = row.approved_amount_ngn != null ? Number(row.approved_amount_ngn) || 0 : 0;
   const paidAmountNgn = Number(row.paid_amount_ngn) || 0;
   const finalApprovedAmountNgn =
-    row.status === 'Approved' || row.status === 'Paid'
+    row.status === 'Approved' || row.status === 'Paid' || row.status === 'Partially paid'
       ? approvedAmountNgn || Number(row.amount_ngn) || 0
       : approvedAmountNgn;
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];

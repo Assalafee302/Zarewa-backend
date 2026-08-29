@@ -117,6 +117,7 @@ import {
 import {
   applyRefundStaffAllocationDeductions,
 } from '../shared/lib/refundStaffAllocationDeduction.js';
+import { refundCategoriesAreOverpaymentOnly } from '../shared/lib/refundCreditApply.js';
 import {
   unclearedReceiptFloatBySalesCustomerIds,
   unclearedTotalsMap,
@@ -2749,6 +2750,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     const waiverErr = splitsWithWaiverAuth.find((s) => s?.__waiverError);
     if (waiverErr) return { ok: false, error: waiverErr.error };
 
+    const overpaymentOnly = refundCategoriesAreOverpaymentOnly(
+      requestedCats,
+      payload.calculationLines
+    );
+
     const splitsForStore = applyRefundStaffAllocationDeductions(splitsWithWaiverAuth, customerID, {
       deductionRate: getRefundStaffAllocationDeductionRate(db),
       unclearedByCustomerId: unclearedTotalsMap(
@@ -2758,6 +2764,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         )
       ),
       honorCompanyCutWaiver: true,
+      overpaymentOnly,
     });
 
     // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.

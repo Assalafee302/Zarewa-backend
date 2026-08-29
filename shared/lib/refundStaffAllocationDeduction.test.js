@@ -43,7 +43,7 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.netPayoutNgn).toBe(10_000);
   });
 
-  it('offsets uncleared receipts from net after company cut', () => {
+  it('does not auto-offset uncleared receipts from net payout', () => {
     const row = applyRefundStaffAllocationDeduction(
       {
         recipientKind: 'customer',
@@ -55,12 +55,13 @@ describe('refundStaffAllocationDeduction', () => {
     );
     expect(row.grossNgn).toBe(20_000);
     expect(row.companyDeductionNgn).toBe(4_000);
-    expect(row.unclearedReceiptOffsetNgn).toBe(5_000);
-    expect(row.netPayoutNgn).toBe(11_000);
-    expect(row.payoutHeldForUnclearedReceipts).toBe(false);
+    expect(row.unclearedReceiptOffsetNgn).toBe(0);
+    expect(row.netPayoutNgn).toBe(16_000);
+    expect(row.unclearedReceiptHoldNgn).toBe(5_000);
+    expect(row.payoutHeldForUnclearedReceipts).toBe(true);
   });
 
-  it('holds payout when uncleared float covers remaining net', () => {
+  it('flags payout held when uncleared float exists even if net remains payable', () => {
     const row = applyRefundStaffAllocationDeduction(
       {
         recipientKind: 'customer',
@@ -70,12 +71,12 @@ describe('refundStaffAllocationDeduction', () => {
       'CUS-QUOTE',
       { deductionRate: 0.2, unclearedReceiptHoldNgn: 50_000 }
     );
-    expect(row.netPayoutNgn).toBe(0);
-    expect(row.unclearedReceiptOffsetNgn).toBe(8_000);
+    expect(row.netPayoutNgn).toBe(8_000);
+    expect(row.unclearedReceiptOffsetNgn).toBe(0);
     expect(row.payoutHeldForUnclearedReceipts).toBe(true);
   });
 
-  it('allows Admin/MD to waive company cut while still offsetting uncleared receipts', () => {
+  it('allows Admin/MD to waive company cut while still flagging uncleared hold', () => {
     const row = applyRefundStaffAllocationDeduction(
       {
         recipientKind: 'associated_staff',
@@ -90,8 +91,24 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.companyCutWaived).toBe(true);
     expect(row.companyDeductionNgn).toBe(0);
     expect(row.deductionRate).toBe(0);
-    expect(row.unclearedReceiptOffsetNgn).toBe(1_500);
-    expect(row.netPayoutNgn).toBe(8_500);
+    expect(row.unclearedReceiptOffsetNgn).toBe(0);
+    expect(row.netPayoutNgn).toBe(10_000);
+    expect(row.payoutHeldForUnclearedReceipts).toBe(true);
+  });
+
+  it('flags overpayment fund as cashier-referral eligible while till payout stays held', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'associated_staff',
+        recipientAssociatedStaffID: 'AS-1',
+        amountNgn: 61_200,
+      },
+      'CUS-QUOTE',
+      { deductionRate: 0.2, unclearedReceiptHoldNgn: 48_960, overpaymentOnly: true }
+    );
+    expect(row.netPayoutNgn).toBe(48_960);
+    expect(row.payoutHeldForUnclearedReceipts).toBe(true);
+    expect(row.overpaymentCashierReferralAvailable).toBe(true);
   });
 
   it('deducts for associated staff and claiming staff', () => {
@@ -116,7 +133,8 @@ describe('refundStaffAllocationDeduction', () => {
       }
     );
     expect(sumRefundStaffCompanyDeductionNgn(rows)).toBe(1000 + 3000);
-    expect(sumRefundStaffUnclearedOffsetNgn(rows)).toBe(2_000);
-    expect(sumRefundStaffNetPayoutNgn(rows)).toBe(4000 + 10_000);
+    expect(sumRefundStaffUnclearedOffsetNgn(rows)).toBe(0);
+    expect(sumRefundStaffNetPayoutNgn(rows)).toBe(4000 + 12_000);
+    expect(rows[1].payoutHeldForUnclearedReceipts).toBe(true);
   });
 });

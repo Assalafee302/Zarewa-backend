@@ -1,7 +1,8 @@
 /**
  * Company cut on refund allocations paid to associated / claiming staff (not the quote customer).
- * Gross allocation stays on the refund for headroom; net after company cut (and any uncleared
- * receipt offset) is what Finance pays out.
+ * Gross allocation stays on the refund for headroom; net after company cut is what Finance pays out.
+ * Uncleared receipt float is informational only — it may block payout until cleared but is never
+ * auto-settled into paid_amount at approval.
  */
 
 export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.2;
@@ -80,9 +81,9 @@ export function refundStaffAllocationDeductionAmounts(
 }
 
 /**
- * Enrich a split row with deduction + optional uncleared-receipt offset.
+ * Enrich a split row with deduction + optional uncleared-receipt hold (informational).
  * Amount on the split remains the gross allocation.
- * Admin/MD may set companyCutWaived to skip the company % (uncleared offset still applies).
+ * Admin/MD may set companyCutWaived to skip the company % (uncleared hold still applies).
  *
  * @param {object} split
  * @param {string} [quoteCustomerId]
@@ -90,6 +91,7 @@ export function refundStaffAllocationDeductionAmounts(
  *   deductionRate?: number,
  *   unclearedReceiptHoldNgn?: number,
  *   honorCompanyCutWaiver?: boolean,
+ *   overpaymentOnly?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '', opts = {}) {
@@ -110,6 +112,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
         opts.deductionRate ?? split?.deductionRate ?? REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
       );
   const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
+  const overpaymentOnly = opts.overpaymentOnly === true;
   const base = {
     ...split,
     amountNgn,
@@ -131,9 +134,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
     };
   }
   const calc = refundStaffAllocationDeductionAmounts(amountNgn, deductionRate);
-  const afterCut = calc.netPayoutNgn;
-  const unclearedReceiptOffsetNgn = Math.min(afterCut, unclearedHoldNgn);
-  const netPayoutNgn = Math.max(0, afterCut - unclearedReceiptOffsetNgn);
+  const netPayoutNgn = calc.netPayoutNgn;
   return {
     ...base,
     grossNgn: calc.grossNgn,
@@ -141,8 +142,10 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
     netPayoutNgn,
     deductionRate: calc.deductionRate,
     unclearedReceiptHoldNgn: unclearedHoldNgn,
-    unclearedReceiptOffsetNgn,
-    payoutHeldForUnclearedReceipts: unclearedHoldNgn > 0 && netPayoutNgn <= 0 && afterCut > 0,
+    unclearedReceiptOffsetNgn: 0,
+    payoutHeldForUnclearedReceipts: unclearedHoldNgn > 0 && netPayoutNgn > 0,
+    overpaymentCashierReferralAvailable:
+      overpaymentOnly && unclearedHoldNgn > 0 && netPayoutNgn > 0,
   };
 }
 
@@ -153,11 +156,13 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
  *   deductionRate?: number,
  *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
  *   honorCompanyCutWaiver?: boolean,
+ *   overpaymentOnly?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
   const rate = opts.deductionRate;
   const byCust = opts.unclearedByCustomerId;
+  const overpaymentOnly = opts.overpaymentOnly === true;
   const getHold = (customerId) => {
     const id = String(customerId || '').trim();
     if (!id || !byCust) return 0;
@@ -169,6 +174,7 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
       deductionRate: rate,
       unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
       honorCompanyCutWaiver: opts.honorCompanyCutWaiver,
+      overpaymentOnly,
     })
   );
 }
@@ -176,6 +182,13 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
 export function sumRefundStaffCompanyDeductionNgn(splits) {
   return (Array.isArray(splits) ? splits : []).reduce(
     (sum, s) => sum + roundRefundStaffMoney(s?.companyDeductionNgn),
+    0
+  );
+}
+
+export function sumRefundStaffUnclearedHoldNgn(splits) {
+  return (Array.isArray(splits) ? splits : []).reduce(
+    (sum, s) => sum + roundRefundStaffMoney(s?.unclearedReceiptHoldNgn),
     0
   );
 }

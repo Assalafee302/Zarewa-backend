@@ -88,11 +88,12 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(refundCashOutstandingNgn(db, updated)).toBe(48_960);
   });
 
-  it('repairs wrongly Paid refunds with no treasury trace', () => {
+  it('repairs wrongly Paid refunds with legacy uncleared offset in payment note', () => {
     db.prepare(
-      `UPDATE customer_refunds SET status = 'Paid', paid_amount_ngn = 61200, payment_note = ? WHERE refund_id = ?`
+      `UPDATE customer_refunds SET status = 'Paid', paid_amount_ngn = 61200, payment_note = ?, split_distributions_json = ? WHERE refund_id = ?`
     ).run(
       'Settled at approval: company cut ₦12,240 → retention ledger; uncleared receipts offset ₦48,960.',
+      '[{"recipientKind":"associated_staff","recipientAssociatedStaffID":"AST-9553","amountNgn":61200,"companyDeductionNgn":12240,"netPayoutNgn":0,"unclearedReceiptHoldNgn":48960,"unclearedReceiptOffsetNgn":48960,"payoutHeldForUnclearedReceipts":true}]',
       REFUND_ID
     );
     const before = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);

@@ -1,6 +1,8 @@
 /**
  * Pure helpers: apply prior overpay / approved refund credit onto a new quotation.
- * Overpayment may apply without manager approval; other refund kinds need Approved status.
+ * Overpayment may apply without manager approval (Pending or Approved) and does not
+ * require production — Finance may use it for cashier referral/confirmation on receipts
+ * even when roofing metres are not produced yet. Other refund kinds need Approved status.
  */
 
 import { normalizeRefundReasonCategoriesForApi } from '../refundConstants.js';
@@ -96,7 +98,9 @@ export function refundCreditUnavailableReason(refund, openNgn, kindEligible = re
     return 'Needs manager approval before it can cover a receipt.';
   }
   if (openNgn <= 0 && kindEligible) {
-    return 'Already used, paid out, or no net balance left after company cut.';
+    return overpayOnly
+      ? 'Already used, paid out, or no balance left after company cut.'
+      : 'Already used, paid out, or no net balance left after company cut.';
   }
   if (openNgn <= 0) {
     return 'Already used or paid out.';

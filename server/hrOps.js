@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canUseAllBranchesRollup, createAppUserRecord, roleLabel, updateUserProfile, userHasPermission, applyHrStaffAuthUpdates, assertActorMayAssignRoleKey, publicUserFromId } from './auth.js';
+import { canUseAllBranchesRollup, createAppUserRecord, resolveStaffRegisterPassword, roleLabel, updateUserProfile, userHasPermission, applyHrStaffAuthUpdates, assertActorMayAssignRoleKey, publicUserFromId } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
   annualLeaveEntitlementDaysForUser,
@@ -8911,7 +8911,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     return registerExistingUserWithProfile(db, actorUserId, body, opts);
   }
   const {
-    username,
+    username: _username,
     displayName,
     password,
     roleKey,
@@ -8943,9 +8943,13 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   if (!assignCheck.ok) return assignCheck;
   const branchId = String(profileFields?.branchId || '').trim() || DEFAULT_BRANCH_ID;
   const resolvedEmployeeNo = resolveRegisterEmployeeNo(db, profileFields, opts, branchId);
-  const usernameInput = String(username || '').trim().toLowerCase();
-  const effectiveUsername = employeeNumberToUsername(resolvedEmployeeNo) || usernameInput;
-  if (!effectiveUsername) return { ok: false, error: 'Employee ID or username is required.' };
+  const effectiveUsername = employeeNumberToUsername(resolvedEmployeeNo);
+  if (!effectiveUsername) {
+    return { ok: false, error: 'Employee ID is required — assign one or leave blank for auto-allocation on save.' };
+  }
+  const pwdResult = resolveStaffRegisterPassword(password);
+  if (!pwdResult.ok) return pwdResult;
+  const effectivePassword = pwdResult.password;
   const nameNeedle = String(displayName || '').trim();
   if (nameNeedle) {
     const sameName = db
@@ -8966,7 +8970,7 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
   const created = createAppUserRecord(db, {
     username: effectiveUsername,
     displayName,
-    password,
+    password: effectivePassword,
     roleKey: effectiveRoleKey,
     workspaceDepartment,
   });
@@ -8996,7 +9000,15 @@ export function registerNewStaffWithProfile(db, actorUserId, body, opts = {}) {
     }
     return up;
   }
-  return { ok: true, userId: created.userId, profile: up.profile };
+  return {
+    ok: true,
+    userId: created.userId,
+    profile: up.profile,
+    loginCredentials: {
+      username: effectiveUsername,
+      temporaryPassword: effectivePassword,
+    },
+  };
 }
 
 function hrPhase6TablesReady(db) {

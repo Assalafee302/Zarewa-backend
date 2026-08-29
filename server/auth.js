@@ -122,6 +122,32 @@ export function validatePasswordStrength(password) {
   return { ok: true };
 }
 
+/** One-time temp password for new staff logins (meets validatePasswordStrength). */
+export function generateDefaultStaffPassword() {
+  return `Zw-${crypto.randomBytes(12).toString('base64url')}`;
+}
+
+/**
+ * Resolve password for HR staff registration — explicit body value, env default, or random temp.
+ * @returns {{ ok: true, password: string } | { ok: false, error: string }}
+ */
+export function resolveStaffRegisterPassword(passwordInput) {
+  const fromBody = String(passwordInput || '').trim();
+  if (fromBody) {
+    const strength = validatePasswordStrength(fromBody);
+    if (!strength.ok) return strength;
+    return { ok: true, password: fromBody };
+  }
+  const fromEnv = String(
+    process.env.ZAREWA_STAFF_DEFAULT_PASSWORD || process.env.ZAREWA_STAFF_IMPORT_PASSWORD || ''
+  ).trim();
+  if (fromEnv) {
+    const strength = validatePasswordStrength(fromEnv);
+    if (strength.ok) return { ok: true, password: fromEnv };
+  }
+  return { ok: true, password: generateDefaultStaffPassword() };
+}
+
 function normalizeEmail(raw) {
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return '';

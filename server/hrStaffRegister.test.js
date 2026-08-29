@@ -61,9 +61,7 @@ describe('registerNewStaffWithProfile beneficiary policy', () => {
 
   it('allows branch staff registration', () => {
     const r = registerNewStaffWithProfile(db, actorId, {
-      username: 'staff.new',
       displayName: 'New Staff',
-      password: 'Zarewa@123',
       roleKey: 'sales_staff',
       payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS,
       branchId: 'BR-KD',
@@ -72,6 +70,22 @@ describe('registerNewStaffWithProfile beneficiary policy', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.userId).toBeTruthy();
+    expect(r.loginCredentials?.username).toBe('zapkd503');
+    expect(r.loginCredentials?.temporaryPassword).toMatch(/^Zw-/);
+  });
+
+  it('still accepts an explicit password when provided', () => {
+    const r = registerNewStaffWithProfile(db, actorId, {
+      displayName: 'Explicit Pass Staff',
+      password: 'Zarewa@123',
+      roleKey: 'sales_staff',
+      payrollGroup: HR_PAYROLL_GROUPS.BRANCH_OPS,
+      branchId: 'BR-KD',
+      employeeNo: 'ZAPKD506',
+      jobTitle: 'Sales Officer',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.loginCredentials?.temporaryPassword).toBe('Zarewa@123');
   });
 
   it('refuses a second login when the display name already exists', () => {

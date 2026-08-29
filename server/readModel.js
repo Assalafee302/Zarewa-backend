@@ -5,6 +5,7 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import { repairRefundPayoutStateTx, resolveRefundStatus } from './sales/refundPayoutStatus.js';
 import {
   poTransportQuotedFeeNgn,
   PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
@@ -2450,7 +2451,7 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
-  return rows.map((row) => mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId));
+  return rows.map((row) => mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId));
 }
 
 export function listTreasuryAccounts(db, branchScope = 'ALL') {
@@ -2666,6 +2667,7 @@ export function getPaymentRequestDetail(db, requestId) {
 export function getCustomerRefundDetail(db, refundId) {
   const id = String(refundId || '').trim();
   if (!id) return null;
+  repairRefundPayoutStateTx(db, id);
   const row = db
     .prepare(
       `SELECT cr.*,
@@ -2679,10 +2681,10 @@ export function getCustomerRefundDetail(db, refundId) {
   if (!row) return null;
   const payoutByRefundId = refundPayoutHistoryByIds(db, [id]);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, [id]);
-  return mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId);
+  return mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId);
 }
 
-function mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId) {
+function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId) {
   let calculationLines = [];
   let suggestedLines = [];
   try {
@@ -2716,6 +2718,7 @@ function mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId) {
       : approvedAmountNgn;
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
   const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
+  const resolvedStatus = resolveRefundStatus(db, row);
   return {
     refundID: row.refund_id,
     customerID: row.customer_id,
@@ -2731,7 +2734,7 @@ function mapCustomerRefundListRow(row, payoutByRefundId, walletOpenByRefundId) {
     previewSnapshot,
     splitDistributions,
     calculationNotes: row.calculation_notes,
-    status: row.status,
+    status: resolvedStatus,
     requestedBy: row.requested_by,
     requestedAtISO: row.requested_at_iso,
     approvalDate: row.approval_date,

@@ -88,6 +88,18 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         recipientAssociatedStaffID: isStaff ? staffId || customerId : '',
         recipientCustomerID: isStaff ? '' : customerId,
         amountNgn: roundMoney(s?.amountNgn ?? s?.amount_ngn),
+        storedCompanyDeductionNgn:
+          s?.companyDeductionNgn != null || s?.company_deduction_ngn != null
+            ? roundMoney(s?.companyDeductionNgn ?? s?.company_deduction_ngn)
+            : null,
+        storedUnclearedOffsetNgn:
+          s?.unclearedReceiptOffsetNgn != null || s?.uncleared_receipt_offset_ngn != null
+            ? roundMoney(s?.unclearedReceiptOffsetNgn ?? s?.uncleared_receipt_offset_ngn)
+            : null,
+        storedNetPayoutNgn:
+          s?.netPayoutNgn != null || s?.net_payout_ngn != null
+            ? roundMoney(s?.netPayoutNgn ?? s?.net_payout_ngn)
+            : null,
         payoutAccount: s?.payoutAccount && typeof s.payoutAccount === 'object' ? s.payoutAccount : null,
         note: String(s?.note || '').trim(),
         companyCutWaived: Boolean(
@@ -133,17 +145,28 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             honorCompanyCutWaiver: true,
           }
         );
-        const creditAmount = roundMoney(withDeduction.netPayoutNgn ?? share);
+        const companyDeductionNgn =
+          s.storedCompanyDeductionNgn != null
+            ? roundMoney(s.storedCompanyDeductionNgn)
+            : roundMoney(withDeduction.companyDeductionNgn);
+        const unclearedReceiptOffsetNgn =
+          s.storedUnclearedOffsetNgn != null
+            ? roundMoney(s.storedUnclearedOffsetNgn)
+            : roundMoney(withDeduction.unclearedReceiptOffsetNgn);
+        const creditAmount =
+          s.storedNetPayoutNgn != null
+            ? roundMoney(s.storedNetPayoutNgn)
+            : roundMoney(withDeduction.netPayoutNgn ?? share);
         const cutPct = Math.round((Number(withDeduction.deductionRate) || 0) * 100);
         const noteParts = [];
         if (withDeduction.companyCutWaived) {
           noteParts.push('company cut waived (Admin/MD)');
-        } else if (withDeduction.companyDeductionNgn > 0) {
+        } else if (companyDeductionNgn > 0) {
           noteParts.push(`net after ${cutPct}% company cut`);
         }
-        if (withDeduction.unclearedReceiptOffsetNgn > 0) {
+        if (unclearedReceiptOffsetNgn > 0) {
           noteParts.push(
-            `−₦${roundMoney(withDeduction.unclearedReceiptOffsetNgn).toLocaleString('en-NG')} uncleared receipts`
+            `−₦${roundMoney(unclearedReceiptOffsetNgn).toLocaleString('en-NG')} uncleared receipts`
           );
         }
         if (withDeduction.payoutHeldForUnclearedReceipts) {
@@ -171,8 +194,8 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             partyName: String(staff?.name || payeeName || s.recipientAssociatedStaffID).trim(),
             amountNgn: creditAmount,
             grossNgn: share,
-            companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
-            unclearedReceiptOffsetNgn: roundMoney(withDeduction.unclearedReceiptOffsetNgn),
+            companyDeductionNgn,
+            unclearedReceiptOffsetNgn,
             payeeName,
             payeeBankName,
             payeeAccountNo,
@@ -195,8 +218,8 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           partyName: String(resolved?.partyName || payeeName || s.recipientCustomerID).trim(),
           amountNgn: creditAmount,
           grossNgn: share,
-          companyDeductionNgn: roundMoney(withDeduction.companyDeductionNgn),
-          unclearedReceiptOffsetNgn: roundMoney(withDeduction.unclearedReceiptOffsetNgn),
+          companyDeductionNgn,
+          unclearedReceiptOffsetNgn,
           payeeName,
           payeeBankName,
           payeeAccountNo,
@@ -221,6 +244,21 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       note: `Refund ${refundRow.refund_id} approved`,
     },
   ];
+}
+
+/** Net cash still owed to payees (wallet/treasury) after company cut and uncleared offset. */
+export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn) {
+  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+  return targets.reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
+}
+
+/** Company cut + uncleared receipt offset settled at BM approval (non-treasury). */
+export function refundSettledAtApprovalNgn(db, refundRow, approvedAmountNgn) {
+  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+  return targets.reduce(
+    (sum, t) => sum + roundMoney(t.companyDeductionNgn) + roundMoney(t.unclearedReceiptOffsetNgn),
+    0
+  );
 }
 
 /**
@@ -503,13 +541,12 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     db.prepare(
       `UPDATE customer_refunds
        SET paid_amount_ngn = ?,
-           status = CASE WHEN ? >= ? THEN 'Paid' ELSE status END,
            payment_note = CASE
              WHEN TRIM(COALESCE(payment_note, '')) = '' THEN ?
              ELSE payment_note
            END
        WHERE refund_id = ?`
-    ).run(nextPaid, nextPaid, approved, paymentNote, refundId);
+    ).run(nextPaid, paymentNote, refundId);
   }
 
   if (walletOn && !walletCreditsExist && !credits.length && settledAtApprovalNgn <= 0) {

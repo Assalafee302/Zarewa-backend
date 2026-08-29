@@ -128,6 +128,11 @@ import {
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
+import {
+  refundCashOutstandingNgn,
+  repairRefundPayoutStateTx,
+  resolveRefundStatus,
+} from './sales/refundPayoutStatus.js';
 import { assertRefundPayerNotApprover } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
@@ -8660,6 +8665,7 @@ export function payAccountsPayable(db, apId, payload) {
 }
 
 export function payRefundEntry(db, refundId, payload) {
+  repairRefundPayoutStateTx(db, refundId);
   let row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
   if (!row) return { ok: false, error: 'Refund not found.' };
   const branchGate = assertEntityBranchForWorkspaceWrite(
@@ -8712,8 +8718,8 @@ export function payRefundEntry(db, refundId, payload) {
   }
   const approvedAmountNgn = roundMoney(row.approved_amount_ngn || row.amount_ngn);
   const paidAmountNgn = roundMoney(row.paid_amount_ngn);
-  const outstandingAmountNgn = effectiveOutstandingNgn(approvedAmountNgn, paidAmountNgn);
-  if (outstandingAmountNgn <= 0) {
+  const cashOutstandingNgn = refundCashOutstandingNgn(db, row);
+  if (cashOutstandingNgn <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
   const defaultPaidDay =
@@ -8739,7 +8745,7 @@ export function payRefundEntry(db, refundId, payload) {
         ? [
             {
               treasuryAccountId: Number(payload.treasuryAccountId),
-              amountNgn: outstandingAmountNgn,
+              amountNgn: cashOutstandingNgn,
               reference: String(payload.reference ?? '').trim(),
               note: String(payload.note ?? '').trim(),
               postedAtISO: payoutLinePostedAtISO(payload, defaultPaidDay, normalizeIsoTimestamp),
@@ -8750,7 +8756,7 @@ export function payRefundEntry(db, refundId, payload) {
   if (!paymentLines.length || payoutAmountNgn <= 0) {
     return { ok: false, error: 'Add at least one payout line.' };
   }
-  if (payoutAmountNgn > outstandingAmountNgn) {
+  if (payoutAmountNgn > cashOutstandingNgn) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
@@ -8822,11 +8828,11 @@ export function payRefundEntry(db, refundId, payload) {
       }
       const approvedFresh = roundMoney(fresh.approved_amount_ngn || fresh.amount_ngn);
       const paidFresh = roundMoney(fresh.paid_amount_ngn);
-      const outstandingFresh = effectiveOutstandingNgn(approvedFresh, paidFresh);
-      if (outstandingFresh <= 0) {
+      const cashOutstandingFresh = refundCashOutstandingNgn(db, fresh);
+      if (cashOutstandingFresh <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
         throw new Error('Refund has already been fully paid.');
       }
-      if (payoutAmountNgn > outstandingFresh) {
+      if (payoutAmountNgn > cashOutstandingFresh) {
         throw new Error('Payout exceeds the approved refund balance.');
       }
 
@@ -8856,13 +8862,17 @@ export function payRefundEntry(db, refundId, payload) {
         }
       );
       const nextPaidAmountNgn = paidFresh + payoutAmountNgn;
-      const fullyPaid = nextPaidAmountNgn >= approvedFresh;
+      const nextRow = {
+        ...fresh,
+        paid_amount_ngn: nextPaidAmountNgn,
+      };
+      const nextStatus = resolveRefundStatus(db, nextRow);
       db.prepare(
         `UPDATE customer_refunds
          SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, paid_by_user_id = ?, payment_note = ?
          WHERE refund_id = ?`
       ).run(
-        fullyPaid ? 'Paid' : 'Approved',
+        nextStatus,
         nextPaidAmountNgn,
         paidAtISO,
         paidBy,

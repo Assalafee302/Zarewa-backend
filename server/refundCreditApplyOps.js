@@ -540,7 +540,7 @@ export function applyRefundCreditToQuotation(db, payload) {
   }
 }
 
-function refundTreasuryPaidNgn(db, refundId) {
+export function refundTreasuryPaidNgn(db, refundId) {
   const rid = String(refundId || '').trim();
   if (!rid) return 0;
   const row = db

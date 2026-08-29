@@ -84,6 +84,7 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     );
     expect(Number(updated.paid_amount_ngn)).toBe(2_000);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
+    expect(String(updated.status || '')).toBe('Approved');
     // Outstanding for cashier = 10000 - 2000 = 8000 (net)
     expect(10_000 - Number(updated.paid_amount_ngn)).toBe(8_000);
 

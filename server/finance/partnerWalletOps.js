@@ -12,6 +12,7 @@ import { evaluateRefundPayoutGlPolicy } from '../ap1cReversalRefundOps.js';
 import { tryPostCustomerRefundPayoutGlTx, ensureSupplementalGlAccounts } from '../glOps.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
 import { effectiveOutstandingNgn } from '../../shared/lib/paymentOutstandingTolerance.js';
+import { resolveRefundStatus } from '../sales/refundPayoutStatus.js';
 import {
   listPartnerWalletOpenCredits,
   nextWalletEntryId,
@@ -238,13 +239,14 @@ export function withdrawPartnerWallet(db, payload = {}) {
           throw new Error(`Withdrawal exceeds open refund balance on ${refundId}.`);
         }
         const nextPaid = paidFresh + delta;
-        const fullyPaid = nextPaid >= approvedFresh;
+        const nextRow = { ...fresh, paid_amount_ngn: nextPaid };
+        const nextStatus = resolveRefundStatus(db, nextRow);
         db.prepare(
           `UPDATE customer_refunds
            SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, paid_by_user_id = ?, payment_note = ?
            WHERE refund_id = ?`
         ).run(
-          fullyPaid ? 'Paid' : 'Approved',
+          nextStatus,
           nextPaid,
           postedAtISO.slice(0, 10),
           paidBy,

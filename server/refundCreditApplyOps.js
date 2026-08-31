@@ -20,6 +20,8 @@ import {
   refundIsEligibleCreditSource,
   refundIsEligibleCreditSourceKind,
   refundOverpayConsumedNgn,
+  refundOverpayFinishedPayout,
+  stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
@@ -156,6 +158,13 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
 
     const kindEligible = refundIsEligibleCreditSourceKind(shape);
     const eligible = kindEligible && open > 0;
+    if (
+      !eligible &&
+      refundOverpayFinishedPayout(shape, refundTreasuryPaidNgn(db, shape.refundID)) &&
+      !(open > 0)
+    ) {
+      continue;
+    }
     if (eligible) {
       sources.push({
         id: `refund:${shape.refundID}`,
@@ -284,34 +293,6 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     }
   }
 
-  const listedRefundIds = new Set(
-    [...sources, ...unavailableSources]
-      .map((s) => String(s.refundId || '').trim())
-      .filter(Boolean)
-  );
-  for (const row of overpayHistory) {
-    const shape = mapRefundRowToCreditShape(row);
-    const rid = String(shape.refundID || '').trim();
-    if (!rid || listedRefundIds.has(rid)) continue;
-    const consumed = refundOverpayConsumedNgn(shape, refundTreasuryPaidNgn(db, rid));
-    if (!(consumed > 0)) continue;
-    const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
-    unavailableSources.push({
-      id: `refund:${rid}`,
-      refundId: rid,
-      sourceQuotationRef: String(row.quotation_ref || '').trim(),
-      availableNgn: 0,
-      status: shape.status,
-      overpaymentOnly,
-      paidAtISO: shape.paidAtISO,
-      paidBy: shape.paidBy,
-      paidAmountNgn: shape.paidAmountNgn,
-      amountNgn: shape.amountNgn,
-      reason: refundCreditUnavailableReason(shape, 0, true),
-    });
-    listedRefundIds.add(rid);
-  }
-
   const blockingOnTarget = refunds.find((row) => {
     if (String(row.quotation_ref || '').trim() !== target) return false;
     const st = String(row.status || '').trim();
@@ -339,7 +320,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     requestedNgn: null,
   });
 
-  return {
+  return stripFinishedOverpayFromConfirmEligible({
     ok: true,
     customerID: cid,
     customerName: cust.name,
@@ -354,7 +335,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     targetBlocksExternalCredit: Boolean(blockingOnTarget),
     blockingRefundId: blockingOnTarget?.refund_id || null,
     statusReportLabel: REFUND_CREDIT_CONFIRMATION_STATUS,
-  };
+  });
 }
 
 function nextApplicationId() {

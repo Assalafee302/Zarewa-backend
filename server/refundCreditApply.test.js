@@ -665,9 +665,7 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(listed.ok).toBe(true);
     expect(listed.sources.find((s) => s.id === 'overpay:QT-KD-26-1173')).toBeUndefined();
     expect(listed.sources.some((s) => s.refundId === 'RF-KD-26-9456')).toBe(false);
-    const paidOut = listed.unavailableSources.find((s) => s.refundId === 'RF-KD-26-9456');
-    expect(paidOut).toBeTruthy();
-    expect(String(paidOut.reason || '')).toMatch(/already paid out/i);
+    expect(listed.unavailableSources.find((s) => s.refundId === 'RF-KD-26-9456')).toBeUndefined();
     expect(listed.totalAvailableNgn).toBe(0);
   });
 

@@ -336,6 +336,30 @@ export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
 }
 
 /**
+ * Overpayment already paid from till/wallet — finished. Must not reappear on confirm payment
+ * as leftover credit or as an “on file” reminder (RF-KD-26-9456).
+ */
+export function refundOverpayFinishedPayout(refund, treasuryPayoutNgn = 0) {
+  return refundOverpayConsumedNgn(refund, treasuryPayoutNgn) > 0;
+}
+
+/**
+ * Drop finished till-paid overpay from confirm’s unavailable list.
+ * False Paid (paid_amount, no payout date) stays visible.
+ */
+export function stripFinishedOverpayFromConfirmEligible(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const unavailableSources = (Array.isArray(payload.unavailableSources) ? payload.unavailableSources : []).filter(
+    (s) => {
+      const open = Math.max(0, Math.round(Number(s?.availableNgn) || 0));
+      if (open > 0) return true;
+      return !refundOverpayFinishedPayout(s);
+    }
+  );
+  return { ...payload, unavailableSources };
+}
+
+/**
  * Cashier confirm: offset usable refund fund against an unconfirmed receipt’s cash.
  * Quote due may already be 0 because Sales posted the receipt — offset against receipt cash instead.
  * @param {{ receiptCashNgn?: number, availableNgn?: number }} p

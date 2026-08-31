@@ -12,6 +12,8 @@ import {
   refundIsEligibleCreditSource,
   refundLeftoverAwaitingApprovalNgn,
   refundOverpayConsumedNgn,
+  refundOverpayFinishedPayout,
+  stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
 
@@ -192,6 +194,42 @@ describe('refundCreditApply pure helpers', () => {
         771_500
       )
     ).toBe(771_500);
+    expect(
+      refundOverpayFinishedPayout({
+        status: 'Approved',
+        reasonCategory: '["Overpayment"]',
+        amountNgn: 771_500,
+        paidAmountNgn: 771_500,
+        paidAtISO: '2026-08-08',
+        paidBy: 'Zarewa Admin',
+      })
+    ).toBe(true);
+    expect(
+      stripFinishedOverpayFromConfirmEligible({
+        unavailableSources: [
+          {
+            refundId: 'RF-KD-26-9456',
+            availableNgn: 0,
+            status: 'Approved',
+            reasonCategory: '["Overpayment"]',
+            amountNgn: 771_500,
+            paidAmountNgn: 771_500,
+            paidAtISO: '2026-08-08',
+            paidBy: 'Zarewa Admin',
+          },
+          {
+            refundId: 'RF-KD-26-9553',
+            availableNgn: 0,
+            status: 'Paid',
+            reasonCategory: '["Overpayment"]',
+            amountNgn: 61_200,
+            paidAmountNgn: 61_200,
+            paidAtISO: '',
+            paidBy: '',
+          },
+        ],
+      }).unavailableSources.map((s) => s.refundId)
+    ).toEqual(['RF-KD-26-9553']);
   });
 
   it('plans cashier receipt offset against refund fund', () => {

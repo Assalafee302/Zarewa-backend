@@ -271,6 +271,31 @@ export function planRefundCreditApplyAmount({ targetDueNgn, availableNgn, reques
 }
 
 /**
+ * Leftover overpayment that can cover another receipt without a refund request.
+ * Sales posts full cash as one RECEIPT (no OVERPAY_ADVANCE split), so economic excess
+ * (cash in minus quote total) must be pooled even when the ledger overpay bucket is empty.
+ * Named refund opens and credit already moved off this quote are subtracted so the same ₦ is not listed twice.
+ * @param {{
+ *   ledgerPoolNgn?: number,
+ *   economicExcessNgn?: number,
+ *   refundOpenNgn?: number,
+ *   creditAppliedOutNgn?: number,
+ * }} p
+ */
+export function unclaimedOverpayCreditNgn({
+  ledgerPoolNgn = 0,
+  economicExcessNgn = 0,
+  refundOpenNgn = 0,
+  creditAppliedOutNgn = 0,
+} = {}) {
+  const ledger = Math.max(0, Math.round(Number(ledgerPoolNgn) || 0));
+  const economic = Math.max(0, Math.round(Number(economicExcessNgn) || 0));
+  const refundOpen = Math.max(0, Math.round(Number(refundOpenNgn) || 0));
+  const creditOut = Math.max(0, Math.round(Number(creditAppliedOutNgn) || 0));
+  return Math.max(0, Math.max(ledger, economic) - refundOpen - creditOut);
+}
+
+/**
  * Cashier confirm: offset usable refund fund against an unconfirmed receipt’s cash.
  * Quote due may already be 0 because Sales posted the receipt — offset against receipt cash instead.
  * @param {{ receiptCashNgn?: number, availableNgn?: number }} p

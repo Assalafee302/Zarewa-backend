@@ -586,4 +586,48 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(rf.availableNgn).toBe(27_000);
     expect(listed.totalAvailableNgn).toBeGreaterThanOrEqual(27_000);
   });
+
+  it('lists full-receipt overpay as credit without OVERPAY_ADVANCE or a refund request', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 2, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-ECON', 'Economic Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-ECON-SRC', 'CUS-ECON', 'Economic Overpay Customer', 100000, 150000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-ECON-DST', 'CUS-ECON', 'Economic Overpay Customer', 40000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-02', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id)
+      VALUES ('LE-ECON-1', 'RECEIPT', 'CUS-ECON', 'Economic Overpay Customer', 'QT-ECON-SRC', 150000, '2026-08-01T12:00:00.000Z', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id)
+      VALUES ('LE-ECON-1', 'CUS-ECON', 'Economic Overpay Customer', 'QT-ECON-SRC', 150000, '₦150,000', 'Cleared', '2026-08-01', 'LE-ECON-1');
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-ECON', 'QT-ECON-DST');
+    expect(listed.ok).toBe(true);
+    const src = listed.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');
+    expect(src).toBeTruthy();
+    expect(src.kind).toBe('overpay');
+    expect(src.availableNgn).toBe(50_000);
+    expect(src.refundId).toBeNull();
+    expect(listed.recommendedApplyNgn).toBe(40_000);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-ECON',
+      targetQuotationRef: 'QT-ECON-DST',
+      sourceIds: ['overpay:QT-ECON-SRC'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-08-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(40_000);
+
+    const listedAfter = listEligibleRefundCredits(db, 'CUS-ECON', 'QT-ECON-DST');
+    const leftover = listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');
+    expect(leftover?.availableNgn ?? 0).toBe(10_000);
+  });
 });

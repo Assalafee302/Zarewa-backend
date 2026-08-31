@@ -10,6 +10,7 @@ import {
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
   refundLeftoverAwaitingApprovalNgn,
+  unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
 
 describe('refundCreditApply pure helpers', () => {
@@ -116,6 +117,33 @@ describe('refundCreditApply pure helpers', () => {
       { id: 'b', amountNgn: 30_000, leftoverOnSourceNgn: 40_000 },
     ]);
     expect(REFUND_CREDIT_CONFIRMATION_STATUS).toBe('Credit confirmation');
+  });
+
+  it('pools economic overpay as credit even when no refund was requested', () => {
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 0,
+        economicExcessNgn: 61_200,
+        refundOpenNgn: 0,
+        creditAppliedOutNgn: 0,
+      })
+    ).toBe(61_200);
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 61_200,
+        economicExcessNgn: 61_200,
+        refundOpenNgn: 61_200,
+        creditAppliedOutNgn: 0,
+      })
+    ).toBe(0);
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 0,
+        economicExcessNgn: 61_200,
+        refundOpenNgn: 0,
+        creditAppliedOutNgn: 20_000,
+      })
+    ).toBe(41_200);
   });
 
   it('plans cashier receipt offset against refund fund', () => {

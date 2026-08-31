@@ -19,9 +19,12 @@ import {
   refundCreditUnavailableReason,
   refundIsEligibleCreditSource,
   refundIsEligibleCreditSourceKind,
+  unclaimedOverpayCreditNgn,
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
+import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
+import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
 import {
   insertLedgerRows,
   overpayCreditRemainingOnQuotationDb,
@@ -200,6 +203,27 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + src.availableNgn));
   }
 
+  const creditOutByQuote = new Map();
+  const creditOutRows = db
+    .prepare(
+      `SELECT source_quotation_ref AS q, COALESCE(SUM(amount_ngn), 0) AS s
+       FROM refund_credit_applications
+       WHERE customer_id = ?
+         AND TRIM(IFNULL(source_quotation_ref, '')) != ''
+         AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+       GROUP BY source_quotation_ref`
+    )
+    .all(cid);
+  for (const row of creditOutRows) {
+    const qid = String(row.q || '').trim();
+    if (qid) creditOutByQuote.set(qid, roundMoney(row.s));
+  }
+
+  const cashByRef = quotationPaymentCashBreakdownByRef(
+    db,
+    quotes.map((q) => String(q.id || '').trim()).filter(Boolean)
+  );
+
   for (const q of quotes) {
     const qid = String(q.id || '').trim();
     const active = refundsByQuote.get(qid) || [];
@@ -211,20 +235,30 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
 
     const overpayRem = overpayCreditRemainingOnQuotationDb(db, cid, qid);
     const refundOpenOnQuote = overpayRefundOpenByQuote.get(qid) || 0;
-    const ledgerExcess = Math.max(0, overpayRem - refundOpenOnQuote);
-    if (ledgerExcess > 0 && !blockingOtherPending) {
+    const cash = cashByRef.get(qid);
+    const economicExcess = quotationOverpaymentExcessNgn({
+      cashInNgn: cash?.cashInNgn || 0,
+      quoteTotalNgn: q.total_ngn,
+    });
+    const leftover = unclaimedOverpayCreditNgn({
+      ledgerPoolNgn: overpayRem,
+      economicExcessNgn: economicExcess,
+      refundOpenNgn: refundOpenOnQuote,
+      creditAppliedOutNgn: creditOutByQuote.get(qid) || 0,
+    });
+    if (leftover > 0 && !blockingOtherPending) {
       sources.push({
         id: `overpay:${qid}`,
         kind: 'overpay',
         refundId: null,
         sourceQuotationRef: qid,
-        availableNgn: ledgerExcess,
+        availableNgn: leftover,
         requiresApproval: false,
         status: null,
         overpaymentOnly: true,
         sameQuotation: qid === target,
-        label: `Refund fund (overpayment) on ${qid}`,
-        recommendation: `Use up to ₦${ledgerExcess.toLocaleString('en-NG')} from refund fund on ${qid}; leftover stays refundable there.`,
+        label: `Overpayment on ${qid}`,
+        recommendation: `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
       });
     }
   }
@@ -361,8 +395,13 @@ export function applyRefundCreditToQuotation(db, payload) {
 
         const ledgerRows = [];
         // Reduce per-quote overpay pool on the source when present (keeps leftover refundable math honest).
+        // Economic overpay (full RECEIPT, no OVERPAY_ADVANCE) still gets a reversal so the same ₦ cannot be reused.
         const sourceOverpay = sourceQ ? overpayCreditRemainingOnQuotationDb(db, cid, sourceQ) : 0;
-        const reverseOverpay = Math.min(amt, sourceOverpay);
+        const reverseOverpay = sourceQ
+          ? src.kind === 'overpay'
+            ? amt
+            : Math.min(amt, sourceOverpay)
+          : 0;
         if (reverseOverpay > 0 && sourceQ) {
           ledgerRows.push({
             type: 'OVERPAY_REVERSAL',

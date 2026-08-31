@@ -631,6 +631,46 @@ describe('apply refund credit to new quotation (integration)', () => {
     expect(leftover?.availableNgn ?? 0).toBe(10_000);
   });
 
+  it('does not list leftover overpay after the refund was till-paid (QT-1173 / RF-9456)', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 1, unitPrice: 12228500 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-1173', 'Engr Yaro', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-KD-26-1173', 'CUS-1173', 'Engr Yaro', 12228500, 13000000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-08', '${DEFAULT_BRANCH_ID}'),
+        ('QT-KD-26-NEXT', 'CUS-1173', 'Engr Yaro', 500000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-20', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id)
+      VALUES ('LE-KD-26-1366', 'RECEIPT', 'CUS-1173', 'Engr Yaro', 'QT-KD-26-1173', 13000000, '2026-08-15T12:00:00.000Z', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id)
+      VALUES ('LE-KD-26-1366', 'CUS-1173', 'Engr Yaro', 'QT-KD-26-1173', 13000000, '₦13,000,000', 'Cleared', '2026-08-15', 'LE-KD-26-1366');
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, requested_by, requested_at_iso, approved_amount_ngn, paid_amount_ngn,
+        paid_at_iso, paid_by, payee_name, payee_bank_name, credit_applied_ngn, branch_id,
+        calculation_lines_json
+      ) VALUES (
+        'RF-KD-26-9456', 'CUS-1173', 'Engr Yaro', 'QT-KD-26-1173', '["Overpayment"]', 'Overpayment',
+        771500, 'Approved', 'Zarewa Admin', '2026-08-08T10:00:00.000Z', 771500, 771500,
+        '2026-08-08', 'Zarewa Admin', 'Abdulrahman', 'OPAY', 0, '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 771500 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-1173', 'QT-KD-26-NEXT');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.find((s) => s.id === 'overpay:QT-KD-26-1173')).toBeUndefined();
+    expect(listed.sources.some((s) => s.refundId === 'RF-KD-26-9456')).toBe(false);
+    const paidOut = listed.unavailableSources.find((s) => s.refundId === 'RF-KD-26-9456');
+    expect(paidOut).toBeTruthy();
+    expect(String(paidOut.reason || '')).toMatch(/already paid out/i);
+    expect(listed.totalAvailableNgn).toBe(0);
+  });
+
   it('applies overpay onto a manager-cleared quotation that still has an unconfirmed receipt', () => {
     const lines = JSON.stringify({
       products: [{ name: 'Roof', qty: 2, unitPrice: 10000 }],

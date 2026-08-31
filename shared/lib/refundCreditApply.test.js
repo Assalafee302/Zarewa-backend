@@ -11,6 +11,7 @@ import {
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
   refundLeftoverAwaitingApprovalNgn,
+  refundOverpayConsumedNgn,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
 
@@ -145,6 +146,52 @@ describe('refundCreditApply pure helpers', () => {
         creditAppliedOutNgn: 20_000,
       })
     ).toBe(41_200);
+    expect(
+      unclaimedOverpayCreditNgn({
+        ledgerPoolNgn: 0,
+        economicExcessNgn: 771_500,
+        refundOpenNgn: 0,
+        refundConsumedNgn: 771_500,
+      })
+    ).toBe(0);
+  });
+
+  it('treats till-paid overpayment as consumed and ignores false Paid with no payout date', () => {
+    expect(
+      refundOverpayConsumedNgn({
+        status: 'Approved',
+        reasonCategory: '["Overpayment"]',
+        amountNgn: 771_500,
+        paidAmountNgn: 771_500,
+        paidAtISO: '2026-08-08',
+        paidBy: 'Zarewa Admin',
+        creditAppliedNgn: 0,
+      })
+    ).toBe(771_500);
+    expect(
+      refundOverpayConsumedNgn({
+        status: 'Paid',
+        reasonCategory: '["Overpayment"]',
+        amountNgn: 61_200,
+        paidAmountNgn: 61_200,
+        paidAtISO: '',
+        paidBy: '',
+        creditAppliedNgn: 0,
+      })
+    ).toBe(0);
+    expect(
+      refundOverpayConsumedNgn(
+        {
+          status: 'Approved',
+          reasonCategory: '["Overpayment"]',
+          amountNgn: 771_500,
+          paidAmountNgn: 0,
+          paidAtISO: '',
+          paidBy: '',
+        },
+        771_500
+      )
+    ).toBe(771_500);
   });
 
   it('plans cashier receipt offset against refund fund', () => {

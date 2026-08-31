@@ -19,6 +19,7 @@ import {
   refundCreditUnavailableReason,
   refundIsEligibleCreditSource,
   refundIsEligibleCreditSourceKind,
+  refundOverpayConsumedNgn,
   unclaimedOverpayCreditNgn,
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
@@ -204,6 +205,24 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + src.availableNgn));
   }
 
+  const overpayConsumedByQuote = new Map();
+  const overpayHistory = db
+    .prepare(
+      `SELECT cr.* FROM customer_refunds cr
+       LEFT JOIN quotations q ON q.id = cr.quotation_ref
+       WHERE (cr.customer_id = ? OR q.customer_id = ?)
+         AND TRIM(COALESCE(LOWER(cr.status), '')) NOT IN ('rejected', 'cancelled')`
+    )
+    .all(cid, cid);
+  for (const row of overpayHistory) {
+    const qid = String(row.quotation_ref || '').trim();
+    if (!qid) continue;
+    const shape = mapRefundRowToCreditShape(row);
+    const consumed = refundOverpayConsumedNgn(shape, refundTreasuryPaidNgn(db, shape.refundID));
+    if (!(consumed > 0)) continue;
+    overpayConsumedByQuote.set(qid, roundMoney((overpayConsumedByQuote.get(qid) || 0) + consumed));
+  }
+
   const creditOutByQuote = new Map();
   const creditOutRows = db
     .prepare(
@@ -245,6 +264,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
       ledgerPoolNgn: overpayRem,
       economicExcessNgn: economicExcess,
       refundOpenNgn: refundOpenOnQuote,
+      refundConsumedNgn: overpayConsumedByQuote.get(qid) || 0,
       creditAppliedOutNgn: creditOutByQuote.get(qid) || 0,
     });
     if (leftover > 0 && !blockingOtherPending) {
@@ -262,6 +282,34 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
         recommendation: `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
       });
     }
+  }
+
+  const listedRefundIds = new Set(
+    [...sources, ...unavailableSources]
+      .map((s) => String(s.refundId || '').trim())
+      .filter(Boolean)
+  );
+  for (const row of overpayHistory) {
+    const shape = mapRefundRowToCreditShape(row);
+    const rid = String(shape.refundID || '').trim();
+    if (!rid || listedRefundIds.has(rid)) continue;
+    const consumed = refundOverpayConsumedNgn(shape, refundTreasuryPaidNgn(db, rid));
+    if (!(consumed > 0)) continue;
+    const overpayOnly = refundCategoriesAreOverpaymentOnly(shape.reasonCategory, shape.calculationLines);
+    unavailableSources.push({
+      id: `refund:${rid}`,
+      refundId: rid,
+      sourceQuotationRef: String(row.quotation_ref || '').trim(),
+      availableNgn: 0,
+      status: shape.status,
+      overpaymentOnly,
+      paidAtISO: shape.paidAtISO,
+      paidBy: shape.paidBy,
+      paidAmountNgn: shape.paidAmountNgn,
+      amountNgn: shape.amountNgn,
+      reason: refundCreditUnavailableReason(shape, 0, true),
+    });
+    listedRefundIds.add(rid);
   }
 
   const blockingOnTarget = refunds.find((row) => {

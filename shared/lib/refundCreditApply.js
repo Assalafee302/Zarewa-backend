@@ -105,6 +105,12 @@ export function refundCreditUnavailableReason(refund, openNgn, kindEligible = re
   }
   const paidAt = String(refund?.paidAtISO ?? refund?.paid_at_iso ?? '').trim();
   const paidBy = String(refund?.paidBy ?? refund?.paid_by ?? '').trim();
+  if (openNgn <= 0 && (paidAt || paidBy)) {
+    const when = paidAt.slice(0, 10);
+    return overpayOnly
+      ? `Already paid out${when ? ` on ${when}` : ''} — cannot cover another receipt. Do not confirm the same ₦ as new bank cash.`
+      : `Already paid out${when ? ` on ${when}` : ''}.`;
+  }
   if (openNgn <= 0 && kindEligible && !paidAt && !paidBy) {
     return overpayOnly
       ? 'Looks fully paid on the refund row but no till payout was posted — still on file. View the refund or wait for repair; do not hide it.'
@@ -280,11 +286,13 @@ export function planRefundCreditApplyAmount({ targetDueNgn, availableNgn, reques
  * Leftover overpayment that can cover another receipt without a refund request.
  * Sales posts full cash as one RECEIPT (no OVERPAY_ADVANCE split), so economic excess
  * (cash in minus quote total) must be pooled even when the ledger overpay bucket is empty.
- * Named refund opens and credit already moved off this quote are subtracted so the same ₦ is not listed twice.
+ * Named refund opens, till/wallet payouts, and credit already moved off this quote are subtracted
+ * so the same ₦ is not listed twice (e.g. RF-KD-26-9456 already paid out must not reappear on confirm).
  * @param {{
  *   ledgerPoolNgn?: number,
  *   economicExcessNgn?: number,
  *   refundOpenNgn?: number,
+ *   refundConsumedNgn?: number,
  *   creditAppliedOutNgn?: number,
  * }} p
  */
@@ -292,13 +300,39 @@ export function unclaimedOverpayCreditNgn({
   ledgerPoolNgn = 0,
   economicExcessNgn = 0,
   refundOpenNgn = 0,
+  refundConsumedNgn = 0,
   creditAppliedOutNgn = 0,
 } = {}) {
   const ledger = Math.max(0, Math.round(Number(ledgerPoolNgn) || 0));
   const economic = Math.max(0, Math.round(Number(economicExcessNgn) || 0));
   const refundOpen = Math.max(0, Math.round(Number(refundOpenNgn) || 0));
+  const refundConsumed = Math.max(0, Math.round(Number(refundConsumedNgn) || 0));
   const creditOut = Math.max(0, Math.round(Number(creditAppliedOutNgn) || 0));
-  return Math.max(0, Math.max(ledger, economic) - refundOpen - creditOut);
+  return Math.max(0, Math.max(ledger, economic) - refundOpen - refundConsumed - creditOut);
+}
+
+/**
+ * Overpayment already taken off this refund as a real till/wallet payout.
+ * Approval-only `paid_amount` with no payout date/actor is ignored (false Paid — still usable as credit).
+ * Credit already moved onto another quote is subtracted separately (`creditAppliedOutNgn`).
+ * @param {object} refund
+ * @param {number} [treasuryPayoutNgn]
+ */
+export function refundOverpayConsumedNgn(refund, treasuryPayoutNgn = 0) {
+  if (!refundCategoriesAreOverpaymentOnly(refund?.reasonCategory ?? refund?.reason_category, refund?.calculationLines)) {
+    return 0;
+  }
+  const status = String(refund?.status || '').trim().toLowerCase();
+  if (status === 'rejected' || status === 'cancelled') return 0;
+  const requested = Math.max(0, Math.round(Number(refund?.amountNgn ?? refund?.amount_ngn) || 0));
+  const paid = Math.max(0, Math.round(Number(refund?.paidAmountNgn ?? refund?.paid_amount_ngn) || 0));
+  const paidAt = String(refund?.paidAtISO ?? refund?.paid_at_iso ?? '').trim();
+  const paidBy = String(refund?.paidBy ?? refund?.paid_by ?? '').trim();
+  const treasury = Math.max(0, Math.round(Number(treasuryPayoutNgn) || 0));
+  const hasPayoutRecord = Boolean(paidAt || paidBy) || treasury > 0;
+  const payout = hasPayoutRecord ? Math.max(paid, treasury) : treasury;
+  if (!(payout > 0)) return 0;
+  return requested > 0 ? Math.min(requested, payout) : payout;
 }
 
 /**

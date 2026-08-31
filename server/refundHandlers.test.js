@@ -5,6 +5,7 @@ import {
   assertRefundPayerNotApprover,
   actorMayOverrideRefundUnclearedPayoutHold,
   isRefundAdminTrialActor,
+  refundTillPayableNgn,
 } from './refundHandlers.js';
 
 describe('refundHandlers (Phase 11A)', () => {
@@ -33,6 +34,42 @@ describe('refundHandlers (Phase 11A)', () => {
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false)).toBe(false);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'md' }, () => false)).toBe(false);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, (p) => p === '*')).toBe(true);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ permissions: ['*'] }, () => false)).toBe(true);
+  });
+
+  it('lets admin till-pay only the held slice while other payees sit on partner wallet', () => {
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 86_440,
+        heldNetNgn: 11_440,
+        adminMayPayUncleared: true,
+        openWalletNgn: 75_000,
+      })
+    ).toBe(11_440);
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 86_440,
+        heldNetNgn: 11_440,
+        adminMayPayUncleared: false,
+        openWalletNgn: 75_000,
+      })
+    ).toBe(0);
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 48_960,
+        heldNetNgn: 48_960,
+        adminMayPayUncleared: true,
+        openWalletNgn: 0,
+      })
+    ).toBe(48_960);
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 48_960,
+        heldNetNgn: 48_960,
+        adminMayPayUncleared: false,
+        openWalletNgn: 0,
+      })
+    ).toBe(0);
   });
 
   it('blocks requester from approving own refund', () => {

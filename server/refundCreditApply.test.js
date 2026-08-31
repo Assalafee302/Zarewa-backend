@@ -630,4 +630,37 @@ describe('apply refund credit to new quotation (integration)', () => {
     const leftover = listedAfter.sources.find((s) => s.id === 'overpay:QT-ECON-SRC');
     expect(leftover?.availableNgn ?? 0).toBe(10_000);
   });
+
+  it('applies overpay onto a manager-cleared quotation that still has an unconfirmed receipt', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 2, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-CLR', 'Cleared Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id, manager_cleared_at_iso)
+      VALUES
+        ('QT-CLR-SRC', 'CUS-CLR', 'Cleared Overpay Customer', 100000, 150000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-01', '${DEFAULT_BRANCH_ID}', '2026-08-02T12:00:00.000Z'),
+        ('QT-CLR-DST', 'CUS-CLR', 'Cleared Overpay Customer', 40000, 40000, 'Paid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-02', '${DEFAULT_BRANCH_ID}', '2026-08-02T12:00:00.000Z');
+      INSERT INTO ledger_entries (id, type, customer_id, customer_name, quotation_ref, amount_ngn, at_iso, branch_id)
+      VALUES
+        ('LE-CLR-SRC', 'OVERPAY_ADVANCE', 'CUS-CLR', 'Cleared Overpay Customer', 'QT-CLR-SRC', 50000, '2026-08-01T12:00:00.000Z', '${DEFAULT_BRANCH_ID}'),
+        ('LE-CLR-DST', 'RECEIPT', 'CUS-CLR', 'Cleared Overpay Customer', 'QT-CLR-DST', 40000, '2026-08-02T12:00:00.000Z', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso, ledger_entry_id)
+      VALUES ('LE-CLR-DST', 'CUS-CLR', 'Cleared Overpay Customer', 'QT-CLR-DST', 40000, '₦40,000', 'Pending clearance', '2026-08-02', 'LE-CLR-DST');
+    `);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-CLR',
+      targetQuotationRef: 'QT-CLR-DST',
+      sourceIds: ['overpay:QT-CLR-SRC'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-08-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(40_000);
+  });
 });

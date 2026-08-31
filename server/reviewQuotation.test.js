@@ -24,7 +24,8 @@ describe('reviewQuotation manager holds', () => {
       UPDATE quotations
       SET paid_ngn = 2725, total_ngn = 21725, payment_status = 'Partial', status = 'Pending',
           manager_cleared_at_iso = NULL, manager_flagged_at_iso = NULL, manager_flag_reason = NULL
-      WHERE id = 'QT-PARTIAL'
+      WHERE id = 'QT-PARTIAL';
+      DELETE FROM sales_receipts WHERE quotation_ref = 'QT-PARTIAL';
     `);
   });
 
@@ -140,6 +141,23 @@ describe('reviewQuotation manager holds', () => {
     expect(r.ok).toBe(true);
     const row = db.prepare(`SELECT manager_cleared_at_iso FROM quotations WHERE id = ?`).get('QT-PARTIAL');
     expect(row.manager_cleared_at_iso).toBeTruthy();
+  });
+
+  it('blocks manager clear when a receipt is still unconfirmed', () => {
+    db.prepare(`UPDATE quotations SET paid_ngn = 21725 WHERE id = ?`).run('QT-PARTIAL');
+    db.exec(`
+      INSERT INTO sales_receipts (
+        id, customer_id, customer_name, quotation_ref, amount_ngn, amount_display, status, date_iso
+      ) VALUES (
+        'LE-UNCONF', 'CUS-1', 'Test', 'QT-PARTIAL', 21725, '₦21,725', 'Pending clearance', '2026-05-16'
+      )
+    `);
+    const r = reviewQuotation(db, 'QT-PARTIAL', { decision: 'clear' }, actor);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe('RECEIPTS_UNCONFIRMED');
+    expect(r.error).toMatch(/unconfirmed/i);
+    const row = db.prepare(`SELECT manager_cleared_at_iso FROM quotations WHERE id = ?`).get('QT-PARTIAL');
+    expect(row.manager_cleared_at_iso).toBeNull();
   });
 
   it('blocks sales officer from quotation clearance', () => {

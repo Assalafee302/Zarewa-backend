@@ -79,6 +79,25 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(cash.cashInNgn).toBe(620_000);
   });
 
+  it('lets finance confirm an unconfirmed receipt even when the quotation is manager-cleared', () => {
+    db.prepare(`UPDATE quotations SET manager_cleared_at_iso = ? WHERE id = ?`).run(
+      '2026-05-21T12:00:00.000Z',
+      'QT-146'
+    );
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 415350 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+    const rec = db.prepare(`SELECT status, finance_reconciliation_saved_at_iso FROM sales_receipts WHERE id = ?`).get(
+      'LE-261'
+    );
+    expect(String(rec.status)).toBe('Cleared');
+    expect(rec.finance_reconciliation_saved_at_iso).toBeTruthy();
+  });
+
   it('payment line corrections sum becomes authoritative bank received', () => {
     const settle = patchSalesReceiptFinanceSettlement(
       db,

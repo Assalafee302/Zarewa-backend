@@ -3551,7 +3551,11 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       }
       if (status === 'Approved' && qref) {
         const qClearRow = db.prepare(`SELECT manager_cleared_at_iso FROM quotations WHERE id = ?`).get(qref);
-        if (qClearRow && !String(qClearRow.manager_cleared_at_iso || '').trim()) {
+        if (
+          qClearRow &&
+          !String(qClearRow.manager_cleared_at_iso || '').trim() &&
+          !quotationHasUnconfirmedSalesReceipts(db, qref)
+        ) {
           const clearedAt = new Date().toISOString();
           db.prepare(
             `UPDATE quotations
@@ -5640,6 +5644,46 @@ export function deleteTreasuryAccount(db, accountId, actor) {
   }
 }
 
+/**
+ * Finance has not confirmed bank/cash on at least one sales receipt for this quotation.
+ * Manager clearance must wait — paid_ngn from unconfirmed receipts is not settled cash.
+ */
+function quotationHasUnconfirmedSalesReceipts(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid) return false;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
+         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+    )
+    .get(qid);
+  return (Number(row?.c) || 0) > 0;
+}
+
+function unconfirmedSalesReceiptBlock(db, quotationRef) {
+  const qid = String(quotationRef || '').trim();
+  if (!qid || !quotationHasUnconfirmedSalesReceipts(db, qid)) return null;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM sales_receipts
+       WHERE quotation_ref = ?
+         AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
+         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
+    )
+    .get(qid);
+  const n = Number(row?.c) || 0;
+  return {
+    ok: false,
+    error:
+      n === 1
+        ? `Cannot clear: 1 receipt on ${qid} is still unconfirmed by Finance. Confirm payment first.`
+        : `Cannot clear: ${n} receipts on ${qid} are still unconfirmed by Finance. Confirm payment first.`,
+    code: 'RECEIPTS_UNCONFIRMED',
+  };
+}
+
 export function reviewQuotation(db, quoteId, payload, actor) {
   const row = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quoteId);
   if (!row) return { ok: false, error: 'Quotation not found.' };
@@ -5684,6 +5728,8 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   const writeOffEval = evaluateReceivableWriteOff(total, paid, priorWaived);
 
   if (decision === 'clear') {
+    const unconfirmed = unconfirmedSalesReceiptBlock(db, quoteId);
+    if (unconfirmed) return unconfirmed;
     if (total > 0 && receivable > 0 && !isEffectivelyFullyPaid(paid, total)) {
       if (!isMinorReceivableForBranchManager(receivable, paid)) {
         return {
@@ -5695,6 +5741,8 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   }
 
   if (decision === 'waive_balance') {
+    const unconfirmed = unconfirmedSalesReceiptBlock(db, quoteId);
+    if (unconfirmed) return unconfirmed;
     if (writeOffEval.kind !== 'round_off') {
       return {
         ok: false,
@@ -5706,6 +5754,8 @@ export function reviewQuotation(db, quoteId, payload, actor) {
   }
 
   if (decision === 'write_off_receivable') {
+    const unconfirmed = unconfirmedSalesReceiptBlock(db, quoteId);
+    if (unconfirmed) return unconfirmed;
     if (receivable <= 0) {
       return { ok: false, error: 'This quotation has no receivable balance to write off.' };
     }

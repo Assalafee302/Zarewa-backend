@@ -9456,7 +9456,8 @@ export function registerHttpApi(app, db) {
       const canSee =
         userHasPermission(req.user, 'refunds.approve') ||
         userHasPermission(req.user, 'finance.approve') ||
-        userHasPermission(req.user, 'refunds.request');
+        userHasPermission(req.user, 'refunds.request') ||
+        userHasPermission(req.user, 'finance.pay');
       if (!canSee) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;

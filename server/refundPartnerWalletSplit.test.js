@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase } from './db.js';
 import { creditRefundToPartnerWalletTx, withdrawPartnerWallet } from './finance/partnerWalletOps.js';
+import { payRefundEntry } from './writeOps.js';
 
 const prevWallet = process.env.ZAREWA_PARTNER_WALLET_V1;
 const prevAssoc = process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1;
@@ -137,5 +138,94 @@ describe('refund partner wallet split (no customer bank)', () => {
       workspaceBranchId: 'BR-KD',
     });
     expect(withdraw.ok).toBe(true);
+  });
+
+  it('lets admin till-pay a held staff slice while customer net sits on the wallet', () => {
+    const splitJson = JSON.stringify([
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: 'CUS-CLAIM-STAFF',
+        amountNgn: 13_000,
+        payeeName: 'Staff Beneficiary',
+        payeeBankName: 'Test Bank PLC',
+        payeeAccountNo: '0123456789',
+      },
+      {
+        recipientKind: 'associated_staff',
+        recipientAssociatedStaffID: 'AST-DRV-WALLET',
+        amountNgn: 7_000,
+        unclearedReceiptHoldNgn: 5_600,
+        payoutHeldForUnclearedReceipts: true,
+        payoutAccount: {
+          payeeName: 'Driver Beneficiary',
+          payeeBankName: 'Test Bank PLC',
+          payeeAccountNo: '0987654321',
+        },
+      },
+    ]);
+    db.prepare(
+      `INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+        approved_amount_ngn, paid_amount_ngn, payment_note
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      'RF-WALLET-HELD-ADMIN',
+      'CUS-CLAIM-STAFF',
+      'Claiming Staff Wallet',
+      '',
+      '["Adjustment"]',
+      'Mixed wallet and held staff',
+      20_000,
+      '[{"category":"Adjustment","amountNgn":20000}]',
+      splitJson,
+      'Approved',
+      'Staff Beneficiary',
+      '0123456789',
+      'Test Bank PLC',
+      'BR-KD',
+      'Sales Staff',
+      '2026-03-29T10:00:00.000Z',
+      20_000,
+      0,
+      'Settled at approval: company cut ₦1,400 → retention ledger.'
+    );
+
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get('RF-WALLET-HELD-ADMIN');
+    const credit = creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 20_000,
+      actor: { id: financeActor.id, displayName: financeActor.displayName, roleKey: financeActor.roleKey },
+    });
+    expect(credit.ok).toBe(true);
+    const open = db
+      .prepare(
+        `SELECT COALESCE(SUM(open_ngn), 0) AS s FROM partner_wallet_entries
+         WHERE refund_id = ? AND open_ngn > 0`
+      )
+      .get('RF-WALLET-HELD-ADMIN');
+    expect(Number(open?.s)).toBe(13_000);
+
+    const cashierPay = payRefundEntry(db, 'RF-WALLET-HELD-ADMIN', {
+      treasuryAccountId,
+      actor: { id: financeActor.id, displayName: financeActor.displayName, roleKey: 'cashier', permissions: ['finance.pay'] },
+      paidBy: 'Cashier',
+      dateISO: '2026-03-29',
+    });
+    expect(cashierPay.ok).toBe(false);
+    expect(cashierPay.code).toBe('PARTNER_WALLET_WITHDRAWAL_REQUIRED');
+
+    const admin = db
+      .prepare(
+        `SELECT id, username, role_key AS roleKey, display_name AS displayName FROM app_users WHERE username = 'admin'`
+      )
+      .get();
+    const adminPay = payRefundEntry(db, 'RF-WALLET-HELD-ADMIN', {
+      paymentLines: [{ treasuryAccountId, amountNgn: 5_600, dateISO: '2026-03-29' }],
+      actor: { id: admin?.id, displayName: admin?.displayName, roleKey: 'admin', permissions: ['*'] },
+      paidBy: 'Admin',
+      dateISO: '2026-03-29',
+    });
+    expect(adminPay.ok).toBe(true);
   });
 });

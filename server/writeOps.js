@@ -126,7 +126,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
-import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
+import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import {
   refundCashOutstandingNgn,
@@ -134,7 +134,7 @@ import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
-import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold } from './refundHandlers.js';
+import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -297,9 +297,10 @@ function normalizeIsoTimestamp(value) {
  * @param {import('better-sqlite3').Database} db
  * @param {Array<Record<string, unknown>>} planRows
  * @param {string | null} branchId
- * @param {{ allowPerRowBranchId?: boolean, allowActiveRefundQuotationRefs?: Set<string> | string[] }} [opts]
+ * @param {{ allowPerRowBranchId?: boolean, allowActiveRefundQuotationRefs?: Set<string> | string[], allowManagerClearedQuotationRefs?: Set<string> | string[] }} [opts]
  *   When false (default), ignore `branchId` on each row so callers cannot override booking branch.
  *   `allowActiveRefundQuotationRefs` permits internal credit-transfer rows on source quotes that still have Pending/Approved refunds.
+ *   `allowManagerClearedQuotationRefs` permits finance confirmation / credit-apply rows on quotes that were manager-cleared while receipts were still unconfirmed.
  */
 export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
   const allowPerRow = Boolean(opts.allowPerRowBranchId);
@@ -308,6 +309,12 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       ? opts.allowActiveRefundQuotationRefs
       : Array.isArray(opts.allowActiveRefundQuotationRefs)
         ? new Set(opts.allowActiveRefundQuotationRefs.map((x) => String(x || '').trim()).filter(Boolean))
+        : null;
+  const allowManagerClearedQuotes =
+    opts.allowManagerClearedQuotationRefs instanceof Set
+      ? opts.allowManagerClearedQuotationRefs
+      : Array.isArray(opts.allowManagerClearedQuotationRefs)
+        ? new Set(opts.allowManagerClearedQuotationRefs.map((x) => String(x || '').trim()).filter(Boolean))
         : null;
   const ins = db.prepare(`
     INSERT INTO ledger_entries (
@@ -323,7 +330,11 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
       if (q) {
         if (q.manager_cleared_at_iso) {
-          throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
+          const allowedCleared =
+            allowManagerClearedQuotes && allowManagerClearedQuotes.has(String(r.quotationRef));
+          if (!allowedCleared) {
+            throw new Error(`Quotation ${r.quotationRef} has been cleared by manager and is closed for further payments.`);
+          }
         }
         if (q.manager_flagged_at_iso) {
           throw new Error(`Quotation ${r.quotationRef} is flagged by manager for review and is closed for further payments.`);
@@ -8693,14 +8704,6 @@ export function payRefundEntry(db, refundId, payload) {
       actor: payload.actor,
     });
   }
-  if (partnerWalletEnabled() && refundHasOpenWalletCredit(db, refundId)) {
-    return {
-      ok: false,
-      error:
-        'This refund is on a partner wallet. Release full or partial balance from Finance Desk → Partner withdrawals (no extra approval).',
-      code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
-    };
-  }
   const qrefPay = String(row.quotation_ref ?? '').trim();
   if (qrefPay) {
     const qBlock = db
@@ -8726,9 +8729,21 @@ export function payRefundEntry(db, refundId, payload) {
   const hasPerm = (p) => userHasPermission(payload.actor, p);
   const adminMayPayUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm);
   const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn);
-  const tillPayableNgn = adminMayPayUncleared
-    ? cashOutstandingNgn
-    : Math.max(0, cashOutstandingNgn - heldNetNgn);
+  const openWalletNgn = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
+  const tillPayableNgn = refundTillPayableNgn({
+    cashOutstandingNgn,
+    heldNetNgn,
+    adminMayPayUncleared,
+    openWalletNgn,
+  });
+  if (openWalletNgn > 0 && tillPayableNgn <= 0) {
+    return {
+      ok: false,
+      error:
+        'This refund is on a partner wallet. Release full or partial balance from Finance Desk → Partner withdrawals (no extra approval).',
+      code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
+    };
+  }
   if (!adminMayPayUncleared && tillPayableNgn <= 0 && heldNetNgn > 0) {
     return {
       ok: false,
@@ -8774,11 +8789,16 @@ export function payRefundEntry(db, refundId, payload) {
   if (payoutAmountNgn > tillPayableNgn) {
     return {
       ok: false,
-      code: 'REFUND_PAYOUT_HELD_UNCLEARED',
+      code:
+        openWalletNgn > 0 && adminMayPayUncleared && tillPayableNgn > 0
+          ? 'PARTNER_WALLET_WITHDRAWAL_REQUIRED'
+          : 'REFUND_PAYOUT_HELD_UNCLEARED',
       error:
-        heldNetNgn > 0 && !adminMayPayUncleared
-          ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldNetNgn.toLocaleString('en-NG')} is held for uncleared receipts.`
-          : 'Payout exceeds the approved refund balance.',
+        openWalletNgn > 0 && adminMayPayUncleared && tillPayableNgn > 0
+          ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} (held for unconfirmed receipts) can be paid from till as an admin exception. The rest is on a partner wallet — release it from Finance Desk → Partner withdrawals.`
+          : heldNetNgn > 0 && !adminMayPayUncleared
+            ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldNetNgn.toLocaleString('en-NG')} is held for uncleared receipts.`
+            : 'Payout exceeds the approved refund balance.',
     };
   }
   if (payoutAmountNgn > cashOutstandingNgn) {
@@ -8857,14 +8877,20 @@ export function payRefundEntry(db, refundId, payload) {
         throw new Error('Refund has already been fully paid.');
       }
       const heldFresh = refundHeldNetCashDueNgn(db, fresh, approvedFresh);
-      const tillPayableFresh = adminMayPayUncleared
-        ? cashOutstandingFresh
-        : Math.max(0, cashOutstandingFresh - heldFresh);
+      const openWalletFresh = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
+      const tillPayableFresh = refundTillPayableNgn({
+        cashOutstandingNgn: cashOutstandingFresh,
+        heldNetNgn: heldFresh,
+        adminMayPayUncleared,
+        openWalletNgn: openWalletFresh,
+      });
       if (payoutAmountNgn > tillPayableFresh) {
         throw new Error(
-          heldFresh > 0 && !adminMayPayUncleared
-            ? `Only ₦${tillPayableFresh.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldFresh.toLocaleString('en-NG')} is held for uncleared receipts.`
-            : 'Payout exceeds the approved refund balance.'
+          openWalletFresh > 0 && adminMayPayUncleared && tillPayableFresh > 0
+            ? `Only ₦${tillPayableFresh.toLocaleString('en-NG')} (held for unconfirmed receipts) can be paid from till as an admin exception. The rest is on a partner wallet.`
+            : heldFresh > 0 && !adminMayPayUncleared
+              ? `Only ₦${tillPayableFresh.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldFresh.toLocaleString('en-NG')} is held for uncleared receipts.`
+              : 'Payout exceeds the approved refund balance.'
         );
       }
       if (payoutAmountNgn > cashOutstandingFresh) {

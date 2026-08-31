@@ -28,6 +28,7 @@ import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
 import {
   insertLedgerRows,
   overpayCreditRemainingOnQuotationDb,
+  quotationHasUnclearedReceipts,
   syncQuotationPaidFromLedger,
 } from './writeOps.js';
 
@@ -342,7 +343,8 @@ export function applyRefundCreditToQuotation(db, payload) {
   const targetGate = db
     .prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso, branch_id FROM quotations WHERE id = ?`)
     .get(target);
-  if (targetGate?.manager_cleared_at_iso) {
+  const targetHasUnconfirmedReceipts = quotationHasUnclearedReceipts(db, target);
+  if (targetGate?.manager_cleared_at_iso && !targetHasUnconfirmedReceipts) {
     return { ok: false, error: `Quotation ${target} has been cleared by manager and is closed for further payments.` };
   }
   if (targetGate?.manager_flagged_at_iso) {
@@ -381,6 +383,8 @@ export function applyRefundCreditToQuotation(db, payload) {
       const appliedRows = [];
       let appliedTotal = 0;
       const allowRefundQuotes = new Set();
+      const allowManagerClearedQuotes = new Set();
+      if (targetHasUnconfirmedReceipts) allowManagerClearedQuotes.add(target);
 
       for (const alloc of allocations) {
         const src = sources.find((s) => s.id === alloc.id);
@@ -391,7 +395,10 @@ export function applyRefundCreditToQuotation(db, payload) {
         const appId = nextApplicationId();
         const refToken = `${REFUND_CREDIT_LEDGER_REF_PREFIX}${appId}`;
         const sourceQ = String(src.sourceQuotationRef || '').trim();
-        if (sourceQ) allowRefundQuotes.add(sourceQ);
+        if (sourceQ) {
+          allowRefundQuotes.add(sourceQ);
+          allowManagerClearedQuotes.add(sourceQ);
+        }
 
         const ledgerRows = [];
         // Reduce per-quote overpay pool on the source when present (keeps leftover refundable math honest).
@@ -436,6 +443,7 @@ export function applyRefundCreditToQuotation(db, payload) {
 
         insertLedgerRows(db, ledgerRows, bid, {
           allowActiveRefundQuotationRefs: allowRefundQuotes,
+          allowManagerClearedQuotationRefs: allowManagerClearedQuotes,
         });
 
         if (src.kind === 'refund' && src.refundId) {

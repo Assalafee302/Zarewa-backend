@@ -14,13 +14,40 @@ export function normalizeRefundActorName(name) {
 
 /**
  * Admin may request → approve → pay during trial (logged in audit_log / approval_actions).
- * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {{ roleKey?: string, role_key?: string, permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} hasPermission
  */
 export function isRefundAdminTrialActor(actor, hasPermission) {
   if (typeof hasPermission === 'function' && hasPermission('*')) return true;
-  const rk = String(actor?.roleKey || '').trim().toLowerCase();
+  const perms = Array.isArray(actor?.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor?.roleKey || actor?.role_key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
   return rk === 'admin';
+}
+
+/**
+ * Cash still payable from till/bank for this refund.
+ * Partner-wallet open credits stay off till (withdrawals desk). Admin may till-pay the
+ * leftover held-for-uncleared slice that was never credited to the wallet.
+ */
+export function refundTillPayableNgn({
+  cashOutstandingNgn = 0,
+  heldNetNgn = 0,
+  adminMayPayUncleared = false,
+  openWalletNgn = 0,
+} = {}) {
+  const cash = Math.max(0, Math.round(Number(cashOutstandingNgn) || 0));
+  const held = Math.max(0, Math.round(Number(heldNetNgn) || 0));
+  const wallet = Math.max(0, Math.round(Number(openWalletNgn) || 0));
+  if (wallet > 0) {
+    if (!adminMayPayUncleared) return 0;
+    return Math.max(0, cash - wallet);
+  }
+  if (adminMayPayUncleared) return cash;
+  return Math.max(0, cash - held);
 }
 
 /**

@@ -98,6 +98,29 @@ describe('receipt finance settlement aligns paid amount', () => {
     expect(rec.finance_reconciliation_saved_at_iso).toBeTruthy();
   });
 
+  it('lets finance confirm a receipt even when the quotation has an approved refund', () => {
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, status, payee_name, payee_account_no, payee_bank_name, branch_id,
+        requested_by, requested_at_iso, approved_amount_ngn, paid_amount_ngn
+      ) VALUES (
+        'RF-QT-146', 'CUS-1', 'Test Customer', 'QT-146', '["Order cancellation"]', 'Cancel leftover',
+        50000, 'Approved', 'Test Customer', '0123456789', 'Test Bank PLC', 'BR-001',
+        'Sales', '2026-05-21T10:00:00.000Z', 50000, 0
+      )
+    `);
+    const settle = patchSalesReceiptFinanceSettlement(
+      db,
+      'LE-261',
+      { bankReceivedAmountNgn: 415350 },
+      { id: 'USR-FIN', displayName: 'Finance', roleKey: 'finance_officer' }
+    );
+    expect(settle.ok).toBe(true);
+    const rec = db.prepare(`SELECT status FROM sales_receipts WHERE id = ?`).get('LE-261');
+    expect(String(rec.status)).toBe('Cleared');
+  });
+
   it('payment line corrections sum becomes authoritative bank received', () => {
     const settle = patchSalesReceiptFinanceSettlement(
       db,

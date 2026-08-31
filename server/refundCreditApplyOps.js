@@ -264,10 +264,30 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     }
   }
 
-  const totalAvailableNgn = sources.reduce((s, x) => s + roundMoney(x.availableNgn), 0);
+  const blockingOnTarget = refunds.find((row) => {
+    if (String(row.quotation_ref || '').trim() !== target) return false;
+    const st = String(row.status || '').trim();
+    if (st !== 'Pending' && st !== 'Approved') return false;
+    return refundBlocksExternalCreditOnQuotation(row);
+  });
+  let listedSources = sources;
+  if (blockingOnTarget) {
+    listedSources = [];
+    for (const s of sources) {
+      if (s.sameQuotation) {
+        listedSources.push(s);
+        continue;
+      }
+      unavailableSources.push({
+        ...s,
+        reason: `This job has open refund ${blockingOnTarget.refund_id}. Confirm the receipt as cash or pay that refund first — credit from another job cannot apply here yet.`,
+      });
+    }
+  }
+  const listedAvailableNgn = listedSources.reduce((s, x) => s + roundMoney(x.availableNgn), 0);
   const plan = planRefundCreditApplyAmount({
     targetDueNgn,
-    availableNgn: totalAvailableNgn,
+    availableNgn: listedAvailableNgn,
     requestedNgn: null,
   });
 
@@ -277,12 +297,14 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     customerName: cust.name,
     targetQuotationRef: target,
     targetDueNgn,
-    totalAvailableNgn,
+    totalAvailableNgn: listedAvailableNgn,
     recommendedApplyNgn: plan.applyNgn,
     remainderDueAfterRecommendNgn: plan.remainderDueNgn,
     leftoverCreditAfterRecommendNgn: plan.leftoverCreditNgn,
-    sources,
+    sources: listedSources,
     unavailableSources,
+    targetBlocksExternalCredit: Boolean(blockingOnTarget),
+    blockingRefundId: blockingOnTarget?.refund_id || null,
     statusReportLabel: REFUND_CREDIT_CONFIRMATION_STATUS,
   };
 }
@@ -311,6 +333,13 @@ export function applyRefundCreditToQuotation(db, payload) {
   const listed = listEligibleRefundCredits(db, cid, target, { branchId: payload.branchId });
   if (!listed.ok) return listed;
   if (!listed.sources.length || listed.totalAvailableNgn <= 0) {
+    if (listed.targetBlocksExternalCredit) {
+      const rid = listed.blockingRefundId ? ` (${listed.blockingRefundId})` : '';
+      return {
+        ok: false,
+        error: `Quotation ${target} has an active refund request${rid} and cannot receive credit from another job.`,
+      };
+    }
     return { ok: false, error: 'No refund fund available for this customer.' };
   }
 

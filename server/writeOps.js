@@ -128,6 +128,7 @@ import {
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
+import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
   refundCashOutstandingNgn,
   refundStatusAllowsTreasuryPayout,
@@ -341,10 +342,16 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
         }
       }
 
-      // Also check for refunds (credit-apply may post OVERPAY_REVERSAL on the source quote).
-      const ref = db.prepare(`SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`).get(r.quotationRef);
+      // New customer cash cannot land on a quote with an open refund. Internal
+      // credit/refund ledger types (OVERPAY_APPLIED, REFUND_OVERPAY, …) must still post.
+      const cashInType = /^(RECEIPT|ADVANCE_IN|OVERPAY_ADVANCE)$/i.test(String(r.type || ''));
+      const ref = cashInType
+        ? db.prepare(`SELECT refund_id FROM customer_refunds WHERE quotation_ref = ? AND status IN ('Pending', 'Approved')`).get(r.quotationRef)
+        : null;
       if (ref && !(allowRefundQuotes && allowRefundQuotes.has(String(r.quotationRef)))) {
-        throw new Error(`Quotation ${r.quotationRef} has an active refund request (${ref.refund_id}) and is closed for further payments.`);
+        throw new Error(
+          `Quotation ${r.quotationRef} has an active refund request (${ref.refund_id}). Confirm existing receipts in Finance, then pay or finish that refund. New cash cannot be posted on this job until then.`
+        );
       }
     }
 
@@ -11066,14 +11073,27 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           alreadyInTransaction: true,
         });
         if (!applied?.ok) {
-          throw new Error(
-            applied?.error ||
-              (finalizeReceipt
-                ? 'Could not apply refund fund to this receipt.'
-                : 'Could not apply refund fund to this payment.')
-          );
+          const err = applied?.error || 'Could not apply refund fund to this receipt.';
+          if (isQuotationActiveRefundLockError(err)) {
+            // Do not roll back cash confirmation. Credit from another job cannot land
+            // on a quote that already has an open refund.
+            if (!(nextBankReceived > 0)) {
+              throw new Error(
+                `This quotation has an open refund, so leftover from another job cannot cover this receipt. Confirm the cash actually received, then pay or finish that refund.`
+              );
+            }
+            creditResult = { ok: false, skipped: true, error: err, appliedNgn: 0 };
+          } else {
+            throw new Error(
+              applied?.error ||
+                (finalizeReceipt
+                  ? 'Could not apply refund fund to this receipt.'
+                  : 'Could not apply refund fund to this payment.')
+            );
+          }
+        } else {
+          creditResult = applied;
         }
-        creditResult = applied;
       }
 
       if (finalizeReceipt) {
@@ -11141,6 +11161,8 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
     allSplitsConfirmed: finalizedNow,
     refundCreditAppliedNgn: creditResult?.appliedNgn || 0,
     refundCreditLeftoverNgn: creditResult?.leftoverCreditNgn ?? null,
+    refundCreditSkipped: Boolean(creditResult?.skipped),
+    refundCreditSkipReason: creditResult?.skipped ? creditResult.error : undefined,
   };
 }
 

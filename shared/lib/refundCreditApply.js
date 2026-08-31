@@ -72,6 +72,12 @@ export function refundIsEligibleCreditSourceKind(refund) {
   return status === 'Approved';
 }
 
+/** True when a ledger/credit error is the quotation-has-open-refund payment lock. */
+export function isQuotationActiveRefundLockError(error) {
+  const s = String(error || '');
+  return /active refund request/i.test(s) || /cannot receive credit from another job/i.test(s);
+}
+
 /**
  * Whether this refund row may be used as transferable credit onto another quotation.
  * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, amountNgn?: number, approvedAmountNgn?: number, paidAmountNgn?: number }} refund

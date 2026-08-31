@@ -4,6 +4,7 @@ import {
   allocateRefundCreditAcrossSources,
   planCashierRefundOffset,
   planRefundCreditApplyAmount,
+  isQuotationActiveRefundLockError,
   refundBlocksExternalCreditOnQuotation,
   refundCategoriesAreOverpaymentOnly,
   refundCreditOpenAmountFromStoredRefund,
@@ -196,6 +197,20 @@ describe('refundCreditApply pure helpers', () => {
         ]),
       })
     ).toBe(8_000);
+  });
+
+  it('detects quotation open-refund lock errors so finance confirm can skip credit', () => {
+    expect(
+      isQuotationActiveRefundLockError(
+        'Quotation QT-1 has an active refund request (RF-1) and cannot receive credit from another job.'
+      )
+    ).toBe(true);
+    expect(
+      isQuotationActiveRefundLockError(
+        'Quotation QT-1 has an active refund request (RF-1). Confirm existing receipts in Finance, then pay or finish that refund. New cash cannot be posted on this job until then.'
+      )
+    ).toBe(true);
+    expect(isQuotationActiveRefundLockError('Treasury lines must equal the receipt amount.')).toBe(false);
   });
 
   it('does not block external credit when target only has a pending overpay refund', () => {

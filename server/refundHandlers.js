@@ -18,9 +18,17 @@ export function normalizeRefundActorName(name) {
  * @param {(perm: string) => boolean} hasPermission
  */
 export function isRefundAdminTrialActor(actor, hasPermission) {
-  if (hasPermission('*')) return true;
+  if (typeof hasPermission === 'function' && hasPermission('*')) return true;
   const rk = String(actor?.roleKey || '').trim().toLowerCase();
   return rk === 'admin';
+}
+
+/**
+ * Cashiers cannot till-pay a refund while the payee has unconfirmed receipts.
+ * Admin (trial actor) may pay out anyway — logged on refund.pay.
+ */
+export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission) {
+  return isRefundAdminTrialActor(actor, hasPermission);
 }
 
 /**

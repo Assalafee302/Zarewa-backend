@@ -97,6 +97,13 @@ export function refundCreditUnavailableReason(refund, openNgn, kindEligible = re
   if (String(refund?.status || '').trim() === 'Pending' && !overpayOnly) {
     return 'Needs manager approval before it can cover a receipt.';
   }
+  const paidAt = String(refund?.paidAtISO ?? refund?.paid_at_iso ?? '').trim();
+  const paidBy = String(refund?.paidBy ?? refund?.paid_by ?? '').trim();
+  if (openNgn <= 0 && kindEligible && !paidAt && !paidBy) {
+    return overpayOnly
+      ? 'Looks fully paid on the refund row but no till payout was posted — still on file. View the refund or wait for repair; do not hide it.'
+      : 'Looks settled without a till payout date. View the refund — company cut may already be in paid_amount.';
+  }
   if (openNgn <= 0 && kindEligible) {
     return overpayOnly
       ? 'Already used, paid out, or no balance left after company cut.'

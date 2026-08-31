@@ -134,7 +134,7 @@ import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
-import { assertRefundPayerNotApprover } from './refundHandlers.js';
+import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -8723,14 +8723,18 @@ export function payRefundEntry(db, refundId, payload) {
   if (cashOutstandingNgn <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
+  const hasPerm = (p) => userHasPermission(payload.actor, p);
+  const adminMayPayUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm);
   const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn);
-  const tillPayableNgn = Math.max(0, cashOutstandingNgn - heldNetNgn);
-  if (tillPayableNgn <= 0 && heldNetNgn > 0) {
+  const tillPayableNgn = adminMayPayUncleared
+    ? cashOutstandingNgn
+    : Math.max(0, cashOutstandingNgn - heldNetNgn);
+  if (!adminMayPayUncleared && tillPayableNgn <= 0 && heldNetNgn > 0) {
     return {
       ok: false,
       code: 'REFUND_PAYOUT_HELD_UNCLEARED',
       error:
-        'Till/bank payout is held until uncleared receipts for the payee are cleared. Overpayment may still be used for cashier referral/confirmation on a receipt.',
+        'Till/bank payout is held until uncleared receipts for the payee are confirmed. An administrator can pay this out as an exception. Overpayment may still be used for cashier referral/confirmation on a receipt.',
     };
   }
   const defaultPaidDay =
@@ -8772,7 +8776,7 @@ export function payRefundEntry(db, refundId, payload) {
       ok: false,
       code: 'REFUND_PAYOUT_HELD_UNCLEARED',
       error:
-        heldNetNgn > 0
+        heldNetNgn > 0 && !adminMayPayUncleared
           ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldNetNgn.toLocaleString('en-NG')} is held for uncleared receipts.`
           : 'Payout exceeds the approved refund balance.',
     };
@@ -8781,7 +8785,6 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
-  const hasPerm = (p) => userHasPermission(payload.actor, p);
   const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 
@@ -8854,10 +8857,12 @@ export function payRefundEntry(db, refundId, payload) {
         throw new Error('Refund has already been fully paid.');
       }
       const heldFresh = refundHeldNetCashDueNgn(db, fresh, approvedFresh);
-      const tillPayableFresh = Math.max(0, cashOutstandingFresh - heldFresh);
+      const tillPayableFresh = adminMayPayUncleared
+        ? cashOutstandingFresh
+        : Math.max(0, cashOutstandingFresh - heldFresh);
       if (payoutAmountNgn > tillPayableFresh) {
         throw new Error(
-          heldFresh > 0
+          heldFresh > 0 && !adminMayPayUncleared
             ? `Only ₦${tillPayableFresh.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldFresh.toLocaleString('en-NG')} is held for uncleared receipts.`
             : 'Payout exceeds the approved refund balance.'
         );
@@ -8897,6 +8902,14 @@ export function payRefundEntry(db, refundId, payload) {
         paid_amount_ngn: nextPaidAmountNgn,
       };
       const nextStatus = resolveRefundStatus(db, nextRow);
+      const unclearedOverrideBit =
+        adminMayPayUncleared && heldNetNgn > 0
+          ? `Admin exemption: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
+          : '';
+      const existingNote = paymentNote || fresh.payment_note || '';
+      const storedPaymentNote = /admin exemption:.*unconfirm/i.test(existingNote)
+        ? existingNote
+        : [existingNote, unclearedOverrideBit].filter(Boolean).join(' ').trim() || null;
       db.prepare(
         `UPDATE customer_refunds
          SET status = ?, paid_amount_ngn = ?, paid_at_iso = ?, paid_by = ?, paid_by_user_id = ?, payment_note = ?
@@ -8907,7 +8920,7 @@ export function payRefundEntry(db, refundId, payload) {
         paidAtISO,
         paidBy,
         actorId(payload.actor),
-        paymentNote || fresh.payment_note || null,
+        storedPaymentNote,
         refundId
       );
       appendAuditLog(db, {
@@ -8921,8 +8934,20 @@ export function payRefundEntry(db, refundId, payload) {
           approvedAmountNgn: approvedFresh,
           paidAmountNgn: nextPaidAmountNgn,
           treasuryAccountIds: movements.map((movement) => movement.treasuryAccountId),
+          unclearedHoldOverride: Boolean(adminMayPayUncleared && heldNetNgn > 0),
+          heldNetNgn: adminMayPayUncleared && heldNetNgn > 0 ? heldNetNgn : undefined,
         },
       });
+      if (adminMayPayUncleared && heldNetNgn > 0) {
+        appendAuditLog(db, {
+          actor: payload.actor,
+          action: 'refund.pay.uncleared_override',
+          entityKind: 'refund',
+          entityId: refundId,
+          note: 'Admin exemption: refund payout while payee has unconfirmed receipts.',
+          details: { heldNetNgn, payoutAmountNgn },
+        });
+      }
       if (segPay.adminTrial) {
         appendAuditLog(db, {
           actor: payload.actor,

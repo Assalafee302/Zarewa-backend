@@ -83,7 +83,9 @@ export function refundStaffAllocationDeductionAmounts(
 /**
  * Enrich a split row with deduction + optional uncleared-receipt hold (informational).
  * Amount on the split remains the gross allocation.
- * Admin/MD may set companyCutWaived to skip the company % (uncleared hold still applies).
+ * Admin/MD may set companyCutWaived to skip the company % (uncleared hold still applies
+ * for cashiers; admin may override the hold at payout). Quote-customer lines skip the
+ * company cut but still take the uncleared-receipt hold.
  *
  * @param {object} split
  * @param {string} [quoteCustomerId]
@@ -128,9 +130,9 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
       deductionRate: 0,
       companyCutWaived: false,
       companyCutWaiverNote: '',
-      unclearedReceiptHoldNgn: 0,
+      unclearedReceiptHoldNgn: unclearedHoldNgn,
       unclearedReceiptOffsetNgn: 0,
-      payoutHeldForUnclearedReceipts: false,
+      payoutHeldForUnclearedReceipts: unclearedHoldNgn > 0 && amountNgn > 0,
     };
   }
   const calc = refundStaffAllocationDeductionAmounts(amountNgn, deductionRate);

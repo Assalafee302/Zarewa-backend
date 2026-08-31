@@ -43,6 +43,18 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.netPayoutNgn).toBe(10_000);
   });
 
+  it('holds quote-customer payout when they have uncleared receipts', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 10_000 },
+      'CUS-1',
+      { unclearedReceiptHoldNgn: 4_000 }
+    );
+    expect(row.companyDeductionNgn).toBe(0);
+    expect(row.netPayoutNgn).toBe(10_000);
+    expect(row.unclearedReceiptHoldNgn).toBe(4_000);
+    expect(row.payoutHeldForUnclearedReceipts).toBe(true);
+  });
+
   it('does not auto-offset uncleared receipts from net payout', () => {
     const row = applyRefundStaffAllocationDeduction(
       {

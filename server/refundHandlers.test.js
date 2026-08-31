@@ -3,6 +3,7 @@ import {
   assertCashierMayNotApproveRefund,
   assertRefundApproverNotRequester,
   assertRefundPayerNotApprover,
+  actorMayOverrideRefundUnclearedPayoutHold,
   isRefundAdminTrialActor,
 } from './refundHandlers.js';
 
@@ -25,6 +26,13 @@ describe('refundHandlers (Phase 11A)', () => {
     expect(isRefundAdminTrialActor({ roleKey: 'admin' }, () => false)).toBe(true);
     expect(isRefundAdminTrialActor({ roleKey: 'sales_manager' }, (p) => p === '*')).toBe(true);
     expect(isRefundAdminTrialActor({ roleKey: 'md' }, () => false)).toBe(false);
+  });
+
+  it('lets admin override uncleared-receipt payout hold, not cashier or MD', () => {
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'admin' }, () => false)).toBe(true);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false)).toBe(false);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'md' }, () => false)).toBe(false);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, (p) => p === '*')).toBe(true);
   });
 
   it('blocks requester from approving own refund', () => {

@@ -240,16 +240,24 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   const customerId = String(refundRow.customer_id || '').trim();
   if (!customerId) return [];
   const resolved = savedCustomerPayoutAccount(db, customerId);
+  const unclearedHoldNgn = roundMoney(
+    unclearedTotalsMap(unclearedReceiptFloatBySalesCustomerIds(db, [customerId])).get(customerId)
+  );
+  const payoutHeldForUnclearedReceipts = unclearedHoldNgn > 0 && approved > 0;
   return [
     {
       partyKind: 'customer',
       partyId: customerId,
       partyName: String(resolved?.partyName || refundRow.customer_name || customerId).trim(),
       amountNgn: approved,
+      unclearedReceiptHoldNgn: unclearedHoldNgn,
+      payoutHeldForUnclearedReceipts,
       payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
       payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
       payeeAccountNo: String(refundRow.payee_account_no || resolved?.payeeAccountNo || '').trim(),
-      note: `Refund ${refundRow.refund_id} approved`,
+      note: payoutHeldForUnclearedReceipts
+        ? `Refund ${refundRow.refund_id} approved (₦${unclearedHoldNgn.toLocaleString('en-NG')} uncleared receipts pending — payout held until receipts are confirmed)`
+        : `Refund ${refundRow.refund_id} approved`,
     },
   ];
 }

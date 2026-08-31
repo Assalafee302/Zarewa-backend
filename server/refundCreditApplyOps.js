@@ -55,6 +55,8 @@ function parseRefundCats(row) {
     approvedAmountNgn: roundMoney(row.approved_amount_ngn),
     paidAmountNgn: roundMoney(row.paid_amount_ngn),
     creditAppliedNgn: roundMoney(row.credit_applied_ngn),
+    paidAtISO: row.paid_at_iso,
+    paidBy: row.paid_by,
   };
 }
 
@@ -109,7 +111,14 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
       `SELECT cr.* FROM customer_refunds cr
        LEFT JOIN quotations q ON q.id = cr.quotation_ref
        WHERE (cr.customer_id = ? OR q.customer_id = ?)
-         AND cr.status IN ('Pending', 'Approved')
+         AND (
+           cr.status IN ('Pending', 'Approved', 'Partially paid')
+           OR (
+             cr.status = 'Paid'
+             AND TRIM(IFNULL(cr.paid_at_iso, '')) = ''
+             AND TRIM(IFNULL(cr.paid_by, '')) = ''
+           )
+         )
        ORDER BY cr.requested_at_iso ASC, cr.refund_id ASC`
     )
     .all(cid, cid);
@@ -173,6 +182,10 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
         availableNgn: open,
         status: shape.status,
         overpaymentOnly: overpayOnly,
+        paidAtISO: shape.paidAtISO,
+        paidBy: shape.paidBy,
+        paidAmountNgn: shape.paidAmountNgn,
+        amountNgn: shape.amountNgn,
         reason,
       });
     }

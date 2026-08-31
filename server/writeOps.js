@@ -126,7 +126,7 @@ import {
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
-import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx } from './finance/partnerWalletCredit.js';
+import { partnerWalletEnabled, refundHasOpenWalletCredit, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import {
   refundCashOutstandingNgn,
@@ -8723,6 +8723,16 @@ export function payRefundEntry(db, refundId, payload) {
   if (cashOutstandingNgn <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
+  const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn);
+  const tillPayableNgn = Math.max(0, cashOutstandingNgn - heldNetNgn);
+  if (tillPayableNgn <= 0 && heldNetNgn > 0) {
+    return {
+      ok: false,
+      code: 'REFUND_PAYOUT_HELD_UNCLEARED',
+      error:
+        'Till/bank payout is held until uncleared receipts for the payee are cleared. Overpayment may still be used for cashier referral/confirmation on a receipt.',
+    };
+  }
   const defaultPaidDay =
     String(payload.paidAtISO ?? payload.dateISO ?? '').trim().slice(0, 10) ||
     new Date().toISOString().slice(0, 10);
@@ -8746,7 +8756,7 @@ export function payRefundEntry(db, refundId, payload) {
         ? [
             {
               treasuryAccountId: Number(payload.treasuryAccountId),
-              amountNgn: cashOutstandingNgn,
+              amountNgn: tillPayableNgn,
               reference: String(payload.reference ?? '').trim(),
               note: String(payload.note ?? '').trim(),
               postedAtISO: payoutLinePostedAtISO(payload, defaultPaidDay, normalizeIsoTimestamp),
@@ -8756,6 +8766,16 @@ export function payRefundEntry(db, refundId, payload) {
   const payoutAmountNgn = paymentLines.reduce((sum, line) => sum + line.amountNgn, 0);
   if (!paymentLines.length || payoutAmountNgn <= 0) {
     return { ok: false, error: 'Add at least one payout line.' };
+  }
+  if (payoutAmountNgn > tillPayableNgn) {
+    return {
+      ok: false,
+      code: 'REFUND_PAYOUT_HELD_UNCLEARED',
+      error:
+        heldNetNgn > 0
+          ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldNetNgn.toLocaleString('en-NG')} is held for uncleared receipts.`
+          : 'Payout exceeds the approved refund balance.',
+    };
   }
   if (payoutAmountNgn > cashOutstandingNgn) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
@@ -8832,6 +8852,15 @@ export function payRefundEntry(db, refundId, payload) {
       const cashOutstandingFresh = refundCashOutstandingNgn(db, fresh);
       if (cashOutstandingFresh <= 0 && !refundHasOpenWalletCredit(db, refundId)) {
         throw new Error('Refund has already been fully paid.');
+      }
+      const heldFresh = refundHeldNetCashDueNgn(db, fresh, approvedFresh);
+      const tillPayableFresh = Math.max(0, cashOutstandingFresh - heldFresh);
+      if (payoutAmountNgn > tillPayableFresh) {
+        throw new Error(
+          heldFresh > 0
+            ? `Only ₦${tillPayableFresh.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldFresh.toLocaleString('en-NG')} is held for uncleared receipts.`
+            : 'Payout exceeds the approved refund balance.'
+        );
       }
       if (payoutAmountNgn > cashOutstandingFresh) {
         throw new Error('Payout exceeds the approved refund balance.');

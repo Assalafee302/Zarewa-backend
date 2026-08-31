@@ -117,7 +117,10 @@ import {
 import {
   applyRefundStaffAllocationDeductions,
 } from '../shared/lib/refundStaffAllocationDeduction.js';
-import { refundCategoriesAreOverpaymentOnly } from '../shared/lib/refundCreditApply.js';
+import {
+  refundCategoriesAreOverpaymentOnly,
+  refundOverpaymentStaffAllocationError,
+} from '../shared/lib/refundCreditApply.js';
 import {
   unclearedReceiptFloatBySalesCustomerIds,
   unclearedTotalsMap,
@@ -2754,6 +2757,13 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       requestedCats,
       payload.calculationLines
     );
+    const overpayStaffErr = refundOverpaymentStaffAllocationError({
+      reasonCategory: requestedCats,
+      calculationLines: payload.calculationLines,
+      splits: splitsWithWaiverAuth,
+      quoteCustomerId: customerID,
+    });
+    if (overpayStaffErr) return { ok: false, error: overpayStaffErr, code: 'REFUND_OVERPAYMENT_STAFF_BLOCKED' };
 
     const splitsForStore = applyRefundStaffAllocationDeductions(splitsWithWaiverAuth, customerID, {
       deductionRate: getRefundStaffAllocationDeductionRate(db),
@@ -3367,6 +3377,22 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         phase: 'approve',
       });
       if (!financial.ok) return financial;
+    }
+    let approveSplits = [];
+    try {
+      const parsed = JSON.parse(String(row.split_distributions_json || '[]'));
+      approveSplits = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      approveSplits = [];
+    }
+    const overpayStaffErr = refundOverpaymentStaffAllocationError({
+      reasonCategory: decisionCats,
+      calculationLines: linesForGuard,
+      splits: approveSplits,
+      quoteCustomerId: row.customer_id,
+    });
+    if (overpayStaffErr) {
+      return { ok: false, error: overpayStaffErr, code: 'REFUND_OVERPAYMENT_STAFF_BLOCKED' };
     }
   }
   if (status === 'Approved' && approvedAmountNgn > requestedAmountNgn) {

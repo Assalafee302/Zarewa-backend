@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   REFUND_CREDIT_CONFIRMATION_STATUS,
+  REFUND_OVERPAYMENT_STAFF_ALLOCATION_ERROR,
   allocateRefundCreditAcrossSources,
   planCashierRefundOffset,
   planRefundCreditApplyAmount,
@@ -10,6 +11,7 @@ import {
   refundCreditOpenAmountNgn,
   refundIsEligibleCreditSource,
   refundLeftoverAwaitingApprovalNgn,
+  refundOverpaymentStaffAllocationError,
 } from './refundCreditApply.js';
 
 describe('refundCreditApply pure helpers', () => {
@@ -23,6 +25,54 @@ describe('refundCreditApply pure helpers', () => {
     expect(
       refundCategoriesAreOverpaymentOnly('', [{ category: 'Overpayment', amountNgn: 1 }])
     ).toBe(true);
+  });
+
+  it('blocks overpayment allocated to associated staff or claiming staff', () => {
+    expect(
+      refundOverpaymentStaffAllocationError({
+        reasonCategory: ['Overpayment'],
+        calculationLines: [{ category: 'Overpayment', amountNgn: 10_000 }],
+        quoteCustomerId: 'CUS-QUOTE',
+        splits: [
+          {
+            recipientKind: 'associated_staff',
+            recipientAssociatedStaffID: 'AST-1',
+            amountNgn: 10_000,
+          },
+        ],
+      })
+    ).toBe(REFUND_OVERPAYMENT_STAFF_ALLOCATION_ERROR);
+    expect(
+      refundOverpaymentStaffAllocationError({
+        reasonCategory: ['Overpayment'],
+        quoteCustomerId: 'CUS-QUOTE',
+        splits: [
+          { recipientKind: 'customer', recipientCustomerID: 'CUS-CLAIM', amountNgn: 10_000 },
+        ],
+      })
+    ).toBe(REFUND_OVERPAYMENT_STAFF_ALLOCATION_ERROR);
+    expect(
+      refundOverpaymentStaffAllocationError({
+        reasonCategory: ['Overpayment'],
+        quoteCustomerId: 'CUS-QUOTE',
+        splits: [
+          { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 10_000 },
+        ],
+      })
+    ).toBeNull();
+    expect(
+      refundOverpaymentStaffAllocationError({
+        reasonCategory: ['Transport issue'],
+        quoteCustomerId: 'CUS-QUOTE',
+        splits: [
+          {
+            recipientKind: 'associated_staff',
+            recipientAssociatedStaffID: 'AST-1',
+            amountNgn: 10_000,
+          },
+        ],
+      })
+    ).toBeNull();
   });
 
   it('allows Pending overpayment refunds but not Pending other categories', () => {

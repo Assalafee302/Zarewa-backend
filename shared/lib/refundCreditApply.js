@@ -8,6 +8,8 @@
 import { normalizeRefundReasonCategoriesForApi } from '../refundConstants.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 import {
+  refundSplitTakesStaffDeduction,
+  roundRefundStaffMoney,
   sumRefundStaffCompanyDeductionNgn,
   sumRefundStaffNetPayoutNgn,
 } from './refundStaffAllocationDeduction.js';
@@ -18,6 +20,10 @@ export const REFUND_CREDIT_REVERSED_STATUS = 'Reversed';
 export const REFUND_CREDIT_LEDGER_REF_PREFIX = 'CREDIT_APPLY:';
 /** Compensating rows for {@link REFUND_CREDIT_LEDGER_REF_PREFIX} (finance.reverse). */
 export const REFUND_CREDIT_REVERSE_LEDGER_REF_PREFIX = 'CREDIT_APPLY_REVERSE:';
+
+/** Overpayment is customer cash — must not land as a staff / claiming-staff payout. */
+export const REFUND_OVERPAYMENT_STAFF_ALLOCATION_ERROR =
+  'Overpayment must be paid to the quote customer, not to claiming staff or associated staff. Resubmit with the customer as payee.';
 
 /**
  * @param {unknown} reasonCategory
@@ -34,6 +40,27 @@ export function refundCategoriesAreOverpaymentOnly(reasonCategory, calculationLi
     .filter(Boolean);
   if (!withCat.length) return false;
   return withCat.every((c) => c.toLowerCase().includes('overpay'));
+}
+
+/**
+ * Reject overpayment-only refunds allocated to associated staff or non-quote customers.
+ * @returns {string | null} Error message, or null when allowed.
+ */
+export function refundOverpaymentStaffAllocationError({
+  reasonCategory,
+  calculationLines,
+  splits,
+  quoteCustomerId,
+} = {}) {
+  if (!refundCategoriesAreOverpaymentOnly(reasonCategory, calculationLines)) return null;
+  const list = Array.isArray(splits) ? splits : [];
+  const bad = list.filter(
+    (s) =>
+      roundRefundStaffMoney(s?.amountNgn ?? s?.amount_ngn) > 0 &&
+      refundSplitTakesStaffDeduction(s, quoteCustomerId)
+  );
+  if (!bad.length) return null;
+  return REFUND_OVERPAYMENT_STAFF_ALLOCATION_ERROR;
 }
 
 /**

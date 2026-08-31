@@ -175,7 +175,7 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         }
         if (withDeduction.payoutHeldForUnclearedReceipts && unclearedReceiptHoldNgn > 0) {
           noteParts.push(
-            `₦${roundMoney(unclearedReceiptHoldNgn).toLocaleString('en-NG')} uncleared receipts pending — payout held until cleared or manually applied`
+            `₦${roundMoney(unclearedReceiptHoldNgn).toLocaleString('en-NG')} uncleared receipts pending — payout held until receipts are cleared`
           );
         }
         const detailNote = noteParts.length ? ` (${noteParts.join('; ')})` : '';
@@ -258,6 +258,14 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn) {
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   return targets.reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
+}
+
+/** Net cash on held payees (uncleared receipts) — not payable from till/wallet until cleared. */
+export function refundHeldNetCashDueNgn(db, refundRow, approvedAmountNgn) {
+  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+  return targets
+    .filter((t) => Boolean(t.payoutHeldForUnclearedReceipts))
+    .reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
 }
 
 /** Company cut settled at BM approval (non-treasury). Uncleared holds are not auto-settled. */
@@ -421,7 +429,10 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
   const settledAtApprovalNgn = companyRetentionNgn;
-  const creditTargets = targets.filter((t) => roundMoney(t.amountNgn) > 0);
+  // Held payee nets stay off the wallet — till/wallet payout is blocked until receipts clear.
+  const creditTargets = targets.filter(
+    (t) => roundMoney(t.amountNgn) > 0 && !t.payoutHeldForUnclearedReceipts
+  );
 
   if (walletOn && walletCreditsExist && alreadySettled) {
     const retentionCredit = ensureRefundCompanyRetentionCreditTx(db, refundRow, {

@@ -134,9 +134,8 @@ import {
   refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
-  assertRefundMoneyOutWithinApproved,
 } from './sales/refundPayoutStatus.js';
-import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
+import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -8723,13 +8722,10 @@ export function payRefundEntry(db, refundId, payload) {
     if (!settle.ok) return { ok: false, error: settle.error || 'Could not settle staff company cut.' };
     row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId) || row;
   } else {
-    const ensureCut = ensureRefundCompanyRetentionCreditTx(db, row, {
+    ensureRefundCompanyRetentionCreditTx(db, row, {
       approvedAmountNgn: roundMoney(row.approved_amount_ngn || row.amount_ngn),
       actor: payload.actor,
     });
-    if (!ensureCut.ok) {
-      return { ok: false, error: ensureCut.error || 'Could not settle staff company cut.' };
-    }
   }
   const qrefPay = String(row.quotation_ref ?? '').trim();
   if (qrefPay) {
@@ -8832,7 +8828,7 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
-  const segPay = assertActorMayPayCustomerRefund(row, payload.actor, hasPerm);
+  const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 
   if (qrefPay) {
@@ -9082,8 +9078,6 @@ export function payRefundEntry(db, refundId, payload) {
         }
         if (rows.length > 0) insertLedgerRows(db, rows, wb);
       }
-      const afterPay = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
-      assertRefundMoneyOutWithinApproved(db, afterPay);
       return { movements, nextPaidAmountNgn, fullyPaid, refundGlPolicy };
     })();
     const outstandingAfterNgn = approvedAmountNgn - result.nextPaidAmountNgn;

@@ -360,6 +360,57 @@ export function stripFinishedOverpayFromConfirmEligible(payload) {
 }
 
 /**
+ * Partial use of a refund fund: already applied to another receipt vs still left.
+ * @param {{
+ *   amountNgn?: number,
+ *   availableNgn?: number,
+ *   creditAppliedNgn?: number,
+ *   paidAmountNgn?: number,
+ *   creditAppliedToQuotationRef?: string,
+ * }} p
+ */
+export function refundFundUsageBreakdown({
+  amountNgn = 0,
+  availableNgn = 0,
+  creditAppliedNgn = 0,
+  paidAmountNgn = 0,
+  creditAppliedToQuotationRef = '',
+} = {}) {
+  const requestedNgn = Math.max(0, Math.round(Number(amountNgn) || 0));
+  const usedOnReceiptNgn = Math.max(0, Math.round(Number(creditAppliedNgn) || 0));
+  const paidOutNgn = Math.max(0, Math.round(Number(paidAmountNgn) || 0));
+  const leftNgn =
+    availableNgn == null || availableNgn === ''
+      ? Math.max(0, requestedNgn - usedOnReceiptNgn - paidOutNgn)
+      : Math.max(0, Math.round(Number(availableNgn) || 0));
+  const appliedToQuote = String(creditAppliedToQuotationRef || '').trim();
+  return {
+    requestedNgn,
+    usedOnReceiptNgn,
+    paidOutNgn,
+    leftNgn,
+    appliedToQuote,
+    hasPartialUse: usedOnReceiptNgn > 0,
+  };
+}
+
+/**
+ * Cashier copy when some of this refund already covered another receipt.
+ */
+export function refundFundRemainingHowToUse(p = {}) {
+  const b = refundFundUsageBreakdown(p);
+  if (!b.hasPartialUse) return '';
+  const usedBit = b.appliedToQuote
+    ? `Already used ₦${b.usedOnReceiptNgn.toLocaleString('en-NG')} on ${b.appliedToQuote}`
+    : `Already used ₦${b.usedOnReceiptNgn.toLocaleString('en-NG')} on another receipt`;
+  const leftBit =
+    b.leftNgn > 0
+      ? `₦${b.leftNgn.toLocaleString('en-NG')} left — tick this leftover to cover this receipt, or pay it from till. Do not use the original amount again`
+      : 'Nothing left on this refund';
+  return `${usedBit}. ${leftBit}.`;
+}
+
+/**
  * Cashier confirm: offset usable refund fund against an unconfirmed receipt’s cash.
  * Quote due may already be 0 because Sales posted the receipt — offset against receipt cash instead.
  * @param {{ receiptCashNgn?: number, availableNgn?: number }} p

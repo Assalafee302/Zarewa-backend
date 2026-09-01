@@ -21,6 +21,7 @@ import {
   refundIsEligibleCreditSourceKind,
   refundOverpayConsumedNgn,
   refundOverpayFinishedPayout,
+  refundFundRemainingHowToUse,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from '../shared/lib/refundCreditApply.js';
@@ -62,6 +63,7 @@ function parseRefundCats(row) {
     approvedAmountNgn: roundMoney(row.approved_amount_ngn),
     paidAmountNgn: roundMoney(row.paid_amount_ngn),
     creditAppliedNgn: roundMoney(row.credit_applied_ngn),
+    creditAppliedToQuotationRef: String(row.credit_applied_to_quotation_ref || '').trim(),
     paidAtISO: row.paid_at_iso,
     paidBy: row.paid_by,
   };
@@ -74,6 +76,35 @@ function mapRefundRowToCreditShape(row) {
     customerID: row.customer_id,
     quotationRef: row.quotation_ref,
     ...parsed,
+  };
+}
+
+function appliedDestsLabel(destsByRefund, refundId, fallback) {
+  const dests = destsByRefund.get(String(refundId || '').trim()) || [];
+  const refs = dests.map((d) => d.quotationRef).filter(Boolean);
+  if (refs.length) return [...new Set(refs)].join(', ');
+  return String(fallback || '').trim();
+}
+
+function refundUsageFields(shape, open, destsByRefund) {
+  const creditAppliedNgn = roundMoney(shape.creditAppliedNgn);
+  const creditAppliedToQuotationRef = appliedDestsLabel(
+    destsByRefund,
+    shape.refundID,
+    shape.creditAppliedToQuotationRef
+  );
+  return {
+    amountNgn: roundMoney(shape.amountNgn),
+    creditAppliedNgn,
+    creditAppliedToQuotationRef,
+    paidAmountNgn: roundMoney(shape.paidAmountNgn),
+    usageHowTo: refundFundRemainingHowToUse({
+      amountNgn: shape.amountNgn,
+      availableNgn: open,
+      creditAppliedNgn,
+      paidAmountNgn: shape.paidAmountNgn,
+      creditAppliedToQuotationRef,
+    }),
   };
 }
 
@@ -130,6 +161,27 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     )
     .all(cid, cid);
 
+  const destsByRefund = new Map();
+  const destRows = db
+    .prepare(
+      `SELECT refund_id, target_quotation_ref, COALESCE(SUM(amount_ngn), 0) AS s
+       FROM refund_credit_applications
+       WHERE customer_id = ?
+         AND TRIM(IFNULL(refund_id, '')) != ''
+         AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+       GROUP BY refund_id, target_quotation_ref`
+    )
+    .all(cid);
+  for (const row of destRows) {
+    const rid = String(row.refund_id || '').trim();
+    if (!rid) continue;
+    if (!destsByRefund.has(rid)) destsByRefund.set(rid, []);
+    destsByRefund.get(rid).push({
+      quotationRef: String(row.target_quotation_ref || '').trim(),
+      amountNgn: roundMoney(row.s),
+    });
+  }
+
   /** @type {Array<object>} */
   const sources = [];
   /** @type {Array<object>} */
@@ -165,6 +217,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     ) {
       continue;
     }
+    const usage = refundUsageFields(shape, open, destsByRefund);
     if (eligible) {
       sources.push({
         id: `refund:${shape.refundID}`,
@@ -176,13 +229,15 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
         status: shape.status,
         overpaymentOnly: overpayOnly,
         sameQuotation: qref === target,
+        ...usage,
         label: overpayOnly
           ? `Refund fund ${shape.refundID} on ${qref}`
           : `Approved refund ${shape.refundID} on ${qref}`,
         recommendation:
-          qref === target
+          usage.usageHowTo ||
+          (qref === target
             ? `Use up to ₦${open.toLocaleString('en-NG')} from this quotation’s refund fund; leftover stays refundable here.`
-            : `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${shape.refundID}; leftover stays refundable on ${qref}.`,
+            : `Use up to ₦${open.toLocaleString('en-NG')} from refund fund ${shape.refundID}; leftover stays refundable on ${qref}.`),
       });
     } else {
       const reason =
@@ -200,6 +255,7 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
         paidBy: shape.paidBy,
         paidAmountNgn: shape.paidAmountNgn,
         amountNgn: shape.amountNgn,
+        ...refundUsageFields(shape, open, destsByRefund),
         reason,
       });
     }
@@ -277,6 +333,13 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
       creditAppliedOutNgn: creditOutByQuote.get(qid) || 0,
     });
     if (leftover > 0 && !blockingOtherPending) {
+      const creditOut = creditOutByQuote.get(qid) || 0;
+      const overpayUsageHowTo = refundFundRemainingHowToUse({
+        amountNgn: leftover + creditOut,
+        availableNgn: leftover,
+        creditAppliedNgn: creditOut,
+        creditAppliedToQuotationRef: '',
+      });
       sources.push({
         id: `overpay:${qid}`,
         kind: 'overpay',
@@ -287,8 +350,15 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
         status: null,
         overpaymentOnly: true,
         sameQuotation: qid === target,
+        amountNgn: leftover + creditOut,
+        creditAppliedNgn: creditOut,
+        creditAppliedToQuotationRef: '',
+        paidAmountNgn: 0,
+        usageHowTo: overpayUsageHowTo,
         label: `Overpayment on ${qid}`,
-        recommendation: `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
+        recommendation:
+          overpayUsageHowTo ||
+          `Use up to ₦${leftover.toLocaleString('en-NG')} from overpayment on ${qid} — no refund request needed. Leftover stays on that job.`,
       });
     }
   }

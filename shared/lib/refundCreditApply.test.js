@@ -13,6 +13,8 @@ import {
   refundLeftoverAwaitingApprovalNgn,
   refundOverpayConsumedNgn,
   refundOverpayFinishedPayout,
+  refundFundRemainingHowToUse,
+  refundFundUsageBreakdown,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
@@ -230,6 +232,32 @@ describe('refundCreditApply pure helpers', () => {
         ],
       }).unavailableSources.map((s) => s.refundId)
     ).toEqual(['RF-KD-26-9553']);
+  });
+
+  it('explains already-used refund fund vs leftover', () => {
+    expect(
+      refundFundRemainingHowToUse({
+        amountNgn: 151_330,
+        availableNgn: 128_300,
+        creditAppliedNgn: 23_030,
+        creditAppliedToQuotationRef: 'QT-KD-26-1282',
+      })
+    ).toMatch(/Already used ₦23,030 on QT-KD-26-1282/);
+    expect(
+      refundFundRemainingHowToUse({
+        amountNgn: 151_330,
+        availableNgn: 128_300,
+        creditAppliedNgn: 23_030,
+        creditAppliedToQuotationRef: 'QT-KD-26-1282',
+      })
+    ).toMatch(/₦128,300 left/);
+    expect(
+      refundFundUsageBreakdown({
+        amountNgn: 50_000,
+        creditAppliedNgn: 20_000,
+        availableNgn: 0,
+      }).leftNgn
+    ).toBe(0);
   });
 
   it('plans cashier receipt offset against refund fund', () => {

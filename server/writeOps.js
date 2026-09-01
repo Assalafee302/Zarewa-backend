@@ -134,8 +134,9 @@ import {
   refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
+  assertRefundMoneyOutWithinApproved,
 } from './sales/refundPayoutStatus.js';
-import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
+import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -3786,6 +3787,7 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
     qtyRemaining: prevRem0,
     currentWeightKg: prevRem0,
+    receivedAtISO: row.received_at_iso ?? '',
   };
 
   const sets = [];
@@ -3812,6 +3814,17 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
     args.push(v || null);
     next.materialTypeName = v;
   }
+  if (Object.prototype.hasOwnProperty.call(b, 'receivedAtISO') || Object.prototype.hasOwnProperty.call(b, 'received_at_iso')) {
+    const raw = Object.prototype.hasOwnProperty.call(b, 'receivedAtISO') ? b.receivedAtISO : b.received_at_iso;
+    const v = String(raw ?? '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      return { ok: false, error: 'Enter a valid date of receival (YYYY-MM-DD).' };
+    }
+    sets.push('received_at_iso = ?');
+    args.push(v);
+    next.receivedAtISO = v;
+  }
+
   if (Object.prototype.hasOwnProperty.call(b, 'stockForm') || Object.prototype.hasOwnProperty.call(b, 'stock_form')) {
     const raw = Object.prototype.hasOwnProperty.call(b, 'stockForm') ? b.stockForm : b.stock_form;
     const form = String(raw || '').trim().toLowerCase();
@@ -3876,7 +3889,8 @@ export function patchCoilLotMasterData(db, coilNo, body = {}, opts = {}) {
   if (!sets.length && !didMass) {
     return {
       ok: false,
-      error: 'No fields to update. Send colour, gaugeLabel, materialTypeName, receivedKg, and/or currentWeightKg.',
+      error:
+        'No fields to update. Send colour, gaugeLabel, materialTypeName, receivedKg, currentWeightKg, and/or receivedAtISO.',
     };
   }
 
@@ -8709,10 +8723,13 @@ export function payRefundEntry(db, refundId, payload) {
     if (!settle.ok) return { ok: false, error: settle.error || 'Could not settle staff company cut.' };
     row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId) || row;
   } else {
-    ensureRefundCompanyRetentionCreditTx(db, row, {
+    const ensureCut = ensureRefundCompanyRetentionCreditTx(db, row, {
       approvedAmountNgn: roundMoney(row.approved_amount_ngn || row.amount_ngn),
       actor: payload.actor,
     });
+    if (!ensureCut.ok) {
+      return { ok: false, error: ensureCut.error || 'Could not settle staff company cut.' };
+    }
   }
   const qrefPay = String(row.quotation_ref ?? '').trim();
   if (qrefPay) {
@@ -8815,7 +8832,7 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
-  const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
+  const segPay = assertActorMayPayCustomerRefund(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 
   if (qrefPay) {
@@ -9065,6 +9082,8 @@ export function payRefundEntry(db, refundId, payload) {
         }
         if (rows.length > 0) insertLedgerRows(db, rows, wb);
       }
+      const afterPay = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+      assertRefundMoneyOutWithinApproved(db, afterPay);
       return { movements, nextPaidAmountNgn, fullyPaid, refundGlPolicy };
     })();
     const outstandingAfterNgn = approvedAmountNgn - result.nextPaidAmountNgn;

@@ -8935,6 +8935,7 @@ export function payRefundEntry(db, refundId, payload) {
         paid_amount_ngn: nextPaidAmountNgn,
       };
       const nextStatus = resolveRefundStatus(db, nextRow);
+      const fullyPaid = nextStatus === 'Paid';
       const unclearedOverrideBit =
         adminMayPayUncleared && heldNetNgn > 0
           ? `Admin exemption: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`

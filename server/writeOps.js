@@ -8455,6 +8455,8 @@ export function payPaymentRequest(db, requestID, payload) {
     assetDescription,
     hasAttachment: hasPrAttachment,
     hasHrLoanLink: Boolean(findApprovedHrLoanForPaymentRequest(db, requestID)),
+    actor,
+    hasPermission: (p) => userHasPermission(actor, p),
   });
   if (!treasuryCatCheck.ok) return treasuryCatCheck;
 
@@ -8527,6 +8529,7 @@ export function payPaymentRequest(db, requestID, payload) {
           treasuryAccountIds: paymentLines.map((line) => line.treasuryAccountId),
           requestBranchId: linkedExpense?.branch_id || '',
           paidFromWorkspaceBranchId: workspaceBranchId || '',
+          staffLoanHrLinkBypass: Boolean(treasuryCatCheck.staffLoanHrLinkBypass),
         },
       });
 

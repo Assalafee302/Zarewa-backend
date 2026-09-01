@@ -7,6 +7,7 @@ import {
   requiresElevatedApprovalLane,
 } from './expenseCategoryLanes.js';
 import {
+  actorMayBypassStaffLoanHrLink,
   actorMaySelectExpenseCategory,
   expenseCategoriesForActor,
   isFinanceExceptionExpenseItem,
@@ -146,6 +147,29 @@ describe('expenseCategoryPolicy', () => {
     expect(validateSpecialLaneTreasuryPayout({ category: 'Chairman loan', hasHrLoanLink: false }).ok).toBe(
       true
     );
+  });
+
+  it('lets admin pay a staff loan without an HR loan link; cashier cannot', () => {
+    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'admin' })).toBe(true);
+    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'cashier' })).toBe(false);
+    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'finance_manager' })).toBe(false);
+    expect(actorMayBypassStaffLoanHrLink({ roleKey: 'md' })).toBe(false);
+    expect(actorMayBypassStaffLoanHrLink({ permissions: ['*'] })).toBe(true);
+
+    const cashierBlocked = validateSpecialLaneTreasuryPayout({
+      category: 'Staff loan',
+      hasHrLoanLink: false,
+      actor: { roleKey: 'cashier' },
+    });
+    expect(cashierBlocked.ok).toBe(false);
+
+    const adminOk = validateSpecialLaneTreasuryPayout({
+      category: 'Staff loan',
+      hasHrLoanLink: false,
+      actor: { roleKey: 'admin' },
+    });
+    expect(adminOk.ok).toBe(true);
+    expect(adminOk.staffLoanHrLinkBypass).toBe(true);
   });
 
   it('honours org Others min length on validation', () => {

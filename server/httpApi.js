@@ -9871,7 +9871,7 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
-      const preview = getPaymentRequestGlPreview(db, String(req.params.requestId || ''));
+      const preview = getPaymentRequestGlPreview(db, String(req.params.requestId || ''), req.user);
       res.status(preview.ok ? 200 : 404).json(preview);
     } catch (e) {
       console.error(e);

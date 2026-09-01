@@ -13,6 +13,7 @@ import {
 import { mapLegacyExpenseCategoryToCanonical } from '../shared/expenseCategories.js';
 import {
   actorMayApprovePaymentRequestCategory,
+  actorMayBypassStaffLoanHrLink,
   CAPEX_MIN_ASSET_DESCRIPTION_LEN,
   resolveExpenseCategoryPolicyLimits,
   validateExpenseCategoryForTreasuryPayout,
@@ -2384,7 +2385,6 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
   }
 }
 
-/** GL debit preview for an approved/unpaid payment request (Finance pay screen). */
 function hasApprovedHrLoanLink(db, requestId) {
   const prId = String(requestId || '').trim();
   if (!prId) return false;
@@ -2402,13 +2402,14 @@ function hasApprovedHrLoanLink(db, requestId) {
   return false;
 }
 
-function buildPaymentRequestPayoutGatePreview(db, row) {
+function buildPaymentRequestPayoutGatePreview(db, row, actor) {
   const requestId = String(row.request_id || '').trim();
   const category = mapLegacyExpenseCategoryToCanonical(row.expense_category || 'Others');
   const lane = getExpenseCategoryLane(category);
   const assetDescription = String(row.expense_reference || row.description || '').trim();
   const hasAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
   const hasHrLoanLink = hasApprovedHrLoanLink(db, requestId);
+  const bypassHrLoanLink = actorMayBypassStaffLoanHrLink(actor, (p) => userHasPermission(actor, p));
 
   const checks = [];
   const glCheck = validateExpenseCategoryForTreasuryPayout(category);
@@ -2438,13 +2439,16 @@ function buildPaymentRequestPayoutGatePreview(db, row) {
   }
 
   if (category === 'Staff loan') {
+    const hrOk = hasHrLoanLink || bypassHrLoanLink;
     checks.push({
       key: 'hr_loan_link',
       label: 'HR loan approved & linked',
-      ok: hasHrLoanLink,
+      ok: hrOk,
       detail: hasHrLoanLink
         ? 'Linked to approved HR loan'
-        : 'Disburse only from an approved HR staff loan request',
+        : bypassHrLoanLink
+          ? 'Admin may pay this staff loan without an HR loan request'
+          : 'Disburse only from an approved HR staff loan request',
     });
   }
 
@@ -2459,7 +2463,8 @@ function buildPaymentRequestPayoutGatePreview(db, row) {
   };
 }
 
-export function getPaymentRequestGlPreview(db, requestId) {
+/** GL debit preview for an approved/unpaid payment request (Finance pay screen). */
+export function getPaymentRequestGlPreview(db, requestId, actor) {
   const rid = String(requestId || '').trim();
   if (!rid) return { ok: false, error: 'Payment request ID is required.' };
   const row = db
@@ -2478,7 +2483,7 @@ export function getPaymentRequestGlPreview(db, requestId) {
   const remainingNgn = Math.max(0, requestedNgn - paidNgn);
   const { accountCode, isEquity, isCapex } = glAccountForExpenseCategory(category, { capexAsAsset: true });
   const lane = getExpenseCategoryLane(category);
-  const payoutGate = buildPaymentRequestPayoutGatePreview(db, row);
+  const payoutGate = buildPaymentRequestPayoutGatePreview(db, row, actor);
   return {
     ok: true,
     requestID: rid,

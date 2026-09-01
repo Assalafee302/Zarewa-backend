@@ -83,6 +83,19 @@ export function actorMaySelectRestrictedExpenseCategories(actor, hasPermission =
 }
 
 /**
+ * Admin (and wildcard) may pay a Staff loan payment request without an HR loan row.
+ * Cashiers and Finance still need the approved HR loan link.
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ * @param {(perm: string) => boolean} [hasPermission]
+ */
+export function actorMayBypassStaffLoanHrLink(actor, hasPermission = () => false) {
+  if (!actor) return false;
+  if (actorHasWildcard(actor, hasPermission)) return true;
+  const rk = String(actor.roleKey || actor.role_key || '').trim().toLowerCase();
+  return rk === 'admin';
+}
+
+/**
  * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
  * @param {string} category
  * @param {(perm: string) => boolean} [hasPermission]
@@ -255,6 +268,8 @@ export function validateCapexTreasuryPayout(input = {}) {
  *   assetDescription?: string;
  *   hasAttachment?: boolean;
  *   hasHrLoanLink?: boolean;
+ *   actor?: { roleKey?: string; permissions?: string[] } | null;
+ *   hasPermission?: (perm: string) => boolean;
  * }} input
  */
 export function validateSpecialLaneTreasuryPayout(input = {}) {
@@ -268,6 +283,10 @@ export function validateSpecialLaneTreasuryPayout(input = {}) {
     if (!capex.ok) return capex;
   }
   if (category === 'Staff loan' && !input.hasHrLoanLink) {
+    const hasPermission = typeof input.hasPermission === 'function' ? input.hasPermission : () => false;
+    if (actorMayBypassStaffLoanHrLink(input.actor, hasPermission)) {
+      return { ...base, staffLoanHrLinkBypass: true };
+    }
     return {
       ok: false,
       error: 'Staff loan payout must be linked to an approved HR loan request.',

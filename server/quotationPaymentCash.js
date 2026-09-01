@@ -105,9 +105,14 @@ export function quotationPaymentCashBreakdownFromRows(receiptRows, ledgerRows) {
           settledQuoteFullOverpayNgn += amt;
         }
         break;
-      case 'OVERPAY_REVERSAL':
+      case 'OVERPAY_REVERSAL': {
+        // Leftover moved onto another job posts CREDIT_APPLY reversals on the source.
+        // Cash received on this quote does not change — Create Refund subtracts that ₦ as credit-out.
+        const bref = String(e.bankReference || '').trim();
+        if (bref.startsWith('CREDIT_APPLY')) break;
         overpayReversalNgn += amt;
         break;
+      }
       default:
         break;
     }

@@ -57,6 +57,17 @@ describe('refundQuotationMoney', () => {
     ).toBe(33_000);
   });
 
+  it('overpayment residual subtracts leftover credit already applied to another quote', () => {
+    expect(
+      quotationOverpaymentResidualNgn({
+        cashInNgn: 4_596_000,
+        quoteTotalNgn: 451_764,
+        overpaymentAlreadyRefundedNgn: 0,
+        creditAppliedOutNgn: 3_200_000,
+      })
+    ).toBe(944_236);
+  });
+
   it('overpayment residual is zero when prior overpay refunds already cover excess', () => {
     expect(
       quotationOverpaymentResidualNgn({
@@ -185,6 +196,18 @@ describe('refundQuotationMoney', () => {
       totalRefundedNgn: 174_830,
       overpaymentAlreadyRefundedNgn: 174_830,
       calculationLines: [{ category: 'Overpayment', amountNgn: 151_330, include: true }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/cannot exceed/i);
+  });
+
+  it('rejects an overpayment line that exceeds residual after leftover credit applied to another quote', () => {
+    const r = validateRefundCalculationLinesNgn({
+      cashInNgn: 4_596_000,
+      quoteTotalNgn: 451_764,
+      totalRefundedNgn: 3_200_000,
+      creditAppliedOutNgn: 3_200_000,
+      calculationLines: [{ category: 'Overpayment', amountNgn: 4_144_236, include: true }],
     });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/cannot exceed/i);

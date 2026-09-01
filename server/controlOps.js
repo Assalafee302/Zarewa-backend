@@ -401,8 +401,65 @@ export function validateRefundProductionAlignmentAtPayout(db, quotationRef, reas
 }
 
 /**
- * Sum of non-rejected / non-cancelled refund amounts on a quotation.
- * Pass `excludeRefundId` when evaluating headroom for an existing request (approve / payout / integrity).
+ * Overpay moved onto another quotation (Confirm payment leftover) with no refund request on this quote.
+ * Linked refund_id rows are already counted via customer_refunds / credit_applied_ngn.
+ */
+export function quotationUnlinkedOverpayCreditOutNgn(db, quotationRef) {
+  const ref = String(quotationRef || '').trim();
+  if (!ref) return 0;
+  try {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+         FROM refund_credit_applications
+         WHERE source_quotation_ref = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+           AND TRIM(IFNULL(refund_id, '')) = ''`
+      )
+      .get(ref);
+    return roundMoney(row?.s ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Batch of {@link quotationUnlinkedOverpayCreditOutNgn} for the refund quotation picker. */
+export function unlinkedOverpayCreditOutBySourceQuote(db, quotationRefs) {
+  const ids = [
+    ...new Set(
+      (Array.isArray(quotationRefs) ? quotationRefs : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const map = new Map();
+  if (!ids.length) return map;
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT source_quotation_ref AS q, COALESCE(SUM(amount_ngn), 0) AS s
+         FROM refund_credit_applications
+         WHERE source_quotation_ref IN (${placeholders})
+           AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('reversed', 'cancelled')
+           AND TRIM(IFNULL(refund_id, '')) = ''
+         GROUP BY source_quotation_ref`
+      )
+      .all(...ids);
+    for (const row of rows) {
+      const qid = String(row.q || '').trim();
+      if (qid) map.set(qid, roundMoney(row.s));
+    }
+  } catch {
+    /* table may be absent on older fixtures */
+  }
+  return map;
+}
+
+/**
+ * Sum of non-rejected / non-cancelled refund amounts on a quotation, plus leftover overpay
+ * already applied to another job (no refund_id). Pass `excludeRefundId` when evaluating
+ * headroom for an existing request (approve / payout / integrity).
  */
 export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId = null) {
   const ref = String(quotationRef || '').trim();
@@ -424,7 +481,7 @@ export function quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundI
              AND TRIM(COALESCE(LOWER(status), '')) NOT IN ('rejected', 'cancelled')`
         )
         .get(ref);
-  return roundMoney(row?.s ?? 0);
+  return roundMoney((row?.s ?? 0) + quotationUnlinkedOverpayCreditOutNgn(db, ref));
 }
 
 
@@ -3091,6 +3148,11 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         calculationLines: calcLinesRaw,
         categorySuggestedMaxNgn,
         derivedCategoryMaxNgn,
+        overpaymentAlreadyRefundedNgn:
+          Number(previewForCaps.preview?.overpaymentAlreadyRefundedNgn) || 0,
+        creditAppliedOutNgn:
+          Number(previewForCaps.preview?.creditAppliedOutNgn) ||
+          quotationUnlinkedOverpayCreditOutNgn(db, quotationRef),
         toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
       });
       if (!lineValidation.ok) return lineValidation;
@@ -3891,10 +3953,12 @@ export function previewRefundRequest(db, payload) {
     existingRefunds,
     excludeRefundIdForOverpay
   );
+  const creditAppliedOutNgn = quotationUnlinkedOverpayCreditOutNgn(db, quotationRef);
   const overpaymentResidualNgn = quotationOverpaymentResidualNgn({
     cashInNgn,
     quoteTotalNgn,
     overpaymentAlreadyRefundedNgn: overpayAlreadyRefundedNgn,
+    creditAppliedOutNgn,
   });
   if (overpaymentResidualNgn <= 0) {
     hardBlockedCategories.add('Overpayment');
@@ -4455,11 +4519,15 @@ export function previewRefundRequest(db, payload) {
   ) {
     if (overpaymentResidualNgn <= 0) {
       warnings.push(
-        `Original overpayment was ₦${overpaymentExcessNgn.toLocaleString('en-NG')}, but it is already fully covered by prior refunds on this quotation (residual ₦0). Do not create another Overpayment refund.`
+        creditAppliedOutNgn > 0
+          ? `Original overpayment was ₦${overpaymentExcessNgn.toLocaleString('en-NG')}. ₦${creditAppliedOutNgn.toLocaleString('en-NG')} is already applied to another quotation and the rest is covered by prior refunds (residual ₦0). Do not create another Overpayment refund.`
+          : `Original overpayment was ₦${overpaymentExcessNgn.toLocaleString('en-NG')}, but it is already fully covered by prior refunds on this quotation (residual ₦0). Do not create another Overpayment refund.`
       );
     } else {
       warnings.push(
-        `Overpayment (₦${overpaymentResidualNgn.toLocaleString('en-NG')} still refundable of ₦${overpaymentExcessNgn.toLocaleString('en-NG')} cash above quote). Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
+        creditAppliedOutNgn > 0
+          ? `Overpayment (₦${overpaymentResidualNgn.toLocaleString('en-NG')} still refundable of ₦${overpaymentExcessNgn.toLocaleString('en-NG')} cash above quote; ₦${creditAppliedOutNgn.toLocaleString('en-NG')} already used on another quotation). Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds and credit applied).`
+          : `Overpayment (₦${overpaymentResidualNgn.toLocaleString('en-NG')} still refundable of ₦${overpaymentExcessNgn.toLocaleString('en-NG')} cash above quote). Other refund categories are separate reasons with their own calculated amounts; combined total cannot exceed cash received on this quotation (₦${(refundHardCapNgn ?? cashInNgn).toLocaleString('en-NG')} after prior refunds).`
       );
     }
   }
@@ -4814,6 +4882,7 @@ export function previewRefundRequest(db, payload) {
       overpaymentExcessNgn,
       overpaymentResidualNgn,
       overpaymentAlreadyRefundedNgn: overpayAlreadyRefundedNgn,
+      creditAppliedOutNgn,
       remainingRefundableNgn,
       refundHardCapNgn,
       quotedMeters,
@@ -5173,6 +5242,7 @@ function refundPickerListHint(db, row, jobs, {
   quoteTotalNgn = null,
   priorRefunds = [],
   materialDelivered = false,
+  creditAppliedOutNgn = 0,
 }) {
   const remaining = roundMoney(remainingNgn);
   if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return null;
@@ -5192,6 +5262,7 @@ function refundPickerListHint(db, row, jobs, {
     cashInNgn: cashIn,
     quoteTotalNgn: quoteTotal,
     overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(priorRefunds),
+    creditAppliedOutNgn,
   });
 
   const isVoid = String(row.status || '').trim().toLowerCase() === 'void';
@@ -5377,6 +5448,11 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     candidates.map((r) => r.id)
   );
 
+  const creditOutByRef = unlinkedOverpayCreditOutBySourceQuote(
+    db,
+    candidates.map((r) => r.id)
+  );
+
   const out = [];
   for (const row of candidates) {
     const cash = cashByRef.get(row.id) || emptyQuotationPaymentCashBreakdown();
@@ -5384,7 +5460,8 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     const paidNgn = roundMoney(row.paid_ngn);
     if (cashInNgn <= 0 && paidNgn <= 0) continue;
 
-    const totalRefundedNgn = roundMoney(row.total_refunded);
+    const creditAppliedOutNgn = creditOutByRef.get(row.id) || 0;
+    const totalRefundedNgn = roundMoney(row.total_refunded) + creditAppliedOutNgn;
     const remainingNgn = quotationRefundHardCapNgn({ cashInNgn, totalRefundedNgn });
     if (remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
 
@@ -5397,6 +5474,7 @@ export function getEligibleRefundQuotations(db, opts = {}) {
       quoteTotalNgn,
       priorRefunds: priorRefundsByRef.get(row.id) || [],
       materialDelivered: deliveredIds.has(String(row.id || '').trim()),
+      creditAppliedOutNgn,
     });
     if (!hint) continue;
     const pickRow = {

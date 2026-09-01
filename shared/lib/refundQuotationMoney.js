@@ -126,15 +126,19 @@ export function overpaymentAlreadyRefundedNgn(refunds, excludeRefundId = null) {
 }
 
 /**
- * Overpayment still available after prior overpayment refunds (and credit applied as payout).
+ * Overpayment still available after prior overpayment refunds and leftover credit applied to another quote.
  */
 export function quotationOverpaymentResidualNgn({
   cashInNgn,
   quoteTotalNgn,
   overpaymentAlreadyRefundedNgn = 0,
+  creditAppliedOutNgn = 0,
 } = {}) {
   const excess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
-  return Math.max(0, excess - roundRefundMoney(overpaymentAlreadyRefundedNgn));
+  return Math.max(
+    0,
+    excess - roundRefundMoney(overpaymentAlreadyRefundedNgn) - roundRefundMoney(creditAppliedOutNgn)
+  );
 }
 
 /**
@@ -304,6 +308,7 @@ export function validateRefundCalculationLinesNgn({
   categorySuggestedMaxNgn,
   derivedCategoryMaxNgn,
   overpaymentAlreadyRefundedNgn = 0,
+  creditAppliedOutNgn = 0,
   toleranceNgn = 1,
 }) {
   const lines = Array.isArray(calculationLines) ? calculationLines : [];
@@ -315,6 +320,7 @@ export function validateRefundCalculationLinesNgn({
     cashInNgn: cashIn,
     quoteTotalNgn: quoteTotal,
     overpaymentAlreadyRefundedNgn,
+    creditAppliedOutNgn,
   });
 
   const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);

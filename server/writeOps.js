@@ -125,7 +125,7 @@ import {
   effectiveOutstandingNgn,
   isEffectivelyFullyPaid,
 } from '../shared/lib/paymentOutstandingTolerance.js';
-import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
+import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
@@ -8763,7 +8763,7 @@ export function payRefundEntry(db, refundId, payload) {
     String(payload.paidAtISO ?? payload.dateISO ?? '').trim().slice(0, 10) ||
     new Date().toISOString().slice(0, 10);
   const paidBy = String(payload.paidBy ?? '').trim() || 'Finance';
-  const paymentNote = String(payload.paymentNote ?? '').trim();
+  const paymentNote = String(payload.paymentNote ?? payload.note ?? '').trim();
   const fromExplicit = Array.isArray(payload.paymentLines)
     ? payload.paymentLines
         .map((line) => ({
@@ -8853,6 +8853,7 @@ export function payRefundEntry(db, refundId, payload) {
         cashInNgn: quotationCashInNgn(db, qrefPay),
         quoteTotalNgn: roundMoney(db.prepare(`SELECT total_ngn FROM quotations WHERE id = ?`).get(qrefPay)?.total_ngn),
         overpaymentAlreadyRefundedNgn: overpaymentAlreadyRefundedNgn(others),
+        creditAppliedOutNgn: quotationUnlinkedOverpayCreditOutNgn(db, qrefPay),
       });
       if (payoutAmountNgn > residual) {
         return {

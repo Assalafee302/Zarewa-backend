@@ -7,12 +7,12 @@ import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { assertEntityBranchForWorkspaceWrite } from '../branchScope.js';
 import { assertPeriodOpen, appendAuditLog } from '../controlOps.js';
 import { allocateHumanId } from '../humanId.js';
-import { assertRefundPayerNotApprover } from '../refundHandlers.js';
+import { assertActorMayPayCustomerRefund } from '../refundHandlers.js';
 import { evaluateRefundPayoutGlPolicy } from '../ap1cReversalRefundOps.js';
 import { tryPostCustomerRefundPayoutGlTx, ensureSupplementalGlAccounts } from '../glOps.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
 import { effectiveOutstandingNgn } from '../../shared/lib/paymentOutstandingTolerance.js';
-import { resolveRefundStatus } from '../sales/refundPayoutStatus.js';
+import { resolveRefundStatus, assertRefundMoneyOutWithinApproved } from '../sales/refundPayoutStatus.js';
 import {
   listPartnerWalletOpenCredits,
   nextWalletEntryId,
@@ -100,7 +100,7 @@ export function withdrawPartnerWallet(db, payload = {}) {
   for (const rid of refundIds) {
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(rid);
     if (!row) continue;
-    const seg = assertRefundPayerNotApprover(row, actor, hasPerm);
+    const seg = assertActorMayPayCustomerRefund(row, actor, hasPerm);
     if (!seg.ok) return { ok: false, error: seg.error };
     const branchGate = assertEntityBranchForWorkspaceWrite(
       actor,
@@ -263,7 +263,7 @@ export function withdrawPartnerWallet(db, payload = {}) {
         const glPay = tryPostCustomerRefundPayoutGlTx(db, {
           refundId,
           payoutAmountNgn: delta,
-          cumulativePaidNgn: nextPaid,
+          payoutMovementIds: [movement.id],
           entryDateISO: postedAtISO.slice(0, 10),
           branchId: fresh.branch_id ?? null,
           createdByUserId: actor?.id != null ? String(actor.id) : null,
@@ -272,6 +272,8 @@ export function withdrawPartnerWallet(db, payload = {}) {
         if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
           throw new Error(glPay.error || 'Refund payout GL failed.');
         }
+        const afterWithdraw = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+        assertRefundMoneyOutWithinApproved(db, afterWithdraw);
       }
 
       return {

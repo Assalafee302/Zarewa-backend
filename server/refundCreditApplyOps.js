@@ -728,6 +728,10 @@ export function applyRefundCreditToQuotation(db, payload) {
   }
 }
 
+/**
+ * Till/bank paid on this refund. REFUND_PAYOUT is stored as a negative treasury
+ * outflow; ABS keeps production payouts and positive test fixtures on the same scale.
+ */
 export function refundTreasuryPaidNgn(db, refundId) {
   const rid = String(refundId || '').trim();
   if (!rid) return 0;
@@ -735,8 +739,8 @@ export function refundTreasuryPaidNgn(db, refundId) {
     .prepare(
       `SELECT COALESCE(SUM(
          CASE
-           WHEN type = 'REFUND_PAYOUT' THEN amount_ngn
-           WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -amount_ngn
+           WHEN type = 'REFUND_PAYOUT' THEN ABS(amount_ngn)
+           WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -ABS(amount_ngn)
            ELSE 0
          END
        ), 0) AS s
@@ -857,7 +861,6 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
           shape.reasonCategory,
           shape.calculationLines
         );
-        const requested = roundMoney(fresh.amount_ngn);
         const priorCredit = roundMoney(fresh.credit_applied_ngn);
         if (amt > priorCredit + 1) {
           throw new Error(
@@ -869,10 +872,14 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
         const paidNow = roundMoney(fresh.paid_amount_ngn);
         const creditSittingInPaid = Math.max(0, paidNow - treasuryPaid);
         const nextPaid = treasuryPaid + Math.max(0, creditSittingInPaid - amt);
-        let nextApproved = roundMoney(fresh.approved_amount_ngn);
-        if (nextApproved > 0) {
-          nextApproved = Math.min(requested, nextApproved + amt);
-        }
+        // Reversal must never grant additional approval. approved_amount_ngn already
+        // reflects whatever a branch manager (or a fully-covering pending auto-apply)
+        // authorized; taking a credit application back only needs to free up that same
+        // ceiling for till payout again (refundCashOutstandingNgn does that by subtracting
+        // credit_applied_ngn) — it must not raise the ceiling itself. Adding `amt` back
+        // here previously let repeated apply/reverse cycles inflate approved above what
+        // was ever actually authorized.
+        const nextApproved = roundMoney(fresh.approved_amount_ngn);
 
         let nextStatus;
         if (nextPaid > 0 && nextApproved > 0 && nextPaid >= nextApproved) {

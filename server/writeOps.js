@@ -130,12 +130,13 @@ import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnFor
 import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
 import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
+  assertRefundMoneyOutWithinApproved,
   refundCashOutstandingNgn,
   refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
-import { assertRefundPayerNotApprover, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
+import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -7935,10 +7936,13 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
     created = reverseTreasurySourceTx(db, 'REFUND', rid, 'REFUND_PAYOUT_REVERSAL_IN', note, actor, {
       postedAtISO,
     });
-    db.prepare(`DELETE FROM ledger_entries WHERE type = 'REFUND_ADVANCE' AND bank_reference = ?`).run(rid);
+    db.prepare(
+      `DELETE FROM ledger_entries WHERE type IN ('REFUND_ADVANCE', 'REFUND_OVERPAY') AND bank_reference = ?`
+    ).run(rid);
     const glRev = tryPostCustomerRefundPayoutReversalGlTx(db, {
       refundId: rid,
       reversalAmountNgn: paidAmountNgn,
+      reversalMovementIds: created.map((m) => m.id),
       entryDateISO: day,
       branchId: row.branch_id ?? null,
       createdByUserId: actor?.id != null ? String(actor.id) : null,
@@ -8828,7 +8832,7 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Payout exceeds the approved refund balance.' };
   }
   const paidAtISO = latestPayoutDay(paymentLines, (line) => payoutLinePostedDay(line, defaultPaidDay));
-  const segPay = assertRefundPayerNotApprover(row, payload.actor, hasPerm);
+  const segPay = assertActorMayPayCustomerRefund(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 
   if (qrefPay) {
@@ -8974,6 +8978,10 @@ export function payRefundEntry(db, refundId, payload) {
         storedPaymentNote,
         refundId
       );
+      // Belt-and-braces: independent of the outstanding-balance formula above, verify
+      // total cash/wallet/company-cut/credit already out for this refund still fits
+      // within what was approved — catches any future drift in the formulas themselves.
+      assertRefundMoneyOutWithinApproved(db, fresh);
       appendAuditLog(db, {
         actor: payload.actor,
         action: 'refund.pay',
@@ -9017,7 +9025,7 @@ export function payRefundEntry(db, refundId, payload) {
       const glPay = tryPostCustomerRefundPayoutGlTx(db, {
         refundId,
         payoutAmountNgn,
-        cumulativePaidNgn: nextPaidAmountNgn,
+        payoutMovementIds: movements.map((movement) => movement.id),
         entryDateISO: paidAtISO.slice(0, 10),
         branchId: fresh.branch_id ?? null,
         createdByUserId: payload.actor?.id != null ? String(payload.actor.id) : null,

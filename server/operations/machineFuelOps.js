@@ -7,6 +7,7 @@ import { nextMachineFuelLogHumanId } from '../humanId.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
 import { isFuelConsumingMachineType } from '../../shared/maintenanceRegistry.js';
 import { normalizeMaintenanceCostKind } from '../../shared/lib/maintenanceCostEnvelope.js';
+import { entityBranchWriteAllowed } from '../workspaceBranchGuards.js';
 
 const FUEL_KINDS = new Set(['diesel', 'petrol', 'other']);
 
@@ -96,6 +97,9 @@ export function createMachineFuelRequest(db, body, actor, workspaceBranchId = ''
     return { ok: false, error: 'Plant register is not available.' };
   }
   if (!machine) return { ok: false, error: 'Machine not found.' };
+  if (!entityBranchWriteAllowed(actor, machine.branch_id, workspaceBranchId)) {
+    return { ok: false, error: 'This machine is not in your current workspace branch.' };
+  }
   if (String(machine.status || '').toLowerCase() === 'decommissioned') {
     return { ok: false, error: 'That machine is decommissioned.' };
   }

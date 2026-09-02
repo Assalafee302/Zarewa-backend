@@ -9047,8 +9047,7 @@ export function registerHttpApi(app, db) {
     try {
       const allowDirect =
         process.env.NODE_ENV === 'test' ||
-        String(process.env.ZAREWA_ALLOW_DIRECT_EXPENSE_POST || '').trim() === '1' ||
-        Boolean(req.body?.allowDirectTreasuryPost);
+        String(process.env.ZAREWA_ALLOW_DIRECT_EXPENSE_POST || '').trim() === '1';
       if (!allowDirect) {
         return res.status(400).json({
           ok: false,

@@ -37,7 +37,13 @@ export function refundWalletWithdrawnNgn(db, refundId) {
   }
 }
 
-/** Net till/bank still owed — treasury only (wallet ignored). */
+/**
+ * Net till/bank still owed. Subtracts every channel that can already discharge the
+ * payee's obligation — treasury payout, partner-wallet withdrawal, and credit applied
+ * to another quotation — so a refund already settled through one channel can't be
+ * paid again through another. (`resolveRefundStatus` below stays treasury-only by
+ * design for the Paid/Partially paid label; this is the money gate, not the label.)
+ */
 export function refundCashOutstandingNgn(db, row) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   if (!refundId) return 0;
@@ -45,7 +51,9 @@ export function refundCashOutstandingNgn(db, row) {
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const netCashDue = refundNetCashDueNgn(db, row, approved);
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
-  return Math.max(0, netCashDue - treasuryPaid);
+  const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
+  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied);
 }
 
 function treasuryCoversNetCashDue(treasuryPaidNgn, netCashDueNgn) {
@@ -83,13 +91,55 @@ export function resolveRefundStatus(db, row) {
   return 'Approved';
 }
 
-/** Recompute paid_amount from treasury + approval settlement (not wallet). */
+/**
+ * Guard: cash that left (till + wallet + company cut + credit apply) cannot exceed approved.
+ * Does not change Paid/Partially paid resolution (still treasury-only).
+ */
+export function refundMoneyOutWithinApproved({
+  approvedNgn = 0,
+  treasuryPaidNgn = 0,
+  walletWithdrawnNgn = 0,
+  companyCutSettledNgn = 0,
+  creditAppliedNgn = 0,
+  toleranceNgn = 1,
+} = {}) {
+  const approved = Math.max(0, roundMoney(approvedNgn));
+  const out =
+    Math.max(0, roundMoney(treasuryPaidNgn)) +
+    Math.max(0, roundMoney(walletWithdrawnNgn)) +
+    Math.max(0, roundMoney(companyCutSettledNgn)) +
+    Math.max(0, roundMoney(creditAppliedNgn));
+  return out <= approved + Math.max(0, roundMoney(toleranceNgn));
+}
+
+export function assertRefundMoneyOutWithinApproved(db, row) {
+  const refundId = String(row?.refund_id || row?.refundID || '').trim();
+  if (!refundId) throw new Error('Refund id required for money-out check.');
+  const approved = roundMoney(
+    row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn
+  );
+  const ok = refundMoneyOutWithinApproved({
+    approvedNgn: approved,
+    treasuryPaidNgn: refundTreasuryPaidNgn(db, refundId),
+    walletWithdrawnNgn: refundWalletWithdrawnNgn(db, refundId),
+    companyCutSettledNgn: refundSettledAtApprovalNgn(db, row, approved),
+    creditAppliedNgn: row.credit_applied_ngn ?? row.creditAppliedNgn,
+  });
+  if (!ok) {
+    throw new Error('Refund money out exceeds the approved amount.');
+  }
+  return { ok: true };
+}
+
+/** Recompute paid_amount from every channel that has actually moved money/credit out. */
 export function correctRefundPaidAmountNgn(db, row) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const treasury = refundTreasuryPaidNgn(db, refundId);
   const settledAtApproval = refundSettledAtApprovalNgn(db, row, approved);
-  return Math.min(approved, treasury + settledAtApproval);
+  const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
+  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  return Math.min(approved, treasury + settledAtApproval + walletWithdrawn + creditApplied);
 }
 
 /**

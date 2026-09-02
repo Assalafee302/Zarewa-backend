@@ -232,6 +232,66 @@ export function assertSalesReceiptIdInWorkspace(db, req, receiptToken) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {import('express').Request} req
+ * @param {string} machineId
+ */
+export function assertMachineIdInWorkspace(db, req, machineId) {
+  const id = String(machineId ?? '').trim();
+  if (!id) return { ok: false, error: 'Machine id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM machines WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Machine not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true, row };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} planId
+ */
+export function assertMaintenancePlanIdInWorkspace(db, req, planId) {
+  const id = String(planId ?? '').trim();
+  if (!id) return { ok: false, error: 'Service plan id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM maintenance_plans WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Service plan not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true, row };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} workOrderId
+ */
+export function assertMaintenanceWorkOrderIdInWorkspace(db, req, workOrderId) {
+  const id = String(workOrderId ?? '').trim();
+  if (!id) return { ok: false, error: 'Work order id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM maintenance_work_orders WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Work order not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true, row };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
  * @param {string} requestId
  */
 export function assertPaymentRequestIdInWorkspace(db, req, requestId) {

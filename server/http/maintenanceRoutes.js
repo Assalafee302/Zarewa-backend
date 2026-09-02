@@ -24,6 +24,11 @@ import {
 import { createMaintenancePlan } from '../workItems.js';
 import { createMachineFuelRequest } from '../operations/machineFuelOps.js';
 import { openWorkOrderFromPlan, stampPlanService } from '../operations/maintenancePlanOps.js';
+import {
+  assertMachineIdInWorkspace,
+  assertMaintenancePlanIdInWorkspace,
+  assertMaintenanceWorkOrderIdInWorkspace,
+} from '../workspaceBranchGuards.js';
 
 function mayEditMachines(user) {
   const rk = String(user?.roleKey || user?.role_key || '')
@@ -96,6 +101,8 @@ export function registerMaintenanceRoutes(app, db) {
             error: 'Only Branch Manager or above can edit machines.',
           });
         }
+        const gate = assertMachineIdInWorkspace(db, req, req.params.machineId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = updateMachine(db, req.params.machineId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       },
@@ -122,6 +129,8 @@ export function registerMaintenanceRoutes(app, db) {
     requirePermission(['operations.view', 'operations.manage', 'reports.view']),
     asyncRoute(
       (req, res) => {
+        const gate = assertMaintenanceWorkOrderIdInWorkspace(db, req, req.params.workOrderId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const wo = getMaintenanceWorkOrder(db, req.params.workOrderId);
         if (!wo) return apiError(res, { status: 404, code: 'NOT_FOUND', error: 'Work order not found.' });
         res.json({ ok: true, ...attachWorkOrderFinance(db, wo) });
@@ -138,6 +147,8 @@ export function registerMaintenanceRoutes(app, db) {
         if (!mayEditWorkOrderMoney(req.user)) {
           return apiError(res, { status: 403, code: 'FORBIDDEN', error: 'Branch Manager or above required.' });
         }
+        const gate = assertMaintenanceWorkOrderIdInWorkspace(db, req, req.params.workOrderId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = patchWorkOrderEnvelope(db, req.params.workOrderId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       },
@@ -153,6 +164,8 @@ export function registerMaintenanceRoutes(app, db) {
         if (!mayEditWorkOrderMoney(req.user)) {
           return apiError(res, { status: 403, code: 'FORBIDDEN', error: 'Branch Manager or above required.' });
         }
+        const gate = assertMaintenanceWorkOrderIdInWorkspace(db, req, req.params.workOrderId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = returnWorkOrderToProduction(db, req.params.workOrderId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       },
@@ -168,6 +181,8 @@ export function registerMaintenanceRoutes(app, db) {
         if (!mayEditWorkOrderMoney(req.user)) {
           return apiError(res, { status: 403, code: 'FORBIDDEN', error: 'Branch Manager or above required.' });
         }
+        const gate = assertMaintenanceWorkOrderIdInWorkspace(db, req, req.params.workOrderId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = closeWorkOrderCosts(db, req.params.workOrderId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       },
@@ -205,6 +220,8 @@ export function registerMaintenanceRoutes(app, db) {
             error: 'Only Branch Manager or above can create service plans.',
           });
         }
+        const machineGate = assertMachineIdInWorkspace(db, req, req.body?.machineId);
+        if (!machineGate.ok) return res.status(machineGate.status).json({ ok: false, error: machineGate.error });
         const r = createMaintenancePlan(
           db,
           req.body || {},
@@ -229,6 +246,8 @@ export function registerMaintenanceRoutes(app, db) {
             error: 'Only Branch Manager or above can open a service job.',
           });
         }
+        const gate = assertMaintenancePlanIdInWorkspace(db, req, req.params.planId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = openWorkOrderFromPlan(
           db,
           req.params.planId,
@@ -253,6 +272,8 @@ export function registerMaintenanceRoutes(app, db) {
             error: 'Only Branch Manager or above can stamp a service as done.',
           });
         }
+        const gate = assertMaintenancePlanIdInWorkspace(db, req, req.params.planId);
+        if (!gate.ok) return res.status(gate.status).json({ ok: false, error: gate.error });
         const r = stampPlanService(db, req.params.planId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       },

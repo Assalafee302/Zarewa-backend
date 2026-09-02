@@ -680,13 +680,20 @@ export function tryPostCustomerAdvanceReversalGl(db, payload) {
 
 /**
  * Cash refund to customer: reduce customer advances (2500) and cash (1000).
- * Idempotent per payout slice via source_id = refundId:paid:cumulativePaidNgn.
+ * Idempotent per payout event via source_id = refundId:paid:<treasury movement id(s)>.
+ * Movement ids are never reused (unlike cumulative paid amount, which repeats after a
+ * pay -> reverse -> pay-again cycle and would otherwise collide with the first payout's
+ * journal and silently skip posting the second one).
  */
 export function tryPostCustomerRefundPayoutGlTx(db, payload) {
   const refundId = String(payload.refundId || '').trim();
   const amt = Math.round(Number(payload.payoutAmountNgn) || 0);
-  const cum = Math.round(Number(payload.cumulativePaidNgn) || 0);
+  const movementIds = (Array.isArray(payload.payoutMovementIds) ? payload.payoutMovementIds : [])
+    .map((id) => String(id ?? '').trim())
+    .filter(Boolean)
+    .sort();
   if (!refundId || amt <= 0) return { ok: true, skipped: true };
+  if (!movementIds.length) return { ok: false, error: 'Refund payout GL requires the posted treasury movement id(s).' };
   const date = String(payload.entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL date.' };
   ensureSupplementalGlAccounts(db);
@@ -698,7 +705,7 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
     entryDateISO: date,
     memo,
     sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
-    sourceId: `${refundId}:paid:${cum}`,
+    sourceId: `${refundId}:paid:${movementIds.join('-')}`,
     branchId: payload.branchId ?? null,
     createdByUserId: payload.createdByUserId ?? null,
     lines: [
@@ -715,14 +722,23 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
 
 /**
  * Full reversal of recorded customer-refund treasury payouts: undo GL accrual (2500/1000) for the net paid amount.
- * Idempotent via `source_id = refundId:full` (second call returns duplicate).
+ * Idempotent per reversal event via source_id = refundId:full:<reversal movement id(s)>, so a
+ * second pay -> reverse cycle on the same refund posts its own reversal instead of colliding
+ * with the first (movement ids are never reused, unlike the refund id alone).
  * @param {import('better-sqlite3').Database} db
- * @param {{ refundId: string, reversalAmountNgn: number, entryDateISO: string, branchId?: string|null, createdByUserId?: string|null }} payload
+ * @param {{ refundId: string, reversalAmountNgn: number, entryDateISO: string, branchId?: string|null, createdByUserId?: string|null, reversalMovementIds?: Array<string|number> }} payload
  */
 export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
   const refundId = String(payload.refundId || '').trim();
   const amt = Math.round(Number(payload.reversalAmountNgn) || 0);
+  const movementIds = (Array.isArray(payload.reversalMovementIds) ? payload.reversalMovementIds : [])
+    .map((id) => String(id ?? '').trim())
+    .filter(Boolean)
+    .sort();
   if (!refundId || amt <= 0) return { ok: true, skipped: true };
+  if (!movementIds.length) {
+    return { ok: false, error: 'Refund payout GL reversal requires the reversal treasury movement id(s).' };
+  }
   const date = String(payload.entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL reversal date.' };
   ensureSupplementalGlAccounts(db);
@@ -730,7 +746,7 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
     entryDateISO: date,
     memo: `Reverse customer refund payout ${refundId}`,
     sourceKind: 'CUSTOMER_REFUND_PAYOUT_REVERSAL_GL',
-    sourceId: `${refundId}:full`,
+    sourceId: `${refundId}:full:${movementIds.join('-')}`,
     branchId: payload.branchId ?? null,
     createdByUserId: payload.createdByUserId ?? null,
     lines: [

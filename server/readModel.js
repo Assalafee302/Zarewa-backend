@@ -2388,7 +2388,7 @@ function refundPayoutHistoryByIds(db, refundIds) {
   const ph = ids.map(() => '?').join(',');
   const rows = db
     .prepare(
-      `SELECT tm.*, ta.name AS account_name
+      `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.bank_name AS bank_name
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
        WHERE tm.source_kind = 'REFUND' AND tm.source_id IN (${ph})
@@ -2403,6 +2403,8 @@ function refundPayoutHistoryByIds(db, refundIds) {
       postedAtISO: movement.posted_at_iso,
       treasuryAccountId: movement.treasury_account_id,
       accountName: movement.account_name ?? '',
+      accountType: movement.account_type ?? '',
+      bankName: movement.bank_name ?? '',
       amountNgn: Math.abs(Number(movement.amount_ngn) || 0),
       reference: movement.reference ?? '',
       note: movement.note ?? '',

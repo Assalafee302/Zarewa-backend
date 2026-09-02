@@ -4,6 +4,7 @@
  */
 
 import { displayCoilNumber, displayDocNumber } from './reportDisplayFormat.js';
+import { abbreviateBankName } from './bankAbbreviation.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -125,11 +126,14 @@ export function purchasesPaidRows(treasuryMovements = [], startDate, endDate) {
     if (startDate && iso < startDate) continue;
     if (endDate && iso > endDate) continue;
     const amt = Math.round(Math.abs(Number(t.amountNgn) || 0));
+    const isCash = String(t.accountType || '').trim().toLowerCase() === 'cash';
+    const bankCode = isCash ? '' : abbreviateBankName(t.bankName);
     rows.push({
       paidDateISO: iso,
       supplier: String(t.counterpartyName || '').trim() || '—',
       amountNgn: amt,
-      bankAccount: String(t.accountName || '').trim() || '—',
+      paymentMethod: isCash ? 'Cash' : 'Bank',
+      bankAccount: isCash ? 'Cash' : bankCode || String(t.accountName || '').trim() || '—',
       reference: String(t.reference || '').trim() || '—',
       sourceKind: String(t.sourceKind || '').trim() || '—',
       sourceIdDisplay: displayDocNumber(t.sourceId) || String(t.sourceId || '').trim() || '—',

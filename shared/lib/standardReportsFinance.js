@@ -4,6 +4,7 @@
 
 import { displayDocNumber } from './reportDisplayFormat.js';
 import { refundApprovedAmount, refundOutstandingAmount, isRefundPayable } from './refundsStore.js';
+import { abbreviateBankName } from './bankAbbreviation.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -14,9 +15,29 @@ function expenseDateIso(e) {
 }
 
 /**
+ * Map expense id -> receiving/paying bank label, from the treasury movement
+ * posted when the expense was paid out (sourceKind EXPENSE, sourceId = expense id).
+ * @param {Array<{ sourceKind?: string, sourceId?: string, accountType?: string, accountName?: string, bankName?: string }>} treasuryMovements
+ */
+function bankLabelByExpenseId(treasuryMovements = []) {
+  const m = new Map();
+  for (const t of treasuryMovements || []) {
+    if (String(t.sourceKind || '') !== 'EXPENSE') continue;
+    const id = String(t.sourceId || '').trim();
+    if (!id || m.has(id)) continue;
+    const isCash = String(t.accountType || '').trim().toLowerCase() === 'cash';
+    const label = isCash ? 'Cash' : abbreviateBankName(t.bankName) || String(t.accountName || '').trim();
+    if (label) m.set(id, label);
+  }
+  return m;
+}
+
+/**
+ * @param {Array} treasuryMovements — used to resolve which bank each expense was paid from
  * @returns {{ detail: object[], summaryByCategory: object[] }}
  */
-export function expensesPackReport(expenses = [], startDate, endDate) {
+export function expensesPackReport(expenses = [], startDate, endDate, treasuryMovements = []) {
+  const bankByExpenseId = bankLabelByExpenseId(treasuryMovements);
   const detail = [];
   for (const e of expenses || []) {
     const iso = expenseDateIso(e);
@@ -24,14 +45,17 @@ export function expensesPackReport(expenses = [], startDate, endDate) {
     if (startDate && iso < startDate) continue;
     if (endDate && iso > endDate) continue;
     const id = String(e.expenseID ?? e.expense_id ?? '').trim();
+    const expenseType = String(e.expenseType ?? e.expense_type ?? '').trim();
     detail.push({
       expenseIdDisplay: displayDocNumber(id) || '—',
       expenseIdFull: id || '—',
       dateISO: iso,
       category: String(e.category || '').trim() || '—',
-      expenseType: String(e.expenseType ?? e.expense_type ?? '').trim() || '—',
+      expenseType: expenseType || '—',
+      description: expenseType || String(e.category || '').trim() || '—',
       amountNgn: Math.round(Number(e.amountNgn ?? e.amount_ngn) || 0),
       paymentMethod: String(e.paymentMethod ?? e.payment_method ?? '').trim() || '—',
+      bankAccount: (id && bankByExpenseId.get(id)) || '—',
       reference: String(e.reference || '').trim() || '—',
     });
   }
@@ -72,6 +96,7 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
       const amountNgn = Math.round(Number(p.amountNgn) || 0);
       if (amountNgn <= 0) continue;
       linesFromHistory += 1;
+      const isCash = String(p.accountType || '').trim().toLowerCase() === 'cash';
       paidInPeriod.push({
         payoutDateISO: iso,
         refundIdDisplay: displayDocNumber(id) || '—',
@@ -79,7 +104,9 @@ export function refundsPackReport(refunds = [], startDate, endDate) {
         customer: String(r.customer || '').trim() || '—',
         quotationRefDisplay: displayDocNumber(r.quotationRef) || '—',
         amountNgn,
-        bankAccount: String(p.accountName || '').trim() || '—',
+        bankAccount: isCash
+          ? 'Cash'
+          : abbreviateBankName(p.bankName) || String(p.accountName || '').trim() || '—',
         reference: String(p.reference || '').trim() || '—',
       });
     }

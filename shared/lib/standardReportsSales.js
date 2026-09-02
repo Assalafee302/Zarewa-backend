@@ -10,6 +10,7 @@ import {
   productionOutputDateISO,
 } from './liveAnalytics.js';
 import { displayDocNumber } from './reportDisplayFormat.js';
+import { abbreviateBankName } from './bankAbbreviation.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -21,7 +22,11 @@ function productionJobIsCompleted(job) {
 
 /**
  * Map ledger entry id → treasury bank label (first LEDGER_RECEIPT split per entry).
- * @param {Array<{ sourceKind?: string, sourceId?: string, accountName?: string, accountNo?: string }>} treasuryMovements
+ * Prefers the receiving bank's short code (e.g. "GTB") over the internal
+ * treasury account name, so a printed report can be reconciled against a
+ * bank statement at a glance. Falls back to the account name when no bank
+ * name is on record (e.g. cash tills, or older data missing the bank field).
+ * @param {Array<{ sourceKind?: string, sourceId?: string, accountName?: string, accountNo?: string, bankName?: string }>} treasuryMovements
  * @returns {Map<string, string>}
  */
 export function treasuryAccountLabelByLedgerEntryId(treasuryMovements = []) {
@@ -30,7 +35,10 @@ export function treasuryAccountLabelByLedgerEntryId(treasuryMovements = []) {
     if (String(t.sourceKind || '') !== 'LEDGER_RECEIPT') continue;
     const id = String(t.sourceId || '').trim();
     if (!id) continue;
-    const label = [t.accountName, t.accountNo].filter(Boolean).join(' · ');
+    const bankCode = abbreviateBankName(t.bankName);
+    const label = bankCode
+      ? [bankCode, t.accountNo].filter(Boolean).join(' · ')
+      : [t.accountName, t.accountNo].filter(Boolean).join(' · ');
     if (!m.has(id)) m.set(id, label || '—');
   }
   return m;

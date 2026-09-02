@@ -34,7 +34,8 @@ import {
   purchasesPaidRows,
   purchasesReceivedRows,
 } from '../shared/lib/standardReportsPurchases.js';
-import { stockCoilAsAtRows } from '../shared/lib/standardReportsStock.js';
+import { stockCoilAsAtRows, stockCoilAsAtTotals } from '../shared/lib/standardReportsStock.js';
+import { coilStockTieOutRows } from '../shared/lib/coilStockTieOut.js';
 import { isInventoryMovementType } from '../shared/lib/inventoryMovementTypes.js';
 import {
   advanceStockRegisterWorkflow,
@@ -4736,7 +4737,8 @@ export function registerHttpApi(app, db) {
       const endDate = String(req.query.endDate || '').slice(0, 10);
       const branchScope = resolveBootstrapBranchScope(req);
       const expenses = listExpenses(db, branchScope, financeHistoryListOpts());
-      const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate);
+      const treasuryMovements = listTreasuryMovements(db, branchScope, financeHistoryListOpts());
+      const { detail, summaryByCategory } = expensesPackReport(expenses, startDate, endDate, treasuryMovements);
       res.json({ ok: true, startDate, endDate, branchScope, detail, summaryByCategory });
     } catch (e) {
       console.error(e);
@@ -4822,6 +4824,7 @@ export function registerHttpApi(app, db) {
           asAtMode: 'snapshot',
           snapshotRowCount: snap.length,
           rows,
+          totals: stockCoilAsAtTotals(rows),
         });
       }
       const live = listCoilLots(db, branchScope);
@@ -4835,6 +4838,7 @@ export function registerHttpApi(app, db) {
         disclaimer:
           'No snapshot for this date — rows show current coil balances. Capture a month-end snapshot (POST /api/reports/coil-snapshot-capture) for historical closing.',
         rows,
+        totals: stockCoilAsAtTotals(rows),
       });
     } catch (e) {
       console.error(e);
@@ -4857,6 +4861,74 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not capture coil snapshot.' });
+    }
+  });
+
+  app.get('/api/reports/coil-stock-tieout', requireManagementReportsView, (req, res) => {
+    try {
+      const startDate = String(req.query.startDate || '').slice(0, 10);
+      const endDate = String(req.query.endDate || '').slice(0, 10);
+      if (!startDate || !endDate || startDate > endDate) {
+        return res.status(400).json({ ok: false, error: 'Valid startDate and endDate are required.' });
+      }
+      const branchScope = resolveBootstrapBranchScope(req);
+      const todayISO = new Date().toISOString().slice(0, 10);
+
+      const openingDateObj = new Date(`${startDate}T00:00:00.000Z`);
+      openingDateObj.setUTCDate(openingDateObj.getUTCDate() - 1);
+      const openingDate = openingDateObj.toISOString().slice(0, 10);
+
+      const openingSnap = listInventoryCoilSnapshots(db, openingDate, branchScope);
+      const openingKnown = openingSnap.length > 0;
+
+      const closingSnap = listInventoryCoilSnapshots(db, endDate, branchScope);
+      let closingKnown = closingSnap.length > 0;
+      let closingSnapshotLots = closingSnap;
+      if (!closingKnown && endDate === todayISO) {
+        closingKnown = true;
+        closingSnapshotLots = listCoilLots(db, branchScope);
+      }
+
+      const materialTransactionReport = buildMaterialTransactionReport({
+        productionJobs: listProductionJobs(db, branchScope, productionHistoryListOpts()),
+        productionJobCoils: listProductionJobCoils(db, branchScope, { limit: 0 }),
+        quotations: listQuotations(db, branchScope),
+        refunds: listRefunds(db, branchScope),
+        coilLots: listCoilLots(db, branchScope),
+        products: listProducts(db, branchScope),
+        stockMovements: listStockMovementsForBranchPeriod(db, branchScope, startDate, endDate),
+        stockMovementsThroughEnd: listStockMovementsForBranchThrough(db, branchScope, endDate),
+        masterData: listMasterData(db),
+        accessoryUsage: listProductionJobAccessoryUsage(db, branchScope),
+        startDate,
+        endDate,
+      });
+
+      const { rows, summary } = coilStockTieOutRows({
+        openingSnapshotLots: openingSnap,
+        openingKnown,
+        closingSnapshotLots,
+        closingKnown,
+        coilLotsReceivedInPeriod: listCoilLots(db, branchScope),
+        startDate,
+        endDate,
+        materialTransactionReport,
+      });
+
+      res.json({
+        ok: true,
+        startDate,
+        endDate,
+        branchScope,
+        openingDate,
+        openingKnown,
+        closingKnown,
+        rows,
+        summary,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Could not build the coil stock tie-out report.' });
     }
   });
 

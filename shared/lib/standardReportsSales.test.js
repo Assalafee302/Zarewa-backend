@@ -6,11 +6,24 @@ import {
 } from './standardReportsSales.js';
 
 describe('treasuryAccountLabelByLedgerEntryId', () => {
-  it('maps LEDGER_RECEIPT source_id to account label', () => {
+  it('falls back to the account name when no bank name is on record', () => {
     const m = treasuryAccountLabelByLedgerEntryId([
       { sourceKind: 'LEDGER_RECEIPT', sourceId: 'LE-1', accountName: 'Zenith Ops', accountNo: '001' },
     ]);
     expect(m.get('LE-1')).toContain('Zenith');
+  });
+
+  it('prefers the bank short code over the internal account name', () => {
+    const m = treasuryAccountLabelByLedgerEntryId([
+      {
+        sourceKind: 'LEDGER_RECEIPT',
+        sourceId: 'LE-2',
+        accountName: 'Zarewa Ops Account',
+        accountNo: '0123456789',
+        bankName: 'Guaranty Trust Bank',
+      },
+    ]);
+    expect(m.get('LE-2')).toBe('GTB · 0123456789');
   });
 });
 

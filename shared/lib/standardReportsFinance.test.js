@@ -15,6 +15,45 @@ describe('expensesPackReport', () => {
     expect(detail).toHaveLength(2);
     expect(summaryByCategory.find((s) => s.category === 'Fuel')?.totalNgn).toBe(150);
   });
+
+  it('shows a description and the paying bank when a treasury movement is on record', () => {
+    const { detail } = expensesPackReport(
+      [{ expenseID: 'EX-9', date: '2026-04-05', category: 'Logistics', expenseType: 'Haulage to Kano', amountNgn: 20000 }],
+      '2026-04-01',
+      '2026-04-30',
+      [
+        {
+          type: 'EXPENSE',
+          sourceKind: 'EXPENSE',
+          sourceId: 'EX-9',
+          accountType: 'Bank',
+          accountName: 'Zenith Production',
+          bankName: 'Zenith Bank',
+        },
+      ]
+    );
+    expect(detail).toHaveLength(1);
+    expect(detail[0].description).toBe('Haulage to Kano');
+    expect(detail[0].bankAccount).toBe('ZENITH');
+  });
+
+  it('shows "Cash" for till-paid expenses', () => {
+    const { detail } = expensesPackReport(
+      [{ expenseID: 'EX-10', date: '2026-04-06', category: 'Sundry', expenseType: 'Fuel', amountNgn: 5000 }],
+      '2026-04-01',
+      '2026-04-30',
+      [
+        {
+          type: 'EXPENSE',
+          sourceKind: 'EXPENSE',
+          sourceId: 'EX-10',
+          accountType: 'Cash',
+          accountName: 'Cash Office (Till)',
+        },
+      ]
+    );
+    expect(detail[0].bankAccount).toBe('Cash');
+  });
 });
 
 describe('refundsPackReport', () => {

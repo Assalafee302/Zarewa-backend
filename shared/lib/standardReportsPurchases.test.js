@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { purchasesOrderedRows, purchasesReceivedRows } from './standardReportsPurchases.js';
+import { purchasesOrderedRows, purchasesPaidRows, purchasesReceivedRows } from './standardReportsPurchases.js';
 
 describe('purchasesReceivedRows', () => {
   it('filters by received date', () => {
@@ -46,5 +46,40 @@ describe('purchasesOrderedRows', () => {
       '2026-04-30'
     );
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('purchasesPaidRows', () => {
+  it('shows a bank short code for bank payments and "Cash" for till payments', () => {
+    const rows = purchasesPaidRows(
+      [
+        {
+          type: 'SUPPLIER_PAYMENT',
+          counterpartyKind: 'SUPPLIER',
+          counterpartyName: 'Sup A',
+          postedAtISO: '2026-06-05',
+          amountNgn: 100000,
+          accountType: 'Bank',
+          accountName: 'GTBank Main',
+          bankName: 'Guaranty Trust Bank',
+        },
+        {
+          type: 'PO_SUPPLIER_PAYMENT',
+          counterpartyKind: 'SUPPLIER',
+          counterpartyName: 'Sup B',
+          postedAtISO: '2026-06-06',
+          amountNgn: 50000,
+          accountType: 'Cash',
+          accountName: 'Cash Office (Till)',
+        },
+      ],
+      '2026-06-01',
+      '2026-06-30'
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].paymentMethod).toBe('Bank');
+    expect(rows[0].bankAccount).toBe('GTB');
+    expect(rows[1].paymentMethod).toBe('Cash');
+    expect(rows[1].bankAccount).toBe('Cash');
   });
 });

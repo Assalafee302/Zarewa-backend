@@ -7,6 +7,11 @@ import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { appendAuditLog } from '../controlOps.js';
 import { createMaintenanceWorkOrder } from '../workItems.js';
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Reject a next-due date further out than this — a typo like 2099-01-01 would otherwise
+ * silently disable the preventive-maintenance alert for that plan with no warning. */
+const MAX_NEXT_DUE_HORIZON_DAYS = 1825; // 5 years
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -16,6 +21,13 @@ function addDaysIso(fromIso, days) {
   const d = new Date(base);
   d.setUTCDate(d.getUTCDate() + Math.max(1, Math.round(Number(days) || 0)));
   return d.toISOString().slice(0, 10);
+}
+
+function daysBetweenIso(fromIso, toIso) {
+  const a = Date.parse(`${fromIso}T00:00:00.000Z`);
+  const b = Date.parse(`${toIso}T00:00:00.000Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86400000);
 }
 
 function mapPlan(row) {
@@ -88,9 +100,23 @@ export function listPlansForMachine(db, machineId) {
 export function stampPlanService(db, planId, body = {}, actor = null) {
   const row = getPlanRow(db, planId);
   if (!row) return { ok: false, error: 'Service plan not found.' };
-  const atIso = String(body?.lastServiceAtIso || '').trim() || nowIso();
+  const lastServiceRaw = String(body?.lastServiceAtIso || '').trim();
+  if (lastServiceRaw && !ISO_DATE_RE.test(lastServiceRaw.slice(0, 10))) {
+    return { ok: false, error: 'Last service date must be a valid date (YYYY-MM-DD).' };
+  }
+  const atIso = lastServiceRaw || nowIso();
   const interval = Math.max(1, Math.round(Number(body?.calendarIntervalDays ?? row.calendar_interval_days) || 30));
-  const nextDue = String(body?.nextDueDateIso || '').trim() || addDaysIso(atIso, interval);
+  const nextDueRaw = String(body?.nextDueDateIso || '').trim();
+  if (nextDueRaw && !ISO_DATE_RE.test(nextDueRaw.slice(0, 10))) {
+    return { ok: false, error: 'Next due date must be a valid date (YYYY-MM-DD).' };
+  }
+  const nextDue = nextDueRaw || addDaysIso(atIso, interval);
+  if (daysBetweenIso(atIso.slice(0, 10), nextDue.slice(0, 10)) > MAX_NEXT_DUE_HORIZON_DAYS) {
+    return {
+      ok: false,
+      error: `Next due date is more than ${MAX_NEXT_DUE_HORIZON_DAYS} days out — check for a typo.`,
+    };
+  }
   const lastMeter =
     body?.lastServiceMeter != null ? Number(body.lastServiceMeter) || 0 : row.last_service_meter;
   const nextMeter =

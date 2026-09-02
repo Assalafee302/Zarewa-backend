@@ -71,7 +71,11 @@ function roundWholeKg(n) {
   return Math.round(Number(n) || 0);
 }
 import { issueOffcutSupplyForProductionTx } from './materialIncidentOps.js';
-import { assertCoilInWorkspaceBranch, insertProductionOffcutPoolIssueTx } from './writeOps.js';
+import {
+  assertCoilInWorkspaceBranch,
+  coilFinishRollTailNetClearedKg,
+  insertProductionOffcutPoolIssueTx,
+} from './writeOps.js';
 import { insertStockMovementTx } from './stockMovementOps.js';
 import { validateConversionVarianceReason } from '../shared/productionConversionReasons.js';
 import { persistProductionConversionVarianceReason } from './operations/productionConversionVariancePersist.js';
@@ -3697,13 +3701,11 @@ function coilAncillaryKgNetDelta(db, coilNo) {
     if (String(m.detail || '').includes('Production book reconcile')) continue;
     net += safeNumber(m.qty);
   }
-  const finishRoll = db
-    .prepare(
-      `SELECT qty FROM stock_movements
-       WHERE type = 'COIL_CONSUMPTION' AND detail LIKE '%roll finished%' AND detail LIKE ?`
-    )
-    .all(`%${cn}%`);
-  for (const m of finishRoll) net += safeNumber(m.qty);
+  // Net kg still cleared by finish-roll (tail cleared minus any undo), keyed by coil_control_events
+  // (exact coil_no match) rather than a `detail LIKE '%coilNo%'` scan — the LIKE scan both missed
+  // "undo finish roll" restores (different wording than "roll finished") and could match a different
+  // coil whose number is a substring of this one (e.g. CL-1 matching CL-10's movement).
+  net -= coilFinishRollTailNetClearedKg(db, cn);
   return net;
 }
 

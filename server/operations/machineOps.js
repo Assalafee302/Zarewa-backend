@@ -9,8 +9,19 @@ import { listMachineFuelLogs } from './machineFuelOps.js';
 import { listPlansForMachine } from './maintenancePlanOps.js';
 import { MACHINE_STATUSES, MACHINE_TYPES } from '../../shared/maintenanceRegistry.js';
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function validOptionalIsoDate(raw, label) {
+  const v = String(raw || '').trim();
+  if (!v) return { ok: true, value: null };
+  if (!ISO_DATE_RE.test(v.slice(0, 10))) {
+    return { ok: false, error: `${label} must be a valid date (YYYY-MM-DD).` };
+  }
+  return { ok: true, value: v.slice(0, 10) };
 }
 
 function normalizeMachineStatus(raw) {
@@ -48,6 +59,14 @@ export function updateMachine(db, machineId, body, actor) {
   const status = body?.status != null ? normalizeMachineStatus(body.status) : current.status;
   const machineType =
     body?.machineType != null ? normalizeMachineType(body.machineType) : current.machine_type;
+  if (body?.installedAtIso != null) {
+    const g = validOptionalIsoDate(body.installedAtIso, 'Installed date');
+    if (!g.ok) return g;
+  }
+  if (body?.commissionedAtIso != null) {
+    const g = validOptionalIsoDate(body.commissionedAtIso, 'Commissioned date');
+    if (!g.ok) return g;
+  }
   db.prepare(
     `UPDATE machines SET
        name = ?, machine_code = ?, line_name = ?, machine_type = ?, status = ?,

@@ -13,6 +13,7 @@ import {
   tryPostGrnInventoryJournal,
   tryPostInventoryReceiptJournal,
   tryPostCoilScrapJournal,
+  tryPostCoilReturnJournal,
   tryPostInventoryVarianceJournal,
 } from './glOps.js';
 import {
@@ -2657,11 +2658,15 @@ export function confirmGrn(
         pushShortReceiptAlertIfNeeded(line, creditQty, coilNo);
       }
       updLine.run(creditQty, poID, line.line_key);
+      // Post the movement in kg (the coil SKU's canonical unit — same unit as coil_lots and
+      // the products.stock_level bump below), never in creditQty's metres for a meter-basis
+      // PO line. Otherwise this movement and the on-hand balance it's supposed to explain end
+      // up permanently apart, in different units, for every metre-basis coil receipt.
       appendMovementTx(db, {
         type: 'STORE_GRN',
         ref: poID,
         productID: e.productID,
-        qty: creditQty,
+        qty: effectiveWeightKg,
         detail: `${coilNo} · ${e.location || 'main store'}`,
         dateISO: lineDateISO,
         atISO: entryReceivedAtISO(lineDateISO),
@@ -3452,6 +3457,7 @@ export function receiveFinishedGoods(
   const workspaceBranchId = opts?.workspaceBranchId;
 
   let coilRow = null;
+  let coilTailKgForFinish = 0;
   if (markFinish) {
     if (!coilNo) return { ok: false, error: 'Source coil number is required for manual coil finish.' };
     coilRow = db.prepare(`SELECT * FROM coil_lots WHERE coil_no = ?`).get(coilNo);
@@ -3474,6 +3480,7 @@ export function receiveFinishedGoods(
     if (qtyRem >= 100) {
       return { ok: false, error: 'Only near-finished coils below 100kg can be closed manually.' };
     }
+    coilTailKgForFinish = qtyRem;
 
     try {
       assertPeriodOpen(db, dateISO || new Date().toISOString().slice(0, 10), 'Manual coil finish date');
@@ -3550,6 +3557,28 @@ export function receiveFinishedGoods(
         finalizeCoilLotStateTx(db, coilNo);
         const bid = String(coilRow.branch_id ?? workspaceBranchId ?? DEFAULT_BRANCH_ID).trim();
         reconcileCoilProductStockFromLots(db, coilProductId, bid);
+        // Same event type as the coil-profile Finish roll action, so this manual finish is
+        // visible to coilFinishRollTailNetClearedKg / coil book reconciliation — without this,
+        // a later reconciliation cannot see the tail was cleared and would silently restore it.
+        if (coilTailKgForFinish > 1e-6) {
+          insertCoilControlEventTx(db, {
+            branchId: bid || DEFAULT_BRANCH_ID,
+            eventKind: 'finish_roll',
+            coilNo,
+            productId: coilProductId,
+            gaugeLabel: coilRow.gauge_label,
+            colour: coilRow.colour,
+            meters: null,
+            kgCoilDelta: -coilTailKgForFinish,
+            bookRef: productionOrderId || null,
+            scrapReason: 'Manual coil finish — tail cleared',
+            note: 'Manual coil finish',
+            dateISO: dateISO || new Date().toISOString().slice(0, 10),
+            creditScrapInventory: false,
+            actorUserId: opts.actor?.id != null ? String(opts.actor.id) : null,
+            actorDisplay: String(opts.actor?.displayName || opts.actor?.username || '').trim() || null,
+          });
+        }
         appendAuditLog(db, {
           actor: opts.actor || null,
           action: 'coil.manual_finish',
@@ -3647,12 +3676,16 @@ export function splitCoilLot(db, payload = {}, opts = {}) {
   const originNote = [note, `split from ${parentCoilNo}`].filter(Boolean).join(' · ').slice(0, 2000);
   const parentLanded = Math.round(Number(parent.landed_cost_ngn) || 0);
   const parentUnit = Math.round(Number(parent.unit_cost_ngn_per_kg) || 0);
-  const volBefore = qtyRem + splitKg;
+  // qtyRem is already the parent's mass BEFORE this split (fetched above, before any mutation) —
+  // it is not "qtyRem + splitKg". That extra splitKg previously understated the child's share of
+  // landed cost and correspondingly overstated what stayed on the parent.
   let childLanded = null;
+  let childUnit = parentUnit || null;
   let parentNewLanded = parentLanded;
-  if (parentLanded > 0 && volBefore > 0) {
-    childLanded = Math.round((splitKg / volBefore) * parentLanded);
+  if (parentLanded > 0 && qtyRem > 0) {
+    childLanded = Math.round((splitKg / qtyRem) * parentLanded);
     parentNewLanded = Math.max(0, parentLanded - childLanded);
+    childUnit = splitKg > 0 ? Math.round(childLanded / splitKg) : parentUnit || null;
   }
 
   try {
@@ -3693,7 +3726,7 @@ export function splitCoilLot(db, payload = {}, opts = {}) {
         parentCoilNo,
         originNote || null,
         childLanded,
-        parentUnit || null
+        childUnit
       );
 
       appendMovementTx(db, {
@@ -4491,6 +4524,16 @@ export function returnCoilMaterialToStock(db, payload = {}, opts = {}) {
 
   const qtyRem = Math.max(0, Number(row.qty_remaining) || Number(row.current_weight_kg) || 0);
   const newRem = qtyRem + kg;
+  // A return can restore mass that was previously scrapped/consumed/split off, but it must not
+  // inflate the coil beyond what was ever physically received — that would add inventory value
+  // out of nowhere with no receiving document behind it.
+  const receivedKg = Math.max(0, Number(row.weight_kg) || Number(row.qty_received) || 0);
+  if (receivedKg > 0 && newRem > receivedKg + 1e-6) {
+    return {
+      ok: false,
+      error: `Cannot return more than ${receivedKg.toFixed(2)} kg total on this coil (its original received weight). Register a new coil/GRN line instead for genuinely new material.`,
+    };
+  }
   const productID = row.product_id;
   const stockBranch = coilStockBranchId(row, workspaceBranchId);
 
@@ -4514,6 +4557,18 @@ export function returnCoilMaterialToStock(db, payload = {}, opts = {}) {
         detail: `${reason}${note ? ` — ${note}` : ''}`,
       });
 
+      const unitCost = Number(row.unit_cost_ngn_per_kg) || 0;
+      const gl = tryPostCoilReturnJournal(db, {
+        entryDateISO: dateISO,
+        coilNo,
+        kg,
+        unitCostNgnPerKg: unitCost,
+        branchId: stockBranch,
+        createdByUserId: actorId(actor),
+        sourceId: `coil-return:${coilNo}:${dateISO}:${kg.toFixed(3)}:${reason}`.slice(0, 120),
+      });
+      if (!gl.ok) throw new Error(gl.error || 'Coil return GL posting failed.');
+
       appendAuditLog(db, {
         actor,
         action: 'coil.return',
@@ -4521,7 +4576,7 @@ export function returnCoilMaterialToStock(db, payload = {}, opts = {}) {
         entityId: coilNo,
         status: 'success',
         note: `${kg} kg onto ${coilNo}`,
-        details: { coilNo, kg, reason },
+        details: { coilNo, kg, reason, glSkipped: Boolean(gl.skipped), glJournalId: gl.journalId ?? null },
       });
 
       insertCoilControlEventTx(db, {

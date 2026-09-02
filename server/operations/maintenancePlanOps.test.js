@@ -84,4 +84,35 @@ describe('maintenancePlanOps', () => {
     expect(r.plan.lastServiceAtIso).toBe('2026-08-22');
     expect(r.plan.nextDueDateIso).toBe('2026-09-21');
   });
+
+  it('rejects a malformed last service date instead of silently falling back to today', () => {
+    const db = makeDb({ plan: PLAN });
+    const r = stampPlanService(db, 'MPL-1', { lastServiceAtIso: 'not-a-date' }, { id: 'USR-BM' });
+    expect(r.ok).toBe(false);
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('rejects a malformed next due date', () => {
+    const db = makeDb({ plan: PLAN });
+    const r = stampPlanService(
+      db,
+      'MPL-1',
+      { lastServiceAtIso: '2026-08-22', nextDueDateIso: 'soon-ish' },
+      { id: 'USR-BM' }
+    );
+    expect(r.ok).toBe(false);
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('rejects a next due date more than 5 years out (likely typo)', () => {
+    const db = makeDb({ plan: PLAN });
+    const r = stampPlanService(
+      db,
+      'MPL-1',
+      { lastServiceAtIso: '2026-08-22', nextDueDateIso: '2099-01-01' },
+      { id: 'USR-BM' }
+    );
+    expect(r.ok).toBe(false);
+    expect(db.updates).toHaveLength(0);
+  });
 });

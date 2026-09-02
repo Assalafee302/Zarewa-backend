@@ -318,6 +318,37 @@ export function tryPostCoilScrapJournal(db, { entryDateISO, coilNo, kg, unitCost
 }
 
 /**
+ * Coil material returned onto stock (correction / recount): Dr RM inventory 1300 / Cr COGS 5000
+ * for kg × unit cost — the mirror of tryPostCoilScrapJournal, so kg added back to a coil's book
+ * has the same GL counterpart as kg removed from one, instead of inventory value appearing with
+ * no journal entry at all.
+ * Skips when amount is 0 (missing unit cost) so the physical return can still post.
+ */
+export function tryPostCoilReturnJournal(db, { entryDateISO, coilNo, kg, unitCostNgnPerKg, branchId, createdByUserId, sourceId }) {
+  const k = Number(kg) || 0;
+  const unit = Number(unitCostNgnPerKg) || 0;
+  const amt = Math.round(k * unit);
+  if (amt <= 0) return { ok: true, skipped: true, reason: 'no_unit_cost_or_zero' };
+  const sid = String(sourceId || '').trim() || `coil-return-${coilNo}-${entryDateISO}-${Math.round(k * 100)}`;
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO,
+      memo: `Coil material returned ${coilNo} (${k} kg)`,
+      sourceKind: 'COIL_RETURN_GL',
+      sourceId: sid,
+      branchId,
+      createdByUserId,
+      lines: [
+        { accountCode: '1300', debitNgn: amt, memo: coilNo },
+        { accountCode: '5000', creditNgn: amt, memo: coilNo },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
  * Perpetual inventory qty variance (manual adjust or month-end count).
  * Shortage (qty decrease / book &gt; count): Dr 5055 / Cr 1300.
  * Surplus (qty increase / count &gt; book): Dr 1300 / Cr 5055.

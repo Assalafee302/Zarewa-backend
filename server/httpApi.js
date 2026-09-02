@@ -7650,7 +7650,12 @@ export function registerHttpApi(app, db) {
     if (!String(dateISO || '').trim()) {
       return res.status(400).json({ ok: false, error: 'Adjustment date is required.' });
     }
-    if (String(type) === 'Decrease' && productID && !acknowledgeCoilSkuDrift) {
+    // Any coil-linked SKU's stock_level is periodically overwritten wholesale by
+    // reconcileCoilProductStockFromLots (sum of coil_lots.qty_remaining) whenever a coil
+    // scrap/split/finish/undo runs. A book-only Increase here would silently vanish on the
+    // next such reconciliation just like a Decrease would — so both directions need the same
+    // acknowledgement gate, not just Decrease.
+    if ((String(type) === 'Decrease' || String(type) === 'Increase') && productID && !acknowledgeCoilSkuDrift) {
       const n = write.countCoilLotsForProductInWorkspace(db, productID, req.workspaceBranchId);
       if (n > 0) {
         return res.status(409).json({
@@ -7658,7 +7663,7 @@ export function registerHttpApi(app, db) {
           code: 'COIL_SKU_DRIFT',
           coilLotCount: n,
           error:
-            'This SKU has coil lots in your branch. Use Operations → Coil control (scrap, adjustments, returns) to change physical stock. To force a book-only decrease, a branch manager must resend with acknowledgeCoilSkuDrift: true.',
+            'This SKU has coil lots in your branch. Use Operations → Coil control (scrap, adjustments, returns) to change physical stock — a book-only adjustment here is overwritten the next time a coil action reconciles this SKU. To force it anyway, a branch manager must resend with acknowledgeCoilSkuDrift: true.',
         });
       }
     }
@@ -7670,7 +7675,7 @@ export function registerHttpApi(app, db) {
         return res.status(403).json({
           ok: false,
           code: 'COIL_SKU_DRIFT_FORBIDDEN',
-          error: 'Book-only coil SKU decreases require branch manager (or MD) approval.',
+          error: 'Book-only coil SKU adjustments require branch manager (or MD) approval.',
         });
       }
     }

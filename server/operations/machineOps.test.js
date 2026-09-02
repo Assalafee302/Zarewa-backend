@@ -1,5 +1,46 @@
-import { describe, expect, it } from 'vitest';
-import { buildMachineDossierNextActions } from './machineOps.js';
+import { describe, expect, it, vi } from 'vitest';
+import { buildMachineDossierNextActions, updateMachine } from './machineOps.js';
+
+vi.mock('../controlOps.js', () => ({
+  appendAuditLog: () => {},
+}));
+
+vi.mock('../workItems.js', () => ({
+  createMachine: () => ({ ok: true }),
+  linkMachineAsset: () => ({ ok: true }),
+  listMachineLinkableAssets: () => [],
+  listMachines: (_db, { branchId }) => [
+    { id: 'MACH-1', branchId, name: 'Line 1' },
+  ],
+}));
+vi.mock('../maintenanceInsightsOps.js', () => ({ buildMaintenanceMachineInsights: () => ({}) }));
+vi.mock('../maintenanceWorkOrderOps.js', () => ({
+  attachWorkOrderFinance: () => ({}),
+  listMaintenanceEventsForMachine: () => [],
+  listWorkOrdersForMachine: () => [],
+}));
+vi.mock('./machineFuelOps.js', () => ({ listMachineFuelLogs: () => [] }));
+vi.mock('./maintenancePlanOps.js', () => ({ listPlansForMachine: () => [] }));
+
+const MACHINE_ROW = {
+  id: 'MACH-1',
+  branch_id: 'BR-KD',
+  name: 'Line 1',
+  machine_type: 'generator',
+  status: 'active',
+};
+
+function makeMachineDb(row = MACHINE_ROW) {
+  return {
+    prepare(sql) {
+      const s = String(sql);
+      return {
+        get: () => (s.includes('FROM machines WHERE id') ? row : null),
+        run: () => ({ changes: 1 }),
+      };
+    },
+  };
+}
 
 describe('buildMachineDossierNextActions', () => {
   it('asks BM to acknowledge and assign an unclaimed open fault', () => {
@@ -38,5 +79,25 @@ describe('buildMachineDossierNextActions', () => {
       ]
     );
     expect(actions.map((a) => a.key)).toContain('spend');
+  });
+});
+
+describe('updateMachine date validation', () => {
+  it('rejects a malformed installed date', () => {
+    const db = makeMachineDb();
+    const r = updateMachine(db, 'MACH-1', { installedAtIso: 'whenever' }, { id: 'USR-BM' });
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a malformed commissioned date', () => {
+    const db = makeMachineDb();
+    const r = updateMachine(db, 'MACH-1', { commissionedAtIso: '31-02-2026' }, { id: 'USR-BM' });
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts a well-formed installed date', () => {
+    const db = makeMachineDb();
+    const r = updateMachine(db, 'MACH-1', { installedAtIso: '2026-01-15' }, { id: 'USR-BM' });
+    expect(r.ok).toBe(true);
   });
 });

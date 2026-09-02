@@ -218,6 +218,7 @@ import {
   previewRefundRequest,
   buildRefundEconomicFloorSummary,
   quotationActiveRefundedTotalNgn,
+  quotationUnlinkedOverpayCreditOutNgn,
   updatePaymentRequest,
   refundSubstitutionDataQualityIssues,
   refundCuttingListQuotationMetreIssues,
@@ -9462,6 +9463,11 @@ export function registerHttpApi(app, db) {
       });
       const cashBreakdown = quotationPaymentCashBreakdown(db, quotationRef);
       const priorRefundedNgn = quotationActiveRefundedTotalNgn(db, quotationRef, excludeRefundId);
+      // Overpayment already redirected as credit to another quotation (not via a refund record).
+      // The pay-time server check subtracts this from the residual overpayment before allowing a
+      // cash payout — the cashier screen needs the same figure to warn/block consistently instead
+      // of a live "Pay" button that the server then rejects.
+      const creditAppliedOutNgn = quotationUnlinkedOverpayCreditOutNgn(db, quotationRef);
       const economicFloor = buildRefundEconomicFloorSummary(db, quote, productionJobs, {
         cashInNgn: cashBreakdown.cashInNgn,
         priorRefundedNgn,
@@ -9483,6 +9489,7 @@ export function registerHttpApi(app, db) {
         economicFloor,
         staleRefundWarnings,
         excludeRefundId,
+        creditAppliedOutNgn,
       });
     } catch (e) {
       console.error(e);

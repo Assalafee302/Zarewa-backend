@@ -731,7 +731,13 @@ export function insertProductionOffcutPoolIssueTx(db, p, actor) {
   if (!Number.isFinite(m) || m <= 0) return null;
   const gaugeLabel = String(p.gaugeLabel ?? '').trim();
   const colour = String(p.colour ?? '').trim();
-  if (!gaugeLabel || !colour) return null;
+  // A missing gauge/colour must fail loudly, not return null: both callers below (production
+  // completion and the incident-issue endpoints) ignore a null return and still insert their
+  // material_incident_issues row, so a null here previously let the same metres be "issued"
+  // over and over with no availability check and no coil-control event recorded for it.
+  if (!gaugeLabel || !colour) {
+    throw new Error('Offcut pool issue requires a gauge and colour to record availability.');
+  }
   const materialIncidentId = String(p.materialIncidentId ?? '').trim() || null;
   if (materialIncidentId) {
     const inc = db.prepare(`SELECT meters_available, status FROM material_incidents WHERE id = ?`).get(materialIncidentId);

@@ -1861,6 +1861,31 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   if (!Number.isFinite(metres) || metres < 0) {
     return { ok: false, error: 'Offcut produced metres must be zero or greater.' };
   }
+  // Offcut/accessories completion previously skipped every guard the coil completion path
+  // enforces: a job could jump straight from Planned to Completed (never started, so the
+  // below-floor MD price gate and payment re-gate in startProductionJob never ran), and a
+  // job under a paid refund could still book new output. Both are checked the same way the
+  // coil path checks them, before any writes.
+  const jobStatusOffcut = String(job.status ?? 'Planned');
+  if (jobStatusOffcut !== 'Running') {
+    return { ok: false, error: 'Start the production job before completing it.' };
+  }
+  const outputMetresOffcut = metres + Math.max(0, offInv);
+  const paidRefundGatePre = validateProductionEditAgainstPaidRefunds(db, job, {
+    proposedJobOutputMetres: outputMetresOffcut,
+  });
+  if (!paidRefundGatePre.ok) return paidRefundGatePre;
+  const plannedMOffcut = Number(job.planned_meters) || 0;
+  if (plannedMOffcut > 0 && outputMetresOffcut > plannedMOffcut + 0.001) {
+    const remark = String(payload?.meterOverrunRemark ?? '').trim();
+    if (remark.length < 3) {
+      return {
+        ok: false,
+        error: `Output (${outputMetresOffcut.toFixed(2)} m) exceeds planned (${plannedMOffcut.toFixed(2)} m). Enter a manager remark explaining the overrun to continue.`,
+        code: 'METER_OVERRUN_REMARK_REQUIRED',
+      };
+    }
+  }
   let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');

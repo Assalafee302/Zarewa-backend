@@ -3834,12 +3834,43 @@ export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
     };
   }
 
+  // This restates a coil's on-hand kg from a background recalculation, not an explicit
+  // operator correction — it must not silently restate a closed period's inventory, and the
+  // movement ledger needs a row explaining the change instead of the balance just moving with
+  // no trail. Type/detail match postCoilScrap/returnCoilMaterialToStock so this reconciliation
+  // line is excluded from future ancillary-kg calculations (see the "Production book reconcile"
+  // check in coilAncillaryKgNetDelta) rather than feeding back into itself.
+  const reconcileDateISO = String(opts.dateISO || new Date().toISOString().slice(0, 10)).trim();
+  try {
+    assertPeriodOpen(db, reconcileDateISO, 'Coil book reconciliation date');
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+
   db.prepare(`UPDATE coil_lots SET qty_remaining = ?, current_weight_kg = ? WHERE coil_no = ?`).run(
     expectedOnHand,
     expectedOnHand,
     cn
   );
   updateCoilDerivedStateTx(db, cn);
+  const stockBranchReconcile = String(coil.branch_id || opts.workspaceBranchId || DEFAULT_BRANCH_ID).trim();
+  appendStockMovementTx(db, {
+    type: delta > 0 ? 'COIL_RETURN' : 'COIL_SCRAP',
+    productID: coil.product_id,
+    qty: delta,
+    ref: cn,
+    dateISO: reconcileDateISO,
+    branchId: stockBranchReconcile,
+    detail: `Production book reconcile: ${beforeOnHand.toFixed(2)} kg → ${expectedOnHand.toFixed(2)} kg (received ${received.toFixed(2)} − jobs ${jobsConsumedKg.toFixed(2)} − split ${splitOutKg.toFixed(2)} + ancillary ${ancillaryNetKg.toFixed(2)})`,
+  });
+  appendAuditLog(db, {
+    actor: opts.actor,
+    action: 'coil.reconcile_book',
+    entityKind: 'coil_lot',
+    entityId: cn,
+    note: `On-hand reconciled: ${beforeOnHand.toFixed(2)} → ${expectedOnHand.toFixed(2)} kg`,
+    details: { coilNo: cn, beforeOnHandKg: beforeOnHand, afterOnHandKg: expectedOnHand, onHandDeltaKg: delta },
+  });
   const bookRecalc = recalculateCoilLotBook(db, cn, {
     workspaceBranchId: opts.workspaceBranchId,
     skipInnerTransaction: true,
@@ -4075,6 +4106,20 @@ export function reconcileCoilReservationFromProductionJobs(db, coilNo, opts = {}
 
   const expectedReserved = expectedCoilReservedKgFromJobs(db, cn);
   const beforeReserved = clampNonNegative(coil.qty_reserved);
+  const qtyRemainingNow = clampNonNegative(coil.qty_remaining ?? coil.current_weight_kg);
+  // The sum of open jobs' opening weight on this coil must physically fit within what's left
+  // on it. Writing a reservation above that and letting updateCoilDerivedStateTx silently
+  // clamp it back down would hide the coil being over-committed across jobs — surface it
+  // instead of correcting one number into a state that contradicts another.
+  if (expectedReserved > qtyRemainingNow + 0.05) {
+    return {
+      ok: false,
+      error: `Reconciled reservation (${expectedReserved.toFixed(2)} kg from open jobs) exceeds this coil's remaining balance (${qtyRemainingNow.toFixed(2)} kg). The coil is over-committed across jobs — release or reduce an allocation before reconciling.`,
+      code: 'COIL_OVER_RESERVED',
+      expectedReserved,
+      qtyRemainingKg: qtyRemainingNow,
+    };
+  }
 
   if (Math.abs(beforeReserved - expectedReserved) <= 0.0001) {
     return {

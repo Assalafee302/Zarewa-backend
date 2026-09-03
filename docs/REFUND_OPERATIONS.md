@@ -90,7 +90,7 @@ Set in production env (see `.env.example`):
 
 - `ZAREWA_ASSOCIATED_STAFF_POLICY_V1=1`
 - `ZAREWA_PARTNER_WALLET_V1=1`
-- `ENFORCE_DUAL_CONTROL_PAYMENTS=1` (defaults on in production when unset; set `=0` only as an escape hatch)
+- `ENFORCE_DUAL_CONTROL_PAYMENTS=1` — off by default everywhere; set this only once refund approve and pay roles are staffed by different people (otherwise the approver can't pay their own approved refunds)
 
 ---
 

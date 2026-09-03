@@ -54,18 +54,18 @@ describe('financeFeatureFlags', () => {
     expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(true);
   });
 
-  it('defaults dual-control on in production when env is unset', () => {
+  it('stays off in production when env is unset (opt-in only, not automatic)', () => {
     process.env.NODE_ENV = 'production';
     delete process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
-    expect(readFinanceFeatureFlags().enforceDualControlPayments).toBe(true);
-    expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(true);
-  });
-
-  it('honours ENFORCE_DUAL_CONTROL_PAYMENTS=0 as production escape hatch', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '0';
     expect(readFinanceFeatureFlags().enforceDualControlPayments).toBe(false);
     expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(false);
+  });
+
+  it('honours ENFORCE_DUAL_CONTROL_PAYMENTS=1 in production once approve/pay roles are separated', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '1';
+    expect(readFinanceFeatureFlags().enforceDualControlPayments).toBe(true);
+    expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(true);
   });
 
   it('defaults Policy v1 flags off', () => {

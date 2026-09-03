@@ -4,10 +4,12 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { createDatabase } from '../db.js';
 import { creditRefundToPartnerWalletTx } from '../finance/partnerWalletCredit.js';
+import { payRefundEntry } from '../writeOps.js';
 import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
   refundCashOutstandingNgn,
+  refundMoneyOutWithinApproved,
 } from './refundPayoutStatus.js';
 
 const prevWallet = process.env.ZAREWA_PARTNER_WALLET_V1;
@@ -213,5 +215,104 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, row)).toBe('Paid');
     expect(refundCashOutstandingNgn(db, row)).toBe(0);
+  });
+
+  it('refuses a second till slice larger than remaining approved net', () => {
+    const OVERPAY_ID = 'RF-MONEY-OUT-1';
+    db.prepare(`DELETE FROM treasury_movements WHERE source_id = ?`).run(OVERPAY_ID);
+    db.prepare(`DELETE FROM customer_refunds WHERE refund_id = ?`).run(OVERPAY_ID);
+    db.prepare(
+      `INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+        approved_amount_ngn, paid_amount_ngn
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      OVERPAY_ID,
+      CUSTOMER_ID,
+      'Quote Customer',
+      '',
+      '["Order cancellation"]',
+      'Customer till overpay guard',
+      10_000,
+      '[]',
+      `[{"recipientKind":"customer","recipientCustomerID":"${CUSTOMER_ID}","amountNgn":10000,"note":"To customer"}]`,
+      'Approved',
+      'Quote Customer',
+      '1111222233',
+      'Test Bank',
+      'BR-KD',
+      'Sales',
+      '2026-03-29T10:00:00.000Z',
+      10_000,
+      0
+    );
+    const acct = db.prepare(`SELECT id FROM treasury_accounts LIMIT 1`).get();
+    const cashier = db
+      .prepare(
+        `SELECT id, username, role_key AS roleKey, display_name AS displayName
+         FROM app_users WHERE username = 'cashier' LIMIT 1`
+      )
+      .get();
+    expect(acct?.id).toBeTruthy();
+    expect(cashier?.id).toBeTruthy();
+    const actor = {
+      id: cashier.id,
+      displayName: cashier.displayName,
+      roleKey: 'cashier',
+    };
+    const first = payRefundEntry(db, OVERPAY_ID, {
+      paymentLines: [{ treasuryAccountId: acct.id, amountNgn: 6_000, dateISO: '2026-03-29' }],
+      actor,
+      paidBy: 'Cashier',
+      dateISO: '2026-03-29',
+    });
+    expect(first.ok).toBe(true);
+    const afterFirst = db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(OVERPAY_ID);
+    expect(Number(afterFirst.paid_amount_ngn)).toBe(6_000);
+
+    const second = payRefundEntry(db, OVERPAY_ID, {
+      paymentLines: [{ treasuryAccountId: acct.id, amountNgn: 5_000, dateISO: '2026-03-29' }],
+      actor,
+      paidBy: 'Cashier',
+      dateISO: '2026-03-29',
+    });
+    expect(second.ok).toBe(false);
+    expect(String(second.error || '')).toMatch(/exceeds the approved refund balance|money out exceeds/i);
+    const afterSecond = db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(OVERPAY_ID);
+    expect(Number(afterSecond.paid_amount_ngn)).toBe(6_000);
+  });
+});
+
+describe('refundMoneyOutWithinApproved', () => {
+  it('allows till + company cut + credit up to approved', () => {
+    expect(
+      refundMoneyOutWithinApproved({
+        approvedNgn: 10_000,
+        treasuryPaidNgn: 8_000,
+        companyCutSettledNgn: 2_000,
+      })
+    ).toBe(true);
+  });
+
+  it('rejects a second till slice that exceeds approved plus ₦1', () => {
+    expect(
+      refundMoneyOutWithinApproved({
+        approvedNgn: 10_000,
+        treasuryPaidNgn: 8_002,
+        companyCutSettledNgn: 2_000,
+      })
+    ).toBe(false);
+  });
+
+  it('allows ₦1 rounding tolerance', () => {
+    expect(
+      refundMoneyOutWithinApproved({
+        approvedNgn: 10_000,
+        treasuryPaidNgn: 8_001,
+        companyCutSettledNgn: 2_000,
+      })
+    ).toBe(true);
   });
 });

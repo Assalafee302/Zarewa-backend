@@ -169,7 +169,7 @@ describe('refund partner wallet split (no customer bank)', () => {
         amount_ngn, calculation_lines_json, split_distributions_json, status,
         payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
         approved_amount_ngn, paid_amount_ngn, payment_note
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       'RF-WALLET-HELD-ADMIN',
       'CUS-CLAIM-STAFF',

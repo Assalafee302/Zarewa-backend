@@ -90,7 +90,7 @@ Set in production env (see `.env.example`):
 
 - `ZAREWA_ASSOCIATED_STAFF_POLICY_V1=1`
 - `ZAREWA_PARTNER_WALLET_V1=1`
-- `ENFORCE_DUAL_CONTROL_PAYMENTS=1` when approve and pay roles are separate
+- `ENFORCE_DUAL_CONTROL_PAYMENTS=1` (defaults on in production when unset; set `=0` only as an escape hatch)
 
 ---
 

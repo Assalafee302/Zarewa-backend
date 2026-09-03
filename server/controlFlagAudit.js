@@ -6,6 +6,7 @@
  */
 import { appendAuditLog } from './controlOps.js';
 import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
+import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 
 const SYSTEM_ACTOR = { id: null, displayName: 'system (boot)', username: 'system' };
 
@@ -18,7 +19,7 @@ export function readControlFlagSnapshot() {
   return {
     deliveryPaymentGate: readDeliveryPaymentGateMode(),
     deliveryPaymentGateStrictFinance: envFlagOn('DELIVERY_PAYMENT_GATE_STRICT_FINANCE'),
-    enforceDualControlPayments: envFlagOn('ENFORCE_DUAL_CONTROL_PAYMENTS'),
+    enforceDualControlPayments: readFinanceFeatureFlags().enforceDualControlPayments,
     nodeEnv: String(process.env.NODE_ENV || 'development'),
   };
 }

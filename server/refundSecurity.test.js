@@ -1230,4 +1230,48 @@ describe('Refund Phase 11A controls', () => {
     });
     expect(cashierPay.status).toBe(201);
   });
+
+  it('blocks MD from paying a customer refund while cashier still can', async () => {
+    const staff = request.agent(app);
+    await loginAs(staff, 'sales.staff', 'Sales@123');
+    const create = await staff.post('/api/refunds').send({
+      customerID: 'CUS-001',
+      customer: 'John Doe',
+      quotationRef: 'QT-RFS-SELF-002',
+      reasonCategory: ['Order cancellation'],
+      amountNgn: 5000,
+      calculationLines: [{ label: 'Cancellation', amountNgn: 5000, category: 'Order cancellation' }],
+      ...REFUND_PAYEE,
+    });
+    expect(create.status).toBe(201);
+    const refundID = create.body.refundID;
+
+    const fin = request.agent(app);
+    await loginAs(fin, 'finance.manager', 'Finance@123');
+    const approve = await fin.post(`/api/refunds/${refundID}/decision`).send({
+      status: 'Approved',
+      approvedAmountNgn: 5000,
+    });
+    expect(approve.status).toBe(200);
+
+    const before = await fin.get('/api/bootstrap');
+    const treasuryAccountId = before.body.treasuryAccounts[0].id;
+
+    const md = request.agent(app);
+    await loginAs(md, 'md', 'Md@1234567890!');
+    const mdPay = await md.post(`/api/refunds/${refundID}/pay`).send({
+      treasuryAccountId,
+      amountNgn: 5000,
+    });
+    expect(mdPay.status).toBe(400);
+    expect(String(mdPay.body.error || '')).toMatch(/cannot pay customer refunds/i);
+
+    const cashier = request.agent(app);
+    await loginAs(cashier, 'cashier', 'Cashier@12345!');
+    const cashierPay = await cashier.post(`/api/refunds/${refundID}/pay`).send({
+      treasuryAccountId,
+      amountNgn: 5000,
+    });
+    expect(cashierPay.status).toBe(201);
+  });
 });

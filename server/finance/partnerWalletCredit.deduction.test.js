@@ -4,7 +4,8 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { createDatabase } from '../db.js';
-import { creditRefundToPartnerWalletTx, backfillMissingRefundCompanyRetentionCredits } from './partnerWalletCredit.js';
+import { decideRefundRequest } from '../controlOps.js';
+import { creditRefundToPartnerWalletTx, backfillMissingRefundCompanyRetentionCredits, assertCompanyRetentionPostedForCut } from './partnerWalletCredit.js';
 
 const prevWallet = process.env.ZAREWA_PARTNER_WALLET_V1;
 const prevAssoc = process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1;
@@ -25,7 +26,15 @@ const STAFF_ID = 'AST-RF-CUT-1';
 const REFUND_WALLET_OFF = 'RF-CUT-WALLET-OFF';
 const REFUND_BACKFILL = 'RF-CUT-WALLET-BACKFILL';
 const REFUND_NOTE_BF = 'RF-CUT-NOTE-BF';
-const FIXTURE_REFUND_IDS = [REFUND_WALLET_OFF, REFUND_BACKFILL, REFUND_NOTE_BF];
+const REFUND_DECIDE_FAIL = 'RF-CUT-DECIDE-FAIL';
+const REFUND_CUSTOMER_ONLY = 'RF-CUT-CUSTOMER-ONLY';
+const FIXTURE_REFUND_IDS = [
+  REFUND_WALLET_OFF,
+  REFUND_BACKFILL,
+  REFUND_NOTE_BF,
+  REFUND_DECIDE_FAIL,
+  REFUND_CUSTOMER_ONLY,
+];
 
 function ensureCustomerStaff(db) {
   const customer = db.prepare(`SELECT customer_id FROM customers WHERE customer_id = ?`).get(CUSTOMER_ID);
@@ -272,5 +281,153 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
       .get(REFUND_NOTE_BF);
     expect(Number(retention?.amount_ngn)).toBe(2_860);
     expect(Number(retention?.open_ngn)).toBe(2_860);
+  });
+
+  it('fails closed when retention tables are missing and does not bump paid_amount', () => {
+    expect(assertCompanyRetentionPostedForCut({ ok: true, skipped: true, reason: 'tables_missing' }, 2_000).ok).toBe(
+      false
+    );
+    expect(assertCompanyRetentionPostedForCut({ ok: true, skipped: true, reason: 'already_credited' }, 2_000).ok).toBe(
+      true
+    );
+    expect(assertCompanyRetentionPostedForCut({ ok: true }, 0).ok).toBe(true);
+
+    db.prepare(`RENAME TABLE refund_company_retention_entries TO refund_company_retention_entries_p0bak`).run();
+    try {
+      const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_WALLET_OFF);
+      const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+      const r = creditRefundToPartnerWalletTx(db, refundRow, {
+        approvedAmountNgn: 10_000,
+        actor: { id: actor?.id, displayName: actor?.displayName },
+      });
+      expect(r.ok).toBe(false);
+      expect(String(r.error || '')).toMatch(/retention ledger is not ready/i);
+      const updated = db
+        .prepare(`SELECT paid_amount_ngn, status FROM customer_refunds WHERE refund_id = ?`)
+        .get(REFUND_WALLET_OFF);
+      expect(Number(updated.paid_amount_ngn)).toBe(0);
+      expect(String(updated.status || '')).toBe('Approved');
+    } finally {
+      db.prepare(`RENAME TABLE refund_company_retention_entries_p0bak TO refund_company_retention_entries`).run();
+    }
+  });
+
+  it('customer-only splits succeed with no retention row', () => {
+    db.prepare(
+      `INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id, requested_by, requested_at_iso,
+        approved_amount_ngn, paid_amount_ngn
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      REFUND_CUSTOMER_ONLY,
+      CUSTOMER_ID,
+      'Quote Customer',
+      'QT-CUT-CUS',
+      '["Order cancellation"]',
+      'Customer-only payout',
+      10_000,
+      '[]',
+      `[{"recipientKind":"customer","recipientCustomerID":"${CUSTOMER_ID}","amountNgn":10000,"note":"To customer"}]`,
+      'Approved',
+      'Quote Customer',
+      '1111222233',
+      'Test Bank',
+      'BR-KD',
+      'Sales',
+      '2026-03-29T10:00:00.000Z',
+      10_000,
+      0
+    );
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_CUSTOMER_ONLY);
+    const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
+    const r = creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 10_000,
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    expect(r.ok).toBe(true);
+    expect(Number(r.companyRetentionNgn || 0)).toBe(0);
+    const retention = db
+      .prepare(`SELECT COUNT(*) AS c FROM refund_company_retention_entries WHERE refund_id = ?`)
+      .get(REFUND_CUSTOMER_ONLY);
+    expect(Number(retention?.c || 0)).toBe(0);
+    const updated = db
+      .prepare(`SELECT paid_amount_ngn, status FROM customer_refunds WHERE refund_id = ?`)
+      .get(REFUND_CUSTOMER_ONLY);
+    expect(Number(updated.paid_amount_ngn)).toBe(0);
+    expect(String(updated.status || '')).toBe('Approved');
+  });
+
+  it('rolls decideRefundRequest back to Pending when retention cannot post', () => {
+    const sales = db
+      .prepare(
+        `SELECT id FROM app_users WHERE username = 'sales.staff' LIMIT 1`
+      )
+      .get();
+    const finance = db
+      .prepare(
+        `SELECT id, username, role_key AS roleKey, display_name AS displayName
+         FROM app_users WHERE username = 'finance.manager' LIMIT 1`
+      )
+      .get();
+    expect(finance?.id).toBeTruthy();
+    db.prepare(
+      `INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, calculation_lines_json, split_distributions_json, status,
+        payee_name, payee_account_no, payee_bank_name, branch_id,
+        requested_by, requested_by_user_id, requested_at_iso, paid_amount_ngn
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      REFUND_DECIDE_FAIL,
+      CUSTOMER_ID,
+      'Quote Customer',
+      '',
+      '["Transport issue"]',
+      'Staff cut decide fail-closed',
+      10_000,
+      JSON.stringify([{ label: 'Transport', amountNgn: 10_000, category: 'Transport issue' }]),
+      `[{"recipientKind":"associated_staff","recipientAssociatedStaffID":"${STAFF_ID}","amountNgn":10000,"note":"Transport"}]`,
+      'Pending',
+      'Driver Payee',
+      '1111222233',
+      'Test Bank',
+      'BR-KD',
+      'Sales',
+      sales?.id || 'USR-SALES-CUT',
+      '2026-03-29T10:00:00.000Z',
+      0
+    );
+
+    db.prepare(`RENAME TABLE refund_company_retention_entries TO refund_company_retention_entries_p0decide`).run();
+    try {
+      const decided = decideRefundRequest(
+        db,
+        REFUND_DECIDE_FAIL,
+        {
+          status: 'Approved',
+          approvedAmountNgn: 10_000,
+          approvalDate: '2026-03-29',
+          calculationLines: [{ label: 'Transport', amountNgn: 10_000, category: 'Transport issue' }],
+        },
+        {
+          id: finance.id,
+          displayName: finance.displayName,
+          roleKey: finance.roleKey,
+        }
+      );
+      expect(decided.ok).toBe(false);
+      expect(String(decided.error || '')).toMatch(/retention ledger is not ready|Partner wallet credit failed/i);
+      const row = db
+        .prepare(`SELECT status, paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`)
+        .get(REFUND_DECIDE_FAIL);
+      expect(String(row.status || '')).toBe('Pending');
+      expect(Number(row.paid_amount_ngn)).toBe(0);
+    } finally {
+      db.prepare(
+        `RENAME TABLE refund_company_retention_entries_p0decide TO refund_company_retention_entries`
+      ).run();
+    }
   });
 });

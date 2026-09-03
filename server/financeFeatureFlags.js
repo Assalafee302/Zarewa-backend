@@ -41,7 +41,12 @@ export function readFinanceFeatureFlags() {
     apGlAlignmentDiagnosticsEnabled: envFlag('AP_GL_ALIGNMENT_DIAGNOSTICS_ENABLED', true),
     strictCashierRbac: envFlag('STRICT_CASHIER_RBAC', false),
     allowAccountantReceiptConfirmation: envFlag('ALLOW_ACCOUNTANT_RECEIPT_CONFIRMATION', true),
-    enforceDualControlPayments: envFlag('ENFORCE_DUAL_CONTROL_PAYMENTS', false),
+    // Production default ON when unset; explicit 0/false remains the escape hatch.
+    // Vitest/Playwright (test/development) stay off unless the env var is set.
+    enforceDualControlPayments: envFlag(
+      'ENFORCE_DUAL_CONTROL_PAYMENTS',
+      String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production'
+    ),
     accountingPolicyV1Labels: envFlag('ACCOUNTING_POLICY_V1_LABELS', false),
     accountingPolicyV1Diagnostics: envFlag('ACCOUNTING_POLICY_V1_DIAGNOSTICS', false),
     accountingPolicyV1ReceiptGl: envFlag('ACCOUNTING_POLICY_V1_RECEIPT_GL', false),

@@ -3,6 +3,7 @@ import {
   assertCashierMayNotApproveRefund,
   assertRefundApproverNotRequester,
   assertRefundPayerNotApprover,
+  assertActorMayPayCustomerRefund,
   actorMayOverrideRefundUnclearedPayoutHold,
   isRefundAdminTrialActor,
   refundTillPayableNgn,
@@ -125,5 +126,23 @@ describe('refundHandlers (Phase 11A)', () => {
     const actor = { id: 'USR-FIN', displayName: 'Finance Manager', roleKey: 'finance_manager' };
     const r = assertRefundPayerNotApprover(row, actor, () => false);
     expect(r.ok).toBe(true);
+  });
+
+  it('blocks MD from customer-refund payout while leaving dual-control for other roles', () => {
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '0';
+    const row = { approved_by_user_id: 'USR-SM', approved_by: 'Sales Manager' };
+    const md = { id: 'USR-MD', displayName: 'Managing Director', roleKey: 'md' };
+    const blocked = assertActorMayPayCustomerRefund(row, md, () => false);
+    expect(blocked.ok).toBe(false);
+    expect(blocked.error).toMatch(/cannot pay customer refunds/i);
+
+    const cashier = { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier' };
+    const allowed = assertActorMayPayCustomerRefund(row, cashier, () => false);
+    expect(allowed.ok).toBe(true);
+
+    const admin = { id: 'USR-ADMIN', displayName: 'Zarewa Admin', roleKey: 'admin' };
+    const trial = assertActorMayPayCustomerRefund(row, admin, (p) => p === '*');
+    expect(trial.ok).toBe(true);
+    expect(trial.adminTrial).toBe(true);
   });
 });

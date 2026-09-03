@@ -7,8 +7,11 @@ import {
 
 describe('financeFeatureFlags', () => {
   const prev = {};
+  let prevNodeEnv;
 
   beforeEach(() => {
+    prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
     for (const k of [
       'STRICT_CASHIER_RBAC',
       'ALLOW_ACCOUNTANT_RECEIPT_CONFIRMATION',
@@ -26,6 +29,8 @@ describe('financeFeatureFlags', () => {
   });
 
   afterEach(() => {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
     for (const k of Object.keys(prev)) {
       if (prev[k] === undefined) delete process.env[k];
       else process.env[k] = prev[k];
@@ -47,6 +52,20 @@ describe('financeFeatureFlags', () => {
   it('honours ENFORCE_DUAL_CONTROL_PAYMENTS=1', () => {
     process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '1';
     expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(true);
+  });
+
+  it('defaults dual-control on in production when env is unset', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.ENFORCE_DUAL_CONTROL_PAYMENTS;
+    expect(readFinanceFeatureFlags().enforceDualControlPayments).toBe(true);
+    expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(true);
+  });
+
+  it('honours ENFORCE_DUAL_CONTROL_PAYMENTS=0 as production escape hatch', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ENFORCE_DUAL_CONTROL_PAYMENTS = '0';
+    expect(readFinanceFeatureFlags().enforceDualControlPayments).toBe(false);
+    expect(financeStrictBlockWouldApply('same_user_approve_pay')).toBe(false);
   });
 
   it('defaults Policy v1 flags off', () => {

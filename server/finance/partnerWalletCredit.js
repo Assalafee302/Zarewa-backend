@@ -268,18 +268,49 @@ export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn) {
   return targets.reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
 }
 
-/** Net cash on held payees (uncleared receipts) — not payable from till/wallet until cleared. */
+/**
+ * Net cash on held payees (uncleared receipts) — not payable from till/wallet until cleared.
+ * Only the slice that actually matches the payee's outstanding uncleared-receipt total is held;
+ * any net payout above that slice remains payable (a payee is not blocked beyond what they
+ * actually owe in unconfirmed receipts, and unrelated payees/refunds are never touched by this).
+ */
 export function refundHeldNetCashDueNgn(db, refundRow, approvedAmountNgn) {
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   return targets
     .filter((t) => Boolean(t.payoutHeldForUnclearedReceipts))
-    .reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
+    .reduce((sum, t) => sum + Math.min(roundMoney(t.amountNgn), roundMoney(t.unclearedReceiptHoldNgn)), 0);
 }
 
 /** Company cut settled at BM approval (non-treasury). Uncleared holds are not auto-settled. */
 export function refundSettledAtApprovalNgn(db, refundRow, approvedAmountNgn) {
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   return targets.reduce((sum, t) => sum + roundMoney(t.companyDeductionNgn), 0);
+}
+
+/**
+ * Company cut must land on the retention ledger before paid_amount is increased.
+ * tables_missing is a deploy hole — fail closed. already_credited / no_amount are success.
+ * @param {{ ok?: boolean, skipped?: boolean, reason?: string, error?: string } | null | undefined} retentionCredit
+ * @param {number} companyRetentionNgn
+ */
+export function assertCompanyRetentionPostedForCut(retentionCredit, companyRetentionNgn) {
+  if (roundMoney(companyRetentionNgn) <= 0) return { ok: true };
+  if (!retentionCredit) {
+    return { ok: false, error: 'Company cut could not be posted to the retention ledger.' };
+  }
+  if (retentionCredit.ok === false) {
+    return {
+      ok: false,
+      error: retentionCredit.error || 'Company cut could not be posted to the retention ledger.',
+    };
+  }
+  if (retentionCredit.skipped && String(retentionCredit.reason || '') === 'tables_missing') {
+    return {
+      ok: false,
+      error: 'Company retention ledger is not ready; cannot settle the company cut on this refund.',
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -305,15 +336,17 @@ export function ensureRefundCompanyRetentionCreditTx(db, refundRow, { approvedAm
 
   const branchId = String(refundRow.branch_id || refundRow.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   try {
-    return creditCompanyRetentionFromRefundTx(db, {
+    const posted = creditCompanyRetentionFromRefundTx(db, {
       refundId,
       branchId,
       amountNgn: companyRetentionNgn,
       actor,
       note: `Company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} from refund ${refundId}`,
     });
+    const gate = assertCompanyRetentionPostedForCut(posted, companyRetentionNgn);
+    if (!gate.ok) return gate;
+    return posted;
   } catch (e) {
-    console.warn('[partnerWallet] ensure company retention credit failed', e?.message || e);
     return { ok: false, error: String(e?.message || e) };
   }
 }
@@ -426,6 +459,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       approvedAmountNgn,
       actor,
     });
+    if (!retentionCredit.ok) return retentionCredit;
     return {
       ok: true,
       skipped: true,
@@ -447,6 +481,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       approvedAmountNgn,
       actor,
     });
+    if (!retentionCredit.ok) return retentionCredit;
     return {
       ok: true,
       skipped: true,
@@ -478,6 +513,24 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const branchId = String(refundRow.branch_id || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const at = new Date().toISOString();
   const credits = [];
+
+  // Company cut must post before paid_amount or wallet credits (fail-closed).
+  let retentionCredit = null;
+  if (companyRetentionNgn > 0) {
+    try {
+      retentionCredit = creditCompanyRetentionFromRefundTx(db, {
+        refundId,
+        branchId,
+        amountNgn: companyRetentionNgn,
+        actor,
+        note: `Company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} from refund ${refundId}`,
+      });
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+    const gate = assertCompanyRetentionPostedForCut(retentionCredit, companyRetentionNgn);
+    if (!gate.ok) return gate;
+  }
 
   if (walletOn && !walletCreditsExist) {
     const ins = db.prepare(`
@@ -524,22 +577,6 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     }
   }
 
-  // Company cut settled at approval (not paid out by cashier).
-  // Company cut accumulates in the branch retention ledger for later BM-approved withdrawal.
-  let retentionCredit = null;
-  if (companyRetentionNgn > 0) {
-    try {
-      retentionCredit = creditCompanyRetentionFromRefundTx(db, {
-        refundId,
-        branchId,
-        amountNgn: companyRetentionNgn,
-        actor,
-        note: `Company cut ₦${companyRetentionNgn.toLocaleString('en-NG')} from refund ${refundId}`,
-      });
-    } catch (e) {
-      console.warn('[partnerWallet] company retention credit failed', e?.message || e);
-    }
-  }
   if (!alreadySettled && settledAtApprovalNgn > 0) {
     const paidNow = roundMoney(
       db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(refundId)

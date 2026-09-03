@@ -5,7 +5,7 @@ import {
   unclearedReceiptFloatBySalesCustomerIds,
   unclearedReceiptFloatForSalesCustomer,
 } from './refundClaimingStaffUnclearedReceipts.js';
-import { refundHeldNetCashDueNgn } from '../finance/partnerWalletCredit.js';
+import { refundHeldNetCashDueNgn, resolveCreditTargets } from '../finance/partnerWalletCredit.js';
 
 function mysqlAvailable() {
   try {
@@ -145,5 +145,77 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
     expect(map.get(CUSTOMER_ID)?.totalNgn || 0).toBe(0);
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(0);
+  });
+
+  it('ignores a receipt posted on a different branch — a cashier there could never confirm it', () => {
+    db.prepare(
+      `INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id)
+       VALUES ('RC-UNCLR-OTHER-BRANCH', ?, 'Payee Customer', 'QT-OTHER-2', 40_000, 'Pending clearance', '2026-05-20', 'BR-LAG')`
+    ).run(CUSTOMER_ID);
+    try {
+      const scopedToKaduna = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID, { branchId: 'BR-KD' });
+      expect(scopedToKaduna.receiptIds).toContain('RC-UNCLR-PAYEE');
+      expect(scopedToKaduna.receiptIds).not.toContain('RC-UNCLR-OTHER-BRANCH');
+      expect(scopedToKaduna.totalNgn).toBe(25_000);
+
+      const scopedToLagos = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID, { branchId: 'BR-LAG' });
+      expect(scopedToLagos.receiptIds).toEqual(['RC-UNCLR-OTHER-BRANCH']);
+      expect(scopedToLagos.totalNgn).toBe(40_000);
+
+      const unscoped = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID);
+      expect(unscoped.totalNgn).toBe(65_000);
+
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(10_000);
+    } finally {
+      db.prepare(`DELETE FROM sales_receipts WHERE id = 'RC-UNCLR-OTHER-BRANCH'`).run();
+    }
+  });
+
+  it('does not let a stale stored hold outlive the receipt it came from', () => {
+    db.prepare(
+      `UPDATE sales_receipts
+       SET status = 'Cleared', finance_reconciliation_saved_at_iso = '2026-05-21T12:00:00.000Z'
+       WHERE id = ?`
+    ).run('RC-UNCLR-PAYEE');
+    const refundRow = {
+      refund_id: 'RF-STALE-SPLIT-1',
+      branch_id: 'BR-KD',
+      customer_id: CUSTOMER_ID,
+      customer_name: 'Payee Customer',
+      reason_category: '["Adjustment"]',
+      split_distributions_json: JSON.stringify([
+        {
+          recipientKind: 'customer',
+          recipientCustomerID: CUSTOMER_ID,
+          amountNgn: 10_000,
+          // Stale snapshot from whenever this split was first written — the receipt behind it
+          // has since been confirmed, so this must not act as a permanent floor.
+          unclearedReceiptHoldNgn: 25_000,
+        },
+      ]),
+    };
+    const targets = resolveCreditTargets(db, refundRow, 10_000);
+    expect(targets).toHaveLength(1);
+    expect(targets[0].unclearedReceiptHoldNgn).toBe(0);
+    expect(targets[0].payoutHeldForUnclearedReceipts).toBe(false);
+    expect(targets[0].unclearedReceiptIds).toEqual([]);
+  });
+
+  it('exposes which receipts back a live hold', () => {
+    const refundRow = {
+      refund_id: 'RF-RECEIPT-IDS-1',
+      branch_id: 'BR-KD',
+      customer_id: CUSTOMER_ID,
+      customer_name: 'Payee Customer',
+      reason_category: '["Adjustment"]',
+      split_distributions_json: JSON.stringify([
+        { recipientKind: 'customer', recipientCustomerID: CUSTOMER_ID, amountNgn: 10_000 },
+      ]),
+    };
+    const targets = resolveCreditTargets(db, refundRow, 10_000);
+    expect(targets).toHaveLength(1);
+    expect(targets[0].payoutHeldForUnclearedReceipts).toBe(true);
+    expect(targets[0].unclearedReceiptIds).toEqual(['RC-UNCLR-PAYEE']);
   });
 });

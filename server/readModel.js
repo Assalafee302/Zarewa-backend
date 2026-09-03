@@ -39,6 +39,7 @@ import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause } from './listQueryOpts.js';
+import { resolveCreditTargets as liveRefundCreditTargets } from './finance/partnerWalletCredit.js';
 /** @param {import('better-sqlite3').Database} db */
 
 /** @type {Map<string, boolean>} */
@@ -2686,6 +2687,43 @@ export function getCustomerRefundDetail(db, refundId) {
   return mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId);
 }
 
+const REFUND_STATUSES_WITH_LIVE_UNCLEARED_HOLD = new Set(['Approved', 'Partially paid']);
+
+/**
+ * Overlay live uncleared-receipt hold amounts (and the receipt ids behind them) onto the stored
+ * split_distributions_json for display. The stored figure is a one-time snapshot from whenever
+ * the split was last written (refund request time) — once a receipt is confirmed afterward, that
+ * snapshot must not keep showing (and gating) a hold that no longer exists, and a cashier needs
+ * to see which receipt to go find and confirm rather than an opaque total.
+ */
+function liveEnrichRefundSplitUnclearedHolds(db, row, splitDistributions, approvedAmountNgn, resolvedStatus) {
+  if (!REFUND_STATUSES_WITH_LIVE_UNCLEARED_HOLD.has(resolvedStatus)) return splitDistributions;
+  if (!Array.isArray(splitDistributions) || !splitDistributions.length) return splitDistributions;
+  let liveTargets;
+  try {
+    liveTargets = liveRefundCreditTargets(db, row, approvedAmountNgn);
+  } catch {
+    return splitDistributions;
+  }
+  if (!Array.isArray(liveTargets) || !liveTargets.length) return splitDistributions;
+  const byKey = new Map(liveTargets.map((t) => [`${t.partyKind}:${t.partyId}`, t]));
+  return splitDistributions.map((s) => {
+    const kindRaw = String(s?.recipientKind ?? s?.recipient_kind ?? '').trim().toLowerCase();
+    const staffId = String(s?.recipientAssociatedStaffID ?? s?.recipient_associated_staff_id ?? '').trim();
+    const customerId = String(s?.recipientCustomerID ?? s?.recipient_customer_id ?? '').trim();
+    const isStaff = kindRaw === 'associated_staff' || kindRaw === 'staff' || (staffId && !customerId);
+    const key = isStaff ? `associated_staff:${staffId || customerId}` : `customer:${customerId}`;
+    const live = byKey.get(key);
+    if (!live) return s;
+    return {
+      ...s,
+      unclearedReceiptHoldNgn: live.unclearedReceiptHoldNgn,
+      payoutHeldForUnclearedReceipts: live.payoutHeldForUnclearedReceipts,
+      unclearedReceiptIds: live.unclearedReceiptIds || [],
+    };
+  });
+}
+
 function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId) {
   let calculationLines = [];
   let suggestedLines = [];
@@ -2721,6 +2759,13 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
   const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
   const resolvedStatus = resolveRefundStatus(db, row);
+  splitDistributions = liveEnrichRefundSplitUnclearedHolds(
+    db,
+    row,
+    splitDistributions,
+    finalApprovedAmountNgn,
+    resolvedStatus
+  );
   return {
     refundID: row.refund_id,
     customerID: row.customer_id,

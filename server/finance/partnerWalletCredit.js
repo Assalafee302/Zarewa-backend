@@ -10,10 +10,7 @@ import {
   applyRefundStaffAllocationDeduction,
 } from '../../shared/lib/refundStaffAllocationDeduction.js';
 import { refundCategoriesAreOverpaymentOnly } from '../../shared/lib/refundCreditApply.js';
-import {
-  unclearedReceiptFloatBySalesCustomerIds,
-  unclearedTotalsMap,
-} from '../sales/refundClaimingStaffUnclearedReceipts.js';
+import { unclearedReceiptFloatBySalesCustomerIds } from '../sales/refundClaimingStaffUnclearedReceipts.js';
 import { getRefundStaffAllocationDeductionRate } from '../orgPolicy.js';
 import {
   creditCompanyRetentionFromRefundTx,
@@ -60,7 +57,7 @@ function branchFilter(scope) {
  * @param {Record<string, unknown>} refundRow
  * @param {number} approvedAmountNgn
  */
-function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
+export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   const approved = roundMoney(approvedAmountNgn);
   if (approved <= 0) return [];
   let splits = [];
@@ -131,11 +128,10 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       refundRow.reason_category,
       calculationLines
     );
-    const unclearedByCustomerId = unclearedTotalsMap(
-      unclearedReceiptFloatBySalesCustomerIds(
-        db,
-        usable.map((s) => s.recipientCustomerID).filter(Boolean)
-      )
+    const unclearedFloatByCustomerId = unclearedReceiptFloatBySalesCustomerIds(
+      db,
+      usable.map((s) => s.recipientCustomerID).filter(Boolean),
+      { branchId: String(refundRow.branch_id || '').trim() }
     );
     const splitSum = usable.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
@@ -146,14 +142,15 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           ? Math.max(0, approved - allocated)
           : roundMoney((approved * s.amountNgn) / splitSum);
         allocated += share;
-        const liveUnclearedHoldNgn = roundMoney(
-          unclearedByCustomerId.get(String(s.recipientCustomerID || '').trim())
-        );
-        const unclearedReceiptHoldNgn = Math.max(
-          liveUnclearedHoldNgn,
-          s.storedUnclearedHoldNgn ?? 0,
-          s.legacyUnclearedOffsetHintNgn ?? 0
-        );
+        const liveUncleared = unclearedFloatByCustomerId.get(String(s.recipientCustomerID || '').trim());
+        const liveUnclearedHoldNgn = roundMoney(liveUncleared?.totalNgn);
+        const unclearedReceiptIds = Array.isArray(liveUncleared?.receiptIds) ? liveUncleared.receiptIds : [];
+        // The live figure is authoritative — it reflects receipts as they stand right now.
+        // storedUnclearedHoldNgn was only ever a snapshot taken when the split was first written
+        // and must not act as a floor once receipts are confirmed, or the hold never clears.
+        // legacyUnclearedOffsetHintNgn is kept as a floor: it is a one-time migration hint for
+        // refunds that predate live tracking and have no other source of truth.
+        const unclearedReceiptHoldNgn = Math.max(liveUnclearedHoldNgn, s.legacyUnclearedOffsetHintNgn ?? 0);
         const withDeduction = applyRefundStaffAllocationDeduction(
           { ...s, amountNgn: share },
           quoteCustomerId,
@@ -202,6 +199,7 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             grossNgn: share,
             companyDeductionNgn,
             unclearedReceiptHoldNgn,
+            unclearedReceiptIds,
             payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
             payeeName,
             payeeBankName,
@@ -227,6 +225,7 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           grossNgn: share,
           companyDeductionNgn,
           unclearedReceiptHoldNgn,
+          unclearedReceiptIds,
           payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
           payeeName,
           payeeBankName,
@@ -240,9 +239,11 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   const customerId = String(refundRow.customer_id || '').trim();
   if (!customerId) return [];
   const resolved = savedCustomerPayoutAccount(db, customerId);
-  const unclearedHoldNgn = roundMoney(
-    unclearedTotalsMap(unclearedReceiptFloatBySalesCustomerIds(db, [customerId])).get(customerId)
-  );
+  const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(db, [customerId], {
+    branchId: String(refundRow.branch_id || '').trim(),
+  }).get(customerId);
+  const unclearedHoldNgn = roundMoney(noSplitUncleared?.totalNgn);
+  const unclearedReceiptIds = Array.isArray(noSplitUncleared?.receiptIds) ? noSplitUncleared.receiptIds : [];
   const payoutHeldForUnclearedReceipts = unclearedHoldNgn > 0 && approved > 0;
   return [
     {
@@ -251,6 +252,7 @@ function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       partyName: String(resolved?.partyName || refundRow.customer_name || customerId).trim(),
       amountNgn: approved,
       unclearedReceiptHoldNgn: unclearedHoldNgn,
+      unclearedReceiptIds,
       payoutHeldForUnclearedReceipts,
       payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
       payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),

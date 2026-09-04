@@ -334,12 +334,17 @@ function jobQuotationForCoilPolicy(db, job) {
   };
 }
 
-/** True when coils / offcut may be used (alu jobs, and stone + Flat sheet / gutter / Coil hybrid). */
+/**
+ * True when coils / offcut may be used (alu jobs, and stone + Flat sheet / gutter / Coil hybrid).
+ * Scoped to this job's own cutting-list product so a sibling product line elsewhere on the same
+ * multi-line quotation (e.g. a "Flat sheet" line next to this job's "Roofing Sheet" line) can't
+ * make a pure stone-metre job expect coil allocation, or vice versa.
+ */
 function jobExpectsCoilAllocation(db, job) {
   if (!jobIsStoneMeter(db, job)) return true;
   const q = jobQuotationForCoilPolicy(db, job);
   if (!q) return false;
-  return quotationExpectsCoilAllocation(q);
+  return quotationExpectsCoilAllocation(q, { jobProductName: job?.product_name });
 }
 
 function jobIsStoneCoilHybrid(db, job) {
@@ -1647,6 +1652,7 @@ function applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, s
     try {
       requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
         stoneMeterQuote: true,
+        jobProductName: job.product_name,
       });
     } catch {
       requiresStoneMetres = false;
@@ -1715,6 +1721,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
     try {
       requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
         stoneMeterQuote: true,
+        jobProductName: job.product_name,
       });
     } catch {
       requiresStoneMetres = false;
@@ -3514,6 +3521,7 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
     try {
       requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
         stoneMeterQuote: true,
+        jobProductName: job.product_name,
       });
     } catch {
       requiresStoneMetres = false;

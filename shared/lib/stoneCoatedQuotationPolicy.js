@@ -304,6 +304,27 @@ export function quotationHasStoneMetreProductLines(products) {
 }
 
 /**
+ * Scope a quotation's product lines to the ones matching one production job / cutting list's own
+ * product (e.g. a job whose cutting list product is "Flat sheet" should only ever see the "Flat
+ * sheet" line — not a sibling "Roofing Sheet" line on the same multi-line quotation). Each cutting
+ * list / production job carries exactly one product (see `cutting_lists.product_name`), so this is
+ * safe to use anywhere a per-job (not whole-quotation) decision is being made.
+ *
+ * Fails open to the full, unscoped list when `jobProductName` is blank or matches none of the
+ * quotation's lines (unknown/legacy job shape) so callers degrade to the prior whole-quotation
+ * behaviour instead of wrongly treating an unresolvable job as having no relevant lines at all.
+ * @param {{ name?: string }[] | null | undefined} products
+ * @param {string | null | undefined} jobProductName
+ */
+export function quotationProductLinesForJobProduct(products, jobProductName) {
+  const list = Array.isArray(products) ? products : [];
+  const jobKey = productLineKey(jobProductName);
+  if (!jobKey) return list;
+  const scoped = list.filter((row) => productLineKey(row?.name) === jobKey);
+  return scoped.length ? scoped : list;
+}
+
+/**
  * Whether the quote has coil-backed lines (gutter / normal flatsheet / coil) for CL metre checks.
  * @param {{ name?: string; qty?: unknown }[] | null | undefined} products
  */
@@ -342,11 +363,19 @@ function treatLinesAsStoneMeterQuote(linesJson, opts) {
 /**
  * Whether completing production should consume stone-coated metre stock (vs stone flatsheet / coil only).
  * @param {object | string | null | undefined} linesJson
- * @param {{ stoneMeterQuote?: boolean } | undefined} [opts]
+ * @param {{ stoneMeterQuote?: boolean, jobProductName?: string | null } | undefined} [opts]
+ *   `jobProductName` scopes the check to one production job's own product line (see
+ *   `quotationProductLinesForJobProduct`) so a sibling "Flat sheet" line on the same multi-line
+ *   quotation doesn't force stone-metre input on a job whose own product is "Roofing Sheet", or
+ *   vice versa. Omit to check the whole quotation (legacy/whole-quotation callers).
  */
 export function quotationRequiresStoneMetreConsumption(linesJson, opts) {
   if (!treatLinesAsStoneMeterQuote(linesJson, opts)) return false;
-  return quotationHasStoneMetreProductLines(parseLinesJsonProducts(linesJson));
+  const products = quotationProductLinesForJobProduct(
+    parseLinesJsonProducts(linesJson),
+    opts?.jobProductName
+  );
+  return quotationHasStoneMetreProductLines(products);
 }
 
 /**

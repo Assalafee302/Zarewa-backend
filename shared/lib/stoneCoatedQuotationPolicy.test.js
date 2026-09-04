@@ -8,6 +8,7 @@ import {
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
   quotationHasStoneMetreProductLines,
+  quotationProductLinesForJobProduct,
   quotationRequiresStoneCoilCuttingListAlignment,
   quotationRequiresStoneFlatsheetConsumption,
   quotationRequiresStoneMetreConsumption,
@@ -185,6 +186,59 @@ describe('stoneCoatedQuotationPolicy — line rules', () => {
     expect(quotationRequiresStoneMetreConsumption(lines)).toBe(true);
   });
 
+  describe('quotationProductLinesForJobProduct (per-job scoping)', () => {
+    it('keeps only the lines matching the job own product', () => {
+      const products = [{ name: 'Roofing Sheet', qty: '100' }, { name: 'Flat sheet', qty: '20' }];
+      expect(quotationProductLinesForJobProduct(products, 'Roofing Sheet')).toEqual([
+        { name: 'Roofing Sheet', qty: '100' },
+      ]);
+      expect(quotationProductLinesForJobProduct(products, 'Flat sheet')).toEqual([
+        { name: 'Flat sheet', qty: '20' },
+      ]);
+    });
+
+    it('fails open to the full list when jobProductName is blank or matches nothing', () => {
+      const products = [{ name: 'Roofing Sheet', qty: '100' }];
+      expect(quotationProductLinesForJobProduct(products, '')).toEqual(products);
+      expect(quotationProductLinesForJobProduct(products, null)).toEqual(products);
+      expect(quotationProductLinesForJobProduct(products, 'Unrelated product')).toEqual(products);
+    });
+  });
+
+  describe('quotationRequiresStoneMetreConsumption is scoped per job on a Roofing Sheet + Flat sheet quote', () => {
+    /** A stone-coated quote with a hybrid roofing + coil-backed flatsheet + stone nail — the bug report scenario. */
+    const hybridQuoteLines = {
+      materialTypeId: 'MAT-005',
+      products: [
+        { name: 'Roofing Sheet', qty: '100' },
+        { name: 'Flat sheet', qty: '30' },
+      ],
+      accessories: [{ name: 'Stone nail', qty: '5' }],
+    };
+
+    it('a job on the Roofing Sheet line requires stone metre consumption, unaffected by the sibling Flat sheet line', () => {
+      expect(
+        quotationRequiresStoneMetreConsumption(hybridQuoteLines, {
+          stoneMeterQuote: true,
+          jobProductName: 'Roofing Sheet',
+        })
+      ).toBe(true);
+    });
+
+    it('a job on the Flat sheet line does NOT require stone metre consumption, unaffected by the sibling Roofing Sheet line', () => {
+      expect(
+        quotationRequiresStoneMetreConsumption(hybridQuoteLines, {
+          stoneMeterQuote: true,
+          jobProductName: 'Flat sheet',
+        })
+      ).toBe(false);
+    });
+
+    it('without job scoping (legacy/whole-quotation callers) both lines make it true — the pre-fix, unscoped behaviour', () => {
+      expect(quotationRequiresStoneMetreConsumption(hybridQuoteLines, { stoneMeterQuote: true })).toBe(true);
+    });
+  });
+
   it('stone ridge yield: 2 m sheet → 6 m ridge; bargeboard → 4 m', () => {
     expect(stoneRidgeMetresPerSheet(2)).toBe(6);
     expect(stoneBargeboardMetresPerSheet(2)).toBe(4);
@@ -333,6 +387,21 @@ describe('quotationExpectsCoilAllocation (stone hybrid)', () => {
         quotationLines: { products: [{ name: 'Coil' }] },
       })
     ).toBe(true);
+  });
+
+  it('bug scenario: Roofing Sheet + Flat sheet on one quote — each job only expects coil for its own product', () => {
+    const hybridQuotation = {
+      stoneMeterQuote: true,
+      quotationLines: {
+        products: [{ name: 'Roofing Sheet', qty: '100' }, { name: 'Flat sheet', qty: '30' }],
+      },
+    };
+    /* Without job scoping the sibling Flat sheet line wrongly pulls the roofing job into coil mode. */
+    expect(quotationExpectsCoilAllocation(hybridQuotation)).toBe(true);
+    /* The Roofing Sheet job's own product line has no coil-backed lines — must not expect coil allocation. */
+    expect(quotationExpectsCoilAllocation(hybridQuotation, { jobProductName: 'Roofing Sheet' })).toBe(false);
+    /* The Flat sheet job's own product line is coil-backed — must expect coil allocation. */
+    expect(quotationExpectsCoilAllocation(hybridQuotation, { jobProductName: 'Flat sheet' })).toBe(true);
   });
 });
 

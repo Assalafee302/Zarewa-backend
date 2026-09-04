@@ -7,6 +7,7 @@ import {
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
   quotationHasStoneCoilBackedProductLines,
+  quotationProductLinesForJobProduct,
 } from './stoneCoatedQuotationPolicy.js';
 
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
@@ -132,9 +133,18 @@ function quotationProductsFromQuotation(quotation) {
   return Array.isArray(q) ? q : [];
 }
 
-/** Stone metre quotes expect coil matching only when Flat sheet, Gutter, and/or Coil lines are present (hybrid jobs). */
-export function quotationExpectsCoilAllocation(quotation) {
-  const products = quotationProductsFromQuotation(quotation);
+/**
+ * Stone metre quotes expect coil matching only when Flat sheet, Gutter, and/or Coil lines are present (hybrid jobs).
+ * @param {Record<string, unknown> | null | undefined} quotation
+ * @param {{ jobProductName?: string | null } | undefined} [opts]
+ *   `jobProductName` scopes the check to one production job's own product line (see
+ *   `quotationProductLinesForJobProduct`) so a job whose own product is "Roofing Sheet" doesn't
+ *   pick up coil allocation just because a sibling "Flat sheet" line exists on the same
+ *   multi-line quotation, and vice versa. Omit to check the whole quotation.
+ */
+export function quotationExpectsCoilAllocation(quotation, opts) {
+  const allProducts = quotationProductsFromQuotation(quotation);
+  const products = quotationProductLinesForJobProduct(allProducts, opts?.jobProductName);
   const mid = String(quotation?.materialTypeId ?? quotation?.material_type_id ?? '').trim();
   const stone =
     quotation?.stoneMeterQuote === true ||

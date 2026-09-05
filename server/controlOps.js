@@ -90,7 +90,11 @@ import {
 import { isEffectivelyFullyPaid } from '../shared/lib/paymentOutstandingTolerance.js';
 import { accountingReceivableOutstandingNgn, quotationWaivedBalanceNgn } from '../shared/lib/customerLedgerCore.js';
 import { appendPaymentRequestTimelineToOfficeThreads } from './officePaymentRequestTimeline.js';
-import { getOrgGovernanceLimits, getRefundStaffAllocationDeductionRate } from './orgPolicy.js';
+import {
+  getOrgGovernanceLimits,
+  getRefundStaffAllocationDeductionRate,
+  getRefundAssociatedStaffDeductionRate,
+} from './orgPolicy.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
 import { backdateWarningForActedDate } from './backdateSignals.js';
 import { resolvePriceListItemFloorNgn } from './pricingResolve.js';
@@ -2818,7 +2822,8 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     );
 
     const splitsForStore = applyRefundStaffAllocationDeductions(splitsWithWaiverAuth, customerID, {
-      deductionRate: getRefundStaffAllocationDeductionRate(db),
+      claimingStaffDeductionRate: getRefundStaffAllocationDeductionRate(db),
+      associatedStaffDeductionRate: getRefundAssociatedStaffDeductionRate(db),
       unclearedByCustomerId: unclearedTotalsMap(
         unclearedReceiptFloatBySalesCustomerIds(
           db,

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   REFUND_STAFF_ALLOCATION_DEDUCTION_RATE,
+  REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE,
   applyRefundStaffAllocationDeduction,
   applyRefundStaffAllocationDeductions,
   normalizeRefundStaffAllocationDeductionRate,
+  refundSplitIsAssociatedStaff,
   refundSplitTakesStaffDeduction,
   refundStaffAllocationDeductionAmounts,
   sumRefundStaffCompanyDeductionNgn,
@@ -12,13 +14,13 @@ import {
 } from './refundStaffAllocationDeduction.js';
 
 describe('refundStaffAllocationDeduction', () => {
-  it('uses 3% company cut by default', () => {
-    expect(REFUND_STAFF_ALLOCATION_DEDUCTION_RATE).toBe(0.03);
+  it('uses 20% company cut by default (company / claiming staff)', () => {
+    expect(REFUND_STAFF_ALLOCATION_DEDUCTION_RATE).toBe(0.2);
     expect(refundStaffAllocationDeductionAmounts(19525)).toEqual({
       grossNgn: 19525,
-      deductionRate: 0.03,
-      companyDeductionNgn: 586,
-      netPayoutNgn: 18939,
+      deductionRate: 0.2,
+      companyDeductionNgn: 3905,
+      netPayoutNgn: 15620,
     });
   });
 
@@ -148,5 +150,73 @@ describe('refundStaffAllocationDeduction', () => {
     expect(sumRefundStaffUnclearedOffsetNgn(rows)).toBe(0);
     expect(sumRefundStaffNetPayoutNgn(rows)).toBe(4000 + 12_000);
     expect(rows[1].payoutHeldForUnclearedReceipts).toBe(true);
+  });
+
+  it('identifies associated staff (driver/installer) vs. claiming staff by recipientKind', () => {
+    expect(
+      refundSplitIsAssociatedStaff({ recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AS-1' })
+    ).toBe(true);
+    expect(
+      refundSplitIsAssociatedStaff({ recipientKind: 'customer', recipientCustomerID: 'CUS-CLAIM' })
+    ).toBe(false);
+  });
+
+  it('applies 3% to associated staff (Transport/Installation) and 20% to claiming staff by default — no opts needed', () => {
+    const rows = applyRefundStaffAllocationDeductions(
+      [
+        {
+          recipientKind: 'associated_staff',
+          recipientAssociatedStaffID: 'AS-DRIVER',
+          amountNgn: 14_300,
+          note: 'Transport',
+        },
+        {
+          recipientKind: 'associated_staff',
+          recipientAssociatedStaffID: 'AS-INSTALLER',
+          amountNgn: 20_000,
+          note: 'Installation',
+        },
+        {
+          recipientKind: 'customer',
+          recipientCustomerID: 'CUS-CLAIM',
+          amountNgn: 15_000,
+          note: 'Claiming staff',
+        },
+      ],
+      'CUS-QUOTE'
+    );
+    const [driver, installer, claimant] = rows;
+    expect(driver.deductionRate).toBe(REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE);
+    expect(driver.companyDeductionNgn).toBe(429);
+    expect(driver.netPayoutNgn).toBe(13_871);
+    expect(installer.deductionRate).toBe(REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE);
+    expect(installer.companyDeductionNgn).toBe(600);
+    expect(installer.netPayoutNgn).toBe(19_400);
+    expect(claimant.deductionRate).toBe(REFUND_STAFF_ALLOCATION_DEDUCTION_RATE);
+    expect(claimant.companyDeductionNgn).toBe(3_000);
+    expect(claimant.netPayoutNgn).toBe(12_000);
+  });
+
+  it('lets org policy set the two rates independently', () => {
+    const rows = applyRefundStaffAllocationDeductions(
+      [
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AS-1', amountNgn: 10_000 },
+        { recipientKind: 'customer', recipientCustomerID: 'CUS-CLAIM', amountNgn: 10_000 },
+      ],
+      'CUS-QUOTE',
+      { associatedStaffDeductionRate: 0.05, claimingStaffDeductionRate: 0.15 }
+    );
+    expect(rows[0].companyDeductionNgn).toBe(500);
+    expect(rows[1].companyDeductionNgn).toBe(1_500);
+  });
+
+  it('never deducts from the quote customer’s own refund, regardless of either rate', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 50_000 },
+      'CUS-QUOTE',
+      { associatedStaffDeductionRate: 0.5, claimingStaffDeductionRate: 0.5 }
+    );
+    expect(row.companyDeductionNgn).toBe(0);
+    expect(row.netPayoutNgn).toBe(50_000);
   });
 });

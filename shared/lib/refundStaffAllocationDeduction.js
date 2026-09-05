@@ -1,14 +1,27 @@
 /**
  * Company cut on refund allocations paid to associated / claiming staff (not the quote customer).
+ * Two different rates apply depending on who is being paid:
+ *   - Company / claiming staff (an HR login claiming via their linked sales-customer account,
+ *     recipientKind 'customer' with an id different from the quote's own customer) — 20%.
+ *   - Associated staff — drivers (Transport) and installers/roofers (Installation),
+ *     recipientKind 'associated_staff' — 3%.
+ *   - The quote customer themselves — 0%, no cut at all.
  * Gross allocation stays on the refund for headroom; net after company cut is what Finance pays out.
  * Uncleared receipt float is informational only — it may block payout until cleared but is never
  * auto-settled into paid_amount at approval.
  */
 
-export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.03;
+/** Company / claiming staff — an HR login claiming a refund via their own customer account. */
+export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.2;
 
-/** Default percent for Settings / org policy (Admin/MD). */
-export const REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT = 3;
+/** Default percent for Settings / org policy (Admin/MD) — company / claiming staff. */
+export const REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT = 20;
+
+/** Associated staff — drivers (Transport) and installers/roofers (Installation). */
+export const REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE = 0.03;
+
+/** Default percent for Settings / org policy (Admin/MD) — associated staff (driver/installer). */
+export const REFUND_ASSOCIATED_STAFF_DEDUCTION_PCT_DEFAULT = 3;
 
 export function roundRefundStaffMoney(value) {
   return Math.round(Number(value) || 0);
@@ -17,20 +30,42 @@ export function roundRefundStaffMoney(value) {
 /**
  * Normalize Admin/MD percent (0–99) or legacy rate (0–1) into a deduction rate.
  * 0 disables the company cut. 100 is rejected (use 99 max).
+ * @param {number | string | null | undefined} raw
+ * @param {number} [fallback] used when raw is missing/invalid — pass the category's own default
+ *   (REFUND_STAFF_ALLOCATION_DEDUCTION_RATE for company/claiming staff,
+ *   REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE for drivers/installers) rather than relying on this
+ *   function's own default, which only matches the company/claiming-staff category.
  */
-export function normalizeRefundStaffAllocationDeductionRate(raw) {
-  if (raw == null || raw === '') return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+export function normalizeRefundStaffAllocationDeductionRate(
+  raw,
+  fallback = REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+) {
+  if (raw == null || raw === '') return fallback;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+  if (!Number.isFinite(n) || n < 0) return fallback;
   if (n === 0) return 0;
   if (n > 0 && n < 1) return n;
   if (n >= 1 && n <= 99) return n / 100;
-  return REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+  return fallback;
 }
 
-export function refundStaffAllocationDeductionPctFromRate(rate) {
-  const r = normalizeRefundStaffAllocationDeductionRate(rate);
+export function refundStaffAllocationDeductionPctFromRate(
+  rate,
+  fallback = REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+) {
+  const r = normalizeRefundStaffAllocationDeductionRate(rate, fallback);
   return Math.round(r * 100);
+}
+
+/** True when this split is a driver/installer (associated staff) rather than claiming staff. */
+export function refundSplitIsAssociatedStaff(split) {
+  const kind = String(split?.recipientKind || split?.payoutAccount?.partyKind || '')
+    .trim()
+    .toLowerCase();
+  if (kind === 'associated_staff' || kind === 'staff') return true;
+  const staffId = String(split?.recipientAssociatedStaffID || '').trim();
+  const customerId = String(split?.recipientCustomerID || '').trim();
+  return Boolean(staffId) && !customerId;
 }
 
 /**
@@ -91,10 +126,15 @@ export function refundStaffAllocationDeductionAmounts(
  * @param {string} [quoteCustomerId]
  * @param {{
  *   deductionRate?: number,
+ *   associatedStaffDeductionRate?: number,
+ *   claimingStaffDeductionRate?: number,
  *   unclearedReceiptHoldNgn?: number,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
- * }} [opts]
+ * }} [opts] `deductionRate` forces one exact rate regardless of category (used by callers that
+ *   already resolved the right rate, and by tests). Otherwise the rate is picked by category:
+ *   `associatedStaffDeductionRate` for drivers/installers, `claimingStaffDeductionRate` for
+ *   company/claiming staff — each falling back to that category's own default.
  */
 export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '', opts = {}) {
   const amountNgn = roundRefundStaffMoney(split?.amountNgn ?? split?.amount_ngn);
@@ -108,10 +148,18 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
   const waiverNote = String(
     split?.companyCutWaiverNote ?? split?.company_cut_waiver_note ?? ''
   ).trim();
+  const isAssociatedStaffKind = refundSplitIsAssociatedStaff(split);
+  const categoryDefaultRate = isAssociatedStaffKind
+    ? REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE
+    : REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
+  const categoryOptsRate = isAssociatedStaffKind
+    ? opts.associatedStaffDeductionRate
+    : opts.claimingStaffDeductionRate;
   const deductionRate = companyCutWaived
     ? 0
     : normalizeRefundStaffAllocationDeductionRate(
-        opts.deductionRate ?? split?.deductionRate ?? REFUND_STAFF_ALLOCATION_DEDUCTION_RATE
+        opts.deductionRate ?? categoryOptsRate ?? split?.deductionRate ?? categoryDefaultRate,
+        categoryDefaultRate
       );
   const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
   const overpaymentOnly = opts.overpaymentOnly === true;
@@ -156,13 +204,14 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
  * @param {string} [quoteCustomerId]
  * @param {{
  *   deductionRate?: number,
+ *   associatedStaffDeductionRate?: number,
+ *   claimingStaffDeductionRate?: number,
  *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
-  const rate = opts.deductionRate;
   const byCust = opts.unclearedByCustomerId;
   const overpaymentOnly = opts.overpaymentOnly === true;
   const getHold = (customerId) => {
@@ -173,7 +222,9 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
   };
   return (Array.isArray(splits) ? splits : []).map((s) =>
     applyRefundStaffAllocationDeduction(s, quoteCustomerId, {
-      deductionRate: rate,
+      deductionRate: opts.deductionRate,
+      associatedStaffDeductionRate: opts.associatedStaffDeductionRate,
+      claimingStaffDeductionRate: opts.claimingStaffDeductionRate,
       unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
       honorCompanyCutWaiver: opts.honorCompanyCutWaiver,
       overpaymentOnly,

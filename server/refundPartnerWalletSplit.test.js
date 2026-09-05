@@ -113,12 +113,15 @@ describe('refund partner wallet split (no customer bank)', () => {
       )
       .all('RF-WALLET-SPLIT-1');
     expect(credits).toHaveLength(2);
-    // Staff splits take the company cut (default 3%) — wallet holds net only.
+    // Associated staff (driver, Transport) takes the 3% cut; claiming staff (a customer-kind
+    // payee different from the quote's own customer 'CUS-NOBANK') takes the 20% cut.
     expect(credits.find((c) => c.party_id === 'AST-DRV-WALLET')?.amount_ngn).toBe(Math.round(transportNgn * 0.97));
-    expect(credits.find((c) => c.party_id === 'CUS-CLAIM-STAFF')?.amount_ngn).toBe(Math.round(remainderNgn * 0.97));
+    expect(credits.find((c) => c.party_id === 'CUS-CLAIM-STAFF')?.amount_ngn).toBe(Math.round(remainderNgn * 0.8));
     expect(credits.find((c) => c.party_id === 'AST-DRV-WALLET')?.open_ngn).toBe(Math.round(transportNgn * 0.97));
-    expect(credits.find((c) => c.party_id === 'CUS-CLAIM-STAFF')?.open_ngn).toBe(Math.round(remainderNgn * 0.97));
-    expect(walletCredit.companyRetentionNgn).toBe(Math.round((transportNgn + remainderNgn) * 0.03));
+    expect(credits.find((c) => c.party_id === 'CUS-CLAIM-STAFF')?.open_ngn).toBe(Math.round(remainderNgn * 0.8));
+    expect(walletCredit.companyRetentionNgn).toBe(
+      Math.round(transportNgn * 0.03) + Math.round(remainderNgn * 0.2)
+    );
   });
 
   it('cashier withdraws staff wallet slice after split credit', () => {
@@ -130,7 +133,7 @@ describe('refund partner wallet split (no customer bank)', () => {
     const withdraw = withdrawPartnerWallet(db, {
       partyKind: 'associated_staff',
       partyId: 'AST-DRV-WALLET',
-      amountNgn: Math.round(7_000 * 0.97),
+      amountNgn: Math.round(7_000 * 0.97), // 3% associated-staff cut
       treasuryAccountId,
       reference: 'PWV-SPLIT-TEST',
       dateISO: '2026-03-29',

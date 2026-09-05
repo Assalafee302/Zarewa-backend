@@ -15,6 +15,8 @@ import {
 } from '../shared/expenseCategoryPolicy.js';
 import {
   REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT,
+  REFUND_ASSOCIATED_STAFF_DEDUCTION_PCT_DEFAULT,
+  REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE,
   normalizeRefundStaffAllocationDeductionRate,
   refundStaffAllocationDeductionPctFromRate,
 } from '../shared/lib/refundStaffAllocationDeduction.js';
@@ -26,6 +28,7 @@ const KEY_OTHERS_REVIEW = 'expense.others_finance_review_threshold_ngn';
 const KEY_AP3_ALERT = 'expense.ap3_unclassified_alert_threshold_ngn';
 const KEY_OTHERS_COACH_PCT = 'expense.others_branch_coach_threshold_pct';
 const KEY_REFUND_STAFF_CUT_PCT = 'refund.staff_allocation_deduction_pct';
+const KEY_REFUND_ASSOCIATED_STAFF_CUT_PCT = 'refund.associated_staff_deduction_pct';
 
 function nowIso() {
   return new Date().toISOString();
@@ -61,6 +64,7 @@ export function getOrgGovernanceLimits(db) {
     ap3UnclassifiedAlertThresholdNgn: AP3_UNCLASSIFIED_ALERT_THRESHOLD_NGN,
     othersBranchCoachThresholdPct: OTHERS_BRANCH_COACH_THRESHOLD_PCT,
     refundStaffAllocationDeductionPct: REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT,
+    refundAssociatedStaffDeductionPct: REFUND_ASSOCIATED_STAFF_DEDUCTION_PCT_DEFAULT,
   };
   if (!orgPolicyTablesReady(db)) return out;
   const eRow = db.prepare(`SELECT value_json FROM org_policy_kv WHERE policy_key = ?`).get(KEY_EXPENSE);
@@ -72,6 +76,9 @@ export function getOrgGovernanceLimits(db) {
   const staffCutRow = db
     .prepare(`SELECT value_json FROM org_policy_kv WHERE policy_key = ?`)
     .get(KEY_REFUND_STAFF_CUT_PCT);
+  const associatedStaffCutRow = db
+    .prepare(`SELECT value_json FROM org_policy_kv WHERE policy_key = ?`)
+    .get(KEY_REFUND_ASSOCIATED_STAFF_CUT_PCT);
   if (eRow?.value_json != null) {
     try {
       const n = Number(JSON.parse(String(eRow.value_json)));
@@ -130,13 +137,32 @@ export function getOrgGovernanceLimits(db) {
       /* keep default */
     }
   }
+  if (associatedStaffCutRow?.value_json != null) {
+    try {
+      const n = Number(JSON.parse(String(associatedStaffCutRow.value_json)));
+      if (Number.isFinite(n) && n >= 0 && n <= 99) {
+        out.refundAssociatedStaffDeductionPct = refundStaffAllocationDeductionPctFromRate(
+          n,
+          REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE
+        );
+      }
+    } catch {
+      /* keep default */
+    }
+  }
   return out;
 }
 
-/** Rate 0–0.99 from org policy for staff refund company cut. */
+/** Rate 0–0.99 from org policy for company/claiming-staff refund company cut. */
 export function getRefundStaffAllocationDeductionRate(db) {
   const pct = getOrgGovernanceLimits(db).refundStaffAllocationDeductionPct;
   return normalizeRefundStaffAllocationDeductionRate(pct);
+}
+
+/** Rate 0–0.99 from org policy for associated-staff (driver/installer) refund company cut. */
+export function getRefundAssociatedStaffDeductionRate(db) {
+  const pct = getOrgGovernanceLimits(db).refundAssociatedStaffDeductionPct;
+  return normalizeRefundStaffAllocationDeductionRate(pct, REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE);
 }
 
 function newPolicyAuditId() {
@@ -152,6 +178,8 @@ function newPolicyAuditId() {
  *   othersFinanceReviewThresholdNgn?: number;
  *   ap3UnclassifiedAlertThresholdNgn?: number;
  *   othersBranchCoachThresholdPct?: number;
+ *   refundStaffAllocationDeductionPct?: number;
+ *   refundAssociatedStaffDeductionPct?: number;
  * }} patch
  * @param {{ id?: string; displayName?: string } | null} actor
  */
@@ -166,6 +194,7 @@ export function setOrgGovernanceLimits(db, patch, actor) {
   const ap3 = patch?.ap3UnclassifiedAlertThresholdNgn;
   const coachPct = patch?.othersBranchCoachThresholdPct;
   const staffCutPct = patch?.refundStaffAllocationDeductionPct;
+  const associatedStaffCutPct = patch?.refundAssociatedStaffDeductionPct;
   if (
     exp === undefined &&
     ref === undefined &&
@@ -173,7 +202,8 @@ export function setOrgGovernanceLimits(db, patch, actor) {
     oRev === undefined &&
     ap3 === undefined &&
     coachPct === undefined &&
-    staffCutPct === undefined
+    staffCutPct === undefined &&
+    associatedStaffCutPct === undefined
   ) {
     return { ok: false, error: 'No limit fields to update.' };
   }
@@ -207,6 +237,17 @@ export function setOrgGovernanceLimits(db, patch, actor) {
       error: 'Staff refund company cut must be between 0 and 99 percent.',
     };
   }
+  if (
+    associatedStaffCutPct !== undefined &&
+    (!Number.isFinite(Number(associatedStaffCutPct)) ||
+      Number(associatedStaffCutPct) < 0 ||
+      Number(associatedStaffCutPct) > 99)
+  ) {
+    return {
+      ok: false,
+      error: 'Associated staff (driver/installer) refund company cut must be between 0 and 99 percent.',
+    };
+  }
 
   const before = getOrgGovernanceLimits(db);
   const after = { ...before };
@@ -219,6 +260,12 @@ export function setOrgGovernanceLimits(db, patch, actor) {
   if (staffCutPct !== undefined) {
     after.refundStaffAllocationDeductionPct = refundStaffAllocationDeductionPctFromRate(
       Number(staffCutPct)
+    );
+  }
+  if (associatedStaffCutPct !== undefined) {
+    after.refundAssociatedStaffDeductionPct = refundStaffAllocationDeductionPctFromRate(
+      Number(associatedStaffCutPct),
+      REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE
     );
   }
 
@@ -345,6 +392,23 @@ export function setOrgGovernanceLimits(db, patch, actor) {
         `INSERT INTO org_policy_audit (id, policy_key, old_value_json, new_value_json, actor_user_id, actor_display, created_at_iso)
          VALUES (?,?,?,?,?,?,?)`
       ).run(newPolicyAuditId(), KEY_REFUND_STAFF_CUT_PCT, oldV, newV, uid, dname, t);
+    }
+    if (associatedStaffCutPct !== undefined) {
+      const oldV = JSON.stringify(before.refundAssociatedStaffDeductionPct);
+      const newV = JSON.stringify(after.refundAssociatedStaffDeductionPct);
+      db.prepare(
+        `INSERT INTO org_policy_kv (policy_key, value_json, updated_at_iso, updated_by_user_id, updated_by_display)
+         VALUES (?,?,?,?,?)
+         ON CONFLICT(policy_key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at_iso = excluded.updated_at_iso,
+           updated_by_user_id = excluded.updated_by_user_id,
+           updated_by_display = excluded.updated_by_display`
+      ).run(KEY_REFUND_ASSOCIATED_STAFF_CUT_PCT, newV, t, uid, dname);
+      db.prepare(
+        `INSERT INTO org_policy_audit (id, policy_key, old_value_json, new_value_json, actor_user_id, actor_display, created_at_iso)
+         VALUES (?,?,?,?,?,?,?)`
+      ).run(newPolicyAuditId(), KEY_REFUND_ASSOCIATED_STAFF_CUT_PCT, oldV, newV, uid, dname, t);
     }
   })();
 

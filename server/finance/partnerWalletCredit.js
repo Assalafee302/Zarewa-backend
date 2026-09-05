@@ -11,7 +11,10 @@ import {
 } from '../../shared/lib/refundStaffAllocationDeduction.js';
 import { refundCategoriesAreOverpaymentOnly } from '../../shared/lib/refundCreditApply.js';
 import { unclearedReceiptFloatBySalesCustomerIds } from '../sales/refundClaimingStaffUnclearedReceipts.js';
-import { getRefundStaffAllocationDeductionRate } from '../orgPolicy.js';
+import {
+  getRefundStaffAllocationDeductionRate,
+  getRefundAssociatedStaffDeductionRate,
+} from '../orgPolicy.js';
 import {
   creditCompanyRetentionFromRefundTx,
   refundCompanyRetentionTablesReady,
@@ -116,7 +119,10 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 
   if (usable.length > 0) {
     const quoteCustomerId = String(refundRow.customer_id || '').trim();
-    const deductionRate = getRefundStaffAllocationDeductionRate(db);
+    // Company/claiming staff (a customer-kind payee that isn't the quote's own customer) and
+    // associated staff (drivers/installers) take different company-cut rates.
+    const claimingStaffDeductionRate = getRefundStaffAllocationDeductionRate(db);
+    const associatedStaffDeductionRate = getRefundAssociatedStaffDeductionRate(db);
     let calculationLines = [];
     try {
       const parsed = JSON.parse(String(refundRow.calculation_lines_json || '[]'));
@@ -155,7 +161,8 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           { ...s, amountNgn: share },
           quoteCustomerId,
           {
-            deductionRate,
+            associatedStaffDeductionRate,
+            claimingStaffDeductionRate,
             unclearedReceiptHoldNgn,
             honorCompanyCutWaiver: true,
             overpaymentOnly,

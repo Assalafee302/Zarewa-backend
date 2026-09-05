@@ -2482,6 +2482,8 @@ export function registerHttpApi(app, db) {
           othersFinanceReviewThresholdNgn: body.othersFinanceReviewThresholdNgn,
           ap3UnclassifiedAlertThresholdNgn: body.ap3UnclassifiedAlertThresholdNgn,
           othersBranchCoachThresholdPct: body.othersBranchCoachThresholdPct,
+          refundStaffAllocationDeductionPct: body.refundStaffAllocationDeductionPct,
+          refundAssociatedStaffDeductionPct: body.refundAssociatedStaffDeductionPct,
         },
         req.user
       );

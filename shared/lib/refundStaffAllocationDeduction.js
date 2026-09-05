@@ -5,10 +5,10 @@
  * auto-settled into paid_amount at approval.
  */
 
-export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.2;
+export const REFUND_STAFF_ALLOCATION_DEDUCTION_RATE = 0.03;
 
 /** Default percent for Settings / org policy (Admin/MD). */
-export const REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT = 20;
+export const REFUND_STAFF_ALLOCATION_DEDUCTION_PCT_DEFAULT = 3;
 
 export function roundRefundStaffMoney(value) {
   return Math.round(Number(value) || 0);

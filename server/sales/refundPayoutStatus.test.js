@@ -125,13 +125,13 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       actor: { id: actor?.id, displayName: actor?.displayName },
     });
     expect(r.ok).toBe(true);
-    expect(r.settledAtApprovalNgn).toBe(12_240);
+    expect(r.settledAtApprovalNgn).toBe(1_836);
 
     const updated = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
-    expect(Number(updated.paid_amount_ngn)).toBe(12_240);
+    expect(Number(updated.paid_amount_ngn)).toBe(1_836);
     expect(String(updated.status)).toBe('Approved');
     expect(resolveRefundStatus(db, updated)).toBe('Approved');
-    expect(refundCashOutstandingNgn(db, updated)).toBe(48_960);
+    expect(refundCashOutstandingNgn(db, updated)).toBe(59_364);
   });
 
   it('repairs wrongly Paid refunds with legacy uncleared offset in payment note', () => {
@@ -149,11 +149,13 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(repair.ok).toBe(true);
     expect(repair.changed).toBe(true);
     expect(repair.toStatus).toBe('Approved');
-    expect(repair.toPaidAmountNgn).toBe(12_240);
+    // Repair recomputes live at the current company-cut rate (3%) — the stale note/split above
+    // predate that recompute and are intentionally left mismatched to prove repair corrects them.
+    expect(repair.toPaidAmountNgn).toBe(1_836);
 
     const after = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, after)).toBe('Approved');
-    expect(refundCashOutstandingNgn(db, after)).toBe(48_960);
+    expect(refundCashOutstandingNgn(db, after)).toBe(59_364);
   });
 
   it('marks Partially paid when treasury paid some but not all net cash due', () => {
@@ -181,10 +183,11 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       'Partial staff payout',
       'Finance'
     );
-    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 32240 WHERE refund_id = ?`).run(REFUND_ID);
+    // 1,836 company cut (3%) + 20,000 treasury payout so far.
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 21836 WHERE refund_id = ?`).run(REFUND_ID);
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, row)).toBe('Partially paid');
-    expect(refundCashOutstandingNgn(db, row)).toBe(28_960);
+    expect(refundCashOutstandingNgn(db, row)).toBe(39_364);
   });
 
   it('marks Paid when treasury covers full net cash due without wallet', () => {
@@ -205,7 +208,7 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       '2026-08-29T12:00:00.000Z',
       'REFUND_PAYOUT',
       acct.id,
-      48_960,
+      59_364,
       'REFUND',
       REFUND_ID,
       'Full staff payout',

@@ -12,13 +12,13 @@ import {
 } from './refundStaffAllocationDeduction.js';
 
 describe('refundStaffAllocationDeduction', () => {
-  it('uses 20% company cut by default', () => {
-    expect(REFUND_STAFF_ALLOCATION_DEDUCTION_RATE).toBe(0.2);
+  it('uses 3% company cut by default', () => {
+    expect(REFUND_STAFF_ALLOCATION_DEDUCTION_RATE).toBe(0.03);
     expect(refundStaffAllocationDeductionAmounts(19525)).toEqual({
       grossNgn: 19525,
-      deductionRate: 0.2,
-      companyDeductionNgn: 3905,
-      netPayoutNgn: 15620,
+      deductionRate: 0.03,
+      companyDeductionNgn: 586,
+      netPayoutNgn: 18939,
     });
   });
 

@@ -125,7 +125,7 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     else process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 = prevAssoc;
   });
 
-  it('reduces paid_amount by 20% company cut and skips wallet rows', () => {
+  it('reduces paid_amount by 3% company cut and skips wallet rows', () => {
     const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_WALLET_OFF);
     const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
     const r = creditRefundToPartnerWalletTx(db, refundRow, {
@@ -134,18 +134,18 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.skippedWallet).toBe(true);
-    expect(r.companyRetentionNgn).toBe(2_000);
-    expect(r.settledAtApprovalNgn).toBe(2_000);
+    expect(r.companyRetentionNgn).toBe(300);
+    expect(r.settledAtApprovalNgn).toBe(300);
     expect(r.credits || []).toHaveLength(0);
 
     const updated = db.prepare(`SELECT paid_amount_ngn, payment_note, status FROM customer_refunds WHERE refund_id = ?`).get(
       REFUND_WALLET_OFF
     );
-    expect(Number(updated.paid_amount_ngn)).toBe(2_000);
+    expect(Number(updated.paid_amount_ngn)).toBe(300);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
     expect(String(updated.status || '')).toBe('Approved');
-    // Outstanding for cashier = 10000 - 2000 = 8000 (net)
-    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(8_000);
+    // Outstanding for cashier = 10000 - 300 = 9700 (net)
+    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(9_700);
 
     const walletRows = db
       .prepare(`SELECT COUNT(*) AS c FROM partner_wallet_entries WHERE refund_id = ?`)
@@ -157,8 +157,8 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
         `SELECT amount_ngn, open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`
       )
       .get(REFUND_WALLET_OFF);
-    expect(Number(retention?.amount_ngn)).toBe(2_000);
-    expect(Number(retention?.open_ngn)).toBe(2_000);
+    expect(Number(retention?.amount_ngn)).toBe(300);
+    expect(Number(retention?.open_ngn)).toBe(300);
   });
 
   it('backfills paid_amount when wallet credits exist but company cut was not settled', () => {
@@ -212,7 +212,7 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
       'Driver Payee',
       'Test Bank',
       '1111222233',
-      'net after 20% company cut',
+      'net after 3% company cut',
       '2026-03-29T11:00:00.000Z'
     );
     const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_BACKFILL);
@@ -223,21 +223,21 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.backfilledSettlement).toBe(true);
-    expect(r.companyRetentionNgn).toBe(2_000);
+    expect(r.companyRetentionNgn).toBe(300);
 
     const updated = db.prepare(`SELECT paid_amount_ngn, payment_note FROM customer_refunds WHERE refund_id = ?`).get(
       REFUND_BACKFILL
     );
-    expect(Number(updated.paid_amount_ngn)).toBe(2_000);
+    expect(Number(updated.paid_amount_ngn)).toBe(300);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
-    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(8_000);
+    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(9_700);
 
     const retention = db
       .prepare(
         `SELECT amount_ngn, open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`
       )
       .get(REFUND_BACKFILL);
-    expect(Number(retention?.amount_ngn)).toBe(2_000);
+    expect(Number(retention?.amount_ngn)).toBe(300);
   });
 
   it('backfills retention from payment note when ledger row was missing at approval', () => {

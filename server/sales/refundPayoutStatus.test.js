@@ -10,7 +10,10 @@ import {
   resolveRefundStatus,
   refundCashOutstandingNgn,
   refundMoneyOutWithinApproved,
+  buildRefundSettlementSummary,
+  refundHasPayeeMoneyOut,
 } from './refundPayoutStatus.js';
+import { cancelApprovedRefundBeforePay } from '../controlOps.js';
 
 const prevWallet = process.env.ZAREWA_PARTNER_WALLET_V1;
 const prevAssoc = process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1;
@@ -128,7 +131,9 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(r.settledAtApprovalNgn).toBe(1_836);
 
     const updated = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
-    expect(Number(updated.paid_amount_ngn)).toBe(1_836);
+    // Company cut must not inflate paid_amount — retention ledger only.
+    expect(Number(updated.paid_amount_ngn)).toBe(0);
+    expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
     expect(String(updated.status)).toBe('Approved');
     expect(resolveRefundStatus(db, updated)).toBe('Approved');
     expect(refundCashOutstandingNgn(db, updated)).toBe(59_364);
@@ -149,9 +154,8 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(repair.ok).toBe(true);
     expect(repair.changed).toBe(true);
     expect(repair.toStatus).toBe('Approved');
-    // Repair recomputes live at the current company-cut rate (3%) — the stale note/split above
-    // predate that recompute and are intentionally left mismatched to prove repair corrects them.
-    expect(repair.toPaidAmountNgn).toBe(1_836);
+    // paid_amount strips company cut — nothing left to payees yet.
+    expect(repair.toPaidAmountNgn).toBe(0);
 
     const after = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, after)).toBe('Approved');
@@ -183,8 +187,8 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       'Partial staff payout',
       'Finance'
     );
-    // 1,836 company cut (3%) + 20,000 treasury payout so far.
-    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 21836 WHERE refund_id = ?`).run(REFUND_ID);
+    // Payee-only paid_amount (treasury). Company cut stays off paid_amount.
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 20000 WHERE refund_id = ?`).run(REFUND_ID);
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, row)).toBe('Partially paid');
     expect(refundCashOutstandingNgn(db, row)).toBe(39_364);
@@ -214,7 +218,7 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       'Full staff payout',
       'Finance'
     );
-    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 61200 WHERE refund_id = ?`).run(REFUND_ID);
+    db.prepare(`UPDATE customer_refunds SET paid_amount_ngn = 59364 WHERE refund_id = ?`).run(REFUND_ID);
     const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
     expect(resolveRefundStatus(db, row)).toBe('Paid');
     expect(refundCashOutstandingNgn(db, row)).toBe(0);
@@ -285,6 +289,42 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
     expect(String(second.error || '')).toMatch(/exceeds the approved refund balance|money out exceeds/i);
     const afterSecond = db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(OVERPAY_ID);
     expect(Number(afterSecond.paid_amount_ngn)).toBe(6_000);
+  });
+
+  it('allows cancel after company cut when no payee money has left', () => {
+    const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    const actor = db.prepare(`SELECT id, display_name AS displayName, role_key AS roleKey FROM app_users LIMIT 1`).get();
+    const credit = creditRefundToPartnerWalletTx(db, refundRow, {
+      approvedAmountNgn: 61_200,
+      actor: { id: actor?.id, displayName: actor?.displayName },
+    });
+    expect(credit.ok).toBe(true);
+    expect(credit.companyRetentionNgn).toBe(1_836);
+
+    const afterCut = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    expect(Number(afterCut.paid_amount_ngn)).toBe(0);
+    expect(refundHasPayeeMoneyOut(db, afterCut)).toBe(false);
+
+    const summary = buildRefundSettlementSummary(db, afterCut);
+    expect(summary.companyCutNgn).toBe(1_836);
+    expect(summary.cashOutstandingNgn).toBe(59_364);
+    expect(summary.canCancelBeforePay).toBe(true);
+    expect(summary.publicLabel).toMatch(/Ready|Approved/i);
+
+    const cancelled = cancelApprovedRefundBeforePay(
+      db,
+      REFUND_ID,
+      { note: 'Wrong payee — cancel before cash out' },
+      { id: actor?.id, displayName: actor?.displayName, roleKey: actor?.roleKey }
+    );
+    expect(cancelled.ok).toBe(true);
+    const row = db.prepare(`SELECT status, paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    expect(String(row.status)).toBe('Cancelled');
+    expect(Number(row.paid_amount_ngn)).toBe(0);
+    const retention = db
+      .prepare(`SELECT open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`)
+      .get(REFUND_ID);
+    expect(Number(retention?.open_ngn ?? 0)).toBe(0);
   });
 });
 

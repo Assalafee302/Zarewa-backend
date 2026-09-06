@@ -24,6 +24,7 @@ export {
   creditRefundToPartnerWalletTx,
   listPartnerWalletBalancesDue,
   listPartnerWalletOpenCredits,
+  listPartnerWalletOpenCreditsForRefund,
   openWalletCreditNgnForRefund,
   partnerWalletEnabled,
   partnerWalletTablesReady,
@@ -74,15 +75,28 @@ export function withdrawPartnerWallet(db, payload = {}) {
   const amountNgn = roundMoney(payload.amountNgn);
   if (amountNgn <= 0) return { ok: false, error: 'Withdrawal amount must be positive.' };
 
-  const credits = listPartnerWalletOpenCredits(db, partyKind, partyId, payload.branchScope || 'ALL');
+  const refundIdFilter = String(payload.refundId || payload.refundID || '').trim();
+  let credits = listPartnerWalletOpenCredits(db, partyKind, partyId, payload.branchScope || 'ALL');
+  if (refundIdFilter) {
+    credits = credits.filter((c) => String(c.refundId || '').trim() === refundIdFilter);
+  }
   const balance = credits.reduce((s, c) => s + c.openNgn, 0);
   if (amountNgn > balance) {
     return {
       ok: false,
-      error: `Withdrawal ₦${amountNgn.toLocaleString('en-NG')} exceeds open balance ₦${balance.toLocaleString('en-NG')}.`,
+      error: refundIdFilter
+        ? `Withdrawal ₦${amountNgn.toLocaleString('en-NG')} exceeds open wallet on this refund ₦${balance.toLocaleString('en-NG')}.`
+        : `Withdrawal ₦${amountNgn.toLocaleString('en-NG')} exceeds open balance ₦${balance.toLocaleString('en-NG')}.`,
     };
   }
-  if (!credits.length) return { ok: false, error: 'No open wallet balance for this partner.' };
+  if (!credits.length) {
+    return {
+      ok: false,
+      error: refundIdFilter
+        ? 'No open partner-wallet balance on this refund for that payee.'
+        : 'No open wallet balance for this partner.',
+    };
+  }
 
   const payeeName = String(credits[0].payeeName || payload.payeeName || '').trim();
   const payeeBankName = String(credits[0].payeeBankName || payload.payeeBankName || '').trim();

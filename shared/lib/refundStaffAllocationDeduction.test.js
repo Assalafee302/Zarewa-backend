@@ -219,4 +219,23 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.companyDeductionNgn).toBe(0);
     expect(row.netPayoutNgn).toBe(50_000);
   });
+
+  it('skips uncleared hold on pure overpayment to the quote customer', () => {
+    const held = applyRefundStaffAllocationDeduction(
+      { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 80_000 },
+      'CUS-QUOTE',
+      { unclearedReceiptHoldNgn: 25_000, overpaymentOnly: true }
+    );
+    expect(held.payoutHeldForUnclearedReceipts).toBe(false);
+    expect(held.unclearedReceiptHoldNgn).toBe(0);
+    expect(held.netPayoutNgn).toBe(80_000);
+
+    const nonOverpay = applyRefundStaffAllocationDeduction(
+      { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 80_000 },
+      'CUS-QUOTE',
+      { unclearedReceiptHoldNgn: 25_000, overpaymentOnly: false }
+    );
+    expect(nonOverpay.payoutHeldForUnclearedReceipts).toBe(true);
+    expect(nonOverpay.unclearedReceiptHoldNgn).toBe(25_000);
+  });
 });

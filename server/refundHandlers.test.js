@@ -33,20 +33,23 @@ describe('refundHandlers (Phase 11A)', () => {
   it('lets admin override uncleared-receipt payout hold, not cashier or MD', () => {
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'admin' }, () => false)).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false)).toBe(false);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, (p) => p === 'finance.approve')).toBe(
+      false
+    );
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'md' }, () => false)).toBe(false);
-    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, (p) => p === '*')).toBe(true);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, () => false)).toBe(true);
+    expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'sales_manager' }, () => false)).toBe(true);
+    expect(
+      actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'finance_manager' }, (p) => p === '*')
+    ).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ permissions: ['*'] }, () => false)).toBe(true);
+    expect(
+      actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'viewer' }, (p) => p === 'refunds.approve')
+    ).toBe(true);
   });
 
-  it('lets admin till-pay only the held slice while other payees sit on partner wallet', () => {
-    expect(
-      refundTillPayableNgn({
-        cashOutstandingNgn: 86_440,
-        heldNetNgn: 11_440,
-        adminMayPayUncleared: true,
-        openWalletNgn: 75_000,
-      })
-    ).toBe(11_440);
+  it('lets cashier till-pay non-wallet surplus while partner wallet stays open', () => {
+    // cash 86,440 = wallet 75,000 + held 11,440 → cashier till = 0
     expect(
       refundTillPayableNgn({
         cashOutstandingNgn: 86_440,
@@ -55,6 +58,24 @@ describe('refundHandlers (Phase 11A)', () => {
         openWalletNgn: 75_000,
       })
     ).toBe(0);
+    // Admin exception: till = cash − wallet (held slice allowed)
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 86_440,
+        heldNetNgn: 11_440,
+        adminMayPayUncleared: true,
+        openWalletNgn: 75_000,
+      })
+    ).toBe(11_440);
+    // Wallet 40k + customer till 20k + held 10k → cashier can pay the 20k till surplus
+    expect(
+      refundTillPayableNgn({
+        cashOutstandingNgn: 70_000,
+        heldNetNgn: 10_000,
+        adminMayPayUncleared: false,
+        openWalletNgn: 40_000,
+      })
+    ).toBe(20_000);
     expect(
       refundTillPayableNgn({
         cashOutstandingNgn: 48_960,

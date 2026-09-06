@@ -2820,6 +2820,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     requestedAtISO: row.requested_at_iso,
     approvalDate: row.approval_date,
     approvedBy: row.approved_by,
+    approvedByUserId: row.approved_by_user_id ?? null,
     approvedAmountNgn: finalApprovedAmountNgn,
     managerComments: row.manager_comments,
     paidAmountNgn: paidAmountForApi,

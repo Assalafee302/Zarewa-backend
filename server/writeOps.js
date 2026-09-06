@@ -141,7 +141,7 @@ import {
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
-import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, refundTillPayableNgn } from './refundHandlers.js';
+import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn } from './refundHandlers.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -8847,7 +8847,8 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
   const hasPerm = (p) => userHasPermission(payload.actor, p);
-  const adminMayPayUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm);
+  const mayOverrideUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm);
+  const adminMayPayUncleared = mayOverrideUncleared;
   const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn);
   const openWalletNgn = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
   const tillPayableNgn = refundTillPayableNgn({
@@ -8860,7 +8861,7 @@ export function payRefundEntry(db, refundId, payload) {
     return {
       ok: false,
       error:
-        'This refund is on a partner wallet. Release full or partial balance from Finance Desk → Partner withdrawals (no extra approval).',
+        'This refund still has partner-wallet balance. Release it from the refund payout dialog (Partner wallet section), then retry till/bank if anything remains.',
       code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
     };
   }
@@ -8869,7 +8870,7 @@ export function payRefundEntry(db, refundId, payload) {
       ok: false,
       code: 'REFUND_PAYOUT_HELD_UNCLEARED',
       error:
-        'Till/bank payout is held until uncleared receipts for the payee are confirmed. An administrator can pay this out as an exception. Overpayment may still be used for cashier referral/confirmation on a receipt.',
+        'Till/bank payout is held until uncleared receipts for the payee are confirmed. Branch manager, Head of Accounts, or an administrator can release with a note. Overpayment may still be used for cashier referral/confirmation on a receipt.',
     };
   }
   const defaultPaidDay =
@@ -8877,6 +8878,19 @@ export function payRefundEntry(db, refundId, payload) {
     new Date().toISOString().slice(0, 10);
   const paidBy = String(payload.paidBy ?? '').trim() || 'Finance';
   const paymentNote = String(payload.paymentNote ?? payload.note ?? '').trim();
+  if (
+    adminMayPayUncleared &&
+    heldNetNgn > 0 &&
+    !actorIsRefundUnclearedHoldAdminOverride(payload.actor, hasPerm) &&
+    paymentNote.replace(/\s+/g, ' ').trim().length < 10
+  ) {
+    return {
+      ok: false,
+      code: 'REFUND_UNCLEARED_OVERRIDE_NOTE_REQUIRED',
+      error:
+        'Add a short note (at least 10 characters) explaining why you are paying while receipts are still unconfirmed.',
+    };
+  }
   const fromExplicit = Array.isArray(payload.paymentLines)
     ? payload.paymentLines
         .map((line) => ({
@@ -8915,7 +8929,7 @@ export function payRefundEntry(db, refundId, payload) {
           : 'REFUND_PAYOUT_HELD_UNCLEARED',
       error:
         openWalletNgn > 0 && adminMayPayUncleared && tillPayableNgn > 0
-          ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} (held for unconfirmed receipts) can be paid from till as an admin exception. The rest is on a partner wallet — release it from Finance Desk → Partner withdrawals.`
+          ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} (held for unconfirmed receipts) can be paid from till as an override. The rest is on a partner wallet — release it from this refund dialog.`
           : heldNetNgn > 0 && !adminMayPayUncleared
             ? `Only ₦${tillPayableNgn.toLocaleString('en-NG')} is payable from till/bank now; ₦${heldNetNgn.toLocaleString('en-NG')} is held for uncleared receipts.`
             : 'Payout exceeds the approved refund balance.',
@@ -9052,10 +9066,12 @@ export function payRefundEntry(db, refundId, payload) {
       const fullyPaid = nextStatus === 'Paid';
       const unclearedOverrideBit =
         adminMayPayUncleared && heldNetNgn > 0
-          ? `Admin exemption: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
+          ? actorIsRefundUnclearedHoldAdminOverride(payload.actor, hasPerm)
+            ? `Admin exemption: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
+            : `Manager override: paid while payee has unconfirmed receipts (₦${heldNetNgn.toLocaleString('en-NG')} pending).`
           : '';
       const existingNote = paymentNote || fresh.payment_note || '';
-      const storedPaymentNote = /admin exemption:.*unconfirm/i.test(existingNote)
+      const storedPaymentNote = /(admin exemption|manager override):.*unconfirm/i.test(existingNote)
         ? existingNote
         : [existingNote, unclearedOverrideBit].filter(Boolean).join(' ').trim() || null;
       db.prepare(

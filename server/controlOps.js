@@ -161,7 +161,48 @@ import {
   creditRefundToPartnerWalletTx,
   voidPartnerWalletCreditsForRefundTx,
 } from './finance/partnerWalletCredit.js';
+import { voidCompanyRetentionForRefundTx } from './finance/refundCompanyRetentionLedger.js';
 import { savedCustomerPayoutAccount } from './sales/customerPayoutAccount.js';
+
+/** Payee money out (till / wallet / credit) — not company cut. Kept local to avoid import cycles. */
+function refundPayeeSettledNgnForCancel(db, row) {
+  const refundId = String(row?.refund_id || '').trim();
+  if (!refundId) return 0;
+  let treasury = 0;
+  try {
+    const t = db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN type = 'REFUND_PAYOUT' THEN ABS(amount_ngn)
+             WHEN type = 'REFUND_PAYOUT_REVERSAL_IN' THEN -ABS(amount_ngn)
+             ELSE 0
+           END
+         ), 0) AS s
+         FROM treasury_movements
+         WHERE source_kind = 'REFUND' AND source_id = ?`
+      )
+      .get(refundId);
+    treasury = roundMoney(t?.s);
+  } catch {
+    treasury = 0;
+  }
+  let walletWithdrawn = 0;
+  try {
+    const w = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_ngn), 0) AS s
+         FROM partner_wallet_withdrawal_allocations
+         WHERE refund_id = ?`
+      )
+      .get(refundId);
+    walletWithdrawn = roundMoney(w?.s);
+  } catch {
+    walletWithdrawn = 0;
+  }
+  const creditApplied = roundMoney(row.credit_applied_ngn);
+  return Math.max(0, treasury + walletWithdrawn + creditApplied);
+}
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -241,6 +282,16 @@ function actorMayBypassIncompleteRefundFloor(actor, hasPermission) {
     .toLowerCase();
   if (rk === 'admin') return true;
   return isExecutiveRoleKey(rk);
+}
+
+/** Admin, MD/exec, or Branch Manager may waive company cut — only at approval, not at create. */
+function actorMayWaiveRefundCompanyCut(actor, hasPermission) {
+  if (actorMayBypassIncompleteRefundFloor(actor, hasPermission)) return true;
+  const rk = String(actor?.roleKey ?? actor?.role_key ?? actor?.role ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  return rk === 'sales_manager' || rk === 'branch_manager';
 }
 
 /**
@@ -2797,24 +2848,12 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       resolvedSplits.push({ ...split, payoutAccount: acct });
     }
 
-    const mayWaiveStaffCut = actorMayBypassIncompleteRefundFloor(actor);
-    const splitsWithWaiverAuth = resolvedSplits.map((s) => {
-      if (!s.companyCutWaived) return { ...s, companyCutWaived: false, companyCutWaiverNote: '' };
-      if (!mayWaiveStaffCut) {
-        return { ...s, companyCutWaived: false, companyCutWaiverNote: '' };
-      }
-      const note = String(s.companyCutWaiverNote || '').trim();
-      if (note.length < 8) {
-        return {
-          __waiverError: true,
-          error:
-            'Admin/MD company-cut waiver requires a short reason (at least 8 characters) on each waived staff/transporter/installer line.',
-        };
-      }
-      return { ...s, companyCutWaived: true, companyCutWaiverNote: note };
-    });
-    const waiverErr = splitsWithWaiverAuth.find((s) => s?.__waiverError);
-    if (waiverErr) return { ok: false, error: waiverErr.error };
+    // Company-cut waive is approval-only (MD/BM). Ignore any create-time waive flags.
+    const splitsWithWaiverAuth = resolvedSplits.map((s) => ({
+      ...s,
+      companyCutWaived: false,
+      companyCutWaiverNote: '',
+    }));
 
     const overpaymentOnly = refundCategoriesAreOverpaymentOnly(
       requestedCats,
@@ -3508,6 +3547,75 @@ export function decideRefundRequest(db, refundID, payload, actor) {
     if (!alignment.ok) return alignment;
     approvalAlignmentAckJson = mergeProductionAlignmentAckJson(storedAlign, alignment, 'approval');
   }
+
+  // Optional company-cut waive at approval (MD/BM/admin) — one note covers all staff-cut lines.
+  let approvalSplitDistributionsJson = null;
+  if (status === 'Approved') {
+    const waiveRequested = Boolean(
+      payload.companyCutWaived === true ||
+        payload.company_cut_waived === true ||
+        payload.waiveCompanyCut === true
+    );
+    if (waiveRequested) {
+      const mayWaive = actorMayWaiveRefundCompanyCut(actor, (p) => userHasPermission(actor, p));
+      if (!mayWaive) {
+        return {
+          ok: false,
+          error: 'Only Admin, MD, or Branch Manager may waive the company cut on approval.',
+        };
+      }
+      const waiverNote = String(
+        payload.companyCutWaiverNote ?? payload.company_cut_waiver_note ?? ''
+      ).trim();
+      if (waiverNote.length < 8) {
+        return {
+          ok: false,
+          error: 'Company-cut waiver requires a short reason (at least 8 characters).',
+        };
+      }
+      let storedSplits = [];
+      try {
+        const parsed = JSON.parse(String(row.split_distributions_json || '[]'));
+        storedSplits = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        storedSplits = [];
+      }
+      if (storedSplits.length) {
+        const quoteCustomerId = String(row.customer_id || '').trim();
+        const waivedBase = storedSplits.map((s) => ({
+          ...s,
+          companyCutWaived: true,
+          companyCutWaiverNote: waiverNote,
+        }));
+        const decisionCatsForCut = resolveRefundReasonCategoriesForDecision(
+          row,
+          payload,
+          normalizeRefundReasonCategoriesForApi
+        );
+        const overpaymentOnly = refundCategoriesAreOverpaymentOnly(
+          decisionCatsForCut,
+          parseRefundCalculationLinesFromRow(
+            row,
+            Array.isArray(payload.calculationLines) ? payload.calculationLines : null
+          )
+        );
+        const splitsForStore = applyRefundStaffAllocationDeductions(waivedBase, quoteCustomerId, {
+          claimingStaffDeductionRate: getRefundStaffAllocationDeductionRate(db),
+          associatedStaffDeductionRate: getRefundAssociatedStaffDeductionRate(db),
+          unclearedByCustomerId: unclearedTotalsMap(
+            unclearedReceiptFloatBySalesCustomerIds(
+              db,
+              waivedBase.map((s) => s.recipientCustomerID).filter(Boolean)
+            )
+          ),
+          honorCompanyCutWaiver: true,
+          overpaymentOnly,
+        });
+        approvalSplitDistributionsJson = JSON.stringify(splitsForStore);
+      }
+    }
+  }
+
   try {
     assertPeriodOpen(db, actedAtISO, 'Refund approval date');
     db.transaction(() => {
@@ -3531,14 +3639,20 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           .filter(Boolean);
         if (normalized.length) suggestedLinesJson = JSON.stringify(normalized);
       }
-      if (calculationLinesJson != null || calcNotes != null || suggestedLinesJson != null) {
+      if (
+        calculationLinesJson != null ||
+        calcNotes != null ||
+        suggestedLinesJson != null ||
+        approvalSplitDistributionsJson != null
+      ) {
         db.prepare(
           `UPDATE customer_refunds
            SET status = ?, approval_date = ?, approved_by = ?, approved_by_user_id = ?, approved_amount_ngn = ?, manager_comments = ?,
                calculation_lines_json = COALESCE(?, calculation_lines_json),
                calculation_notes = COALESCE(?, calculation_notes),
                suggested_lines_json = COALESCE(?, suggested_lines_json),
-               production_alignment_ack_json = COALESCE(?, production_alignment_ack_json)
+               production_alignment_ack_json = COALESCE(?, production_alignment_ack_json),
+               split_distributions_json = COALESCE(?, split_distributions_json)
            WHERE refund_id = ?`
         ).run(
           status,
@@ -3551,6 +3665,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           calcNotes,
           suggestedLinesJson,
           approvalAlignmentAckJson,
+          approvalSplitDistributionsJson,
           refundID
         );
       } else {
@@ -3585,8 +3700,27 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         entityKind: 'refund',
         entityId: refundID,
         note: comment || `Refund ${status.toLowerCase()}`,
-        details: { status, approvedAmountNgn, creditAppliedNgn, leftoverAfterCreditNgn, creditDest },
+        details: {
+          status,
+          approvedAmountNgn,
+          creditAppliedNgn,
+          leftoverAfterCreditNgn,
+          creditDest,
+          companyCutWaived: Boolean(approvalSplitDistributionsJson),
+        },
       });
+      if (approvalSplitDistributionsJson) {
+        appendAuditLog(db, {
+          actor,
+          action: 'refund.company_cut.waive',
+          entityKind: 'refund',
+          entityId: refundID,
+          note: String(
+            payload.companyCutWaiverNote ?? payload.company_cut_waiver_note ?? ''
+          ).trim(),
+          details: { phase: 'approval' },
+        });
+      }
       if (approvalAlignmentAckJson && approvalAlignmentOverrideIsNew) {
         try {
           const ack = JSON.parse(approvalAlignmentAckJson);
@@ -3680,9 +3814,14 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
   if (String(row.status || '').trim() !== 'Approved') {
     return { ok: false, error: 'Only approved refunds can be cancelled from payout queue.' };
   }
-  const paidAmountNgn = roundMoney(row.paid_amount_ngn);
-  if (paidAmountNgn > 0) {
-    return { ok: false, error: 'This refund already has payout entries and cannot be cancelled.' };
+  // Gate on real payee money out — company cut on the retention ledger alone must not block cancel.
+  const payeeSettledNgn = refundPayeeSettledNgnForCancel(db, row);
+  if (payeeSettledNgn > 0) {
+    return {
+      ok: false,
+      error:
+        'This refund already has till, partner-wallet, or credit-apply payout and cannot be cancelled.',
+    };
   }
   const note = String(payload.note ?? payload.managerComments ?? '').trim();
   const actedAtISO = String(payload.actedAtISO ?? '').trim() || nowIso().slice(0, 10);
@@ -3691,6 +3830,13 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
     db.transaction(() => {
       const voided = voidPartnerWalletCreditsForRefundTx(db, refundID);
       if (!voided.ok) throw new Error(voided.error || 'Could not void partner wallet credits.');
+      // Wallet void skips retention when wallet tables are missing — always clear the cut here.
+      if (voided.skipped) {
+        const retentionVoid = voidCompanyRetentionForRefundTx(db, refundID);
+        if (!retentionVoid.ok) {
+          throw new Error(retentionVoid.error || 'Could not void company retention for this refund.');
+        }
+      }
       db.prepare(
         `UPDATE customer_refunds
          SET status = 'Cancelled',
@@ -3707,7 +3853,11 @@ export function cancelApprovedRefundBeforePay(db, refundID, payload, actor) {
         entityKind: 'refund',
         entityId: refundID,
         note: note || `Refund ${refundID} cancelled before payout`,
-        details: { previousStatus: 'Approved', paidAmountNgn },
+        details: {
+          previousStatus: 'Approved',
+          payeeSettledNgn,
+          previousPaidAmountNgn: roundMoney(row.paid_amount_ngn),
+        },
       });
     })();
     return { ok: true };

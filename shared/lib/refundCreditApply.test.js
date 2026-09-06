@@ -19,6 +19,7 @@ import {
   refundFundUsageBreakdown,
   refundSplitHasMultiplePayees,
   refundSplitPayeeKeys,
+  refundCreditPayeeIsQuoteCustomerOnly,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
@@ -36,11 +37,12 @@ describe('refundCreditApply pure helpers', () => {
     ).toBe(true);
   });
 
-  it('allows Pending overpayment refunds but not Pending other categories', () => {
+  it('allows Pending overpayment refunds but not other categories (even Approved)', () => {
     expect(
       refundIsEligibleCreditSource({
         status: 'Pending',
         reasonCategory: 'Overpayment',
+        customerID: 'CUS-1',
         amountNgn: 50_000,
         paidAmountNgn: 0,
       })
@@ -57,10 +59,11 @@ describe('refundCreditApply pure helpers', () => {
       refundIsEligibleCreditSource({
         status: 'Approved',
         reasonCategory: 'Unproduced meterage',
+        customerID: 'CUS-1',
         approvedAmountNgn: 40_000,
         paidAmountNgn: 10_000,
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       refundIsEligibleCreditSource({
         status: 'Approved',
@@ -102,7 +105,8 @@ describe('refundCreditApply pure helpers', () => {
   it('blocks a multi-payee split refund (staff + customer) from being used as receipt credit', () => {
     const multiPayeeRefund = {
       status: 'Approved',
-      reasonCategory: 'Order cancellation',
+      reasonCategory: 'Overpayment',
+      customerID: 'CUS-1',
       approvedAmountNgn: 89_300,
       paidAmountNgn: 0,
       splitDistributions: [
@@ -116,18 +120,45 @@ describe('refundCreditApply pure helpers', () => {
     expect(refundCreditUnavailableReason(multiPayeeRefund, 50_000)).toMatch(/more than one person/i);
   });
 
-  it('still allows a single-payee split refund as receipt credit', () => {
-    const singlePayeeRefund = {
+  it('blocks non-overpay and staff-only refunds from receipt credit', () => {
+    const staffOnly = {
       status: 'Approved',
       reasonCategory: 'Order cancellation',
+      customerID: 'CUS-1',
       approvedAmountNgn: 14_300,
       paidAmountNgn: 0,
       splitDistributions: [
         { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 14_300 },
       ],
     };
-    expect(refundSplitHasMultiplePayees(singlePayeeRefund.splitDistributions)).toBe(false);
-    expect(refundIsEligibleCreditSourceKind(singlePayeeRefund)).toBe(true);
+    expect(refundSplitHasMultiplePayees(staffOnly.splitDistributions)).toBe(false);
+    expect(refundIsEligibleCreditSourceKind(staffOnly)).toBe(false);
+    expect(refundCreditUnavailableReason(staffOnly, 14_300)).toMatch(/overpayment/i);
+
+    const overpayToStaff = {
+      status: 'Approved',
+      reasonCategory: 'Overpayment',
+      customerID: 'CUS-1',
+      approvedAmountNgn: 14_300,
+      paidAmountNgn: 0,
+      splitDistributions: [
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 14_300 },
+      ],
+    };
+    expect(refundIsEligibleCreditSourceKind(overpayToStaff)).toBe(false);
+    expect(refundCreditUnavailableReason(overpayToStaff, 14_300)).toMatch(/staff|Till\/Bank/i);
+
+    const overpayToQuoteCustomer = {
+      status: 'Approved',
+      reasonCategory: 'Overpayment',
+      customerID: 'CUS-1',
+      approvedAmountNgn: 14_300,
+      paidAmountNgn: 0,
+      splitDistributions: [
+        { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 14_300 },
+      ],
+    };
+    expect(refundIsEligibleCreditSourceKind(overpayToQuoteCustomer)).toBe(true);
   });
 
   it('computes open credit and plans partial apply leaving remainder', () => {

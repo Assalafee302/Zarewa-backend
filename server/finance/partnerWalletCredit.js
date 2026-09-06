@@ -93,14 +93,6 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           s?.companyDeductionNgn != null || s?.company_deduction_ngn != null
             ? roundMoney(s?.companyDeductionNgn ?? s?.company_deduction_ngn)
             : null,
-        storedUnclearedHoldNgn:
-          s?.unclearedReceiptHoldNgn != null || s?.uncleared_receipt_hold_ngn != null
-            ? roundMoney(s?.unclearedReceiptHoldNgn ?? s?.uncleared_receipt_hold_ngn)
-            : null,
-        legacyUnclearedOffsetHintNgn:
-          s?.unclearedReceiptOffsetNgn != null || s?.uncleared_receipt_offset_ngn != null
-            ? roundMoney(s?.unclearedReceiptOffsetNgn ?? s?.uncleared_receipt_offset_ngn)
-            : 0,
         payoutAccount: s?.payoutAccount && typeof s.payoutAccount === 'object' ? s.payoutAccount : null,
         note: String(s?.note || '').trim(),
         companyCutWaived: Boolean(
@@ -151,12 +143,9 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         const liveUncleared = unclearedFloatByCustomerId.get(String(s.recipientCustomerID || '').trim());
         const liveUnclearedHoldNgn = roundMoney(liveUncleared?.totalNgn);
         const unclearedReceiptIds = Array.isArray(liveUncleared?.receiptIds) ? liveUncleared.receiptIds : [];
-        // The live figure is authoritative — it reflects receipts as they stand right now.
-        // storedUnclearedHoldNgn was only ever a snapshot taken when the split was first written
-        // and must not act as a floor once receipts are confirmed, or the hold never clears.
-        // legacyUnclearedOffsetHintNgn is kept as a floor: it is a one-time migration hint for
-        // refunds that predate live tracking and have no other source of truth.
-        const unclearedReceiptHoldNgn = Math.max(liveUnclearedHoldNgn, s.legacyUnclearedOffsetHintNgn ?? 0);
+        // Live float only — never floor on legacy unclearedReceiptOffsetNgn (that sticky floor
+        // kept holds after receipts were confirmed).
+        const unclearedReceiptHoldNgn = liveUnclearedHoldNgn;
         const withDeduction = applyRefundStaffAllocationDeduction(
           { ...s, amountNgn: share },
           quoteCustomerId,
@@ -178,8 +167,12 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           noteParts.push(`net after ${cutPct}% company cut`);
         }
         if (withDeduction.payoutHeldForUnclearedReceipts && unclearedReceiptHoldNgn > 0) {
+          const heldSlice = Math.min(creditAmount, unclearedReceiptHoldNgn);
+          const readySlice = Math.max(0, creditAmount - heldSlice);
           noteParts.push(
-            `₦${roundMoney(unclearedReceiptHoldNgn).toLocaleString('en-NG')} uncleared receipts pending — payout held until receipts are cleared`
+            readySlice > 0
+              ? `₦${heldSlice.toLocaleString('en-NG')} held for uncleared receipts; ₦${readySlice.toLocaleString('en-NG')} ready`
+              : `₦${heldSlice.toLocaleString('en-NG')} uncleared receipts pending — till payout held until cleared`
           );
         }
         const detailNote = noteParts.length ? ` (${noteParts.join('; ')})` : '';
@@ -245,12 +238,28 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 
   const customerId = String(refundRow.customer_id || '').trim();
   if (!customerId) return [];
+  let calculationLinesNoSplit = [];
+  try {
+    const parsed = JSON.parse(String(refundRow.calculation_lines_json || '[]'));
+    calculationLinesNoSplit = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    calculationLinesNoSplit = [];
+  }
+  const overpaymentOnlyNoSplit = refundCategoriesAreOverpaymentOnly(
+    refundRow.reason_category,
+    calculationLinesNoSplit
+  );
   const resolved = savedCustomerPayoutAccount(db, customerId);
   const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(db, [customerId], {
     branchId: String(refundRow.branch_id || '').trim(),
   }).get(customerId);
-  const unclearedHoldNgn = roundMoney(noSplitUncleared?.totalNgn);
-  const unclearedReceiptIds = Array.isArray(noSplitUncleared?.receiptIds) ? noSplitUncleared.receiptIds : [];
+  // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal).
+  const unclearedHoldNgn = overpaymentOnlyNoSplit ? 0 : roundMoney(noSplitUncleared?.totalNgn);
+  const unclearedReceiptIds = overpaymentOnlyNoSplit
+    ? []
+    : Array.isArray(noSplitUncleared?.receiptIds)
+      ? noSplitUncleared.receiptIds
+      : [];
   const payoutHeldForUnclearedReceipts = unclearedHoldNgn > 0 && approved > 0;
   return [
     {
@@ -265,7 +274,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
       payeeAccountNo: String(refundRow.payee_account_no || resolved?.payeeAccountNo || '').trim(),
       note: payoutHeldForUnclearedReceipts
-        ? `Refund ${refundRow.refund_id} approved (₦${unclearedHoldNgn.toLocaleString('en-NG')} uncleared receipts pending — payout held until receipts are confirmed)`
+        ? `Refund ${refundRow.refund_id} approved (₦${unclearedHoldNgn.toLocaleString('en-NG')} uncleared receipts pending — ₦${Math.max(0, approved - unclearedHoldNgn).toLocaleString('en-NG')} ready when confirmed)`
         : `Refund ${refundRow.refund_id} approved`,
     },
   ];
@@ -480,10 +489,23 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
   const companyRetentionNgn = targets.reduce((s, t) => s + roundMoney(t.companyDeductionNgn), 0);
   const settledAtApprovalNgn = companyRetentionNgn;
-  // Held payee nets stay off the wallet — till/wallet payout is blocked until receipts clear.
-  const creditTargets = targets.filter(
-    (t) => roundMoney(t.amountNgn) > 0 && !t.payoutHeldForUnclearedReceipts
-  );
+  // Wallet gets the unheld slice only — matches till math: min(net, uncleared) stays for till
+  // after receipts clear (or manager override). Fully held payees credit ₦0 to the wallet.
+  const creditTargets = targets
+    .map((t) => {
+      const net = roundMoney(t.amountNgn);
+      if (net <= 0) return null;
+      if (!t.payoutHeldForUnclearedReceipts) return t;
+      const held = Math.min(net, roundMoney(t.unclearedReceiptHoldNgn));
+      const walletSlice = Math.max(0, net - held);
+      if (walletSlice <= 0) return null;
+      return {
+        ...t,
+        amountNgn: walletSlice,
+        note: `${t.note || ''} (wallet ₦${walletSlice.toLocaleString('en-NG')}; ₦${held.toLocaleString('en-NG')} held for uncleared receipts)`.trim(),
+      };
+    })
+    .filter(Boolean);
 
   if (walletOn && walletCreditsExist && alreadySettled) {
     const retentionCredit = ensureRefundCompanyRetentionCreditTx(db, refundRow, {
@@ -523,7 +545,7 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
   const at = new Date().toISOString();
   const credits = [];
 
-  // Company cut must post before paid_amount or wallet credits (fail-closed).
+  // Company cut must post before wallet credits (fail-closed).
   let retentionCredit = null;
   if (companyRetentionNgn > 0) {
     try {
@@ -586,13 +608,9 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
     }
   }
 
+  // Company cut posts to the retention ledger only — do not inflate paid_amount_ngn.
+  // paid_amount tracks cash/credit that left to payees (till, wallet withdrawal, credit-apply).
   if (!alreadySettled && settledAtApprovalNgn > 0) {
-    const paidNow = roundMoney(
-      db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(refundId)
-        ?.paid_amount_ngn
-    );
-    const nextPaid = paidNow + settledAtApprovalNgn;
-    const approved = roundMoney(approvedAmountNgn || refundRow.approved_amount_ngn || refundRow.amount_ngn);
     const noteParts = [];
     if (companyRetentionNgn > 0) {
       noteParts.push(
@@ -600,16 +618,16 @@ export function creditRefundToPartnerWalletTx(db, refundRow, { approvedAmountNgn
       );
     }
     const paymentNote = noteParts.length ? `Settled at approval: ${noteParts.join('; ')}.` : '';
-    db.prepare(
-      `UPDATE customer_refunds
-       SET paid_amount_ngn = ?,
-           payment_note = CASE
-             WHEN TRIM(COALESCE(payment_note, '')) = '' THEN ?
-             WHEN ? = '' THEN payment_note
-             ELSE payment_note
-           END
-       WHERE refund_id = ?`
-    ).run(nextPaid, paymentNote, paymentNote, refundId);
+    if (paymentNote) {
+      db.prepare(
+        `UPDATE customer_refunds
+         SET payment_note = CASE
+               WHEN TRIM(COALESCE(payment_note, '')) = '' THEN ?
+               ELSE payment_note
+             END
+         WHERE refund_id = ?`
+      ).run(paymentNote, refundId);
+    }
   }
 
   if (walletOn && !walletCreditsExist && !credits.length && settledAtApprovalNgn <= 0) {
@@ -727,7 +745,7 @@ export function listPartnerWalletOpenCredits(db, partyKind, partyId, branchScope
     .prepare(
       `
       SELECT id, refund_id, amount_ngn, open_ngn, payee_name, payee_bank_name, payee_account_no,
-             branch_id, note, created_at_iso, source_id, party_name
+             branch_id, note, created_at_iso, source_id, party_name, party_kind, party_id
       FROM partner_wallet_entries
       WHERE entry_type = 'credit' AND open_ngn > 0
         AND party_kind = ? AND party_id = ? ${bw.sql}
@@ -744,6 +762,42 @@ export function listPartnerWalletOpenCredits(db, partyKind, partyId, branchScope
       payeeBankName: r.payee_bank_name || '',
       payeeAccountNo: r.payee_account_no || '',
       branchId: r.branch_id || '',
+      partyKind: r.party_kind || pk,
+      partyId: r.party_id || pid,
+      partyName: r.party_name || '',
+      note: r.note || '',
+      createdAtISO: r.created_at_iso || '',
+    }));
+}
+
+/** Open wallet credits sourced from one refund (cashier Release on that refund). */
+export function listPartnerWalletOpenCreditsForRefund(db, refundId) {
+  if (!partnerWalletTablesReady(db)) return [];
+  const rid = String(refundId || '').trim();
+  if (!rid) return [];
+  return db
+    .prepare(
+      `
+      SELECT id, refund_id, amount_ngn, open_ngn, payee_name, payee_bank_name, payee_account_no,
+             branch_id, note, created_at_iso, source_id, party_name, party_kind, party_id
+      FROM partner_wallet_entries
+      WHERE entry_type = 'credit' AND open_ngn > 0
+        AND (refund_id = ? OR source_id = ?)
+      ORDER BY created_at_iso ASC, id ASC
+    `
+    )
+    .all(rid, rid)
+    .map((r) => ({
+      id: r.id,
+      refundId: r.refund_id || r.source_id || rid,
+      amountNgn: roundMoney(r.amount_ngn),
+      openNgn: roundMoney(r.open_ngn),
+      payeeName: r.payee_name || '',
+      payeeBankName: r.payee_bank_name || '',
+      payeeAccountNo: r.payee_account_no || '',
+      branchId: r.branch_id || '',
+      partyKind: r.party_kind || '',
+      partyId: r.party_id || '',
       partyName: r.party_name || '',
       note: r.note || '',
       createdAtISO: r.created_at_iso || '',

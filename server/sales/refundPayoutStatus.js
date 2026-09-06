@@ -1,12 +1,17 @@
 /**
- * Refund payout status from till/bank (treasury) only — partner-wallet withdrawals
- * do not affect Paid / Partially paid / Approved labels.
+ * Refund payout status and settlement summary.
+ * paid_amount_ngn = payee money out (treasury + wallet withdrawn + credit apply).
+ * Company cut is retention ledger only — never counted as paid to the payee.
  */
 import { PAYMENT_OUTSTANDING_TOLERANCE_NGN } from '../../shared/lib/paymentOutstandingTolerance.js';
 import {
+  openWalletCreditNgnForRefund,
+  partnerWalletEnabled,
+  refundHeldNetCashDueNgn,
   refundNetCashDueNgn,
   refundSettledAtApprovalNgn,
 } from '../finance/partnerWalletCredit.js';
+import { refundTillPayableNgn } from '../refundHandlers.js';
 import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
@@ -19,7 +24,7 @@ function roundMoney(value) {
   return Math.round(n);
 }
 
-/** Sum of partner-wallet withdrawal allocations linked to this refund (informational only). */
+/** Sum of partner-wallet withdrawal allocations linked to this refund. */
 export function refundWalletWithdrawnNgn(db, refundId) {
   const rid = String(refundId || '').trim();
   if (!rid) return 0;
@@ -38,11 +43,7 @@ export function refundWalletWithdrawnNgn(db, refundId) {
 }
 
 /**
- * Net till/bank still owed. Subtracts every channel that can already discharge the
- * payee's obligation — treasury payout, partner-wallet withdrawal, and credit applied
- * to another quotation — so a refund already settled through one channel can't be
- * paid again through another. (`resolveRefundStatus` below stays treasury-only by
- * design for the Paid/Partially paid label; this is the money gate, not the label.)
+ * Net till/bank/wallet/credit still owed to payees (after company cut).
  */
 export function refundCashOutstandingNgn(db, row) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
@@ -56,10 +57,20 @@ export function refundCashOutstandingNgn(db, row) {
   return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied);
 }
 
-function treasuryCoversNetCashDue(treasuryPaidNgn, netCashDueNgn) {
+/** Money that has already discharged the payee obligation (not company cut). */
+export function refundPayeeSettledNgn(db, row) {
+  const refundId = String(row?.refund_id || row?.refundID || '').trim();
+  if (!refundId) return 0;
+  const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
+  const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
+  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  return Math.max(0, treasuryPaid + walletWithdrawn + creditApplied);
+}
+
+function payeeCoversNetCashDue(payeeSettledNgn, netCashDueNgn) {
   const net = roundMoney(netCashDueNgn);
   if (net <= 0) return true;
-  return roundMoney(treasuryPaidNgn) >= net - PAYMENT_OUTSTANDING_TOLERANCE_NGN;
+  return roundMoney(payeeSettledNgn) >= net - PAYMENT_OUTSTANDING_TOLERANCE_NGN;
 }
 
 export function refundStatusAllowsTreasuryPayout(status) {
@@ -68,24 +79,21 @@ export function refundStatusAllowsTreasuryPayout(status) {
 }
 
 /**
- * Paid when till/bank covers net cash due (or nothing was due via treasury).
- * Partially paid when some treasury payout posted but net cash remains.
- * @param {import('better-sqlite3').Database} db
- * @param {Record<string, unknown>} row
+ * Paid when till + wallet withdrawals + credit cover net cash due to payees.
+ * Company cut alone never marks Paid.
  */
 export function resolveRefundStatus(db, row) {
   const stored = String(row?.status || '').trim();
   if (!PAYOUT_LIFECYCLE_STATUSES.has(stored)) return stored;
 
-  const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const netCashDue = refundNetCashDueNgn(db, row, approved);
-  const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
+  const payeeSettled = refundPayeeSettledNgn(db, row);
 
-  if (treasuryCoversNetCashDue(treasuryPaid, netCashDue)) {
+  if (payeeCoversNetCashDue(payeeSettled, netCashDue)) {
     return 'Paid';
   }
-  if (treasuryPaid > 0) {
+  if (payeeSettled > 0) {
     return REFUND_STATUS_PARTIALLY_PAID;
   }
   return 'Approved';
@@ -93,7 +101,6 @@ export function resolveRefundStatus(db, row) {
 
 /**
  * Guard: cash that left (till + wallet + company cut + credit apply) cannot exceed approved.
- * Does not change Paid/Partially paid resolution (still treasury-only).
  */
 export function refundMoneyOutWithinApproved({
   approvedNgn = 0,
@@ -131,21 +138,114 @@ export function assertRefundMoneyOutWithinApproved(db, row) {
   return { ok: true };
 }
 
-/** Recompute paid_amount from every channel that has actually moved money/credit out. */
+/**
+ * paid_amount = payee channels only (treasury + wallet withdrawn + credit).
+ * Company cut is excluded — it lives on the retention ledger.
+ */
 export function correctRefundPaidAmountNgn(db, row) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const treasury = refundTreasuryPaidNgn(db, refundId);
-  const settledAtApproval = refundSettledAtApprovalNgn(db, row, approved);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
   const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
-  return Math.min(approved, treasury + settledAtApproval + walletWithdrawn + creditApplied);
+  return Math.min(approved, treasury + walletWithdrawn + creditApplied);
 }
 
 /**
- * Repair stored status / paid_amount when approval marked Paid without treasury payout.
+ * True when no cash/credit has left to payees yet (company cut alone does not block cancel).
+ */
+export function refundHasPayeeMoneyOut(db, row) {
+  return refundPayeeSettledNgn(db, row) > 0;
+}
+
+/**
+ * Unified settlement snapshot for list/detail APIs and cashier UX.
  * @param {import('better-sqlite3').Database} db
- * @param {string} refundId
+ * @param {Record<string, unknown>} row
+ * @param {{ walletOpenNgn?: number }} [opts]
+ */
+export function buildRefundSettlementSummary(db, row, opts = {}) {
+  const refundId = String(row?.refund_id || row?.refundID || '').trim();
+  const storedStatus = String(row?.status || '').trim();
+  const approvedNgn = roundMoney(
+    row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn
+  );
+  const companyCutNgn = refundSettledAtApprovalNgn(db, row, approvedNgn);
+  const netCashDueNgn = refundNetCashDueNgn(db, row, approvedNgn);
+  const treasuryPaidNgn = refundId ? refundTreasuryPaidNgn(db, refundId) : 0;
+  const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
+  const creditAppliedNgn = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
+  const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
+  const heldUnclearedNgn = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus) || storedStatus === 'Paid'
+    ? refundHeldNetCashDueNgn(db, row, approvedNgn)
+    : 0;
+  const walletOpenNgn =
+    opts.walletOpenNgn != null
+      ? Math.max(0, roundMoney(opts.walletOpenNgn))
+      : partnerWalletEnabled() && refundId
+        ? openWalletCreditNgnForRefund(db, refundId)
+        : 0;
+  const tillPayableNgn = refundTillPayableNgn({
+    cashOutstandingNgn,
+    heldNetNgn: heldUnclearedNgn,
+    adminMayPayUncleared: false,
+    openWalletNgn: walletOpenNgn,
+  });
+
+  const lifecycleStatus = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus)
+    ? resolveRefundStatus(db, row)
+    : storedStatus;
+
+  let publicLabel = lifecycleStatus || 'Pending';
+  if (PAYOUT_LIFECYCLE_STATUSES.has(lifecycleStatus) || lifecycleStatus === 'Paid') {
+    if (cashOutstandingNgn <= PAYMENT_OUTSTANDING_TOLERANCE_NGN && walletOpenNgn <= 0) {
+      publicLabel = 'Settled';
+    } else if (walletOpenNgn > 0 && tillPayableNgn > 0) {
+      publicLabel = 'Ready — till & wallet';
+    } else if (walletOpenNgn > 0 && tillPayableNgn <= 0) {
+      publicLabel = 'Ready — partner wallet';
+    } else if (heldUnclearedNgn > 0 && tillPayableNgn <= 0 && walletOpenNgn <= 0) {
+      publicLabel = 'Blocked — clear receipts';
+    } else if (payeeSettledNgn > 0 || tillPayableNgn < cashOutstandingNgn) {
+      publicLabel =
+        tillPayableNgn > 0 && heldUnclearedNgn > 0
+          ? 'Partially ready'
+          : lifecycleStatus === REFUND_STATUS_PARTIALLY_PAID || payeeSettledNgn > 0
+            ? 'Partially settled'
+            : 'Ready';
+    } else if (tillPayableNgn > 0) {
+      publicLabel = 'Ready';
+    } else {
+      publicLabel = 'Approved';
+    }
+  }
+
+  return {
+    approvedNgn,
+    companyCutNgn,
+    netCashDueNgn,
+    heldUnclearedNgn,
+    walletOpenNgn,
+    walletWithdrawnNgn,
+    treasuryPaidNgn,
+    creditAppliedNgn,
+    payeeSettledNgn,
+    cashOutstandingNgn,
+    tillPayableNgn,
+    status: lifecycleStatus,
+    publicLabel,
+    canCancelBeforePay: Boolean(
+      (lifecycleStatus === 'Approved' || storedStatus === 'Approved') &&
+        payeeSettledNgn <= 0 &&
+        walletWithdrawnNgn <= 0
+    ),
+  };
+}
+
+/**
+ * Repair stored status / paid_amount when approval marked Paid without payee payout,
+ * or when paid_amount still includes legacy company-cut inflation.
  */
 export function repairRefundPayoutStateTx(db, refundId) {
   const rid = String(refundId || '').trim();

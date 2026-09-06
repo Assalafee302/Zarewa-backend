@@ -125,7 +125,7 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     else process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 = prevAssoc;
   });
 
-  it('reduces paid_amount by 3% company cut and skips wallet rows', () => {
+  it('settles company cut on retention ledger without inflating paid_amount', () => {
     const refundRow = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_WALLET_OFF);
     const actor = db.prepare(`SELECT id, display_name AS displayName FROM app_users LIMIT 1`).get();
     const r = creditRefundToPartnerWalletTx(db, refundRow, {
@@ -141,11 +141,9 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     const updated = db.prepare(`SELECT paid_amount_ngn, payment_note, status FROM customer_refunds WHERE refund_id = ?`).get(
       REFUND_WALLET_OFF
     );
-    expect(Number(updated.paid_amount_ngn)).toBe(300);
+    expect(Number(updated.paid_amount_ngn)).toBe(0);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
     expect(String(updated.status || '')).toBe('Approved');
-    // Outstanding for cashier = 10000 - 300 = 9700 (net)
-    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(9_700);
 
     const walletRows = db
       .prepare(`SELECT COUNT(*) AS c FROM partner_wallet_entries WHERE refund_id = ?`)
@@ -161,7 +159,7 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     expect(Number(retention?.open_ngn)).toBe(300);
   });
 
-  it('backfills paid_amount when wallet credits exist but company cut was not settled', () => {
+  it('backfills company cut note when wallet credits exist but retention was not settled', () => {
     process.env.ZAREWA_PARTNER_WALLET_V1 = '1';
     process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 = '1';
     db.prepare(
@@ -228,9 +226,8 @@ describe.skipIf(!mysqlOk)('company cut settles without partner wallet', () => {
     const updated = db.prepare(`SELECT paid_amount_ngn, payment_note FROM customer_refunds WHERE refund_id = ?`).get(
       REFUND_BACKFILL
     );
-    expect(Number(updated.paid_amount_ngn)).toBe(300);
+    expect(Number(updated.paid_amount_ngn)).toBe(0);
     expect(String(updated.payment_note || '')).toMatch(/Settled at approval/i);
-    expect(10_000 - Number(updated.paid_amount_ngn)).toBe(9_700);
 
     const retention = db
       .prepare(

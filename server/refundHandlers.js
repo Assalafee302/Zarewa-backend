@@ -30,8 +30,9 @@ export function isRefundAdminTrialActor(actor, hasPermission) {
 
 /**
  * Cash still payable from till/bank for this refund.
- * Partner-wallet open credits stay off till (withdrawals desk). Admin may till-pay the
- * leftover held-for-uncleared slice that was never credited to the wallet.
+ * Open partner-wallet credits stay off till (released via wallet withdraw on the same refund).
+ * Non-wallet surplus (customer till / cleared slices) remains payable while wallet is open.
+ * Uncleared holds still reduce cashier till unless admin overrides.
  */
 export function refundTillPayableNgn({
   cashOutstandingNgn = 0,
@@ -42,19 +43,33 @@ export function refundTillPayableNgn({
   const cash = Math.max(0, Math.round(Number(cashOutstandingNgn) || 0));
   const held = Math.max(0, Math.round(Number(heldNetNgn) || 0));
   const wallet = Math.max(0, Math.round(Number(openWalletNgn) || 0));
-  if (wallet > 0) {
-    if (!adminMayPayUncleared) return 0;
-    return Math.max(0, cash - wallet);
-  }
-  if (adminMayPayUncleared) return cash;
-  return Math.max(0, cash - held);
+  const nonWallet = Math.max(0, cash - wallet);
+  if (adminMayPayUncleared) return nonWallet;
+  return Math.max(0, nonWallet - held);
 }
 
 /**
  * Cashiers cannot till-pay a refund while the payee has unconfirmed receipts.
- * Admin (trial actor) may pay out anyway — logged on refund.pay.
+ * Branch manager, Head of Accounts, or admin may override (note required for non-admin).
  */
 export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission) {
+  if (isRefundAdminTrialActor(actor, hasPermission)) return true;
+  const rk = String(actor?.roleKey || actor?.role_key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (rk === 'cashier' || rk === 'md' || rk === 'ceo' || rk === 'chairman') return false;
+  if (rk === 'sales_manager' || rk === 'branch_manager' || rk === 'finance_manager' || rk === 'admin') {
+    return true;
+  }
+  if (typeof hasPermission === 'function') {
+    if (hasPermission('refunds.approve') || hasPermission('finance.approve')) return true;
+  }
+  return false;
+}
+
+/** True when override is admin trial / * — note still recommended but not required. */
+export function actorIsRefundUnclearedHoldAdminOverride(actor, hasPermission) {
   return isRefundAdminTrialActor(actor, hasPermission);
 }
 

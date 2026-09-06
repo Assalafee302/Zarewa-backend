@@ -390,6 +390,52 @@ export function quotationRequiresStoneCoilCuttingListAlignment(linesJson, opts) 
 }
 
 /**
+ * Distinct `cutting_list_lines.line_type` values present on one cutting list's own lines.
+ *
+ * This is the reliable per-job scoping signal for stone-coated hybrid routing. A production
+ * job's / cutting list's `product_name` is NOT a usable scoping key here: real cutting-list
+ * creation (`insertCuttingList` / `CuttingListModal.buildPersistPayload`) only ever sets
+ * `product_name` for accessories-only lists — every normal roofing / flat-sheet cutting list is
+ * persisted with a null product name — so any check keyed on job/list product name silently fails
+ * open to the whole quotation's product lines and misclassifies sibling jobs on a multi-product
+ * stone quote. `cutting_list_lines.line_type`, by contrast, is always populated (defaults to
+ * 'Roof') because it drives the cutting-list UI and metre/sheet math directly.
+ * @param {{ lineType?: string; line_type?: string }[] | null | undefined} lines
+ * @returns {Set<string>}
+ */
+export function cuttingListLineTypeSet(lines) {
+  const set = new Set();
+  for (const row of Array.isArray(lines) ? lines : []) {
+    const t = String(row?.lineType ?? row?.line_type ?? '').trim();
+    if (t) set.add(t);
+  }
+  return set;
+}
+
+/**
+ * Whether a stone-coated job's own cutting list carries Flat sheet / gutter / coil-backed lines —
+ * i.e. this job must accept coil allocation or offcut completion for that portion. Prefer this
+ * over quotation-wide / product-name scoping (`quotationExpectsCoilAllocation`) whenever the job's
+ * own cutting-list lines are available — see `cuttingListLineTypeSet` for why product-name scoping
+ * is unreliable in practice.
+ * @param {{ lineType?: string; line_type?: string }[] | null | undefined} cuttingListLines
+ */
+export function cuttingListExpectsCoilAllocation(cuttingListLines) {
+  const types = cuttingListLineTypeSet(cuttingListLines);
+  return types.has('Flatsheet') || types.has('Cladding');
+}
+
+/**
+ * Whether a stone-coated job's own cutting list carries a Roof line — i.e. this job must consume
+ * stone-coated metre stock. See `cuttingListExpectsCoilAllocation` for why this is preferred over
+ * product-name scoping.
+ * @param {{ lineType?: string; line_type?: string }[] | null | undefined} cuttingListLines
+ */
+export function cuttingListRequiresStoneMetreConsumption(cuttingListLines) {
+  return cuttingListLineTypeSet(cuttingListLines).has('Roof');
+}
+
+/**
  * Whether production should consume stone flatsheet stock (sold SF and/or ridge/barge yield).
  * @param {object | string | null | undefined} linesJson
  * @param {{ stoneMeterQuote?: boolean } | undefined} [opts]

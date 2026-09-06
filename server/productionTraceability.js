@@ -33,7 +33,12 @@ import {
   coilSpecMismatchIssues,
   quotationExpectsCoilAllocation,
 } from '../shared/lib/coilSpecVersusProduct.js';
-import { quotationRequiresStoneMetreConsumption } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import {
+  quotationRequiresStoneMetreConsumption,
+  cuttingListLineTypeSet,
+  cuttingListExpectsCoilAllocation,
+  cuttingListRequiresStoneMetreConsumption,
+} from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
 import {
   adjustProductStockForBranch,
@@ -335,16 +340,60 @@ function jobQuotationForCoilPolicy(db, job) {
 }
 
 /**
+ * Distinct `cutting_list_lines.line_type` values on this job's own cutting list.
+ * `production_jobs.product_id` / `product_name` are NOT usable per-job scoping keys — real
+ * cutting-list creation (`insertCuttingList` / frontend `CuttingListModal.buildPersistPayload`)
+ * only ever sets a product name for accessories-only lists, so every normal roofing / flat-sheet
+ * job is persisted with a null product name. `cutting_list_lines.line_type` is always populated
+ * (defaults to 'Roof') and reflects what was actually cut for this specific job, so it is the
+ * reliable signal for routing stone-metre vs coil/offcut completion.
+ */
+function jobCuttingListLineTypes(db, job) {
+  const clId = String(job?.cutting_list_id ?? '').trim();
+  if (!clId) return new Set();
+  const rows = db
+    .prepare(`SELECT DISTINCT line_type FROM cutting_list_lines WHERE cutting_list_id = ?`)
+    .all(clId);
+  return cuttingListLineTypeSet(rows.map((r) => ({ lineType: r.line_type })));
+}
+
+/**
  * True when coils / offcut may be used (alu jobs, and stone + Flat sheet / gutter / Coil hybrid).
- * Scoped to this job's own cutting-list product so a sibling product line elsewhere on the same
- * multi-line quotation (e.g. a "Flat sheet" line next to this job's "Roofing Sheet" line) can't
- * make a pure stone-metre job expect coil allocation, or vice versa.
+ * Scoped to this job's own cutting-list lines (see `jobCuttingListLineTypes`) so a sibling product
+ * line elsewhere on the same multi-line quotation (e.g. a "Flat sheet" line next to this job's
+ * "Roofing Sheet" line) can't make a pure stone-metre job expect coil allocation, or vice versa.
+ * Falls back to the (unreliable) whole-quotation / product-name check only when this job has no
+ * resolvable cutting-list lines at all (e.g. legacy data, accessories-only jobs).
  */
 function jobExpectsCoilAllocation(db, job) {
   if (!jobIsStoneMeter(db, job)) return true;
+  const lineTypes = jobCuttingListLineTypes(db, job);
+  if (lineTypes.size) return cuttingListExpectsCoilAllocation([...lineTypes].map((t) => ({ lineType: t })));
   const q = jobQuotationForCoilPolicy(db, job);
   if (!q) return false;
   return quotationExpectsCoilAllocation(q, { jobProductName: job?.product_name });
+}
+
+/**
+ * True when this job's own cutting list carries a Roof line — i.e. completion must consume
+ * stone-coated metre stock. See `jobExpectsCoilAllocation` for why cutting-list line types are
+ * preferred over quotation-wide / product-name scoping.
+ */
+function jobRequiresStoneMetreConsumption(db, job, qRow) {
+  if (!jobIsStoneMeter(db, job)) return false;
+  const lineTypes = jobCuttingListLineTypes(db, job);
+  if (lineTypes.size) {
+    return cuttingListRequiresStoneMetreConsumption([...lineTypes].map((t) => ({ lineType: t })));
+  }
+  if (!qRow?.lines_json) return false;
+  try {
+    return quotationRequiresStoneMetreConsumption(qRow.lines_json, {
+      stoneMeterQuote: true,
+      jobProductName: job?.product_name,
+    });
+  } catch {
+    return false;
+  }
 }
 
 function jobIsStoneCoilHybrid(db, job) {
@@ -1647,17 +1696,7 @@ function applyHybridStoneMetreAndSfTx(db, job, jobID, payload, completedAtISO, s
   if (!jobIsStoneCoilHybrid(db, job)) return { stoneMetres: 0, stoneFlatsheetStockWarnings: [] };
   const qref = String(job.quotation_ref ?? '').trim();
   const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
-  let requiresStoneMetres = false;
-  if (qRow?.lines_json) {
-    try {
-      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
-        stoneMeterQuote: true,
-        jobProductName: job.product_name,
-      });
-    } catch {
-      requiresStoneMetres = false;
-    }
-  }
+  const requiresStoneMetres = jobRequiresStoneMetreConsumption(db, job, qRow);
   const metresRaw = safeNumber(
     payload.stoneMetersConsumed ?? payload.stoneMeters ?? payload.metersConsumed ?? 0
   );
@@ -1716,17 +1755,7 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
   );
   const qref = String(job.quotation_ref ?? '').trim();
   const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
-  let requiresStoneMetres = false;
-  if (qRow?.lines_json) {
-    try {
-      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
-        stoneMeterQuote: true,
-        jobProductName: job.product_name,
-      });
-    } catch {
-      requiresStoneMetres = false;
-    }
-  }
+  const requiresStoneMetres = jobRequiresStoneMetreConsumption(db, job, qRow);
   const metres = requiresStoneMetres ? metresRaw : 0;
   if (!Number.isFinite(metresRaw)) {
     return { ok: false, error: 'Stone metres consumed must be a number.' };
@@ -1802,9 +1831,9 @@ function completeProductionJobStone(db, job, jobID, payload = {}, opts = {}) {
       db.prepare(
         `UPDATE production_jobs
          SET status = ?, end_date_iso = ?, completed_at_iso = ?, actual_meters = ?, actual_weight_kg = ?,
-             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?
+             conversion_alert_state = ?, manager_review_required = ?, offcut_inventory_meters = ?, actual_roof_m = ?
          WHERE job_id = ?`
-      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, 0, jobID);
+      ).run('Completed', completedAtISO.slice(0, 10), completedAtISO, metres, 0, 'OK', 0, 0, metres, jobID);
       if (job.cutting_list_id) {
         db.prepare(`UPDATE cutting_lists SET status = 'Finished' WHERE id = ?`).run(job.cutting_list_id);
       }
@@ -1877,7 +1906,12 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
   if (jobStatusOffcut !== 'Running') {
     return { ok: false, error: 'Start the production job before completing it.' };
   }
-  const outputMetresOffcut = metres + Math.max(0, offInv);
+  // `metres` is already the resolved total finished-goods output (resolveOffcutCompletionMetres
+  // defaults it from `offInv` when the operator only fills in "Offcut stock metres" — see that
+  // function's fallback). `actual_meters` below is persisted as `metres` alone, so gating on
+  // `metres + offInv` here double-counted whenever only one of the two fields was entered
+  // (the common case), producing false "exceeds planned metres" / refund-gate rejections.
+  const outputMetresOffcut = metres;
   const paidRefundGatePre = validateProductionEditAgainstPaidRefunds(db, job, {
     proposedJobOutputMetres: outputMetresOffcut,
   });
@@ -1997,6 +2031,16 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
         completedAtISO,
         stockBranch,
         adjustStock
+      );
+      // `metres` above is the coil/offcut-derived flatsheet output; the stone roofing metres
+      // consumed just above via applyHybridStoneMetreAndSfTx are a separate figure that the
+      // `actual_meters` UPDATE (above) never includes. Record both so the job's completed output
+      // is visible per product portion, not just the coil/flatsheet number (see actual_roof_m /
+      // actual_flatsheet_m column comment in migrate.js).
+      db.prepare(`UPDATE production_jobs SET actual_roof_m = ?, actual_flatsheet_m = ? WHERE job_id = ?`).run(
+        hybridStoneOffcut.stoneMetres || 0,
+        metres,
+        jobID
       );
       appendAuditLog(db, {
         actor: opts.actor,
@@ -2352,6 +2396,16 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
           ...hybridStone.stoneFlatsheetStockWarnings,
         ];
       }
+      // `outputMeters` (persisted as actual_meters above) is the coil-derived flatsheet output
+      // only; the stone roofing metres consumed just above via applyHybridStoneMetreAndSfTx are a
+      // separate figure never folded into actual_meters. Record both so the job's completed
+      // output is visible per product portion (see actual_roof_m / actual_flatsheet_m column
+      // comment in migrate.js).
+      db.prepare(`UPDATE production_jobs SET actual_roof_m = ?, actual_flatsheet_m = ? WHERE job_id = ?`).run(
+        hybridStone.stoneMetres || 0,
+        outputMeters,
+        jobID
+      );
       appendAuditLog(db, {
         actor: opts.actor,
         action: 'production.complete',
@@ -3516,17 +3570,7 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
   }
   const qref = String(job.quotation_ref ?? '').trim();
   const qRow = qref ? db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(qref) : null;
-  let requiresStoneMetres = false;
-  if (qRow?.lines_json) {
-    try {
-      requiresStoneMetres = quotationRequiresStoneMetreConsumption(qRow.lines_json, {
-        stoneMeterQuote: true,
-        jobProductName: job.product_name,
-      });
-    } catch {
-      requiresStoneMetres = false;
-    }
-  }
+  const requiresStoneMetres = jobRequiresStoneMetreConsumption(db, job, qRow);
   const previousFromMovements = netStoneMetresConsumedForJob(db, jobId);
   const pureStone = !jobExpectsCoilAllocation(db, job);
   const previous =
@@ -3617,7 +3661,15 @@ export function applyCompletedProductionStoneMetresCorrections(db, jobID, payloa
             dateISO: atISO.slice(0, 10),
           });
         }
-        db.prepare(`UPDATE production_jobs SET actual_meters = ? WHERE job_id = ?`).run(nextMetres, jobId);
+        db.prepare(`UPDATE production_jobs SET actual_meters = ?, actual_roof_m = ? WHERE job_id = ?`).run(
+          nextMetres,
+          nextMetres,
+          jobId
+        );
+      } else {
+        // Hybrid job: actual_meters keeps tracking the coil/flatsheet portion only (set at
+        // completion) — record the corrected stone-roofing portion separately.
+        db.prepare(`UPDATE production_jobs SET actual_roof_m = ? WHERE job_id = ?`).run(nextMetres, jobId);
       }
       appendAuditLog(db, {
         actor: opts.actor,

@@ -822,6 +822,27 @@ function runMigrationsUnlocked(db) {
   if (!productionJobs.has('planned_flatsheet_m')) {
     db.exec(`ALTER TABLE production_jobs ADD COLUMN planned_flatsheet_m REAL NOT NULL DEFAULT 0`);
   }
+  /*
+   * Actual output, split by cutting-list line type — mirrors the planned_* columns above.
+   * A stone-coated hybrid job (one job, Roof + Flatsheet lines together) previously had only the
+   * single `actual_meters` figure, which the coil/offcut completion path sets to the coil-derived
+   * flatsheet output ALONE — the stone-metre roofing consumption entered separately via
+   * `applyHybridStoneMetreAndSfTx` was never folded into any per-job "output" figure at all. That
+   * made the roofing entry look like it "didn't count" (nothing in the job's output changed) while
+   * the one visible number was actually the coil/flatsheet metres, reading as if coil usage had
+   * been counted as roof production. These columns are purely additive: `actual_meters` keeps its
+   * existing value/meaning (downstream refund-gate / GL code depends on it), and the split is
+   * exposed alongside it for accurate per-type reporting and register display.
+   */
+  if (!productionJobs.has('actual_roof_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN actual_roof_m REAL NOT NULL DEFAULT 0`);
+  }
+  if (!productionJobs.has('actual_cladding_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN actual_cladding_m REAL NOT NULL DEFAULT 0`);
+  }
+  if (!productionJobs.has('actual_flatsheet_m')) {
+    db.exec(`ALTER TABLE production_jobs ADD COLUMN actual_flatsheet_m REAL NOT NULL DEFAULT 0`);
+  }
   if (productionJobs.has('planned_roof_m')) {
     try {
       db.exec(`
@@ -1213,6 +1234,9 @@ function runMigrationsUnlocked(db) {
       conversion_variance_band TEXT,
       coil_spec_mismatch_pending INTEGER NOT NULL DEFAULT 0,
       offcut_inventory_meters REAL NOT NULL DEFAULT 0,
+      actual_roof_m REAL NOT NULL DEFAULT 0,
+      actual_cladding_m REAL NOT NULL DEFAULT 0,
+      actual_flatsheet_m REAL NOT NULL DEFAULT 0,
       FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
     );
 

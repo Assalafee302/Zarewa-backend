@@ -1,5 +1,6 @@
 import { effectiveOutstandingNgn, rawOutstandingNgn } from './paymentOutstandingTolerance.js';
 import { registerReceivableOutstandingNgn } from './receivableWriteOffPolicy.js';
+import { jobHasPositiveOutputMetres } from './jobOutputMetres.js';
 
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
@@ -153,7 +154,8 @@ export function quotationHasCompletedProduction(quotationRef, productionJobs = [
   return (productionJobs || []).some((j) => {
     if (String(j?.status || '').trim() !== 'Completed') return false;
     if (String(j.quotationRef || '').trim() !== ref) return false;
-    return (Number(j.actualMeters) || 0) > 0;
+    /* Hybrid stone can complete with actual_meters=0 and actual_roof_m > 0. */
+    return jobHasPositiveOutputMetres(j);
   });
 }
 

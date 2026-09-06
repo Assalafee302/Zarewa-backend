@@ -6,6 +6,7 @@ import { normalizeMaterialProfile } from './materialProfileNormalize.js';
 import { effectiveOutstandingNgn } from './paymentOutstandingTolerance.js';
 import { refundOutstandingAmount, isRefundPayable, approvedRefundsAwaitingPayment } from './refundsStore.js';
 import { receiptCashReceivedNgn } from './salesReceiptsList.js';
+import { jobTotalOutputMetres } from './jobOutputMetres.js';
 
 function toIsoDate(value) {
   return String(value || '').slice(0, 10);
@@ -45,7 +46,7 @@ export function productionOutputDateISO(job) {
 }
 
 function productionJobActualMeters(job) {
-  return Number(job?.actualMeters) || 0;
+  return jobTotalOutputMetres(job);
 }
 
 /** Sum of actual metres from completed production jobs per quotation ref (split denominator for attributed sales). */

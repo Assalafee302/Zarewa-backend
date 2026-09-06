@@ -179,4 +179,51 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
     expect(stoneMovement).toBeTruthy();
     expect(Number(stoneMovement.qty)).toBe(-60);
   });
+
+  it('hybrid offcut completion with stone metres and zero flatsheet output still posts STONE_CONSUMPTION', () => {
+    insertStoneQuotation(
+      'QT-STONE-HYBRID-ZERO-FS',
+      [
+        { name: 'Roofing Sheet', qty: '100', unitPrice: '5000' },
+        { name: 'Flat sheet', qty: '1.33', unitPrice: '4000' },
+      ],
+      505320
+    );
+
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-HYBRID-ZERO-FS',
+      lines: [
+        { sheets: 20, lengthM: 5, lineType: 'Roof' },
+        { sheets: 1, lengthM: 1.33, lineType: 'Flatsheet' },
+      ],
+    });
+    expect(cl.ok).toBe(true);
+
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+
+    const started = startProductionJob(db, job.jobID);
+    expect(started.ok).toBe(true);
+
+    // Same shape as production register: Offcut mode, stone = plan roof, offcut flatsheet = 0.
+    const done = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 0,
+      offcutInventoryMeters: 0,
+      stoneMetersConsumed: 100,
+    });
+    expect(done.ok).toBe(true);
+
+    const finalRow = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
+    expect(finalRow.status).toBe('Completed');
+    expect(Number(finalRow.actual_meters)).toBe(0);
+    expect(Number(finalRow.actual_roof_m)).toBe(100);
+    expect(Number(finalRow.actual_flatsheet_m)).toBe(0);
+
+    const stoneMovement = db
+      .prepare(`SELECT * FROM stock_movements WHERE ref = ? AND type = 'STONE_CONSUMPTION'`)
+      .get(job.jobID);
+    expect(stoneMovement).toBeTruthy();
+    expect(Number(stoneMovement.qty)).toBe(-100);
+  });
 });

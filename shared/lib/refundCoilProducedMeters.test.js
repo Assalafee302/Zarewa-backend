@@ -69,6 +69,34 @@ describe('refundCoilProducedMeters', () => {
     expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: false })).toBe(28);
   });
 
+  it('producedMetersForUnproducedRefund on hybrid stone uses roof metres, not flatsheet actual_meters', () => {
+    const db = memDbWithCoils([]);
+    const jobs = [
+      {
+        job_id: 'PRO-HY',
+        status: 'Completed',
+        actual_meters: 25,
+        actual_roof_m: 60,
+        actual_flatsheet_m: 25,
+      },
+    ];
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: true })).toBe(60);
+  });
+
+  it('producedMetersForUnproducedRefund on hybrid stone-only (actual_meters=0) still counts roof', () => {
+    const db = memDbWithCoils([]);
+    const jobs = [
+      {
+        job_id: 'PRO-HY0',
+        status: 'Completed',
+        actual_meters: 0,
+        actual_roof_m: 100,
+        actual_flatsheet_m: 0,
+      },
+    ];
+    expect(producedMetersForUnproducedRefund(db, jobs, { isStoneMeterQuote: true })).toBe(100);
+  });
+
   it('producedMetersForUnproducedRefund counts offcut-only completed output', () => {
     const db = memDbWithCoils([]);
     const jobs = [{ job_id: 'PRO-OFF', status: 'Completed', actual_meters: 1, offcut_inventory_meters: 1 }];

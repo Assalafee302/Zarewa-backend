@@ -4,8 +4,9 @@ import {
   pendingAdvanceDepositRowsFromEntries,
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
+import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
-import { repairRefundPayoutStateTx, resolveRefundStatus } from './sales/refundPayoutStatus.js';
+import { repairRefundPayoutStateTx, resolveRefundStatus, buildRefundSettlementSummary } from './sales/refundPayoutStatus.js';
 import {
   poTransportQuotedFeeNgn,
   PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
@@ -39,7 +40,7 @@ import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause } from './listQueryOpts.js';
-import { resolveCreditTargets as liveRefundCreditTargets } from './finance/partnerWalletCredit.js';
+import { resolveCreditTargets as liveRefundCreditTargets, listPartnerWalletOpenCreditsForRefund } from './finance/partnerWalletCredit.js';
 /** @param {import('better-sqlite3').Database} db */
 
 /** @type {Map<string, boolean>} */
@@ -470,6 +471,16 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
     .map((row) => {
       const baseActual = Number(row.actual_meters) || 0;
       const fgAdj = adjByJob.get(row.job_id) || 0;
+      const actualRoofM = Number(row.actual_roof_m) || 0;
+      const actualCladdingM = Number(row.actual_cladding_m) || 0;
+      const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
+      /* Hybrid stone: roof lives in actual_roof_m; actual_meters is flatsheet-only — do not use base alone. */
+      const totalBase = jobTotalOutputMetres({
+        actualMeters: baseActual,
+        actualRoofM,
+        actualCladdingM,
+        actualFlatsheetM,
+      });
       return {
         jobID: row.job_id,
         cuttingListId: row.cutting_list_id ?? '',
@@ -492,10 +503,10 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
         completedAtISO: row.completed_at_iso ?? '',
         productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
         actualMeters: baseActual + fgAdj,
-        effectiveOutputMeters: baseActual + fgAdj,
-        actualRoofM: Number(row.actual_roof_m) || 0,
-        actualCladdingM: Number(row.actual_cladding_m) || 0,
-        actualFlatsheetM: Number(row.actual_flatsheet_m) || 0,
+        effectiveOutputMeters: totalBase + fgAdj,
+        actualRoofM,
+        actualCladdingM,
+        actualFlatsheetM,
         actualWeightKg: Number(row.actual_weight_kg) || 0,
         branchId: row.branch_id ?? '',
       };
@@ -2097,6 +2108,15 @@ export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
     .map((row) => {
       const baseActual = Number(row.actual_meters) || 0;
       const fgAdj = adjByJob.get(row.job_id) || 0;
+      const actualRoofM = Number(row.actual_roof_m) || 0;
+      const actualCladdingM = Number(row.actual_cladding_m) || 0;
+      const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
+      const totalBase = jobTotalOutputMetres({
+        actualMeters: baseActual,
+        actualRoofM,
+        actualCladdingM,
+        actualFlatsheetM,
+      });
       return {
         jobID: row.job_id,
         cuttingListId: row.cutting_list_id ?? '',
@@ -2120,10 +2140,10 @@ export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
         productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
         actualMeters: baseActual,
         fgAdjustmentMetersTotal: fgAdj,
-        effectiveOutputMeters: baseActual + fgAdj,
-        actualRoofM: Number(row.actual_roof_m) || 0,
-        actualCladdingM: Number(row.actual_cladding_m) || 0,
-        actualFlatsheetM: Number(row.actual_flatsheet_m) || 0,
+        effectiveOutputMeters: totalBase + fgAdj,
+        actualRoofM,
+        actualCladdingM,
+        actualFlatsheetM,
         actualWeightKg: Number(row.actual_weight_kg) || 0,
         conversionAlertState: row.conversion_alert_state ?? 'Pending',
         managerReviewRequired: Boolean(row.manager_review_required),
@@ -2757,7 +2777,6 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     splitDistributions = [];
   }
   const approvedAmountNgn = row.approved_amount_ngn != null ? Number(row.approved_amount_ngn) || 0 : 0;
-  const paidAmountNgn = Number(row.paid_amount_ngn) || 0;
   const finalApprovedAmountNgn =
     row.status === 'Approved' || row.status === 'Paid' || row.status === 'Partially paid'
       ? approvedAmountNgn || Number(row.amount_ngn) || 0
@@ -2772,6 +2791,15 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     finalApprovedAmountNgn,
     resolvedStatus
   );
+  const settlementSummary = buildRefundSettlementSummary(db, row, { walletOpenNgn });
+  // Prefer repaired payee-only paid amount when legacy rows still include company cut.
+  const paidAmountForApi = settlementSummary.payeeSettledNgn;
+  let walletOpenCredits = [];
+  try {
+    walletOpenCredits = listPartnerWalletOpenCreditsForRefund(db, row.refund_id);
+  } catch {
+    walletOpenCredits = [];
+  }
   return {
     refundID: row.refund_id,
     customerID: row.customer_id,
@@ -2794,7 +2822,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     approvedBy: row.approved_by,
     approvedAmountNgn: finalApprovedAmountNgn,
     managerComments: row.manager_comments,
-    paidAmountNgn,
+    paidAmountNgn: paidAmountForApi,
     paidAtISO: row.paid_at_iso,
     paidBy: row.paid_by,
     paymentNote: row.payment_note ?? '',
@@ -2803,6 +2831,10 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     payeeBankName: row.payee_bank_name ?? '',
     payoutHistory,
     walletOpenNgn,
+    walletOpenCredits,
+    heldNetNgn: settlementSummary.heldUnclearedNgn,
+    companyCutNgn: settlementSummary.companyCutNgn,
+    settlementSummary,
     branchId: row.branch_id ?? '',
     creditAppliedNgn: Number(row.credit_applied_ngn) || 0,
     creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',

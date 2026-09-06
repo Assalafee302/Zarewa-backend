@@ -11,6 +11,7 @@ import {
   productionOutputDateISO,
 } from './liveAnalytics.js';
 import { quotationHasFlatSheetLine } from './stoneCoatedQuotationPolicy.js';
+import { jobStoneRoofingMetres, jobTotalOutputMetres } from './jobOutputMetres.js';
 const ACCESSORY_REGISTER_TYPES = [
   { key: 'nails_fasteners', label: 'Nails & fasteners', patterns: [/nail/i, /fastener/i, /tapping screw/i] },
   { key: 'screws_clips', label: 'Screws & clips', patterns: [/screw/i, /clip/i, /washer/i] },
@@ -593,6 +594,9 @@ function normalizeJobRow(j) {
     startDateISO: j.startDateISO ?? j.start_date_iso,
     actualMeters: j.actualMeters ?? j.actual_meters,
     effectiveOutputMeters: j.effectiveOutputMeters,
+    actualRoofM: j.actualRoofM ?? j.actual_roof_m,
+    actualCladdingM: j.actualCladdingM ?? j.actual_cladding_m,
+    actualFlatsheetM: j.actualFlatsheetM ?? j.actual_flatsheet_m,
     actualWeightKg: j.actualWeightKg ?? j.actual_weight_kg,
   };
 }
@@ -667,20 +671,22 @@ function inferFamilyFromProductName(productName) {
 function resolveJobOutputKind(job, quote, coils, accLines) {
   if (coils.length > 0) return 'none';
   const meters = Number(job.actualMeters) || 0;
+  const roofM = jobStoneRoofingMetres(job, 0);
   const weight = Number(job.actualWeightKg) || 0;
   const hints = quoteProductHints(quote);
   const products = quotationLines(quote).products || [];
 
-  if (quotationHasFlatSheetLine(products) && meters === 0 && weight === 0) {
+  if (quotationHasFlatSheetLine(products) && meters === 0 && roofM <= 1e-9 && weight === 0) {
     return accLines.length > 0 ? 'accessory_only' : 'none';
   }
+  if (roofM > 1e-9 && weight === 0) return 'stone_meter';
   if (meters !== 0 && weight === 0) return 'stone_meter';
-  if (hints.hasStone && !hints.hasCoilProduct && meters !== 0) return 'stone_meter';
-  if (accLines.length > 0 && meters === 0 && weight === 0) return 'accessory_only';
-  if (hints.hasAccessory && !hints.hasCoilProduct && !hints.hasStone && meters === 0 && weight === 0) {
+  if (hints.hasStone && !hints.hasCoilProduct && (meters !== 0 || roofM > 1e-9)) return 'stone_meter';
+  if (accLines.length > 0 && meters === 0 && roofM <= 1e-9 && weight === 0) return 'accessory_only';
+  if (hints.hasAccessory && !hints.hasCoilProduct && !hints.hasStone && meters === 0 && roofM <= 1e-9 && weight === 0) {
     return 'accessory_only';
   }
-  if (meters > 0 || weight > 0) return 'offcut_production';
+  if (meters > 0 || weight > 0 || roofM > 1e-9) return 'offcut_production';
   if (accLines.length > 0) return 'accessory_only';
   return 'none';
 }
@@ -915,7 +921,7 @@ function buildOffcutProductionRow({ job, quote, metersByRef, refunds, cancelled 
     qtNoDisplay: displayLast4(qref) || '—',
     customerProject: customerProjectLabel(job, quote),
     design: quotationDesignLabel(quote),
-    metres: round2(Number(job.effectiveOutputMeters ?? job.actualMeters) || 0),
+    metres: round2(jobTotalOutputMetres(job)),
     kgUsed: round2(Number(job.actualWeightKg) || 0),
     amountNetNgn: amountPaidNetForJob(quote, refunds, qref),
     attributedNgn: Math.round(allocatedQuotationRevenueForProductionJob(job, quote, metersByRef)),
@@ -939,8 +945,13 @@ function splitCoilRowsByFamily(coilRows) {
 
 function buildStoneMeterRow({ job, quote, refunds, cancelled, masterData, drawSnapshot }) {
   const qref = String(job.quotationRef || '').trim();
-  const usedM = round2(Math.abs(Number(job.actualMeters) || 0));
   const snap = drawSnapshot || {};
+  const snapUsed =
+    snap.beforeM != null && snap.afterM != null
+      ? round2(Math.abs((Number(snap.beforeM) || 0) - (Number(snap.afterM) || 0)))
+      : 0;
+  /* Prefer roof column / stone draw — never flatsheet-only actualMeters on hybrids. */
+  const metresUsed = round2(Math.max(jobStoneRoofingMetres(job, snapUsed), snapUsed));
   const dates = rowDateFields(jobTxnDateISO(job));
   const colourRaw = quotationColourRaw(quote);
   return {
@@ -953,7 +964,7 @@ function buildStoneMeterRow({ job, quote, refunds, cancelled, masterData, drawSn
     beforeM: snap.beforeM != null ? round2(snap.beforeM) : null,
     afterM: snap.afterM != null ? round2(snap.afterM) : null,
     stoneProductId: String(snap.productId || job.productID || job.product_id || '').trim(),
-    metresUsed: usedM,
+    metresUsed,
     amountNetNgn: amountPaidNetForJob(quote, refunds, qref),
     jobId: String(job.jobID || '').trim(),
     cancelled: Boolean(cancelled),
@@ -1201,6 +1212,19 @@ export function buildMaterialTransactionReport(input = {}) {
         if (cancelled) cancelledRows.push({ ...row, section: 'coil' });
         else completedCoilRows.push(row);
       });
+      /* Hybrid stone + coil: also emit stone roofing row (coil branch used to skip it entirely). */
+      if (jobStoneRoofingMetres(job, 0) > 1e-9) {
+        const stoneRow = buildStoneMeterRow({
+          job,
+          quote,
+          refunds,
+          cancelled,
+          masterData,
+          drawSnapshot: stoneDrawSnapshots.get(jid),
+        });
+        if (cancelled) cancelledStoneMeter.push(stoneRow);
+        else stoneMeterRows.push(stoneRow);
+      }
     } else if (outputKind === 'stone_meter') {
       const row = buildStoneMeterRow({
         job,

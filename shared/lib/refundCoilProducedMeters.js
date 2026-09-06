@@ -1,3 +1,5 @@
+import { jobStoneRoofingMetres } from './jobOutputMetres.js';
+
 /**
  * Metres drawn from coil allocations on production jobs (coil consumption only).
  * @param {import('better-sqlite3').Database} db
@@ -81,8 +83,8 @@ export function netStoneConsumptionMetresForJob(db, jobId) {
 /**
  * Metres that reduce unproduced-meterage refund potential.
  * Coil roofing: coil metres per job, or job actual metres when completed from offcut/accessories only.
- * Stone meter quotes: per completed job, the larger of actual metres and net stone consumption
- * (hybrid stone jobs keep roofing metres in STONE_CONSUMPTION movements, not actual_meters).
+ * Stone meter quotes: roofing metres only (`actual_roof_m` / STONE_CONSUMPTION) — never max with
+ * hybrid flatsheet `actual_meters`, which would overstate roofing vs quoted roofing sheet metres.
  */
 export function producedMetersForUnproducedRefund(db, productionJobs, opts = {}) {
   if (!Array.isArray(productionJobs) || productionJobs.length === 0) return 0;
@@ -91,9 +93,8 @@ export function producedMetersForUnproducedRefund(db, productionJobs, opts = {})
     for (const j of productionJobs) {
       const st = String(j.status ?? '').trim().toLowerCase();
       if (st !== 'completed') continue;
-      const actualM = Number(j.actual_meters ?? j.actualMeters) || 0;
       const stoneM = netStoneConsumptionMetresForJob(db, j.job_id ?? j.jobID);
-      sum += Math.max(actualM, stoneM);
+      sum += jobStoneRoofingMetres(j, stoneM);
     }
     return sum;
   }

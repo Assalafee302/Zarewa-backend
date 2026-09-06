@@ -55,9 +55,17 @@ function parseRefundCats(row) {
   } catch {
     calculationLines = [];
   }
+  let splitDistributions = [];
+  try {
+    const parsed = JSON.parse(row.split_distributions_json || '[]');
+    splitDistributions = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    splitDistributions = [];
+  }
   return {
     reasonCategory: row.reason_category,
     calculationLines,
+    splitDistributions,
     status: row.status,
     amountNgn: roundMoney(row.amount_ngn),
     approvedAmountNgn: roundMoney(row.approved_amount_ngn),
@@ -419,6 +427,7 @@ function nextApplicationId() {
  *   targetQuotationRef: string,
  *   amountNgn?: number | null,
  *   sourceIds?: string[] | null,
+ *   sourceReceiptId?: string | null,
  *   dateISO?: string,
  *   actor?: object,
  *   branchId?: string,
@@ -446,6 +455,18 @@ export function applyRefundCreditToQuotation(db, payload) {
   const wanted = Array.isArray(payload.sourceIds)
     ? payload.sourceIds.map((s) => String(s || '').trim()).filter(Boolean)
     : null;
+  // A specific source must be named once there is more than one candidate — silently pooling
+  // every eligible refund/overpay together is exactly how one confirmation drained a refund
+  // that a different payee still needed to be paid from. Only the unambiguous single-source
+  // case may fall through without a selection.
+  if ((!wanted || !wanted.length) && listed.sources.length > 1) {
+    return {
+      ok: false,
+      error: 'More than one refund fund is available for this customer — select which one this should apply against.',
+      code: 'REFUND_CREDIT_SOURCE_REQUIRED',
+      sources: listed.sources,
+    };
+  }
   if (wanted && wanted.length) {
     const set = new Set(wanted);
     sources = sources.filter((s) => set.has(s.id));
@@ -652,8 +673,8 @@ export function applyRefundCreditToQuotation(db, payload) {
           `INSERT INTO refund_credit_applications (
              application_id, customer_id, target_quotation_ref, source_quotation_ref, refund_id,
              kind, amount_ngn, status, ledger_bank_reference, created_at_iso,
-             created_by_user_id, created_by_name, branch_id
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+             created_by_user_id, created_by_name, branch_id, source_receipt_id
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
           appId,
           cid,
@@ -667,7 +688,8 @@ export function applyRefundCreditToQuotation(db, payload) {
           atIso,
           actorId(actor),
           actorName(actor),
-          bid
+          bid,
+          String(payload.sourceReceiptId || '').trim() || null
         );
 
         appendAuditLog(db, {
@@ -1019,5 +1041,42 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
     createdByUserId: row.created_by_user_id,
     createdByName: row.created_by_name,
     branchId: row.branch_id,
+    sourceReceiptId: row.source_receipt_id || null,
+  }));
+}
+
+/**
+ * Active (non-reversed) refund-credit applications created by confirming a specific receipt —
+ * so reversing that receipt can offer to undo the credit it applied in the same action, and so
+ * anyone reviewing the receipt can see exactly what it did to which refund.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} receiptId
+ */
+export function listActiveRefundCreditApplicationsBySourceReceipt(db, receiptId) {
+  const rid = String(receiptId || '').trim();
+  if (!rid) return [];
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT * FROM refund_credit_applications
+         WHERE source_receipt_id = ?
+           AND LOWER(TRIM(COALESCE(status, ''))) != ?`
+      )
+      .all(rid, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+  } catch {
+    // source_receipt_id column not present yet (migration pending on this host) — nothing to link.
+    return [];
+  }
+  return rows.map((row) => ({
+    applicationId: row.application_id,
+    customerID: row.customer_id,
+    targetQuotationRef: row.target_quotation_ref,
+    sourceQuotationRef: row.source_quotation_ref,
+    refundId: row.refund_id,
+    kind: row.kind,
+    amountNgn: roundMoney(row.amount_ngn),
+    status: row.status || REFUND_CREDIT_CONFIRMATION_STATUS,
+    createdAtISO: row.created_at_iso,
   }));
 }

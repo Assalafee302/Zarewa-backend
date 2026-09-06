@@ -128,7 +128,11 @@ import {
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
-import { applyRefundCreditToQuotation } from './refundCreditApplyOps.js';
+import {
+  applyRefundCreditToQuotation,
+  reverseRefundCreditApplication,
+  listActiveRefundCreditApplicationsBySourceReceipt,
+} from './refundCreditApplyOps.js';
 import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
   assertRefundMoneyOutWithinApproved,
@@ -6461,11 +6465,22 @@ export function reverseReceiptEntry(db, entryId, note = '', actor = null) {
     .get(reversalMarker(entryId), `%${entryId}%`);
   if (existing) return { ok: false, error: 'Receipt already reversed.' };
 
+  // Confirming this receipt may have also applied refund-fund credit toward the quotation
+  // (see patchSalesReceiptFinanceSettlement). Reversing the receipt alone would leave that
+  // credit standing against money that no longer has a confirmed receipt behind it — undo
+  // both in one action, same as if the confirmation had never happened.
+  const receiptRow = db
+    .prepare(`SELECT id FROM sales_receipts WHERE id = ? OR ledger_entry_id = ?`)
+    .get(entryId, entryId);
+  const linkedReceiptId = String(receiptRow?.id || entryId).trim();
+  const linkedCreditApplications = listActiveRefundCreditApplicationsBySourceReceipt(db, linkedReceiptId);
+
   const reversalNote = note || `Reverse receipt ${entryId}`;
   const reversalDateISO = new Date().toISOString().slice(0, 10);
   try {
     assertPeriodOpen(db, reversalDateISO, 'Receipt reversal date');
     let reversal;
+    const reversedCreditApplications = [];
     db.transaction(() => {
       reversal = insertLedgerRows(
         db,
@@ -6501,18 +6516,35 @@ export function reverseReceiptEntry(db, entryId, note = '', actor = null) {
       if (!glRev.ok && !glRev.skipped) {
         throw new Error(glRev.error || 'GL reversal failed for receipt.');
       }
+      for (const app of linkedCreditApplications) {
+        const rev = reverseRefundCreditApplication(db, app.applicationId, {
+          actor,
+          note: `Auto-reversed with receipt ${linkedReceiptId}${reversalNote ? ` — ${reversalNote}` : ''}`,
+          dateISO: reversalDateISO,
+          alreadyInTransaction: true,
+        });
+        if (!rev.ok && rev.code !== 'ALREADY_REVERSED') {
+          throw new Error(
+            `Receipt reversed, but could not also reverse refund credit ${app.applicationId}: ${rev.error}`
+          );
+        }
+        if (rev.ok) reversedCreditApplications.push(rev);
+      }
       appendAuditLog(db, {
         actor,
         action: 'ledger.reverse_receipt',
         entityKind: 'ledger_entry',
         entityId: entryId,
         note: reversalNote,
-        details: { reversalEntryId: reversal?.id ?? '' },
+        details: {
+          reversalEntryId: reversal?.id ?? '',
+          reversedRefundCreditApplicationIds: reversedCreditApplications.map((r) => r.applicationId),
+        },
       });
       const qref = String(target.quotation_ref || '').trim();
       if (qref) syncQuotationPaidFromLedger(db, qref);
     })();
-    return { ok: true, entry: reversal };
+    return { ok: true, entry: reversal, reversedRefundCreditApplications: reversedCreditApplications };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -11154,6 +11186,7 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
           targetQuotationRef: qref,
           amountNgn: creditApplyNgn,
           sourceIds: creditSourceIds,
+          sourceReceiptId: id,
           actor,
           branchId: row.branch_id,
           dateISO: String(row.date_iso || '').trim().slice(0, 10) || undefined,
@@ -11170,6 +11203,11 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
               );
             }
             creditResult = { ok: false, skipped: true, error: err, appliedNgn: 0 };
+          } else if (applied?.code === 'REFUND_CREDIT_SOURCE_REQUIRED') {
+            const structured = new Error(err);
+            structured.code = applied.code;
+            structured.sources = applied.sources;
+            throw structured;
           } else {
             throw new Error(
               applied?.error ||
@@ -11216,7 +11254,12 @@ export function patchSalesReceiptFinanceSettlement(db, receiptId, payload, actor
       }
     })();
   } catch (e) {
-    return { ok: false, error: String(e.message || e) };
+    return {
+      ok: false,
+      error: String(e.message || e),
+      ...(e?.code ? { code: e.code } : {}),
+      ...(e?.sources ? { sources: e.sources } : {}),
+    };
   }
 
   const finalizedNow = usesSplitConfirm

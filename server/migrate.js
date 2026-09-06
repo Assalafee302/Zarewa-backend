@@ -7034,6 +7034,45 @@ function migrateRefundCreditApplications(db) {
       /* ignore */
     }
   }
+
+  // Links a credit-apply back to the specific receipt confirmation that created it, so reversing
+  // that receipt can also reverse the credit it applied instead of leaving the two out of sync.
+  try {
+    const tableCols = (name) => {
+      try {
+        const rows = db
+          .prepare(
+            `SELECT column_name FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ?`
+          )
+          .all(name);
+        if (rows.length) {
+          return new Set(
+            rows
+              .map((c) => String(c.column_name ?? c.COLUMN_NAME ?? c.Column_name ?? '').toLowerCase())
+              .filter(Boolean)
+          );
+        }
+      } catch {
+        /* SQLite dev databases do not expose information_schema. */
+      }
+      try {
+        return new Set(db.prepare(`PRAGMA table_info(refund_credit_applications)`).all().map((c) => c.name));
+      } catch {
+        return new Set();
+      }
+    };
+    const cols = tableCols('refund_credit_applications');
+    if (cols.size && !cols.has('source_receipt_id')) {
+      db.exec(`ALTER TABLE refund_credit_applications ADD COLUMN source_receipt_id TEXT`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_receipt
+           ON refund_credit_applications(source_receipt_id)`
+      );
+    }
+  } catch {
+    /* ignore — best-effort, older hosts without information_schema/PRAGMA support */
+  }
 }
 
 /**

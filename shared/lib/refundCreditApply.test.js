@@ -9,12 +9,16 @@ import {
   refundCategoriesAreOverpaymentOnly,
   refundCreditOpenAmountFromStoredRefund,
   refundCreditOpenAmountNgn,
+  refundCreditUnavailableReason,
   refundIsEligibleCreditSource,
+  refundIsEligibleCreditSourceKind,
   refundLeftoverAwaitingApprovalNgn,
   refundOverpayConsumedNgn,
   refundOverpayFinishedPayout,
   refundFundRemainingHowToUse,
   refundFundUsageBreakdown,
+  refundSplitHasMultiplePayees,
+  refundSplitPayeeKeys,
   stripFinishedOverpayFromConfirmEligible,
   unclaimedOverpayCreditNgn,
 } from './refundCreditApply.js';
@@ -73,6 +77,57 @@ describe('refundCreditApply pure helpers', () => {
         paidAmountNgn: 0,
       })
     ).toBe(false);
+  });
+
+  it('counts distinct payees on a refund split by recipient id, ignoring zero-amount lines', () => {
+    expect(
+      refundSplitPayeeKeys([
+        { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 75_000 },
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 14_300 },
+      ])
+    ).toHaveLength(2);
+    expect(
+      refundSplitPayeeKeys([{ recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 75_000 }])
+    ).toHaveLength(1);
+    expect(refundSplitPayeeKeys([])).toHaveLength(0);
+    // A zero-amount line (e.g. fully consumed already) does not count as a second payee.
+    expect(
+      refundSplitPayeeKeys([
+        { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 75_000 },
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 0 },
+      ])
+    ).toHaveLength(1);
+  });
+
+  it('blocks a multi-payee split refund (staff + customer) from being used as receipt credit', () => {
+    const multiPayeeRefund = {
+      status: 'Approved',
+      reasonCategory: 'Order cancellation',
+      approvedAmountNgn: 89_300,
+      paidAmountNgn: 0,
+      splitDistributions: [
+        { recipientKind: 'customer', recipientCustomerID: 'CUS-1', amountNgn: 75_000 },
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 14_300 },
+      ],
+    };
+    expect(refundSplitHasMultiplePayees(multiPayeeRefund.splitDistributions)).toBe(true);
+    expect(refundIsEligibleCreditSourceKind(multiPayeeRefund)).toBe(false);
+    expect(refundIsEligibleCreditSource(multiPayeeRefund)).toBe(false);
+    expect(refundCreditUnavailableReason(multiPayeeRefund, 50_000)).toMatch(/more than one person/i);
+  });
+
+  it('still allows a single-payee split refund as receipt credit', () => {
+    const singlePayeeRefund = {
+      status: 'Approved',
+      reasonCategory: 'Order cancellation',
+      approvedAmountNgn: 14_300,
+      paidAmountNgn: 0,
+      splitDistributions: [
+        { recipientKind: 'associated_staff', recipientAssociatedStaffID: 'AST-1', amountNgn: 14_300 },
+      ],
+    };
+    expect(refundSplitHasMultiplePayees(singlePayeeRefund.splitDistributions)).toBe(false);
+    expect(refundIsEligibleCreditSourceKind(singlePayeeRefund)).toBe(true);
   });
 
   it('computes open credit and plans partial apply leaving remainder', () => {

@@ -676,7 +676,8 @@ CREATE TABLE IF NOT EXISTS refund_credit_applications (
   created_at_iso TEXT NOT NULL,
   created_by_user_id TEXT,
   created_by_name TEXT,
-  branch_id TEXT
+  branch_id TEXT,
+  source_receipt_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_customer
@@ -684,6 +685,9 @@ CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_customer
 
 CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_target
   ON refund_credit_applications(target_quotation_ref, created_at_iso DESC);
+
+CREATE INDEX IF NOT EXISTS idx_refund_credit_apps_receipt
+  ON refund_credit_applications(source_receipt_id);
 
 CREATE TABLE IF NOT EXISTS setup_quote_items (
   item_id TEXT PRIMARY KEY,

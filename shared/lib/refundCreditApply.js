@@ -53,13 +53,59 @@ function refundIncludesNonTransferableServiceCategory(reasonCategory, calculatio
   return lines.some((l) => matchesBlocked(l?.category) || matchesBlocked(l?.label));
 }
 
+function parseSplitDistributionsForCredit(raw) {
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(String(raw || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Distinct payees (by recipient id) with a nonzero allocation on this refund's split.
+ * @param {unknown} splitDistributions raw array, JSON string, or already-parsed
+ */
+export function refundSplitPayeeKeys(splitDistributions) {
+  const splits = parseSplitDistributionsForCredit(splitDistributions);
+  const keys = new Set();
+  for (const s of splits) {
+    const amt = Math.round(Number(s?.amountNgn ?? s?.amount_ngn) || 0);
+    if (amt <= 0) continue;
+    const kind = String(s?.recipientKind ?? s?.recipient_kind ?? '').trim().toLowerCase();
+    const isStaff = kind === 'associated_staff' || kind === 'staff';
+    const id = isStaff
+      ? String(s?.recipientAssociatedStaffID ?? s?.recipient_associated_staff_id ?? '').trim()
+      : String(s?.recipientCustomerID ?? s?.recipient_customer_id ?? '').trim();
+    keys.add(`${isStaff ? 'associated_staff' : 'customer'}:${id || kind || 'unknown'}`);
+  }
+  return [...keys];
+}
+
+/**
+ * True when a refund pays out to more than one distinct payee (e.g. a Transport/Installation
+ * split to a driver/installer alongside the quote customer). Refund-fund credit-apply moves
+ * money against the refund's shared paid/credit-applied totals, not a specific payee's share —
+ * applying it against one payee's portion would silently reduce what the OTHER payee can still
+ * be paid, with no way to tell which payee it was meant to cover. Pay each payee out directly
+ * (Till/Bank payout) instead; only single-payee refunds are safe to use as transferable credit.
+ * @param {unknown} splitDistributions
+ */
+export function refundSplitHasMultiplePayees(splitDistributions) {
+  return refundSplitPayeeKeys(splitDistributions).length > 1;
+}
+
 /**
  * Status/category gate only — does not check open balance (use with stored-row open helpers).
- * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown }} refund
+ * @param {{ status?: string, reasonCategory?: unknown, calculationLines?: unknown, splitDistributions?: unknown }} refund
  */
 export function refundIsEligibleCreditSourceKind(refund) {
   const status = String(refund?.status || '').trim();
   if (refundIncludesNonTransferableServiceCategory(refund?.reasonCategory, refund?.calculationLines)) {
+    return false;
+  }
+  if (refundSplitHasMultiplePayees(refund?.splitDistributions)) {
     return false;
   }
   const overpayOnly = refundCategoriesAreOverpaymentOnly(
@@ -99,6 +145,9 @@ export function refundCreditUnavailableReason(refund, openNgn, kindEligible = re
   );
   if (refundIncludesNonTransferableServiceCategory(refund?.reasonCategory, refund?.calculationLines)) {
     return 'Transport/installation refunds are cash payout only.';
+  }
+  if (refundSplitHasMultiplePayees(refund?.splitDistributions)) {
+    return 'This refund pays out to more than one person — apply each payee’s share directly from Till/Bank payout instead of a receipt credit.';
   }
   if (String(refund?.status || '').trim() === 'Pending' && !overpayOnly) {
     return 'Needs manager approval before it can cover a receipt.';

@@ -668,3 +668,164 @@ export function buildDashboardBootstrap(db, opts = {}) {
     },
   };
 }
+
+/**
+ * Desk register arrays deferred on the first-paint shell. Domains refill via
+ * `/api/workspace/{domain}-snapshot` (and optional background prefetch).
+ */
+export const SHELL_DEFERRED_DESK_ARRAYS = [
+  'customers',
+  'quotations',
+  'receipts',
+  'refunds',
+  'cuttingLists',
+  'expenses',
+  'paymentRequests',
+  'treasuryMovements',
+  'treasuryAccounts',
+  'ledgerEntries',
+  'purchaseOrders',
+  'suppliers',
+  'transportAgents',
+  'associatedStaff',
+  'products',
+  'coilLots',
+  'coilControlEvents',
+  'materialIncidents',
+  'movements',
+  'deliveries',
+  'productionJobs',
+  'productionJobCoils',
+  'productionJobAccessoryUsage',
+  'productionJobStoneFlatsheetUsage',
+  'productionConversionChecks',
+  'productionCompletionAdjustments',
+  'materialRequests',
+  'inTransitLoads',
+  'machines',
+  'maintenancePlans',
+  'maintenanceWorkOrders',
+  'bankReconciliation',
+  'bankDeposits',
+  'coilRequests',
+  'yardCoilRegister',
+  'procurementCatalog',
+  'accountsPayable',
+  'advanceInEvents',
+  'glJournalSearchSlice',
+  'materialPricingRows',
+  'priceListItems',
+  'masterData',
+  'salesAvailableStock',
+  'registerSettlementsAwaitingPayment',
+  'staffRecoveriesDue',
+  'staffRepayableObligations',
+  'partnerWalletBalancesDue',
+  'poTransportAwaitingTreasury',
+  'poTransportMissingLink',
+  'poTransportCatchUp',
+  'orphanHaulageTreasuryMovements',
+  'refundCreditApplications',
+  'hrPerformanceReviews',
+];
+
+/**
+ * Minimal first-paint bootstrap: auth, branches, and inbox slice only.
+ * Does not run the full desk list builder (avoids multi-thousand-row JSON on slow links).
+ *
+ * @param {import('./db.js').Database} db
+ * @param {{
+ *   user?: object | null;
+ *   session?: {authenticated: boolean, user?: object | null, permissions?: string[]};
+ *   branchScope?: 'ALL' | string;
+ *   includeControls?: boolean;
+ *   includeUsers?: boolean;
+ *   includeRegisteredPasswords?: boolean;
+ * }} [opts]
+ */
+export function buildShellBootstrap(db, opts = {}) {
+  const branchScope = opts.branchScope ?? 'ALL';
+  const user = opts.user ?? opts.session?.user ?? null;
+  const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
+  const workScope = {
+    viewAll: branchScope === 'ALL',
+    branchId:
+      branchScope === 'ALL'
+        ? DEFAULT_BRANCH_ID
+        : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+  };
+
+  const orgManagerTargetsRaw = getJsonBlob(db, 'org.manager_targets.v1');
+  const orgManagerTargets = (() => {
+    if (!orgManagerTargetsRaw || typeof orgManagerTargetsRaw !== 'object') return null;
+    const n = Number(orgManagerTargetsRaw.nairaTargetPerMonth);
+    const m = Number(orgManagerTargetsRaw.meterTargetPerMonth);
+    const o = {};
+    if (Number.isFinite(n) && n > 0) o.nairaTargetPerMonth = n;
+    if (Number.isFinite(m) && m > 0) o.meterTargetPerMonth = m;
+    return Object.keys(o).length ? o : null;
+  })();
+
+  const emptyDesk = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, []]));
+  const truncated = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, true]));
+
+  return {
+    ok: true,
+    session,
+    permissions: session.permissions ?? [],
+    workspaceBranches: listBranches(db),
+    branchScope,
+    ...emptyDesk,
+    materialPoolSummary: null,
+    wipByProduct: {},
+    productionMetrics: {
+      jobCount: 0,
+      byStatus: {},
+      totalPlannedMeters: 0,
+      totalActualMeters: 0,
+      completedActualMeters: 0,
+    },
+    operationsInventoryAttention: emptyOperationsInventoryAttention(),
+    customerDashboard: { orders: [], interactions: [], salesTrendByCustomer: {} },
+    pricingPolicyBundle: null,
+    appUsers: opts.includeUsers
+      ? listAppUsers(db, { revealRegisteredPasswords: Boolean(opts.includeRegisteredPasswords) })
+      : [],
+    periodLocks: opts.includeControls ? listPeriodLocks(db) : [],
+    approvalActions: opts.includeControls ? listApprovalActions(db) : [],
+    auditLog: opts.includeControls ? listAuditLog(db) : [],
+    dashboardPrefs:
+      session?.user?.id != null ? getJsonBlob(db, `user_dashboard_prefs:${session.user.id}`) ?? {} : {},
+    orgManagerTargets,
+    orgStoreRestock: normalizeOrgStoreRestock(getJsonBlob(db, 'org.store_restock.v1')),
+    orgGovernanceLimits: user ? getOrgGovernanceLimits(db) : null,
+    /** Small inbox slice for Workspace home — desks still load full queues via domain packs. */
+    unifiedWorkItems: user
+      ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 40 }))
+      : [],
+    staffPurchaseCreditPendingCount:
+      user &&
+      (userMayApproveStaffPurchaseCredit(user) || userMayRejectStaffPurchaseCredit(user))
+        ? countPendingStaffPurchaseCreditRequests(
+            db,
+            workScope.viewAll ? 'ALL' : workScope.branchId
+          )
+        : 0,
+    staffPurchaseCreditCrossBranch:
+      user && userMayApproveStaffPurchaseCredit(user)
+        ? summarizePendingStaffPurchaseCreditByBranch(
+            db,
+            workScope.viewAll ? '' : workScope.branchId
+          )
+        : null,
+    workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
+    suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
+    helpPersonalization: null,
+    bootstrapMeta: {
+      mode: 'shell',
+      deferredDeskArrays: [...SHELL_DEFERRED_DESK_ARRAYS],
+      truncated,
+      listLimitsApplied: {},
+    },
+  };
+}

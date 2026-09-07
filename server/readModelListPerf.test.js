@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { listPurchaseOrders, listQuotations, listStockMovements } from './readModel.js';
-import { buildDashboardBootstrap } from './bootstrap.js';
+import { buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
 import { insertCustomer, insertSupplier } from './writeOps.js';
 
 function mysqlAvailable() {
@@ -87,6 +87,34 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(snap.productionJobCoils).toEqual([]);
     expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
       expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils'])
+    );
+    db.close();
+  });
+
+  it('buildShellBootstrap stays lean and defers desk registers', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    for (let i = 1; i <= 5; i += 1) {
+      db.prepare(
+        `INSERT INTO stock_movements (id, type, product_id, qty, at_iso, date_iso, branch_id)
+         VALUES (?, 'ADJUSTMENT', 'P1', 1, ?, ?, 'BR-KD')`
+      ).run(`M-${i}`, `2026-07-0${i}T12:00:00Z`, `2026-07-0${i}`);
+    }
+    const snap = buildShellBootstrap(db, {
+      user: { id: 1, roleKey: 'md', displayName: 'MD' },
+      session: { authenticated: true, user: { id: 1, roleKey: 'md' }, permissions: ['dashboard.view'] },
+      branchScope: 'BR-KD',
+    });
+    expect(snap.ok).toBe(true);
+    expect(snap.bootstrapMeta?.mode).toBe('shell');
+    expect(snap.workspaceBranches.length).toBeGreaterThan(0);
+    expect(snap.customers).toEqual([]);
+    expect(snap.quotations).toEqual([]);
+    expect(snap.receipts).toEqual([]);
+    expect(snap.productionJobs).toEqual([]);
+    expect(snap.purchaseOrders).toEqual([]);
+    expect(snap.movements).toEqual([]);
+    expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
+      expect.arrayContaining(['quotations', 'receipts', 'productionJobs', 'customers'])
     );
     db.close();
   });

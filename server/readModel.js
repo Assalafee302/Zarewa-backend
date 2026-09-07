@@ -515,11 +515,20 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
 
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const b = branchWhere(db, 'quotations', branchScope);
-  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const page = sqlLimitOffsetClause(limit, offset);
+  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`;
+  const args = [...b.args, ...page.args];
   const mapped = db.prepare(sql).all(...args).map((row) => mapQuotationRow(db, row));
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
+}
+
+/** @param {import('better-sqlite3').Database} db */
+export function countQuotations(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'quotations', branchScope);
+  const row = db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}`).get(...b.args);
+  return Number(row?.c) || 0;
 }
 
 /**

@@ -287,18 +287,21 @@ const MASTER_DATA_CONFIG = {
     auditKind: 'setup_gauge',
     orderBy: 'sort_order ASC, gauge_mm ASC, label ASC, gauge_id ASC',
     defaults: [
-      { id: 'GAU-001', label: '0.20mm', gaugeMm: 0.2, active: true, sortOrder: 1 },
-      { id: 'GAU-002', label: '0.22mm', gaugeMm: 0.22, active: true, sortOrder: 2 },
-      { id: 'GAU-003', label: '0.24mm', gaugeMm: 0.24, active: true, sortOrder: 3 },
-      { id: 'GAU-004', label: '0.28mm', gaugeMm: 0.28, active: true, sortOrder: 4 },
-      { id: 'GAU-005', label: '0.30mm', gaugeMm: 0.3, active: true, sortOrder: 5 },
-      { id: 'GAU-006', label: '0.40mm', gaugeMm: 0.4, active: true, sortOrder: 6 },
-      { id: 'GAU-007', label: '0.45mm', gaugeMm: 0.45, active: true, sortOrder: 7 },
-      { id: 'GAU-008', label: '0.55mm', gaugeMm: 0.55, active: true, sortOrder: 8 },
-      { id: 'GAU-009', label: '0.70mm', gaugeMm: 0.7, active: true, sortOrder: 9 },
-      { id: 'GAU-010', label: '0.18mm', gaugeMm: 0.18, active: true, sortOrder: 10 },
-      { id: 'GAU-011', label: '0.35mm', gaugeMm: 0.35, active: true, sortOrder: 11 },
+      // Thickness-ordered. GAU-010+ were added after initial seed; migrateEnsureQuotationGauges2026
+      // backfills them on existing DBs (seedCollection skips non-empty setup_gauges).
+      { id: 'GAU-010', label: '0.18mm', gaugeMm: 0.18, active: true, sortOrder: 1 },
+      { id: 'GAU-001', label: '0.20mm', gaugeMm: 0.2, active: true, sortOrder: 2 },
+      { id: 'GAU-002', label: '0.22mm', gaugeMm: 0.22, active: true, sortOrder: 3 },
+      { id: 'GAU-003', label: '0.24mm', gaugeMm: 0.24, active: true, sortOrder: 4 },
+      { id: 'GAU-004', label: '0.28mm', gaugeMm: 0.28, active: true, sortOrder: 5 },
+      { id: 'GAU-005', label: '0.30mm', gaugeMm: 0.3, active: true, sortOrder: 6 },
+      { id: 'GAU-011', label: '0.35mm', gaugeMm: 0.35, active: true, sortOrder: 7 },
+      { id: 'GAU-006', label: '0.40mm', gaugeMm: 0.4, active: true, sortOrder: 8 },
+      { id: 'GAU-007', label: '0.45mm', gaugeMm: 0.45, active: true, sortOrder: 9 },
+      { id: 'GAU-013', label: '0.50mm', gaugeMm: 0.5, active: true, sortOrder: 10 },
+      { id: 'GAU-008', label: '0.55mm', gaugeMm: 0.55, active: true, sortOrder: 11 },
       { id: 'GAU-012', label: '0.60mm', gaugeMm: 0.6, active: true, sortOrder: 12 },
+      { id: 'GAU-009', label: '0.70mm', gaugeMm: 0.7, active: true, sortOrder: 13 },
     ],
     normalizePayload(payload, fallbackSort = 0) {
       const gaugeMm = decimalOrNull(payload.gaugeMm);

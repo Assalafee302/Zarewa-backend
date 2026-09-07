@@ -1472,6 +1472,7 @@ function runMigrationsUnlocked(db) {
   migrateQuotationLineCatalog2026(db);
   migrateLinkUnpricedQuoteItems2026(db);
   migrateCoilAluzincColours2026(db);
+  migrateEnsureQuotationGauges2026(db);
   migrateMergeDuplicateSetupColours(db);
   migrateMergeDuplicateSuppliersOnBoot(db);
   migrateMergeDuplicateHrStaffOnBoot(db);
@@ -3467,6 +3468,49 @@ function migrateCoilAluzincColours2026(db) {
         upd.run(name, abbr, sort, id);
       } else {
         ins.run(id, name, abbr, sort);
+      }
+    }
+  })();
+}
+
+/**
+ * Quotation form gauges come from setup_gauges. seedMasterData skips the table when any
+ * rows exist, so gauges added later to masterData defaults (0.18 / 0.35 / 0.50 / 0.60)
+ * never appeared on long-lived DBs. Upsert the full catalog and keep rows active.
+ */
+function migrateEnsureQuotationGauges2026(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_gauges'`).get()) return;
+  const exists = db.prepare(`SELECT 1 FROM setup_gauges WHERE gauge_id = ?`);
+  const upd = db.prepare(
+    `UPDATE setup_gauges SET label = ?, gauge_mm = ?, active = 1, sort_order = ? WHERE gauge_id = ?`
+  );
+  const ins = db.prepare(
+    `INSERT INTO setup_gauges (gauge_id, label, gauge_mm, active, sort_order) VALUES (?,?,?,1,?)`
+  );
+
+  /** @type {[string, string, number, number][]} */
+  const rows = [
+    ['GAU-010', '0.18mm', 0.18, 1],
+    ['GAU-001', '0.20mm', 0.2, 2],
+    ['GAU-002', '0.22mm', 0.22, 3],
+    ['GAU-003', '0.24mm', 0.24, 4],
+    ['GAU-004', '0.28mm', 0.28, 5],
+    ['GAU-005', '0.30mm', 0.3, 6],
+    ['GAU-011', '0.35mm', 0.35, 7],
+    ['GAU-006', '0.40mm', 0.4, 8],
+    ['GAU-007', '0.45mm', 0.45, 9],
+    ['GAU-013', '0.50mm', 0.5, 10],
+    ['GAU-008', '0.55mm', 0.55, 11],
+    ['GAU-012', '0.60mm', 0.6, 12],
+    ['GAU-009', '0.70mm', 0.7, 13],
+  ];
+
+  db.transaction(() => {
+    for (const [id, label, gaugeMm, sort] of rows) {
+      if (exists.get(id)) {
+        upd.run(label, gaugeMm, sort, id);
+      } else {
+        ins.run(id, label, gaugeMm, sort);
       }
     }
   })();

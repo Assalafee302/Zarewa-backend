@@ -120,9 +120,17 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(snap.productionJobs).toEqual([]);
     expect(snap.purchaseOrders).toEqual([]);
     expect(snap.movements).toEqual([]);
+    // Setup catalog stays on shell so quotation form options are not empty before domain packs.
+    expect(snap.masterData).toEqual(
+      expect.objectContaining({
+        gauges: expect.any(Array),
+        materialTypes: expect.any(Array),
+      })
+    );
     expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
       expect.arrayContaining(['quotations', 'receipts', 'productionJobs', 'customers'])
     );
+    expect(snap.bootstrapMeta?.deferredDeskArrays).not.toContain('masterData');
     db.close();
   });
 });

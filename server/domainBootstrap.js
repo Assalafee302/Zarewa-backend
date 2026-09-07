@@ -63,6 +63,7 @@ import {
   canReadCoilAndMovements,
   canReadFinanceDomain,
   canReadLedgerRelated,
+  canReadMasterData,
   canReadOperationsDomain,
   canReadProcurementDomain,
   canReadPurchaseOrdersList,
@@ -75,7 +76,9 @@ import {
   canSeeRefundsList,
   canReadYardRegister,
   canListTreasuryAccounts,
+  EMPTY_MASTER_DATA,
 } from './workspaceAccess.js';
+import { listMasterData } from './masterData.js';
 import {
   listMachines,
   listMaintenancePlans,
@@ -147,11 +150,12 @@ function snapshotRefundCreditApplications(db, f) {
  */
 export function buildSalesDomainSnapshot(db, opts = {}) {
   const f = domainFlags(db, opts);
-  const { branchScope, salesOk, ledgerOk, ledgerRows, refundsOk } = f;
+  const { branchScope, salesOk, ledgerOk, ledgerRows, refundsOk, user } = f;
   const availableStock = salesOk ? getJsonBlob(db, 'sales_available_stock') ?? [] : [];
   const customerDashboard = salesOk
     ? getJsonBlob(db, 'customer_dashboard') ?? { orders: [], interactions: [], salesTrendByCustomer: {} }
     : { orders: [], interactions: [], salesTrendByCustomer: {} };
+  const masterOk = canReadMasterData(user);
   return {
     ok: true,
     domain: 'sales',
@@ -165,6 +169,8 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
+    /** Quotation form material type / gauge / colour options (shell may also include this). */
+    masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
     salesAvailableStock: availableStock,
     customerDashboard,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],

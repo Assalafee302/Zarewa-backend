@@ -715,7 +715,8 @@ export const SHELL_DEFERRED_DESK_ARRAYS = [
   'glJournalSearchSlice',
   'materialPricingRows',
   'priceListItems',
-  'masterData',
+  // masterData stays on the shell — quotation / coil forms need gauges + material types
+  // before domain snapshots merge, and the catalog is tiny vs desk registers.
   'salesAvailableStock',
   'registerSettlementsAwaitingPayment',
   'staffRecoveriesDue',
@@ -768,6 +769,7 @@ export function buildShellBootstrap(db, opts = {}) {
 
   const emptyDesk = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, []]));
   const truncated = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, true]));
+  const masterOk = canReadMasterData(user);
 
   return {
     ok: true,
@@ -776,6 +778,8 @@ export function buildShellBootstrap(db, opts = {}) {
     workspaceBranches: listBranches(db),
     branchScope,
     ...emptyDesk,
+    /** Setup gauges / material types / colours — required for quotation form on first paint. */
+    masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
     materialPoolSummary: null,
     wipByProduct: {},
     productionMetrics: {

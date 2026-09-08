@@ -4,6 +4,7 @@ import { payRefundEntry } from '../writeOps.js';
 import {
   unclearedReceiptFloatBySalesCustomerIds,
   unclearedReceiptFloatForSalesCustomer,
+  UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN,
 } from './refundClaimingStaffUnclearedReceipts.js';
 import { refundHeldNetCashDueNgn, resolveCreditTargets } from '../finance/partnerWalletCredit.js';
 
@@ -102,6 +103,45 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
     expect(info.totalNgn).toBe(25_000);
     expect(info.receiptCount).toBe(1);
     expect(info.receiptIds).toContain('RC-UNCLR-PAYEE');
+  });
+
+  it('does not hold payout for unconfirmed payment completions under ₦2,000', () => {
+    expect(UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN).toBe(2000);
+    db.prepare(
+      `INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RC-UNCLR-TINY', ?, 'Payee Customer', 'QT-TINY', 1_999, 'Pending clearance', '2026-05-20')`
+    ).run(CUSTOMER_ID);
+    try {
+      const withTinyExtra = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID);
+      expect(withTinyExtra.receiptIds).toContain('RC-UNCLR-PAYEE');
+      expect(withTinyExtra.receiptIds).not.toContain('RC-UNCLR-TINY');
+      expect(withTinyExtra.totalNgn).toBe(25_000);
+
+      db.prepare(`UPDATE sales_receipts SET amount_ngn = 1_999 WHERE id = ?`).run('RC-UNCLR-PAYEE');
+      const onlyUnderFloor = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID);
+      expect(onlyUnderFloor.totalNgn).toBe(0);
+      expect(onlyUnderFloor.receiptIds).toEqual([]);
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(0);
+    } finally {
+      db.prepare(`DELETE FROM sales_receipts WHERE id = 'RC-UNCLR-TINY'`).run();
+      db.prepare(`UPDATE sales_receipts SET amount_ngn = 25_000 WHERE id = ?`).run('RC-UNCLR-PAYEE');
+    }
+  });
+
+  it('still holds payout when an unconfirmed receipt is ₦2,000 or more', () => {
+    db.prepare(
+      `UPDATE sales_receipts SET amount_ngn = ? WHERE id = ?`
+    ).run(UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN, 'RC-UNCLR-PAYEE');
+    try {
+      const info = unclearedReceiptFloatForSalesCustomer(db, CUSTOMER_ID);
+      expect(info.totalNgn).toBe(UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN);
+      expect(info.receiptIds).toEqual(['RC-UNCLR-PAYEE']);
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN);
+    } finally {
+      db.prepare(`UPDATE sales_receipts SET amount_ngn = 25_000 WHERE id = ?`).run('RC-UNCLR-PAYEE');
+    }
   });
 
   it('holds the full customer till payout while receipts are unconfirmed', () => {

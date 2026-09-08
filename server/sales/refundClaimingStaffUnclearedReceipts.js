@@ -1,10 +1,15 @@
 /**
  * Uncleared / unconfirmed sales receipts for refund payees (customers and claiming staff).
  * Till/bank payout is held until cashier confirms those receipts — admin may override at pay time.
+ * Small pending receipts under UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN do not hold payout
+ * (payment completions below that floor are ignored for the hold gate).
  */
 import { receiptEffectiveCashNgn, isReceiptPendingClearance } from '../../shared/lib/receiptClearance.js';
 import { staffPurchaseCreditColumnsReady } from '../staffPurchaseCreditOps.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
+
+/** Pending receipt cash below this does not block till/bank refund payout. */
+export const UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN = 2000;
 
 function trim(v) {
   return String(v ?? '').trim();
@@ -23,7 +28,8 @@ function accumulateUnclearedRow(out, customerId, row) {
   if (!cid) return;
   if (!isReceiptPendingClearance(row) && row.finance_reconciliation_saved_at_iso) return;
   const amt = roundMoney(receiptEffectiveCashNgn(row));
-  if (amt <= 0) return;
+  // Ignore tiny pending completions — do not hold staff/customer payout for < ₦2,000.
+  if (amt < UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN) return;
   const rid = trim(row.receipt_id ?? row.id);
   const prev = out.get(cid) || emptyFloat();
   if (rid && prev.receiptIds.includes(rid)) return;

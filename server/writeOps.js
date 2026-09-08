@@ -116,6 +116,7 @@ import {
   enrichSalesReceiptRowsWithCashFromLedger,
   getQuotation,
   listLedgerEntries,
+  listLedgerEntriesForAdvanceBalance,
   listQuotationIds,
   listSalesReceipts,
   listCoilLots,
@@ -6565,7 +6566,10 @@ export function reverseAdvanceEntry(db, entryId, note = '', actor = null) {
   if (existing) return { ok: false, error: 'Advance already reversed.' };
 
   const branchScope = target.branch_id ? String(target.branch_id) : 'ALL';
-  const remainingById = advanceInRemainingNgnByIdFromEntries(listLedgerEntries(db, branchScope));
+  // Unbounded advance-type history for this customer — never use capped listLedgerEntries (breaks FIFO).
+  const remainingById = advanceInRemainingNgnByIdFromEntries(
+    listLedgerEntriesForAdvanceBalance(db, branchScope, { customerId: target.customer_id })
+  );
   const remainingNgn = Math.round(Number(remainingById.get(String(entryId))) || 0);
   if (remainingNgn <= 0) {
     return { ok: false, error: 'No unused balance remains on this advance (fully applied or already reversed).' };

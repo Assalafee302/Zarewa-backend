@@ -1,4 +1,5 @@
-import { buildBootstrap } from './bootstrap.js';
+import { buildShellBootstrap } from './bootstrap.js';
+import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { userHasPermission, userMayViewManagementReports } from './auth.js';
 import { resolveBootstrapBranchScope } from './branchScope.js';
 import {
@@ -567,13 +568,17 @@ export function buildAiContextForRequest(db, req, opts = {}) {
     };
   }
 
-  const snapshot = buildBootstrap(db, {
-    user: req.user,
-    session: req.session,
-    includeControls: false,
-    includeUsers: false,
-    branchScope,
-  });
+  // Domain-scoped snapshots — never rebuild full desk bootstrap for AI chat.
+  const builder = DOMAIN_SNAPSHOT_BUILDERS[mode];
+  const snapshot = builder
+    ? builder(db, { user: req.user, branchScope })
+    : buildShellBootstrap(db, {
+        user: req.user,
+        session: req.session,
+        includeControls: false,
+        includeUsers: false,
+        branchScope,
+      });
 
   let modeLines = [];
   if (mode === 'sales') {

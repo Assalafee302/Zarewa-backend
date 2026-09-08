@@ -28,6 +28,7 @@ import {
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
 import {
   insertLedgerRows,
@@ -1012,6 +1013,7 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
 export function listRefundCreditApplications(db, customerId = '', branchScope = 'ALL', opts = {}) {
   const cid = String(customerId || '').trim();
   const target = String(opts.targetQuotationRef || '').trim();
+  const limit = resolveListLimit(opts);
   const args = [];
   let sql = `SELECT * FROM refund_credit_applications WHERE 1=1`;
   if (cid) {
@@ -1026,7 +1028,8 @@ export function listRefundCreditApplications(db, customerId = '', branchScope = 
     sql += ` AND branch_id = ?`;
     args.push(String(branchScope));
   }
-  sql += ` ORDER BY created_at_iso DESC, application_id DESC`;
+  sql += ` ORDER BY created_at_iso DESC, application_id DESC${sqlLimitClause(limit)}`;
+  if (limit > 0) args.push(limit);
   return db.prepare(sql).all(...args).map((row) => ({
     applicationId: row.application_id,
     customerID: row.customer_id,

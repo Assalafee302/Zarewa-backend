@@ -27,6 +27,7 @@ import {
   scoreBankDepositMatch,
 } from '../shared/lib/bankDeposits.js';
 import { appendAuditLog, assertPeriodOpen } from './controlOps.js';
+import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import {
   tryPostBankDepositAllocationGl,
   tryPostBankDepositMergeDuplicateAdvanceGl,
@@ -419,6 +420,11 @@ export function listBankDepositAllocationsForDeposit(db, depositId) {
 /** @param {import('better-sqlite3').Database} db */
 export function listBankDeposits(db, branchScope = 'ALL', opts = {}) {
   const openOnly = Boolean(opts.openOnly);
+  const limit = resolveListLimit({
+    ...opts,
+    // Open cashier queue stays complete unless an explicit limit is passed.
+    useDefaultLimit: opts.useDefaultLimit === true || (!openOnly && opts.unlimited !== true && opts.limit == null),
+  });
   let sql = `SELECT * FROM bank_deposits WHERE 1=1`;
   const args = [];
   if (branchScope && branchScope !== 'ALL') {
@@ -428,11 +434,40 @@ export function listBankDeposits(db, branchScope = 'ALL', opts = {}) {
   if (openOnly) {
     sql += ` AND status IN ('OPEN','PARTIAL','RESERVED') AND amount_ngn - allocated_ngn > 0`;
   }
-  sql += ` ORDER BY bank_date_iso DESC, registered_at_iso DESC`;
+  sql += ` ORDER BY bank_date_iso DESC, registered_at_iso DESC${sqlLimitClause(limit)}`;
+  if (limit > 0) args.push(limit);
   return db
     .prepare(sql)
     .all(...args)
     .map((row) => mapDepositRow(row));
+}
+
+/**
+ * Desk snapshot: all open/allocatable deposits plus a capped recent history window.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {{ unlimited?: boolean; limit?: number }} [historyOpts]
+ */
+export function listBankDepositsForDesk(db, branchScope = 'ALL', historyOpts = {}) {
+  const open = listBankDeposits(db, branchScope, { openOnly: true, unlimited: true });
+  if (historyOpts?.unlimited) {
+    return listBankDeposits(db, branchScope, { unlimited: true });
+  }
+  const recent = listBankDeposits(db, branchScope, historyOpts);
+  const byId = new Map();
+  for (const row of [...recent, ...open]) {
+    const id = String(row?.id || '').trim();
+    if (id) byId.set(id, row);
+  }
+  return [...byId.values()].sort((a, b) => {
+    const d = String(b.bankDateISO || b.bank_date_iso || '').localeCompare(
+      String(a.bankDateISO || a.bank_date_iso || '')
+    );
+    if (d !== 0) return d;
+    return String(b.registeredAtISO || b.registered_at_iso || '').localeCompare(
+      String(a.registeredAtISO || a.registered_at_iso || '')
+    );
+  });
 }
 
 /**

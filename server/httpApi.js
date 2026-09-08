@@ -180,7 +180,7 @@ import {
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
-import { parseListQuery, sendPaginatedList, slicePage } from './listPagination.js';
+import { parseListQuery, sendPaginatedList } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
 import { humanizeValidationMessage } from './validationLabels.js';
@@ -403,6 +403,7 @@ import {
   ensureWorkItemsForVisibleOfficeThreads,
   ensureWorkItemForOfficeThread,
   getUnifiedWorkItem,
+  shouldSyncDerivedWorkItemsNow,
   syncDerivedWorkItems,
   linkWorkItemToOfficeThread,
   listMaterialRequests,
@@ -490,6 +491,7 @@ import {
   listTransportAgents,
   listAssociatedStaff,
   listRefunds,
+  countRefunds,
   listExpenses,
   getRefundIntelligenceForQuotation,
   listAdvanceInEvents,
@@ -696,8 +698,6 @@ const aiKnowledgeBuckets = new Map();
 const aiRouterBuckets = new Map();
 const aiUnifiedBuckets = new Map();
 const aiAutomationBuckets = new Map();
-const workItemSyncLastAt = new Map();
-const WORK_ITEM_SYNC_DEBOUNCE_MS = 30_000;
 /** @type {Map<string, { payload: object; etag: string; expires: number }>} */
 const bootstrapPollCache = new Map();
 const BOOTSTRAP_POLL_CACHE_MS = Math.max(
@@ -705,9 +705,38 @@ const BOOTSTRAP_POLL_CACHE_MS = Math.max(
   Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 1000)
 );
 
-function bootstrapPayloadEtag(payload) {
-  const hash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('base64');
-  return `W/"${hash.slice(0, 48)}"`;
+/**
+ * Cheap bootstrap ETag: workspace revision + mode/user/scope — avoids SHA-256 of multi-MB JSON.
+ * Full mode still fingerprints major array lengths so rare forceFull responses stay correct enough for 304.
+ * @param {object} payload
+ * @param {{ revision?: string; mode?: string }} [meta]
+ */
+function bootstrapPayloadEtag(payload, meta = {}) {
+  const mode = meta.mode || payload?.bootstrapMeta?.mode || 'full';
+  const fingerprint = {
+    kind: 'bootstrap',
+    mode,
+    revision: meta.revision || '',
+    userId: payload?.session?.user?.id ?? '',
+    branchScope: payload?.branchScope ?? '',
+    workItems: Array.isArray(payload?.unifiedWorkItems) ? payload.unifiedWorkItems.length : 0,
+    staffCredit: payload?.staffPurchaseCreditPendingCount ?? 0,
+    controls: Array.isArray(payload?.auditLog) ? payload.auditLog.length : 0,
+  };
+  if (mode === 'full') {
+    fingerprint.lens = [
+      payload?.customers?.length ?? 0,
+      payload?.quotations?.length ?? 0,
+      payload?.ledgerEntries?.length ?? 0,
+      payload?.receipts?.length ?? 0,
+      payload?.productionJobs?.length ?? 0,
+      payload?.purchaseOrders?.length ?? 0,
+      payload?.expenses?.length ?? 0,
+      payload?.treasuryMovements?.length ?? 0,
+      payload?.movements?.length ?? 0,
+    ];
+  }
+  return jsonWeakEtag(fingerprint);
 }
 
 function bootstrapPollCacheKey(req, { branchScope, mode, includeControls, includeUsers }) {
@@ -729,25 +758,13 @@ function clearBootstrapPollCacheForUser(userId) {
   }
 }
 
-function respondBootstrap(res, payload, ifNoneMatch) {
-  const etag = bootstrapPayloadEtag(payload);
+function respondBootstrap(res, payload, ifNoneMatch, meta = {}) {
+  const etag = bootstrapPayloadEtag(payload, meta);
   if (ifNoneMatch && ifNoneMatch === etag) {
     return res.status(304).end();
   }
   res.setHeader('ETag', etag);
   return res.json(payload);
-}
-
-function shouldSyncDerivedWorkItemsNow(userId, branchId) {
-  const uid = String(userId || '').trim();
-  const bid = String(branchId || '').trim();
-  if (!uid) return false;
-  const key = `${uid}:${bid}`;
-  const now = Date.now();
-  const last = workItemSyncLastAt.get(key) || 0;
-  if (now - last < WORK_ITEM_SYNC_DEBOUNCE_MS) return false;
-  workItemSyncLastAt.set(key, now);
-  return true;
 }
 
 const STRICT_BRANCH_AUDIT_TABLES = [
@@ -3381,7 +3398,18 @@ export function registerHttpApi(app, db) {
           user: req.user,
           branchScope,
         });
-        const etag = jsonWeakEtag({ domain, branchScope, payload });
+        const revision = buildWorkspaceRevision(db, branchScope).revision;
+        const etag = jsonWeakEtag({
+          domain,
+          branchScope,
+          revision,
+          userId: req.user?.id ?? '',
+          // Length fingerprint — avoids hashing multi-MB domain JSON bodies.
+          lens: Object.keys(payload)
+            .filter((k) => Array.isArray(payload[k]))
+            .sort()
+            .map((k) => `${k}:${payload[k].length}`),
+        });
         if (ifNoneMatchHit(req, etag)) {
           return res.status(304).end();
         }
@@ -3403,7 +3431,10 @@ export function registerHttpApi(app, db) {
       const includeUsers = userHasPermission(req.user, 'settings.view');
       const includeRegisteredPasswords = includeUsers && canRevealUserPasswords(req.user);
       const branchScope = resolveBootstrapBranchScope(req);
-      const mode = String(req.query?.mode ?? '').trim().toLowerCase();
+      const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '')
+        .trim()
+        .toLowerCase();
+      const mode = modeRaw === 'shell' || modeRaw === 'dashboard' ? modeRaw : '';
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
@@ -3428,6 +3459,8 @@ export function registerHttpApi(app, db) {
               })
             : buildBootstrap(db, bootstrapOpts);
       const ifNoneMatch = String(req.headers['if-none-match'] || '');
+      const revision = buildWorkspaceRevision(db, branchScope).revision;
+      const etagMeta = { revision, mode: mode || 'full' };
       const useShortLivedBootstrapCache =
         skipSideEffects || mode === 'dashboard' || mode === 'shell';
       if (useShortLivedBootstrapCache) {
@@ -3445,7 +3478,7 @@ export function registerHttpApi(app, db) {
           res.setHeader('ETag', hit.etag);
           return res.json(hit.payload);
         }
-        const etag = bootstrapPayloadEtag(payload);
+        const etag = bootstrapPayloadEtag(payload, etagMeta);
         if (ifNoneMatch && ifNoneMatch === etag) {
           return res.status(304).end();
         }
@@ -3457,7 +3490,7 @@ export function registerHttpApi(app, db) {
         });
         return res.json(payload);
       }
-      return respondBootstrap(res, payload, ifNoneMatch);
+      return respondBootstrap(res, payload, ifNoneMatch, etagMeta);
     } catch (e) {
       const detail = String(e?.message || e || 'unknown').slice(0, 500);
       console.error('[bootstrap]', e);
@@ -11269,12 +11302,12 @@ export function registerHttpApi(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
+      const includeLines = String(req.query?.includeLines || '1') !== '0';
       const total = countQuotations(db, branchScope);
-      const quotations = listQuotations(
-        db,
-        branchScope,
-        unlimited ? { unlimited: true } : { limit, offset }
-      );
+      const quotations = listQuotations(db, branchScope, {
+        ...(unlimited ? { unlimited: true } : { limit, offset }),
+        includeLines,
+      });
       return sendPaginatedList(res, {
         items: quotations,
         total,
@@ -11678,12 +11711,16 @@ export function registerHttpApi(app, db) {
   app.get('/api/refunds', requirePermission(REFUNDS_VISIBLE_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req);
-      const all = listRefunds(db, branchScope, unlimited ? { unlimited: true } : { limit: 0, useDefaultLimit: false });
-      const items = slicePage(all, offset, limit);
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const refunds = listRefunds(
+        db,
+        branchScope,
+        unlimited ? { unlimited: true } : { limit, offset }
+      );
+      const total = unlimited ? refunds.length : countRefunds(db, branchScope);
       return sendPaginatedList(res, {
-        items,
-        total: all.length,
+        items: refunds,
+        total,
         limit: unlimited ? 0 : limit,
         offset,
         key: 'refunds',

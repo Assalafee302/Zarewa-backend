@@ -1456,6 +1456,7 @@ function runMigrationsUnlocked(db) {
   migratePricingPolicy2026(db);
   migrateLedgerPerformanceIndexes(db);
   migrateFinanceDeskPerformanceIndexes(db);
+  migrateOpsDeskPerformanceIndexes(db);
   migrateRefundCreditApplications(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
@@ -7031,6 +7032,7 @@ function migrateLedgerPerformanceIndexes(db) {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_ledger_branch_at ON ledger_entries(branch_id, at_iso DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_ledger_customer_quotation ON ledger_entries(customer_id, quotation_ref, type, at_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_ledger_advance_fifo ON ledger_entries(branch_id, type, at_iso ASC, id ASC);
       CREATE INDEX IF NOT EXISTS idx_quotations_branch_date ON quotations(branch_id, date_iso DESC, id DESC);
     `);
   } catch {
@@ -7051,6 +7053,24 @@ function migrateFinanceDeskPerformanceIndexes(db) {
     `);
   } catch {
     /* ignore — column may not exist on very old files until prior migrations run */
+  }
+}
+
+/**
+ * Operations / production desk list + workspace revision hot paths
+ * (stock movements, cutting lists, jobs, coils, deliveries).
+ */
+function migrateOpsDeskPerformanceIndexes(db) {
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_stock_movements_branch_at ON stock_movements(branch_id, at_iso DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_cutting_lists_branch_date ON cutting_lists(branch_id, date_iso DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_production_jobs_branch_created ON production_jobs(branch_id, created_at_iso DESC, job_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_coil_lots_branch_received ON coil_lots(branch_id, received_at_iso DESC, coil_no DESC);
+      CREATE INDEX IF NOT EXISTS idx_deliveries_branch_id ON deliveries(branch_id, id DESC);
+    `);
+  } catch {
+    /* ignore — branch_id / date columns may arrive via earlier migrations on some hosts */
   }
 }
 

@@ -9,6 +9,15 @@ export const DEFAULT_BRANCH_ID = 'BR-KD';
 /** Suppliers and transport agents are shared company-wide (not per branch). */
 export const GLOBAL_MASTER_DATA_BRANCH = '';
 
+const BRANCH_LIST_CACHE_MS = Math.min(
+  60_000,
+  Math.max(1_000, Number(process.env.ZAREWA_BRANCH_LIST_CACHE_MS) || 15_000)
+);
+/** @type {{ at: number; rows: ReturnType<typeof listBranchesUncached> } | null} */
+let branchListCache = null;
+/** @type {boolean | null} */
+let branchesHasFracColumn = null;
+
 /**
  * Require an explicit branch id for onboarding/import writes — never falls back to Kaduna.
  * @param {unknown} branchId
@@ -30,17 +39,17 @@ export function requireExplicitBranchId(branchId, label = 'record') {
  * @param {import('better-sqlite3').Database} db
  * @returns {Array<{ id: string; code: string; name: string; active: boolean; sortOrder: number; cuttingListMinPaidFraction: number }>}
  */
-export function listBranches(db) {
+function listBranchesUncached(db) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'`).get()) {
     return [];
   }
-  const cols = new Set(
-    db
+  if (branchesHasFracColumn == null) {
+    branchesHasFracColumn = db
       .prepare(`PRAGMA table_info(branches)`)
       .all()
-      .map((c) => c.name)
-  );
-  const hasFrac = cols.has('cutting_list_min_paid_fraction');
+      .some((c) => c.name === 'cutting_list_min_paid_fraction');
+  }
+  const hasFrac = Boolean(branchesHasFracColumn);
   return db
     .prepare(`SELECT * FROM branches WHERE active = 1 ORDER BY sort_order ASC, id ASC`)
     .all()
@@ -54,6 +63,25 @@ export function listBranches(db) {
         ? Math.min(1, Math.max(0.05, Number(row.cutting_list_min_paid_fraction) || 0.7))
         : 0.7,
     }));
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @returns {Array<{ id: string; code: string; name: string; active: boolean; sortOrder: number; cuttingListMinPaidFraction: number }>}
+ */
+export function listBranches(db) {
+  const now = Date.now();
+  if (branchListCache && now - branchListCache.at < BRANCH_LIST_CACHE_MS) {
+    return branchListCache.rows;
+  }
+  const rows = listBranchesUncached(db);
+  branchListCache = { at: now, rows };
+  return rows;
+}
+
+/** Invalidate branch list cache after writes that change branches. */
+export function invalidateBranchListCache() {
+  branchListCache = null;
 }
 
 /**
@@ -110,6 +138,7 @@ export function setBranchCuttingListMinPaidFraction(db, branchId, fraction) {
   const exists = db.prepare(`SELECT 1 FROM branches WHERE id = ?`).get(bid);
   if (!exists) return { ok: false, error: 'Branch not found.' };
   db.prepare(`UPDATE branches SET cutting_list_min_paid_fraction = ? WHERE id = ?`).run(f, bid);
+  invalidateBranchListCache();
   return { ok: true, branchId: bid, cuttingListMinPaidFraction: f };
 }
 

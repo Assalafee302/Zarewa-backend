@@ -310,7 +310,8 @@ function groupedFromQuotationLinesTableRows(rows) {
   return out;
 }
 
-function mapQuotationRow(db, row) {
+function mapQuotationRow(db, row, opts = {}) {
+  const includeLines = opts.includeLines !== false;
   let quotationLines;
   let materialGauge = '';
   let materialColor = '';
@@ -327,11 +328,13 @@ function mapQuotationRow(db, row) {
         if (typeof j.materialColor === 'string') materialColor = j.materialColor;
         if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
         if (typeof j.materialTypeId === 'string') materialTypeId = j.materialTypeId;
-        quotationLines = {
-          products: Array.isArray(j.products) ? j.products : [],
-          accessories: Array.isArray(j.accessories) ? j.accessories : [],
-          services: Array.isArray(j.services) ? j.services : [],
-        };
+        if (includeLines) {
+          quotationLines = {
+            products: Array.isArray(j.products) ? j.products : [],
+            accessories: Array.isArray(j.accessories) ? j.accessories : [],
+            services: Array.isArray(j.services) ? j.services : [],
+          };
+        }
       }
     }
   } catch {
@@ -516,11 +519,16 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const includeLines = opts.includeLines !== false;
   const b = branchWhere(db, 'quotations', branchScope);
   const page = sqlLimitOffsetClause(limit, offset);
   const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`;
   const args = [...b.args, ...page.args];
-  const mapped = db.prepare(sql).all(...args).map((row) => mapQuotationRow(db, row));
+  const mapped = db
+    .prepare(sql)
+    .all(...args)
+    .map((row) => mapQuotationRow(db, row, { includeLines }));
+  if (!includeLines) return mapped;
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
 }
 
@@ -963,21 +971,114 @@ function deliveryLinesByIds(db, deliveryIds) {
   return map;
 }
 
+function mapCuttingListLineRow(row) {
+  return {
+    lineNo: row.sort_order,
+    sheets: Number(row.sheets) || 0,
+    lengthM: Number(row.length_m) || 0,
+    totalM: Number(row.total_m) || 0,
+    lineType: row.line_type || 'Roof',
+  };
+}
+
 function listCuttingListLinesForId(db, cuttingListId) {
   return db
     .prepare(`SELECT * FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`)
     .all(cuttingListId)
-    .map((row) => ({
-      lineNo: row.sort_order,
-      sheets: Number(row.sheets) || 0,
-      lengthM: Number(row.length_m) || 0,
-      totalM: Number(row.total_m) || 0,
-      lineType: row.line_type || 'Roof',
-    }));
+    .map(mapCuttingListLineRow);
 }
 
-function mapCuttingListRow(db, row) {
-  const lines = listCuttingListLinesForId(db, row.id);
+/** Batch-load cutting_list_lines (avoids N+1 per cutting list on desk/bootstrap). */
+function cuttingListLinesByListIds(db, listIds) {
+  /** @type {Map<string, ReturnType<typeof mapCuttingListLineRow>[]>} */
+  const byId = new Map();
+  const ids = [...new Set((listIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return byId;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT * FROM cutting_list_lines
+       WHERE cutting_list_id IN (${placeholders})
+       ORDER BY cutting_list_id, sort_order`
+    )
+    .all(...ids);
+  for (const row of rows) {
+    const cid = String(row.cutting_list_id || '').trim();
+    if (!cid) continue;
+    if (!byId.has(cid)) byId.set(cid, []);
+    byId.get(cid).push(mapCuttingListLineRow(row));
+  }
+  return byId;
+}
+
+/**
+ * Batch equivalent of isCuttingListProductionCompleted for list endpoints.
+ * @returns {Set<string>} cutting list ids that are production-edit-locked
+ */
+function cuttingListProductionLockedIds(db, rows) {
+  /** @type {Set<string>} */
+  const locked = new Set();
+  const registered = (rows || []).filter((row) => Number(row.production_registered));
+  if (!registered.length) return locked;
+
+  const refs = [
+    ...new Set(
+      registered.map((row) => String(row.production_register_ref || '').trim()).filter(Boolean)
+    ),
+  ];
+  /** @type {Map<string, string>} */
+  const statusByJobId = new Map();
+  if (refs.length) {
+    const ph = refs.map(() => '?').join(',');
+    const jobRows = db
+      .prepare(`SELECT job_id, status FROM production_jobs WHERE job_id IN (${ph})`)
+      .all(...refs);
+    for (const job of jobRows) {
+      statusByJobId.set(String(job.job_id || '').trim(), String(job.status || ''));
+    }
+  }
+
+  /** @type {string[]} */
+  const needByListId = [];
+  for (const row of registered) {
+    const listId = String(row.id ?? '').trim();
+    const ref = String(row.production_register_ref || '').trim();
+    if (ref && statusByJobId.has(ref)) {
+      if (statusByJobId.get(ref) === 'Completed' && listId) locked.add(listId);
+      continue;
+    }
+    if (listId) needByListId.push(listId);
+  }
+
+  if (needByListId.length) {
+    const uniqueListIds = [...new Set(needByListId)];
+    const ph = uniqueListIds.map(() => '?').join(',');
+    const jobRows = db
+      .prepare(
+        `SELECT cutting_list_id, status, created_at_iso, job_id
+         FROM production_jobs
+         WHERE cutting_list_id IN (${ph})
+         ORDER BY created_at_iso DESC, job_id DESC`
+      )
+      .all(...uniqueListIds);
+    const seen = new Set();
+    for (const job of jobRows) {
+      const cid = String(job.cutting_list_id || '').trim();
+      if (!cid || seen.has(cid)) continue;
+      seen.add(cid);
+      if (String(job.status) === 'Completed') locked.add(cid);
+    }
+  }
+  return locked;
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {object} row
+ * @param {{ lines?: ReturnType<typeof mapCuttingListLineRow>[]; productionEditLocked?: boolean }} [preloaded]
+ */
+function mapCuttingListRow(db, row, preloaded = {}) {
+  const lines = preloaded.lines ?? listCuttingListLinesForId(db, row.id);
   const totalMeters =
     Number(row.total_meters) ||
     lines.reduce((sum, line) => sum + (Number(line.totalM) || 0), 0);
@@ -987,6 +1088,10 @@ function mapCuttingListRow(db, row) {
       minimumFractionDigits: Number.isInteger(totalMeters) ? 0 : 2,
       maximumFractionDigits: 2,
     })} m`;
+  const productionEditLocked =
+    preloaded.productionEditLocked != null
+      ? Boolean(preloaded.productionEditLocked)
+      : isCuttingListProductionCompleted(db, row);
   return {
     id: row.id,
     customerID: row.customer_id,
@@ -1003,7 +1108,7 @@ function mapCuttingListRow(db, row) {
     machineName: row.machine_name ?? '',
     operatorName: row.operator_name ?? '',
     productionRegistered: Boolean(row.production_registered),
-    productionEditLocked: isCuttingListProductionCompleted(db, row),
+    productionEditLocked,
     productionRegisterRef: row.production_register_ref ?? '',
     handledBy: row.handled_by,
     lines,
@@ -1061,15 +1166,33 @@ export function countLedgerEntries(db, branchScope = 'ALL') {
 
 const ADVANCE_BALANCE_LEDGER_TYPES = ['ADVANCE_IN', 'ADVANCE_REVERSAL', 'ADVANCE_APPLIED', 'REFUND_ADVANCE'];
 
-/** Ledger rows needed for advance-deposit FIFO balance — avoids full-branch ledger scans. */
-export function listLedgerEntriesForAdvanceBalance(db, branchScope = 'ALL') {
+/** Columns required for FIFO remaining + listAdvanceInEvents (avoid SELECT *). */
+const ADVANCE_BALANCE_LEDGER_COLUMNS = `id, at_iso, type, customer_id, customer_name, amount_ngn,
+  quotation_ref, payment_method, bank_reference, purpose, note, branch_id,
+  created_by_user_id, created_by_name`;
+
+/**
+ * Ledger rows needed for advance-deposit FIFO balance — type-filtered, ASC for FIFO.
+ * Optional `customerId` scopes to one customer (reverse / detail paths).
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {{ customerId?: string }} [opts]
+ */
+export function listLedgerEntriesForAdvanceBalance(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'ledger_entries', branchScope);
   const placeholders = ADVANCE_BALANCE_LEDGER_TYPES.map(() => '?').join(', ');
+  const customerId = String(opts.customerId || '').trim();
+  const customerSql = customerId ? ' AND customer_id = ?' : '';
+  const args = [...ADVANCE_BALANCE_LEDGER_TYPES, ...b.args];
+  if (customerId) args.push(customerId);
   return db
     .prepare(
-      `SELECT * FROM ledger_entries WHERE type IN (${placeholders})${b.sql} ORDER BY at_iso ASC, id ASC`
+      `SELECT ${ADVANCE_BALANCE_LEDGER_COLUMNS}
+       FROM ledger_entries
+       WHERE type IN (${placeholders})${b.sql}${customerSql}
+       ORDER BY at_iso ASC, id ASC`
     )
-    .all(...ADVANCE_BALANCE_LEDGER_TYPES, ...b.args)
+    .all(...args)
     .map(mapLedgerRow);
 }
 
@@ -1592,15 +1715,18 @@ export function listOrphanHaulageTreasuryMovements(db, branchScope = 'ALL') {
   });
 }
 
-export function listCoilControlEvents(db, branchScope = 'ALL') {
+export function listCoilControlEvents(db, branchScope = 'ALL', opts = {}) {
   if (!hasColumn(db, 'coil_control_events', 'branch_id')) return [];
   const b = branchWhere(db, 'coil_control_events', branchScope);
-  const lim = 2000;
+  const limit = resolveListLimit(opts);
+  const args = [...b.args];
+  const limSql = sqlLimitClause(limit);
+  if (limit > 0) args.push(limit);
   return db
     .prepare(
-      `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, id DESC LIMIT ?`
+      `SELECT * FROM coil_control_events WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, id DESC${limSql}`
     )
-    .all(...b.args, lim)
+    .all(...args)
     .map((row) => ({
       id: row.id,
       branchId: row.branch_id ?? '',
@@ -1687,7 +1813,9 @@ function mapCoilLotRow(db, row, masterData) {
 }
 
 /**
- * Coil register. Default is unbounded (domain/bootstrap). Pass `limit`/`offset` for paginated lists.
+ * Coil register. Pass `useDefaultLimit: true` (bootstrap/domain) or `limit`/`offset` for
+ * paginated lists. Unbounded only when `unlimited: true` or when callers omit both
+ * `limit` and `useDefaultLimit` (exports / stock rebuild tools).
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} [branchScope]
  * @param {{ limit?: number; offset?: number; unlimited?: boolean; useDefaultLimit?: boolean }} [opts]
@@ -1785,22 +1913,34 @@ export function listInventoryCoilSnapshots(db, asAtISO, branchScope = 'ALL') {
 
 export function listStockMovements(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
-  const limitSql = sqlLimitClause(limit);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const page = sqlLimitOffsetClause(limit, offset);
   if (branchScope === 'ALL' || !branchScope) {
-    const args = limit > 0 ? [limit] : [];
     return db
-      .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC${limitSql}`)
-      .all(...args)
+      .prepare(`SELECT * FROM stock_movements ORDER BY at_iso DESC, id DESC${page.sql}`)
+      .all(...page.args)
       .map(mapStockMovementRow);
   }
   const bf = stockMovementsBranchFilter(db, branchScope);
-  const args = limit > 0 ? [...bf.args, limit] : bf.args;
   return db
     .prepare(
-      `SELECT sm.* FROM stock_movements sm WHERE 1=1${bf.sql} ORDER BY sm.at_iso DESC, sm.id DESC${limitSql}`
+      `SELECT sm.* FROM stock_movements sm WHERE 1=1${bf.sql} ORDER BY sm.at_iso DESC, sm.id DESC${page.sql}`
     )
-    .all(...args)
+    .all(...bf.args, ...page.args)
     .map(mapStockMovementRow);
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countStockMovements(db, branchScope = 'ALL') {
+  if (branchScope === 'ALL' || !branchScope) {
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM stock_movements`).get();
+    return Number(row?.n) || 0;
+  }
+  const bf = stockMovementsBranchFilter(db, branchScope);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM stock_movements sm WHERE 1=1${bf.sql}`)
+    .get(...bf.args);
+  return Number(row?.n) || 0;
 }
 
 /**
@@ -1986,17 +2126,28 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
     : '';
   const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
   const args = limit > 0 ? [...b.args, limit] : b.args;
-  const userDisplayStmt = db.prepare(`SELECT display_name FROM app_users WHERE id = ? LIMIT 1`);
-  const financeReconciliationSavedByDisplay = (userId) => {
-    const uid = String(userId || '').trim();
-    if (!uid) return '';
-    const row = userDisplayStmt.get(uid);
-    return String(row?.display_name || '').trim();
-  };
-  return db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => ({
+  const rows = db.prepare(sql).all(...args);
+  const actorIds = [
+    ...new Set(
+      rows
+        .map((row) => String(row.finance_reconciliation_saved_by_user_id || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  /** @type {Map<string, string>} */
+  const displayByUserId = new Map();
+  if (actorIds.length) {
+    const ph = actorIds.map(() => '?').join(',');
+    const users = db
+      .prepare(`SELECT id, display_name FROM app_users WHERE id IN (${ph})`)
+      .all(...actorIds);
+    for (const user of users) {
+      displayByUserId.set(String(user.id), String(user.display_name || '').trim());
+    }
+  }
+  return rows.map((row) => {
+    const savedById = String(row.finance_reconciliation_saved_by_user_id || '').trim();
+    return {
       id: row.id,
       customerID: row.customer_id,
       customer: row.customer_name,
@@ -2017,10 +2168,9 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       financeDeliveryClearedByUserId: row.finance_delivery_cleared_by_user_id ?? null,
       financeReconciliationSavedAtISO: row.finance_reconciliation_saved_at_iso ?? null,
       financeReconciliationSavedByUserId: row.finance_reconciliation_saved_by_user_id ?? null,
-      financeReconciliationSavedBy: financeReconciliationSavedByDisplay(
-        row.finance_reconciliation_saved_by_user_id
-      ),
-    }));
+      financeReconciliationSavedBy: savedById ? displayByUserId.get(savedById) || '' : '',
+    };
+  });
 }
 
 function ngnListDisplay(n) {
@@ -2070,13 +2220,30 @@ export function listAdvanceInEvents(db, branchScope = 'ALL', opts = {}) {
 
 export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'cutting_lists', branchScope);
-  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
-  return db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => mapCuttingListRow(db, row));
+  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC${page.sql}`;
+  const args = [...b.args, ...page.args];
+  const rows = db.prepare(sql).all(...args);
+  const linesById = cuttingListLinesByListIds(
+    db,
+    rows.map((row) => row.id)
+  );
+  const lockedIds = cuttingListProductionLockedIds(db, rows);
+  return rows.map((row) =>
+    mapCuttingListRow(db, row, {
+      lines: linesById.get(String(row.id || '').trim()) || [],
+      productionEditLocked: lockedIds.has(String(row.id || '').trim()),
+    })
+  );
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countCuttingLists(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'cutting_lists', branchScope);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM cutting_lists WHERE 1=1${b.sql}`).get(...b.args);
+  return Number(row?.n) || 0;
 }
 
 export function getCuttingList(db, id) {
@@ -2107,10 +2274,12 @@ function fgAdjustmentTotalsByJobId(db, branchScope) {
 
 export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const page = sqlLimitOffsetClause(limit, offset);
   const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
   const b = branchWhere(db, 'production_jobs', branchScope);
-  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC${page.sql}`;
+  const args = [...b.args, ...page.args];
   return db
     .prepare(sql)
     .all(...args)
@@ -2182,12 +2351,23 @@ export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
     });
 }
 
-export function listProductionCompletionAdjustments(db, branchScope = 'ALL') {
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countProductionJobs(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'production_jobs', branchScope);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM production_jobs WHERE 1=1${b.sql}`).get(...b.args);
+  return Number(row?.n) || 0;
+}
+
+export function listProductionCompletionAdjustments(db, branchScope = 'ALL', opts = {}) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_completion_adjustments'`).get()) {
     return [];
   }
   const b = branchWhere(db, 'production_jobs', branchScope);
   const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+  const limit = resolveListLimit(opts);
+  const limSql = sqlLimitClause(limit);
+  const args = [...b.args];
+  if (limit > 0) args.push(limit);
   const rows = db
     .prepare(
       `SELECT a.id AS id, a.job_id AS job_id, a.delta_finished_goods_m AS delta_finished_goods_m,
@@ -2196,9 +2376,9 @@ export function listProductionCompletionAdjustments(db, branchScope = 'ALL') {
        FROM production_completion_adjustments a
        INNER JOIN production_jobs j ON j.job_id = a.job_id
        WHERE 1=1${branchSql}
-       ORDER BY a.at_iso DESC, a.id DESC`
+       ORDER BY a.at_iso DESC, a.id DESC${limSql}`
     )
-    .all(...b.args);
+    .all(...args);
   return rows.map((row) => ({
     id: row.id,
     jobID: row.job_id,
@@ -2210,9 +2390,20 @@ export function listProductionCompletionAdjustments(db, branchScope = 'ALL') {
   }));
 }
 
-export function listProductionJobAccessoryUsage(db, branchScope = 'ALL') {
+export function listProductionJobAccessoryUsage(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'production_jobs', branchScope);
   const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+  const jobIds = [
+    ...new Set((opts.jobIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  const jobSql = jobIds.length ? ` AND u.job_id IN (${jobIds.map(() => '?').join(',')})` : '';
+  const limit = resolveListLimit({
+    ...opts,
+    useDefaultLimit: opts.useDefaultLimit === true || jobIds.length === 0,
+  });
+  const limitSql = sqlLimitClause(limit);
+  const args = [...b.args, ...jobIds];
+  if (limit > 0) args.push(limit);
   const rows = db
     .prepare(
       `SELECT u.id AS id, u.job_id AS job_id, u.quotation_ref AS quotation_ref, u.quote_line_id AS quote_line_id,
@@ -2220,10 +2411,10 @@ export function listProductionJobAccessoryUsage(db, branchScope = 'ALL') {
               u.inventory_product_id AS inventory_product_id, u.posted_at_iso AS posted_at_iso
        FROM production_job_accessory_usage u
        INNER JOIN production_jobs j ON j.job_id = u.job_id
-       WHERE 1=1${branchSql}
-       ORDER BY u.posted_at_iso DESC`
+       WHERE 1=1${branchSql}${jobSql}
+       ORDER BY u.posted_at_iso DESC${limitSql}`
     )
-    .all(...b.args);
+    .all(...args);
   return rows.map((row) => ({
     id: row.id,
     jobID: row.job_id,
@@ -2237,12 +2428,23 @@ export function listProductionJobAccessoryUsage(db, branchScope = 'ALL') {
   }));
 }
 
-export function listProductionJobStoneFlatsheetUsage(db, branchScope = 'ALL') {
+export function listProductionJobStoneFlatsheetUsage(db, branchScope = 'ALL', opts = {}) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_job_stone_flatsheet_usage'`).get()) {
     return [];
   }
   const b = branchWhere(db, 'production_jobs', branchScope);
   const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+  const jobIds = [
+    ...new Set((opts.jobIds || []).map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  const jobSql = jobIds.length ? ` AND u.job_id IN (${jobIds.map(() => '?').join(',')})` : '';
+  const limit = resolveListLimit({
+    ...opts,
+    useDefaultLimit: opts.useDefaultLimit === true || jobIds.length === 0,
+  });
+  const limitSql = sqlLimitClause(limit);
+  const args = [...b.args, ...jobIds];
+  if (limit > 0) args.push(limit);
   const rows = db
     .prepare(
       `SELECT u.id AS id, u.job_id AS job_id, u.quotation_ref AS quotation_ref, u.quote_line_id AS quote_line_id,
@@ -2250,10 +2452,10 @@ export function listProductionJobStoneFlatsheetUsage(db, branchScope = 'ALL') {
               u.deduction_m2 AS deduction_m2, u.inventory_product_id AS inventory_product_id, u.posted_at_iso AS posted_at_iso
        FROM production_job_stone_flatsheet_usage u
        INNER JOIN production_jobs j ON j.job_id = u.job_id
-       WHERE 1=1${branchSql}
-       ORDER BY u.posted_at_iso DESC`
+       WHERE 1=1${branchSql}${jobSql}
+       ORDER BY u.posted_at_iso DESC${limitSql}`
     )
-    .all(...b.args);
+    .all(...args);
   return rows.map((row) => ({
     id: row.id,
     jobID: row.job_id,
@@ -2475,6 +2677,8 @@ function partnerWalletOpenByRefundIds(db, refundIds) {
 
 export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
   const sql = `SELECT cr.*,
@@ -2483,13 +2687,23 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
        FROM customer_refunds cr
        LEFT JOIN quotations q ON q.id = cr.quotation_ref
        WHERE 1=1${branchSql}
-       ORDER BY cr.requested_at_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+       ORDER BY cr.requested_at_iso DESC${page.sql}`;
+  const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
   return rows.map((row) => mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId));
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countRefunds(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'customer_refunds', branchScope);
+  const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM customer_refunds cr WHERE 1=1${branchSql}`)
+    .get(...b.args);
+  return Number(row?.n) || 0;
 }
 
 export function listTreasuryAccounts(db, branchScope = 'ALL') {
@@ -2854,16 +3068,18 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   };
 }
 
-export function listAccountsPayable(db, branchScope = 'ALL') {
+export function listAccountsPayable(db, branchScope = 'ALL', opts) {
+  // No opts → full register (subledger / exports). Domain snapshots pass financeRegisterListOpts().
+  const limit = opts == null ? 0 : resolveListLimit(opts);
   const b = branchPredicate(db, 'purchase_orders', branchScope, 'po');
-  return db
-    .prepare(
-      `SELECT ap.*, po.branch_id AS po_branch_id FROM accounts_payable ap
+  const sql = `SELECT ap.*, po.branch_id AS po_branch_id FROM accounts_payable ap
        LEFT JOIN purchase_orders po ON po.po_id = ap.po_ref
        WHERE 1=1${b.sql}
-       ORDER BY ap.due_date_iso DESC`
-    )
-    .all(...b.args)
+       ORDER BY ap.due_date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
+  return db
+    .prepare(sql)
+    .all(...args)
     .map((row) => ({
       apID: row.ap_id,
       supplierName: row.supplier_name,
@@ -2877,11 +3093,14 @@ export function listAccountsPayable(db, branchScope = 'ALL') {
     }));
 }
 
-export function listBankReconciliation(db, branchScope = 'ALL') {
+export function listBankReconciliation(db, branchScope = 'ALL', opts) {
+  const limit = opts == null ? 0 : resolveListLimit(opts);
   const b = branchWhere(db, 'bank_reconciliation_lines', branchScope);
+  const sql = `SELECT * FROM bank_reconciliation_lines WHERE 1=1${b.sql} ORDER BY bank_date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   return db
-    .prepare(`SELECT * FROM bank_reconciliation_lines WHERE 1=1${b.sql} ORDER BY bank_date_iso DESC`)
-    .all(...b.args)
+    .prepare(sql)
+    .all(...args)
     .map((row) => ({
       id: row.id,
       bankDateISO: row.bank_date_iso,
@@ -2939,11 +3158,16 @@ function mapYardCoilRow(row) {
   };
 }
 
-export function listYardCoils(db, branchScope = 'ALL') {
+export function listYardCoils(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit({
+    ...opts,
+    useDefaultLimit: opts.useDefaultLimit === true,
+  });
+  const page = sqlLimitOffsetClause(limit, Math.max(0, Math.floor(Number(opts.offset) || 0)));
   if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'coil_lots', 'branch_id')) {
     return db
-      .prepare(`SELECT * FROM yard_coils ORDER BY id`)
-      .all()
+      .prepare(`SELECT * FROM yard_coils ORDER BY id${page.sql}`)
+      .all(...page.args)
       .map(mapYardCoilRow);
   }
   const b = branchWhere(db, 'coil_lots', branchScope);
@@ -2951,9 +3175,9 @@ export function listYardCoils(db, branchScope = 'ALL') {
     .prepare(
       `SELECT y.* FROM yard_coils y
        WHERE y.id IN (SELECT coil_no FROM coil_lots WHERE 1=1${b.sql})
-       ORDER BY y.id`
+       ORDER BY y.id${page.sql}`
     )
-    .all(...b.args)
+    .all(...b.args, ...page.args)
     .map(mapYardCoilRow);
 }
 

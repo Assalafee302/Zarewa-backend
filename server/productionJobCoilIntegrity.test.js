@@ -60,4 +60,38 @@ describe('repairProductionJobCoilIntegrity', () => {
     expect(forJob).toHaveLength(2);
     expect(forJob.map((c) => c.coilNo)).toEqual(['CL-A', 'CL-B']);
   });
+
+  it('loads coils for completed jobs when partial slice is empty (desk snapshot path)', () => {
+    const db = {
+      prepare(sql) {
+        const s = String(sql);
+        return {
+          all(...jobIds) {
+            if (!s.includes('production_job_coils') || !s.includes('job_id IN')) return [];
+            if (!jobIds.includes('PRO-DONE')) return [];
+            return [
+              {
+                id: 'PJC-9',
+                job_id: 'PRO-DONE',
+                sequence_no: 1,
+                coil_no: 'CL-Z',
+                opening_weight_kg: 500,
+                closing_weight_kg: 100,
+                consumed_weight_kg: 400,
+                meters_produced: 200,
+                allocation_status: 'Consumed',
+              },
+            ];
+          },
+        };
+      },
+    };
+    const repaired = repairProductionJobCoilIntegrity(
+      db,
+      [{ jobID: 'PRO-DONE', status: 'Completed' }],
+      []
+    );
+    expect(repaired).toHaveLength(1);
+    expect(repaired[0].coilNo).toBe('CL-Z');
+  });
 });

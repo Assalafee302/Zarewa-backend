@@ -30,7 +30,6 @@ import {
   listYardCoils,
   listProcurementCatalog,
   getJsonBlob,
-  listAdvanceInEvents,
   listProductionJobs,
   listProductionCompletionAdjustments,
   listProductionJobAccessoryUsage,
@@ -50,7 +49,7 @@ import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
 import { shouldShowPoInTransit } from '../shared/lib/inTransitVisibility.js';
 import { runQuotationLifecycleMaintenance } from './quotationLifecycleOps.js';
-import { listProductionConversionChecks, listProductionJobCoils, repairProductionJobCoilIntegrity } from './productionTraceability.js';
+import { listProductionConversionChecks, repairProductionJobCoilIntegrity } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
 import { SUGGESTED_ROLE_BY_DEPARTMENT, WORKSPACE_DEPARTMENT_IDS } from './departmentRoleTemplates.js';
@@ -81,18 +80,17 @@ import {
   listMaintenancePlans,
   listMaintenanceWorkOrders,
   listMaterialRequests,
+  shouldSyncDerivedWorkItemsNow,
   syncDerivedWorkItems,
   listUnifiedWorkItems,
 } from './workItems.js';
 import { sanitizeWorkItemsForClient } from '../shared/lib/workspaceSanitize.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { normalizeOrgStoreRestock } from './orgStoreRestock.js';
-import { buildHelpPersonalizationFromSnapshot } from './helpQueryOps.js';
-import { listBankDeposits } from './bankDepositOps.js';
+import { listBankDepositsForDesk } from './bankDepositOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import {
-  listPartnerWalletBalancesDue,
   partnerWalletEnabled,
 } from './finance/partnerWalletCredit.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
@@ -100,19 +98,12 @@ import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSett
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
 import {
   financeHistoryListOpts,
+  financeRegisterListOpts,
   productionHistoryListOpts,
   receiptsHistoryListOpts,
   rowListOpts,
   salesCustomersListOpts,
 } from './listQueryOpts.js';
-import {
-  countPendingStaffPurchaseCreditRequests,
-  summarizePendingStaffPurchaseCreditByBranch,
-} from './staffPurchaseCreditWorkItems.js';
-import {
-  userMayApproveStaffPurchaseCredit,
-  userMayRejectStaffPurchaseCredit,
-} from './staffPurchaseCreditOps.js';
 
 function userMayReceiveBranchExpenseCoachAlert(user) {
   if (!user) return false;
@@ -194,11 +185,11 @@ export function buildBootstrap(db, opts = {}) {
   const productionOk = prodRollupOk && opsOk;
   const MAX_PROD_ROWS = Math.min(
     5000,
-    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 2000)
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 800)
   );
   const MAX_LEDGER_ROWS = Math.min(
     10_000,
-    Math.max(500, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 3000)
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 1000)
   );
 
   const customerDashboard = salesOk
@@ -236,10 +227,10 @@ export function buildBootstrap(db, opts = {}) {
         console.error('[zarewa] quotation lifecycle maintenance failed', e);
       }
     }
-    if (!skipWorkItemSync && user && userHasPermission(user, 'office.use')) {
-      ensureWorkItemsForVisibleOfficeThreads(db, workScope, user);
-    }
-    if (!skipWorkItemSync && user) {
+    if (!skipWorkItemSync && user && shouldSyncDerivedWorkItemsNow(user.id, workScope.branchId)) {
+      if (userHasPermission(user, 'office.use')) {
+        ensureWorkItemsForVisibleOfficeThreads(db, workScope, user);
+      }
       syncDerivedWorkItems(db, workScope, user);
     }
   }
@@ -267,7 +258,6 @@ export function buildBootstrap(db, opts = {}) {
   const listOpts = (key) => ({ limit: listLimit(key) });
   const poListOpts = { ...rowListOpts(opts, 'purchaseOrders'), skipSideEffects: skipSideEffects || true };
   const refunds = refundsOk ? listRefunds(db, branchScope, listOpts('refunds')) : [];
-  const helpSnapshotPartial = { productionMetrics, operationsInventoryAttention, refunds };
   const cuttingListHistoryOpts =
     opts.listLimits?.cuttingLists != null ? listOpts('cuttingLists') : productionHistoryListOpts();
   const productionJobsHistoryOpts =
@@ -289,13 +279,14 @@ export function buildBootstrap(db, opts = {}) {
   const productionJobsList = prodRollupOk
     ? listProductionJobs(db, branchScope, productionJobsHistoryOpts)
     : [];
+  const productionJobIds = productionJobsList.map((j) => j.jobID).filter(Boolean);
   const productionJobCoilsList =
     prodRollupOk && !omitDesk.productionJobCoils
       ? repairProductionJobCoilIntegrity(
           db,
           productionJobsList,
-          // Coils must cover every loaded job — do not apply the conversion-check row cap here.
-          listProductionJobCoils(db, branchScope, { limit: 0 })
+          // Coils only for jobs in this snapshot — avoid full-table production_job_coils scan.
+          []
         )
       : [];
 
@@ -307,12 +298,14 @@ export function buildBootstrap(db, opts = {}) {
     branchScope,
     customers: salesOk && !omitDesk.customers ? listCustomers(db, branchScope, customersHistoryOpts) : [],
     quotations: salesOk
-      ? listQuotations(db, branchScope, rowListOpts(opts, 'quotations'))
+      ? listQuotations(db, branchScope, { ...rowListOpts(opts, 'quotations'), includeLines: false })
       : prodRollupOk
         ? listQuotationsForProductionContext(db, branchScope)
         : [],
     ledgerEntries: ledgerRows,
-    advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
+    // FIFO open deposits load on sales/finance domain snapshots + GET /api/advance-deposits
+    // (full history required — never LIMIT; defer from cold bootstrap).
+    advanceInEvents: [],
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
     associatedStaff: procOk || salesOk ? listAssociatedStaff(db, branchScope) : [],
@@ -321,8 +314,8 @@ export function buildBootstrap(db, opts = {}) {
     },
     products: productsOk ? listProducts(db, branchScope) : [],
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, poListOpts) : [],
-    coilLots: coilMovOk && !omitDesk.coilLots ? listCoilLots(db, branchScope) : [],
-    coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
+    coilLots: coilMovOk && !omitDesk.coilLots ? listCoilLots(db, branchScope, { useDefaultLimit: true }) : [],
+    coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, listOpts('coilControlEvents')) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
     movements: coilMovOk ? listStockMovements(db, branchScope, rowListOpts(opts, 'movements')) : [],
@@ -333,12 +326,18 @@ export function buildBootstrap(db, opts = {}) {
       : [],
     cuttingLists: opsOk || salesOk ? listCuttingLists(db, branchScope, cuttingListHistoryOpts) : [],
     productionJobs: productionJobsList,
-    productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
-    productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
+    productionJobAccessoryUsage: prodRollupOk
+      ? listProductionJobAccessoryUsage(db, branchScope, { jobIds: productionJobIds })
+      : [],
+    productionJobStoneFlatsheetUsage: prodRollupOk
+      ? listProductionJobStoneFlatsheetUsage(db, branchScope, { jobIds: productionJobIds })
+      : [],
     productionMetrics,
     productionJobCoils: productionJobCoilsList,
     productionConversionChecks: prodRollupOk ? listProductionConversionChecks(db, branchScope, { limit: MAX_PROD_ROWS }) : [],
-    productionCompletionAdjustments: prodRollupOk ? listProductionCompletionAdjustments(db, branchScope) : [],
+    productionCompletionAdjustments: prodRollupOk
+      ? listProductionCompletionAdjustments(db, branchScope, productionJobsHistoryOpts)
+      : [],
     operationsInventoryAttention,
     refunds,
     masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
@@ -355,7 +354,7 @@ export function buildBootstrap(db, opts = {}) {
     expenses: expensesSnapshotOk && !omitDesk.expenses ? listExpenses(db, branchScope, expensesHistoryOpts) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, paymentRequestsHistoryOpts) : [],
     glJournalSearchSlice: finOk ? listGlJournalsForWorkspaceSearch(db, branchScope, { limit: 800 }) : [],
-    accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
+    accountsPayable: finOk ? listAccountsPayable(db, branchScope, financeRegisterListOpts()) : [],
     /** Haulage awaiting treasury — finance users need it on Accounts; procurement users need it to confirm Finance visibility after linking transport. */
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
@@ -374,12 +373,8 @@ export function buildBootstrap(db, opts = {}) {
         ? listStaffRepayableObligationsForCashier(db, branchScope)
         : [],
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
-    partnerWalletsDue:
-      finOk ||
-      (user &&
-        (userHasPermission(user, 'finance.pay') || userHasPermission(user, 'cashier.desk.view')))
-        ? listPartnerWalletBalancesDue(db, branchScope)
-        : [],
+    /** Lazy via GET /api/partner-wallets — keep bootstrap free of wallet balance scans. */
+    partnerWalletsDue: [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')
         ? listRegisterSettlementsAwaitingPayment(db, branchScope)
@@ -402,11 +397,11 @@ export function buildBootstrap(db, opts = {}) {
             orgLimits: orgGovernanceLimitsSnapshot,
           })
         : null,
-    bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
+    bankReconciliation: finOk ? listBankReconciliation(db, branchScope, financeRegisterListOpts()) : [],
     bankDeposits:
-      ledgerOk || finOk ? listBankDeposits(db, branchScope, { openOnly: false }) : [],
+      ledgerOk || finOk ? listBankDepositsForDesk(db, branchScope, financeHistoryListOpts()) : [],
     coilRequests: coilReqOk ? listCoilRequests(db, branchScope) : [],
-    yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
+    yardCoilRegister: yardOk ? listYardCoils(db, branchScope, { useDefaultLimit: true }) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     salesAvailableStock: availableStock,
     customerDashboard,
@@ -426,22 +421,9 @@ export function buildBootstrap(db, opts = {}) {
     unifiedWorkItems: user
       ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 200 }))
       : [],
-    staffPurchaseCreditPendingCount:
-      user &&
-      (userMayApproveStaffPurchaseCredit(user) ||
-        userMayRejectStaffPurchaseCredit(user))
-        ? countPendingStaffPurchaseCreditRequests(
-            db,
-            workScope.viewAll ? 'ALL' : workScope.branchId
-          )
-        : 0,
-    staffPurchaseCreditCrossBranch:
-      user && userMayApproveStaffPurchaseCredit(user)
-        ? summarizePendingStaffPurchaseCreditByBranch(
-            db,
-            workScope.viewAll ? '' : workScope.branchId
-          )
-        : null,
+    /** Lazy via GET /api/staff-purchase-credits/pending-count — not on bootstrap hot path. */
+    staffPurchaseCreditPendingCount: 0,
+    staffPurchaseCreditCrossBranch: null,
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     machines: user ? listMachines(db, workScope) : [],
@@ -450,14 +432,8 @@ export function buildBootstrap(db, opts = {}) {
     hrPerformanceReviews: [],
     workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
     suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
-    helpPersonalization: user
-      ? buildHelpPersonalizationFromSnapshot(db, helpSnapshotPartial, {
-          userId: user.id,
-          branchId: branchScope === 'ALL' ? DEFAULT_BRANCH_ID : branchScope,
-          roleKey: user.roleKey,
-          pathname: '/',
-        })
-      : null,
+    /** Help prompts load on demand via help APIs — not on bootstrap hot path. */
+    helpPersonalization: null,
     bootstrapMeta: {
       listLimitsApplied: {
         customers: customersHistoryOpts.unlimited
@@ -499,9 +475,11 @@ export function buildBootstrap(db, opts = {}) {
         cuttingLists: (opsOk || salesOk) && !cuttingListHistoryOpts.unlimited,
         productionJobs: prodRollupOk && !productionJobsHistoryOpts.unlimited,
         ledgerEntries: ledgerOk,
-        coilLots: Boolean(omitDesk.coilLots),
+        advanceInEvents: ledgerOk,
+        coilLots: coilMovOk || Boolean(omitDesk.coilLots),
         productionJobCoils: Boolean(omitDesk.productionJobCoils),
       },
+      deferredDeskArrays: ledgerOk ? ['advanceInEvents'] : [],
     },
   };
 }
@@ -599,72 +577,25 @@ export function repairDashboardReceivablePurchaseOrders(full, partial) {
 }
 
 /**
- * Dashboard-focused snapshot: same shape as bootstrap, but defers desk-owned heavy arrays
- * (customers, expenses, coilLots, productionJobCoils) so first paint stays fast.
- * Desks refill via `/api/workspace/{domain}-snapshot` when opened.
+ * Dashboard bootstrap is shell-first: same first-paint contract as `buildShellBootstrap`.
+ * Desk registers hydrate via `/api/workspace/{domain}-snapshot` (and optional prefetch).
+ * Avoids building a full desk dump then discarding rows (CPU + DB cost on slow links).
  */
 export function buildDashboardBootstrap(db, opts = {}) {
   const limit = Math.min(5000, Math.max(200, Number(opts.limit) || 600));
-  const full = buildBootstrap(db, {
+  const shell = buildShellBootstrap(db, {
     ...opts,
     skipSideEffects: true,
     skipWorkItemSync: true,
-    omitDeskArrays: {
-      customers: true,
-      expenses: true,
-      coilLots: true,
-      productionJobCoils: true,
-      ...(opts.omitDeskArrays || {}),
-    },
-    listLimits: {
-      quotations: limit,
-      purchaseOrders: limit,
-      movements: limit,
-      ledgerEntries: Math.min(limit, 300),
-    },
   });
-  const partial = {
-    ...full,
-    quotations: full.quotations,
-    /** Manager / production queues need cutting lists + jobs; coil join rows deferred to operations domain. */
-    cuttingLists: full.cuttingLists,
-    purchaseOrders: full.purchaseOrders,
-    deliveries: take(full.deliveries, limit),
-    refunds: take(full.refunds, limit),
-    paymentRequests: full.paymentRequests,
-    treasuryMovements: full.treasuryMovements,
-    movements: take(full.movements, limit),
-    coilControlEvents: take(full.coilControlEvents ?? [], limit),
-    productionJobs: full.productionJobs,
-    productionJobCoils: full.productionJobCoils,
-    productionConversionChecks: take(full.productionConversionChecks, limit),
-    productionCompletionAdjustments: full.productionCompletionAdjustments,
-    unifiedWorkItems: take(full.unifiedWorkItems, Math.min(limit, 180)),
-    materialRequests: take(full.materialRequests, Math.min(limit, 120)),
-    inTransitLoads: take(full.inTransitLoads, Math.min(limit, 120)),
-    machines: take(full.machines, Math.min(limit, 120)),
-    maintenancePlans: take(full.maintenancePlans, Math.min(limit, 120)),
-    maintenanceWorkOrders: take(full.maintenanceWorkOrders, Math.min(limit, 120)),
-    hrPerformanceReviews: take(full.hrPerformanceReviews, Math.min(limit, 120)),
-    ledgerEntries: full.ledgerEntries,
-    /** Full receipts — trimming hid older Draft/pending rows so Sales counts diverged from Cashier desk. */
-    receipts: full.receipts,
-  };
-  repairDashboardProductionJoins(full, partial);
-  repairDashboardReceivablePurchaseOrders(full, partial);
-  const deferredDeskArrays = ['customers', 'expenses', 'coilLots', 'productionJobCoils'];
   return {
-    ...partial,
+    ...shell,
     bootstrapMeta: {
-      ...(partial.bootstrapMeta || {}),
-      deferredDeskArrays,
-      truncated: {
-        ...(partial.bootstrapMeta?.truncated || {}),
-        customers: true,
-        expenses: true,
-        coilLots: true,
-        productionJobCoils: true,
-      },
+      ...(shell.bootstrapMeta || {}),
+      mode: 'dashboard',
+      deferredDeskArrays: [...SHELL_DEFERRED_DESK_ARRAYS],
+      listLimitsApplied: { dashboardCap: limit },
+      truncated: Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, true])),
     },
   };
 }
@@ -807,21 +738,9 @@ export function buildShellBootstrap(db, opts = {}) {
     unifiedWorkItems: user
       ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 40 }))
       : [],
-    staffPurchaseCreditPendingCount:
-      user &&
-      (userMayApproveStaffPurchaseCredit(user) || userMayRejectStaffPurchaseCredit(user))
-        ? countPendingStaffPurchaseCreditRequests(
-            db,
-            workScope.viewAll ? 'ALL' : workScope.branchId
-          )
-        : 0,
-    staffPurchaseCreditCrossBranch:
-      user && userMayApproveStaffPurchaseCredit(user)
-        ? summarizePendingStaffPurchaseCreditByBranch(
-            db,
-            workScope.viewAll ? '' : workScope.branchId
-          )
-        : null,
+    /** Lazy via GET /api/staff-purchase-credits/pending-count — shell stays free of credit scans. */
+    staffPurchaseCreditPendingCount: 0,
+    staffPurchaseCreditCrossBranch: null,
     workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
     suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
     helpPersonalization: null,

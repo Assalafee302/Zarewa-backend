@@ -42,12 +42,11 @@ import { listPriceListItems } from './pricingOps.js';
 import { listMaterialPricingRowsForSnapshot } from './materialWorkbookQuotationPrice.js';
 import { getPricingPolicyBundle } from './pricingPolicyOps.js';
 import { listInTransitLoads } from './inTransitOps.js';
-import { listProductionConversionChecks, listProductionJobCoils, repairProductionJobCoilIntegrity } from './productionTraceability.js';
+import { listProductionConversionChecks, repairProductionJobCoilIntegrity } from './productionTraceability.js';
 import { computePoolSummary, listMaterialIncidents } from './materialIncidentOps.js';
 import { recoverySchedulesTableReady } from './hrIncidentRecoveryOps.js';
 import { listStaffRecoveriesDueForCashier } from './staffRecoveryCashierOps.js';
 import {
-  listPartnerWalletBalancesDue,
   partnerWalletEnabled,
 } from './finance/partnerWalletCredit.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
@@ -87,6 +86,7 @@ import {
 } from './workItems.js';
 import {
   financeHistoryListOpts,
+  financeRegisterListOpts,
   productionHistoryListOpts,
   receiptsHistoryListOpts,
   salesCustomersListOpts,
@@ -94,22 +94,22 @@ import {
 
 const MAX_PROD_ROWS = Math.min(
   5000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 2000)
+  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 800)
 );
 const MAX_LEDGER_ROWS = Math.min(
   10_000,
-  Math.max(500, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 3000)
+  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 1000)
 );
 
 /**
+ * Permission flags for domain snapshots. Does **not** load ledger rows — callers that need
+ * receipts cash enrichment (sales/finance) load ledger themselves.
  * @param {import('better-sqlite3').Database} db
  * @param {{ user?: object | null; branchScope?: 'ALL' | string }} opts
  */
 function domainFlags(db, opts = {}) {
   const user = opts.user ?? null;
   const branchScope = opts.branchScope ?? 'ALL';
-  const ledgerOk = canReadLedgerRelated(user);
-  const ledgerRows = ledgerOk ? listLedgerEntries(db, branchScope, { limit: MAX_LEDGER_ROWS }) : [];
   return {
     user,
     branchScope,
@@ -120,8 +120,7 @@ function domainFlags(db, opts = {}) {
     finOk: canReadFinanceDomain(user),
     treasuryMovementsOk: canReadTreasuryMovements(user),
     expensesSnapshotOk: canReadFinanceDomain(user) || userHasPermission(user, 'expenses.create'),
-    ledgerOk,
-    ledgerRows,
+    ledgerOk: canReadLedgerRelated(user),
     treasuryOk: canListTreasuryAccounts(user),
     refundsOk: canSeeRefundsList(user),
     payReqOk: canSeePaymentRequests(user),
@@ -134,10 +133,14 @@ function domainFlags(db, opts = {}) {
   };
 }
 
+function loadLedgerRows(db, f) {
+  return f.ledgerOk ? listLedgerEntries(db, f.branchScope, { limit: MAX_LEDGER_ROWS }) : [];
+}
+
 function snapshotRefundCreditApplications(db, f) {
   if (!(f.refundsOk || f.ledgerOk)) return [];
   try {
-    return listRefundCreditApplications(db, '', f.branchScope === 'ALL' ? 'ALL' : f.branchScope);
+    return listRefundCreditApplications(db, '', f.branchScope === 'ALL' ? 'ALL' : f.branchScope, financeHistoryListOpts());
   } catch (e) {
     console.error('[domainBootstrap] refundCreditApplications', e);
     return [];
@@ -150,7 +153,8 @@ function snapshotRefundCreditApplications(db, f) {
  */
 export function buildSalesDomainSnapshot(db, opts = {}) {
   const f = domainFlags(db, opts);
-  const { branchScope, salesOk, ledgerOk, ledgerRows, refundsOk, user } = f;
+  const { branchScope, salesOk, ledgerOk, refundsOk, user } = f;
+  const ledgerRows = loadLedgerRows(db, f);
   const availableStock = salesOk ? getJsonBlob(db, 'sales_available_stock') ?? [] : [];
   const customerDashboard = salesOk
     ? getJsonBlob(db, 'customer_dashboard') ?? { orders: [], interactions: [], salesTrendByCustomer: {} }
@@ -160,11 +164,13 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     ok: true,
     domain: 'sales',
     customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
-    quotations: salesOk ? listQuotations(db, branchScope) : [],
+    quotations: salesOk
+      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: false })
+      : [],
     receipts: salesOk
       ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
       : [],
-    refunds: refundsOk ? listRefunds(db, branchScope) : [],
+    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
     cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
@@ -211,12 +217,13 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   };
   const historyOpts = productionHistoryListOpts();
   const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope, historyOpts) : [];
+  const productionJobIds = productionJobsList.map((j) => j.jobID).filter(Boolean);
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
         db,
         productionJobsList,
-        // Full allocations for every loaded job (history must not lose coil labels on older rows).
-        listProductionJobCoils(db, branchScope, { limit: 0 })
+        // Coils only for jobs in this snapshot — avoid full-table production_job_coils scan.
+        []
       )
     : [];
   return {
@@ -224,25 +231,31 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     domain: 'operations',
     cuttingLists: opsOk ? listCuttingLists(db, branchScope, historyOpts) : [],
     productionJobs: productionJobsList,
-    productionJobAccessoryUsage: prodRollupOk ? listProductionJobAccessoryUsage(db, branchScope) : [],
-    productionJobStoneFlatsheetUsage: prodRollupOk ? listProductionJobStoneFlatsheetUsage(db, branchScope) : [],
+    productionJobAccessoryUsage: prodRollupOk
+      ? listProductionJobAccessoryUsage(db, branchScope, { jobIds: productionJobIds })
+      : [],
+    productionJobStoneFlatsheetUsage: prodRollupOk
+      ? listProductionJobStoneFlatsheetUsage(db, branchScope, { jobIds: productionJobIds })
+      : [],
     productionMetrics,
     productionJobCoils: productionJobCoilsList,
     productionConversionChecks: prodRollupOk
       ? listProductionConversionChecks(db, branchScope, { limit: MAX_PROD_ROWS })
       : [],
     productionCompletionAdjustments: prodRollupOk
-      ? listProductionCompletionAdjustments(db, branchScope)
+      ? listProductionCompletionAdjustments(db, branchScope, historyOpts)
       : [],
     operationsInventoryAttention,
-    deliveries: opsOk ? listDeliveries(db, branchScope) : [],
-    coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
-    coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
+    deliveries: opsOk ? listDeliveries(db, branchScope, historyOpts) : [],
+    // Full coil register for production-register selectors (browse + allocate any in-stock coil).
+    // Shell/bootstrap stays capped; use GET /api/coil-lots/search when typing a coil not in a trimmed pack.
+    coilLots: coilMovOk ? listCoilLots(db, branchScope, { unlimited: true }) : [],
+    coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
-    movements: coilMovOk ? listStockMovements(db, branchScope) : [],
+    movements: coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
-    yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
+    yardCoilRegister: yardOk ? listYardCoils(db, branchScope, { useDefaultLimit: true }) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     machines: user ? listMachines(db, workScope) : [],
@@ -289,12 +302,12 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     finOk,
     treasuryMovementsOk,
     ledgerOk,
-    ledgerRows,
     treasuryOk,
     refundsOk,
     payReqOk,
     procOk,
   } = f;
+  const ledgerRows = loadLedgerRows(db, f);
   const expensesSnapshotOk = f.expensesSnapshotOk;
   const user = opts.user ?? null;
   const canSeeCategoryAlert =
@@ -304,6 +317,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       userHasPermission(user, 'reports.view'));
   const orgLimits = user ? getOrgGovernanceLimits(db) : null;
   const accountingRegisters = buildAccountingRegisterSnapshotFields(db, user, branchScope);
+  const registerOpts = financeRegisterListOpts();
   return {
     ok: true,
     domain: 'finance',
@@ -324,9 +338,9 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
       : [],
     expenses: expensesSnapshotOk ? listExpenses(db, branchScope, financeHistoryListOpts()) : [],
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, financeHistoryListOpts()) : [],
-    accountsPayable: finOk ? listAccountsPayable(db, branchScope) : [],
-    bankReconciliation: finOk ? listBankReconciliation(db, branchScope) : [],
-    refunds: refundsOk ? listRefunds(db, branchScope) : [],
+    accountsPayable: finOk ? listAccountsPayable(db, branchScope, registerOpts) : [],
+    bankReconciliation: finOk ? listBankReconciliation(db, branchScope, registerOpts) : [],
+    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
@@ -342,12 +356,8 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         ? listStaffRepayableObligationsForCashier(db, branchScope)
         : [],
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
-    partnerWalletsDue:
-      finOk ||
-      (user &&
-        (userHasPermission(user, 'finance.pay') || userHasPermission(user, 'cashier.desk.view')))
-        ? listPartnerWalletBalancesDue(db, branchScope)
-        : [],
+    /** Lazy via GET /api/partner-wallets — finance desk fetches when the queue is shown. */
+    partnerWalletsDue: [],
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')
         ? listRegisterSettlementsAwaitingPayment(db, branchScope)
@@ -396,11 +406,11 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     associatedStaffPolicy: {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
-    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope) : [],
+    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, { skipSideEffects: true }) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
-    movements: coilMovOk ? listStockMovements(db, branchScope) : [],
+    coilLots: coilMovOk ? listCoilLots(db, branchScope, { useDefaultLimit: true }) : [],
+    movements: coilMovOk ? listStockMovements(db, branchScope, productionHistoryListOpts()) : [],
     inTransitLoads: f.user ? listInTransitLoads(db, branchScope) : [],
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],

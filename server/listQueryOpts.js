@@ -31,17 +31,18 @@ export { DEFAULT_LIST_LIMIT };
 export function productionHistoryListOpts() {
   const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
   if (raw == null || String(raw).trim() === '') {
-    return { limit: Math.min(50_000, Math.max(500, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 5000)) };
+    // Desk queues stay usable; older jobs load via search / paginated APIs.
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 500)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
-/** Desk-safe default for finance history lists (covers ~3 months live volume; override via env). */
+/** Desk-safe default for finance history lists (recent live volume; override via env). */
 export const DEFAULT_FINANCE_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(500, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 3000)
+  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 800)
 );
 
 /**
@@ -67,18 +68,37 @@ export function financeHistoryListOpts() {
 export function salesCustomersListOpts() {
   const raw = process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
   if (raw == null || String(raw).trim() === '') {
-    return { limit: Math.min(50_000, Math.max(500, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 5000)) };
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 2000)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
-/** Desk-safe default for receipts history (~3 months live KD volume was ~1,061). */
+/** Desk-safe default for receipts history (~recent live KD volume; override via env). */
 export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(500, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 3000)
+  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 800)
 );
+
+/** Open AP / bank-recon lines on finance snapshots (not full history dumps). */
+export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
+  50_000,
+  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 500)
+);
+
+/**
+ * List opts for accounts payable / bank reconciliation snapshot slices.
+ * Set `ZAREWA_FINANCE_REGISTER_LIMIT=0` for unlimited.
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function financeRegisterListOpts() {
+  const raw = process.env.ZAREWA_FINANCE_REGISTER_LIMIT;
+  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_FINANCE_REGISTER_LIMIT };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+}
 
 /**
  * List opts for sales receipts (Sales filters + Cashier desk confirmation queue).

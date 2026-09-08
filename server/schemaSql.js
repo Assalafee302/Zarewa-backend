@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 
 CREATE INDEX IF NOT EXISTS idx_ledger_customer ON ledger_entries(customer_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_quotation ON ledger_entries(quotation_ref);
+CREATE INDEX IF NOT EXISTS idx_ledger_advance_fifo ON ledger_entries(branch_id, type, at_iso ASC, id ASC);
 
 CREATE TABLE IF NOT EXISTS suppliers (
   supplier_id TEXT PRIMARY KEY,
@@ -261,6 +262,8 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   value_ngn INTEGER,
   branch_id TEXT NOT NULL DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_stock_movements_branch_at ON stock_movements(branch_id, at_iso DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS wip_balances (
   branch_id TEXT NOT NULL DEFAULT '',
@@ -1280,6 +1283,7 @@ CREATE TABLE IF NOT EXISTS quotation_lines (
 CREATE INDEX IF NOT EXISTS idx_po_lines_po ON purchase_order_lines(po_id);
 CREATE INDEX IF NOT EXISTS idx_quotation_lines_q ON quotation_lines(quotation_id);
 CREATE INDEX IF NOT EXISTS idx_coil_lots_po ON coil_lots(po_id);
+/** branch_id + received_at added by migrate; composite index created in migrateOpsDeskPerformanceIndexes. */
 
 CREATE TABLE IF NOT EXISTS gl_accounts (
   id TEXT PRIMARY KEY,

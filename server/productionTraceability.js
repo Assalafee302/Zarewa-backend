@@ -265,23 +265,20 @@ export function listProductionJobCoilsForJob(db, jobID) {
 }
 
 /**
- * Bootstrap trims productionJobCoils globally (recency cap). Ensure every job that
- * appears in the partial slice — or is Planned/Running — still carries its full coil set.
+ * Ensure every job in `productionJobs` carries its full coil allocation set.
+ * Prefer this over scanning the entire production_job_coils table when the jobs
+ * list is already history-capped (bootstrap / domain snapshots).
  */
 export function repairProductionJobCoilIntegrity(db, productionJobs, partialCoils) {
   const coils = Array.isArray(partialCoils) ? [...partialCoils] : [];
   if (!db) return coils;
   const seen = new Set(coils.map((c) => c.id).filter((id) => id != null && id !== ''));
-  const partialCountByJob = new Map();
+  const jobIdsToCheck = new Set();
   for (const c of coils) {
     const jid = String(c.jobID ?? c.job_id ?? '').trim();
-    if (!jid) continue;
-    partialCountByJob.set(jid, (partialCountByJob.get(jid) || 0) + 1);
+    if (jid) jobIdsToCheck.add(jid);
   }
-  const jobIdsToCheck = new Set(partialCountByJob.keys());
   for (const j of productionJobs || []) {
-    const st = String(j.status ?? '').trim().toLowerCase();
-    if (st !== 'planned' && st !== 'running') continue;
     const jid = String(j.jobID ?? j.job_id ?? '').trim();
     if (jid) jobIdsToCheck.add(jid);
   }
@@ -786,37 +783,40 @@ function aggregateAlertState(alerts) {
 }
 
 export function listProductionJobCoils(db, branchScope = 'ALL', opts = {}) {
+  // limit=0 / omitted => unbounded (stock register / admin dumps). Prefer
+  // repairProductionJobCoilIntegrity(jobs, []) on bootstrap so only loaded jobs are queried.
   const limit = Number.isFinite(Number(opts.limit)) ? Math.max(0, Number(opts.limit)) : 0;
   const bid = String(branchScope ?? 'ALL').trim();
   const scoped = bid && bid !== 'ALL';
+  const limitSql = limit > 0 ? ' LIMIT ?' : '';
   const sql = scoped
     ? `SELECT c.*
        FROM production_job_coils c
        JOIN production_jobs j ON j.job_id = c.job_id
        WHERE j.branch_id = ?
-       ORDER BY c.allocated_at_iso DESC, c.sequence_no ASC, c.id ASC`
-    : `SELECT * FROM production_job_coils ORDER BY allocated_at_iso DESC, sequence_no ASC, id ASC`;
-  const base = scoped ? db.prepare(sql).all(bid) : db.prepare(sql).all();
-  const rows = limit > 0 ? base.slice(0, limit) : base;
-  return rows.map(mapProductionJobCoilRow);
+       ORDER BY c.allocated_at_iso DESC, c.sequence_no ASC, c.id ASC${limitSql}`
+    : `SELECT * FROM production_job_coils ORDER BY allocated_at_iso DESC, sequence_no ASC, id ASC${limitSql}`;
+  const args = scoped ? (limit > 0 ? [bid, limit] : [bid]) : limit > 0 ? [limit] : [];
+  return db.prepare(sql).all(...args).map(mapProductionJobCoilRow);
 }
 
 export function listProductionConversionChecks(db, branchScope = 'ALL', opts = {}) {
   const limit = Number.isFinite(Number(opts.limit)) ? Math.max(0, Number(opts.limit)) : 0;
   const bid = String(branchScope ?? 'ALL').trim();
   const scoped = bid && bid !== 'ALL';
+  const limitSql = limit > 0 ? ' LIMIT ?' : '';
   const sql = scoped
     ? `SELECT c.*, j.cutting_list_id AS cutting_list_id_joined
        FROM production_conversion_checks c
        JOIN production_jobs j ON j.job_id = c.job_id
        WHERE j.branch_id = ?
-       ORDER BY c.checked_at_iso DESC, c.job_id DESC, c.coil_no DESC, c.id DESC`
+       ORDER BY c.checked_at_iso DESC, c.job_id DESC, c.coil_no DESC, c.id DESC${limitSql}`
     : `SELECT c.*, j.cutting_list_id AS cutting_list_id_joined
        FROM production_conversion_checks c
        LEFT JOIN production_jobs j ON j.job_id = c.job_id
-       ORDER BY c.checked_at_iso DESC, c.job_id DESC, c.coil_no DESC, c.id DESC`;
-  const base = scoped ? db.prepare(sql).all(bid) : db.prepare(sql).all();
-  const rows = limit > 0 ? base.slice(0, limit) : base;
+       ORDER BY c.checked_at_iso DESC, c.job_id DESC, c.coil_no DESC, c.id DESC${limitSql}`;
+  const args = scoped ? (limit > 0 ? [bid, limit] : [bid]) : limit > 0 ? [limit] : [];
+  const rows = db.prepare(sql).all(...args);
   return rows
     .map((row) => {
       let varianceSummary = {};

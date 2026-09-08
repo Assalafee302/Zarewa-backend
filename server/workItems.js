@@ -934,6 +934,35 @@ export function ensureWorkItemsForVisibleOfficeThreads(db, scope, user) {
   return out;
 }
 
+const workItemSyncLastAt = new Map();
+const WORK_ITEM_SYNC_DEBOUNCE_MS = Math.min(
+  120_000,
+  Math.max(5_000, Number(process.env.ZAREWA_WORK_ITEM_SYNC_DEBOUNCE_MS) || 30_000)
+);
+
+/**
+ * Debounce derived work-item upserts per user+branch (bootstrap + /api/work-items).
+ * Inbox reads still use listUnifiedWorkItems; sync can lag up to the debounce window.
+ * @param {unknown} userId
+ * @param {unknown} branchId
+ */
+export function shouldSyncDerivedWorkItemsNow(userId, branchId) {
+  const uid = String(userId || '').trim();
+  const bid = String(branchId || '').trim();
+  if (!uid) return false;
+  const key = `${uid}:${bid}`;
+  const now = Date.now();
+  const last = workItemSyncLastAt.get(key) || 0;
+  if (now - last < WORK_ITEM_SYNC_DEBOUNCE_MS) return false;
+  workItemSyncLastAt.set(key, now);
+  return true;
+}
+
+/** Test helper — clear debounce map. */
+export function resetWorkItemSyncDebounceForTests() {
+  workItemSyncLastAt.clear();
+}
+
 function upsertLegacyBaseAsWorkItem(db, base, actor = null, { suppressAudit = true } = {}) {
   return upsertWorkItemBySource(db, {
     actor,

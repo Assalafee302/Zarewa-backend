@@ -6770,18 +6770,19 @@ export function registerHttpApi(app, db) {
   app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
+      // Cap even when unlimited=1 — open-ended customer dumps can OOM on large books.
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
       const q = String(req.query?.q || '').trim();
       const total = countCustomers(db, branchScope, { q });
       const customers = listCustomers(db, branchScope, {
-        ...(unlimited ? { unlimited: true } : { limit, offset }),
+        ...(unlimited ? { limit: 5000 } : { limit, offset }),
         q,
       });
       return sendPaginatedList(res, {
         items: customers,
         total,
-        limit: unlimited ? 0 : limit,
-        offset,
+        limit: unlimited ? 5000 : limit,
+        offset: unlimited ? 0 : offset,
         key: 'customers',
       });
     } catch (e) {

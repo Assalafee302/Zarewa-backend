@@ -27,4 +27,36 @@ describe('refundsStore payable filters', () => {
     expect(isRefundPayable(blocked)).toBe(false);
     expect(approvedRefundsAwaitingPayment([blocked])).toEqual([]);
   });
+
+  it('drops from Pay when approved fund was applied onto another receipt', () => {
+    const applied = {
+      ...payable,
+      paidAmountNgn: 5000,
+      creditAppliedNgn: 5000,
+      creditAppliedToQuotationRef: 'QT-NEW',
+    };
+    expect(isRefundPayable(applied)).toBe(false);
+    expect(approvedRefundsAwaitingPayment([applied])).toEqual([]);
+  });
+
+  it('reduces outstanding after a partial credit apply', () => {
+    const partial = {
+      ...payable,
+      paidAmountNgn: 2000,
+      creditAppliedNgn: 2000,
+    };
+    expect(isRefundPayable(partial)).toBe(true);
+    expect(approvedRefundsAwaitingPayment([partial])).toEqual([partial]);
+  });
+
+  it('drops from Pay when settlement till payable is already zero', () => {
+    const settledOnTill = {
+      ...payable,
+      paidAmountNgn: 3500,
+      creditAppliedNgn: 3500,
+      companyCutNgn: 1500,
+      settlementSummary: { tillPayableNgn: 0, cashOutstandingNgn: 0, companyCutNgn: 1500 },
+    };
+    expect(isRefundPayable(settledOnTill)).toBe(false);
+  });
 });

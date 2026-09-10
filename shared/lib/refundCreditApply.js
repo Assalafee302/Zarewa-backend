@@ -255,8 +255,11 @@ export function refundCreditOpenAmountNgn(refund) {
   }
   const approved =
     Math.round(Number(refund?.approvedAmountNgn) || 0) ||
-    (status === 'Approved' || status === 'Paid' ? Math.round(Number(refund?.amountNgn) || 0) : 0);
-  return effectiveOutstandingNgn(approved, paid);
+    (status === 'Approved' || status === 'Paid' || status === 'Partially paid'
+      ? Math.round(Number(refund?.amountNgn) || 0)
+      : 0);
+  // paid_amount often already includes credit apply; never ignore credit_applied when paid was not bumped.
+  return effectiveOutstandingNgn(approved, Math.max(paid, creditApplied));
 }
 
 function parseRefundSplitDistributions(raw) {

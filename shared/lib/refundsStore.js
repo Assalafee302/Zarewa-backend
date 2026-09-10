@@ -37,9 +37,18 @@ export function refundApprovedAmount(r) {
 }
 
 export function refundOutstandingAmount(r) {
+  const fromSummary = r?.settlementSummary?.cashOutstandingNgn;
+  if (fromSummary != null && Number.isFinite(Number(fromSummary))) {
+    return Math.max(0, Math.round(Number(fromSummary) || 0));
+  }
   const approved = refundApprovedAmount(r);
-  const paid = Number(r?.paidAmountNgn) || 0;
-  return effectiveOutstandingNgn(approved, paid);
+  const paid = Math.round(Number(r?.paidAmountNgn ?? r?.paid_amount_ngn) || 0);
+  const creditApplied = Math.round(Number(r?.creditAppliedNgn ?? r?.credit_applied_ngn) || 0);
+  // paid_amount usually already includes credit apply; if only credit_applied was set, use that.
+  const settled = Math.max(paid, creditApplied);
+  const companyCut = Math.round(Number(r?.companyCutNgn ?? r?.settlementSummary?.companyCutNgn) || 0);
+  const due = companyCut > 0 ? Math.max(0, approved - companyCut) : approved;
+  return effectiveOutstandingNgn(due, settled);
 }
 
 /**
@@ -84,7 +93,16 @@ export function normalizeRefund(r) {
     paidBy: r.paidBy ?? '',
     paymentNote: r.paymentNote ?? '',
     payoutHistory: Array.isArray(r.payoutHistory) ? r.payoutHistory.map(normalizePayoutLine) : [],
-    outstandingAmountNgn: effectiveOutstandingNgn(approvedAmountNgn, paidAmountNgn),
+    creditAppliedNgn: Math.round(Number(r.creditAppliedNgn ?? r.credit_applied_ngn) || 0),
+    settlementSummary:
+      r.settlementSummary != null && typeof r.settlementSummary === 'object' ? r.settlementSummary : null,
+    companyCutNgn: Math.round(Number(r.companyCutNgn ?? r?.settlementSummary?.companyCutNgn) || 0),
+    outstandingAmountNgn: refundOutstandingAmount({
+      ...r,
+      amountNgn,
+      paidAmountNgn,
+      approvedAmountNgn,
+    }),
     quotationRefundsBlockedAtISO:
       r.quotationRefundsBlockedAtISO ?? r.quotation_refunds_blocked_at_iso ?? null,
     quotationRefundsBlockedReason:
@@ -93,12 +111,19 @@ export function normalizeRefund(r) {
 }
 
 export function isRefundPayable(r) {
+  if (refundQuotationRefundsBlocked(r)) return false;
+  const status = r?.status;
+  if (status !== 'Approved' && status !== 'Partially paid') return false;
+  const approved = refundApprovedAmount(r);
+  const paid = Math.round(Number(r?.paidAmountNgn ?? r?.paid_amount_ngn) || 0);
+  const creditApplied = Math.round(Number(r?.creditAppliedNgn ?? r?.credit_applied_ngn) || 0);
+  if (approved > 0 && Math.max(paid, creditApplied) >= approved) return false;
+  const tillFromSummary = r?.settlementSummary?.tillPayableNgn;
+  if (tillFromSummary != null) {
+    return Math.round(Number(tillFromSummary) || 0) > 0;
+  }
   if (Math.round(Number(r?.walletOpenNgn) || 0) > 0) return false;
-  return (
-    (r?.status === 'Approved' || r?.status === 'Partially paid') &&
-    refundOutstandingAmount(r) > 0 &&
-    !refundQuotationRefundsBlocked(r)
-  );
+  return refundOutstandingAmount(r) > 0;
 }
 
 export function loadRefunds() {

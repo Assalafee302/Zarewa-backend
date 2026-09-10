@@ -27,6 +27,7 @@ import {
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
+import { repairRefundPayoutStateTx } from './sales/refundPayoutStatus.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
 import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
@@ -680,6 +681,9 @@ export function applyRefundCreditToQuotation(db, payload) {
             REFUND_CREDIT_CONFIRMATION_STATUS,
             src.refundId
           );
+          // Gross paid vs approved can leave status Approved after a full net apply
+          // (company cut). Repair marks Paid and drops the till queue.
+          repairRefundPayoutStateTx(db, src.refundId);
         }
 
         db.prepare(
@@ -1012,6 +1016,121 @@ export function reverseRefundCreditApplication(db, applicationId, payload = {}) 
 
     const result = payload.alreadyInTransaction ? runReverse() : db.transaction(runReverse)();
     return { ok: true, status: REFUND_CREDIT_REVERSED_STATUS, ...result };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+/**
+ * Manual correction for a refund whose cash was already consumed elsewhere before the system
+ * had a way to track it — e.g. a transport/installation refund (cash-payout-only, never itself
+ * selectable as a credit source) whose source quotation's overpayment pool was, before the
+ * double-count fix in `listEligibleRefundCredits`, offered and spent as generic leftover credit
+ * on a different receipt. That spend is real and already happened on the ledger (as an
+ * OVERPAY_APPLIED/OVERPAY_REVERSAL pair against the OTHER quotation) — this does not touch the
+ * ledger or move any new money. It only brings the refund's own bookkeeping (`credit_applied_ngn`,
+ * `paid_amount_ngn`, `status`) up to date with what already, in fact, happened, so the refund
+ * correctly drops off the till/bank payout queue instead of asking to pay out cash a second time.
+ * Finance/manager only — requires a note naming the receipt/quotation that actually consumed it.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {{
+ *   refundId: string,
+ *   amountNgn: number,
+ *   note: string,
+ *   targetQuotationRef?: string,
+ *   actor?: object,
+ *   dateISO?: string,
+ *   alreadyInTransaction?: boolean,
+ * }} payload
+ */
+export function reconcileRefundCreditAlreadyApplied(db, payload = {}) {
+  const refundId = String(payload?.refundId || '').trim();
+  const amt = roundMoney(payload?.amountNgn);
+  const note = String(payload?.note || '').trim();
+  if (!refundId) return { ok: false, error: 'refundId is required.' };
+  if (!(amt > 0)) return { ok: false, error: 'amountNgn must be greater than zero.' };
+  if (!note) {
+    return {
+      ok: false,
+      error: 'A note naming the receipt/quotation that already consumed this amount is required.',
+    };
+  }
+
+  const target = String(payload?.targetQuotationRef || '').trim();
+  const postingDay =
+    String(payload.dateISO || '').trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    assertPeriodOpen(db, postingDay, 'Refund reconciliation date');
+  } catch (pe) {
+    return { ok: false, error: String(pe?.message || pe), code: 'PERIOD_LOCKED' };
+  }
+
+  const actor = payload.actor || null;
+  try {
+    const runReconcile = () => {
+      const fresh = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(refundId);
+      if (!fresh) throw new Error(`Refund ${refundId} not found.`);
+      const status = String(fresh.status || '').trim();
+      if (status !== 'Approved' && status !== 'Partially paid') {
+        throw new Error(`Refund ${refundId} must be Approved or Partially paid to reconcile (currently ${status || 'unknown'}).`);
+      }
+      const open = refundCreditOpenAmountFromStoredRefund(fresh);
+      if (amt > open + 1) {
+        throw new Error(
+          `Refund ${refundId} only has ₦${open.toLocaleString('en-NG')} still outstanding — cannot reconcile ₦${amt.toLocaleString('en-NG')}.`
+        );
+      }
+
+      const priorCredit = roundMoney(fresh.credit_applied_ngn);
+      const nextCredit = priorCredit + amt;
+      const noteBit = `Reconciled: ₦${amt.toLocaleString('en-NG')} already consumed by ${
+        target || 'a prior receipt'
+      } on ${postingDay} (double-count correction) — ${note}`;
+      const prevNote = String(fresh.payment_note || '').trim();
+      const paymentNote = prevNote ? `${prevNote} · ${noteBit}` : noteBit;
+
+      db.prepare(
+        `UPDATE customer_refunds
+         SET credit_applied_ngn = ?,
+             credit_applied_to_quotation_ref = ?,
+             payment_note = ?
+         WHERE refund_id = ?`
+      ).run(nextCredit, target || fresh.credit_applied_to_quotation_ref || null, paymentNote, refundId);
+
+      const repaired = repairRefundPayoutStateTx(db, refundId);
+
+      appendAuditLog(db, {
+        actor,
+        action: 'refund.reconcile_prior_credit_use',
+        entityKind: 'customer_refund',
+        entityId: refundId,
+        note: `Reconciled ₦${amt.toLocaleString('en-NG')} already consumed by ${target || 'a prior receipt'}: ${note}`,
+        details: {
+          refundId,
+          amountNgn: amt,
+          targetQuotationRef: target || null,
+          note,
+          priorCreditAppliedNgn: priorCredit,
+          nextCreditAppliedNgn: nextCredit,
+          repaired,
+        },
+      });
+
+      const after = db
+        .prepare(`SELECT status, paid_amount_ngn, credit_applied_ngn FROM customer_refunds WHERE refund_id = ?`)
+        .get(refundId);
+      return {
+        refundId,
+        amountNgn: amt,
+        targetQuotationRef: target || null,
+        statusAfter: after?.status || null,
+        paidAmountNgnAfter: roundMoney(after?.paid_amount_ngn),
+        creditAppliedNgnAfter: roundMoney(after?.credit_applied_ngn),
+      };
+    };
+    const result = payload.alreadyInTransaction ? runReconcile() : db.transaction(runReconcile)();
+    return { ok: true, ...result };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   }

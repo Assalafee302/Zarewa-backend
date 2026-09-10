@@ -1533,7 +1533,18 @@ function openSessionForUser(db, row) {
   const sessionToken = createSessionToken();
   const createdAtISO = nowIso();
   const expiresAtISO = addMinutesToIso(createdAtISO, sessionTimeoutMinutes());
-  const branchId = defaultBranchIdForDb(db);
+  // Prefer the user's assigned workspace branch so Yola staff never land on Kaduna by default.
+  let branchId = '';
+  try {
+    const assigned = String(row.workspace_branch_id || '').trim();
+    if (assigned) {
+      const br = db.prepare(`SELECT id, active FROM branches WHERE id = ?`).get(assigned);
+      if (br?.id && Number(br.active) === 1) branchId = assigned;
+    }
+  } catch {
+    /* older DBs */
+  }
+  if (!branchId) branchId = defaultBranchIdForDb(db);
   db.transaction(() => {
     db.prepare(`DELETE FROM user_sessions WHERE user_id = ?`).run(row.id);
     const sessCols = db.prepare(`PRAGMA table_info(user_sessions)`).all();

@@ -2532,6 +2532,7 @@ export function confirmGrn(
           atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upSheet || null,
           valueNgn: landedFs,
+          branchId: coilBranch,
         });
         const glF = tryPostInventoryReceiptJournal(db, {
           entryDateISO: lineDateISO,
@@ -2565,6 +2566,7 @@ export function confirmGrn(
           atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upM || null,
           valueNgn: landedStone,
+          branchId: coilBranch,
         });
         const glS = tryPostInventoryReceiptJournal(db, {
           entryDateISO: lineDateISO,
@@ -2598,6 +2600,7 @@ export function confirmGrn(
           atISO: entryReceivedAtISO(lineDateISO),
           unitPriceNgn: upEach || null,
           valueNgn: landedAcc,
+          branchId: coilBranch,
         });
         const glA = tryPostInventoryReceiptJournal(db, {
           entryDateISO: lineDateISO,

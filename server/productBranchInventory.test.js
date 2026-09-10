@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import {
   adjustProductStockForBranch,
+  ensureNonCoilProductRowsForAllBranches,
   getProductRowForWorkspace,
   migrateProductsBranchCompositeInventory,
   productsTableHasBranchCompositePk,
 } from './productBranchInventory.js';
 
-function memDb() {
+/** Minimal better-sqlite3-compatible harness (package may be absent in MySQL-only installs). */
+async function tryMemDb() {
+  let Database;
+  try {
+    Database = (await import('better-sqlite3')).default;
+  } catch {
+    return null;
+  }
   const db = new Database(':memory:');
   db.exec(`
     CREATE TABLE branches (id TEXT PRIMARY KEY, code TEXT, name TEXT, active INTEGER, sort_order INTEGER);
@@ -32,8 +39,9 @@ function memDb() {
 }
 
 describe('productBranchInventory', () => {
-  it('expands accessories per branch and keeps coils global', () => {
-    const db = memDb();
+  it('expands accessories per branch and keeps coils global', async () => {
+    const db = await tryMemDb();
+    if (!db) return;
     db.prepare(
       `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
        VALUES ('ACC-RIVET-PACK','Rivets',50,'pack',0,0,'{"inventoryModel":"consumable"}','')`
@@ -53,10 +61,27 @@ describe('productBranchInventory', () => {
 
     const coil = getProductRowForWorkspace(db, 'COIL-ALU', 'BR-YL');
     expect(coil?.stock_level).toBe(1000);
+    db.close();
   });
 
-  it('adjustProductStockForBranch updates only the target branch row', () => {
-    const db = memDb();
+  it('adjustProductStockForBranch updates only the target branch row', async () => {
+    const db = await tryMemDb();
+    if (!db) return;
+    db.exec(`DROP TABLE products`);
+    db.exec(`
+      CREATE TABLE products (
+        product_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        stock_level REAL NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL,
+        low_stock_threshold REAL NOT NULL DEFAULT 0,
+        reorder_qty REAL NOT NULL DEFAULT 0,
+        gauge TEXT, colour TEXT, material_type TEXT,
+        dashboard_attrs_json TEXT,
+        branch_id TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (branch_id, product_id)
+      );
+    `);
     db.prepare(
       `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
        VALUES ('ACC-RIVET-PACK','Rivets',10,'pack',0,0,'{"inventoryModel":"consumable"}','BR-KD')`
@@ -70,5 +95,43 @@ describe('productBranchInventory', () => {
 
     expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-KD')?.stock_level).toBe(7);
     expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-YL')?.stock_level).toBe(20);
+    db.close();
+  });
+
+  it('ensureNonCoilProductRowsForAllBranches copies BR-KD-only accessories/stone onto Yola at 0', async () => {
+    const db = await tryMemDb();
+    if (!db) return;
+    db.exec(`DROP TABLE products`);
+    db.exec(`
+      CREATE TABLE products (
+        product_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        stock_level REAL NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL,
+        low_stock_threshold REAL NOT NULL DEFAULT 0,
+        reorder_qty REAL NOT NULL DEFAULT 0,
+        gauge TEXT, colour TEXT, material_type TEXT,
+        dashboard_attrs_json TEXT,
+        branch_id TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (branch_id, product_id)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
+       VALUES ('ACC-RIVET-PACK','Rivets',50,'pack',0,0,'{"inventoryModel":"consumable"}','BR-KD')`
+    ).run();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, dashboard_attrs_json, branch_id)
+       VALUES ('STONE-bond-red-0.50mm','Stone coated Bond / Red / 0.50mm',120,'m',0,0,'{"inventoryModel":"stone_meter"}','BR-KD')`
+    ).run();
+
+    ensureNonCoilProductRowsForAllBranches(db);
+
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-YL')?.stock_level).toBe(0);
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', 'BR-KD')?.stock_level).toBe(50);
+    expect(getProductRowForWorkspace(db, 'STONE-bond-red-0.50mm', 'BR-YL')?.stock_level).toBe(0);
+    expect(getProductRowForWorkspace(db, 'STONE-bond-red-0.50mm', 'BR-KD')?.stock_level).toBe(120);
+    expect(getProductRowForWorkspace(db, 'ACC-RIVET-PACK', '')).toBeNull();
+    db.close();
   });
 });

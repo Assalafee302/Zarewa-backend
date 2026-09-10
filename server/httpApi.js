@@ -166,6 +166,7 @@ import {
   assertSingleBranchWorkspaceForCreate,
   assertTreasuryAccountsBulkForWorkspace,
   resolveBootstrapBranchScope,
+  userMayPostAcrossBranches,
 } from './branchScope.js';
 import {
   assertCuttingListIdInWorkspace,
@@ -201,6 +202,7 @@ import {
   listBranches,
   setBranchCuttingListMinPaidFraction,
 } from './branches.js';
+import { detectNearestBranch } from './branchLocationDetect.js';
 import {
   appendAuditLog,
   verifyAuditLogChain,
@@ -258,6 +260,7 @@ import {
   rejectEditApproval,
   createEditApprovalRequest,
   cuttingListEditRequiresEditApproval,
+  getEditApproval,
   getEditApprovalDetail,
   handlePatchWithEditApproval,
   handlePatchWithEditApprovalQuotation,
@@ -1853,7 +1856,8 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'You cannot review edit approvals.' });
     }
     try {
-      res.json({ ok: true, items: listPendingEditApprovals(db) });
+      const branchScope = resolveBootstrapBranchScope(req);
+      res.json({ ok: true, items: listPendingEditApprovals(db, branchScope, 100) });
     } catch (e) {
       res.status(500).json({ ok: false, error: String(e.message || e) });
     }
@@ -1867,6 +1871,21 @@ export function registerHttpApi(app, db) {
       if (row.requestedByUserId !== uid && !userCanApproveEditMutations(req.user)) {
         return res.status(403).json({ ok: false, error: 'Forbidden.' });
       }
+      const bid = String(row.branchId || '').trim();
+      const wb = String(req.workspaceBranchId || '').trim();
+      if (
+        bid &&
+        wb &&
+        bid !== wb &&
+        !req.workspaceViewAll &&
+        row.requestedByUserId !== uid &&
+        !userMayPostAcrossBranches(req.user)
+      ) {
+        return res.status(403).json({
+          ok: false,
+          error: `This edit approval belongs to branch ${bid}. Switch workspace before continuing.`,
+        });
+      }
       res.json({ ok: true, approval: row });
     } catch (e) {
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -1875,6 +1894,22 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/edit-approvals/:id/approve', requireAuth, (req, res) => {
     try {
+      const existing = getEditApproval(db, req.params.id);
+      if (!existing) return res.status(404).json({ ok: false, error: 'Not found.' });
+      const bid = String(existing.branchId || '').trim();
+      const wb = String(req.workspaceBranchId || '').trim();
+      if (
+        bid &&
+        wb &&
+        bid !== wb &&
+        !req.workspaceViewAll &&
+        !userMayPostAcrossBranches(req.user)
+      ) {
+        return res.status(403).json({
+          ok: false,
+          error: `This edit approval belongs to branch ${bid}. Switch workspace before continuing.`,
+        });
+      }
       const r = approveEditApproval(db, { approvalId: req.params.id, actor: req.user });
       if (r.ok) {
         const target = upsertWorkItemBySource(db, {
@@ -1913,6 +1948,22 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/edit-approvals/:id/reject', requireAuth, (req, res) => {
     try {
+      const existing = getEditApproval(db, req.params.id);
+      if (!existing) return res.status(404).json({ ok: false, error: 'Not found.' });
+      const bid = String(existing.branchId || '').trim();
+      const wb = String(req.workspaceBranchId || '').trim();
+      if (
+        bid &&
+        wb &&
+        bid !== wb &&
+        !req.workspaceViewAll &&
+        !userMayPostAcrossBranches(req.user)
+      ) {
+        return res.status(403).json({
+          ok: false,
+          error: `This edit approval belongs to branch ${bid}. Switch workspace before continuing.`,
+        });
+      }
       const reason = String(req.body?.reason ?? req.body?.note ?? '').trim();
       const r = rejectEditApproval(db, { approvalId: req.params.id, actor: req.user, reason });
       if (r.ok) {
@@ -3157,6 +3208,79 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ ok: false, error: 'Could not update workspace.' });
+    }
+  });
+
+  /**
+   * Automatic branch detection from device GPS.
+   * Body: { latitude, longitude, apply?: boolean, maxRadiusKm?: number }
+   * When apply=true and the user may select the detected branch, session workspace is switched.
+   */
+  app.post('/api/session/detect-location', requireAuth, (req, res) => {
+    try {
+      const body = req.body || {};
+      const detected = detectNearestBranch(db, body.latitude ?? body.lat, body.longitude ?? body.lng ?? body.lon, {
+        maxRadiusKm: body.maxRadiusKm,
+      });
+      if (!detected.ok) {
+        return res.status(400).json(detected);
+      }
+
+      let applied = false;
+      let applyError = null;
+      const wantApply = body.apply === true || body.apply === 'true' || body.apply === 1;
+      const targetId = String(detected.detectedBranchId || '').trim();
+
+      if (wantApply && targetId) {
+        if (!userMaySelectSessionWorkspaceBranch(db, req.user, targetId)) {
+          applyError = 'You cannot switch to the detected branch from this account.';
+        } else {
+          const token = req.sessionToken;
+          if (!token) {
+            applyError = 'No session.';
+          } else {
+            const branchCol = db
+              .prepare(`PRAGMA table_info(user_sessions)`)
+              .all()
+              .some((c) => c.name === 'current_branch_id');
+            if (!branchCol) {
+              applyError = 'Workspace columns missing; restart server after migration.';
+            } else {
+              db.prepare(
+                `UPDATE user_sessions SET current_branch_id = ?, view_all_branches = 0 WHERE session_token = ?`
+              ).run(targetId, token);
+              req.workspaceBranchId = targetId;
+              req.workspaceViewAll = false;
+              applied = true;
+              appendAuditLog(db, {
+                actor: req.user,
+                action: 'session.detect_location',
+                entityKind: 'branch',
+                entityId: targetId,
+                note: `GPS auto workspace · ${detected.distanceKm} km · ${detected.confidence}`,
+              });
+            }
+          }
+        }
+      }
+
+      return res.json({
+        ok: true,
+        detectedBranchId: detected.detectedBranchId,
+        branch: detected.branch,
+        distanceKm: detected.distanceKm,
+        confidence: detected.confidence,
+        withinRadius: detected.withinRadius,
+        candidates: detected.candidates,
+        applied,
+        applyError,
+        currentBranchId: applied ? targetId : req.workspaceBranchId,
+        viewAllBranches: applied ? false : Boolean(req.workspaceViewAll),
+        branches: listBranches(db),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not detect location.' });
     }
   });
 
@@ -7544,7 +7668,9 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/inventory/stone-receipt', requirePermission('inventory.receive'), (req, res) => {
     try {
-      const r = write.postStoneInventoryReceipt(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
+      const r = write.postStoneInventoryReceipt(db, req.body || {}, req.workspaceBranchId, {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
@@ -7556,7 +7682,9 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/inventory/stone-flatsheet-receipt', requirePermission('inventory.receive'), (req, res) => {
     try {
-      const r = write.postStoneFlatsheetInventoryReceipt(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
+      const r = write.postStoneFlatsheetInventoryReceipt(db, req.body || {}, req.workspaceBranchId, {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
@@ -7568,7 +7696,9 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/inventory/accessory-receipt', requirePermission('inventory.receive'), (req, res) => {
     try {
-      const r = write.postAccessoryInventoryReceipt(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID, {
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
+      const r = write.postAccessoryInventoryReceipt(db, req.body || {}, req.workspaceBranchId, {
         actor: req.user,
       });
       res.status(r.ok ? 200 : 400).json(r);
@@ -7615,11 +7745,13 @@ export function registerHttpApi(app, db) {
       if (!designLabel || !colourLabel || !gaugeLabel) {
         return res.status(400).json({ ok: false, error: 'designLabel, colourLabel, and gaugeLabel are required.' });
       }
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
       const productId = ensureStoneProduct(db, {
         designLabel,
         colourLabel,
         gaugeLabel,
-        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        branchId: req.workspaceBranchId,
       });
       res.json({ ok: true, productId });
     } catch (e) {
@@ -7635,10 +7767,12 @@ export function registerHttpApi(app, db) {
       if (!colourLabel) {
         return res.status(400).json({ ok: false, error: 'colourLabel is required.' });
       }
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
       const productId = ensureStoneFlatsheetProduct(db, {
         colourLabel,
         lengthM,
-        branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
+        branchId: req.workspaceBranchId,
       });
       res.json({ ok: true, productId });
     } catch (e) {
@@ -9858,6 +9992,8 @@ export function registerHttpApi(app, db) {
   app.post('/api/payment-requests', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
       if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.create')) return;
+      const createGate = assertSingleBranchWorkspaceForCreate(req);
+      if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
       if (r.ok) {
         const woId = String(req.body?.workOrderId || req.body?.maintenanceWorkOrderId || '').trim();
@@ -9934,6 +10070,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const requestId = String(req.params.requestId || '').trim();
       const row = db
         .prepare(
@@ -9993,6 +10131,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const preview = getPaymentRequestGlPreview(db, String(req.params.requestId || ''), req.user);
       res.status(preview.ok ? 200 : 404).json(preview);
     } catch (e) {
@@ -10003,6 +10143,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/reclassify-category', requireAuth, (req, res) => {
     try {
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const requestId = String(req.params.requestId || '');
       const row = db.prepare(`SELECT paid_amount_ngn FROM payment_requests WHERE request_id = ?`).get(requestId);
       if (!row) {
@@ -10040,6 +10182,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const preview = getPaidExpenseCategoryReclassPreview(db, {
         requestId: String(req.params.requestId || ''),
         expenseCategory: req.query.expenseCategory || req.query.category || '',
@@ -10169,6 +10313,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const r = updatePaymentRequest(db, req.params.requestId, req.body || {}, req.user);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -10182,6 +10328,8 @@ export function registerHttpApi(app, db) {
       if (!userMayReviewPaymentRequests(req.user, (perm) => userHasPermission(req.user, perm))) {
         return res.status(403).json({ ok: false, error: 'Forbidden' });
       }
+      const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+      if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
       const r = decidePaymentRequest(db, req.params.requestId, req.body || {}, req.user);
       if (r.ok) {
         const outcome = String(req.body?.status || '').trim() || 'reviewed';
@@ -10264,6 +10412,8 @@ export function registerHttpApi(app, db) {
     requirePermission(['finance.approve', 'finance.pay']),
     (req, res) => {
       try {
+        const prGate = assertPaymentRequestIdInWorkspace(db, req, req.params.requestId);
+        if (!prGate.ok) return res.status(prGate.status).json({ ok: false, error: prGate.error });
         const r = cancelApprovedPaymentRequestBeforePay(db, req.params.requestId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {

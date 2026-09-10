@@ -43,13 +43,17 @@ export function resolveStockMovementBranchId(db, entry) {
 
   if (productId && hasColumn(db, 'products', 'branch_id')) {
     try {
-      const row = db
+      const rows = db
         .prepare(
-          `SELECT branch_id FROM products WHERE product_id = ? AND TRIM(COALESCE(branch_id,'')) != '' LIMIT 1`
+          `SELECT DISTINCT branch_id FROM products
+           WHERE product_id = ? AND TRIM(COALESCE(branch_id,'')) != ''`
         )
-        .get(productId);
-      const bid = String(row?.branch_id ?? '').trim();
-      if (bid) return bid;
+        .all(productId);
+      // Only infer from product when a single branch owns the SKU — never LIMIT 1 across KD/YL/MDG.
+      if (rows.length === 1) {
+        const bid = String(rows[0]?.branch_id ?? '').trim();
+        if (bid) return bid;
+      }
     } catch {
       /* ignore */
     }
@@ -150,12 +154,14 @@ export function migrateStockMovementsBranchId(db) {
     );
   }
   if (hasColumn(db, 'products', 'branch_id')) {
+    // Only backfill from products when the SKU exists on exactly one branch.
     backfills.push(
       `UPDATE stock_movements SET branch_id = (
          SELECT p.branch_id FROM products p
          WHERE p.product_id = stock_movements.product_id
            AND TRIM(COALESCE(p.branch_id,'')) != ''
-         LIMIT 1
+         GROUP BY p.product_id
+         HAVING COUNT(DISTINCT p.branch_id) = 1
        ) WHERE TRIM(COALESCE(branch_id,'')) = '' AND product_id IS NOT NULL AND TRIM(product_id) != ''`
     );
   }

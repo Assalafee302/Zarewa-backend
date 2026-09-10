@@ -7,6 +7,7 @@ import {
   createEditApprovalRequest,
   buildEditApprovalRecordContext,
   getEditApprovalDetail,
+  listPendingEditApprovals,
   receiptFinanceSettlementRequiresEditApproval,
   expenseOutflowCorrectionRequiresEditApproval,
   salesReceiptReconciliationIsFinalized,
@@ -422,5 +423,61 @@ describe('editApproval (no MySQL)', () => {
     expect(detail?.changeSummary).toBe('Update customer phone');
     expect(detail?.changeDetails).toHaveLength(1);
     expect(detail?.recordContext?.headline).toContain('Bob');
+  });
+
+  it('listPendingEditApprovals filters by branch when scope is not ALL', () => {
+    const prepared = [];
+    const db = {
+      exec: vi.fn(),
+      prepare(sql) {
+        const s = String(sql);
+        if (s.includes('sqlite_master') || s.includes('PRAGMA')) {
+          return { get: () => ({ name: 'edit_approval_tokens' }), all: () => [{ name: 'branch_id' }] };
+        }
+        prepared.push(s);
+        return {
+          all: (...args) => {
+            if (s.includes('TRIM(COALESCE(branch_id')) {
+              expect(args[0]).toBe('BR-YL');
+              return [
+                {
+                  id: 'EA-YL',
+                  entity_kind: 'quotation',
+                  entity_id: 'Q-YL',
+                  branch_id: 'BR-YL',
+                  status: 'pending',
+                  requested_by_user_id: 'u1',
+                  requested_by_display: 'Yola BM',
+                  requested_at_iso: '2026-09-10',
+                  change_summary: 'Yola edit',
+                  change_details_json: null,
+                },
+              ];
+            }
+            return [
+              {
+                id: 'EA-KD',
+                entity_kind: 'quotation',
+                entity_id: 'Q-KD',
+                branch_id: 'BR-KD',
+                status: 'pending',
+                requested_by_user_id: 'u2',
+                requested_by_display: 'KD BM',
+                requested_at_iso: '2026-09-10',
+                change_summary: 'Kaduna edit',
+                change_details_json: null,
+              },
+            ];
+          },
+        };
+      },
+    };
+    const yl = listPendingEditApprovals(db, 'BR-YL', 50);
+    expect(yl).toHaveLength(1);
+    expect(yl[0].id).toBe('EA-YL');
+    expect(prepared.some((s) => s.includes('TRIM(COALESCE(branch_id'))).toBe(true);
+
+    const all = listPendingEditApprovals(db, 'ALL', 50);
+    expect(all[0].id).toBe('EA-KD');
   });
 });

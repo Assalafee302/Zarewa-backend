@@ -1004,7 +1004,7 @@ export function syncDerivedWorkItems(db, scope, user) {
   if (!workRegistryTablesReady(db) || !user) return [];
   const seeds = [
     ...listLegacyManagementWorkItems(db, scope, user),
-    ...listLegacyEditApprovalWorkItems(db, user),
+    ...listLegacyEditApprovalWorkItems(db, scope, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
     ...listLegacyStaffPurchaseCreditWorkItems(db, scope, user),
@@ -1179,7 +1179,11 @@ function listLegacyManagementWorkItems(db, scope, user) {
       );
     }
     if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_incidents'`).get()) {
-      const bp = branchScope?.viewAll ? { sql: '', args: [] } : { sql: ` AND branch_id = ?`, args: [branchScope?.branchId || DEFAULT_BRANCH_ID] };
+      // branchScope is 'ALL' | branch id string (not the scope object).
+      const bp =
+        branchScope === 'ALL' || !branchScope
+          ? { sql: '', args: [] }
+          : { sql: ` AND branch_id = ?`, args: [String(branchScope).trim()] };
       const mexRows = db
         .prepare(
           `SELECT id, incident_type, gauge_label, colour, total_meters, date_iso, storekeeper_remark
@@ -1255,13 +1259,15 @@ function listLegacyManagementWorkItems(db, scope, user) {
   return out;
 }
 
-function listLegacyEditApprovalWorkItems(db, user) {
+function listLegacyEditApprovalWorkItems(db, scope, user) {
   if (!userCanApproveEditMutations(user)) return [];
-  return listPendingEditApprovals(db).map((row) =>
+  const branchScope =
+    scope?.viewAll && canUseAllBranchesRollup(user) ? 'ALL' : scope?.branchId || DEFAULT_BRANCH_ID;
+  return listPendingEditApprovals(db, branchScope, 100).map((row) =>
     legacyWorkItemBase({
       id: legacyItemId('edit-approval', row.id),
       referenceNo: row.id,
-      branchId: row.branchId || DEFAULT_BRANCH_ID,
+      branchId: row.branchId || scope?.branchId || DEFAULT_BRANCH_ID,
       officeKey: 'branch_manager',
       documentClass: 'approval',
       documentType: 'edit_approval',
@@ -1286,7 +1292,9 @@ function listLegacyCoilRequestWorkItems(db, scope, user) {
     userHasPermission(user, 'procurement.manage') ||
     canSeeManagementApprovalQueues(user);
   if (!canSee) return [];
-  return listCoilRequests(db)
+  const coilBranchScope =
+    scope?.viewAll && canUseAllBranchesRollup(user) ? 'ALL' : scope?.branchId || DEFAULT_BRANCH_ID;
+  return listCoilRequests(db, coilBranchScope)
     .filter((row) => {
       const st = String(row.status || '').toLowerCase();
       // Pending needs BM; approved/acknowledged stays visible for procurement triage.
@@ -1364,7 +1372,7 @@ function listLegacyStaffPurchaseCreditWorkItems(db, scope, user) {
   if (!user) return [];
   if (!userMayApproveStaffPurchaseCredit(user) && !userMayRejectStaffPurchaseCredit(user)) return [];
   const scopeNorm = {
-    viewAll: Boolean(scope?.viewAll) || canUseAllBranchesRollup(user),
+    viewAll: Boolean(scope?.viewAll),
     branchId: String(scope?.branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
   };
   const rows = listStaffPurchaseCreditQueue(db, {
@@ -1743,7 +1751,7 @@ export function listUnifiedWorkItems(db, scope, user, filter = {}) {
   const existingSources = collectPersistedSourceKeys(persisted);
   const legacy = [
     ...listLegacyManagementWorkItems(db, scope, user),
-    ...listLegacyEditApprovalWorkItems(db, user),
+    ...listLegacyEditApprovalWorkItems(db, scope, user),
     ...listLegacyCoilRequestWorkItems(db, scope, user),
     ...listLegacyHrRequestWorkItems(db, scope, user),
     ...listLegacyStaffPurchaseCreditWorkItems(db, scope, user),

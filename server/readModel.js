@@ -652,8 +652,12 @@ export function listManagementItems(db, branchScope = 'ALL') {
     ORDER BY requested_at_iso DESC LIMIT 50
   `).all(...bRef.args);
 
-  // 5. Payment requests pending approval (column is approval_status, not status)
+  // 5. Payment requests pending approval (column is approval_status, not status).
+  // Branch is on expenses — must filter like listPaymentRequests or Yola sees Kaduna PRs.
   const prHasPayee = hasColumn(db, 'payment_requests', 'payee_account_no');
+  const useExpenseBranch = branchScope !== 'ALL' && String(branchScope || '').trim();
+  const expenseBranchSql = useExpenseBranch ? ` AND e.branch_id = ?` : '';
+  const expenseBranchArgs = useExpenseBranch ? [String(branchScope).trim()] : [];
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
            pr.request_reference, pr.line_items_json, pr.attachment_name,
@@ -662,9 +666,9 @@ export function listManagementItems(db, branchScope = 'ALL') {
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
     FROM payment_requests pr
     LEFT JOIN expenses e ON e.expense_id = pr.expense_id
-    WHERE pr.approval_status = 'Pending'
+    WHERE pr.approval_status = 'Pending'${expenseBranchSql}
     ORDER BY pr.request_date DESC LIMIT 50
-  `).all();
+  `).all(...expenseBranchArgs);
   const pendingExpenses = pendingExpensesRaw.map((row) => ({
     request_id: row.request_id,
     expense_id: row.expense_id,

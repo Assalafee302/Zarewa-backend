@@ -395,15 +395,34 @@ export function getEditApproval(db, approvalId) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {number | {'ALL'|string}} [limitOrBranchScope]
+ * @param {number} [limit]
  */
-export function listPendingEditApprovals(db, limit = 100) {
+export function listPendingEditApprovals(db, limitOrBranchScope = 100, limit = 100) {
   ensureEditApprovalTable(db);
-  const lim = Math.min(Math.max(Number(limit) || 100, 1), 500);
-  const rows = db
-    .prepare(
-      `SELECT * FROM edit_approval_tokens WHERE status = 'pending' ORDER BY requested_at_iso DESC LIMIT ?`
-    )
-    .all(lim);
+  let branchScope = 'ALL';
+  let lim = limit;
+  if (typeof limitOrBranchScope === 'number') {
+    lim = limitOrBranchScope;
+  } else if (limitOrBranchScope != null) {
+    branchScope = String(limitOrBranchScope || 'ALL').trim() || 'ALL';
+    lim = limit;
+  }
+  lim = Math.min(Math.max(Number(lim) || 100, 1), 500);
+  const useBranch = branchScope !== 'ALL' && branchScope;
+  const rows = useBranch
+    ? db
+        .prepare(
+          `SELECT * FROM edit_approval_tokens
+           WHERE status = 'pending' AND TRIM(COALESCE(branch_id,'')) = ?
+           ORDER BY requested_at_iso DESC LIMIT ?`
+        )
+        .all(branchScope, lim)
+    : db
+        .prepare(
+          `SELECT * FROM edit_approval_tokens WHERE status = 'pending' ORDER BY requested_at_iso DESC LIMIT ?`
+        )
+        .all(lim);
   return rows.map(mapApprovalRow);
 }
 

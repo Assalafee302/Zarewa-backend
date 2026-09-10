@@ -74,7 +74,7 @@ export function listForumTopics(db, filters = {}) {
     params.push(scope);
   }
   if (branchId) {
-    sql += ` AND (scope = 'company' OR branch_id = ? OR branch_id IS NULL)`;
+    sql += ` AND (scope = 'company' OR branch_id = ?)`;
     params.push(branchId);
   }
   sql += ` ORDER BY updated_at_iso DESC LIMIT 100`;

@@ -120,10 +120,94 @@ export function getProductRowForWorkspace(db, productId, workspaceBranchId) {
     }
     return db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid) || null;
   }
-  if (!wb) {
-    return getProductRowForWorkspace(db, pid, DEFAULT_BRANCH_ID);
-  }
+  // Non-coil SKUs are per-branch — never invent Kaduna when workspace branch is missing.
+  if (!wb) return null;
   return db.prepare(`SELECT * FROM products WHERE product_id = ? AND branch_id = ?`).get(pid, wb);
+}
+
+/**
+ * Ensure every non-coil SKU exists on every active branch (stock 0 on missing branches).
+ * Fixes accessories/stone seeded only onto BR-KD after composite PK migration.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function ensureNonCoilProductRowsForAllBranches(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
+    return;
+  }
+  const branches = listBranches(db)
+    .map((b) => b.id)
+    .filter(Boolean);
+  if (!branches.length) return;
+  const homePrefer = branches.includes(DEFAULT_BRANCH_ID) ? DEFAULT_BRANCH_ID : branches[0];
+
+  const rows = db.prepare(`SELECT * FROM products`).all();
+  /** @type {Map<string, typeof rows>} */
+  const byPid = new Map();
+  for (const row of rows) {
+    if (isGlobalCoilCatalogRow(row)) continue;
+    const pid = String(row.product_id || '').trim();
+    if (!pid) continue;
+    if (!byPid.has(pid)) byPid.set(pid, []);
+    byPid.get(pid).push(row);
+  }
+
+  const insertCopy = db.prepare(
+    `INSERT OR IGNORE INTO products (
+      product_id, name, stock_level, unit, low_stock_threshold, reorder_qty,
+      gauge, colour, material_type, dashboard_attrs_json, branch_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  );
+
+  db.transaction(() => {
+    for (const [pid, group] of byPid) {
+      // Reassign empty-branch non-coil rows onto a real branch (never leave '' → BR-KD-only forever).
+      const emptyRows = group.filter((r) => String(r.branch_id ?? '').trim() === '');
+      for (const er of emptyRows) {
+        const stock = Number(er.stock_level) || 0;
+        const homeExists = db
+          .prepare(`SELECT stock_level FROM products WHERE product_id = ? AND branch_id = ?`)
+          .get(pid, homePrefer);
+        if (homeExists) {
+          db.prepare(
+            `UPDATE products SET stock_level = stock_level + ? WHERE product_id = ? AND branch_id = ?`
+          ).run(stock, pid, homePrefer);
+          db.prepare(`DELETE FROM products WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')`).run(
+            pid
+          );
+        } else {
+          db.prepare(
+            `UPDATE products SET branch_id = ? WHERE product_id = ? AND (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')`
+          ).run(homePrefer, pid);
+        }
+      }
+
+      const template =
+        db.prepare(`SELECT * FROM products WHERE product_id = ? AND TRIM(COALESCE(branch_id,'')) != '' LIMIT 1`).get(
+          pid
+        ) || group[0];
+      if (!template) continue;
+
+      for (const br of branches) {
+        const exists = db
+          .prepare(`SELECT 1 AS ok FROM products WHERE product_id = ? AND branch_id = ?`)
+          .get(pid, br);
+        if (exists) continue;
+        insertCopy.run(
+          pid,
+          template.name,
+          0,
+          template.unit,
+          template.low_stock_threshold,
+          template.reorder_qty,
+          template.gauge,
+          template.colour,
+          template.material_type,
+          template.dashboard_attrs_json,
+          br
+        );
+      }
+    }
+  })();
 }
 
 /**
@@ -135,6 +219,7 @@ export function migrateProductsBranchCompositeInventory(db) {
   }
   if (productsTableHasBranchCompositePk(db)) {
     repairNonCoilProductBranchAssignment(db);
+    ensureNonCoilProductRowsForAllBranches(db);
     return;
   }
 
@@ -208,19 +293,14 @@ export function migrateProductsBranchCompositeInventory(db) {
   })();
 
   repairNonCoilProductBranchAssignment(db);
+  ensureNonCoilProductRowsForAllBranches(db);
   rebalanceWipBalancesForProducts(db, branches);
 }
 
 /** Undo mistaken global catalogue stamp on accessories / stone (keep coils global). */
 function repairNonCoilProductBranchAssignment(db) {
-  const rows = db.prepare(`SELECT product_id, branch_id, dashboard_attrs_json FROM products`).all();
-  for (const row of rows) {
-    if (!isGlobalCoilCatalogRow(row) && String(row.branch_id ?? '').trim() === '') {
-      db.prepare(`UPDATE products SET branch_id = 'BR-KD' WHERE product_id = ? AND branch_id = ''`).run(
-        row.product_id
-      );
-    }
-  }
+  // Empty non-coil rows are expanded by ensureNonCoilProductRowsForAllBranches —
+  // do not stamp them BR-KD-only (that hid accessories/stone from Yola).
   // Global coil SKUs must remain catalogue-scoped (empty branch_id), even when seed defaulted them to a home branch.
   for (const pid of GLOBAL_COIL_PRODUCT_IDS) {
     const branched = db
@@ -284,14 +364,14 @@ function rebalanceWipBalancesForProducts(db, branches) {
     )
     .all();
   for (const w of orphanWip) {
-    const match = db
-      .prepare(`SELECT branch_id FROM products WHERE product_id = ? LIMIT 1`)
-      .get(w.product_id);
-    if (match) {
-      db.prepare(`UPDATE wip_balances SET branch_id = ? WHERE product_id = ?`).run(
-        String(match.branch_id ?? '').trim(),
-        w.product_id
-      );
-    }
+    // Prefer a product row on the same WIP branch; never reassign via arbitrary LIMIT 1 (often BR-KD).
+    const sameBranch = db
+      .prepare(`SELECT branch_id FROM products WHERE product_id = ? AND branch_id = ?`)
+      .get(w.product_id, w.branch_id);
+    if (sameBranch) continue;
+    db.prepare(`DELETE FROM wip_balances WHERE branch_id = ? AND product_id = ?`).run(
+      w.branch_id,
+      w.product_id
+    );
   }
 }

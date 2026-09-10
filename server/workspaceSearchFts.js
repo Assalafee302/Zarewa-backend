@@ -396,8 +396,11 @@ export function collectWorkspaceSearchIndexDocs(db) {
   if (tableExists(db, 'payment_requests')) {
     const rows = db
       .prepare(
-        `SELECT request_id, IFNULL(description,'') AS description, expense_id FROM payment_requests
-         ORDER BY request_date DESC LIMIT ?`
+        `SELECT pr.request_id, IFNULL(pr.description,'') AS description, pr.expense_id,
+                IFNULL(e.branch_id,'') AS branch_id
+         FROM payment_requests pr
+         LEFT JOIN expenses e ON e.expense_id = pr.expense_id
+         ORDER BY pr.request_date DESC LIMIT ?`
       )
       .all(INDEX_KIND_LIMIT);
     for (const row of rows) {
@@ -405,7 +408,7 @@ export function collectWorkspaceSearchIndexDocs(db) {
         makeSearchDoc(
           'payment_request',
           row.request_id,
-          '',
+          row.branch_id,
           row.request_id,
           row.description || row.expense_id,
           '/accounts',
@@ -532,10 +535,18 @@ export function queryWorkspaceSearchFts(db, branchScope, allowedKinds, rawQuery,
   const kinds = [...new Set(allowedKinds)];
   const kindPlaceholders = kinds.map(() => '?').join(', ');
   const scope = String(branchScope || 'ALL').trim() || 'ALL';
+  // Money / operational docs must match the workspace branch. Empty branch_id only
+  // matches for intentionally global kinds (shared coil catalogue products, HR directory, help).
   const branchSql =
     scope === 'ALL'
       ? ''
-      : ` AND (branch_id IS NULL OR TRIM(branch_id) = '' OR branch_id = ?)`;
+      : ` AND (
+           branch_id = ?
+           OR (
+             (branch_id IS NULL OR TRIM(branch_id) = '')
+             AND kind IN ('product', 'hr_staff', 'help')
+           )
+         )`;
   const args = [match, ...kinds];
   if (scope !== 'ALL') args.push(scope);
   args.push(Math.min(200, Math.max(20, rowLimit)));

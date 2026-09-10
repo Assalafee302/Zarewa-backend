@@ -204,9 +204,10 @@ function roomMuteState(db, roomId, userId) {
 }
 
 function threadBranchIdForRoom(scopeKind, branchId) {
-  // Company rooms: workspace_rooms.branch_id is null; office_threads need a NOT NULL branch_id.
-  if (scopeKind === 'company') return DEFAULT_BRANCH_ID;
-  return branchId || DEFAULT_BRANCH_ID;
+  // Company rooms are org-wide: stamp empty branch so they do not appear in Kaduna/Yola office inboxes.
+  // Rooms UI still lists them via scope_kind = 'company'.
+  if (scopeKind === 'company') return '';
+  return String(branchId || '').trim() || DEFAULT_BRANCH_ID;
 }
 
 function activityBranchForRoom(room, workspaceBranchId) {

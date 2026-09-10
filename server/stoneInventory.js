@@ -4,7 +4,8 @@
 
 import { INVENTORY_MODEL, STONE_COATED_MATERIAL_TYPE_ID } from './inventoryConstants.js';
 import { normalizeStoneFlatsheetLengthM } from '../shared/lib/stoneCoatedQuotationPolicy.js';
-import { getProductRowForWorkspace } from './productBranchInventory.js';
+import { ensureNonCoilProductRowsForAllBranches, getProductRowForWorkspace } from './productBranchInventory.js';
+import { requireExplicitBranchId } from './branches.js';
 
 function slugPart(s) {
   return String(s ?? '')
@@ -53,11 +54,10 @@ function productRowForLookup(db, productId, branchId) {
   if (!pid) return null;
   const bid = String(branchId ?? '').trim();
   if (bid) {
-    return (
-      getProductRowForWorkspace(db, pid, bid) ??
-      db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid)
-    );
+    // Never fall back across branches — that leaked Kaduna stock/attrs into Yola.
+    return getProductRowForWorkspace(db, pid, bid);
   }
+  // Classification-only (no workspace): attrs from any branch row are OK.
   return db.prepare(`SELECT * FROM products WHERE product_id = ? LIMIT 1`).get(pid);
 }
 
@@ -134,11 +134,16 @@ export function ensureStoneProduct(db, spec) {
   const colourLabel = String(spec.colourLabel || '').trim();
   const gaugeLabel = String(spec.gaugeLabel || '').trim();
   const id = stoneProductIdFromSpec(designLabel, colourLabel, gaugeLabel);
-  const branchId = String(spec.branchId ?? '').trim() || 'BR-KD';
+  const branchGate = requireExplicitBranchId(spec.branchId, 'stone product');
+  if (!branchGate.ok) throw new Error(branchGate.error);
+  const branchId = branchGate.branchId;
   const existing = db
     .prepare(`SELECT product_id FROM products WHERE product_id = ? AND branch_id = ?`)
     .get(id, branchId);
-  if (existing) return id;
+  if (existing) {
+    ensureNonCoilProductRowsForAllBranches(db);
+    return id;
+  }
 
   const name = `Stone coated ${designLabel} / ${colourLabel} / ${gaugeLabel}`.replace(/\s+/g, ' ').trim();
   const dash = JSON.stringify({
@@ -164,6 +169,7 @@ export function ensureStoneProduct(db, spec) {
     dash,
     branchId
   );
+  ensureNonCoilProductRowsForAllBranches(db);
   return id;
 }
 
@@ -191,11 +197,16 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     throw new Error('Stone flatsheet requires colour and length (1.4 m or 2 m).');
   }
   const id = stoneFlatsheetProductIdFromSpec(colourLabel, lengthM);
-  const branchId = String(spec.branchId ?? '').trim() || 'BR-KD';
+  const branchGate = requireExplicitBranchId(spec.branchId, 'stone flatsheet product');
+  if (!branchGate.ok) throw new Error(branchGate.error);
+  const branchId = branchGate.branchId;
   const existing = db
     .prepare(`SELECT product_id FROM products WHERE product_id = ? AND branch_id = ?`)
     .get(id, branchId);
-  if (existing) return id;
+  if (existing) {
+    ensureNonCoilProductRowsForAllBranches(db);
+    return id;
+  }
 
   const name = `Stone flatsheet ${colourLabel} / ${lengthM} m`.replace(/\s+/g, ' ').trim();
   const dash = JSON.stringify({
@@ -221,6 +232,7 @@ export function ensureStoneFlatsheetProduct(db, spec) {
     dash,
     branchId
   );
+  ensureNonCoilProductRowsForAllBranches(db);
   return id;
 }
 
@@ -251,7 +263,7 @@ export function isStoneMeterQuotationLinesJson(db, linesJson) {
  * Resolve stone raw product from quotation header spec.
  * @param {import('better-sqlite3').Database} db
  * @param {object} quotation — row with lines_json, optional branch_id
- * @param {string} [branchId] workspace / job branch (defaults quotation.branch_id or BR-KD)
+ * @param {string} [branchId] workspace / job branch (required — never defaults to Kaduna)
  */
 export function resolveStoneRawProductIdForQuotation(db, quotation, branchId) {
   if (!quotation?.lines_json) return null;
@@ -266,8 +278,8 @@ export function resolveStoneRawProductIdForQuotation(db, quotation, branchId) {
   const colour = String(j.materialColor || '').trim();
   const gauge = String(j.materialGauge || '').trim();
   if (!design || !colour || !gauge) return null;
-  const bid =
-    String(branchId ?? quotation?.branch_id ?? '').trim() || 'BR-KD';
+  const bid = String(branchId ?? quotation?.branch_id ?? '').trim();
+  if (!bid) return null;
   return ensureStoneProduct(db, {
     designLabel: design,
     colourLabel: colour,

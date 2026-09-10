@@ -55,6 +55,11 @@ describe.skipIf(!mysqlAvailable())('workspaceSearchFts', () => {
     expect(hits.some((h) => h.kind === 'customer' && h.id === 'CU-1')).toBe(true);
   });
 
+  it('does not return other-branch customers under Yola scope', () => {
+    const hits = queryWorkspaceSearchFts(db, 'BR-YL', ['customer'], 'musa', 10);
+    expect(hits.some((h) => h.id === 'CU-1')).toBe(false);
+  });
+
   it('logs search misses without throwing', () => {
     logWorkspaceSearchMiss(db, { query: 'zzznomatch', contextPath: '/sales', userId: 'U1', branchId: 'BR-KD' });
     const row = db.prepare(`SELECT COUNT(*) AS n FROM workspace_search_misses`).get();

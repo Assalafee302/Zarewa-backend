@@ -50,6 +50,13 @@ function listBranchesUncached(db) {
       .some((c) => c.name === 'cutting_list_min_paid_fraction');
   }
   const hasFrac = Boolean(branchesHasFracColumn);
+  const cols = new Set(
+    db
+      .prepare(`PRAGMA table_info(branches)`)
+      .all()
+      .map((c) => c.name)
+  );
+  const hasGeo = cols.has('latitude') && cols.has('longitude');
   return db
     .prepare(`SELECT * FROM branches WHERE active = 1 ORDER BY sort_order ASC, id ASC`)
     .all()
@@ -62,6 +69,9 @@ function listBranchesUncached(db) {
       cuttingListMinPaidFraction: hasFrac
         ? Math.min(1, Math.max(0.05, Number(row.cutting_list_min_paid_fraction) || 0.7))
         : 0.7,
+      latitude: hasGeo && row.latitude != null ? Number(row.latitude) : null,
+      longitude: hasGeo && row.longitude != null ? Number(row.longitude) : null,
+      radiusKm: cols.has('radius_km') ? Number(row.radius_km) || 75 : 75,
     }));
 }
 
@@ -111,6 +121,7 @@ export function getBranch(db, id) {
       .map((c) => c.name)
   );
   const hasFrac = cols.has('cutting_list_min_paid_fraction');
+  const hasGeo = cols.has('latitude') && cols.has('longitude');
   return {
     id: row.id,
     code: row.code,
@@ -120,6 +131,9 @@ export function getBranch(db, id) {
     cuttingListMinPaidFraction: hasFrac
       ? Math.min(1, Math.max(0.05, Number(row.cutting_list_min_paid_fraction) || 0.7))
       : 0.7,
+    latitude: hasGeo && row.latitude != null ? Number(row.latitude) : null,
+    longitude: hasGeo && row.longitude != null ? Number(row.longitude) : null,
+    radiusKm: cols.has('radius_km') ? Number(row.radius_km) || 75 : 75,
   };
 }
 

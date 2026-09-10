@@ -494,17 +494,35 @@ export function convertOfficeThreadToMaterialRequest(db, scope, actor, workspace
 export function listOfficeDirectory(db, scope) {
   const viewAll = scope.viewAll;
   const branchId = String(scope.branchId || '').trim() || DEFAULT_BRANCH_ID;
+  const hasUserBranch = (() => {
+    try {
+      return db.prepare(`PRAGMA table_info(app_users)`).all().some((c) => c.name === 'workspace_branch_id');
+    } catch {
+      return false;
+    }
+  })();
+  const branchSelect = hasUserBranch
+    ? `COALESCE(NULLIF(TRIM(COALESCE(p.branch_id,'')), ''), NULLIF(TRIM(COALESCE(u.workspace_branch_id,'')), ''), '') AS branchId`
+    : `COALESCE(p.branch_id, '') AS branchId`;
   let sql = `
     SELECT u.id, u.username, u.display_name AS displayName, u.role_key AS roleKey,
-           COALESCE(p.branch_id, '') AS branchId
+           ${branchSelect}
     FROM app_users u
     LEFT JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE u.status = 'active'
   `;
   const args = [];
   if (!viewAll) {
-    sql += ` AND (p.branch_id = ? OR p.branch_id IS NULL OR TRIM(COALESCE(p.branch_id,'')) = '')`;
-    args.push(branchId);
+    if (hasUserBranch) {
+      sql += ` AND (
+        TRIM(COALESCE(p.branch_id,'')) = ?
+        OR TRIM(COALESCE(u.workspace_branch_id,'')) = ?
+      )`;
+      args.push(branchId, branchId);
+    } else {
+      sql += ` AND TRIM(COALESCE(p.branch_id,'')) = ?`;
+      args.push(branchId);
+    }
   }
   sql += ` ORDER BY u.display_name ASC LIMIT 500`;
   return db

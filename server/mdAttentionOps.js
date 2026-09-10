@@ -224,7 +224,7 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
     });
   }
 
-  for (const e of listPendingEditApprovals(db, 80)) {
+  for (const e of listPendingEditApprovals(db, branchScope, 80)) {
     const ek = String(e.entityKind || '').trim();
     const eid = String(e.entityId || '').trim();
     pushItem(items, {

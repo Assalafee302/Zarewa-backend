@@ -8,7 +8,7 @@ import { deriveProcurementKindFromPoLines, inferLineTypeFromProduct } from '../s
 import { migrateMergeDuplicateSetupColours } from './colourDedupeMigrate.js';
 import { migrateMergeDuplicateSuppliersOnBoot } from './supplierDedupeMigrate.js';
 import { migrateMergeDuplicateHrStaffOnBoot } from './hrStaffDuplicateCleanupMigrate.js';
-import { migrateProductsBranchCompositeInventory } from './productBranchInventory.js';
+import { migrateProductsBranchCompositeInventory, ensureNonCoilProductRowsForAllBranches } from './productBranchInventory.js';
 import { migrateStockMovementsBranchId } from './stockMovementOps.js';
 import { withMigrationLock } from './migrationLock.js';
 import { migrateRepairCoilProductionBookDrift2026 } from './coilProductionBookMigrate.js';
@@ -3690,6 +3690,8 @@ function migrateStoneCoatedAndPricingArch(db) {
          VALUES (?,?,0,?,0,0,'','','Accessory',?, '')`
       ).run(pid, pname, unit, dash);
     }
+    // Expand ACC/STONE SKUs onto every active branch (Yola must not see only Kaduna stock).
+    ensureNonCoilProductRowsForAllBranches(db);
   }
 
   const accessoryQuoteLinks = [
@@ -6193,6 +6195,28 @@ function migrateBranches(db) {
     db.exec(
       `ALTER TABLE branches ADD COLUMN opening_cutover_date_iso TEXT NOT NULL DEFAULT '2026-06-01'`
     );
+  }
+  if (branchesCols.size && !branchesCols.has('latitude')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN latitude REAL`);
+  }
+  if (branchesCols.size && !branchesCols.has('longitude')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN longitude REAL`);
+  }
+  if (branchesCols.size && !branchesCols.has('radius_km')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN radius_km REAL NOT NULL DEFAULT 75`);
+  }
+  // Seed GPS centres for automatic location → workspace branch detection.
+  const seedGeo = [
+    ['BR-KD', 10.5105, 7.4165, 75],
+    ['BR-YL', 9.2035, 12.4954, 75],
+    ['BR-MDG', 11.8469, 13.1571, 75],
+  ];
+  const geoUpd = db.prepare(
+    `UPDATE branches SET latitude = ?, longitude = ?, radius_km = COALESCE(NULLIF(radius_km, 0), ?)
+     WHERE id = ? AND (latitude IS NULL OR longitude IS NULL)`
+  );
+  for (const [id, lat, lon, r] of seedGeo) {
+    geoUpd.run(lat, lon, r, id);
   }
 
   const sessions = tableCols('user_sessions');

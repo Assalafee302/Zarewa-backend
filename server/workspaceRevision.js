@@ -19,6 +19,53 @@ const REVISION_TABLES = [
 ];
 
 /**
+ * Which desk domains each revision table feeds. A table listed under several domains
+ * invalidates all of them: over-refreshing costs bandwidth, under-refreshing shows a
+ * clerk stale money, so anything ambiguous belongs in both.
+ * @type {Readonly<Record<string, ReadonlyArray<string>>>}
+ */
+const TABLE_DOMAINS = Object.freeze({
+  quotations: ['sales'],
+  sales_receipts: ['sales', 'finance'],
+  customers: ['sales'],
+  cutting_lists: ['sales', 'operations'],
+  production_jobs: ['operations'],
+  purchase_orders: ['procurement'],
+  coil_lots: ['operations', 'procurement'],
+  ledger_entries: ['finance'],
+  treasury_movements: ['finance'],
+  expenses: ['finance'],
+  payment_requests: ['finance', 'procurement'],
+  work_items: ['sales', 'operations', 'finance', 'procurement'],
+});
+
+const REVISION_DOMAIN_KEYS = Object.freeze(['sales', 'operations', 'finance', 'procurement']);
+
+/**
+ * Per-domain revisions from the same table fingerprints the global hash is built from.
+ * Lets a poll answer "did *my* desk change" instead of "did anything anywhere change" —
+ * without this one cashier's receipt makes every connected client re-pull its desk pack.
+ * @param {ReadonlyArray<string>} parts `table:count:max` fingerprints, scope entry first
+ * @param {string} branchScope
+ */
+function domainRevisions(parts, branchScope) {
+  /** @type {Record<string, string[]>} */
+  const byDomain = Object.fromEntries(REVISION_DOMAIN_KEYS.map((d) => [d, [`scope:${branchScope}`]]));
+  for (const part of parts) {
+    const table = String(part).split(':')[0];
+    for (const domain of TABLE_DOMAINS[table] || []) {
+      byDomain[domain].push(part);
+    }
+  }
+  return Object.fromEntries(
+    REVISION_DOMAIN_KEYS.map((d) => [
+      d,
+      crypto.createHash('sha256').update(byDomain[d].join('|')).digest('base64url').slice(0, 16),
+    ])
+  );
+}
+
+/**
  * Cheap workspace revision — avoids building full bootstrap on poll when nothing changed.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
@@ -40,6 +87,7 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
   return {
     ok: true,
     revision,
+    domains: domainRevisions(parts.slice(1), branchScope),
     branchScope,
     checkedAtIso: new Date().toISOString(),
   };
@@ -72,6 +120,7 @@ export async function buildWorkspaceRevisionAsync(db, branchScope = 'ALL') {
   return {
     ok: true,
     revision,
+    domains: domainRevisions(parts.slice(1), branchScope),
     branchScope,
     checkedAtIso: new Date().toISOString(),
   };

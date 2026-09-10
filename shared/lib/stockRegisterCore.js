@@ -498,11 +498,17 @@ function isAccessoryProduct(p) {
   return mt.includes('accessory') || pid.includes('ACC');
 }
 
-function productMovementsInPeriod(movements, productId, start, end) {
+function productMovementsInPeriod(movements, productId, start, end, branchId = '') {
+  const bid = String(branchId || '').trim();
   let received = 0;
   let used = 0;
   for (const m of movements || []) {
     if (String(m.productID || m.product_id || '') !== productId) continue;
+    if (bid) {
+      const mb = String(m.branchId || m.branch_id || '').trim();
+      // Untagged movements are allowed (legacy); tagged ones must match the register branch.
+      if (mb && mb !== bid) continue;
+    }
     const d = toIsoDate(m.dateISO || m.date_iso || m.atISO || m.at_iso);
     if (!inPeriod(d, start, end)) continue;
     const qty = Number(m.qty) || 0;
@@ -512,22 +518,29 @@ function productMovementsInPeriod(movements, productId, start, end) {
   return { received: round2(received), used: round2(used) };
 }
 
-function buildStoneSection(products, movements, openingByProduct, start, end, masterData) {
+function buildStoneSection(products, movements, openingByProduct, start, end, masterData, branchId = '') {
   const rows = [];
   for (const p of products || []) {
     if (!isStoneProduct(p)) continue;
     const pid = String(p.productID || '');
     const stock = Number(p.stockLevel) || 0;
     if (stock <= 0.0001) {
-      const mv = productMovementsInPeriod(movements, pid, start, end);
+      const mv = productMovementsInPeriod(movements, pid, start, end, branchId);
       if (mv.received <= 0 && mv.used <= 0 && !(openingByProduct.get(pid) > 0)) continue;
     }
     const gauge = String(p.dashboardAttrs?.gauge || '').trim() || '—';
     const colour = String(p.dashboardAttrs?.colour || p.name || '').trim();
     const opening = round2(openingByProduct.get(pid) || 0);
-    const { received, used } = productMovementsInPeriod(movements, pid, start, end);
+    const { received, used } = productMovementsInPeriod(movements, pid, start, end, branchId);
     const total = round2(opening + received);
-    const remaining = round2(total - used);
+    const reconstructed = round2(total - used);
+    // Prefer live branch stock as remaining when period reconstruction is empty but on-hand exists,
+    // and never invent remaining from cross-branch untagged movements (filtered upstream).
+    const liveStock = Number.isFinite(Number(p.stockLevel)) ? Number(p.stockLevel) : null;
+    const remaining =
+      liveStock != null && opening <= 0 && received <= 0 && used <= 0
+        ? round2(liveStock)
+        : reconstructed;
     if (opening <= 0 && received <= 0 && used <= 0 && remaining <= 0) continue;
     rows.push({
       gaugeLabel: gauge,
@@ -557,7 +570,15 @@ function buildStoneSection(products, movements, openingByProduct, start, end, ma
   return { groups, rowCount: rows.length };
 }
 
-function buildAccessorySection(products, movements, openingByProduct, start, end, displayNameByProduct = null) {
+function buildAccessorySection(
+  products,
+  movements,
+  openingByProduct,
+  start,
+  end,
+  displayNameByProduct = null,
+  branchId = ''
+) {
   const rows = [];
   for (const p of products || []) {
     if (!isAccessoryProduct(p)) continue;
@@ -566,8 +587,12 @@ function buildAccessorySection(products, movements, openingByProduct, start, end
     const catalogName = String(p.name || '').trim() || pid;
     const itemName = String(displayNameByProduct?.get(pid) || catalogName).trim() || pid;
     const opening = round2(openingByProduct.get(pid) || 0);
-    const { received, used } = productMovementsInPeriod(movements, pid, start, end);
-    const balance = round2(Number(p.stockLevel) || opening + received - used);
+    const { received, used } = productMovementsInPeriod(movements, pid, start, end, branchId);
+    // Prefer live on-hand — do not treat stockLevel 0 as missing (|| would pull foreign-branch maths).
+    const liveStock = p.stockLevel != null && p.stockLevel !== '' ? Number(p.stockLevel) : null;
+    const balance = round2(
+      Number.isFinite(liveStock) ? liveStock : opening + received - used
+    );
     if (opening <= 0 && received <= 0 && used <= 0 && balance <= 0) continue;
     rows.push({
       productID: pid,
@@ -1023,7 +1048,8 @@ export function buildStockRegisterPack(opts = {}) {
     opts.stoneOpeningByProduct || new Map(),
     start,
     end,
-    opts.masterData
+    opts.masterData,
+    opts.branchId || ''
   );
   const accessories = buildAccessorySection(
     opts.products,
@@ -1031,7 +1057,8 @@ export function buildStockRegisterPack(opts = {}) {
     opts.accessoryOpeningByProduct || new Map(),
     start,
     end,
-    opts.accessoryDisplayNameByProduct || null
+    opts.accessoryDisplayNameByProduct || null,
+    opts.branchId || ''
   );
   const inTransit = buildInTransitAppendix(opts.inTransitLoads, opts.branchId);
 

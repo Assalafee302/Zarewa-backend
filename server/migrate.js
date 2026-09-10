@@ -3681,14 +3681,29 @@ function migrateStoneCoatedAndPricingArch(db) {
     ['ACC-STONE-NAIL-PACK', 'Stone nail (pack)', 'pack'],
   ];
   if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'`).get()) {
+    const activeBranches = db
+      .prepare(`SELECT id FROM branches WHERE active = 1 ORDER BY sort_order ASC, id ASC`)
+      .all()
+      .map((r) => String(r.id || '').trim())
+      .filter(Boolean);
+    const branchIds = activeBranches.length ? activeBranches : ['BR-KD', 'BR-YL', 'BR-MDG'];
     for (const [pid, pname, unit] of accessoryProducts) {
-      const ex = db.prepare(`SELECT 1 FROM products WHERE product_id = ?`).get(pid);
-      if (ex) continue;
       const dash = JSON.stringify({ inventoryModel: 'consumable', accessoryKind: 'accessory' });
-      db.prepare(
-        `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
-         VALUES (?,?,0,?,0,0,'','','Accessory',?, '')`
-      ).run(pid, pname, unit, dash);
+      for (const bid of branchIds) {
+        const ex = db
+          .prepare(`SELECT 1 FROM products WHERE product_id = ? AND branch_id = ?`)
+          .get(pid, bid);
+        if (ex) continue;
+        // Prefer INSERT OR IGNORE so composite PK sites get a row per branch.
+        try {
+          db.prepare(
+            `INSERT INTO products (product_id, name, stock_level, unit, low_stock_threshold, reorder_qty, gauge, colour, material_type, dashboard_attrs_json, branch_id)
+             VALUES (?,?,0,?,0,0,'','','Accessory',?, ?)`
+          ).run(pid, pname, unit, dash, bid);
+        } catch {
+          /* single-PK legacy: first branch wins; ensureNonCoil expands later if composite */
+        }
+      }
     }
     // Expand ACC/STONE SKUs onto every active branch (Yola must not see only Kaduna stock).
     ensureNonCoilProductRowsForAllBranches(db);

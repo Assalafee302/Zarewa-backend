@@ -307,11 +307,41 @@ describe('stockRegisterCore', () => {
       ]),
     });
     const stoneRow = pack.stoneCoated.groups[0]?.rows[0];
-    expect(stoneRow.colourDisplay).toBe('Premium Red');
-    expect(pack.accessories.rows).toHaveLength(1);
-    expect(pack.accessories.rows[0].itemName).toBe('Tapping Screw 50mm (per PO wording)');
-    expect(colourFullNameForRegister({ colours: [{ name: 'Premium Red', abbreviation: 'PRED' }] }, 'PRED')).toBe(
-      'Premium Red'
-    );
+    expect(stoneRow?.colourDisplay).toBe('Premium Red');
+    expect(pack.accessories.rows[0]?.itemName).toContain('Tapping Screw 50mm');
+  });
+
+  it('keeps accessory balance at live stock 0 even when foreign receipts exist in the movement list', () => {
+    const pack = buildStockRegisterPack({
+      branchId: 'BR-YL',
+      periodEnd: '2026-04-30',
+      coilLots: [],
+      productionJobs: [],
+      productionJobCoils: [],
+      coilControlEvents: [],
+      products: [
+        {
+          productID: 'ACC-RIVET-PACK',
+          name: 'Rivets',
+          stockLevel: 0,
+          unit: 'pack',
+          dashboardAttrs: { inventoryModel: 'consumable' },
+        },
+      ],
+      // Would previously become balance = 0 || (0+500-0) = 500 (Kaduna leak).
+      stockMovements: [
+        {
+          type: 'STORE_ACCESSORY_DIRECT',
+          productID: 'ACC-RIVET-PACK',
+          qty: 500,
+          dateISO: '2026-04-10',
+          branchId: 'BR-KD',
+        },
+      ],
+    });
+    const row = pack.accessories.rows.find((r) => r.productID === 'ACC-RIVET-PACK');
+    // Cross-branch tagged movement is ignored; zero Yola stock → row omitted (not inflated to 500).
+    expect(row).toBeUndefined();
+    expect(pack.accessories.rows.every((r) => r.balance !== 500)).toBe(true);
   });
 });

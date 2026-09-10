@@ -71,10 +71,14 @@ export function branchWhere(db, table, scope) {
   return { sql: ` AND branch_id = ?`, args: [scope] };
 }
 
+/** Movement types for branch-owned SKUs (stone / accessory / FG). Must carry stock_movements.branch_id. */
 const DIRECT_BRANCH_SKU_MOVEMENT_TYPES = [
   'STORE_STONE_DIRECT',
   'STORE_STONE_FLATSHEET_DIRECT',
   'STORE_ACCESSORY_DIRECT',
+  'STORE_GRN_STONE',
+  'STORE_GRN_STONE_FLATSHEET',
+  'STORE_GRN_ACCESSORY',
   'ADJUSTMENT',
   'CUSTOMER_DELIVERY',
   'ACCESSORY_ISSUE',
@@ -89,6 +93,11 @@ const DIRECT_BRANCH_SKU_MOVEMENT_TYPES = [
   'WIP_CONSUMED',
   'TRANSFER_TO_PRODUCTION',
 ];
+
+/** Exported for migrate / diagnostics — empty-branch rows of these types must not leak across sites. */
+export function directBranchSkuMovementTypes() {
+  return DIRECT_BRANCH_SKU_MOVEMENT_TYPES.slice();
+}
 
 function mapStockMovementRow(row) {
   return {
@@ -115,6 +124,8 @@ function stockMovementsBranchFilterLegacy(db, branchScope) {
   const bQuo = branchWhere(db, 'quotations', branchScope);
   const bDel = branchWhere(db, 'deliveries', branchScope);
 
+  // Ref-based only — never match empty-branch stone/accessory movements just because the
+  // product_id exists on this branch (ensureNonCoil copies ACC/STONE to every site).
   const parts = [
     `sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})`,
     `sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})`,
@@ -131,19 +142,14 @@ function stockMovementsBranchFilterLegacy(db, branchScope) {
     parts.push(`sm.ref IN (SELECT coil_no FROM coil_lots WHERE branch_id = ?)`);
     args.push(bid);
   }
-  if (hasColumn(db, 'products', 'branch_id')) {
-    const typeList = DIRECT_BRANCH_SKU_MOVEMENT_TYPES.map(() => '?').join(', ');
-    parts.push(
-      `(sm.type IN (${typeList}) AND sm.product_id IN (SELECT product_id FROM products WHERE branch_id = ?))`
-    );
-    args.push(...DIRECT_BRANCH_SKU_MOVEMENT_TYPES, bid);
-  }
 
   return { sql: `(${parts.join(' OR ')})`, args };
 }
 
 /**
  * SQL fragment restricting stock_movements to a workspace branch (alias `sm`).
+ * Direct stone/accessory movements must carry sm.branch_id — product_id alone is not enough
+ * once ACC/STONE SKUs exist on every branch.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
  * @returns {{ sql: string, args: unknown[] }}
@@ -154,8 +160,16 @@ function stockMovementsBranchFilter(db, branchScope) {
 
   if (hasColumn(db, 'stock_movements', 'branch_id')) {
     const legacy = stockMovementsBranchFilterLegacy(db, branchScope);
+    // Tagged: exact branch. Untagged: only via job/PO/quote/delivery/coil on this branch.
+    // (Do not match shared ACC/STONE product_ids — that pulled Kaduna history into Yola.)
     return {
-      sql: ` AND (TRIM(COALESCE(sm.branch_id,'')) = ? OR ((TRIM(COALESCE(sm.branch_id,'')) = '') AND ${legacy.sql}))`,
+      sql: ` AND (
+        TRIM(COALESCE(sm.branch_id,'')) = ?
+        OR (
+          TRIM(COALESCE(sm.branch_id,'')) = ''
+          AND ${legacy.sql}
+        )
+      )`,
       args: [bid, ...legacy.args],
     };
   }

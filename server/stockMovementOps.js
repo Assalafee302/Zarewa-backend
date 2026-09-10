@@ -174,6 +174,26 @@ export function migrateStockMovementsBranchId(db) {
     }
   }
 
+  // Final fallback: leave empty only for ambiguous multi-branch SKUs; stamp remaining
+  // stone/accessory directs that still have no branch to Kaduna so they never appear on Yola.
+  try {
+    db.prepare(
+      `UPDATE stock_movements SET branch_id = ?
+       WHERE TRIM(COALESCE(branch_id,'')) = ''
+         AND (
+           type LIKE 'STORE_STONE%'
+           OR type LIKE 'STORE_GRN_STONE%'
+           OR type LIKE 'STORE_ACCESSORY%'
+           OR type LIKE 'STORE_GRN_ACCESSORY%'
+           OR type IN ('STONE_CONSUMPTION','STONE_FLATSHEET_ISSUE','STONE_FLATSHEET_ISSUE_ADJUSTMENT',
+                       'ACCESSORY_ISSUE','ACCESSORY_ISSUE_ADJUSTMENT','STORE_STONE_DIRECT',
+                       'STORE_STONE_FLATSHEET_DIRECT','STORE_ACCESSORY_DIRECT')
+         )`
+    ).run(DEFAULT_BRANCH_ID);
+  } catch {
+    /* ignore */
+  }
+
   db.prepare(`UPDATE stock_movements SET branch_id = ? WHERE TRIM(COALESCE(branch_id,'')) = ''`).run(
     DEFAULT_BRANCH_ID
   );

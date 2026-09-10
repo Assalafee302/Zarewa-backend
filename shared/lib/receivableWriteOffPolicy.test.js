@@ -8,8 +8,11 @@ import {
 } from './receivableWriteOffPolicy.js';
 
 describe('receivableWriteOffPolicy', () => {
-  it('roundOffToleranceNgn caps at 5000', () => {
-    expect(roundOffToleranceNgn(1_000_000)).toBe(5000);
+  it('roundOffToleranceNgn is capped by the ₦1 payment tolerance, itself capped at 5000', () => {
+    // PAYMENT_OUTSTANDING_TOLERANCE_NGN is a deliberate absolute ₦1 tolerance (see
+    // paymentOutstandingTolerance.test.js) — it, not MAX_ROUND_OFF_WAIVE_NGN, is the binding
+    // constraint here for any realistic total, so this never reaches the 5000 cap in practice.
+    expect(roundOffToleranceNgn(1_000_000)).toBe(1);
     expect(roundOffToleranceNgn(10_000)).toBeLessThanOrEqual(5000);
   });
 
@@ -28,8 +31,12 @@ describe('receivableWriteOffPolicy', () => {
     expect(isMinorReceivableForBranchManager(500, 0)).toBe(false);
   });
 
-  it('registerReceivableOutstandingNgn hides immaterial round-off', () => {
-    expect(registerReceivableOutstandingNgn(1_250_300, 1_250_000, 0)).toBe(0);
+  it('registerReceivableOutstandingNgn shows the real residual once payment tolerance is ₦1', () => {
+    // Under the strict absolute ₦1 payment tolerance, a ₦300 residual is no longer
+    // "effectively fully paid" — the register now shows it as a real receivable rather than
+    // hiding it, even though it still falls in the minor-receivable band a Branch Manager can
+    // waive via maxRoundOffWaiveNgn (see 'allows round-off only when effectively fully paid').
+    expect(registerReceivableOutstandingNgn(1_250_300, 1_250_000, 0)).toBe(300);
     expect(registerReceivableOutstandingNgn(1_000_000, 900_000, 0)).toBe(100_000);
   });
 

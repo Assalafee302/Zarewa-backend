@@ -16,6 +16,8 @@ Use this as a cutover guide; adjust host names, secrets, and backup strategy to 
 
 - Monitor API logs and disk use (SQLite file growth, WAL if enabled).
 - Schedule backups of the SQLite file (and WAL/shm if present) on a cadence that matches your RPO.
+- Work through [POST_DEPLOYMENT_VERIFICATION.md](./POST_DEPLOYMENT_VERIFICATION.md) for the
+  first-30-minutes checks, 24-hour monitoring, per-symptom troubleshooting, and rollback.
 
 ## Release verification (local or staging)
 

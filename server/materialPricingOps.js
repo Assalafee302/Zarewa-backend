@@ -19,6 +19,7 @@ import { upsertPriceListItem, defaultPriceListEffectiveFromIso } from './pricing
 import { listMaterialPricingRowsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
 import { gaugeMmKeyFromLabel } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { displayGaugeLabelForBranch, formatGaugeLabelMm } from '../shared/lib/gaugeDisplayAlias.js';
 
 export { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 export { suggestedPricePerMeterNgn } from '../shared/lib/suggestedPricePerMeter.js';
@@ -206,6 +207,14 @@ function normKey(s) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+/** Yola workbook customer label when none was posted (0.28 → 0.35mm, 0.24 → 0.30mm). */
+function defaultYolaGaugeCustomerLabel(branchId, gaugeMm) {
+  const display = displayGaugeLabelForBranch(branchId, formatGaugeLabelMm(gaugeMm));
+  const canonical = formatGaugeLabelMm(gaugeMm);
+  if (!display || display === canonical) return '';
+  return display;
 }
 
 function mapRow(row) {
@@ -548,15 +557,22 @@ export function upsertMaterialPricingSheetRow(db, body, actor, opts = {}) {
     }
   }
 
-  const gaugeCustomerLabel =
-    body?.gaugeCustomerLabel != null ? String(body.gaugeCustomerLabel).trim().slice(0, 120) : '';
-
   const existing = db
     .prepare(
       `SELECT * FROM material_pricing_sheet_rows
        WHERE material_key = ? AND gauge_mm = ? AND branch_id = ? AND design_key = ?`
     )
     .get(materialKey, gaugeMm, branchId, designKey);
+
+  let gaugeCustomerLabel;
+  if (body?.gaugeCustomerLabel != null) {
+    gaugeCustomerLabel = String(body.gaugeCustomerLabel).trim().slice(0, 120);
+  } else if (existing) {
+    const prior = String(existing.gauge_customer_label ?? '').trim();
+    gaugeCustomerLabel = prior || defaultYolaGaugeCustomerLabel(branchId, gaugeMm);
+  } else {
+    gaugeCustomerLabel = defaultYolaGaugeCustomerLabel(branchId, gaugeMm);
+  }
 
   const id =
     existing?.id ||

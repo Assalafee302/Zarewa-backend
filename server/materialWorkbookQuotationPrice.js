@@ -37,12 +37,22 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
   const scope = branchScope != null ? String(branchScope).trim() : '';
   // HQ / view-all uses branchScope "ALL" — that is not a real branch_id.
   const allBranches = !scope || scope.toUpperCase() === 'ALL';
+  let hasCustomerLabel = false;
+  try {
+    hasCustomerLabel = db
+      .prepare(`PRAGMA table_info(material_pricing_sheet_rows)`)
+      .all()
+      .some((c) => c.name === 'gauge_customer_label');
+  } catch {
+    hasCustomerLabel = false;
+  }
+  const labelCol = hasCustomerLabel ? ', gauge_customer_label' : '';
   let rows;
   if (!allBranches) {
     rows = db
       .prepare(
         `SELECT id, material_key, gauge_mm, branch_id, design_key,
-                minimum_price_per_m_ngn, commission_ngn_per_m
+                minimum_price_per_m_ngn, commission_ngn_per_m${labelCol}
          FROM material_pricing_sheet_rows
          WHERE branch_id = ?
          ORDER BY material_key ASC, gauge_mm ASC, design_key ASC`
@@ -52,7 +62,7 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
     rows = db
       .prepare(
         `SELECT id, material_key, gauge_mm, branch_id, design_key,
-                minimum_price_per_m_ngn, commission_ngn_per_m
+                minimum_price_per_m_ngn, commission_ngn_per_m${labelCol}
          FROM material_pricing_sheet_rows
          ORDER BY branch_id ASC, material_key ASC, gauge_mm ASC, design_key ASC`
       )
@@ -70,6 +80,7 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
       minimumPricePerMeterNgn: floor,
       commissionNgnPerM: commission,
       publishedListPriceNgn: publishedListPriceFromWorkbook(floor, commission),
+      gaugeCustomerLabel: String(r.gauge_customer_label ?? '').trim(),
     };
   });
 }

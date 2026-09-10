@@ -340,7 +340,7 @@ export function buildBootstrap(db, opts = {}) {
       : [],
     operationsInventoryAttention,
     refunds,
-    masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
+    masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     /** Floor list (₦/m) synced from material pricing workbook — used by quotations UI for coil products. */
     priceListItems: salesOk ? listPriceListItems(db) : [],
     /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
@@ -710,7 +710,7 @@ export function buildShellBootstrap(db, opts = {}) {
     branchScope,
     ...emptyDesk,
     /** Setup gauges / material types / colours — required for quotation form on first paint. */
-    masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
+    masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     materialPoolSummary: null,
     wipByProduct: {},
     productionMetrics: {

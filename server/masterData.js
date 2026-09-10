@@ -2,6 +2,7 @@ import { appendAuditLog } from './controlOps.js';
 import { voidRecentQuotationsAfterMasterPriceChange } from './quotationLifecycleOps.js';
 import { canonicalColourName, normalizeColourKey } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
+import { decorateSetupGaugesForBranch } from '../shared/lib/gaugeDisplayAlias.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -628,11 +629,18 @@ function listRows(db, kind) {
     .map((row) => cfg.toClient(row));
 }
 
-export function listMasterData(db) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ branchId?: string | null }} [opts] — when branchId is BR-YL, gauges get displayLabel / quotationOption
+ */
+export function listMasterData(db, opts = {}) {
+  const branchId = opts?.branchId != null ? String(opts.branchId).trim() : '';
+  const scopeOk = branchId && branchId.toUpperCase() !== 'ALL' ? branchId : '';
+  const gauges = decorateSetupGaugesForBranch(listRows(db, 'gauges'), scopeOk || null);
   return {
     quoteItems: listRows(db, 'quote-items'),
     colours: listRows(db, 'colours'),
-    gauges: listRows(db, 'gauges'),
+    gauges,
     materialTypes: listRows(db, 'material-types'),
     profiles: listRows(db, 'profiles'),
     priceList: listRows(db, 'price-list'),

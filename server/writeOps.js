@@ -43,6 +43,7 @@ import {
   assertQuotationMaterialRules,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { assertQuotationMaterialHeaderRequired } from '../shared/lib/quotationMaterialHeader.js';
+import { canonicalGaugeLabelForBranchInput } from '../shared/lib/gaugeDisplayAlias.js';
 import { applyPricingSnapshotsToServices } from './pricingPolicyResolve.js';
 import { quotationPriceViolations } from './pricingOps.js';
 import { quotationBelowFloorExceptionApproved } from '../shared/lib/quotationPriceException.js';
@@ -9454,7 +9455,9 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
     accessories: payload.lines?.accessories ?? [],
     services: payload.lines?.services ?? [],
   };
-  if (payload.materialGauge !== undefined) linesJson.materialGauge = String(payload.materialGauge ?? '').trim();
+  if (payload.materialGauge !== undefined) {
+    linesJson.materialGauge = canonicalGaugeLabelForBranchInput(bid, payload.materialGauge);
+  }
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
@@ -9690,7 +9693,10 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     linesJson.accessories = payload.lines.accessories ?? [];
     linesJson.services = payload.lines.services ?? [];
   }
-  if (payload.materialGauge !== undefined) linesJson.materialGauge = String(payload.materialGauge ?? '').trim();
+  if (payload.materialGauge !== undefined) {
+    const bidUpd = String(existing.branch_id || DEFAULT_BRANCH_ID).trim();
+    linesJson.materialGauge = canonicalGaugeLabelForBranchInput(bidUpd, payload.materialGauge);
+  }
   if (payload.materialColor !== undefined) linesJson.materialColor = String(payload.materialColor ?? '').trim();
   if (payload.materialDesign !== undefined) linesJson.materialDesign = String(payload.materialDesign ?? '').trim();
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();

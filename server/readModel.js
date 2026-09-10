@@ -28,6 +28,7 @@ import { listBranches } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { displayGaugeLabelForBranch } from '../shared/lib/gaugeDisplayAlias.js';
 import {
   coilProducedMetersFromProductionJobs,
   producedMetersForUnproducedRefund,
@@ -355,6 +356,7 @@ function mapQuotationRow(db, row, opts = {}) {
     /* ignore */
   }
   const stoneMeterQuote = Boolean(db && linesJsonForStone && isStoneMeterQuotationLinesJson(db, linesJsonForStone));
+  const branchId = row.branch_id ?? '';
   return {
     id: row.id,
     customerID: row.customer_id,
@@ -376,11 +378,13 @@ function mapQuotationRow(db, row, opts = {}) {
     projectName: row.project_name || '',
     quotationLines,
     materialGauge,
+    /** Yola trade name when branch uses aliases; else same as materialGauge. */
+    materialGaugeDisplay: displayGaugeLabelForBranch(branchId, materialGauge),
     materialColor,
     materialDesign,
     materialTypeId,
     stoneMeterQuote,
-    branchId: row.branch_id ?? '',
+    branchId,
     managerProductionApprovedAtISO: row.manager_production_approved_at_iso ?? null,
     managerProductionApprovedByUserId: row.manager_production_approved_by_user_id ?? null,
     managerProductionApprovedByName: row.manager_production_approved_by_name ?? null,
@@ -940,6 +944,7 @@ export function listManagerQuotationAudit(db, quotationRef) {
           materialTypeId: mtId || null,
           materialTypeName: materialTypeName || null,
           materialGauge: quotation?.materialGauge || null,
+          materialGaugeDisplay: quotation?.materialGaugeDisplay || null,
           materialColor: quotation?.materialColor || null,
           materialDesign: quotation?.materialDesign || null,
         }

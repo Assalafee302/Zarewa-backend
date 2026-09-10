@@ -1474,6 +1474,7 @@ function runMigrationsUnlocked(db) {
   migrateLinkUnpricedQuoteItems2026(db);
   migrateCoilAluzincColours2026(db);
   migrateEnsureQuotationGauges2026(db);
+  migrateYolaGaugeCustomerLabels2026(db);
   migrateMergeDuplicateSetupColours(db);
   migrateMergeDuplicateSuppliersOnBoot(db);
   migrateMergeDuplicateHrStaffOnBoot(db);
@@ -3513,6 +3514,37 @@ function migrateEnsureQuotationGauges2026(db) {
       } else {
         ins.run(id, label, gaugeMm, sort);
       }
+    }
+  })();
+}
+
+/**
+ * Yola trade names on material pricing workbook: true 0.28 → "0.35mm", true 0.24 → "0.30mm".
+ * Only fills empty gauge_customer_label so manual overrides are preserved. Kaduna untouched.
+ */
+function migrateYolaGaugeCustomerLabels2026(db) {
+  if (
+    !db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_pricing_sheet_rows'`).get()
+  ) {
+    return;
+  }
+  const cols = db.prepare(`PRAGMA table_info(material_pricing_sheet_rows)`).all();
+  if (!cols.some((c) => c.name === 'gauge_customer_label')) return;
+
+  const pairs = [
+    [0.28, '0.35mm'],
+    [0.24, '0.30mm'],
+  ];
+  const upd = db.prepare(
+    `UPDATE material_pricing_sheet_rows
+     SET gauge_customer_label = ?
+     WHERE branch_id = 'BR-YL'
+       AND ABS(CAST(gauge_mm AS REAL) - ?) < 0.001
+       AND (gauge_customer_label IS NULL OR TRIM(COALESCE(gauge_customer_label, '')) = '')`
+  );
+  db.transaction(() => {
+    for (const [gaugeMm, label] of pairs) {
+      upd.run(label, gaugeMm);
     }
   })();
 }

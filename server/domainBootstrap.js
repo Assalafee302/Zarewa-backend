@@ -165,7 +165,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     domain: 'sales',
     customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
     quotations: salesOk
-      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: false })
+      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: true })
       : [],
     receipts: salesOk
       ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
@@ -176,7 +176,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     /** Quotation form material type / gauge / colour options (shell may also include this). */
-    masterData: masterOk ? listMasterData(db) : EMPTY_MASTER_DATA,
+    masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     salesAvailableStock: availableStock,
     customerDashboard,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],

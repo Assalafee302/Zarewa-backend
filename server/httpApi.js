@@ -9845,9 +9845,10 @@ export function registerHttpApi(app, db) {
     }
   );
 
-  app.get('/api/setup', requirePermission('settings.view'), (_req, res) => {
+  app.get('/api/setup', requirePermission('settings.view'), (req, res) => {
     try {
-      res.json({ ok: true, masterData: listMasterData(db) });
+      const branchId = String(req.workspaceBranchId || req.query?.branchId || '').trim();
+      res.json({ ok: true, masterData: listMasterData(db, { branchId }) });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load setup data' });

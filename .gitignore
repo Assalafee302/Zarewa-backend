@@ -22,3 +22,14 @@ scripts/output/
 
 # Editor workspace files (local only)
 *.code-workspace
+
+# Claude Code tool-local session state (not app code)
+.claude/
+
+# Ad-hoc test/report output dropped at repo root
+/test-run-report.txt
+/test-rerun-report.txt
+/refund-overlap-review.json
+
+# Real business data exports should never land in git history
+/zarewa-entered-data*.xlsx

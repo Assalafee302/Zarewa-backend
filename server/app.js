@@ -33,7 +33,9 @@ export function createApp(db) {
   const app = express();
   app.use(
     compression({
-      threshold: Number(process.env.ZAREWA_COMPRESSION_THRESHOLD_BYTES) || 1024,
+      // 256, not compression's 1KB default: on a 100kbps mill link the bytes saved on
+      // small JSON replies matter more than the CPU spent gzipping them.
+      threshold: Number(process.env.ZAREWA_COMPRESSION_THRESHOLD_BYTES) || 256,
       filter: (req, res) => {
         if (req.headers['x-no-compression']) return false;
         return compression.filter(req, res);

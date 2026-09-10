@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adaptExecSqlForMysql, expandNamedBindParams } from './mysqlSqlAdapt.js';
+import { adaptExecSqlForMysql, adaptSqlForMysql, expandNamedBindParams } from './mysqlSqlAdapt.js';
 
 describe('expandNamedBindParams', () => {
   it('expands @named placeholders to positional ? for MySQL', () => {
@@ -45,5 +45,17 @@ describe('adaptExecSqlForMysql index IFNULL expressions', () => {
 
     const select = adaptExecSqlForMysql(`SELECT IFNULL(branch_id, '') AS b FROM workspace_rooms`);
     expect(select).toContain(`IFNULL(branch_id, '')`);
+  });
+});
+
+describe('adaptSqlForMysql CAST REAL', () => {
+  it('rewrites CAST(... AS REAL) to DOUBLE for MariaDB', () => {
+    const { sql } = adaptSqlForMysql(
+      `UPDATE material_pricing_sheet_rows SET gauge_customer_label = ?
+       WHERE ABS(CAST(gauge_mm AS REAL) - ?) < 0.001`,
+      ['0.35mm', 0.28]
+    );
+    expect(sql).toMatch(/CAST\(gauge_mm AS DOUBLE\)/i);
+    expect(sql).not.toMatch(/AS REAL/i);
   });
 });

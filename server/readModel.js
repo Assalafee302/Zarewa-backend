@@ -256,23 +256,38 @@ const STAFF_LINKED_CUSTOMER_SELECT = `
   LEFT JOIN hr_staff_profiles p ON trim(IFNULL(p.sales_customer_id, '')) = trim(c.customer_id)
   LEFT JOIN app_users u ON u.id = p.user_id`;
 
+/** @param {string} [q] @param {string} [colPrefix] */
+function customerSearchClause(q, colPrefix = '') {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  const col = (name) => `${colPrefix}${name}`;
+  return {
+    sql: ` AND (${col('name')} LIKE ? OR ${col('phone_number')} LIKE ? OR ${col('customer_id')} LIKE ? OR ${col('company_name')} LIKE ?)`,
+    args: [like, like, like, like],
+  };
+}
+
 export function listCustomers(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const b = branchWhere(db, 'customers', branchScope);
   const lo = sqlLimitOffsetClause(limit, offset);
   if (staffSalesCustomerJoinReady(db)) {
-    const sql = `${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')} ORDER BY c.name COLLATE NOCASE${lo.sql}`;
-    return db.prepare(sql).all(...b.args, ...lo.args).map((row) => mapCustomerRow(row));
+    const s = customerSearchClause(opts.q, 'c.');
+    const sql = `${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')}${s.sql} ORDER BY c.name COLLATE NOCASE${lo.sql}`;
+    return db.prepare(sql).all(...b.args, ...s.args, ...lo.args).map((row) => mapCustomerRow(row));
   }
-  const sql = `SELECT * FROM customers WHERE 1=1${b.sql} ORDER BY name COLLATE NOCASE${lo.sql}`;
-  return db.prepare(sql).all(...b.args, ...lo.args).map((row) => mapCustomerRow(row));
+  const s = customerSearchClause(opts.q);
+  const sql = `SELECT * FROM customers WHERE 1=1${b.sql}${s.sql} ORDER BY name COLLATE NOCASE${lo.sql}`;
+  return db.prepare(sql).all(...b.args, ...s.args, ...lo.args).map((row) => mapCustomerRow(row));
 }
 
-/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countCustomers(db, branchScope = 'ALL') {
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] @param {{ q?: string }} [opts] */
+export function countCustomers(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'customers', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM customers WHERE 1=1${b.sql}`).get(...b.args);
+  const s = customerSearchClause(opts.q);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM customers WHERE 1=1${b.sql}${s.sql}`).get(...b.args, ...s.args);
   return Number(row?.n) || 0;
 }
 
@@ -2140,15 +2155,24 @@ export function listSalesReceiptsForDesk(db, branchScope, ledgerRows, historyOpt
   return enrichSalesReceiptRowsWithCashFromLedger(mergeSalesReceiptRowsById(recent, pending), ledgerRows);
 }
 
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countSalesReceipts(db, branchScope = 'ALL') {
+  const b = branchWhere(db, 'sales_receipts', branchScope);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM sales_receipts WHERE 1=1${b.sql}`).get(...b.args);
+  return Number(row?.n) || 0;
+}
+
 export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'sales_receipts', branchScope);
   const unclearedSql = opts?.unclearedOnly
     ? ` AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     : '';
-  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
+  const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const actorIds = [
     ...new Set(
@@ -3848,8 +3872,9 @@ function poOrderedValue(po) {
 export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) {
   const fromIso = String(opts?.from || '').trim();
   const toIso = String(opts?.to || '').trim();
-  const pos = listPurchaseOrders(db, branchScope);
-  const aps = listAccountsPayable(db, branchScope);
+  // KPIs must reflect the full dataset, not the desk's recent-N cap — see listQueryOpts.js.
+  const pos = listPurchaseOrders(db, branchScope, { unlimited: true });
+  const aps = listAccountsPayable(db, branchScope, { unlimited: true });
   const loads = listInTransitLoads(db, branchScope);
   const products = listProducts(db, branchScope);
   const inWindow = pos.filter((po) => {
@@ -3886,7 +3911,7 @@ export function procurementDashboardSummary(db, branchScope = 'ALL', opts = {}) 
 export function procurementSpendTrend(db, branchScope = 'ALL', opts = {}) {
   const fromIso = String(opts?.from || '').trim();
   const toIso = String(opts?.to || '').trim();
-  const pos = listPurchaseOrders(db, branchScope).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
+  const pos = listPurchaseOrders(db, branchScope, { unlimited: true }).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
   const m = new Map();
   pos.forEach((po) => {
     const d = String(po?.orderDateISO || '').slice(0, 10);
@@ -3901,7 +3926,7 @@ export function procurementSpendTrend(db, branchScope = 'ALL', opts = {}) {
 }
 
 export function procurementSupplierScorecard(db, branchScope = 'ALL') {
-  const pos = listPurchaseOrders(db, branchScope).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
+  const pos = listPurchaseOrders(db, branchScope, { unlimited: true }).filter((po) => normalizeProcurementStatus(po.status) !== 'rejected');
   const byId = new Map();
   pos.forEach((po) => {
     const id = String(po?.supplierID || '').trim();
@@ -3924,7 +3949,7 @@ export function procurementSupplierScorecard(db, branchScope = 'ALL') {
 }
 
 export function procurementPayablesAging(db, branchScope = 'ALL') {
-  const aps = listAccountsPayable(db, branchScope);
+  const aps = listAccountsPayable(db, branchScope, { unlimited: true });
   const now = new Date();
   const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
   aps.forEach((ap) => {
@@ -3997,11 +4022,14 @@ function normalizeSalesDashboardStatus(raw) {
 export function salesDashboardSummary(db, branchScope = 'ALL', opts = {}) {
   const fromIso = String(opts?.from || '').trim();
   const toIso = String(opts?.to || '').trim();
-  const quotations = listQuotations(db, branchScope);
-  const receipts = listSalesReceipts(db, branchScope);
-  const refunds = listRefunds(db, branchScope);
-  const cuttingLists = listCuttingLists(db, branchScope);
-  const productionJobs = listProductionJobs(db, branchScope);
+  // KPIs must reflect the full dataset, not the desk's recent-N cap — see readModel.js
+  // list functions' DEFAULT_LIST_LIMIT (listQueryOpts.js). includeLines: false skips the
+  // (unneeded here) per-quotation line-item enrichment so this stays cheap at full volume.
+  const quotations = listQuotations(db, branchScope, { unlimited: true, includeLines: false });
+  const receipts = listSalesReceipts(db, branchScope, { unlimited: true });
+  const refunds = listRefunds(db, branchScope, { unlimited: true });
+  const cuttingLists = listCuttingLists(db, branchScope, { unlimited: true });
+  const productionJobs = listProductionJobs(db, branchScope, { unlimited: true });
   const qInRange = quotations.filter((q) => {
     const d = String(q?.dateISO || q?.date || '').slice(0, 10);
     if (!d) return false;
@@ -4037,7 +4065,7 @@ export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
   const fromIso = String(opts?.from || '').trim();
   const toIso = String(opts?.to || '').trim();
   const rows = new Map();
-  listQuotations(db, branchScope).forEach((q) => {
+  listQuotations(db, branchScope, { unlimited: true, includeLines: false }).forEach((q) => {
     const d = String(q?.dateISO || q?.date || '').slice(0, 10);
     if (!d) return;
     if (fromIso && d < fromIso) return;
@@ -4047,7 +4075,7 @@ export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
     curr.salesNgn += Number(q?.totalNgn) || 0;
     rows.set(key, curr);
   });
-  listSalesReceipts(db, branchScope).forEach((r) => {
+  listSalesReceipts(db, branchScope, { unlimited: true }).forEach((r) => {
     const d = String(r?.dateISO || r?.date || '').slice(0, 10);
     if (!d) return;
     if (fromIso && d < fromIso) return;
@@ -4063,8 +4091,8 @@ export function salesDashboardRevenueTrend(db, branchScope = 'ALL', opts = {}) {
 export function salesDashboardReceivablesAging(db, branchScope = 'ALL') {
   const out = { '0_30': 0, '31_60': 0, '61_90': 0, over_90: 0 };
   const now = new Date();
-  const productionJobs = listProductionJobs(db, branchScope);
-  listQuotations(db, branchScope).forEach((q) => {
+  const productionJobs = listProductionJobs(db, branchScope, { unlimited: true });
+  listQuotations(db, branchScope, { unlimited: true, includeLines: false }).forEach((q) => {
     const outstanding = receivableDueOnQuotationFromEntries([], q, productionJobs);
     if (!(outstanding > 0)) return;
     const ref = String(q?.id || q?.quotationId || '').trim();

@@ -3539,7 +3539,7 @@ function migrateYolaGaugeCustomerLabels2026(db) {
     `UPDATE material_pricing_sheet_rows
      SET gauge_customer_label = ?
      WHERE branch_id = 'BR-YL'
-       AND ABS(CAST(gauge_mm AS REAL) - ?) < 0.001
+       AND ABS(CAST(gauge_mm AS DOUBLE) - ?) < 0.001
        AND (gauge_customer_label IS NULL OR TRIM(COALESCE(gauge_customer_label, '')) = '')`
   );
   db.transaction(() => {

@@ -132,6 +132,8 @@ export function adaptSqlForMysql(sql, args) {
   s = s.replace(/\bINSERT\s+OR\s+IGNORE\s+INTO\b/gi, 'INSERT IGNORE INTO');
   /* SQLite-only collation; MySQL 8 + utf8mb4 */
   s = s.replace(/\bCOLLATE\s+NOCASE\b/gi, 'COLLATE utf8mb4_unicode_ci');
+  /* SQLite CAST(... AS REAL); MariaDB needs DOUBLE/DECIMAL */
+  s = s.replace(/\bCAST\s*\(\s*([^)]+?)\s+AS\s+REAL\s*\)/gi, 'CAST($1 AS DOUBLE)');
 
   s = adaptSqliteUpsertToMysql(s);
 

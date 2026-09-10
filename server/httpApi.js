@@ -477,6 +477,8 @@ import {
 } from './productionTraceability.js';
 import {
   getCustomer,
+  listCustomers,
+  countCustomers,
   listQuotations,
   countQuotations,
   listQuotationsForCustomer,
@@ -485,6 +487,8 @@ import {
   getQuotation,
   quotationLinkedToProductionContext,
   getCuttingList,
+  countCuttingLists,
+  countProductionJobs,
   listLedgerEntries,
   countLedgerEntries,
   listLedgerEntriesForCustomer,
@@ -526,6 +530,8 @@ import {
   getPaymentRequestDetail,
   getCustomerRefundDetail,
   listSalesReceipts,
+  countSalesReceipts,
+  listCuttingLists,
   enrichSalesReceiptRowsWithCashFromLedger,
   listTreasuryMovements,
   procurementDashboardSummary,
@@ -6761,6 +6767,29 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
+      const q = String(req.query?.q || '').trim();
+      const total = countCustomers(db, branchScope, { q });
+      const customers = listCustomers(db, branchScope, {
+        ...(unlimited ? { unlimited: true } : { limit, offset }),
+        q,
+      });
+      return sendPaginatedList(res, {
+        items: customers,
+        total,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'customers',
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to load customers' });
+    }
+  });
+
   app.post('/api/customers', requirePermission('customers.manage'), (req, res) => {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
@@ -7371,6 +7400,48 @@ export function registerHttpApi(app, db) {
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load deliveries' });
+    }
+  });
+
+  app.get(
+    '/api/cutting-lists',
+    requirePermission([...SALES_DOMAIN_PERMS, ...OPERATIONS_DOMAIN_PERMS]),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
+        const total = countCuttingLists(db, branchScope);
+        const cuttingLists = listCuttingLists(db, branchScope, unlimited ? { unlimited: true } : { limit, offset });
+        return sendPaginatedList(res, {
+          items: cuttingLists,
+          total,
+          limit: unlimited ? 0 : limit,
+          offset,
+          key: 'cuttingLists',
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ ok: false, error: 'Failed to load cutting lists' });
+      }
+    }
+  );
+
+  app.get('/api/production-jobs', requirePermission(OPERATIONS_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
+      const total = countProductionJobs(db, branchScope);
+      const productionJobs = listProductionJobs(db, branchScope, unlimited ? { unlimited: true } : { limit, offset });
+      return sendPaginatedList(res, {
+        items: productionJobs,
+        total,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'productionJobs',
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to load production jobs' });
     }
   });
 
@@ -12632,6 +12703,25 @@ export function registerHttpApi(app, db) {
     }
   }
   );
+
+  app.get('/api/receipts', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
+      const total = countSalesReceipts(db, branchScope);
+      const receipts = listSalesReceipts(db, branchScope, unlimited ? { unlimited: true } : { limit, offset });
+      return sendPaginatedList(res, {
+        items: receipts,
+        total,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'receipts',
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ ok: false, error: 'Failed to load receipts' });
+    }
+  });
 
   app.delete('/api/receipts/:id', requirePermission('receipts.post'), (req, res) => {
     try {

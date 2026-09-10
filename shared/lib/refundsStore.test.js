@@ -59,4 +59,14 @@ describe('refundsStore payable filters', () => {
     };
     expect(isRefundPayable(settledOnTill)).toBe(false);
   });
+
+  it('drops from Pay even if a stale settlement summary still shows the old till due', () => {
+    const stale = {
+      ...payable,
+      paidAmountNgn: 5000,
+      creditAppliedNgn: 5000,
+      settlementSummary: { tillPayableNgn: 5000, cashOutstandingNgn: 5000 },
+    };
+    expect(isRefundPayable(stale)).toBe(false);
+  });
 });

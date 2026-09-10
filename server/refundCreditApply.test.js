@@ -776,4 +776,72 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(applied.ok).toBe(true);
     expect(applied.appliedNgn).toBe(40_000);
   });
+
+  it('stamps an approved refund when leftover overpay is applied and paid_amount hid the credit-open', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 2, unitPrice: 20000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-FALSEPAID', 'False Paid Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-FP-SRC', 'CUS-FALSEPAID', 'False Paid Overpay Customer', 40000, 80000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-FP-DST', 'CUS-FALSEPAID', 'False Paid Overpay Customer', 40000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-FALSEPAID',
+          customerName: 'False Paid Overpay Customer',
+          amountNgn: 40_000,
+          quotationRef: 'QT-FP-SRC',
+          atISO: '2026-08-01T12:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-FALSEPAID',
+          customerName: 'False Paid Overpay Customer',
+          amountNgn: 40_000,
+          quotationRef: 'QT-FP-SRC',
+          atISO: '2026-08-01T12:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso, paid_amount_ngn, branch_id,
+        calculation_lines_json
+      ) VALUES (
+        'RF-FP-1', 'CUS-FALSEPAID', 'False Paid Overpay Customer', 'QT-FP-SRC', '["Overpayment"]', 'Overpayment',
+        40000, 40000, 'Approved', 'Sales One', '2026-08-01T13:00:00.000Z', 40000, '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 40000 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-FALSEPAID', 'QT-FP-DST');
+    const overpay = listed.sources.find((s) => s.kind === 'overpay' && s.sourceQuotationRef === 'QT-FP-SRC');
+    expect(overpay?.availableNgn ?? 0).toBeGreaterThan(0);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-FALSEPAID',
+      targetQuotationRef: 'QT-FP-DST',
+      sourceIds: ['overpay:QT-FP-SRC'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-08-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(40_000);
+
+    const rf = db.prepare(`SELECT status, credit_applied_ngn FROM customer_refunds WHERE refund_id = 'RF-FP-1'`).get();
+    expect(Number(rf.credit_applied_ngn)).toBe(40_000);
+    expect(rf.status).toBe('Paid');
+  });
 });

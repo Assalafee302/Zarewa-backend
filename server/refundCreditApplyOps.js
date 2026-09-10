@@ -27,7 +27,7 @@ import {
 } from '../shared/lib/refundCreditApply.js';
 import { amountDueOnQuotationFromEntries } from '../shared/lib/customerLedgerCore.js';
 import { quotationOverpaymentExcessNgn } from '../shared/lib/refundQuotationMoney.js';
-import { repairRefundPayoutStateTx } from './sales/refundPayoutStatus.js';
+import { refundCashOutstandingNgn, repairRefundPayoutStateTx } from './sales/refundPayoutStatus.js';
 import { assertPeriodOpen, appendAuditLog } from './controlOps.js';
 import { resolveListLimit, sqlLimitClause } from './listQueryOpts.js';
 import { quotationPaymentCashBreakdownByRef } from './quotationPaymentCash.js';
@@ -94,6 +94,101 @@ function appliedDestsLabel(destsByRefund, refundId, fallback) {
   const refs = dests.map((d) => d.quotationRef).filter(Boolean);
   if (refs.length) return [...new Set(refs)].join(', ');
   return String(fallback || '').trim();
+}
+
+function stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso }) {
+  const shape = mapRefundRowToCreditShape(fresh);
+  const overpayOnly = refundCategoriesAreOverpaymentOnly(
+    shape.reasonCategory,
+    shape.calculationLines
+  );
+  const paidFresh = roundMoney(fresh.paid_amount_ngn);
+  const priorApplied = roundMoney(fresh.credit_applied_ngn);
+  const nextCredit = priorApplied + amt;
+  const requested = roundMoney(fresh.amount_ngn);
+  const leftoverAfter = Math.max(0, requested - nextCredit);
+  const wasPending = String(fresh.status) === 'Pending';
+  let nextPaid = paidFresh;
+  let approvedFresh = roundMoney(fresh.approved_amount_ngn);
+  let nextStatus;
+  if (wasPending) {
+    nextPaid = paidFresh;
+    approvedFresh = leftoverAfter <= 0 ? nextCredit : 0;
+    nextStatus = leftoverAfter <= 0 ? 'Paid' : 'Pending';
+    if (leftoverAfter <= 0) nextPaid = nextCredit;
+  } else {
+    nextPaid = paidFresh + amt;
+    if (overpayOnly && approvedFresh <= 0) {
+      approvedFresh = requested;
+    }
+    if (approvedFresh <= 0) {
+      approvedFresh = requested;
+    }
+    nextStatus = nextPaid >= approvedFresh ? 'Paid' : 'Approved';
+  }
+  const noteBit =
+    leftoverAfter > 0 && wasPending
+      ? `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}. ₦${leftoverAfter.toLocaleString('en-NG')} still awaits approval for cash payout.`
+      : `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}`;
+  const prevNote = String(fresh.payment_note || '').trim();
+  const paymentNote = prevNote ? `${prevNote} · ${noteBit}` : noteBit;
+
+  db.prepare(
+    `UPDATE customer_refunds
+     SET status = ?,
+         approved_amount_ngn = ?,
+         paid_amount_ngn = ?,
+         paid_at_iso = ?,
+         paid_by = ?,
+         paid_by_user_id = ?,
+         payment_note = ?,
+         credit_applied_ngn = ?,
+         credit_applied_to_quotation_ref = ?,
+         credit_confirmation_status = ?
+     WHERE refund_id = ?`
+  ).run(
+    nextStatus,
+    approvedFresh,
+    nextPaid,
+    leftoverAfter <= 0 || !wasPending ? atIso : fresh.paid_at_iso,
+    leftoverAfter <= 0 || !wasPending ? actorName(actor) : fresh.paid_by,
+    leftoverAfter <= 0 || !wasPending ? actorId(actor) : fresh.paid_by_user_id,
+    paymentNote,
+    nextCredit,
+    target,
+    REFUND_CREDIT_CONFIRMATION_STATUS,
+    fresh.refund_id
+  );
+  repairRefundPayoutStateTx(db, fresh.refund_id);
+}
+
+/**
+ * Leftover `overpay:` apply does not stamp a refund row. If that quote still has an
+ * approved payout (credit-open was 0 because paid_amount was inflated at approval),
+ * move the applied ₦ onto those refunds so Pay no longer shows the original till due.
+ */
+function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, target, actor, atIso }) {
+  const qid = String(quotationRef || '').trim();
+  let left = roundMoney(amountNgn);
+  if (!qid || left <= 0) return;
+  const rows = db
+    .prepare(
+      `SELECT * FROM customer_refunds
+       WHERE quotation_ref = ?
+         AND LOWER(TRIM(COALESCE(status, ''))) IN ('pending', 'approved', 'partially paid')
+       ORDER BY requested_at_iso ASC, refund_id ASC`
+    )
+    .all(qid);
+  for (const row of rows) {
+    if (left <= 0) break;
+    const creditOpen = refundCreditOpenAmountFromStoredRefund(row);
+    if (creditOpen > 0) continue;
+    const cashOut = refundCashOutstandingNgn(db, row);
+    const take = Math.min(left, cashOut);
+    if (take <= 0) continue;
+    stampRefundCreditOnRowTx(db, row, take, { target, actor, atIso });
+    left -= take;
+  }
 }
 
 function refundUsageFields(shape, open, destsByRefund) {
@@ -618,72 +713,15 @@ export function applyRefundCreditToQuotation(db, payload) {
           }
           const open = refundCreditOpenAmountFromStoredRefund(fresh);
           if (amt > open) throw new Error(`Refund ${src.refundId} open balance is only ₦${open.toLocaleString('en-NG')}.`);
-
-          const overpayOnly = refundCategoriesAreOverpaymentOnly(
-            shape.reasonCategory,
-            shape.calculationLines
-          );
-          const paidFresh = roundMoney(fresh.paid_amount_ngn);
-          const priorApplied = roundMoney(fresh.credit_applied_ngn);
-          const nextCredit = priorApplied + amt;
-          const requested = roundMoney(fresh.amount_ngn);
-          const leftoverAfter = Math.max(0, requested - nextCredit);
-          const wasPending = String(fresh.status) === 'Pending';
-          let nextPaid = paidFresh;
-          let approvedFresh = roundMoney(fresh.approved_amount_ngn);
-          let nextStatus;
-          if (wasPending) {
-            // Confirmation may use pending overpay fund; leftover stays Pending for the manager.
-            nextPaid = paidFresh;
-            approvedFresh = leftoverAfter <= 0 ? nextCredit : 0;
-            nextStatus = leftoverAfter <= 0 ? 'Paid' : 'Pending';
-            if (leftoverAfter <= 0) nextPaid = nextCredit;
-          } else {
-            nextPaid = paidFresh + amt;
-            if (overpayOnly && approvedFresh <= 0) {
-              approvedFresh = requested;
-            }
-            if (approvedFresh <= 0) {
-              approvedFresh = requested;
-            }
-            nextStatus = nextPaid >= approvedFresh ? 'Paid' : 'Approved';
-          }
-          const noteBit =
-            leftoverAfter > 0 && wasPending
-              ? `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}. ₦${leftoverAfter.toLocaleString('en-NG')} still awaits approval for cash payout.`
-              : `${REFUND_CREDIT_CONFIRMATION_STATUS}: ₦${amt.toLocaleString('en-NG')} applied to ${target}`;
-          const prevNote = String(fresh.payment_note || '').trim();
-          const paymentNote = prevNote ? `${prevNote} · ${noteBit}` : noteBit;
-
-          db.prepare(
-            `UPDATE customer_refunds
-             SET status = ?,
-                 approved_amount_ngn = ?,
-                 paid_amount_ngn = ?,
-                 paid_at_iso = ?,
-                 paid_by = ?,
-                 paid_by_user_id = ?,
-                 payment_note = ?,
-                 credit_applied_ngn = ?,
-                 credit_applied_to_quotation_ref = ?,
-                 credit_confirmation_status = ?
-             WHERE refund_id = ?`
-          ).run(
-            nextStatus,
-            approvedFresh,
-            nextPaid,
-            leftoverAfter <= 0 || !wasPending ? atIso : fresh.paid_at_iso,
-            leftoverAfter <= 0 || !wasPending ? actorName(actor) : fresh.paid_by,
-            leftoverAfter <= 0 || !wasPending ? actorId(actor) : fresh.paid_by_user_id,
-            paymentNote,
-            nextCredit,
+          stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso });
+        } else if (src.kind === 'overpay' && sourceQ) {
+          consumeFalseOpenRefundsOnOverpayApplyTx(db, {
+            quotationRef: sourceQ,
+            amountNgn: amt,
             target,
-            REFUND_CREDIT_CONFIRMATION_STATUS,
-            src.refundId
-          );
-          // Gross paid vs approved can leave status Approved after a full net apply
-          // (company cut). Repair marks Paid and drops the till queue.
-          repairRefundPayoutStateTx(db, src.refundId);
+            actor,
+            atIso,
+          });
         }
 
         db.prepare(

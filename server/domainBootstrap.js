@@ -94,11 +94,11 @@ import {
 
 const MAX_PROD_ROWS = Math.min(
   5000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 800)
+  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 400)
 );
 const MAX_LEDGER_ROWS = Math.min(
   10_000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 1000)
+  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 500)
 );
 
 /**
@@ -249,9 +249,12 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       : [],
     operationsInventoryAttention,
     deliveries: opsOk ? listDeliveries(db, branchScope, historyOpts) : [],
-    // Full coil register for production-register selectors (browse + allocate any in-stock coil).
-    // Shell/bootstrap stays capped; use GET /api/coil-lots/search when typing a coil not in a trimmed pack.
-    coilLots: coilMovOk ? listCoilLots(db, branchScope, { unlimited: true }) : [],
+    // Coil register for production selectors — capped; search API covers older lots.
+    coilLots: coilMovOk
+      ? listCoilLots(db, branchScope, {
+          limit: Math.min(2000, Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_COIL_LOTS_LIMIT) || 500)),
+        })
+      : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,

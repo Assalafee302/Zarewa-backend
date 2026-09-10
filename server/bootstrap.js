@@ -185,11 +185,11 @@ export function buildBootstrap(db, opts = {}) {
   const productionOk = prodRollupOk && opsOk;
   const MAX_PROD_ROWS = Math.min(
     5000,
-    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 800)
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 400)
   );
   const MAX_LEDGER_ROWS = Math.min(
     10_000,
-    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 1000)
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 500)
   );
 
   const customerDashboard = salesOk
@@ -249,7 +249,7 @@ export function buildBootstrap(db, opts = {}) {
     : emptyOperationsInventoryAttention();
   const DEFAULT_BOOTSTRAP_LIST_LIMIT = Math.min(
     5000,
-    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_LIST_LIMIT) || 600)
+    Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_LIST_LIMIT) || 300)
   );
   const listLimit = (key) =>
     opts.listLimits?.[key] != null

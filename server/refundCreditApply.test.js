@@ -15,7 +15,20 @@ import {
 import { REFUND_CREDIT_CONFIRMATION_STATUS } from '../shared/lib/refundCreditApply.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 
-describe('apply refund credit to new quotation (integration)', () => {
+/** Same probe the other integration suites use — no local MySQL means skip, not fail. */
+function mysqlAvailable() {
+  try {
+    const db = createDatabase(':memory:', { seed: false });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const mysqlOk = mysqlAvailable();
+
+describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', () => {
   let db;
 
   beforeAll(() => {
@@ -314,6 +327,68 @@ describe('apply refund credit to new quotation (integration)', () => {
       dateISO: '2026-07-04',
     });
     expect(again.ok).toBe(false);
+  });
+
+  it('excludes an approved transport/installation refund\'s open balance from leftover overpay credit (no double count)', () => {
+    // Transport/installation refunds are cash-payout-only (refundIsEligibleCreditSourceKind
+    // rejects them), so they never appear as an explicit "refund:" source themselves. But they
+    // still earmark real cash out of the same quote's overpayment pool, so that amount must not
+    // also be offered as generic "overpay:" leftover credit on the same quote — otherwise the
+    // same ₦ could be applied to another receipt while the refund still expects to pay it out.
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 10, unitPrice: 10000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-TRANS', 'Transport Refund Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-TRANS-SRC', 'CUS-TRANS', 'Transport Refund Customer', 100000, 150000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-12-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-TRANS-DST', 'CUS-TRANS', 'Transport Refund Customer', 15000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-12-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-TRANS',
+          customerName: 'Transport Refund Customer',
+          amountNgn: 100_000,
+          quotationRef: 'QT-TRANS-SRC',
+          atISO: '2026-12-01T10:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-TRANS',
+          customerName: 'Transport Refund Customer',
+          amountNgn: 50_000,
+          quotationRef: 'QT-TRANS-SRC',
+          atISO: '2026-12-01T10:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso, paid_amount_ngn, branch_id
+      ) VALUES (
+        'RF-TRANS-1', 'CUS-TRANS', 'Transport Refund Customer', 'QT-TRANS-SRC', '["Transport"]', 'Transport refund to driver',
+        20000, 20000, 'Approved', 'Sales One', '2026-12-01T11:00:00.000Z', 0, '${DEFAULT_BRANCH_ID}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-TRANS', 'QT-TRANS-DST');
+    expect(listed.ok).toBe(true);
+    expect(listed.sources.some((s) => s.refundId === 'RF-TRANS-1')).toBe(false);
+    expect(listed.unavailableSources.some((s) => s.refundId === 'RF-TRANS-1')).toBe(true);
+    const overpaySource = listed.sources.find(
+      (s) => s.kind === 'overpay' && s.sourceQuotationRef === 'QT-TRANS-SRC'
+    );
+    expect(overpaySource?.availableNgn ?? 0).toBe(30_000);
+    expect(listed.totalAvailableNgn).toBe(30_000);
   });
 
   it('lists a same-quote pending overpay refund so Add payment can show it', () => {

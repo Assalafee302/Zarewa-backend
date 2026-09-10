@@ -2,6 +2,7 @@
  * Branch-scoped non-coil inventory vs global coil catalogue SKUs.
  */
 import { DEFAULT_BRANCH_ID, listBranches } from './branches.js';
+import { batchRunSameSql } from './dbBatchInsert.js';
 
 export const GLOBAL_COIL_PRODUCT_IDS = new Set(['COIL-ALU', 'PRD-102']);
 
@@ -151,14 +152,14 @@ export function ensureNonCoilProductRowsForAllBranches(db) {
     byPid.get(pid).push(row);
   }
 
-  const insertCopy = db.prepare(
-    `INSERT OR IGNORE INTO products (
+  const insertCopySql = `INSERT OR IGNORE INTO products (
       product_id, name, stock_level, unit, low_stock_threshold, reorder_qty,
       gauge, colour, material_type, dashboard_attrs_json, branch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  );
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`;
 
   db.transaction(() => {
+    /** @type {unknown[][]} */
+    const pendingCopies = [];
     for (const [pid, group] of byPid) {
       // Reassign empty-branch non-coil rows onto a real branch (never leave '' → BR-KD-only forever).
       const emptyRows = group.filter((r) => String(r.branch_id ?? '').trim() === '');
@@ -192,7 +193,7 @@ export function ensureNonCoilProductRowsForAllBranches(db) {
           .prepare(`SELECT 1 AS ok FROM products WHERE product_id = ? AND branch_id = ?`)
           .get(pid, br);
         if (exists) continue;
-        insertCopy.run(
+        pendingCopies.push([
           pid,
           template.name,
           0,
@@ -203,9 +204,12 @@ export function ensureNonCoilProductRowsForAllBranches(db) {
           template.colour,
           template.material_type,
           template.dashboard_attrs_json,
-          br
-        );
+          br,
+        ]);
       }
+    }
+    if (pendingCopies.length) {
+      batchRunSameSql(db, insertCopySql, pendingCopies, { batchSize: 100 });
     }
   })();
 }
@@ -266,14 +270,14 @@ export function migrateProductsBranchCompositeInventory(db) {
         PRIMARY KEY (branch_id, product_id)
       )
     `);
-    const ins = db.prepare(
-      `INSERT OR REPLACE INTO products__branch_new (
+    const insSql = `INSERT OR REPLACE INTO products__branch_new (
         product_id, name, stock_level, unit, low_stock_threshold, reorder_qty,
         gauge, colour, material_type, dashboard_attrs_json, branch_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-    );
-    for (const r of expanded) {
-      ins.run(
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`;
+    batchRunSameSql(
+      db,
+      insSql,
+      expanded.map((r) => [
         r.product_id,
         r.name,
         r.stock_level,
@@ -284,9 +288,10 @@ export function migrateProductsBranchCompositeInventory(db) {
         r.colour,
         r.material_type,
         r.dashboard_attrs_json,
-        String(r.branch_id ?? '').trim()
-      );
-    }
+        String(r.branch_id ?? '').trim(),
+      ]),
+      { batchSize: 200 }
+    );
     db.exec(`DROP TABLE products`);
     db.exec(`ALTER TABLE products__branch_new RENAME TO products`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ws_products_branch ON products(branch_id)`);

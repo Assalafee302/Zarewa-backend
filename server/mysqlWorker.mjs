@@ -226,7 +226,10 @@ async function ensurePool(cfg) {
       password: cfg.password,
       database: cfg.database,
       waitForConnections: true,
-      connectionLimit: cfg.connectionLimit ?? 12,
+      connectionLimit: cfg.connectionLimit ?? (Number(process.env.ZAREWA_MYSQL_POOL_SIZE) || 12),
+      queueLimit: Math.max(0, Number(process.env.ZAREWA_MYSQL_QUEUE_LIMIT) || 50),
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10_000,
       multipleStatements: true,
       charset: 'utf8mb4',
     });

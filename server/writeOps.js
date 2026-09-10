@@ -34,6 +34,7 @@ import {
   getProductStockLevelForBranch,
   isGlobalCoilCatalogProductId,
 } from './productBranchInventory.js';
+import { batchInsertValues } from './dbBatchInsert.js';
 import {
   stoneFlatsheetSheetsToM2,
 } from '../shared/lib/poLineTypes.js';
@@ -325,15 +326,16 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       : Array.isArray(opts.allowManagerClearedQuotationRefs)
         ? new Set(opts.allowManagerClearedQuotationRefs.map((x) => String(x || '').trim()).filter(Boolean))
         : null;
-  const ins = db.prepare(`
+  const insertSql = `
     INSERT INTO ledger_entries (
       id, at_iso, type, customer_id, customer_name, amount_ngn, quotation_ref,
       payment_method, bank_reference, purpose, created_by_user_id, created_by_name, note, branch_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `);
+    )`;
 
   /** No nested `db.transaction` here: httpApi and writeOps callers already wrap in an outer transaction. Nested tx breaks the MySQL worker SAVEPOINT stack (`SAVEPOINT sp_1 does not exist`). */
   const saved = [];
+  /** @type {unknown[][]} */
+  const insertArgs = [];
   for (const r of planRows) {
     if (r.quotationRef && !opts.bypassQuotationPaymentLocks) {
       const q = db.prepare(`SELECT manager_cleared_at_iso, manager_flagged_at_iso FROM quotations WHERE id = ?`).get(r.quotationRef);
@@ -370,7 +372,7 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       : branchId;
     const id = nextLedgerEntryId(db, bid || DEFAULT_BRANCH_ID);
     const atIso = r.atISO || new Date().toISOString();
-    ins.run(
+    insertArgs.push([
       id,
       atIso,
       r.type,
@@ -384,8 +386,8 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       r.createdByUserId ?? null,
       r.createdByName ?? null,
       r.note ?? null,
-      bid ?? null
-    );
+      bid ?? null,
+    ]);
     saved.push({
       id,
       atISO: atIso,
@@ -402,6 +404,10 @@ export function insertLedgerRows(db, planRows, branchId = null, opts = {}) {
       note: r.note,
       branchId: bid ?? '',
     });
+  }
+
+  if (insertArgs.length) {
+    batchInsertValues(db, insertSql.replace(/\s+/g, ' ').trim(), 14, insertArgs, { batchSize: 100 });
   }
 
   return saved;
@@ -1404,12 +1410,11 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
       transport_paid, transport_paid_at_iso, supplier_paid_ngn, branch_id, procurement_kind
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
-  const insL = db.prepare(`
+  const lineInsertPrefix = `
     INSERT INTO purchase_order_lines (
       po_id, line_key, product_id, product_name, color, gauge, meters_offered, conversion_kg_per_m,
       unit_price_per_kg_ngn, unit_price_ngn, qty_ordered, qty_received, line_type
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `);
+    )`;
 
   db.transaction(() => {
     insPo.run(
@@ -1430,21 +1435,27 @@ export function insertPurchaseOrder(db, payload, branchId = DEFAULT_BRANCH_ID) {
       String(branchId || DEFAULT_BRANCH_ID).trim(),
       kind
     );
-    for (const l of normLinesIn) {
-      insL.run(
-        poID,
-        l.lineKey,
-        l.productID,
-        l.productName,
-        l.color ?? '',
-        l.gauge ?? '',
-        l.metersOffered ?? null,
-        roundConv2(l.conversionKgPerM) ?? null,
-        l.unitPricePerKgNgn ?? null,
-        l.unitPriceNgn,
-        l.qtyOrdered,
-        l.qtyReceived ?? 0,
-        l.lineType ?? null
+    if (normLinesIn.length) {
+      batchInsertValues(
+        db,
+        lineInsertPrefix.replace(/\s+/g, ' ').trim(),
+        13,
+        normLinesIn.map((l) => [
+          poID,
+          l.lineKey,
+          l.productID,
+          l.productName,
+          l.color ?? '',
+          l.gauge ?? '',
+          l.metersOffered ?? null,
+          roundConv2(l.conversionKgPerM) ?? null,
+          l.unitPricePerKgNgn ?? null,
+          l.unitPriceNgn,
+          l.qtyOrdered,
+          l.qtyReceived ?? 0,
+          l.lineType ?? null,
+        ]),
+        { batchSize: 100 }
       );
     }
     appendMovementTx(db, {

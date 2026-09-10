@@ -261,7 +261,7 @@ function runAttendanceReport(db, scope, filters, opts) {
   if (filters.fromIso) { sql += ' AND ae.event_date_iso >= ?'; args.push(filters.fromIso); }
   if (filters.toIso) { sql += ' AND ae.event_date_iso <= ?'; args.push(filters.toIso); }
   if (filters.status) { sql += ' AND ae.status = ?'; args.push(filters.status); }
-  sql += ' ORDER BY ae.event_date_iso DESC LIMIT 2000';
+  sql += ' ORDER BY ae.event_date_iso DESC LIMIT 500';
   const rows = db.prepare(sql).all(...args).map((r) => ({
     displayName: r.display_name,
     branchId: r.branch_id,
@@ -513,7 +513,7 @@ function runLetterIssuance(db, scope, filters, opts) {
     sql += ` AND date(l.issued_at_iso) <= date(?)`;
     args.push(filters.toIso);
   }
-  sql += ` ORDER BY l.issued_at_iso DESC LIMIT 1000`;
+  sql += ` ORDER BY l.issued_at_iso DESC LIMIT 500`;
   let rows = [];
   try {
     rows = db.prepare(sql).all(...args).map((r) => ({

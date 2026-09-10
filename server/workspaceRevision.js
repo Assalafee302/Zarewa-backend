@@ -16,6 +16,8 @@ const REVISION_TABLES = [
   ['expenses', 'date'],
   ['payment_requests', 'request_date'],
   ['work_items', 'updated_at_iso'],
+  // Credit apply / payout update paid + credit without always bumping dates — fingerprint sums too.
+  ['customer_refunds', 'requested_at_iso'],
 ];
 
 /**
@@ -37,6 +39,7 @@ const TABLE_DOMAINS = Object.freeze({
   expenses: ['finance'],
   payment_requests: ['finance', 'procurement'],
   work_items: ['sales', 'operations', 'finance', 'procurement'],
+  customer_refunds: ['sales', 'finance'],
 });
 
 const REVISION_DOMAIN_KEYS = Object.freeze(['sales', 'operations', 'finance', 'procurement']);
@@ -75,10 +78,21 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
   for (const [table, dateCol] of REVISION_TABLES) {
     try {
       const b = branchWhere(db, table, branchScope);
+      const moneyExtra =
+        table === 'customer_refunds'
+          ? `, COALESCE(SUM(credit_applied_ngn),0) AS credit_sum, COALESCE(SUM(paid_amount_ngn),0) AS paid_sum`
+          : '';
       const row = db
-        .prepare(`SELECT COUNT(*) AS c, MAX(${dateCol}) AS m FROM ${table} WHERE 1=1${b.sql}`)
+        .prepare(
+          `SELECT COUNT(*) AS c, MAX(${dateCol}) AS m${moneyExtra} FROM ${table} WHERE 1=1${b.sql}`
+        )
         .get(...b.args);
-      parts.push(`${table}:${row?.c ?? 0}:${row?.m ?? ''}`);
+      const base = `${table}:${row?.c ?? 0}:${row?.m ?? ''}`;
+      parts.push(
+        table === 'customer_refunds'
+          ? `${base}:${row?.credit_sum ?? 0}:${row?.paid_sum ?? 0}`
+          : base
+      );
     } catch {
       parts.push(`${table}:na`);
     }
@@ -107,10 +121,20 @@ export async function buildWorkspaceRevisionAsync(db, branchScope = 'ALL') {
     REVISION_TABLES.map(async ([table, dateCol], i) => {
       try {
         const b = branchWhere(db, table, branchScope);
+        const moneyExtra =
+          table === 'customer_refunds'
+            ? `, COALESCE(SUM(credit_applied_ngn),0) AS credit_sum, COALESCE(SUM(paid_amount_ngn),0) AS paid_sum`
+            : '';
         const row = await db.async
-          .prepare(`SELECT COUNT(*) AS c, MAX(${dateCol}) AS m FROM ${table} WHERE 1=1${b.sql}`)
+          .prepare(
+            `SELECT COUNT(*) AS c, MAX(${dateCol}) AS m${moneyExtra} FROM ${table} WHERE 1=1${b.sql}`
+          )
           .get(...b.args);
-        parts[i + 1] = `${table}:${row?.c ?? 0}:${row?.m ?? ''}`;
+        const base = `${table}:${row?.c ?? 0}:${row?.m ?? ''}`;
+        parts[i + 1] =
+          table === 'customer_refunds'
+            ? `${base}:${row?.credit_sum ?? 0}:${row?.paid_sum ?? 0}`
+            : base;
       } catch {
         parts[i + 1] = `${table}:na`;
       }

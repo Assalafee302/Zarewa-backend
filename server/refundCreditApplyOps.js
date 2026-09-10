@@ -270,13 +270,25 @@ export function listEligibleRefundCredits(db, customerId, targetQuotationRef, _o
     }
   }
 
-  /** Open overpay-refund credit already counted per source quotation (avoid double-counting ledger pool). */
+  /**
+   * Open refund amount already earmarked per source quotation (avoid double-counting the same
+   * overpayment cash as both "owed to a refund payee" and "available as leftover credit for
+   * another receipt"). Sums EVERY active refund on the quote, not just the overpayment-only ones
+   * eligible to be picked as an explicit credit source: a transport/installation staff refund
+   * (cash-payout-only, never itself selectable as a credit source — see
+   * `refundIsEligibleCreditSourceKind`) still reserves the same underlying overpayment cash, so
+   * its open balance must still reduce what is offered as leftover. Before this fix, only
+   * overpayment-only refunds were subtracted here, so a quote's overpayment could be applied as
+   * credit to a different receipt while an approved staff refund on the same quote still expected
+   * to pay that same cash out — the refund's own "still to pay" balance never moved.
+   */
   const overpayRefundOpenByQuote = new Map();
-  for (const src of sources) {
-    if (src.kind !== 'refund' || !src.overpaymentOnly) continue;
-    const qid = String(src.sourceQuotationRef || '').trim();
+  for (const row of refunds) {
+    const qid = String(row.quotation_ref || '').trim();
     if (!qid) continue;
-    overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + src.availableNgn));
+    const open = refundCreditOpenAmountFromStoredRefund(row);
+    if (!(open > 0)) continue;
+    overpayRefundOpenByQuote.set(qid, roundMoney((overpayRefundOpenByQuote.get(qid) || 0) + open));
   }
 
   const overpayConsumedByQuote = new Map();

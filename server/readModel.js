@@ -125,22 +125,21 @@ function stockMovementsBranchFilterLegacy(db, branchScope) {
   const bQuo = branchWhere(db, 'quotations', branchScope);
   const bDel = branchWhere(db, 'deliveries', branchScope);
 
-  // Ref-based only — never match empty-branch stone/accessory movements just because the
-  // product_id exists on this branch (ensureNonCoil copies ACC/STONE to every site).
+  // EXISTS (not OR'd IN subqueries) so the planner can stop at the first matching ref index.
   const parts = [
-    `sm.ref IN (SELECT job_id FROM production_jobs WHERE 1=1${bJob.sql})`,
-    `sm.ref IN (SELECT po_id FROM purchase_orders WHERE 1=1${bPo.sql})`,
-    `sm.ref IN (SELECT id FROM quotations WHERE 1=1${bQuo.sql})`,
-    `sm.ref IN (SELECT id FROM deliveries WHERE 1=1${bDel.sql})`,
+    `EXISTS (SELECT 1 FROM production_jobs pj WHERE pj.job_id = sm.ref${bJob.sql.replace(/\bbranch_id\b/g, 'pj.branch_id')})`,
+    `EXISTS (SELECT 1 FROM purchase_orders po WHERE po.po_id = sm.ref${bPo.sql.replace(/\bbranch_id\b/g, 'po.branch_id')})`,
+    `EXISTS (SELECT 1 FROM quotations q WHERE q.id = sm.ref${bQuo.sql.replace(/\bbranch_id\b/g, 'q.branch_id')})`,
+    `EXISTS (SELECT 1 FROM deliveries d WHERE d.id = sm.ref${bDel.sql.replace(/\bbranch_id\b/g, 'd.branch_id')})`,
   ];
   const args = [...bJob.args, ...bPo.args, ...bQuo.args, ...bDel.args];
 
   if (hasColumn(db, 'material_incidents', 'branch_id')) {
-    parts.push(`sm.ref IN (SELECT id FROM material_incidents WHERE branch_id = ?)`);
+    parts.push(`EXISTS (SELECT 1 FROM material_incidents mi WHERE mi.id = sm.ref AND mi.branch_id = ?)`);
     args.push(bid);
   }
   if (hasColumn(db, 'coil_lots', 'branch_id')) {
-    parts.push(`sm.ref IN (SELECT coil_no FROM coil_lots WHERE branch_id = ?)`);
+    parts.push(`EXISTS (SELECT 1 FROM coil_lots cl WHERE cl.coil_no = sm.ref AND cl.branch_id = ?)`);
     args.push(bid);
   }
 

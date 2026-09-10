@@ -1,6 +1,13 @@
+/** Desk/list default — 250 keeps JSON payloads usable on ~100–400 kbps mill links. */
 const DEFAULT_LIST_LIMIT = Math.min(
   50_000,
-  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 500)
+  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 250)
+);
+
+/** Hard cap when HTTP clients pass unlimited=1 (internal `unlimited: true` opts stay uncapped). */
+export const UNLIMITED_LIST_HARD_CAP = Math.min(
+  50_000,
+  Math.max(500, Number(process.env.ZAREWA_UNLIMITED_LIST_HARD_CAP) || 5000)
 );
 
 /**
@@ -42,7 +49,7 @@ export function productionHistoryListOpts() {
 /** Desk-safe default for finance history lists (recent live volume; override via env). */
 export const DEFAULT_FINANCE_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 800)
+  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 400)
 );
 
 /**
@@ -68,7 +75,7 @@ export function financeHistoryListOpts() {
 export function salesCustomersListOpts() {
   const raw = process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
   if (raw == null || String(raw).trim() === '') {
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 2000)) };
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 1000)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
@@ -84,7 +91,7 @@ export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
 /** Open AP / bank-recon lines on finance snapshots (not full history dumps). */
 export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
   50_000,
-  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 500)
+  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 250)
 );
 
 /**

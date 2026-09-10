@@ -298,7 +298,7 @@ export function buildBootstrap(db, opts = {}) {
     branchScope,
     customers: salesOk && !omitDesk.customers ? listCustomers(db, branchScope, customersHistoryOpts) : [],
     quotations: salesOk
-      ? listQuotations(db, branchScope, { ...rowListOpts(opts, 'quotations'), includeLines: true })
+      ? listQuotations(db, branchScope, { ...rowListOpts(opts, 'quotations'), includeLines: false })
       : prodRollupOk
         ? listQuotationsForProductionContext(db, branchScope)
         : [],

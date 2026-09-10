@@ -14,6 +14,12 @@ Use these when deploying or running automated tests. There is no committed `.env
 | `ZAREWA_MYSQL_DATABASE` | Application schema name (default `zarewa_db`). |
 | `ZAREWA_MYSQL_TEST_DATABASE` | Vitest schema (default `zarewa_test`). Forks append a worker suffix. |
 | `ZAREWA_MYSQL_E2E_DATABASE` | Playwright E2E schema (default `zarewa_e2e`). |
+| `ZAREWA_MYSQL_SYNC_TIMEOUT_MS` | synckit worker timeout in ms. **Serving default `10000`**. One-shot migrate/boot jobs should set `900000` (synckit locks the first timeout for the process). |
+| `ZAREWA_MYSQL_ASYNC_POOL_SIZE` | Main-thread async MySQL pool size for `db.async` / revision (default `8`). |
+| `ZAREWA_BOOTSTRAP_POLL_CACHE_MS` | In-memory TTL for `GET /api/bootstrap` when `poll=1` or `mode=shell|dashboard` (default `8000`, clamped 1000–30000). Cache is checked **before** building the payload. |
+| `ZAREWA_MIGRATION_LOCK_WAIT_SEC` | How long a boot waits for the migration lock when another API instance is migrating (default 1200 outside tests). |
+| `ZAREWA_PRODUCTION_HISTORY_DEFAULT` | Cap for production jobs / cutting lists on desk snapshots (default `250`). |
+| `ZAREWA_RECEIPTS_HISTORY_DEFAULT` | Cap for sales receipts on desk snapshots (default `300`). Paginate further via `GET /api/sales-receipts`. |
 | `E2E_UI_PORT` | Optional. Vite port for Playwright (default **5180**). Set when **5180 is already in use** (e.g. a leftover `e2e-web` process) so `npm run test:e2e` can start: `E2E_UI_PORT=5182 E2E_API_PORT=8789 npm run test:e2e`. |
 | `E2E_API_PORT` | Optional. API port paired with `E2E_UI_PORT` (default **8788**). |
 | `E2E_REUSE_SERVER` | When `1`, Playwright does not spawn `scripts/e2e-web.mjs` and expects a stack already listening on the configured ports — use only when you intentionally reuse a running dev server. |

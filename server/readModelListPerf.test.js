@@ -4,6 +4,7 @@ import {
   listCuttingLists,
   listPurchaseOrders,
   listQuotations,
+  listRefunds,
   listStockMovements,
   countQuotations,
   countStockMovements,
@@ -178,6 +179,24 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(slim[0].materialGauge).toBe('0.5');
     const full = listQuotations(db, 'BR-KD', { includeLines: true });
     expect(full[0].quotationLines?.products?.length).toBe(1);
+    db.close();
+  });
+
+  it('listRefunds omits previewSnapshot unless opted in', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertCustomer(db, { customerID: 'C1', name: 'Customer' }, 'BR-KD');
+    const fat = JSON.stringify({ lines: [{ a: 1 }], meta: 'x'.repeat(2000) });
+    db.prepare(
+      `INSERT INTO customer_refunds (
+         refund_id, customer_id, customer_name, amount_ngn, status, requested_at_iso, branch_id,
+         preview_snapshot_json, calculation_lines_json
+       ) VALUES ('RF-SLIM', 'C1', 'Customer', 5000, 'Pending', '2026-07-01T00:00:00.000Z', 'BR-KD', ?, '[]')`
+    ).run(fat);
+    const slim = listRefunds(db, 'BR-KD');
+    expect(slim).toHaveLength(1);
+    expect(slim[0].previewSnapshot).toBeNull();
+    const full = listRefunds(db, 'BR-KD', { includePreviewSnapshot: true });
+    expect(full[0].previewSnapshot?.meta).toBeTruthy();
     db.close();
   });
 

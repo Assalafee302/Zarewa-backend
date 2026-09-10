@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS customers (
   branch_id TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_customers_branch_name ON customers(branch_id, name);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
+
 CREATE TABLE IF NOT EXISTS customer_crm_interactions (
   id TEXT PRIMARY KEY,
   customer_id TEXT NOT NULL,

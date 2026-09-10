@@ -508,7 +508,9 @@ export function collectEnteredDataPack(db, branchScope = 'ALL') {
   const quotations = safeList('quotations', () => listQuotations(db, branchScope, UNLIMITED));
   const receipts = safeList('receipts', () => listSalesReceipts(db, branchScope, UNLIMITED));
   const deliveries = safeList('deliveries', () => listDeliveries(db, branchScope, UNLIMITED));
-  const refunds = safeList('refunds', () => listRefunds(db, branchScope, UNLIMITED));
+  const refunds = safeList('refunds', () =>
+    listRefunds(db, branchScope, { ...UNLIMITED, includePreviewSnapshot: true })
+  );
   const cuttingLists = safeList('cuttingLists', () => listCuttingLists(db, branchScope, UNLIMITED));
   const productionJobs = safeList('productionJobs', () => listProductionJobs(db, branchScope, UNLIMITED));
   const purchaseOrders = safeList('purchaseOrders', () => listPurchaseOrders(db, branchScope, PO_OPTS));

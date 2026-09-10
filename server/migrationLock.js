@@ -1,3 +1,5 @@
+import { mysqlSyncTimeoutMs } from './mysqlDatabase.js';
+
 const MIGRATION_LOCK_NAME = 'zarewa_run_migrations';
 
 /** MySQL GET_LOCK names are capped at 64 characters. */
@@ -56,6 +58,38 @@ export function withDeadlockRetry(fn, opts = {}) {
 }
 
 /**
+ * GET_LOCK blocks server-side for the entire wait it is given, but every query still
+ * travels the synckit channel, which gives up after ZAREWA_MYSQL_SYNC_TIMEOUT_MS (10s
+ * when serving). Asking for a 1200s lock in one call therefore kills the worker rather
+ * than queueing it — precisely what happens when several workers boot together and one
+ * of them is migrating. So wait in slices that fit inside the sync timeout, re-asking
+ * until the overall deadline.
+ * @param {number} totalWaitSec
+ */
+function lockSliceSec(totalWaitSec) {
+  const budgetSec = Math.floor(mysqlSyncTimeoutMs() / 1000);
+  const slice = Math.max(1, Math.floor(budgetSec / 2));
+  return Math.max(1, Math.min(totalWaitSec, slice));
+}
+
+/**
+ * Blocking sleep. Boot is single-threaded and not yet serving, so parking the thread is
+ * fine here — and it is the only way to back off between attempts in this sync codebase.
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  if (!(ms > 0)) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      /* SharedArrayBuffer unavailable — spin as a last resort */
+    }
+  }
+}
+
+/**
  * Serialize boot migrations across concurrent API processes on the same MySQL database.
  * @param {import('better-sqlite3').Database} db
  * @param {() => void} fn
@@ -64,12 +98,36 @@ export function withMigrationLock(db, fn) {
   let acquired = false;
   const lockName = resolveMigrationLockName(db);
   try {
-    const waitSec = migrationLockWaitSec();
-    const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(lockName, waitSec);
-    acquired = Number(row?.got) === 1;
+    const totalWaitSec = migrationLockWaitSec();
+    const sliceSec = lockSliceSec(totalWaitSec);
+    const startedAt = Date.now();
+    const deadline = startedAt + totalWaitSec * 1000;
+    let lastLoggedAt = startedAt;
+
+    for (;;) {
+      const attemptedAt = Date.now();
+      const row = db.prepare(`SELECT GET_LOCK(?, ?) AS got`).get(lockName, sliceSec);
+      acquired = Number(row?.got) === 1;
+      if (acquired || Date.now() >= deadline) break;
+
+      // GET_LOCK is expected to block for the whole slice. If it came back immediately
+      // it is not really waiting (error, or NULL), so back off rather than hammer MySQL.
+      const elapsedMs = Date.now() - attemptedAt;
+      if (elapsedMs < 250) sleepSync(Math.min(1000, Math.max(0, deadline - Date.now())));
+
+      const now = Date.now();
+      if (now - lastLoggedAt >= 30_000) {
+        lastLoggedAt = now;
+        console.warn(
+          `[zarewa] waiting for migration lock "${lockName}" — another instance is migrating ` +
+            `(${Math.round((now - startedAt) / 1000)}s of ${totalWaitSec}s)`
+        );
+      }
+    }
+
     if (!acquired) {
       throw new Error(
-        `Could not acquire migration lock "${lockName}" within ${waitSec}s. ` +
+        `Could not acquire migration lock "${lockName}" within ${totalWaitSec}s. ` +
           'Another Zarewa process may be migrating the same database — wait and retry, or stop duplicate instances.'
       );
     }

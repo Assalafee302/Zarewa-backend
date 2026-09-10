@@ -16,12 +16,14 @@ import {
   countCuttingLists,
   countExpenses,
   countProductionJobs,
+  countSalesReceipts,
   countStockMovements,
   listCoilLots,
   listCustomers,
   listCuttingLists,
   listExpenses,
   listProductionJobs,
+  listSalesReceipts,
   listStockMovements,
 } from '../readModel.js';
 import {
@@ -154,6 +156,25 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load cutting lists.' });
+    }
+  });
+
+  app.get('/api/sales-receipts', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const parsed = parseListQuery(req, { defaultLimit: 200, maxLimit: 5000 });
+      const items = listSalesReceipts(db, branchScope, listOptsFromQuery(parsed));
+      const total = parsed.unlimited ? items.length : countSalesReceipts(db, branchScope);
+      return sendPaginatedList(res, {
+        items,
+        total,
+        limit: parsed.unlimited ? 0 : parsed.limit,
+        offset: parsed.offset,
+        key: 'receipts',
+      });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load sales receipts.' });
     }
   });
 }

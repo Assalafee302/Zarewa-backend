@@ -46,9 +46,49 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
 }
 
 /**
+ * Async revision — parallel COUNT/MAX via db.async (main-thread pool, no Atomics.wait).
+ * Falls back to sync buildWorkspaceRevision when async is unavailable.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ */
+export async function buildWorkspaceRevisionAsync(db, branchScope = 'ALL') {
+  if (!db?.async?.prepare) return buildWorkspaceRevision(db, branchScope);
+  const parts = new Array(REVISION_TABLES.length + 1);
+  parts[0] = `scope:${branchScope}`;
+  await Promise.all(
+    REVISION_TABLES.map(async ([table, dateCol], i) => {
+      try {
+        const b = branchWhere(db, table, branchScope);
+        const row = await db.async
+          .prepare(`SELECT COUNT(*) AS c, MAX(${dateCol}) AS m FROM ${table} WHERE 1=1${b.sql}`)
+          .get(...b.args);
+        parts[i + 1] = `${table}:${row?.c ?? 0}:${row?.m ?? ''}`;
+      } catch {
+        parts[i + 1] = `${table}:na`;
+      }
+    })
+  );
+  const revision = crypto.createHash('sha256').update(parts.join('|')).digest('base64url').slice(0, 24);
+  return {
+    ok: true,
+    revision,
+    branchScope,
+    checkedAtIso: new Date().toISOString(),
+  };
+}
+
+/**
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
  */
 export function workspaceRevisionEtag(db, branchScope = 'ALL') {
   return jsonWeakEtag(buildWorkspaceRevision(db, branchScope));
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ */
+export async function workspaceRevisionEtagAsync(db, branchScope = 'ALL') {
+  return jsonWeakEtag(await buildWorkspaceRevisionAsync(db, branchScope));
 }

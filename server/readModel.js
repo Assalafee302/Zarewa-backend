@@ -600,10 +600,11 @@ export function listQuotationsForProductionContext(db, branchScope = 'ALL') {
   const ids = [...refs];
   const ph = ids.map(() => '?').join(',');
   const bQuo = branchWhere(db, 'quotations', branchScope);
-  return db
+  const mapped = db
     .prepare(`SELECT * FROM quotations WHERE id IN (${ph})${bQuo.sql} ORDER BY date_iso DESC, id DESC`)
     .all(...ids, ...bQuo.args)
-    .map((row) => enrichQuotationWithLineTable(db, mapQuotationRow(db, row)));
+    .map((row) => mapQuotationRow(db, row));
+  return enrichQuotationsWithLineTableBatch(db, mapped);
 }
 
 /** True when a quotation is referenced by a production job or cutting list in branch scope. */
@@ -1425,15 +1426,16 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const statusStmt = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`);
   return pos.map((row) => {
     const rawLines = linesByPoId.get(String(row.po_id || '').trim()) || [];
+    let effectiveStatus = row.status;
     if (
       !opts.skipSideEffects &&
       RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status)) &&
       poLinesFullyReceived(rawLines, mapPoLineFromDb)
     ) {
       reconcilePoReceiptStatusIfComplete(db, row.po_id);
+      const refreshedPo = statusStmt.get(row.po_id);
+      effectiveStatus = refreshedPo?.status ?? row.status;
     }
-    const refreshedPo = statusStmt.get(row.po_id);
-    const effectiveStatus = refreshedPo?.status ?? row.status;
     return {
       poID: row.po_id,
       supplierID: row.supplier_id,
@@ -2726,9 +2728,21 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
+  /** Desk lists default off — preview_snapshot_json is ~69% of refund row weight on the wire. */
+  const includePreviewSnapshot = opts.includePreviewSnapshot === true;
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
-  const sql = `SELECT cr.*,
+  const crSelect = includePreviewSnapshot
+    ? 'cr.*'
+    : `cr.refund_id, cr.customer_id, cr.customer_name, cr.quotation_ref, cr.cutting_list_ref,
+       cr.product, cr.reason_category, cr.reason, cr.amount_ngn, cr.calculation_lines_json,
+       cr.suggested_lines_json, cr.split_distributions_json, cr.calculation_notes, cr.status,
+       cr.requested_by, cr.requested_by_user_id, cr.requested_at_iso, cr.approval_date, cr.approved_by,
+       cr.approved_by_user_id, cr.approved_amount_ngn, cr.manager_comments, cr.paid_amount_ngn,
+       cr.paid_at_iso, cr.paid_by, cr.payment_note, cr.payee_name, cr.payee_account_no,
+       cr.payee_bank_name, cr.branch_id, cr.credit_applied_ngn, cr.credit_applied_to_quotation_ref,
+       cr.credit_confirmation_status`;
+  const sql = `SELECT ${crSelect},
               q.refunds_blocked_at_iso AS quotation_refunds_blocked_at_iso,
               q.refunds_blocked_reason AS quotation_refunds_blocked_reason
        FROM customer_refunds cr
@@ -2740,7 +2754,11 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
-  return rows.map((row) => mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId));
+  return rows.map((row) =>
+    mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, {
+      includePreviewSnapshot,
+    })
+  );
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
@@ -3020,7 +3038,7 @@ function liveEnrichRefundSplitUnclearedHolds(db, row, splitDistributions, approv
   });
 }
 
-function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId) {
+function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, mapOpts = {}) {
   let calculationLines = [];
   let suggestedLines = [];
   try {
@@ -3035,10 +3053,12 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   }
   let previewSnapshot = null;
   let splitDistributions = [];
-  try {
-    previewSnapshot = JSON.parse(row.preview_snapshot_json || 'null');
-  } catch {
-    previewSnapshot = null;
+  if (mapOpts.includePreviewSnapshot === true && row.preview_snapshot_json != null) {
+    try {
+      previewSnapshot = JSON.parse(row.preview_snapshot_json || 'null');
+    } catch {
+      previewSnapshot = null;
+    }
   }
   try {
     splitDistributions = JSON.parse(row.split_distributions_json || '[]');
@@ -3064,11 +3084,14 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   const settlementSummary = buildRefundSettlementSummary(db, row, { walletOpenNgn });
   // Prefer repaired payee-only paid amount when legacy rows still include company cut.
   const paidAmountForApi = settlementSummary.payeeSettledNgn;
+  // Desk lists already batch walletOpenNgn; skip per-row open-credit detail (N+1 under synckit).
   let walletOpenCredits = [];
-  try {
-    walletOpenCredits = listPartnerWalletOpenCreditsForRefund(db, row.refund_id);
-  } catch {
-    walletOpenCredits = [];
+  if (mapOpts.includeWalletOpenCredits === true) {
+    try {
+      walletOpenCredits = listPartnerWalletOpenCreditsForRefund(db, row.refund_id);
+    } catch {
+      walletOpenCredits = [];
+    }
   }
   return {
     refundID: row.refund_id,

@@ -1457,6 +1457,7 @@ function runMigrationsUnlocked(db) {
   migrateLedgerPerformanceIndexes(db);
   migrateFinanceDeskPerformanceIndexes(db);
   migrateOpsDeskPerformanceIndexes(db);
+  migrateSalesDeskListPerformanceIndexes(db);
   migrateRefundCreditApplications(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
@@ -7142,6 +7143,20 @@ function migrateOpsDeskPerformanceIndexes(db) {
     `);
   } catch {
     /* ignore — branch_id / date columns may arrive via earlier migrations on some hosts */
+  }
+}
+
+/** Customers + purchase orders — desk sorts and head-office branch filters. */
+function migrateSalesDeskListPerformanceIndexes(db) {
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_customers_branch_name ON customers(branch_id, name);
+      CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
+      CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_date ON purchase_orders(branch_id, order_date_iso, po_id);
+      CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_status ON purchase_orders(branch_id, status);
+    `);
+  } catch {
+    /* ignore — branch_id may arrive via earlier migrations on some hosts */
   }
 }
 

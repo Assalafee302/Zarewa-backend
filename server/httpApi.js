@@ -54,7 +54,8 @@ import {
 import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
-import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
+import { buildWorkspaceRevision, buildWorkspaceRevisionAsync, workspaceRevisionEtag } from './workspaceRevision.js';
+import { asyncRoute } from './httpErrors.js';
 import {
   ASSOCIATED_STAFF_MANAGE_PERMS,
   ASSOCIATED_STAFF_READ_PERMS,
@@ -711,7 +712,7 @@ const aiAutomationBuckets = new Map();
 const bootstrapPollCache = new Map();
 const BOOTSTRAP_POLL_CACHE_MS = Math.max(
   1000,
-  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 1000)
+  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 8000)
 );
 
 /**
@@ -3504,55 +3505,62 @@ export function registerHttpApi(app, db) {
   registerAiAutomationRoutes(app, db, aiAutomationBuckets);
   registerAiProviderRoutes(app);
 
-  app.get('/api/workspace/revision', (req, res) => {
-    try {
-      const branchScope = resolveBootstrapBranchScope(req);
-      const payload = buildWorkspaceRevision(db, branchScope);
-      const etag = workspaceRevisionEtag(db, branchScope);
-      if (ifNoneMatchHit(req, etag)) {
-        return res.status(304).end();
-      }
-      setWeakEtag(res, etag);
-      return res.json(payload);
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ ok: false, error: 'Could not compute workspace revision.' });
-    }
-  });
-
-  for (const [domain, buildSnapshot] of Object.entries(DOMAIN_SNAPSHOT_BUILDERS)) {
-    app.get(`/api/workspace/${domain}-snapshot`, (req, res) => {
-      try {
+  app.get(
+    '/api/workspace/revision',
+    asyncRoute(
+      async (req, res) => {
         const branchScope = resolveBootstrapBranchScope(req);
-        const payload = buildSnapshot(db, {
-          user: req.user,
-          branchScope,
-        });
-        const revision = buildWorkspaceRevision(db, branchScope).revision;
-        const etag = jsonWeakEtag({
-          domain,
-          branchScope,
-          revision,
-          userId: req.user?.id ?? '',
-          // Length fingerprint — avoids hashing multi-MB domain JSON bodies.
-          lens: Object.keys(payload)
-            .filter((k) => Array.isArray(payload[k]))
-            .sort()
-            .map((k) => `${k}:${payload[k].length}`),
-        });
+        const payload = await buildWorkspaceRevisionAsync(db, branchScope);
+        const etag = jsonWeakEtag(payload);
         if (ifNoneMatchHit(req, etag)) {
           return res.status(304).end();
         }
         setWeakEtag(res, etag);
         return res.json(payload);
-      } catch (e) {
-        console.error(`[workspace/${domain}-snapshot]`, e);
-        return res.status(500).json({ ok: false, error: `Could not load ${domain} workspace data.` });
-      }
-    });
+      },
+      { context: 'workspace.revision', fallbackMessage: 'Could not compute workspace revision.' }
+    )
+  );
+
+  for (const [domain, buildSnapshot] of Object.entries(DOMAIN_SNAPSHOT_BUILDERS)) {
+    app.get(
+      `/api/workspace/${domain}-snapshot`,
+      asyncRoute(
+        async (req, res) => {
+          const branchScope = resolveBootstrapBranchScope(req);
+          // Yield once so concurrent health/revision can run before the sync desk build.
+          await Promise.resolve();
+          const payload = buildSnapshot(db, {
+            user: req.user,
+            branchScope,
+          });
+          const revision = (await buildWorkspaceRevisionAsync(db, branchScope)).revision;
+          const etag = jsonWeakEtag({
+            domain,
+            branchScope,
+            revision,
+            userId: req.user?.id ?? '',
+            // Length fingerprint — avoids hashing multi-MB domain JSON bodies.
+            lens: Object.keys(payload)
+              .filter((k) => Array.isArray(payload[k]))
+              .sort()
+              .map((k) => `${k}:${payload[k].length}`),
+          });
+          if (ifNoneMatchHit(req, etag)) {
+            return res.status(304).end();
+          }
+          setWeakEtag(res, etag);
+          return res.json(payload);
+        },
+        {
+          context: `workspace.${domain}-snapshot`,
+          fallbackMessage: `Could not load ${domain} workspace data.`,
+        }
+      )
+    );
   }
 
-  app.get('/api/bootstrap', (req, res) => {
+  app.get('/api/bootstrap', async (req, res) => {
     try {
       const includeControls =
         userHasPermission(req.user, 'audit.view') ||
@@ -3569,6 +3577,26 @@ export function registerHttpApi(app, db) {
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
       const skipWorkItemSync = skipSideEffects || mode === 'dashboard' || mode === 'shell';
+      const ifNoneMatch = String(req.headers['if-none-match'] || '');
+      const useShortLivedBootstrapCache =
+        skipSideEffects || mode === 'dashboard' || mode === 'shell';
+      // Check cache before any bootstrap build — polls must not pay full DB cost on hit.
+      if (useShortLivedBootstrapCache) {
+        const cacheKey = bootstrapPollCacheKey(req, {
+          branchScope,
+          mode,
+          includeControls,
+          includeUsers,
+        });
+        const hit = bootstrapPollCache.get(cacheKey);
+        if (hit && Date.now() < hit.expires) {
+          if (ifNoneMatch && ifNoneMatch === hit.etag) {
+            return res.status(304).end();
+          }
+          res.setHeader('ETag', hit.etag);
+          return res.json(hit.payload);
+        }
+      }
       const bootstrapOpts = {
         user: req.user,
         session: req.session,
@@ -3588,11 +3616,8 @@ export function registerHttpApi(app, db) {
                 limit,
               })
             : buildBootstrap(db, bootstrapOpts);
-      const ifNoneMatch = String(req.headers['if-none-match'] || '');
-      const revision = buildWorkspaceRevision(db, branchScope).revision;
+      const revision = (await buildWorkspaceRevisionAsync(db, branchScope)).revision;
       const etagMeta = { revision, mode: mode || 'full' };
-      const useShortLivedBootstrapCache =
-        skipSideEffects || mode === 'dashboard' || mode === 'shell';
       if (useShortLivedBootstrapCache) {
         const cacheKey = bootstrapPollCacheKey(req, {
           branchScope,
@@ -3600,14 +3625,6 @@ export function registerHttpApi(app, db) {
           includeControls,
           includeUsers,
         });
-        const hit = bootstrapPollCache.get(cacheKey);
-        if (hit && Date.now() < hit.expires) {
-          if (ifNoneMatch && ifNoneMatch === hit.etag) {
-            return res.status(304).end();
-          }
-          res.setHeader('ETag', hit.etag);
-          return res.json(hit.payload);
-        }
         const etag = bootstrapPayloadEtag(payload, etagMeta);
         if (ifNoneMatch && ifNoneMatch === etag) {
           return res.status(304).end();

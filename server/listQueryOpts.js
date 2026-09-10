@@ -32,7 +32,7 @@ export function productionHistoryListOpts() {
   const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
   if (raw == null || String(raw).trim() === '') {
     // Desk queues stay usable; older jobs load via search / paginated APIs.
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 500)) };
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 250)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
@@ -78,7 +78,7 @@ export function salesCustomersListOpts() {
 /** Desk-safe default for receipts history (~recent live KD volume; override via env). */
 export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 800)
+  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 300)
 );
 
 /** Open AP / bank-recon lines on finance snapshots (not full history dumps). */

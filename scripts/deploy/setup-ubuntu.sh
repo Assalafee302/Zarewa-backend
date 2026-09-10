@@ -95,10 +95,13 @@ else
   echo "==> Keeping existing $ENV_FILE (verify CORS_ORIGIN=$PUBLIC_URL and COOKIE_SECURE for HTTPS)"
 fi
 
-echo "==> systemd: zarewa.service"
-cat >/etc/systemd/system/zarewa.service <<EOF
+echo "==> systemd: zarewa@.service (4 workers on 3001–3004)"
+# Stop legacy single-process unit if present
+systemctl disable --now zarewa 2>/dev/null || true
+
+cat >/etc/systemd/system/zarewa@.service <<EOF
 [Unit]
-Description=Zarewa API + web UI
+Description=Zarewa API worker %i
 After=network.target
 
 [Service]
@@ -107,6 +110,9 @@ User=$ZAREWA_USER
 Group=$ZAREWA_USER
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
+Environment=PORT=300%i
+Environment=ZAREWA_MYSQL_SYNC_TIMEOUT_MS=10000
+Environment=ZAREWA_MIGRATION_LOCK_WAIT_SEC=1200
 ExecStart=$NODE_BIN server/index.js
 Restart=on-failure
 RestartSec=5
@@ -116,25 +122,35 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable zarewa
-systemctl restart zarewa
-sleep 1
-systemctl is-active --quiet zarewa || (journalctl -u zarewa -n 40 --no-pager; exit 1)
+systemctl enable zarewa@1 zarewa@2 zarewa@3 zarewa@4
+systemctl restart zarewa@1 zarewa@2 zarewa@3 zarewa@4
+sleep 2
+for i in 1 2 3 4; do
+  systemctl is-active --quiet "zarewa@$i" || (journalctl -u "zarewa@$i" -n 40 --no-pager; exit 1)
+done
 
-echo "==> Local health check"
-curl -sfS "http://127.0.0.1:8787/api/health" | head -c 200 || true
+echo "==> Local health check (worker 1)"
+curl -sfS "http://127.0.0.1:3001/api/health" | head -c 200 || true
 echo
 
 NGINX_SERVER_NAME="${DOMAIN:-_}"
-echo "==> nginx reverse proxy (server_name $NGINX_SERVER_NAME)"
+echo "==> nginx reverse proxy (server_name $NGINX_SERVER_NAME) → upstream 3001–3004"
 cat >/etc/nginx/sites-available/zarewa <<EOF
+upstream zarewa_api {
+    least_conn;
+    server 127.0.0.1:3001;
+    server 127.0.0.1:3002;
+    server 127.0.0.1:3003;
+    server 127.0.0.1:3004;
+}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name $NGINX_SERVER_NAME;
 
     location / {
-        proxy_pass http://127.0.0.1:8787;
+        proxy_pass http://zarewa_api;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -152,7 +168,7 @@ if [[ -n "${CERTBOT_EMAIL:-}" && -n "$DOMAIN" ]]; then
   echo "==> Let's Encrypt (certbot)"
   certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" --redirect
   systemctl reload nginx
-  echo "If CORS_ORIGIN was http://, update .env to https://$DOMAIN and: sudo systemctl restart zarewa"
+  echo "If CORS_ORIGIN was http://, update .env to https://$DOMAIN and: sudo systemctl restart 'zarewa@*'"
 else
   echo "==> TLS: skipped (set CERTBOT_EMAIL + ZAREWA_DOMAIN and re-run certbot when DNS points here):"
   echo "    sudo certbot --nginx -d your.domain --agree-tos -m you@example.com"
@@ -161,8 +177,8 @@ fi
 echo "
 Done.
   App:     $PUBLIC_URL
-  Service: sudo systemctl status zarewa
-  Logs:    sudo journalctl -u zarewa -f
+  Service: sudo systemctl status 'zarewa@*'
+  Logs:    sudo journalctl -u 'zarewa@*' -f
   SQLite:  $ZAREWA_DB_PATH
 Next: point DNS A/AAAA record to this host; open EC2 security group for 80/443; rotate seeded passwords (docs/DEPLOYMENT.md).
 "

@@ -11646,6 +11646,7 @@ export function registerHttpApi(app, db) {
         quotationId: id,
         quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
       };
+      clearBootstrapPollCacheForUser(req.user?.id);
       storeIdempotentSuccess(db, req, 'quotation.create', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
@@ -11739,6 +11740,7 @@ export function registerHttpApi(app, db) {
       if (!getQuotation(db, qid)) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
+      clearBootstrapPollCacheForUser(req.user?.id);
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
         const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
         syncQuotationStaffPurchaseFlag(db, qid);
@@ -11782,6 +11784,7 @@ export function registerHttpApi(app, db) {
       }
       const r = write.deleteQuotationIfAllowed(db, req.params.id);
       if (r.ok) {
+        clearBootstrapPollCacheForUser(req.user?.id);
         appendAuditLog(db, {
           actor: req.user,
           action: 'quotation.delete',
@@ -11811,6 +11814,7 @@ export function registerHttpApi(app, db) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
       write.reviveQuotation(db, qid);
+      clearBootstrapPollCacheForUser(req.user?.id);
       const quotation = getQuotation(db, qid);
       res.json({ ok: true, quotation });
     } catch (e) {

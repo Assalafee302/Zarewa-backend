@@ -40,6 +40,7 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.domain).toBe('sales');
     expect(Array.isArray(snap.customers)).toBe(true);
     expect(Array.isArray(snap.associatedStaff)).toBe(true);
+    expect(Array.isArray(snap.treasuryAccounts)).toBe(true);
     expect(snap.associatedStaffPolicy).toEqual({ enabled: false });
     expect(snap.masterData).toEqual(
       expect.objectContaining({

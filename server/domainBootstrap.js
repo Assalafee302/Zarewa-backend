@@ -190,6 +190,8 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
+    // Receipt / advance account pickers — keep on sales so cashiers do not wait on finance pack.
+    treasuryAccounts: f.treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
   };
 }
 

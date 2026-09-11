@@ -10,29 +10,13 @@ import {
 } from '../../shared/lib/refundCreditApply.js';
 import { quotationOverpaymentExcessNgn } from '../../shared/lib/refundQuotationMoney.js';
 import { quotationPaymentCashBreakdownByRef } from '../quotationPaymentCash.js';
+import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 import { refundCashOutstandingNgn, repairRefundPayoutStateTx } from './refundPayoutStatus.js';
 
 function roundMoney(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n);
-}
-
-function refundTreasuryPaidNgnLocal(db, refundId) {
-  const rid = String(refundId || '').trim();
-  if (!rid) return 0;
-  try {
-    const row = db
-      .prepare(
-        `SELECT COALESCE(SUM(ABS(amount_ngn)), 0) AS s
-         FROM treasury_movements
-         WHERE source_kind = 'REFUND_PAYOUT' AND source_id = ?`
-      )
-      .get(rid);
-    return Math.max(0, roundMoney(row?.s));
-  } catch {
-    return 0;
-  }
 }
 
 function mapRefundRowShape(row) {
@@ -98,7 +82,7 @@ function unlinkedOverpayOvershootNgn(db, quotationRef) {
     refundOpen += refundCreditOpenAmountFromStoredRefund(row);
     refundConsumed += refundOverpayConsumedNgn(
       mapRefundRowShape(row),
-      refundTreasuryPaidNgnLocal(db, row.refund_id)
+      refundTreasuryPaidNgn(db, row.refund_id)
     );
   }
   const capacity = Math.max(0, economic - refundOpen - refundConsumed);

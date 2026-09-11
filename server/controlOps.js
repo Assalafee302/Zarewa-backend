@@ -163,6 +163,7 @@ import {
 } from './finance/partnerWalletCredit.js';
 import { voidCompanyRetentionForRefundTx } from './finance/refundCompanyRetentionLedger.js';
 import { savedCustomerPayoutAccount } from './sales/customerPayoutAccount.js';
+import { refundCreditSettledNgn, refundCreditTargetsFor } from './sales/refundCreditLedger.js';
 
 /** Payee money out (till / wallet / credit) — not company cut. Kept local to avoid import cycles. */
 function refundPayeeSettledNgnForCancel(db, row) {
@@ -3380,9 +3381,18 @@ export function decideRefundRequest(db, refundID, payload, actor) {
   }
   const actedAtISO = String(payload.approvalDate ?? '').trim() || nowIso().slice(0, 10);
   const requestedAmountNgn = roundMoney(row.amount_ngn);
-  const creditAppliedNgn = roundMoney(row.credit_applied_ngn);
+  // Ledger-backed, not the stored counter: this figure decides how much cash a manager
+  // may still approve, so a counter that lost an apply would open headroom for a second
+  // payout of money the customer has already had as credit.
+  const creditAppliedNgn = refundCreditSettledNgn(db, row);
   const leftoverAfterCreditNgn = Math.max(0, requestedAmountNgn - creditAppliedNgn);
-  const creditDest = String(row.credit_applied_to_quotation_ref || '').trim();
+  // Every target, not just the last one stamped on the row — a manager refusing an
+  // approval deserves to see all the jobs the money actually went to.
+  const creditTargets = refundCreditTargetsFor(db, refundID);
+  const creditDest =
+    creditTargets.length > 0
+      ? creditTargets.join(', ')
+      : String(row.credit_applied_to_quotation_ref || '').trim();
   const defaultApproveNgn = creditAppliedNgn > 0 ? leftoverAfterCreditNgn : requestedAmountNgn;
   const approvedAmountNgn =
     status === 'Approved'

@@ -13,6 +13,7 @@ import {
 } from '../finance/partnerWalletCredit.js';
 import { refundTillPayableNgn } from '../refundHandlers.js';
 import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
+import { refundCreditSettledNgn } from './refundCreditLedger.js';
 
 export const REFUND_STATUS_PARTIALLY_PAID = 'Partially paid';
 
@@ -53,7 +54,7 @@ export function refundCashOutstandingNgn(db, row) {
   const netCashDue = refundNetCashDueNgn(db, row, approved);
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  const creditApplied = refundCreditSettledNgn(db, row);
   return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied);
 }
 
@@ -63,7 +64,7 @@ export function refundPayeeSettledNgn(db, row) {
   if (!refundId) return 0;
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  const creditApplied = refundCreditSettledNgn(db, row);
   return Math.max(0, treasuryPaid + walletWithdrawn + creditApplied);
 }
 
@@ -130,7 +131,7 @@ export function assertRefundMoneyOutWithinApproved(db, row) {
     treasuryPaidNgn: refundTreasuryPaidNgn(db, refundId),
     walletWithdrawnNgn: refundWalletWithdrawnNgn(db, refundId),
     companyCutSettledNgn: refundSettledAtApprovalNgn(db, row, approved),
-    creditAppliedNgn: row.credit_applied_ngn ?? row.creditAppliedNgn,
+    creditAppliedNgn: refundCreditSettledNgn(db, row),
   });
   if (!ok) {
     throw new Error('Refund money out exceeds the approved amount.');
@@ -147,7 +148,7 @@ export function correctRefundPaidAmountNgn(db, row) {
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const treasury = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  const creditApplied = refundCreditSettledNgn(db, row);
   return Math.min(approved, treasury + walletWithdrawn + creditApplied);
 }
 
@@ -174,7 +175,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   const netCashDueNgn = refundNetCashDueNgn(db, row, approvedNgn);
   const treasuryPaidNgn = refundId ? refundTreasuryPaidNgn(db, refundId) : 0;
   const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
-  const creditAppliedNgn = roundMoney(row.credit_applied_ngn ?? row.creditAppliedNgn);
+  const creditAppliedNgn = refundCreditSettledNgn(db, row);
   const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
   const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
   const heldUnclearedNgn = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus) || storedStatus === 'Paid'
@@ -230,6 +231,12 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     walletWithdrawnNgn,
     treasuryPaidNgn,
     creditAppliedNgn,
+    /**
+     * Money that actually left the business, credit excluded. `paid_amount_ngn` on the
+     * refund row counts applied credit as paid — correct for "what is still owed",
+     * wrong for "what did we disburse". Cash reporting wants this field.
+     */
+    cashPaidNgn: Math.max(0, treasuryPaidNgn + walletWithdrawnNgn),
     payeeSettledNgn,
     cashOutstandingNgn,
     tillPayableNgn,

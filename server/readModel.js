@@ -7,6 +7,7 @@ import {
 import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { repairRefundPayoutStateTx, resolveRefundStatus, buildRefundSettlementSummary } from './sales/refundPayoutStatus.js';
+import { healRefundCreditAppliedFromApplicationsTx } from './sales/refundCreditHeal.js';
 import {
   poTransportQuotedFeeNgn,
   PO_TRANSPORT_TREASURY_PAYABLE_STATUSES,
@@ -2750,6 +2751,22 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
        ORDER BY cr.requested_at_iso DESC${page.sql}`;
   const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
+  // Open payouts: stamp credit that already left via leftover-overpay applications so
+  // Finance waiting list drops (e.g. RF-KD-26-9578 still showing after OVERPAY_REVERSAL).
+  for (const row of rows) {
+    const st = String(row.status || '').trim();
+    if (st === 'Approved' || st === 'Partially paid') {
+      healRefundCreditAppliedFromApplicationsTx(db, row.refund_id);
+      const healed = db
+        .prepare(
+          `SELECT status, paid_amount_ngn, credit_applied_ngn, credit_applied_to_quotation_ref,
+                  payment_note, paid_at_iso, paid_by, paid_by_user_id, approved_amount_ngn
+           FROM customer_refunds WHERE refund_id = ?`
+        )
+        .get(row.refund_id);
+      if (healed) Object.assign(row, healed);
+    }
+  }
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
@@ -2983,6 +3000,8 @@ export function getPaymentRequestDetail(db, requestId) {
 export function getCustomerRefundDetail(db, refundId) {
   const id = String(refundId || '').trim();
   if (!id) return null;
+  // Heal credit_applied when Confirm payment already spent this refund's reserved overpay.
+  healRefundCreditAppliedFromApplicationsTx(db, id);
   repairRefundPayoutStateTx(db, id);
   const row = db
     .prepare(

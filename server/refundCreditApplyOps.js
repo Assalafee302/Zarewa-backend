@@ -166,6 +166,9 @@ function stampRefundCreditOnRowTx(db, fresh, amt, { target, actor, atIso }) {
  * Leftover `overpay:` apply does not stamp a refund row. If that quote still has an
  * approved payout (credit-open was 0 because paid_amount was inflated at approval),
  * move the applied ₦ onto those refunds so Pay no longer shows the original till due.
+ *
+ * Also stamps approved overpayment refunds whose open balance was spent as generic
+ * leftover before listEligible reserved it (RF-KD-26-9578 class).
  */
 function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, target, actor, atIso }) {
   const qid = String(quotationRef || '').trim();

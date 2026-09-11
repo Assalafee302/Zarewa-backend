@@ -25,7 +25,7 @@ import {
 import { reconcilePoReceiptStatusIfComplete } from './inTransitOps.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
-import { listBranches } from './branches.js';
+import { listBranches, DEFAULT_BRANCH_ID } from './branches.js';
 import { branchPredicate } from './branchSql.js';
 import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
@@ -2788,25 +2788,35 @@ export function countRefunds(db, branchScope = 'ALL') {
 }
 
 export function listTreasuryAccounts(db, branchScope = 'ALL') {
-  const b = branchWhere(db, 'treasury_accounts', branchScope);
+  const mapRow = (row) => ({
+    id: row.id,
+    name: row.name,
+    bankName: row.bank_name,
+    balance: row.balance,
+    openingBalanceNgn: row.opening_balance_ngn ?? 0,
+    type: row.type,
+    accNo: row.acc_no,
+    accountOfficerName: row.account_officer_name ?? '',
+    accountOfficerPhone: row.account_officer_phone ?? '',
+    bankBranch: row.bank_branch ?? '',
+    sortCodeOrSwift: row.sort_code_or_swift ?? '',
+    notes: row.notes ?? '',
+    branchId: row.branch_id ?? '',
+  });
+  if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')) {
+    return db.prepare(`SELECT * FROM treasury_accounts ORDER BY id`).all().map(mapRow);
+  }
+  // Empty branch_id posts as DEFAULT_BRANCH_ID (assertTreasuryAccountForWorkspace) — include those
+  // when the workspace is on the default branch so cashiers can pick till/bank accounts.
   return db
-    .prepare(`SELECT * FROM treasury_accounts WHERE 1=1${b.sql} ORDER BY id`)
-    .all(...b.args)
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      bankName: row.bank_name,
-      balance: row.balance,
-      openingBalanceNgn: row.opening_balance_ngn ?? 0,
-      type: row.type,
-      accNo: row.acc_no,
-      accountOfficerName: row.account_officer_name ?? '',
-      accountOfficerPhone: row.account_officer_phone ?? '',
-      bankBranch: row.bank_branch ?? '',
-      sortCodeOrSwift: row.sort_code_or_swift ?? '',
-      notes: row.notes ?? '',
-      branchId: row.branch_id ?? '',
-    }));
+    .prepare(
+      `SELECT * FROM treasury_accounts
+       WHERE branch_id = ?
+          OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
+       ORDER BY id`
+    )
+    .all(branchScope, branchScope, DEFAULT_BRANCH_ID)
+    .map(mapRow);
 }
 
 export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {

@@ -6,6 +6,7 @@ import { createDatabase, defaultDbPath, lastBootPhase } from './db.js';
 import { createApp } from './app.js';
 import { loadProjectEnv } from './loadProjectEnv.js';
 import { mysqlConfigFromEnv } from './mysqlDatabase.js';
+import { DEPLOYED_COMMIT, PROCESS_STARTED_AT_ISO } from './deployedCommit.js';
 
 loadProjectEnv();
 
@@ -61,6 +62,10 @@ try {
     ok: false,
     service: 'zarewa-api',
     degraded: true,
+    // Same pair as the healthy probe: a degraded boot still needs to say which code
+    // failed and when it tried, or "I redeployed and it is still broken" is unanswerable.
+    commit: DEPLOYED_COMMIT,
+    startedAt: PROCESS_STARTED_AT_ISO,
     database: false,
     bootError: errMsg,
     bootPhase: lastBootPhase,

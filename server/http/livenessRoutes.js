@@ -9,11 +9,15 @@
  * @param {import('express').Express} app
  * @param {{ livenessCapabilities?: Record<string, unknown> }} [opts]
  */
+import { DEPLOYED_COMMIT, PROCESS_STARTED_AT_ISO } from '../deployedCommit.js';
+
 export function registerLivenessRoutes(app, { livenessCapabilities = {} } = {}) {
   const sendPublicLiveness = (_req, res) => {
     res.json({
       ok: true,
       service: 'zarewa-api',
+      commit: DEPLOYED_COMMIT,
+      startedAt: PROCESS_STARTED_AT_ISO,
       time: new Date().toISOString(),
     });
   };
@@ -21,6 +25,10 @@ export function registerLivenessRoutes(app, { livenessCapabilities = {} } = {}) 
     res.json({
       ok: true,
       service: 'zarewa-api',
+      // Deploy check: `commit` says which code is serving, `startedAt` says whether the
+      // restart that was meant to pick it up actually happened.
+      commit: DEPLOYED_COMMIT,
+      startedAt: PROCESS_STARTED_AT_ISO,
       time: new Date().toISOString(),
       capabilities: livenessCapabilities,
     });

@@ -844,4 +844,72 @@ describe.skipIf(!mysqlOk)('apply refund credit to new quotation (integration)', 
     expect(Number(rf.credit_applied_ngn)).toBe(40_000);
     expect(rf.status).toBe('Paid');
   });
+
+  it('stamps an approved unpaid overpay refund when leftover overpay is applied as refund fund', () => {
+    const lines = JSON.stringify({
+      products: [{ name: 'Roof', qty: 2, unitPrice: 20000 }],
+      accessories: [],
+      services: [],
+    });
+    db.exec(`
+      INSERT INTO customers (customer_id, name, branch_id)
+      VALUES ('CUS-WAITPAY', 'Waiting Pay Overpay Customer', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES
+        ('QT-WP-SRC', 'CUS-WAITPAY', 'Waiting Pay Overpay Customer', 40000, 120000, 'Paid', 'Finished', '${lines.replace(/'/g, "''")}', '2026-08-01', '${DEFAULT_BRANCH_ID}'),
+        ('QT-WP-DST', 'CUS-WAITPAY', 'Waiting Pay Overpay Customer', 40000, 0, 'Unpaid', 'Draft', '${lines.replace(/'/g, "''")}', '2026-08-02', '${DEFAULT_BRANCH_ID}');
+    `);
+    insertLedgerRows(
+      db,
+      [
+        {
+          type: 'RECEIPT',
+          customerID: 'CUS-WAITPAY',
+          customerName: 'Waiting Pay Overpay Customer',
+          amountNgn: 40_000,
+          quotationRef: 'QT-WP-SRC',
+          atISO: '2026-08-01T12:00:00.000Z',
+        },
+        {
+          type: 'OVERPAY_ADVANCE',
+          customerID: 'CUS-WAITPAY',
+          customerName: 'Waiting Pay Overpay Customer',
+          amountNgn: 80_000,
+          quotationRef: 'QT-WP-SRC',
+          atISO: '2026-08-01T12:30:00.000Z',
+        },
+      ],
+      DEFAULT_BRANCH_ID
+    );
+    db.exec(`
+      INSERT INTO customer_refunds (
+        refund_id, customer_id, customer_name, quotation_ref, reason_category, reason,
+        amount_ngn, approved_amount_ngn, status, requested_by, requested_at_iso, paid_amount_ngn, branch_id,
+        calculation_lines_json
+      ) VALUES (
+        'RF-WP-1', 'CUS-WAITPAY', 'Waiting Pay Overpay Customer', 'QT-WP-SRC', '["Overpayment"]', 'Overpayment',
+        40000, 40000, 'Approved', 'Sales One', '2026-08-01T13:00:00.000Z', 0, '${DEFAULT_BRANCH_ID}',
+        '${JSON.stringify([{ category: 'Overpayment', amountNgn: 40000 }]).replace(/'/g, "''")}'
+      );
+    `);
+
+    const listed = listEligibleRefundCredits(db, 'CUS-WAITPAY', 'QT-WP-DST');
+    const leftover = listed.sources.find((s) => s.kind === 'overpay' && s.sourceQuotationRef === 'QT-WP-SRC');
+    expect(leftover?.availableNgn ?? 0).toBeGreaterThan(0);
+
+    const applied = applyRefundCreditToQuotation(db, {
+      customerID: 'CUS-WAITPAY',
+      targetQuotationRef: 'QT-WP-DST',
+      sourceIds: ['overpay:QT-WP-SRC'],
+      actor,
+      branchId: DEFAULT_BRANCH_ID,
+      dateISO: '2026-08-03',
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.appliedNgn).toBe(40_000);
+
+    const rf = db.prepare(`SELECT status, credit_applied_ngn FROM customer_refunds WHERE refund_id = 'RF-WP-1'`).get();
+    expect(Number(rf.credit_applied_ngn)).toBe(40_000);
+    expect(rf.status).toBe('Paid');
+  });
 });

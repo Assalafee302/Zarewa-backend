@@ -181,10 +181,21 @@ function consumeFalseOpenRefundsOnOverpayApplyTx(db, { quotationRef, amountNgn, 
     .all(qid);
   for (const row of rows) {
     if (left <= 0) break;
+    const status = String(row.status || '').trim();
+    const shape = mapRefundRowToCreditShape(row);
+    const overpayOnly = refundCategoriesAreOverpaymentOnly(
+      shape.reasonCategory,
+      shape.calculationLines
+    );
     const creditOpen = refundCreditOpenAmountFromStoredRefund(row);
-    if (creditOpen > 0) continue;
     const cashOut = refundCashOutstandingNgn(db, row);
-    const take = Math.min(left, cashOut);
+    // Pending leftover stays for the manager unless credit-open was hidden (false paid_amount).
+    if (status === 'Pending' && creditOpen > 0) continue;
+    // Transport/installation cash-payout refunds stay reserved when leftover is extra.
+    // Overpayment refunds that cashiers apply as "refund fund" via leftover overpay must
+    // leave the till waiting list.
+    if (!overpayOnly && creditOpen > 0) continue;
+    const take = Math.min(left, Math.max(creditOpen, cashOut));
     if (take <= 0) continue;
     stampRefundCreditOnRowTx(db, row, take, { target, actor, atIso });
     left -= take;

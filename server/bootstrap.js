@@ -613,7 +613,6 @@ export const SHELL_DEFERRED_DESK_ARRAYS = [
   'expenses',
   'paymentRequests',
   'treasuryMovements',
-  'treasuryAccounts',
   'ledgerEntries',
   'purchaseOrders',
   'suppliers',
@@ -711,6 +710,13 @@ export function buildShellBootstrap(db, opts = {}) {
     ...emptyDesk,
     /** Setup gauges / material types / colours — required for quotation form on first paint. */
     masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
+    /**
+     * Reference data, not a register: a mill has a dozen or so bank and cash accounts that
+     * change a few times a year. Deferring them with the thousand-row desk arrays meant the
+     * receipt screen could not offer a bank until the whole sales pack had downloaded —
+     * minutes, on a Kaduna link. A few hundred gzipped bytes here buys that back.
+     */
+    treasuryAccounts: canListTreasuryAccounts(user) ? listTreasuryAccounts(db, branchScope) : [],
     materialPoolSummary: null,
     wipByProduct: {},
     productionMetrics: {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { buildWorkspaceRevision } from './workspaceRevision.js';
+import { SHELL_DEFERRED_DESK_ARRAYS } from './bootstrap.js';
 import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
 
@@ -15,6 +16,22 @@ function mysqlAvailable() {
 }
 
 const mysqlOk = mysqlAvailable();
+
+describe('shell first-paint contract', () => {
+  it('ships treasury accounts on the shell rather than deferring them', () => {
+    // Regression guard, not a tautology: treasuryAccounts sat in this list alongside the
+    // thousand-row registers, so a cashier could not pick a bank until the entire sales
+    // desk pack had downloaded. It is a dozen rows of reference data — if it ever goes
+    // back in here, the receipt screen silently gets slow again on a mill link.
+    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('treasuryAccounts');
+  });
+
+  it('still defers the registers that actually are large', () => {
+    for (const k of ['customers', 'quotations', 'receipts', 'ledgerEntries', 'treasuryMovements']) {
+      expect(SHELL_DEFERRED_DESK_ARRAYS).toContain(k);
+    }
+  });
+});
 
 describe('httpEtag', () => {
   it('jsonWeakEtag is deterministic', () => {

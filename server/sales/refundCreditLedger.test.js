@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+  refundCreditAppliedByIds,
   refundCreditAppliedNgn,
   refundCreditSettledNgn,
   refundCreditTargetsFor,
@@ -47,6 +48,60 @@ describe('refundCreditAppliedNgn', () => {
   it('falls back to zero when the table is not there yet', () => {
     // Pending migration must not crash a payout screen; the caller still has the counter.
     expect(refundCreditAppliedNgn(stubDb(null), 'RF-1')).toBe(0);
+  });
+});
+
+describe('refundCreditAppliedByIds', () => {
+  /** Counts prepare() calls so a test can prove the list path is one query, not N. */
+  function countingDb(rows) {
+    let prepares = 0;
+    return {
+      prepares: () => prepares,
+      prepare() {
+        prepares += 1;
+        return { all: () => rows, get: () => ({ s: 0 }) };
+      },
+    };
+  }
+
+  it('resolves many refunds in a single query', () => {
+    // The refund list mapper runs per row; looking credit up inside it would turn one
+    // desk request into hundreds of queries on a layer that serializes them.
+    const db = countingDb([
+      { refund_id: 'RF-1', s: 500 },
+      { refund_id: 'RF-2', s: 900 },
+    ]);
+    const map = refundCreditAppliedByIds(db, ['RF-1', 'RF-2', 'RF-1']);
+    expect(db.prepares()).toBe(1);
+    expect(map.get('RF-1')).toBe(500);
+    expect(map.get('RF-2')).toBe(900);
+  });
+
+  it('asks nothing when there is nothing to ask about', () => {
+    const db = countingDb([]);
+    expect(refundCreditAppliedByIds(db, []).size).toBe(0);
+    expect(refundCreditAppliedByIds(db, [null, '  ']).size).toBe(0);
+    expect(db.prepares()).toBe(0);
+  });
+
+  it('returns an empty map when the table is missing', () => {
+    const db = { prepare() { throw new Error('no such table'); } };
+    expect(refundCreditAppliedByIds(db, ['RF-1']).size).toBe(0);
+  });
+});
+
+describe('refundCreditSettledNgn with a batched map', () => {
+  it('uses the map instead of querying', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = { prepare() { throw new Error('should not be queried'); } };
+    const map = new Map([['RF-1', 800]]);
+    expect(refundCreditSettledNgn(db, { refund_id: 'RF-1', credit_applied_ngn: 300 }, map)).toBe(800);
+  });
+
+  it('treats a refund absent from the map as no ledger credit', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = { prepare() { throw new Error('should not be queried'); } };
+    expect(refundCreditSettledNgn(db, { refund_id: 'RF-9', credit_applied_ngn: 250 }, new Map())).toBe(250);
   });
 });
 

@@ -15,6 +15,24 @@ function roundMoney(value) {
 }
 
 /**
+ * Refunds already reported as drifted this process.
+ *
+ * A mismatch is a property of the row, not of the request, so re-reporting it every time
+ * a desk list is rebuilt turns a useful signal into hundreds of identical lines per poll.
+ * One line per refund per process is enough to find them; the set resets on restart.
+ */
+const warnedRefundIds = new Set();
+
+/** @param {string} refundId @param {number} stored @param {number} ledger */
+function warnMismatchOnce(refundId, stored, ledger) {
+  if (warnedRefundIds.has(refundId)) return;
+  warnedRefundIds.add(refundId);
+  console.warn(
+    `[zarewa] refund ${refundId} credit mismatch — counter ₦${stored}, applications ₦${ledger}; settling on ₦${Math.max(stored, ledger)}`
+  );
+}
+
+/**
  * Sum of live credit applications against this refund.
  *
  * The counterpart to refundTreasuryPaidNgn: derived from history on every read, so it
@@ -42,6 +60,41 @@ export function refundCreditAppliedNgn(db, refundId) {
     // the stored counter, which is what shipped before this module existed.
     return 0;
   }
+}
+
+/**
+ * Live credit totals for many refunds in one query.
+ *
+ * The single-refund form is a per-row query, and the refund list mapper runs once per
+ * row — so calling it from a list turns one request into hundreds on a database layer
+ * that serializes them. List callers batch here and hand the map down, the way the
+ * payout-history and wallet lookups beside it already do.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string[]} refundIds
+ * @returns {Map<string, number>}
+ */
+export function refundCreditAppliedByIds(db, refundIds) {
+  const ids = [...new Set((refundIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+  try {
+    const ph = ids.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT refund_id, COALESCE(SUM(amount_ngn), 0) AS s
+         FROM refund_credit_applications
+         WHERE refund_id IN (${ph})
+           AND LOWER(TRIM(COALESCE(status, ''))) != ?
+         GROUP BY refund_id`
+      )
+      .all(...ids, REFUND_CREDIT_REVERSED_STATUS.toLowerCase());
+    for (const row of rows) {
+      map.set(String(row.refund_id), Math.max(0, roundMoney(row.s)));
+    }
+  } catch {
+    // Table missing on this host — callers fall back to the stored counter per row.
+  }
+  return map;
 }
 
 /**
@@ -95,15 +148,14 @@ export function refundCreditTargetsFor(db, refundId) {
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} row a customer_refunds row, snake or camel case
  */
-export function refundCreditSettledNgn(db, row) {
+export function refundCreditSettledNgn(db, row, ledgerByRefundId = null) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const stored = Math.max(0, roundMoney(row?.credit_applied_ngn ?? row?.creditAppliedNgn));
   if (!refundId) return stored;
-  const ledger = refundCreditAppliedNgn(db, refundId);
-  if (ledger !== stored) {
-    console.warn(
-      `[zarewa] refund ${refundId} credit mismatch — counter ₦${stored}, applications ₦${ledger}; settling on ₦${Math.max(stored, ledger)}`
-    );
-  }
+  // A caller walking a list passes the batched map; a caller holding one refund does not.
+  const ledger = ledgerByRefundId
+    ? Math.max(0, roundMoney(ledgerByRefundId.get(refundId)))
+    : refundCreditAppliedNgn(db, refundId);
+  if (ledger !== stored) warnMismatchOnce(refundId, stored, ledger);
   return Math.max(stored, ledger);
 }

@@ -7,6 +7,7 @@ import {
 import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
 import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
 import { repairRefundPayoutStateTx, resolveRefundStatus, buildRefundSettlementSummary } from './sales/refundPayoutStatus.js';
+import { refundCreditAppliedByIds } from './sales/refundCreditLedger.js';
 import { healRefundCreditAppliedFromApplicationsTx } from './sales/refundCreditHeal.js';
 import {
   poTransportQuotedFeeNgn,
@@ -2770,9 +2771,13 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
+  // One query for the whole page: the settlement summary needs applied credit per row,
+  // and looking it up inside the mapper would be a query per refund.
+  const creditAppliedByRefundId = refundCreditAppliedByIds(db, refundIds);
   return rows.map((row) =>
     mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, {
       includePreviewSnapshot,
+      creditAppliedByRefundId,
     })
   );
 }
@@ -3101,7 +3106,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
       : approvedAmountNgn;
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
   const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
-  const resolvedStatus = resolveRefundStatus(db, row);
+  const resolvedStatus = resolveRefundStatus(db, row, mapOpts.creditAppliedByRefundId);
   splitDistributions = liveEnrichRefundSplitUnclearedHolds(
     db,
     row,
@@ -3109,7 +3114,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     finalApprovedAmountNgn,
     resolvedStatus
   );
-  const settlementSummary = buildRefundSettlementSummary(db, row, { walletOpenNgn });
+  const settlementSummary = buildRefundSettlementSummary(db, row, { walletOpenNgn, creditAppliedByRefundId: mapOpts.creditAppliedByRefundId });
   // Prefer repaired payee-only paid amount when legacy rows still include company cut.
   const paidAmountForApi = settlementSummary.payeeSettledNgn;
   // Desk lists already batch walletOpenNgn; skip per-row open-credit detail (N+1 under synckit).

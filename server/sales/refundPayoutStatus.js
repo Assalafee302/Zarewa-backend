@@ -46,7 +46,7 @@ export function refundWalletWithdrawnNgn(db, refundId) {
 /**
  * Net till/bank/wallet/credit still owed to payees (after company cut).
  */
-export function refundCashOutstandingNgn(db, row) {
+export function refundCashOutstandingNgn(db, row, creditAppliedByRefundId = null) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   if (!refundId) return 0;
 
@@ -54,17 +54,17 @@ export function refundCashOutstandingNgn(db, row) {
   const netCashDue = refundNetCashDueNgn(db, row, approved);
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = refundCreditSettledNgn(db, row);
+  const creditApplied = refundCreditSettledNgn(db, row, creditAppliedByRefundId);
   return Math.max(0, netCashDue - treasuryPaid - walletWithdrawn - creditApplied);
 }
 
 /** Money that has already discharged the payee obligation (not company cut). */
-export function refundPayeeSettledNgn(db, row) {
+export function refundPayeeSettledNgn(db, row, creditAppliedByRefundId = null) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   if (!refundId) return 0;
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = refundCreditSettledNgn(db, row);
+  const creditApplied = refundCreditSettledNgn(db, row, creditAppliedByRefundId);
   return Math.max(0, treasuryPaid + walletWithdrawn + creditApplied);
 }
 
@@ -83,13 +83,13 @@ export function refundStatusAllowsTreasuryPayout(status) {
  * Paid when till + wallet withdrawals + credit cover net cash due to payees.
  * Company cut alone never marks Paid.
  */
-export function resolveRefundStatus(db, row) {
+export function resolveRefundStatus(db, row, creditAppliedByRefundId = null) {
   const stored = String(row?.status || '').trim();
   if (!PAYOUT_LIFECYCLE_STATUSES.has(stored)) return stored;
 
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const netCashDue = refundNetCashDueNgn(db, row, approved);
-  const payeeSettled = refundPayeeSettledNgn(db, row);
+  const payeeSettled = refundPayeeSettledNgn(db, row, creditAppliedByRefundId);
 
   if (payeeCoversNetCashDue(payeeSettled, netCashDue)) {
     return 'Paid';
@@ -143,12 +143,12 @@ export function assertRefundMoneyOutWithinApproved(db, row) {
  * paid_amount = payee channels only (treasury + wallet withdrawn + credit).
  * Company cut is excluded — it lives on the retention ledger.
  */
-export function correctRefundPaidAmountNgn(db, row) {
+export function correctRefundPaidAmountNgn(db, row, creditAppliedByRefundId = null) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
   const treasury = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
-  const creditApplied = refundCreditSettledNgn(db, row);
+  const creditApplied = refundCreditSettledNgn(db, row, creditAppliedByRefundId);
   return Math.min(approved, treasury + walletWithdrawn + creditApplied);
 }
 
@@ -175,7 +175,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   const netCashDueNgn = refundNetCashDueNgn(db, row, approvedNgn);
   const treasuryPaidNgn = refundId ? refundTreasuryPaidNgn(db, refundId) : 0;
   const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
-  const creditAppliedNgn = refundCreditSettledNgn(db, row);
+  const creditAppliedNgn = refundCreditSettledNgn(db, row, opts.creditAppliedByRefundId ?? null);
   const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
   const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
   const heldUnclearedNgn = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus) || storedStatus === 'Paid'

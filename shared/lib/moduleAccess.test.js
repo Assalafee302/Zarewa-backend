@@ -49,8 +49,10 @@ describe('moduleAccess', () => {
     expect(canAccessModuleWithPermissions(['dashboard.view'], 'edit_approvals')).toBe(true);
   });
 
-  it('cashier cannot open Sales module even with receipts.post', () => {
-    expect(userMayAccessSalesModule('cashier', ['receipts.post', 'sales.view'])).toBe(false);
+  it('cashier opens Sales with quote/view keys, not receipts.post alone', () => {
+    expect(userMayAccessSalesModule('cashier', ['receipts.post'])).toBe(false);
+    expect(userMayAccessSalesModule('cashier', ['receipts.post', 'sales.view'])).toBe(true);
+    expect(userMayAccessSalesModule('cashier', ['quotations.manage'])).toBe(true);
     expect(userMayAccessSalesModule('sales_staff', ['sales.view'])).toBe(true);
   });
 });

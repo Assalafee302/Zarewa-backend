@@ -45,6 +45,15 @@ describe('ensureSalesDeskPermissions', () => {
     expect(perms).toContain('expenses.create');
     expect(perms).toContain('quotations.manage');
   });
+
+  it('grants sales desk perms for cashier role', () => {
+    const perms = ['dashboard.view'];
+    ensureSalesDeskPermissions(perms, { roleKey: 'cashier', department: 'cashier' });
+    expect(perms).toContain('quotations.manage');
+    expect(perms).toContain('sales.view');
+    expect(perms).toContain('customers.manage');
+    expect(perms).toContain('receipts.post');
+  });
 });
 
 describe('operations_officer role aliases', () => {
@@ -79,6 +88,14 @@ describe('operations_officer role aliases', () => {
     expect(cashier).toContain('ot.view_branch');
     expect(cashier).not.toContain('ot.request');
     expect(cashier).not.toContain('ot.approve');
+  });
+
+  it('grants cashier sales desk create access (quotes, receipts, cutting lists)', () => {
+    const cashier = permissionsForRole('cashier');
+    expect(cashier).toContain('sales.view');
+    expect(cashier).toContain('customers.manage');
+    expect(cashier).toContain('quotations.manage');
+    expect(cashier).toContain('receipts.post');
   });
 
   it('lets MD approve overtime from Command Centre', () => {

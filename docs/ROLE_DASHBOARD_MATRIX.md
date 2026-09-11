@@ -9,7 +9,7 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 | `md` | Managing Director | `/exec` (Control Center) | `/executive-hr`, `/procurement`, `/accounting`, `/manager` (oversight) |
 | `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations` — **not** `/hr`, `/executive-hr`, `/accounting` |
 | `finance_manager` | Accountant / Head of Accounts | `/accounting` | `/accounts` (reconciliation tabs), `/reports` |
-| `cashier` | Cashier | `/cashier` | Limited `/accounts` tabs only — **not** `/accounting` |
+| `cashier` | Cashier | `/cashier` | `/sales` (quotations, receipts, cutting lists); limited `/accounts` tabs only — **not** `/accounting` |
 | `hr_admin` | HR / Admin | `/hr` | `/reports` |
 | `gmhr` | GM HR | `/hr` | `/reports` |
 | `sales_staff` | Sales officer | `/` (workspace) | `/sales`, `/my-profile` |

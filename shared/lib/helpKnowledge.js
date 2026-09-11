@@ -1262,7 +1262,7 @@ const CORE_HELP_ARTICLES = [
       'cashier cannot approve',
     ],
     answer:
-      '**Finance desk** (`/accounts?tab=desk`) is the cashier finance home: liquidity, till/bank statements, confirm receipts, pay approved refunds, expenses, register withdrawals, and haulage — all on one tab. Cashiers **request** refunds in Sales but **cannot approve** them.',
+      '**Finance desk** (`/accounts?tab=desk`) is the cashier finance home: liquidity, till/bank statements, confirm receipts, pay approved refunds, expenses, register withdrawals, and haulage — all on one tab. Cashiers also use **Sales** (`/sales`) to create quotations, receipts, and cutting lists. They **request** refunds in Sales but **cannot approve** them.',
     steps: [
       'Open **Finance → Finance desk** from the sidebar (or `/accounts?tab=desk`).',
       'Review liquidity, account cards, and colour-coded queues — work top to bottom.',

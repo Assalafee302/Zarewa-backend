@@ -90,12 +90,17 @@ export const MODULE_ACCESS_POLICY = {
   exec: ['exec.dashboard.view', 'dashboard.view'],
 };
 
-/** Cashiers work in Finance only — receipts.post must not expose the Sales module. */
-export const SALES_MODULE_EXCLUDED_ROLE_KEYS = new Set(['cashier']);
+/**
+ * Cashiers may open Sales when they hold quote/customer desk keys.
+ * `receipts.post` alone (cashier till) must not expose the Sales module.
+ */
+export const SALES_MODULE_CASHIER_REQUIRED = ['sales.view', 'sales.manage', 'quotations.manage'];
 
 export function userMayAccessSalesModule(roleKey, permissions) {
   const rk = String(roleKey || '').trim().toLowerCase();
-  if (SALES_MODULE_EXCLUDED_ROLE_KEYS.has(rk)) return false;
+  if (rk === 'cashier') {
+    return SALES_MODULE_CASHIER_REQUIRED.some((p) => hasPermissionInList(permissions, p));
+  }
   return canAccessModuleWithPermissions(permissions, 'sales');
 }
 

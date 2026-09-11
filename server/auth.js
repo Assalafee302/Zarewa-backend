@@ -277,6 +277,9 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard.view',
       'office.use',
+      'sales.view',
+      'customers.manage',
+      'quotations.manage',
       'receipts.post',
       'refunds.request',
       'expenses.create',
@@ -791,6 +794,7 @@ export function ensureSalesDeskPermissions(permissions, ctx = {}) {
   const deptRole = normalizeWorkspaceDepartment(rawDept || rk);
   const needsSales =
     rk === 'sales_staff' ||
+    rk === 'cashier' ||
     SALES_DESK_DEPARTMENT_LABELS.has(rawDept) ||
     deptRole === 'sales_staff';
   if (!needsSales) return;

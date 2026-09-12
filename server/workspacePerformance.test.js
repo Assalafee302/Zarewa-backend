@@ -18,12 +18,16 @@ function mysqlAvailable() {
 const mysqlOk = mysqlAvailable();
 
 describe('shell first-paint contract', () => {
-  it('ships treasury accounts on the shell rather than deferring them', () => {
+  it('ships reference data on the shell rather than deferring it', () => {
     // Regression guard, not a tautology: treasuryAccounts sat in this list alongside the
     // thousand-row registers, so a cashier could not pick a bank until the entire sales
     // desk pack had downloaded. It is a dozen rows of reference data — if it ever goes
     // back in here, the receipt screen silently gets slow again on a mill link.
     expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('treasuryAccounts');
+    // Same reasoning: a few dozen rows of reference data that every procurement screen
+    // needs, and an empty supplier picker reads as "no suppliers exist".
+    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('suppliers');
+    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('transportAgents');
   });
 
   it('still defers the registers that actually are large', () => {

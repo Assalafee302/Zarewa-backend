@@ -615,8 +615,6 @@ export const SHELL_DEFERRED_DESK_ARRAYS = [
   'treasuryMovements',
   'ledgerEntries',
   'purchaseOrders',
-  'suppliers',
-  'transportAgents',
   'associatedStaff',
   'products',
   'coilLots',
@@ -717,6 +715,18 @@ export function buildShellBootstrap(db, opts = {}) {
      * minutes, on a Kaduna link. A few hundred gzipped bytes here buys that back.
      */
     treasuryAccounts: canListTreasuryAccounts(user) ? listTreasuryAccounts(db, branchScope) : [],
+    /**
+     * Reference data, same reasoning as treasury accounts above. A mill has a few dozen
+     * suppliers and hauliers that change a handful of times a year, and they are
+     * referenced from purchase orders, GRNs and transport all over the app. Deferring
+     * them with the thousand-row registers meant a supplier picker came up empty — and an
+     * empty dropdown reads as "there are no suppliers", not as "still loading".
+     *
+     * Agreement file bodies are already stripped from these rows for list use, so the
+     * whole set is a few KB gzipped.
+     */
+    suppliers: canReadProcurementDomain(user) ? listSuppliers(db, branchScope) : [],
+    transportAgents: canReadProcurementDomain(user) ? listTransportAgents(db, branchScope) : [],
     materialPoolSummary: null,
     wipByProduct: {},
     productionMetrics: {

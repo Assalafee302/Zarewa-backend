@@ -78,3 +78,103 @@ export function notifyWorkspaceWrite(kind, branchId = null) {
   if (!domains) return;
   broadcastWorkspaceDataChanged({ domains: [...domains], branchId, reason: String(kind) });
 }
+
+/**
+ * Which desks each API resource feeds.
+ *
+ * Matched on the first path segment after /api/. Generous on purpose: naming one desk too
+ * many costs a conditional request that answers 304, while naming one too few leaves a
+ * colleague staring at stale data — which is the whole bug.
+ * @type {Readonly<Record<string, ReadonlyArray<string>>>}
+ */
+const RESOURCE_DOMAINS = Object.freeze({
+  quotations: ['sales'],
+  customers: ['sales'],
+  receipts: ['sales', 'finance'],
+  ledger: ['sales', 'finance'],
+  refunds: ['sales', 'finance'],
+  'cutting-lists': ['sales', 'operations'],
+  'staff-purchase-credits': ['sales', 'finance'],
+  'credit-exceptions': ['sales'],
+
+  'production-jobs': ['operations'],
+  deliveries: ['operations'],
+  'coil-lots': ['operations', 'procurement'],
+  'coil-control': ['operations'],
+  'coil-requests': ['operations', 'procurement'],
+  'material-incidents': ['operations'],
+  'material-requests': ['operations'],
+  'stock-register': ['operations', 'procurement'],
+  inventory: ['operations', 'procurement'],
+  maintenance: ['operations'],
+
+  expenses: ['finance'],
+  'expense-categories': ['finance'],
+  'payment-requests': ['finance', 'procurement'],
+  treasury: ['finance'],
+  'bank-deposits': ['finance'],
+  'bank-reconciliation': ['finance'],
+  'accounts-payable': ['finance', 'procurement'],
+  accounting: ['finance'],
+  gl: ['finance'],
+  'partner-wallets': ['finance'],
+  'inter-branch-loans': ['finance'],
+
+  'purchase-orders': ['procurement'],
+  suppliers: ['procurement'],
+  pricing: ['sales', 'procurement'],
+
+  // Cross-cutting: approvals and edits land on whichever desk raised them, and the work
+  // queue itself is read by all four.
+  'work-items': ['sales', 'operations', 'finance', 'procurement'],
+  'edit-approvals': ['sales', 'operations', 'finance', 'procurement'],
+  controls: ['sales', 'operations', 'finance', 'procurement'],
+});
+
+/** Methods that can change something worth telling other desks about. */
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+/** @param {string} path e.g. /api/quotations/QT-1 */
+export function domainsForApiPath(path) {
+  const m = /^\/api\/([a-z0-9-]+)/i.exec(String(path || ''));
+  const resource = m ? m[1].toLowerCase() : '';
+  return RESOURCE_DOMAINS[resource] ? [...RESOURCE_DOMAINS[resource]] : [];
+}
+
+/**
+ * Announce successful writes without asking twenty route handlers to remember to.
+ *
+ * Wrapping the response rather than editing each handler is deliberate: a missed call
+ * site is invisible until someone reports stale data weeks later, and each hand-edit in
+ * a money path is a chance to break something that currently works. The trade is that
+ * the resource-to-desk mapping is central rather than at the point of the write — which
+ * is also the only place it can be reviewed as a whole.
+ *
+ * Fires after the handler has produced its response, so after its transaction committed.
+ * Only on a 2xx that did not carry `ok: false`, because several routes report refusals
+ * that way rather than by status code.
+ */
+export function workspaceDataEventMiddleware(req, res, next) {
+  if (!MUTATING_METHODS.has(String(req.method || '').toUpperCase())) return next();
+  const domains = domainsForApiPath(req.originalUrl || req.url || '');
+  if (!domains.length) return next();
+
+  const sendJson = res.json.bind(res);
+  res.json = (body) => {
+    const out = sendJson(body);
+    try {
+      const okStatus = res.statusCode >= 200 && res.statusCode < 300;
+      if (okStatus && body?.ok !== false) {
+        broadcastWorkspaceDataChanged({
+          domains,
+          branchId: req.workspaceBranchId || null,
+          reason: String(req.method),
+        });
+      }
+    } catch {
+      // Never let announcing a write disturb the write's own response.
+    }
+    return out;
+  };
+  next();
+}

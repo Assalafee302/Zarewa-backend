@@ -191,6 +191,7 @@ import {
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
+import { workspaceDataEventMiddleware } from './workspaceDataEvents.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
@@ -3504,6 +3505,10 @@ export function registerHttpApi(app, db) {
   registerIntegrationReadApi(app, db);
 
   app.use('/api', requireAuth, requireActivePassword);
+  // After requireAuth, which is what sets req.workspaceBranchId — a broadcast without it
+  // would reach every branch instead of the one that changed. Mounted before the route
+  // registrations below so it wraps them all.
+  app.use('/api', workspaceDataEventMiddleware);
 
   registerWorkspaceListRoutes(app, db);
   registerHrApi(app, db);

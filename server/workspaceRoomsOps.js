@@ -240,7 +240,12 @@ export function broadcastWorkspaceEvent(event) {
     ? new Set(targetUserIds.map((u) => String(u)))
     : null;
   const eventBranch = String(wire.branchId || '').trim();
+  // `workspace.data` says only which desk packs moved and is safe for any signed-in user;
+  // everything else on this stream is room, presence or activity content and stays behind
+  // office.use. The gate moved here from the endpoint so one connection can carry both.
+  const isDataOnlyEvent = wire.type === 'workspace.data';
   for (const [res, scope] of sseClients) {
+    if (!isDataOnlyEvent && !scope?.canOffice) continue;
     if (targets && !targets.has(String(scope?.userId || ''))) continue;
     if (!targets && eventBranch && !scope?.viewAll && String(scope?.branchId || '') !== eventBranch) {
       continue;
@@ -296,6 +301,9 @@ export function registerWorkspaceSseClient(res, scope = {}) {
     userId,
     branchId: String(scope.branchId || ''),
     viewAll: Boolean(scope.viewAll),
+    // Decides whether this client receives room and presence traffic, or only the
+    // workspace.data invalidations every signed-in desk needs.
+    canOffice: Boolean(scope.canOffice),
   });
   res.on('close', () => sseClients.delete(res));
   return { ok: true };

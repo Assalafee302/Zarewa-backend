@@ -4,6 +4,14 @@
  * in *Ops modules; this file should only wire HTTP to ops.
  */
 import {
+  analyzeWholeSystem,
+  getArchitectureRecommendations,
+  debugIssue,
+  suggestFeatureImplementation,
+  analyzeCode,
+  performanceAnalysis,
+} from './aiSystemAnalyzer.js';
+import {
   advanceBalanceFromEntries,
   overpayCreditBalanceFromEntries,
   amountDueOnQuotationFromEntries,
@@ -13053,5 +13061,54 @@ export function registerHttpApi(app, db) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
+
+  // AI System Analyzer Routes
+  app.post('/api/ai/analyze-system', requireAuth, asyncRoute(async (req, res) => {
+    console.log('🤖 Analyzing entire system...');
+    const analysis = await analyzeWholeSystem();
+    res.json({ ok: true, analysis });
+  }));
+
+  app.post('/api/ai/architecture-recommendations', requireAuth, asyncRoute(async (req, res) => {
+    console.log('🤖 Generating architecture recommendations...');
+    const recommendations = await getArchitectureRecommendations();
+    res.json({ ok: true, recommendations });
+  }));
+
+  app.post('/api/ai/debug-issue', requireAuth, asyncRoute(async (req, res) => {
+    const { description, code } = req.body || {};
+    if (!description || !code) {
+      return res.status(400).json({ ok: false, error: 'description and code required' });
+    }
+    console.log('🤖 Analyzing issue...');
+    const analysis = await debugIssue(description, code);
+    res.json({ ok: true, analysis });
+  }));
+
+  app.post('/api/ai/suggest-feature', requireAuth, asyncRoute(async (req, res) => {
+    const { featureDescription } = req.body || {};
+    if (!featureDescription) {
+      return res.status(400).json({ ok: false, error: 'featureDescription required' });
+    }
+    console.log('🤖 Suggesting feature implementation...');
+    const suggestion = await suggestFeatureImplementation(featureDescription);
+    res.json({ ok: true, suggestion });
+  }));
+
+  app.post('/api/ai/analyze-code', requireAuth, asyncRoute(async (req, res) => {
+    const { code, context } = req.body || {};
+    if (!code) {
+      return res.status(400).json({ ok: false, error: 'code required' });
+    }
+    console.log('🤖 Analyzing code...');
+    const analysis = await analyzeCode(code, context || 'general');
+    res.json({ ok: true, analysis });
+  }));
+
+  app.post('/api/ai/performance-analysis', requireAuth, asyncRoute(async (req, res) => {
+    console.log('🤖 Performing performance analysis...');
+    const analysis = await performanceAnalysis();
+    res.json({ ok: true, analysis });
+  }));
 
 }

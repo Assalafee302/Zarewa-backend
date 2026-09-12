@@ -7,7 +7,7 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 | Role key | Label | Primary route | Also uses |
 |----------|-------|---------------|-----------|
 | `md` | Managing Director | `/exec` (Control Center) | `/executive-hr`, `/procurement`, `/accounting`, `/manager` (oversight) |
-| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations` — **not** `/hr`, `/executive-hr`, `/accounting` |
+| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations`, `/cashier` (cover) — **not** `/hr`, `/executive-hr`, `/accounting` |
 | `finance_manager` | Accountant / Head of Accounts | `/accounting` | `/accounts` (reconciliation tabs), `/reports` |
 | `cashier` | Cashier | `/cashier` | `/sales` (quotations, receipts, cutting lists); limited `/accounts` tabs only — **not** `/accounting` |
 | `hr_admin` | HR / Admin | `/hr` | `/reports` |
@@ -22,7 +22,7 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 | Role | Must NOT access |
 |------|-----------------|
-| Branch manager | Main `/hr`, `/executive-hr`, `/accounting`, broad `/accounts`, org payroll/bank, executive benefits |
+| Branch manager | Main `/hr`, `/executive-hr`, `/accounting`, GL/audit tabs on `/accounts`, org payroll/bank, executive benefits |
 | Cashier | `/accounting`, GL/audit tabs on `/accounts` |
 | Accountant | Branch production ops, cashier desk (default), HR admin |
 | Staff | `/hr`, `/team-hr` (unless granted), finance desks |
@@ -39,9 +39,9 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 ## Legacy `/accounts` (Phase 10)
 
-- **Hidden** from cashier and branch manager navigation.
-- **Tab RBAC**: cashier → receipts/movements/disbursements/treasury; accountant → includes audit; MD/admin → all.
-- **Redirects**: cashier → `/cashier`; BM → `/manager`; denied GL tab → desk or home.
+- **Visible** to cashier and branch manager as Finance desk (cashier tabs only).
+- **Tab RBAC**: cashier + BM → desk/receipts/movements/disbursements; accountant → includes audit; MD/admin → all.
+- **Redirects**: denied GL/audit tab → desk; denied route → home / role primary.
 
 ## Custom permission overrides
 

@@ -5,7 +5,7 @@ This document summarizes how roles, API routes, and the workspace bootstrap rela
 ## Phase 10 hardening (summary)
 
 - **Accountant** — role key `finance_manager`, label **Accountant / Head of Accounts**; narrowed default perms (no branch ops/sales/settings).
-- **Branch manager** — no main `/hr`, no `/accounting`, no broad `/accounts`; Team HR at `/team-hr` with dashboard landing.
+- **Branch manager** — no main `/hr`, no `/accounting`, no GL/audit; may open cashier Finance desk (`/accounts` desk tabs) to cover when cashier is absent; Team HR at `/team-hr` with dashboard landing.
 - **Cashier / Accountant segregation** — desk route guards + legacy tab RBAC + GL API enforcement (`server/legacyAccountsAccess.js`).
 - **MD HR** — Executive HR nav (`/hr/executive`); main HR admin shell requires HR operations perms (not `hr.payroll.md_approve` alone).
 - **Custom overrides** — `GET /api/admin/permission-overrides-audit` (settings); audited on `PATCH /api/users/:id/permissions`.

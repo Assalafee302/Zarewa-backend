@@ -12,8 +12,10 @@ const ROLE_BRANCH_MANAGER = 'sales_manager';
 const ROLE_CASHIER = 'cashier';
 const ROLE_ACCOUNTANT = 'finance_manager';
 const OVERSIGHT_ROLES = new Set(['admin', 'md']);
+/** Canonical BM is `sales_manager`; `branch_manager` accepted as alias. */
+const BRANCH_MANAGER_ROLES = new Set([ROLE_BRANCH_MANAGER, 'branch_manager']);
 
-/** Cashier: desk, receipts, transfers, and payouts. */
+/** Cashier (+ BM cover): desk, receipts, transfers, and payouts. */
 const CASHIER_LEGACY_TABS = new Set(['desk', 'receipts', 'movements', 'disbursements']);
 
 /** Accountant — Finance desk replaces legacy Treasury tab. */
@@ -21,6 +23,10 @@ const ACCOUNTANT_LEGACY_TABS = new Set(['desk', 'receipts', 'movements', 'disbur
 
 function withoutRetiredTreasuryTab(tabs) {
   return tabs.filter((t) => t !== 'treasury');
+}
+
+function isBranchManagerRole(roleKey) {
+  return BRANCH_MANAGER_ROLES.has(String(roleKey || '').trim().toLowerCase());
 }
 
 /**
@@ -31,9 +37,9 @@ export function userMayAccessLegacyAccountsRoute(user) {
   if (userHasPermission(user, '*')) return true;
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
   if (OVERSIGHT_ROLES.has(rk)) return true;
-  if (rk === ROLE_BRANCH_MANAGER) return false;
-  if (rk === ROLE_CASHIER) {
-    // Cashier desk is this role's home. Permission keys gate posting, not opening the page.
+  // Branch managers may open the cashier desk to cover when cashier is absent.
+  if (isBranchManagerRole(rk) || rk === ROLE_CASHIER) {
+    // Desk is this role's finance home. Permission keys gate posting, not opening the page.
     return true;
   }
   if (rk === ROLE_ACCOUNTANT) {
@@ -56,8 +62,7 @@ export function getAllowedLegacyAccountTabs(user) {
   if (userHasPermission(user, '*')) return withoutRetiredTreasuryTab([...LEGACY_ACCOUNT_TAB_IDS]);
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
   if (OVERSIGHT_ROLES.has(rk)) return withoutRetiredTreasuryTab([...LEGACY_ACCOUNT_TAB_IDS]);
-  if (rk === ROLE_BRANCH_MANAGER) return [];
-  if (rk === ROLE_CASHIER) {
+  if (isBranchManagerRole(rk) || rk === ROLE_CASHIER) {
     return LEGACY_ACCOUNT_TAB_IDS.filter((t) => CASHIER_LEGACY_TABS.has(t));
   }
   if (rk === ROLE_ACCOUNTANT) {
@@ -90,9 +95,9 @@ export function getDefaultLegacyAccountTab(user) {
 export function resolveLegacyAccountsRedirect(user, tabId = '') {
   if (!user) return { to: '/', reason: 'unauthenticated' };
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
-  if (rk === ROLE_BRANCH_MANAGER) return { to: '/manager', reason: 'branch_manager' };
   if (!userMayAccessLegacyAccountsRoute(user)) {
     if (rk === ROLE_CASHIER) return { to: '/access-denied', reason: 'cashier_finance' };
+    if (isBranchManagerRole(rk)) return { to: '/manager', reason: 'branch_manager' };
     if (rk === ROLE_ACCOUNTANT) return { to: '/accounting', reason: 'accounting_desk' };
     return { to: '/', reason: 'denied' };
   }
@@ -114,7 +119,7 @@ export function userMayAccessAccountingGlApis(user) {
   if (!user) return false;
   if (userHasPermission(user, '*')) return true;
   const rk = String(user.roleKey || user.role_key || '').trim().toLowerCase();
-  if (rk === ROLE_CASHIER || rk === ROLE_BRANCH_MANAGER) return false;
+  if (rk === ROLE_CASHIER || isBranchManagerRole(rk)) return false;
   if (OVERSIGHT_ROLES.has(rk) || rk === ROLE_ACCOUNTANT) return true;
   return (
     userHasPermission(user, 'accounting.gl.view') ||

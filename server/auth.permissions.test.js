@@ -78,8 +78,12 @@ describe('operations_officer role aliases', () => {
     expect(bm).toContain('material_incidents.approve');
     expect(bm).toContain('ot.approve');
     expect(bm).toContain('ot.view_branch');
+    expect(bm).toContain('finance.pay');
+    expect(bm).toContain('cashier.desk.view');
+    expect(bm).toContain('cashier.receipts.confirm');
     expect(bm).not.toContain('ot.request');
     expect(bm).not.toContain('ot.pay');
+    expect(bm).not.toContain('accounting.gl.view');
   });
 
   it('grants cashier ot.pay without request/approve', () => {

@@ -314,6 +314,14 @@ export const ROLE_DEFINITIONS = {
       /** Direct expense rows + treasury debit (same POST as finance.post); excludes GL/bank-rec workflows. */
       'expenses.create',
       'refunds.approve',
+      /**
+       * Cashier cover — open desk, confirm receipts, and pay when the cashier is absent.
+       * Still blocked from GL/audit via legacyAccountsAccess (no accounting.*).
+       */
+      'finance.view',
+      'finance.pay',
+      'cashier.desk.view',
+      'cashier.receipts.confirm',
       'operations.view',
       'operations.manage',
       'production.manage',

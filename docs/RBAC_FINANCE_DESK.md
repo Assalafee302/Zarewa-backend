@@ -3,8 +3,8 @@
 ## Phase 10 — RBAC & legacy `/accounts` (current)
 
 - **Role key `finance_manager`** displays as **Accountant / Head of Accounts** (key unchanged for DB compatibility).
-- **Cashier** primary UI: `/cashier`. Legacy `/accounts` nav **hidden**; tab RBAC allows receipts/movements/disbursements/treasury only — **not** audit/GL.
-- **Branch manager** (`sales_manager`): **no** `/accounts`, **no** `/accounting`; default `finance.approve` removed — branch refunds use `refunds.approve` in Management inbox.
+- **Cashier** primary UI: `/cashier`. Tab RBAC allows desk/receipts/movements/disbursements — **not** audit/GL.
+- **Branch manager** (`sales_manager`): primary `/manager`; may also open `/cashier` / `/accounts` desk tabs to cover when cashier is absent (`finance.pay`, `cashier.desk.view`). Still **no** `/accounting` / GL. Branch refunds use `refunds.approve` in Management inbox.
 - **Accountant** primary UI: `/accounting`. Full reconciliation tabs on `/accounts` when needed.
 - **MD / admin**: oversight on all finance routes; delivery payment gate mode shown on Management dashboard (from `GET /api/health` → `capabilities.deliveryPaymentGate`).
 - **GL APIs** (`/api/gl/*`, reconciliation pack): require accounting GL access — cashier and BM blocked server-side.
@@ -79,7 +79,8 @@ The `cashier` role **still includes** legacy `finance.view`, `finance.post`, `fi
 
 - Validates quotation/order correctness (`manager_cleared_at_iso`, production gates)
 - Reviews mismatches via Management inbox and sales reports
-- Does **not** post GL or edit treasury balances
+- May open **Cashier desk** (`/cashier` → `/accounts?tab=desk`) to confirm receipts and pay when the branch cashier is absent
+- Does **not** post GL or edit accounting registers
 
 ## MD / Audit control
 

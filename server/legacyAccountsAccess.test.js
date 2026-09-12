@@ -15,9 +15,14 @@ describe('legacyAccountsAccess', () => {
   };
   const md = { roleKey: 'md', permissions: ['finance.view', 'accounting.desk.view'] };
 
-  it('branch manager cannot access legacy accounts route', () => {
-    expect(userMayAccessLegacyAccountsRoute(bm)).toBe(false);
-    expect(resolveLegacyAccountsRedirect(bm)?.to).toBe('/manager');
+  it('branch manager can open cashier desk tabs but not audit/GL', () => {
+    expect(userMayAccessLegacyAccountsRoute(bm)).toBe(true);
+    expect(resolveLegacyAccountsRedirect(bm)).toBeNull();
+    expect(getAllowedLegacyAccountTabs(bm)).toEqual(
+      expect.arrayContaining(['desk', 'receipts', 'movements', 'disbursements'])
+    );
+    expect(getAllowedLegacyAccountTabs(bm)).not.toContain('audit');
+    expect(resolveLegacyAccountsRedirect(bm, 'audit')?.to).toBe('/accounts?tab=desk');
   });
 
   it('cashier role can open Finance desk even without desk permission keys', () => {

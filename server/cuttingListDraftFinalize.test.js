@@ -127,6 +127,30 @@ describe.skipIf(!mysqlOk)('cutting list draft finalize', () => {
     expect(row?.lines?.length).toBe(1);
   });
 
+  it('finalize on an already-Waiting list updates lines instead of erroring', () => {
+    db = createDatabase(':memory:');
+    const created = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+      totalMeters: 10,
+    });
+    expect(created.ok).toBe(true);
+    expect(getCuttingList(db, created.id)?.status).toBe('Waiting');
+
+    const again = updateCuttingList(db, created.id, {
+      finalize: true,
+      lines: [{ sheets: 3, lengthM: 5, lineType: 'Roof' }],
+      totalMeters: 15,
+    });
+    expect(again.ok).toBe(true);
+    const row = getCuttingList(db, created.id);
+    expect(row?.status).toBe('Waiting');
+    expect(row?.totalMeters).toBe(15);
+  });
+
   it('updateCuttingList finalize accepts fractional total metres', () => {
     db = createDatabase(':memory:');
     const draft = insertCuttingList(db, {

@@ -7260,17 +7260,16 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   if (!isAutosave && !existingIsDraft && !lines.length && !accessoriesOnly) {
     return { ok: false, error: 'Cutting list must keep at least one valid line.' };
   }
-  if (finalize && !existingIsDraft) {
-    return { ok: false, error: 'Only draft cutting lists can be finalized from this action.' };
-  }
-  if (finalize) {
+  // Idempotent finalize: client may resend finalize after Save list already moved Draft → Waiting.
+  const doFinalize = Boolean(finalize && existingIsDraft);
+  if (doFinalize) {
     const qFinalize = validateQuotationForCuttingList(db, quotationRef, cuttingListId, { forDraft: false });
     if (!qFinalize.ok) return qFinalize;
     if (!lines.length && !accessoriesOnly) {
       return { ok: false, error: 'Add at least one valid cutting line before saving the list.' };
     }
   }
-  const shouldValidateQuotationMetres = !isAutosave && (finalize || !existingIsDraft);
+  const shouldValidateQuotationMetres = !isAutosave && (doFinalize || !existingIsDraft);
   if (shouldValidateQuotationMetres) {
     const metreAlign = assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines, { accessoriesOnly });
     if (!metreAlign.ok) return metreAlign;
@@ -7279,7 +7278,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   const lineSumMeters = cuttingListLinearMetresExcludingStoneFlatsheet(lines);
   const totalMetersResolved = resolveCuttingListTotalMeters({
     accessoriesOnly,
-    isDraft: existingIsDraft && !finalize,
+    isDraft: existingIsDraft && !doFinalize,
     lineSumMeters,
     payloadTotalMeters: payload.totalMeters,
   });
@@ -7305,9 +7304,9 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
     payload.machineName !== undefined
       ? String(payload.machineName ?? '').trim()
       : existing.machine_name ?? '';
-  const status = finalize ? 'Waiting' : existing.status;
+  const status = doFinalize ? 'Waiting' : existing.status;
   const handledBy = payload.handledBy ?? existing.handled_by;
-  const productionReleasePending = finalize
+  const productionReleasePending = doFinalize
     ? Boolean(payload.holdForProductionApproval) || Boolean(payload.holdProductionRelease)
       ? 1
       : 0

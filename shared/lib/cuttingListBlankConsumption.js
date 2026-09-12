@@ -232,6 +232,37 @@ export function cuttingListFlatsheetMetresFromLines(lines) {
  *   trimBlankHardToleranceM?: number,
  * }} p
  */
+/**
+ * Whether the caller actually handed us the quotation's line data.
+ *
+ * Desk packs omit `quotationLines` for payload size and the cutting list modal hydrates
+ * them with a separate GET, which can fail silently on a poor link. Without this check a
+ * missing fetch looks identical to a quotation with no roofing metres, and the operator
+ * is told to go and enter metres on a quotation that already has them.
+ *
+ * Accessories-only quotes count as loaded: they carry the arrays, products is just empty.
+ * @param {unknown} linesJson
+ */
+function quotationLinesAreLoaded(linesJson) {
+  if (!linesJson) return false;
+  let parsed = linesJson;
+  if (typeof parsed === 'string') {
+    const trimmed = parsed.trim();
+    if (!trimmed) return false;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return false;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return false;
+  return (
+    Array.isArray(parsed.products) ||
+    Array.isArray(parsed.accessories) ||
+    Array.isArray(parsed.services)
+  );
+}
+
 export function assessCuttingListQuotationConsumption({
   quotationLinesJson,
   cuttingListLines,
@@ -383,6 +414,27 @@ export function assessCuttingListQuotationConsumption({
       trimBlankGapM: coilGapM,
       trimBlankProductionBlocked: false,
       deltaMetres: coilGapM,
+    };
+  }
+
+  // Before blaming the quotation, check we were actually given its lines. A failed
+  // hydrate and a genuinely metre-less quotation both compute to zero here, and only one
+  // of them is fixed by editing the quotation.
+  if (!quotationLinesAreLoaded(quotationLinesJson) && cuttingListTotalM > 0) {
+    return {
+      ok: false,
+      code: 'cutting_list_quotation_lines_unavailable',
+      warnings,
+      quotedSheetPoolM,
+      quotedTrimBlankM,
+      expectedTotalM,
+      cuttingListTotalM,
+      clFlatsheetM,
+      trimBlankGapM,
+      trimBlankProductionBlocked,
+      deltaMetres: 0,
+      message:
+        'Could not read this quotation’s product lines, so the metres cannot be checked. This is usually a connection problem, not a problem with the quotation. Close the cutting list, reopen it, and try again. Do not add metres to the quotation unless you have opened it and confirmed they are genuinely missing.',
     };
   }
 

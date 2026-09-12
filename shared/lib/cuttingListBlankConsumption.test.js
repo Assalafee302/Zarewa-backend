@@ -208,3 +208,47 @@ describe('cuttingListBlankConsumption', () => {
     expect(assessment.expectedTotalM).toBe(gutterBlank);
   });
 });
+
+describe('quotation lines that never arrived', () => {
+  const clLines = [{ lineType: 'Roof', sheets: 10, lengthM: 3 }];
+
+  it('says the lines could not be read, not that the quotation has none', () => {
+    // The desk pack omits quotationLines and the modal hydrates them separately. When
+    // that fetch fails on a poor link the caller passes nothing — and telling the
+    // operator to "enter metres" would have them edit a quotation that is already right.
+    for (const missing of ['', '   ', null, undefined, '{}', 'not json', {}]) {
+      const a = assessCuttingListQuotationConsumption({
+        quotationLinesJson: missing,
+        cuttingListLines: clLines,
+      });
+      expect(a.ok).toBe(false);
+      expect(a.code).toBe('cutting_list_quotation_lines_unavailable');
+      expect(a.message).toMatch(/connection problem/i);
+    }
+  });
+
+  it('still blames the quotation when the lines did arrive and hold no metres', () => {
+    const a = assessCuttingListQuotationConsumption({
+      quotationLinesJson: { products: [], accessories: [], services: [] },
+      cuttingListLines: clLines,
+    });
+    expect(a.ok).toBe(false);
+    expect(a.code).toBe('cutting_list_no_quoted_roofing_metres');
+  });
+
+  it('treats an accessories-only quote as loaded, not as a failed fetch', () => {
+    const a = assessCuttingListQuotationConsumption({
+      quotationLinesJson: { products: [], accessories: [{ name: 'Ridge cap', qty: 4 }] },
+      cuttingListLines: clLines,
+    });
+    expect(a.code).not.toBe('cutting_list_quotation_lines_unavailable');
+  });
+
+  it('does not fire when there is no cutting list metreage to reconcile', () => {
+    const a = assessCuttingListQuotationConsumption({
+      quotationLinesJson: '',
+      cuttingListLines: [],
+    });
+    expect(a.code).not.toBe('cutting_list_quotation_lines_unavailable');
+  });
+});

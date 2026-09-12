@@ -7073,7 +7073,7 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   const lines = normalizeCuttingListLines(payload.lines, { allowPartial: isDraft });
   const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
   if (!isDraft && !lines.length && !accessoriesOnly) {
-    return { ok: false, error: 'Add at least one valid cutting line.' };
+    return { ok: false, error: 'Add at least one valid cutting line before saving.' };
   }
   if (!isDraft) {
     const metreAlign = assertCuttingListQuotationRoofingMetreAlignment(db, quotationRef, lines, { accessoriesOnly });

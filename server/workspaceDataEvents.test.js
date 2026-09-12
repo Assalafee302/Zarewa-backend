@@ -174,3 +174,46 @@ describe('domainsForApiPath', () => {
     }
   });
 });
+
+describe('shell-level changes', () => {
+  function run({ url, method = 'POST', status = 200, body = { ok: true }, branchId = 'KD' }) {
+    const req = { method, originalUrl: url, workspaceBranchId: branchId };
+    const res = { statusCode: status, json: (b) => b };
+    workspaceDataEventMiddleware(req, res, () => {});
+    res.json(body);
+  }
+
+  it('flags an account change as shell, not as a desk pack', () => {
+    // appUsers rides the first-paint shell and app_users is not one of the tables the
+    // workspace revision fingerprints, so a colleague's poll can answer 304 and refresh
+    // nothing at all after an account is created.
+    run({ url: '/api/users' });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].shell).toBe(true);
+    expect(sent[0].domains).toEqual([]);
+  });
+
+  it('reaches every branch, because accounts are not a branch concern', () => {
+    run({ url: '/api/users/u-1/permissions', method: 'PATCH', branchId: 'KD' });
+    expect(sent[0].branchId).toBe('');
+  });
+
+  it('covers roles, branches and org settings too', () => {
+    for (const url of ['/api/settings/org', '/api/branches', '/api/setup/roles']) {
+      run({ url });
+    }
+    expect(sent).toHaveLength(3);
+    expect(sent.every((e) => e.shell === true)).toBe(true);
+  });
+
+  it('leaves desk writes unflagged', () => {
+    run({ url: '/api/quotations' });
+    expect(sent[0].shell).toBe(false);
+    expect(sent[0].domains).toEqual(['sales']);
+  });
+
+  it('still says nothing when a shell write failed', () => {
+    run({ url: '/api/users', status: 200, body: { ok: false, error: 'username taken' } });
+    expect(sent).toHaveLength(0);
+  });
+});

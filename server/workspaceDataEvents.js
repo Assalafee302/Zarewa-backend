@@ -21,16 +21,21 @@ import { broadcastWorkspaceEvent } from './workspaceRoomsOps.js';
 const KNOWN_DOMAINS = new Set(['sales', 'operations', 'finance', 'procurement']);
 
 /**
- * @param {{ domains: string[], branchId?: string | null, reason?: string }} p
+ * @param {{ domains: string[], shell?: boolean, branchId?: string | null, reason?: string }} p
  */
-export function broadcastWorkspaceDataChanged({ domains, branchId = null, reason = '' }) {
+export function broadcastWorkspaceDataChanged({ domains, shell = false, branchId = null, reason = '' }) {
   const list = [...new Set((Array.isArray(domains) ? domains : []).map((d) => String(d || '').trim().toLowerCase()))]
     .filter((d) => KNOWN_DOMAINS.has(d));
-  if (!list.length) return;
+  if (!list.length && !shell) return;
   try {
     broadcastWorkspaceEvent({
       type: 'workspace.data',
       domains: list,
+      // Not everything lives in a desk pack. Users, roles, branches and org settings ride
+      // the first-paint shell, and app_users is not among the tables the revision
+      // fingerprints — so a colleague's poll can answer 304 and refresh nothing at all
+      // after an account is created or a permission changed.
+      shell: Boolean(shell),
       // Branch-scoped like every other event: a Kaduna write should not wake Yola desks.
       // An empty branch reaches everyone, which is right for genuinely global changes.
       branchId: String(branchId || '').trim(),
@@ -134,11 +139,24 @@ const RESOURCE_DOMAINS = Object.freeze({
 /** Methods that can change something worth telling other desks about. */
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
+/**
+ * Resources that change the shell rather than a desk pack: accounts, roles, permissions,
+ * branches and org settings. These are what a colleague's poll cannot see, because
+ * app_users is not one of the tables the workspace revision fingerprints.
+ */
+const SHELL_RESOURCES = new Set(['users', 'settings', 'branches', 'org', 'setup', 'controls']);
+
 /** @param {string} path e.g. /api/quotations/QT-1 */
 export function domainsForApiPath(path) {
   const m = /^\/api\/([a-z0-9-]+)/i.exec(String(path || ''));
   const resource = m ? m[1].toLowerCase() : '';
   return RESOURCE_DOMAINS[resource] ? [...RESOURCE_DOMAINS[resource]] : [];
+}
+
+/** @param {string} path @returns {boolean} whether this write changes shell-level data */
+export function isShellApiPath(path) {
+  const m = /^\/api\/([a-z0-9-]+)/i.exec(String(path || ''));
+  return m ? SHELL_RESOURCES.has(m[1].toLowerCase()) : false;
 }
 
 /**
@@ -156,8 +174,10 @@ export function domainsForApiPath(path) {
  */
 export function workspaceDataEventMiddleware(req, res, next) {
   if (!MUTATING_METHODS.has(String(req.method || '').toUpperCase())) return next();
-  const domains = domainsForApiPath(req.originalUrl || req.url || '');
-  if (!domains.length) return next();
+  const path = req.originalUrl || req.url || '';
+  const domains = domainsForApiPath(path);
+  const shell = isShellApiPath(path);
+  if (!domains.length && !shell) return next();
 
   const sendJson = res.json.bind(res);
   res.json = (body) => {
@@ -167,7 +187,10 @@ export function workspaceDataEventMiddleware(req, res, next) {
       if (okStatus && body?.ok !== false) {
         broadcastWorkspaceDataChanged({
           domains,
-          branchId: req.workspaceBranchId || null,
+          shell,
+          // Accounts, roles and branches are not branch-scoped concerns: an empty branch
+          // reaches every connected desk, which is what a new colleague needs.
+          branchId: shell ? null : req.workspaceBranchId || null,
           reason: String(req.method),
         });
       }

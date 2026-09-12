@@ -7100,6 +7100,10 @@ export function insertCuttingList(db, payload, branchFallback = DEFAULT_BRANCH_I
   });
   if (totalMetersResolved.error) return { ok: false, error: totalMetersResolved.error };
   const totalMeters = totalMetersResolved.totalMeters;
+  // Debug: log when creating a list with no lines
+  if (!isDraft && lines.length === 0 && !accessoriesOnly) {
+    console.warn(`[CuttingList] Creating non-draft list with no lines. totalMeters=${totalMeters}, payload.totalMeters=${payload.totalMeters}`);
+  }
   const sheetsToCut = Number(
     payload.sheetsToCut ?? cuttingListSheetsExcludingStoneFlatsheet(lines)
   );

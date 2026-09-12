@@ -72,6 +72,61 @@ describe.skipIf(!mysqlOk)('cutting list draft finalize', () => {
     expect(getCuttingList(db, draft.id)?.status).toBe('Waiting');
   });
 
+  it('stale autosave after finalize does not regress status or metres', () => {
+    db = createDatabase(':memory:');
+    const draft = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      draft: true,
+      lines: [{ sheets: 1, lengthM: 6, lineType: 'Roof' }],
+    });
+    expect(draft.ok).toBe(true);
+
+    const finalized = updateCuttingList(db, draft.id, {
+      finalize: true,
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+      totalMeters: 10,
+    });
+    expect(finalized.ok).toBe(true);
+
+    const staleAutosave = updateCuttingList(db, draft.id, {
+      autosave: true,
+      lines: [{ sheets: 0, lengthM: 6, lineType: 'Roof' }],
+      totalMeters: 0,
+    });
+    expect(staleAutosave.ok).toBe(true);
+    expect(staleAutosave.skipped).toBe(true);
+    const row = getCuttingList(db, draft.id);
+    expect(row?.status).toBe('Waiting');
+    expect(row?.totalMeters).toBe(10);
+  });
+
+  it('autosave with empty lines does not wipe an existing draft', () => {
+    db = createDatabase(':memory:');
+    const draft = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      draft: true,
+      lines: [{ sheets: 2, lengthM: 5, lineType: 'Roof' }],
+    });
+    expect(draft.ok).toBe(true);
+
+    const wiped = updateCuttingList(db, draft.id, {
+      autosave: true,
+      lines: [],
+      totalMeters: 0,
+    });
+    expect(wiped.ok).toBe(true);
+    const row = getCuttingList(db, draft.id);
+    expect(row?.status).toBe('Draft');
+    expect(row?.totalMeters).toBe(10);
+    expect(row?.lines?.length).toBe(1);
+  });
+
   it('updateCuttingList finalize accepts fractional total metres', () => {
     db = createDatabase(':memory:');
     const draft = insertCuttingList(db, {

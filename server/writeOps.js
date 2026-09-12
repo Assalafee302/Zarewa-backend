@@ -7172,12 +7172,29 @@ export function clearCuttingListProductionHold(db, cuttingListId, actor = null) 
   return { ok: true };
 }
 
+function loadCuttingListLineRows(db, cuttingListId) {
+  return db
+    .prepare(`SELECT * FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`)
+    .all(cuttingListId)
+    .map((row) => ({
+      sortOrder: row.sort_order,
+      sheets: Number(row.sheets) || 0,
+      lengthM: Number(row.length_m) || 0,
+      totalM: Number(row.total_m) || 0,
+      lineType: row.line_type || 'Roof',
+    }));
+}
+
 export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
   const isAutosave = Boolean(payload.autosave);
   const finalize = Boolean(payload.finalize);
   const existingIsDraft = isCuttingListDraftStatus(existing.status);
+  // Stale draft autosave must not regress a list that was already finalized (Save list race).
+  if (isAutosave && !existingIsDraft) {
+    return { ok: true, id: cuttingListId, skipped: true };
+  }
   // Admin/MD may correct completed production records; everyone else stays locked.
   const mayEditAfterProduction = !editMutationRequiresSecondApproval(actor);
   if (isCuttingListProductionCompleted(db, existing) && !mayEditAfterProduction) {
@@ -7223,18 +7240,22 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
     db.prepare(`SELECT customer_id, name FROM customers WHERE customer_id = ?`).get(customerID) ||
     null;
   if (!customer) return { ok: false, error: 'Customer not found.' };
-  const lines = payload.lines
-    ? normalizeCuttingListLines(payload.lines, { allowPartial: existingIsDraft && (isAutosave || !finalize) })
-    : db
-        .prepare(`SELECT * FROM cutting_list_lines WHERE cutting_list_id = ? ORDER BY sort_order`)
-        .all(cuttingListId)
-        .map((row) => ({
-          sortOrder: row.sort_order,
-          sheets: Number(row.sheets) || 0,
-          lengthM: Number(row.length_m) || 0,
-          totalM: Number(row.total_m) || 0,
-          lineType: row.line_type || 'Roof',
-        }));
+  const existingLines = loadCuttingListLineRows(db, cuttingListId);
+  let lines = existingLines;
+  let replaceLines = false;
+  if (payload.lines) {
+    const normalized = normalizeCuttingListLines(payload.lines, {
+      allowPartial: existingIsDraft && (isAutosave || !finalize),
+    });
+    // Autosave with empty/partial-only payload must not wipe lines already on the draft.
+    if (isAutosave && normalized.length === 0 && existingLines.length > 0) {
+      lines = existingLines;
+      replaceLines = false;
+    } else {
+      lines = normalized;
+      replaceLines = true;
+    }
+  }
   const accessoriesOnly = quotationIsAccessoriesOnlyForProduction(db, quotationRef);
   if (!isAutosave && !existingIsDraft && !lines.length && !accessoriesOnly) {
     return { ok: false, error: 'Cutting list must keep at least one valid line.' };
@@ -7292,33 +7313,70 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
       : 0
     : Number(existing.production_release_pending) || 0;
 
-  db.transaction(() => {
-    db.prepare(
-      `UPDATE cutting_lists
-       SET customer_id = ?, customer_name = ?, quotation_ref = ?, product_id = ?, product_name = ?,
-           date_label = ?, date_iso = ?, sheets_to_cut = ?, total_meters = ?, total_label = ?,
-           status = ?, machine_name = ?, operator_name = ?, handled_by = ?,
-           production_release_pending = ?
-       WHERE id = ?`
-    ).run(
-      customer.customer_id,
-      customer.name,
-      quotationRef || null,
-      productID || null,
-      productName || null,
-      shortDateFromIso(dateISO),
-      dateISO,
-      sheetsToCut,
-      totalMeters,
-      formatMetersLabel(totalMeters),
-      status,
-      machineName || null,
-      null,
-      handledBy,
-      productionReleasePending,
-      cuttingListId
-    );
-    syncCuttingListLineRows(db, cuttingListId, lines);
+  const txResult = db.transaction(() => {
+    // Autosave: only write while still Draft so a concurrent Save list finalize wins.
+    const upd = isAutosave
+      ? db
+          .prepare(
+            `UPDATE cutting_lists
+             SET customer_id = ?, customer_name = ?, quotation_ref = ?, product_id = ?, product_name = ?,
+                 date_label = ?, date_iso = ?, sheets_to_cut = ?, total_meters = ?, total_label = ?,
+                 status = ?, machine_name = ?, operator_name = ?, handled_by = ?,
+                 production_release_pending = ?
+             WHERE id = ? AND status = ?`
+          )
+          .run(
+            customer.customer_id,
+            customer.name,
+            quotationRef || null,
+            productID || null,
+            productName || null,
+            shortDateFromIso(dateISO),
+            dateISO,
+            sheetsToCut,
+            totalMeters,
+            formatMetersLabel(totalMeters),
+            status,
+            machineName || null,
+            null,
+            handledBy,
+            productionReleasePending,
+            cuttingListId,
+            CUTTING_LIST_DRAFT_STATUS
+          )
+      : db
+          .prepare(
+            `UPDATE cutting_lists
+             SET customer_id = ?, customer_name = ?, quotation_ref = ?, product_id = ?, product_name = ?,
+                 date_label = ?, date_iso = ?, sheets_to_cut = ?, total_meters = ?, total_label = ?,
+                 status = ?, machine_name = ?, operator_name = ?, handled_by = ?,
+                 production_release_pending = ?
+             WHERE id = ?`
+          )
+          .run(
+            customer.customer_id,
+            customer.name,
+            quotationRef || null,
+            productID || null,
+            productName || null,
+            shortDateFromIso(dateISO),
+            dateISO,
+            sheetsToCut,
+            totalMeters,
+            formatMetersLabel(totalMeters),
+            status,
+            machineName || null,
+            null,
+            handledBy,
+            productionReleasePending,
+            cuttingListId
+          );
+    if (isAutosave && Number(upd.changes) === 0) {
+      return { skipped: true };
+    }
+    if (replaceLines) {
+      syncCuttingListLineRows(db, cuttingListId, lines);
+    }
 
     const regRef = String(existing.production_register_ref ?? '').trim();
     let jobRow = regRef
@@ -7357,9 +7415,10 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
         );
       }
     }
+    return { skipped: false };
   })();
 
-  return { ok: true, id: cuttingListId };
+  return { ok: true, id: cuttingListId, ...(txResult?.skipped ? { skipped: true } : {}) };
 }
 
 export function recordCuttingListPrint(db, cuttingListId, actor = null) {

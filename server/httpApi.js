@@ -7061,7 +7061,7 @@ export function registerHttpApi(app, db) {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
           const cuttingList = getCuttingList(db, cid);
-          return { ok: true, cuttingList };
+          return { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) };
         },
         { requiresEditApproval: cuttingListEditRequiresEditApproval }
       );

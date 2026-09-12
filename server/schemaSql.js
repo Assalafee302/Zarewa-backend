@@ -362,6 +362,8 @@ CREATE TABLE IF NOT EXISTS cutting_lists (
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_cutting_lists_quotation_ref ON cutting_lists(quotation_ref);
+
 CREATE TABLE IF NOT EXISTS cutting_list_lines (
   cutting_list_id TEXT NOT NULL,
   sort_order INTEGER NOT NULL,
@@ -410,6 +412,8 @@ CREATE TABLE IF NOT EXISTS production_jobs (
   offcut_supply_json TEXT,
   FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_production_jobs_quotation_ref ON production_jobs(quotation_ref);
 
 CREATE TABLE IF NOT EXISTS material_incidents (
   id TEXT PRIMARY KEY,
@@ -668,6 +672,11 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   credit_confirmation_status TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_customer_refunds_branch_requested
+  ON customer_refunds(branch_id, requested_at_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_refunds_quotation_ref
+  ON customer_refunds(quotation_ref);
 
 CREATE TABLE IF NOT EXISTS refund_credit_applications (
   application_id TEXT PRIMARY KEY,

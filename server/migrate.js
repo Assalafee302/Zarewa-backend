@@ -7154,6 +7154,14 @@ function migrateSalesDeskListPerformanceIndexes(db) {
       CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
       CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_date ON purchase_orders(branch_id, order_date_iso, po_id);
       CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_status ON purchase_orders(branch_id, status);
+      CREATE INDEX IF NOT EXISTS idx_customer_refunds_branch_requested
+        ON customer_refunds(branch_id, requested_at_iso DESC);
+      CREATE INDEX IF NOT EXISTS idx_customer_refunds_quotation_ref
+        ON customer_refunds(quotation_ref);
+      CREATE INDEX IF NOT EXISTS idx_production_jobs_quotation_ref
+        ON production_jobs(quotation_ref);
+      CREATE INDEX IF NOT EXISTS idx_cutting_lists_quotation_ref
+        ON cutting_lists(quotation_ref);
     `);
   } catch {
     /* ignore — branch_id may arrive via earlier migrations on some hosts */

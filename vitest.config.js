@@ -14,6 +14,10 @@ export default defineConfig({
       forks: { singleFork: true },
     },
     environment: 'node',
+    // Keep legacy full bootstrap payloads in tests; production defaults to shell.
+    env: {
+      ZAREWA_BOOTSTRAP_DEFAULT_MODE: 'full',
+    },
     include: ['server/**/*.test.js', 'shared/**/*.test.js'],
     testTimeout: 360_000,
     hookTimeout: 600_000,

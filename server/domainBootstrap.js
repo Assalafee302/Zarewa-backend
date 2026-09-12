@@ -13,8 +13,8 @@ import {
   getWipByProduct,
   listDeliveries,
   listSalesReceiptsForDesk,
-  listCuttingLists,
-  listRefunds,
+  listCuttingListsForDesk,
+  listRefundsForDesk,
   listTreasuryAccounts,
   listTreasuryMovements,
   listExpenses,
@@ -29,8 +29,7 @@ import {
   listYardCoils,
   listProcurementCatalog,
   getJsonBlob,
-  listAdvanceInEvents,
-  listProductionJobs,
+  listProductionJobsForDesk,
   listProductionCompletionAdjustments,
   listProductionJobAccessoryUsage,
   listProductionJobStoneFlatsheetUsage,
@@ -171,9 +170,9 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
       ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
       : [],
     refunds: refundsOk
-      ? listRefunds(db, branchScope, { ...financeHistoryListOpts(), includePreviewSnapshot: false })
+      ? listRefundsForDesk(db, branchScope, financeHistoryListOpts())
       : [],
-    cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
+    cuttingLists: salesOk ? listCuttingListsForDesk(db, branchScope, productionHistoryListOpts()) : [],
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
@@ -181,7 +180,8 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     salesAvailableStock: availableStock,
     customerDashboard,
-    advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
+    // Advance FIFO history is deferred — load via GET /api/advance-deposits (same as full bootstrap).
+    advanceInEvents: [],
     ledgerEntries: ledgerOk ? ledgerRows : [],
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
     // Refund payout allocation (transport/install/claiming staff) reads this on the sales desk.
@@ -192,6 +192,10 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
     // Receipt / advance account pickers — keep on sales so cashiers do not wait on finance pack.
     treasuryAccounts: f.treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    bootstrapMeta: {
+      deferredDeskArrays: ledgerOk ? ['advanceInEvents'] : [],
+      truncated: ledgerOk ? { advanceInEvents: true } : {},
+    },
   };
 }
 
@@ -220,7 +224,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       branchScope === 'ALL' ? DEFAULT_BRANCH_ID : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
   };
   const historyOpts = productionHistoryListOpts();
-  const productionJobsList = prodRollupOk ? listProductionJobs(db, branchScope, historyOpts) : [];
+  const productionJobsList = prodRollupOk ? listProductionJobsForDesk(db, branchScope, historyOpts) : [];
   const productionJobIds = productionJobsList.map((j) => j.jobID).filter(Boolean);
   const productionJobCoilsList = prodRollupOk
     ? repairProductionJobCoilIntegrity(
@@ -233,7 +237,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   return {
     ok: true,
     domain: 'operations',
-    cuttingLists: opsOk ? listCuttingLists(db, branchScope, historyOpts) : [],
+    cuttingLists: opsOk ? listCuttingListsForDesk(db, branchScope, historyOpts) : [],
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk
       ? listProductionJobAccessoryUsage(db, branchScope, { jobIds: productionJobIds })
@@ -336,9 +340,10 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         : [],
     cuttingLists:
       salesOk || finOk || treasuryMovementsOk
-        ? listCuttingLists(db, branchScope, productionHistoryListOpts())
+        ? listCuttingListsForDesk(db, branchScope, productionHistoryListOpts())
         : [],
-    advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
+    // Advance FIFO history is deferred — load via GET /api/advance-deposits.
+    advanceInEvents: [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
     treasuryMovements: treasuryMovementsOk
       ? listTreasuryMovements(db, branchScope, financeHistoryListOpts())
@@ -347,9 +352,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, financeHistoryListOpts()) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope, registerOpts) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope, registerOpts) : [],
-    refunds: refundsOk
-      ? listRefunds(db, branchScope, { ...financeHistoryListOpts(), includePreviewSnapshot: false })
-      : [],
+    refunds: refundsOk ? listRefundsForDesk(db, branchScope, financeHistoryListOpts()) : [],
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
@@ -396,6 +399,10 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
             }
           })()
         : null,
+    bootstrapMeta: {
+      deferredDeskArrays: ledgerOk ? ['advanceInEvents'] : [],
+      truncated: ledgerOk ? { advanceInEvents: true } : {},
+    },
   };
 }
 

@@ -21,12 +21,23 @@ import { broadcastWorkspaceEvent } from './workspaceRoomsOps.js';
 const KNOWN_DOMAINS = new Set(['sales', 'operations', 'finance', 'procurement']);
 
 /**
- * @param {{ domains: string[], shell?: boolean, branchId?: string | null, reason?: string }} p
+ * @param {{ domains: string[], shell?: boolean, branchId?: string | null, reason?: string, entityIds?: Record<string, string[]> | null }} p
  */
-export function broadcastWorkspaceDataChanged({ domains, shell = false, branchId = null, reason = '' }) {
+export function broadcastWorkspaceDataChanged({ domains, shell = false, branchId = null, reason = '', entityIds = null }) {
   const list = [...new Set((Array.isArray(domains) ? domains : []).map((d) => String(d || '').trim().toLowerCase()))]
     .filter((d) => KNOWN_DOMAINS.has(d));
   if (!list.length && !shell) return;
+  /** @type {Record<string, string[]> | undefined} */
+  let ids;
+  if (entityIds && typeof entityIds === 'object') {
+    ids = {};
+    for (const [bag, values] of Object.entries(entityIds)) {
+      if (!Array.isArray(values)) continue;
+      const cleaned = [...new Set(values.map((v) => String(v || '').trim()).filter(Boolean))].slice(0, 50);
+      if (cleaned.length) ids[bag] = cleaned;
+    }
+    if (!Object.keys(ids).length) ids = undefined;
+  }
   try {
     broadcastWorkspaceEvent({
       type: 'workspace.data',
@@ -41,11 +52,37 @@ export function broadcastWorkspaceDataChanged({ domains, shell = false, branchId
       branchId: String(branchId || '').trim(),
       reason: String(reason || '').slice(0, 60),
       revision: Date.now(),
+      // Optional ids only (never row payloads) so a future SPA can GET one entity.
+      ...(ids ? { entityIds: ids } : {}),
     });
   } catch {
     // A failed notification must never fail the write that triggered it. The poll will
     // still carry the change; the user just waits as long as they did before.
   }
+}
+
+/**
+ * Pull entity ids from an additive write `delta` bag (quotations[].id, refunds[].refundID, …).
+ * @param {unknown} body
+ * @returns {Record<string, string[]> | null}
+ */
+export function entityIdsFromWriteBody(body) {
+  const delta = body && typeof body === 'object' ? /** @type {{ delta?: Record<string, unknown[]> }} */ (body).delta : null;
+  if (!delta || typeof delta !== 'object') return null;
+  /** @type {Record<string, string[]>} */
+  const out = {};
+  for (const [bag, rows] of Object.entries(delta)) {
+    if (!Array.isArray(rows)) continue;
+    const ids = rows
+      .map((row) => {
+        if (!row || typeof row !== 'object') return '';
+        const r = /** @type {Record<string, unknown>} */ (row);
+        return String(r.id || r.jobID || r.refundID || r.quotationId || r.poID || '').trim();
+      })
+      .filter(Boolean);
+    if (ids.length) out[bag] = ids;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /**
@@ -192,6 +229,7 @@ export function workspaceDataEventMiddleware(req, res, next) {
           // reaches every connected desk, which is what a new colleague needs.
           branchId: shell ? null : req.workspaceBranchId || null,
           reason: String(req.method),
+          entityIds: entityIdsFromWriteBody(body),
         });
       }
     } catch {

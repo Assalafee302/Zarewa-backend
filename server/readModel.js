@@ -42,7 +42,7 @@ import { canonicalColourName } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
-import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause } from './listQueryOpts.js';
+import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause, unclearedReceiptsListOpts } from './listQueryOpts.js';
 import { resolveCreditTargets as liveRefundCreditTargets, listPartnerWalletOpenCreditsForRefund } from './finance/partnerWalletCredit.js';
 /** @param {import('better-sqlite3').Database} db */
 
@@ -349,27 +349,36 @@ function mapQuotationRow(db, row, opts = {}) {
   let materialDesign = '';
   let materialTypeId = '';
   let linesJsonForStone = null;
-  try {
-    const raw = row.lines_json;
-    if (raw) {
-      const j = JSON.parse(raw);
-      if (j && typeof j === 'object') {
-        linesJsonForStone = j;
-        if (typeof j.materialGauge === 'string') materialGauge = j.materialGauge;
-        if (typeof j.materialColor === 'string') materialColor = j.materialColor;
-        if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
-        if (typeof j.materialTypeId === 'string') materialTypeId = j.materialTypeId;
-        if (includeLines) {
-          quotationLines = {
-            products: Array.isArray(j.products) ? j.products : [],
-            accessories: Array.isArray(j.accessories) ? j.accessories : [],
-            services: Array.isArray(j.services) ? j.services : [],
-          };
+  // Desk list path: headers extracted in SQL (no lines_json blob loaded into Node).
+  if (row._list_material_gauge != null || row._list_material_type_id != null || row._list_material_color != null) {
+    materialGauge = typeof row._list_material_gauge === 'string' ? row._list_material_gauge : String(row._list_material_gauge || '');
+    materialColor = typeof row._list_material_color === 'string' ? row._list_material_color : String(row._list_material_color || '');
+    materialDesign = typeof row._list_material_design === 'string' ? row._list_material_design : String(row._list_material_design || '');
+    materialTypeId = typeof row._list_material_type_id === 'string' ? row._list_material_type_id : String(row._list_material_type_id || '');
+    linesJsonForStone = { materialTypeId };
+  } else {
+    try {
+      const raw = row.lines_json;
+      if (raw) {
+        const j = JSON.parse(raw);
+        if (j && typeof j === 'object') {
+          linesJsonForStone = j;
+          if (typeof j.materialGauge === 'string') materialGauge = j.materialGauge;
+          if (typeof j.materialColor === 'string') materialColor = j.materialColor;
+          if (typeof j.materialDesign === 'string') materialDesign = j.materialDesign;
+          if (typeof j.materialTypeId === 'string') materialTypeId = j.materialTypeId;
+          if (includeLines) {
+            quotationLines = {
+              products: Array.isArray(j.products) ? j.products : [],
+              accessories: Array.isArray(j.accessories) ? j.accessories : [],
+              services: Array.isArray(j.services) ? j.services : [],
+            };
+          }
         }
       }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
   const stoneMeterQuote = Boolean(db && linesJsonForStone && isStoneMeterQuotationLinesJson(db, linesJsonForStone));
   const branchId = row.branch_id ?? '';
@@ -498,57 +507,40 @@ export function listQuotationsForCustomer(db, customerId, branchScope = 'ALL', o
 export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScope = 'ALL') {
   const refs = [...new Set((quotationRefs || []).map((r) => String(r || '').trim()).filter(Boolean))];
   if (!refs.length) return [];
-  const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
   const b = branchWhere(db, 'production_jobs', branchScope);
   const ph = refs.map(() => '?').join(',');
   const sql = `SELECT * FROM production_jobs WHERE quotation_ref IN (${ph})${b.sql} ORDER BY created_at_iso DESC, job_id DESC`;
-  return db
-    .prepare(sql)
-    .all(...refs, ...b.args)
-    .map((row) => {
-      const baseActual = Number(row.actual_meters) || 0;
-      const fgAdj = adjByJob.get(row.job_id) || 0;
-      const actualRoofM = Number(row.actual_roof_m) || 0;
-      const actualCladdingM = Number(row.actual_cladding_m) || 0;
-      const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
-      /* Hybrid stone: roof lives in actual_roof_m; actual_meters is flatsheet-only — do not use base alone. */
-      const totalBase = jobTotalOutputMetres({
-        actualMeters: baseActual,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-      });
-      return {
-        jobID: row.job_id,
-        cuttingListId: row.cutting_list_id ?? '',
-        quotationRef: row.quotation_ref ?? '',
-        customerID: row.customer_id ?? '',
-        customerName: row.customer_name ?? '',
-        productID: row.product_id ?? '',
-        productName: row.product_name ?? '',
-        plannedMeters: Number(row.planned_meters) || 0,
-        plannedSheets: Number(row.planned_sheets) || 0,
-        plannedRoofM: Number(row.planned_roof_m) || 0,
-        plannedCladdingM: Number(row.planned_cladding_m) || 0,
-        plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
-        machineName: row.machine_name ?? '',
-        startDateISO: row.start_date_iso ?? '',
-        endDateISO: row.end_date_iso ?? '',
-        materialsNote: row.materials_note ?? '',
-        status: row.status ?? 'Planned',
-        createdAtISO: row.created_at_iso,
-        completedAtISO: row.completed_at_iso ?? '',
-        productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
-        actualMeters: baseActual + fgAdj,
-        effectiveOutputMeters: totalBase + fgAdj,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-        actualWeightKg: Number(row.actual_weight_kg) || 0,
-        branchId: row.branch_id ?? '',
-      };
-    });
+  const rows = db.prepare(sql).all(...refs, ...b.args);
+  const adjByJob = fgAdjustmentTotalsByJobId(
+    db,
+    branchScope,
+    rows.map((row) => row.job_id)
+  );
+  return rows.map((row) => mapProductionJobRow(row, adjByJob.get(row.job_id) || 0));
 }
+
+/**
+ * Desk list columns — omit lines_json; pull material headers via JSON_EXTRACT only.
+ * Falls back to SELECT * if optional manager/price columns are missing on a host.
+ */
+const QUOTATION_DESK_LIST_SELECT = `id, customer_id, customer_name, date_label, date_iso, due_date_iso,
+  total_display, total_ngn, paid_ngn, payment_status, status, approval_date, customer_feedback,
+  handled_by, handled_by_user_id, project_name, agent_customer_id, agent_customer_name, branch_id,
+  manager_cleared_at_iso, manager_flagged_at_iso, manager_flag_reason,
+  refunds_blocked_at_iso, refunds_blocked_by_user_id, refunds_blocked_by_name, refunds_blocked_reason,
+  payment_balance_waived_ngn, payment_balance_waived_at_iso, payment_balance_waived_by_user_id,
+  payment_balance_waived_by_name, payment_balance_waive_note,
+  manager_production_approved_at_iso, manager_production_approved_by_user_id,
+  manager_production_approved_by_name, manager_production_approval_note,
+  manager_production_paid_fraction_at_approval, manager_production_approval_level,
+  md_price_exception_approved_at_iso, md_price_exception_approved_by_user_id,
+  bm_price_exception_approved_at_iso, bm_price_exception_approved_by_user_id,
+  price_exception_md_review_required, price_exception_md_confirmed_at_iso, price_exception_md_confirmed_by_user_id,
+  payment_gate_basis_total_ngn, archived, quotation_lifecycle_note,
+  JSON_UNQUOTE(JSON_EXTRACT(lines_json, '$.materialGauge')) AS _list_material_gauge,
+  JSON_UNQUOTE(JSON_EXTRACT(lines_json, '$.materialColor')) AS _list_material_color,
+  JSON_UNQUOTE(JSON_EXTRACT(lines_json, '$.materialDesign')) AS _list_material_design,
+  JSON_UNQUOTE(JSON_EXTRACT(lines_json, '$.materialTypeId')) AS _list_material_type_id`;
 
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
@@ -556,12 +548,26 @@ export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const includeLines = opts.includeLines !== false;
   const b = branchWhere(db, 'quotations', branchScope);
   const page = sqlLimitOffsetClause(limit, offset);
-  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`;
   const args = [...b.args, ...page.args];
-  const mapped = db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => mapQuotationRow(db, row, { includeLines }));
+  let rows;
+  if (!includeLines) {
+    try {
+      rows = db
+        .prepare(
+          `SELECT ${QUOTATION_DESK_LIST_SELECT} FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`
+        )
+        .all(...args);
+    } catch {
+      rows = db
+        .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`)
+        .all(...args);
+    }
+  } else {
+    rows = db
+      .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`)
+      .all(...args);
+  }
+  const mapped = rows.map((row) => mapQuotationRow(db, row, { includeLines }));
   if (!includeLines) return mapped;
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
 }
@@ -1348,24 +1354,41 @@ export function listProducts(db, branchScope = 'ALL', opts = {}) {
   const hasPb = hasColumn(db, 'products', 'branch_id');
   const limit = resolveListLimit(opts);
   const limSql = sqlLimitClause(limit);
+  const q = String(opts.q || '').trim();
+  const prefix = String(opts.prefix || '').trim();
+  const likeArgs = [];
+  let searchSql = '';
+  if (prefix) {
+    searchSql += ` AND product_id LIKE ?`;
+    likeArgs.push(`${prefix}%`);
+  }
+  if (q) {
+    searchSql += ` AND (LOWER(product_id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(colour,'')) LIKE ? OR LOWER(COALESCE(gauge,'')) LIKE ?)`;
+    const like = `%${q.toLowerCase()}%`;
+    likeArgs.push(like, like, like, like);
+  }
   let rows;
   if (branchScope === 'ALL' || !branchScope || !hasPb) {
     const b = branchWhere(db, 'products', branchScope);
-    const args = [...b.args];
+    const args = [...b.args, ...likeArgs];
     if (limit > 0) args.push(limit);
-    rows = db.prepare(`SELECT * FROM products WHERE 1=1${b.sql} ORDER BY name${limSql}`).all(...args);
+    rows = db
+      .prepare(`SELECT * FROM products WHERE 1=1${b.sql}${searchSql} ORDER BY name${limSql}`)
+      .all(...args);
   } else {
     const bid = String(branchScope).trim();
-    const args = [bid];
+    const args = [bid, ...likeArgs];
     if (limit > 0) args.push(limit);
     rows = db
       .prepare(
         `SELECT * FROM products
-         WHERE branch_id = ?
-            OR (
-              (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')
-              AND product_id IN ('COIL-ALU','PRD-102')
-            )
+         WHERE (
+              branch_id = ?
+              OR (
+                (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')
+                AND product_id IN ('COIL-ALU','PRD-102')
+              )
+            )${searchSql}
          ORDER BY name${limSql}`
       )
       .all(...args);
@@ -1395,6 +1418,45 @@ export function listProducts(db, branchScope = 'ALL', opts = {}) {
     });
 }
 
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] @param {{ q?: string; prefix?: string }} [opts] */
+export function countProducts(db, branchScope = 'ALL', opts = {}) {
+  const hasPb = hasColumn(db, 'products', 'branch_id');
+  const q = String(opts.q || '').trim();
+  const prefix = String(opts.prefix || '').trim();
+  const likeArgs = [];
+  let searchSql = '';
+  if (prefix) {
+    searchSql += ` AND product_id LIKE ?`;
+    likeArgs.push(`${prefix}%`);
+  }
+  if (q) {
+    searchSql += ` AND (LOWER(product_id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(colour,'')) LIKE ? OR LOWER(COALESCE(gauge,'')) LIKE ?)`;
+    const like = `%${q.toLowerCase()}%`;
+    likeArgs.push(like, like, like, like);
+  }
+  if (branchScope === 'ALL' || !branchScope || !hasPb) {
+    const b = branchWhere(db, 'products', branchScope);
+    const row = db
+      .prepare(`SELECT COUNT(*) AS n FROM products WHERE 1=1${b.sql}${searchSql}`)
+      .get(...b.args, ...likeArgs);
+    return Number(row?.n) || 0;
+  }
+  const bid = String(branchScope).trim();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM products
+       WHERE (
+            branch_id = ?
+            OR (
+              (branch_id IS NULL OR TRIM(COALESCE(branch_id,'')) = '')
+              AND product_id IN ('COIL-ALU','PRD-102')
+            )
+          )${searchSql}`
+    )
+    .get(bid, ...likeArgs);
+  return Number(row?.n) || 0;
+}
+
 function purchaseOrderLinesByPoIds(db, poIds) {
   /** @type {Map<string, object[]>} */
   const byPoId = new Map();
@@ -1417,8 +1479,31 @@ function purchaseOrderLinesByPoIds(db, poIds) {
 export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'purchase_orders', branchScope);
-  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const q = String(opts.q || '').trim();
+  const statusRaw = String(opts.status || '').trim();
+  const statuses = statusRaw
+    ? statusRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  const idList = Array.isArray(opts.ids)
+    ? [...new Set(opts.ids.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+  let filterSql = '';
+  const filterArgs = [];
+  if (idList.length) {
+    filterSql += ` AND po_id IN (${idList.map(() => '?').join(',')})`;
+    filterArgs.push(...idList);
+  }
+  if (statuses.length) {
+    filterSql += ` AND status IN (${statuses.map(() => '?').join(',')})`;
+    filterArgs.push(...statuses);
+  }
+  if (q) {
+    filterSql += ` AND (LOWER(po_id) LIKE ? OR LOWER(COALESCE(supplier_name,'')) LIKE ? OR LOWER(COALESCE(invoice_no,'')) LIKE ?)`;
+    const like = `%${q.toLowerCase()}%`;
+    filterArgs.push(like, like, like);
+  }
+  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${filterSql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, ...filterArgs, limit] : [...b.args, ...filterArgs];
   const pos = db.prepare(sql).all(...args);
   const linesByPoId = purchaseOrderLinesByPoIds(
     db,
@@ -1476,6 +1561,43 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
       })),
     };
   });
+}
+
+/**
+ * Single PO for write deltas (skip status side effects).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} poId
+ */
+export function getPurchaseOrder(db, poId) {
+  const id = String(poId || '').trim();
+  if (!id) return null;
+  const [po] = listPurchaseOrders(db, 'ALL', { ids: [id], limit: 1, skipSideEffects: true });
+  return po || null;
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] @param {{ q?: string; status?: string }} [opts] */
+export function countPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  const q = String(opts.q || '').trim();
+  const statusRaw = String(opts.status || '').trim();
+  const statuses = statusRaw
+    ? statusRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  let filterSql = '';
+  const filterArgs = [];
+  if (statuses.length) {
+    filterSql += ` AND status IN (${statuses.map(() => '?').join(',')})`;
+    filterArgs.push(...statuses);
+  }
+  if (q) {
+    filterSql += ` AND (LOWER(po_id) LIKE ? OR LOWER(COALESCE(supplier_name,'')) LIKE ? OR LOWER(COALESCE(invoice_no,'')) LIKE ?)`;
+    const like = `%${q.toLowerCase()}%`;
+    filterArgs.push(like, like, like);
+  }
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE 1=1${b.sql}${filterSql}`)
+    .get(...b.args, ...filterArgs);
+  return Number(row?.n) || 0;
 }
 
 /**
@@ -2145,6 +2267,7 @@ export function mergeSalesReceiptRowsById(...groups) {
 
 /**
  * Recent receipts plus any still-uncleared rows (cashier queue), then cash enrichment.
+ * Uncleared merge is capped (see unclearedReceiptsListOpts) so desk packs stay bounded as backlog grows.
  * @param {import('better-sqlite3').Database} db
  * @param {'ALL' | string} branchScope
  * @param {object[]} ledgerRows
@@ -2154,7 +2277,7 @@ export function listSalesReceiptsForDesk(db, branchScope, ledgerRows, historyOpt
   const recent = listSalesReceipts(db, branchScope, historyOpts);
   const pending = historyOpts?.unlimited
     ? []
-    : listSalesReceipts(db, branchScope, { unclearedOnly: true, unlimited: true });
+    : listSalesReceipts(db, branchScope, { unclearedOnly: true, ...unclearedReceiptsListOpts() });
   return enrichSalesReceiptRowsWithCashFromLedger(mergeSalesReceiptRowsById(recent, pending), ledgerRows);
 }
 
@@ -2174,8 +2297,12 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
     ? ` AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     : '';
-  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const idList = Array.isArray(opts.ids)
+    ? [...new Set(opts.ids.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+  const idSql = idList.length ? ` AND id IN (${idList.map(() => '?').join(',')})` : '';
+  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql}${idSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
+  const args = [...b.args, ...idList, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const actorIds = [
     ...new Set(
@@ -2273,7 +2400,11 @@ export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'cutting_lists', branchScope);
-  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC${page.sql}`;
+  // Active desk queue: not finished (Draft / Waiting / In production / etc.).
+  const activeOnlySql = opts.activeOnly
+    ? ` AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('finished', 'cancelled')`
+    : '';
+  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql}${activeOnlySql} ORDER BY date_iso DESC${page.sql}`;
   const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const linesById = cuttingListLinesByListIds(
@@ -2286,6 +2417,33 @@ export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
       lines: linesById.get(String(row.id || '').trim()) || [],
       productionEditLocked: lockedIds.has(String(row.id || '').trim()),
     })
+  );
+}
+
+/**
+ * Recent cutting-list history plus still-active (non-finished) rows.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {{ unlimited?: boolean; limit?: number }} [historyOpts]
+ */
+export function listCuttingListsForDesk(db, branchScope, historyOpts) {
+  const recent = listCuttingLists(db, branchScope, historyOpts);
+  const active =
+    historyOpts?.unlimited
+      ? []
+      : listCuttingLists(db, branchScope, {
+          activeOnly: true,
+          ...unclearedReceiptsListOpts(),
+        });
+  if (!active.length) return recent;
+  const byId = new Map();
+  for (const row of [...active, ...recent]) {
+    const id = String(row.id || '').trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, row);
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(b.dateISO || '').localeCompare(String(a.dateISO || ''))
   );
 }
 
@@ -2302,21 +2460,32 @@ export function getCuttingList(db, id) {
   return mapCuttingListRow(db, row);
 }
 
-function fgAdjustmentTotalsByJobId(db, branchScope) {
+function fgAdjustmentTotalsByJobId(db, branchScope, jobIds = null) {
   if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_completion_adjustments'`).get()) {
     return new Map();
   }
+  const scopedIds = Array.isArray(jobIds)
+    ? [...new Set(jobIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : null;
+  if (scopedIds && scopedIds.length === 0) return new Map();
+
   const b = branchWhere(db, 'production_jobs', branchScope);
   const branchSql = b.sql ? b.sql.replace(/\bbranch_id\b/g, 'j.branch_id') : '';
+  const args = [...b.args];
+  let jobSql = '';
+  if (scopedIds) {
+    jobSql = ` AND a.job_id IN (${scopedIds.map(() => '?').join(',')})`;
+    args.push(...scopedIds);
+  }
   const rows = db
     .prepare(
       `SELECT a.job_id AS job_id, COALESCE(SUM(a.delta_finished_goods_m), 0) AS total
        FROM production_completion_adjustments a
        INNER JOIN production_jobs j ON j.job_id = a.job_id
-       WHERE 1=1${branchSql}
+       WHERE 1=1${branchSql}${jobSql}
        GROUP BY a.job_id`
     )
-    .all(...b.args);
+    .all(...args);
   const m = new Map();
   for (const r of rows) m.set(r.job_id, Number(r.total) || 0);
   return m;
@@ -2326,79 +2495,140 @@ export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
-  const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
   const b = branchWhere(db, 'production_jobs', branchScope);
-  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC${page.sql}`;
+  const activeOnlySql = opts.activeOnly
+    ? ` AND TRIM(COALESCE(status, 'Planned')) IN ('Planned', 'Running')`
+    : '';
+  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql}${activeOnlySql} ORDER BY created_at_iso DESC, job_id DESC${page.sql}`;
   const args = [...b.args, ...page.args];
-  return db
-    .prepare(sql)
-    .all(...args)
-    .map((row) => {
-      const baseActual = Number(row.actual_meters) || 0;
-      const fgAdj = adjByJob.get(row.job_id) || 0;
-      const actualRoofM = Number(row.actual_roof_m) || 0;
-      const actualCladdingM = Number(row.actual_cladding_m) || 0;
-      const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
-      const totalBase = jobTotalOutputMetres({
-        actualMeters: baseActual,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-      });
-      return {
-        jobID: row.job_id,
-        cuttingListId: row.cutting_list_id ?? '',
-        quotationRef: row.quotation_ref ?? '',
-        customerID: row.customer_id ?? '',
-        customerName: row.customer_name ?? '',
-        productID: row.product_id ?? '',
-        productName: row.product_name ?? '',
-        plannedMeters: Number(row.planned_meters) || 0,
-        plannedSheets: Number(row.planned_sheets) || 0,
-        plannedRoofM: Number(row.planned_roof_m) || 0,
-        plannedCladdingM: Number(row.planned_cladding_m) || 0,
-        plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
-        machineName: row.machine_name ?? '',
-        startDateISO: row.start_date_iso ?? '',
-        endDateISO: row.end_date_iso ?? '',
-        materialsNote: row.materials_note ?? '',
-        status: row.status ?? 'Planned',
-        createdAtISO: row.created_at_iso,
-        completedAtISO: row.completed_at_iso ?? '',
-        productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
-        actualMeters: baseActual,
-        fgAdjustmentMetersTotal: fgAdj,
-        effectiveOutputMeters: totalBase + fgAdj,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-        actualWeightKg: Number(row.actual_weight_kg) || 0,
-        conversionAlertState: row.conversion_alert_state ?? 'Pending',
-        managerReviewRequired: Boolean(row.manager_review_required),
-        managerReviewSignedAtISO: row.manager_review_signed_at_iso ?? '',
-        managerReviewSignedByUserId: row.manager_review_signed_by_user_id ?? '',
-        managerReviewSignedByName: row.manager_review_signed_by_name ?? '',
-        managerReviewRemark: row.manager_review_remark ?? '',
-        conversionVarianceReasonCode: row.conversion_variance_reason_code ?? '',
-        conversionVarianceReasonText: row.conversion_variance_reason_text ?? '',
-        conversionVarianceBand: row.conversion_variance_band ?? '',
-        operatorName: row.operator_name ?? '',
-        branchId: row.branch_id ?? '',
-        coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
-        offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
-        offcutSupplyJson: row.offcut_supply_json ?? '',
-        offcutSupply: (() => {
-          const raw = row.offcut_supply_json;
-          if (!raw || !String(raw).trim()) return [];
-          try {
-            const parsed = JSON.parse(String(raw));
-            return Array.isArray(parsed) ? parsed : [];
-          } catch {
-            return [];
-          }
-        })(),
-      };
-    });
+  const rows = db.prepare(sql).all(...args);
+  const adjByJob = fgAdjustmentTotalsByJobId(
+    db,
+    branchScope,
+    rows.map((row) => row.job_id)
+  );
+  return rows.map((row) => mapProductionJobRow(row, adjByJob.get(row.job_id) || 0));
+}
+
+/**
+ * Recent production history plus Planned/Running jobs that may sit outside the history window.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {{ unlimited?: boolean; limit?: number }} [historyOpts]
+ */
+export function listProductionJobsForDesk(db, branchScope, historyOpts) {
+  const recent = listProductionJobs(db, branchScope, historyOpts);
+  const active =
+    historyOpts?.unlimited
+      ? []
+      : listProductionJobs(db, branchScope, {
+          activeOnly: true,
+          ...unclearedReceiptsListOpts(),
+        });
+  if (!active.length) return recent;
+  const byId = new Map();
+  for (const row of [...active, ...recent]) {
+    const id = String(row.jobID || '').trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, row);
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(b.createdAtISO || '').localeCompare(String(a.createdAtISO || ''))
+  );
+}
+
+/** @param {object} row @param {number} [fgAdj] */
+function mapProductionJobRow(row, fgAdj = 0) {
+  const baseActual = Number(row.actual_meters) || 0;
+  const actualRoofM = Number(row.actual_roof_m) || 0;
+  const actualCladdingM = Number(row.actual_cladding_m) || 0;
+  const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
+  const totalBase = jobTotalOutputMetres({
+    actualMeters: baseActual,
+    actualRoofM,
+    actualCladdingM,
+    actualFlatsheetM,
+  });
+  return {
+    jobID: row.job_id,
+    cuttingListId: row.cutting_list_id ?? '',
+    quotationRef: row.quotation_ref ?? '',
+    customerID: row.customer_id ?? '',
+    customerName: row.customer_name ?? '',
+    productID: row.product_id ?? '',
+    productName: row.product_name ?? '',
+    plannedMeters: Number(row.planned_meters) || 0,
+    plannedSheets: Number(row.planned_sheets) || 0,
+    plannedRoofM: Number(row.planned_roof_m) || 0,
+    plannedCladdingM: Number(row.planned_cladding_m) || 0,
+    plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
+    machineName: row.machine_name ?? '',
+    startDateISO: row.start_date_iso ?? '',
+    endDateISO: row.end_date_iso ?? '',
+    materialsNote: row.materials_note ?? '',
+    status: row.status ?? 'Planned',
+    createdAtISO: row.created_at_iso,
+    completedAtISO: row.completed_at_iso ?? '',
+    productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
+    actualMeters: baseActual,
+    fgAdjustmentMetersTotal: fgAdj,
+    effectiveOutputMeters: totalBase + fgAdj,
+    actualRoofM,
+    actualCladdingM,
+    actualFlatsheetM,
+    actualWeightKg: Number(row.actual_weight_kg) || 0,
+    conversionAlertState: row.conversion_alert_state ?? 'Pending',
+    managerReviewRequired: Boolean(row.manager_review_required),
+    managerReviewSignedAtISO: row.manager_review_signed_at_iso ?? '',
+    managerReviewSignedByUserId: row.manager_review_signed_by_user_id ?? '',
+    managerReviewSignedByName: row.manager_review_signed_by_name ?? '',
+    managerReviewRemark: row.manager_review_remark ?? '',
+    conversionVarianceReasonCode: row.conversion_variance_reason_code ?? '',
+    conversionVarianceReasonText: row.conversion_variance_reason_text ?? '',
+    conversionVarianceBand: row.conversion_variance_band ?? '',
+    operatorName: row.operator_name ?? '',
+    branchId: row.branch_id ?? '',
+    coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
+    offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
+    offcutSupplyJson: row.offcut_supply_json ?? '',
+    offcutSupply: (() => {
+      const raw = row.offcut_supply_json;
+      if (!raw || !String(raw).trim()) return [];
+      try {
+        const parsed = JSON.parse(String(raw));
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    })(),
+  };
+}
+
+/** @param {import('better-sqlite3').Database} db @param {string} jobId */
+export function getProductionJob(db, jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const row = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(id);
+  if (!row) return null;
+  const adj = fgAdjustmentTotalsByJobId(db, row.branch_id || 'ALL', [id]);
+  return mapProductionJobRow(row, adj.get(id) || 0);
+}
+
+/**
+ * Desk-shaped sales receipt by ledger entry id (writer delta after POST /api/ledger/receipt).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} ledgerEntryId
+ */
+export function getSalesReceiptByLedgerEntryId(db, ledgerEntryId) {
+  const lid = String(ledgerEntryId || '').trim();
+  if (!lid) return null;
+  const row = db.prepare(`SELECT * FROM sales_receipts WHERE ledger_entry_id = ? LIMIT 1`).get(lid);
+  if (!row) return null;
+  const [mapped] = listSalesReceipts(db, row.branch_id || 'ALL', {
+    ids: [row.id],
+    limit: 1,
+  });
+  return mapped || null;
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
@@ -2733,6 +2963,10 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
   const includePreviewSnapshot = opts.includePreviewSnapshot === true;
   const b = branchWhere(db, 'customer_refunds', branchScope);
   const branchSql = b.sql.replace(/\bbranch_id\b/g, 'cr.branch_id');
+  // Open payout / approval queue — Pending + Approved awaiting cash (not Paid/Rejected/Cancelled).
+  const openOnlySql = opts.openOnly
+    ? ` AND TRIM(COALESCE(cr.status, '')) IN ('Pending', 'Approved', 'Partially paid')`
+    : '';
   const crSelect = includePreviewSnapshot
     ? 'cr.*'
     : `cr.refund_id, cr.customer_id, cr.customer_name, cr.quotation_ref, cr.cutting_list_ref,
@@ -2748,26 +2982,12 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
               q.refunds_blocked_reason AS quotation_refunds_blocked_reason
        FROM customer_refunds cr
        LEFT JOIN quotations q ON q.id = cr.quotation_ref
-       WHERE 1=1${branchSql}
+       WHERE 1=1${branchSql}${openOnlySql}
        ORDER BY cr.requested_at_iso DESC${page.sql}`;
   const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
-  // Open payouts: stamp credit that already left via leftover-overpay applications so
-  // Finance waiting list drops (e.g. RF-KD-26-9578 still showing after OVERPAY_REVERSAL).
-  for (const row of rows) {
-    const st = String(row.status || '').trim();
-    if (st === 'Approved' || st === 'Partially paid') {
-      healRefundCreditAppliedFromApplicationsTx(db, row.refund_id);
-      const healed = db
-        .prepare(
-          `SELECT status, paid_amount_ngn, credit_applied_ngn, credit_applied_to_quotation_ref,
-                  payment_note, paid_at_iso, paid_by, paid_by_user_id, approved_amount_ngn
-           FROM customer_refunds WHERE refund_id = ?`
-        )
-        .get(row.refund_id);
-      if (healed) Object.assign(row, healed);
-    }
-  }
+  // Desk lists are read-only. Credit heal runs on detail/write paths only
+  // (getCustomerRefundDetail) so bootstrap/finance packs stay O(rows) not O(writes).
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
@@ -2779,6 +2999,34 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
       includePreviewSnapshot,
       creditAppliedByRefundId,
     })
+  );
+}
+
+/**
+ * Recent refund history plus any still-open Pending/Approved/Partially paid rows.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} branchScope
+ * @param {{ unlimited?: boolean; limit?: number }} [historyOpts]
+ */
+export function listRefundsForDesk(db, branchScope, historyOpts) {
+  const recent = listRefunds(db, branchScope, { ...historyOpts, includePreviewSnapshot: false });
+  const open =
+    historyOpts?.unlimited
+      ? []
+      : listRefunds(db, branchScope, {
+          openOnly: true,
+          ...unclearedReceiptsListOpts(),
+          includePreviewSnapshot: false,
+        });
+  if (!open.length) return recent;
+  const byId = new Map();
+  for (const row of [...open, ...recent]) {
+    const id = String(row.refundID || '').trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, row);
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(b.requestedAtISO || '').localeCompare(String(a.requestedAtISO || ''))
   );
 }
 

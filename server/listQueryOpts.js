@@ -88,6 +88,27 @@ export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
   Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 300)
 );
 
+/**
+ * Cap for uncleared/pending receipts merged into desk packs (cashier queue).
+ * Full backlog belongs on a dedicated paginated cashier endpoint, not every sales/finance snapshot.
+ * Set `ZAREWA_UNCLEARED_RECEIPTS_LIMIT=0` for unlimited (emergency only).
+ */
+export const DEFAULT_UNCLEARED_RECEIPTS_LIMIT = Math.min(
+  50_000,
+  Math.max(50, Number(process.env.ZAREWA_UNCLEARED_RECEIPTS_DEFAULT) || 400)
+);
+
+/**
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function unclearedReceiptsListOpts() {
+  const raw = process.env.ZAREWA_UNCLEARED_RECEIPTS_LIMIT;
+  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_UNCLEARED_RECEIPTS_LIMIT };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+}
+
 /** Open AP / bank-recon lines on finance snapshots (not full history dumps). */
 export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
   50_000,
@@ -110,7 +131,8 @@ export function financeRegisterListOpts() {
 /**
  * List opts for sales receipts (Sales filters + Cashier desk confirmation queue).
  * Default: capped recent history. Uncleared/pending receipts are merged in separately
- * so cashier queues are not silently truncated.
+ * (capped via unclearedReceiptsListOpts — default 400) so cashier queues stay complete
+ * without unbounded desk packs.
  * Set `ZAREWA_RECEIPTS_HISTORY_LIMIT=0` for unlimited, or a positive integer to override.
  * @returns {{ unlimited: true } | { limit: number }}
  */

@@ -1,13 +1,6 @@
-/** Desk/list default — 250 keeps JSON payloads usable on ~100–400 kbps mill links. */
 const DEFAULT_LIST_LIMIT = Math.min(
   50_000,
-  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 250)
-);
-
-/** Hard cap when HTTP clients pass unlimited=1 (internal `unlimited: true` opts stay uncapped). */
-export const UNLIMITED_LIST_HARD_CAP = Math.min(
-  50_000,
-  Math.max(500, Number(process.env.ZAREWA_UNLIMITED_LIST_HARD_CAP) || 5000)
+  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 500)
 );
 
 /**
@@ -39,7 +32,8 @@ export function productionHistoryListOpts() {
   const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
   if (raw == null || String(raw).trim() === '') {
     // Desk queues stay usable; older jobs load via search / paginated APIs.
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 250)) };
+    // Desk queues stay usable; older jobs load via search / paginated APIs.
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 500)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
@@ -49,7 +43,7 @@ export function productionHistoryListOpts() {
 /** Desk-safe default for finance history lists (recent live volume; override via env). */
 export const DEFAULT_FINANCE_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 400)
+  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 800)
 );
 
 /**
@@ -75,7 +69,7 @@ export function financeHistoryListOpts() {
 export function salesCustomersListOpts() {
   const raw = process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
   if (raw == null || String(raw).trim() === '') {
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 1000)) };
+    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 2000)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
@@ -85,34 +79,13 @@ export function salesCustomersListOpts() {
 /** Desk-safe default for receipts history (~recent live KD volume; override via env). */
 export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
   50_000,
-  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 300)
+  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 800)
 );
-
-/**
- * Cap for uncleared/pending receipts merged into desk packs (cashier queue).
- * Full backlog belongs on a dedicated paginated cashier endpoint, not every sales/finance snapshot.
- * Set `ZAREWA_UNCLEARED_RECEIPTS_LIMIT=0` for unlimited (emergency only).
- */
-export const DEFAULT_UNCLEARED_RECEIPTS_LIMIT = Math.min(
-  50_000,
-  Math.max(50, Number(process.env.ZAREWA_UNCLEARED_RECEIPTS_DEFAULT) || 400)
-);
-
-/**
- * @returns {{ unlimited: true } | { limit: number }}
- */
-export function unclearedReceiptsListOpts() {
-  const raw = process.env.ZAREWA_UNCLEARED_RECEIPTS_LIMIT;
-  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_UNCLEARED_RECEIPTS_LIMIT };
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
-  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
-}
 
 /** Open AP / bank-recon lines on finance snapshots (not full history dumps). */
 export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
   50_000,
-  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 250)
+  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 500)
 );
 
 /**
@@ -131,8 +104,7 @@ export function financeRegisterListOpts() {
 /**
  * List opts for sales receipts (Sales filters + Cashier desk confirmation queue).
  * Default: capped recent history. Uncleared/pending receipts are merged in separately
- * (capped via unclearedReceiptsListOpts — default 400) so cashier queues stay complete
- * without unbounded desk packs.
+ * so cashier queues are not silently truncated.
  * Set `ZAREWA_RECEIPTS_HISTORY_LIMIT=0` for unlimited, or a positive integer to override.
  * @returns {{ unlimited: true } | { limit: number }}
  */

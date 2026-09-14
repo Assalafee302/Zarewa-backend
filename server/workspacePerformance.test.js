@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { buildWorkspaceRevision } from './workspaceRevision.js';
-import { SHELL_DEFERRED_DESK_ARRAYS } from './bootstrap.js';
+import { buildBootstrap } from './bootstrap.js';
 import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
+import { insertAssociatedStaff } from './writeOps.js';
 
 function mysqlAvailable() {
   try {
@@ -16,26 +17,6 @@ function mysqlAvailable() {
 }
 
 const mysqlOk = mysqlAvailable();
-
-describe('shell first-paint contract', () => {
-  it('ships reference data on the shell rather than deferring it', () => {
-    // Regression guard, not a tautology: treasuryAccounts sat in this list alongside the
-    // thousand-row registers, so a cashier could not pick a bank until the entire sales
-    // desk pack had downloaded. It is a dozen rows of reference data — if it ever goes
-    // back in here, the receipt screen silently gets slow again on a mill link.
-    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('treasuryAccounts');
-    // Same reasoning: a few dozen rows of reference data that every procurement screen
-    // needs, and an empty supplier picker reads as "no suppliers exist".
-    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('suppliers');
-    expect(SHELL_DEFERRED_DESK_ARRAYS).not.toContain('transportAgents');
-  });
-
-  it('still defers the registers that actually are large', () => {
-    for (const k of ['customers', 'quotations', 'receipts', 'ledgerEntries', 'treasuryMovements']) {
-      expect(SHELL_DEFERRED_DESK_ARRAYS).toContain(k);
-    }
-  });
-});
 
 describe('httpEtag', () => {
   it('jsonWeakEtag is deterministic', () => {
@@ -80,6 +61,29 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.domain).toBe('finance');
     expect(Array.isArray(snap.receipts)).toBe(true);
     expect(Array.isArray(snap.cuttingLists)).toBe(true);
+    db.close();
+  });
+
+  it('full bootstrap ships associated staff and refund credit apps for refund-only users', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertAssociatedStaff(db, {
+      id: 'AS-DRV-1',
+      name: 'Driver One',
+      staffType: 'Driver',
+      status: 'Active',
+    });
+    const user = {
+      id: 'refund-only-1',
+      roleKey: 'custom',
+      displayName: 'Refund Clerk',
+      permissions: ['refunds.request'],
+    };
+    const session = { authenticated: true, user, permissions: user.permissions };
+    const full = buildBootstrap(db, { user, session, branchScope: 'BR-KD', skipSideEffects: true });
+    expect(full.ok).toBe(true);
+    expect(full.customers).toEqual([]);
+    expect(full.associatedStaff.some((s) => s.id === 'AS-DRV-1')).toBe(true);
+    expect(Array.isArray(full.refundCreditApplications)).toBe(true);
     db.close();
   });
 });

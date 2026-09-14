@@ -36,9 +36,6 @@ export function parseProductDashboardAttrs(row) {
   }
 }
 
-/** @type {WeakMap<object, Map<string, string | null>>} */
-const materialTypeInventoryModelCache = new WeakMap();
-
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} materialTypeId
@@ -46,18 +43,10 @@ const materialTypeInventoryModelCache = new WeakMap();
 export function inventoryModelForMaterialTypeId(db, materialTypeId) {
   const id = String(materialTypeId || '').trim();
   if (!id) return null;
-  let cache = materialTypeInventoryModelCache.get(db);
-  if (!cache) {
-    cache = new Map();
-    materialTypeInventoryModelCache.set(db, cache);
-  }
-  if (cache.has(id)) return cache.get(id);
   const row = db
     .prepare(`SELECT inventory_model FROM setup_material_types WHERE material_type_id = ?`)
     .get(id);
-  const model = row?.inventory_model != null ? String(row.inventory_model).trim() || null : null;
-  cache.set(id, model);
-  return model;
+  return row?.inventory_model != null ? String(row.inventory_model).trim() || null : null;
 }
 
 function productRowForLookup(db, productId, branchId) {

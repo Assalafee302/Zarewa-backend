@@ -1466,7 +1466,6 @@ function runMigrationsUnlocked(db) {
   migrateLedgerPerformanceIndexes(db);
   migrateFinanceDeskPerformanceIndexes(db);
   migrateOpsDeskPerformanceIndexes(db);
-  migrateSalesDeskListPerformanceIndexes(db);
   migrateRefundCreditApplications(db);
   migrateUserProfileAndPasswordReset(db);
   migrateRepairMustChangePasswordLoop2026(db);
@@ -6379,16 +6378,6 @@ function migrateBranches(db) {
       updated_by_user_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch ON fixed_assets(branch_id);
-    CREATE TABLE IF NOT EXISTS http_idempotency (
-      user_id TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      idempotency_key TEXT NOT NULL,
-      status_code INTEGER NOT NULL,
-      body_json TEXT NOT NULL,
-      created_at_iso TEXT NOT NULL,
-      PRIMARY KEY (user_id, scope, idempotency_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_http_idempotency_created ON http_idempotency(created_at_iso);
     CREATE TABLE IF NOT EXISTS product_standard_costs (
       product_id TEXT PRIMARY KEY,
       standard_material_cost_ngn_per_kg INTEGER,
@@ -7154,28 +7143,6 @@ function migrateOpsDeskPerformanceIndexes(db) {
     `);
   } catch {
     /* ignore — branch_id / date columns may arrive via earlier migrations on some hosts */
-  }
-}
-
-/** Customers + purchase orders — desk sorts and head-office branch filters. */
-function migrateSalesDeskListPerformanceIndexes(db) {
-  try {
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_customers_branch_name ON customers(branch_id, name);
-      CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
-      CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_date ON purchase_orders(branch_id, order_date_iso, po_id);
-      CREATE INDEX IF NOT EXISTS idx_purchase_orders_branch_status ON purchase_orders(branch_id, status);
-      CREATE INDEX IF NOT EXISTS idx_customer_refunds_branch_requested
-        ON customer_refunds(branch_id, requested_at_iso DESC);
-      CREATE INDEX IF NOT EXISTS idx_customer_refunds_quotation_ref
-        ON customer_refunds(quotation_ref);
-      CREATE INDEX IF NOT EXISTS idx_production_jobs_quotation_ref
-        ON production_jobs(quotation_ref);
-      CREATE INDEX IF NOT EXISTS idx_cutting_lists_quotation_ref
-        ON cutting_lists(quotation_ref);
-    `);
-  } catch {
-    /* ignore — branch_id may arrive via earlier migrations on some hosts */
   }
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { listAdvanceInEvents, listLedgerEntriesForAdvanceBalance } from './readModel.js';
 import { insertCustomer } from './writeOps.js';
-import { buildBootstrap, buildShellBootstrap } from './bootstrap.js';
+import { buildBootstrap } from './bootstrap.js';
 
 function mysqlAvailable() {
   try {
@@ -43,7 +43,7 @@ describe.skipIf(!mysqlOk)('advance FIFO list performance', () => {
     db.close();
   });
 
-  it('full bootstrap defers advanceInEvents; shell stays empty', () => {
+  it('full bootstrap includes open advanceInEvents', () => {
     const db = createDatabase(':memory:', { seed: false });
     insertCustomer(db, { customerID: 'C-ADV', name: 'Advance Cust' }, 'BR-KD');
     db.exec(`
@@ -53,12 +53,8 @@ describe.skipIf(!mysqlOk)('advance FIFO list performance', () => {
     const user = { id: 1, roleKey: 'md', displayName: 'MD' };
     const session = { authenticated: true, user, permissions: ['dashboard.view', 'sales.view', 'finance.view'] };
     const full = buildBootstrap(db, { user, session, branchScope: 'BR-KD', skipSideEffects: true });
-    expect(full.advanceInEvents).toEqual([]);
-    expect(full.bootstrapMeta?.truncated?.advanceInEvents).toBe(true);
-    expect(full.bootstrapMeta?.deferredDeskArrays).toEqual(expect.arrayContaining(['advanceInEvents']));
-
-    const shell = buildShellBootstrap(db, { user, session, branchScope: 'BR-KD' });
-    expect(shell.advanceInEvents).toEqual([]);
+    expect(full.advanceInEvents.find((a) => a.ledgerEntryId === 'LE-A1')?.amountNgn).toBe(5000);
+    expect(full.bootstrapMeta?.deferredDeskArrays || []).not.toContain('advanceInEvents');
     db.close();
   });
 });

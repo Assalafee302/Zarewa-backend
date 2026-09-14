@@ -59,7 +59,7 @@ describe('listQueryOpts', () => {
   });
 
   it('productionHistoryListOpts defaults to capped desk limit', () => {
-    expect(productionHistoryListOpts()).toEqual({ limit: 250 });
+    expect(productionHistoryListOpts()).toEqual({ limit: 500 });
   });
 
   it('productionHistoryListOpts honors ZAREWA_PRODUCTION_HISTORY_LIMIT', () => {
@@ -70,7 +70,7 @@ describe('listQueryOpts', () => {
   });
 
   it('financeHistoryListOpts defaults to capped desk limit', () => {
-    expect(financeHistoryListOpts()).toEqual({ limit: 400 });
+    expect(financeHistoryListOpts()).toEqual({ limit: 800 });
   });
 
   it('financeHistoryListOpts honors ZAREWA_FINANCE_HISTORY_LIMIT', () => {
@@ -81,7 +81,7 @@ describe('listQueryOpts', () => {
   });
 
   it('salesCustomersListOpts defaults to capped directory', () => {
-    expect(salesCustomersListOpts()).toEqual({ limit: 1000 });
+    expect(salesCustomersListOpts()).toEqual({ limit: 2000 });
   });
 
   it('salesCustomersListOpts honors ZAREWA_SALES_CUSTOMERS_LIMIT', () => {
@@ -92,7 +92,7 @@ describe('listQueryOpts', () => {
   });
 
   it('receiptsHistoryListOpts defaults to capped desk limit', () => {
-    expect(receiptsHistoryListOpts()).toEqual({ limit: 300 });
+    expect(receiptsHistoryListOpts()).toEqual({ limit: 800 });
   });
 
   it('receiptsHistoryListOpts honors ZAREWA_RECEIPTS_HISTORY_LIMIT', () => {
@@ -103,6 +103,6 @@ describe('listQueryOpts', () => {
   });
 
   it('financeRegisterListOpts defaults to capped register slice', () => {
-    expect(financeRegisterListOpts()).toEqual({ limit: 250 });
+    expect(financeRegisterListOpts()).toEqual({ limit: 500 });
   });
 });

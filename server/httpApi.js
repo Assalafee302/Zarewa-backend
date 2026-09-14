@@ -60,12 +60,10 @@ import {
   saveStockRegisterPrintSnapshot,
   saveStockRegisterStoreChecklist,
 } from './stockRegisterOps.js';
-import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
+import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
-import { withWriteDelta } from './workspaceWriteDelta.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
-import { buildWorkspaceRevision, buildWorkspaceRevisionAsync, workspaceRevisionEtag } from './workspaceRevision.js';
-import { asyncRoute } from './httpErrors.js';
+import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
 import {
   ASSOCIATED_STAFF_MANAGE_PERMS,
   ASSOCIATED_STAFF_READ_PERMS,
@@ -195,9 +193,6 @@ import {
   assertRefundIdInWorkspace,
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
-import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
-import { workspaceDataEventMiddleware } from './workspaceDataEvents.js';
-import { debugSessionLog } from './debugSessionLog.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
@@ -497,7 +492,6 @@ import {
   listCustomers,
   countCustomers,
   listQuotations,
-  countQuotations,
   listQuotationsForCustomer,
   listProductionJobsForQuotationRefs,
   listQuotationIds,
@@ -527,7 +521,6 @@ import {
   listCoilLots,
   searchCoilLots,
   listPurchaseOrders,
-  getPurchaseOrder,
   listInventoryCoilSnapshots,
   listCoilControlEvents,
   listStockMovementsForProduct,
@@ -550,8 +543,6 @@ import {
   listSalesReceipts,
   countSalesReceipts,
   listCuttingLists,
-  getProductionJob,
-  getSalesReceiptByLedgerEntryId,
   enrichSalesReceiptRowsWithCashFromLedger,
   listTreasuryMovements,
   procurementDashboardSummary,
@@ -731,7 +722,7 @@ const aiAutomationBuckets = new Map();
 const bootstrapPollCache = new Map();
 const BOOTSTRAP_POLL_CACHE_MS = Math.max(
   1000,
-  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 8000)
+  Math.min(30_000, Number(process.env.ZAREWA_BOOTSTRAP_POLL_CACHE_MS) || 1000)
 );
 
 /**
@@ -1439,7 +1430,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/accounting/settlements/:settlementId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'register_settlement.pay')) return;
       const result = payRegisterSettlement(db, req.params.settlementId, {
         ...(req.body || {}),
         paidBy: req.user?.displayName,
@@ -1485,7 +1475,6 @@ export function registerHttpApi(app, db) {
           console.error('[register-settlement-pay-work-item-sync]', syncErr);
         }
       }
-      if (result.ok) storeIdempotentSuccess(db, req, 'register_settlement.pay', 201, result);
       return res.status(result.ok ? 201 : 400).json(result);
     } catch (e) {
       console.error('[accounting-settlement-pay]', e);
@@ -3519,10 +3508,6 @@ export function registerHttpApi(app, db) {
   registerIntegrationReadApi(app, db);
 
   app.use('/api', requireAuth, requireActivePassword);
-  // After requireAuth, which is what sets req.workspaceBranchId — a broadcast without it
-  // would reach every branch instead of the one that changed. Mounted before the route
-  // registrations below so it wraps them all.
-  app.use('/api', workspaceDataEventMiddleware(db));
 
   registerWorkspaceListRoutes(app, db);
   registerHrApi(app, db);
@@ -3533,79 +3518,55 @@ export function registerHttpApi(app, db) {
   registerAiAutomationRoutes(app, db, aiAutomationBuckets);
   registerAiProviderRoutes(app);
 
-  app.get(
-    '/api/workspace/revision',
-    asyncRoute(
-      async (req, res) => {
-        const branchScope = resolveBootstrapBranchScope(req);
-        const payload = await buildWorkspaceRevisionAsync(db, branchScope);
-        const etag = jsonWeakEtag(payload);
-        if (ifNoneMatchHit(req, etag)) {
-          // #region agent log
-          debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:revision304', message: 'workspace revision 304', data: { branchScope, revision: payload?.revision, domains: payload?.domains } });
-          // #endregion
-          return res.status(304).end();
-        }
-        // #region agent log
-        debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:revision200', message: 'workspace revision 200', data: { branchScope, revision: payload?.revision, domains: payload?.domains } });
-        // #endregion
-        setWeakEtag(res, etag);
-        return res.json(payload);
-      },
-      { context: 'workspace.revision', fallbackMessage: 'Could not compute workspace revision.' }
-    )
-  );
+  app.get('/api/workspace/revision', (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const payload = buildWorkspaceRevision(db, branchScope);
+      const etag = workspaceRevisionEtag(db, branchScope);
+      if (ifNoneMatchHit(req, etag)) {
+        return res.status(304).end();
+      }
+      setWeakEtag(res, etag);
+      return res.json(payload);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ ok: false, error: 'Could not compute workspace revision.' });
+    }
+  });
 
   for (const [domain, buildSnapshot] of Object.entries(DOMAIN_SNAPSHOT_BUILDERS)) {
-    app.get(
-      `/api/workspace/${domain}-snapshot`,
-      asyncRoute(
-        async (req, res) => {
-          const branchScope = resolveBootstrapBranchScope(req);
-          const before = await buildWorkspaceRevisionAsync(db, branchScope);
-          const beforeRevision = before.domains?.[domain] || before.revision;
-          const beforeEtag = jsonWeakEtag({
-            domain,
-            branchScope,
-            revision: beforeRevision,
-            userId: req.user?.id ?? '',
-          });
-          // Compare the cheap durable domain revision before building a potentially large pack.
-          if (ifNoneMatchHit(req, beforeEtag)) {
-            // #region agent log
-            debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:snapshot304', message: 'domain snapshot 304', data: { domain, branchScope, beforeRevision } });
-            // #endregion
-            return res.status(304).end();
-          }
-          // Yield once so concurrent health/revision can run before the sync desk build.
-          await Promise.resolve();
-          const payload = buildSnapshot(db, {
-            user: req.user,
-            branchScope,
-          });
-          const after = await buildWorkspaceRevisionAsync(db, branchScope);
-          const revision = after.domains?.[domain] || after.revision;
-          // #region agent log
-          debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:snapshot200', message: 'domain snapshot rebuilt', data: { domain, branchScope, beforeRevision, revision, payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [] } });
-          // #endregion
-          const etag = jsonWeakEtag({
-            domain,
-            branchScope,
-            revision,
-            userId: req.user?.id ?? '',
-          });
-          setWeakEtag(res, etag);
-          return res.json(payload);
-        },
-        {
-          context: `workspace.${domain}-snapshot`,
-          fallbackMessage: `Could not load ${domain} workspace data.`,
+    app.get(`/api/workspace/${domain}-snapshot`, (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const payload = buildSnapshot(db, {
+          user: req.user,
+          branchScope,
+        });
+        const revision = buildWorkspaceRevision(db, branchScope).revision;
+        const etag = jsonWeakEtag({
+          domain,
+          branchScope,
+          revision,
+          userId: req.user?.id ?? '',
+          // Length fingerprint — avoids hashing multi-MB domain JSON bodies.
+          lens: Object.keys(payload)
+            .filter((k) => Array.isArray(payload[k]))
+            .sort()
+            .map((k) => `${k}:${payload[k].length}`),
+        });
+        if (ifNoneMatchHit(req, etag)) {
+          return res.status(304).end();
         }
-      )
-    );
+        setWeakEtag(res, etag);
+        return res.json(payload);
+      } catch (e) {
+        console.error(`[workspace/${domain}-snapshot]`, e);
+        return res.status(500).json({ ok: false, error: `Could not load ${domain} workspace data.` });
+      }
+    });
   }
 
-  app.get('/api/bootstrap', async (req, res) => {
+  app.get('/api/bootstrap', (req, res) => {
     try {
       const includeControls =
         userHasPermission(req.user, 'audit.view') ||
@@ -3614,46 +3575,14 @@ export function registerHttpApi(app, db) {
       const includeUsers = userHasPermission(req.user, 'settings.view');
       const includeRegisteredPasswords = includeUsers && canRevealUserPasswords(req.user);
       const branchScope = resolveBootstrapBranchScope(req);
-      // Default shell for first paint; pass mode=full for legacy full dump. Vitest sets
-      // ZAREWA_BOOTSTRAP_DEFAULT_MODE=full so existing tests keep full payloads.
-      const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? 'shell')
+      const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '')
         .trim()
         .toLowerCase();
-      const mode =
-        modeRaw === 'shell' || modeRaw === 'dashboard'
-          ? modeRaw
-          : modeRaw === 'full'
-            ? ''
-            : modeRaw === '' || modeRaw === '0'
-              ? ''
-              : 'shell';
+      const mode = modeRaw === 'dashboard' ? modeRaw : '';
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
-      const skipWorkItemSync = skipSideEffects || mode === 'dashboard' || mode === 'shell';
-      const ifNoneMatch = String(req.headers['if-none-match'] || '');
-      const useShortLivedBootstrapCache =
-        skipSideEffects || mode === 'dashboard' || mode === 'shell';
-      // Check cache before any bootstrap build — polls must not pay full DB cost on hit.
-      if (useShortLivedBootstrapCache) {
-        const cacheKey = bootstrapPollCacheKey(req, {
-          branchScope,
-          mode,
-          includeControls,
-          includeUsers,
-        });
-        const hit = bootstrapPollCache.get(cacheKey);
-        if (hit && Date.now() < hit.expires) {
-          // #region agent log
-          debugSessionLog({ hypothesisId: 'C', location: 'httpApi.js:bootstrapCacheHit', message: 'bootstrap poll cache hit', data: { mode, branchScope, etagMatch: Boolean(ifNoneMatch && ifNoneMatch === hit.etag), msLeft: hit.expires - Date.now() } });
-          // #endregion
-          if (ifNoneMatch && ifNoneMatch === hit.etag) {
-            return res.status(304).end();
-          }
-          res.setHeader('ETag', hit.etag);
-          return res.json(hit.payload);
-        }
-      }
+      const skipWorkItemSync = skipSideEffects || mode === 'dashboard';
       const bootstrapOpts = {
         user: req.user,
         session: req.session,
@@ -3665,16 +3594,16 @@ export function registerHttpApi(app, db) {
         skipWorkItemSync,
       };
       const payload =
-        mode === 'shell'
-          ? buildShellBootstrap(db, bootstrapOpts)
-          : mode === 'dashboard'
-            ? buildDashboardBootstrap(db, {
-                ...bootstrapOpts,
-                limit,
-              })
-            : buildBootstrap(db, bootstrapOpts);
-      const revision = (await buildWorkspaceRevisionAsync(db, branchScope)).revision;
+        mode === 'dashboard'
+          ? buildDashboardBootstrap(db, {
+              ...bootstrapOpts,
+              limit,
+            })
+          : buildBootstrap(db, bootstrapOpts);
+      const ifNoneMatch = String(req.headers['if-none-match'] || '');
+      const revision = buildWorkspaceRevision(db, branchScope).revision;
       const etagMeta = { revision, mode: mode || 'full' };
+      const useShortLivedBootstrapCache = skipSideEffects || mode === 'dashboard';
       if (useShortLivedBootstrapCache) {
         const cacheKey = bootstrapPollCacheKey(req, {
           branchScope,
@@ -3682,6 +3611,14 @@ export function registerHttpApi(app, db) {
           includeControls,
           includeUsers,
         });
+        const hit = bootstrapPollCache.get(cacheKey);
+        if (hit && Date.now() < hit.expires) {
+          if (ifNoneMatch && ifNoneMatch === hit.etag) {
+            return res.status(304).end();
+          }
+          res.setHeader('ETag', hit.etag);
+          return res.json(hit.payload);
+        }
         const etag = bootstrapPayloadEtag(payload, etagMeta);
         if (ifNoneMatch && ifNoneMatch === etag) {
           return res.status(304).end();
@@ -4341,17 +4278,15 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'gl.journal.manual')) return;
       const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
       if (lines.length > 20) {
         return res.status(400).json({ ok: false, error: 'Too many journal lines (max 20).', code: 'GL_LINE_CAP' });
       }
-      const idemKey = normalizeIdempotencyKey(req.get('Idempotency-Key') || req.get('idempotency-key'));
       const r = postBalancedJournal(db, {
         entryDateISO: req.body?.entryDateISO,
         memo: req.body?.memo,
         sourceKind: 'MANUAL_JOURNAL',
-        sourceId: idemKey || undefined,
+        sourceId: req.body?.sourceId || undefined,
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         createdByUserId: req.user?.id,
         lines,
@@ -4372,7 +4307,6 @@ export function registerHttpApi(app, db) {
           note: String(req.body?.memo || 'Manual journal').slice(0, 240),
           details: { journalId: r.journalId, duplicate: Boolean(r.duplicate), lineCount: lines.length },
         });
-        storeIdempotentSuccess(db, req, 'gl.journal.manual', r.duplicate ? 200 : 201, r);
       }
       res.status(r.ok ? (r.duplicate ? 200 : 201) : 400).json(r);
     } catch (e) {
@@ -4460,7 +4394,6 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_balance')) return;
       const body = req.body || {};
       const lines = Array.isArray(body.lines) ? body.lines : [];
       if (lines.length > 20) {
@@ -4476,7 +4409,6 @@ export function registerHttpApi(app, db) {
         lines,
       });
       if (!result.ok) return res.status(400).json(result);
-      storeIdempotentSuccess(db, req, 'finance.opening_balance', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-balance-post]', e);
@@ -4517,7 +4449,6 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_pack.post')) return;
       ensureArchitecturalGlAccounts(db);
       const body = req.body || {};
       const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
@@ -4528,7 +4459,6 @@ export function registerHttpApi(app, db) {
         createdByUserId: req.user?.id,
       });
       if (!result.ok) return res.status(400).json(result);
-      storeIdempotentSuccess(db, req, 'finance.opening_pack.post', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-pack-post]', e);
@@ -5734,18 +5664,17 @@ export function registerHttpApi(app, db) {
         const qid = String(req.params.quotationId || '');
         const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
+        const quotation = getQuotation(db, qid);
         const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
-        const quotationRow = getQuotation(db, qid);
-        if (!quotationRow) {
-          return res.status(500).json({ ok: false, error: 'Quotation missing after MD approval.' });
-        }
-        const quotation = {
-          ...quotationRow,
-          pricingViolations: pv.violations,
-          pricingHasFloorRows: pv.hasFloorRows,
-        };
-        return res.json(withWriteDelta({ ok: true, quotation }, { quotations: [quotation] }));
+        return res.json({
+          ok: true,
+          quotation: {
+            ...quotation,
+            pricingViolations: pv.violations,
+            pricingHasFloorRows: pv.hasFloorRows,
+          },
+        });
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not record MD price exception approval.' });
@@ -5879,17 +5808,7 @@ export function registerHttpApi(app, db) {
         if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
         return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'sales_receipt', rid, (stripped) => {
           const confirmed = Boolean(stripped?.confirmed);
-          const r = write.patchSalesReceiptBankConfirmation(db, rid, confirmed, req.user);
-          if (!r.ok) return r;
-          const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
-          /** @type {Record<string, unknown[]>} */
-          const bags = { receipts: receipt ? [receipt] : [] };
-          const qRef = String(receipt?.quotationRef || '').trim();
-          if (qRef) {
-            const quotation = getQuotation(db, qRef);
-            if (quotation) bags.quotations = [quotation];
-          }
-          return withWriteDelta({ ...r }, bags);
+          return write.patchSalesReceiptBankConfirmation(db, rid, confirmed, req.user);
         });
       } catch (e) {
         console.error(e);
@@ -5933,32 +5852,7 @@ export function registerHttpApi(app, db) {
           req.body || {},
           'sales_receipt',
           rid,
-          (stripped) => {
-            const r = write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user);
-            if (!r.ok) return r;
-            const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
-            /** @type {Record<string, unknown[]>} */
-            const bags = { receipts: receipt ? [receipt] : [] };
-            const qRef = String(receipt?.quotationRef || '').trim();
-            if (qRef) {
-              const quotation = getQuotation(db, qRef);
-              if (quotation) bags.quotations = [quotation];
-            }
-            const sourceIds = Array.isArray(stripped?.refundCreditApply?.sourceIds)
-              ? stripped.refundCreditApply.sourceIds
-              : [];
-            const refunds = [];
-            for (const sid of sourceIds) {
-              const raw = String(sid || '').trim();
-              if (!raw.toLowerCase().startsWith('refund:')) continue;
-              const refundId = raw.slice(raw.indexOf(':') + 1).trim();
-              if (!refundId) continue;
-              const row = getCustomerRefundDetail(db, refundId);
-              if (row) refunds.push(row);
-            }
-            if (refunds.length) bags.refunds = refunds;
-            return withWriteDelta({ ...r }, bags);
-          },
+          (stripped) => write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user),
           {
             requiresEditApproval: (database, user, receiptId) =>
               receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
@@ -6375,11 +6269,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  // Auth only, not office.use: every signed-in desk needs the workspace.data invalidations
-  // that keep a colleague's saved quotation from taking ninety seconds to appear. Room and
-  // presence traffic is still office-gated — broadcastWorkspaceEvent filters per client on
-  // the canOffice flag registered below, so one stream serves both without leaking chat.
-  app.get('/api/workspace/realtime', requireAuth, (req, res) => {
+  app.get('/api/workspace/realtime', requireAuth, requirePermission('office.use'), (req, res) => {
     // Cookie/session auth via requireAuth; EventSource clients must set withCredentials: true.
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -6394,7 +6284,6 @@ export function registerHttpApi(app, db) {
       userId: req.user?.id,
       branchId: scope?.branchId,
       viewAll: Boolean(scope?.viewAll),
-      canOffice: userHasPermission(req.user, 'office.use'),
     });
     const heartbeat = setInterval(() => {
       try {
@@ -6887,19 +6776,18 @@ export function registerHttpApi(app, db) {
   app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      // Cap even when unlimited=1 — open-ended customer dumps can OOM on large books.
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
       const q = String(req.query?.q || '').trim();
       const total = countCustomers(db, branchScope, { q });
       const customers = listCustomers(db, branchScope, {
-        ...(unlimited ? { limit: 5000 } : { limit, offset }),
+        ...(unlimited ? { unlimited: true } : { limit, offset }),
         q,
       });
       return sendPaginatedList(res, {
         items: customers,
         total,
-        limit: unlimited ? 5000 : limit,
-        offset: unlimited ? 0 : offset,
+        limit: unlimited ? 0 : limit,
+        offset,
         key: 'customers',
       });
     } catch (e) {
@@ -7098,9 +6986,7 @@ export function registerHttpApi(app, db) {
       workspaceBranchId: req.workspaceBranchId,
       workspaceViewAll: Boolean(req.workspaceViewAll),
     });
-    if (!r.ok) return res.status(400).json(r);
-    const purchaseOrder = getPurchaseOrder(db, req.params.poId);
-    res.status(200).json(withWriteDelta({ ...r }, { purchaseOrders: purchaseOrder ? [purchaseOrder] : [] }));
+    res.status(r.ok ? 200 : 400).json(r);
   });
 
   app.patch('/api/purchase-orders/:poId/status', requirePermission('purchase_orders.manage'), (req, res) => {
@@ -7136,9 +7022,7 @@ export function registerHttpApi(app, db) {
       const r = write.insertCuttingList(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       if (!r.ok) return res.status(400).json(r);
       const cuttingList = getCuttingList(db, r.id);
-      res.status(201).json(
-        withWriteDelta({ ok: true, id: r.id, cuttingList }, { cuttingLists: [cuttingList] })
-      );
+      res.status(201).json({ ok: true, id: r.id, cuttingList });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7165,10 +7049,7 @@ export function registerHttpApi(app, db) {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
           const cuttingList = getCuttingList(db, cid);
-          return withWriteDelta(
-            { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) },
-            { cuttingLists: cuttingList ? [cuttingList] : [] }
-          );
+          return { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) };
         },
         { requiresEditApproval: cuttingListEditRequiresEditApproval }
       );
@@ -7193,20 +7074,6 @@ export function registerHttpApi(app, db) {
     return productionJobIdForCuttingList(dbConn, cuttingListId);
   }
 
-  /** Attach desk-ready job (+ linked cutting list) for SPA write-delta merges. */
-  function withProductionJobWriteDelta(dbConn, jobId, base = {}) {
-    const productionJob = getProductionJob(dbConn, jobId);
-    const clId = String(productionJob?.cuttingListId || '').trim();
-    const cuttingList = clId ? getCuttingList(dbConn, clId) : null;
-    return withWriteDelta(
-      { ...base, productionJob, cuttingList },
-      {
-        productionJobs: productionJob ? [productionJob] : [],
-        cuttingLists: cuttingList ? [cuttingList] : [],
-      }
-    );
-  }
-
   app.post(
     '/api/cutting-lists/:id/record-print',
     requirePermission(['sales.manage', 'operations.manage', 'quotations.manage', 'production.manage']),
@@ -7218,12 +7085,7 @@ export function registerHttpApi(app, db) {
         const r = write.recordCuttingListPrint(db, clId, req.user);
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, clId);
-        res.json(
-          withWriteDelta(
-            { ok: true, printCount: r.printCount, cuttingList },
-            { cuttingLists: cuttingList ? [cuttingList] : [] }
-          )
-        );
+        res.json({ ok: true, printCount: r.printCount, cuttingList });
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7241,7 +7103,7 @@ export function registerHttpApi(app, db) {
         const r = write.clearCuttingListProductionHold(db, req.params.id, req.user);
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, req.params.id);
-        res.json(withWriteDelta({ ok: true, cuttingList }, { cuttingLists: cuttingList ? [cuttingList] : [] }));
+        res.json({ ok: true, cuttingList });
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7282,13 +7144,7 @@ export function registerHttpApi(app, db) {
         );
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, clId);
-        const productionJob = getProductionJob(db, r.jobID);
-        res.status(201).json(
-          withWriteDelta(
-            { ok: true, jobID: r.jobID, cuttingList },
-            { cuttingLists: [cuttingList], productionJobs: [productionJob] }
-          )
-        );
+        res.status(201).json({ ok: true, jobID: r.jobID, cuttingList });
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7342,15 +7198,7 @@ export function registerHttpApi(app, db) {
         return res.status(404).json({ ok: false, error: 'No production run for this cutting list.' });
       }
       const r = startProductionJob(db, jobId, req.body || {}, { actor: req.user });
-      if (!r.ok) return res.status(400).json(r);
-      const cuttingList = getCuttingList(db, req.params.id);
-      const productionJob = getProductionJob(db, jobId);
-      res.status(200).json(
-        withWriteDelta(
-          { ...r, cuttingList, productionJob },
-          { cuttingLists: [cuttingList], productionJobs: [productionJob] }
-        )
-      );
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7359,7 +7207,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/cutting-lists/:id/production/complete', requirePermission('production.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const wg = assertCuttingListIdInWorkspace(db, req, req.params.id);
       if (!wg.ok) return res.status(wg.status).json({ ok: false, error: wg.error });
       const jobId = resolveCuttingListProductionJob(db, req.params.id);
@@ -7369,21 +7216,10 @@ export function registerHttpApi(app, db) {
       const existing = db.prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`).get(jobId);
       if (String(existing?.status || '') === 'Completed') {
         const payload = { ok: true, idempotent: true, jobId, status: 'Completed' };
-        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
         return res.status(200).json(payload);
       }
       const r = completeProductionJob(db, jobId, req.body || {}, { actor: req.user });
-      if (r.ok) {
-        const cuttingList = getCuttingList(db, req.params.id);
-        const productionJob = getProductionJob(db, jobId);
-        const payload = withWriteDelta(
-          { ...r, cuttingList, productionJob },
-          { cuttingLists: [cuttingList], productionJobs: [productionJob] }
-        );
-        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
-        return res.status(200).json(payload);
-      }
-      res.status(400).json(r);
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7484,8 +7320,7 @@ export function registerHttpApi(app, db) {
         append: Boolean(req.body?.append),
         workspaceBranchId: req.workspaceBranchId,
       });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7500,8 +7335,7 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,
       });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7517,8 +7351,7 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         extraCoilNos: Array.isArray(req.body?.extraCoilNos) ? req.body.extraCoilNos : [],
       });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7530,8 +7363,7 @@ export function registerHttpApi(app, db) {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = startProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7540,27 +7372,17 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/production-jobs/:jobId/complete', requirePermission('production.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return apiError(res, { status: jg.status, code: 'FORBIDDEN', error: jg.error });
       const existing = db
         .prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`)
         .get(req.params.jobId);
       if (String(existing?.status || '') === 'Completed') {
-        const payload = withProductionJobWriteDelta(db, req.params.jobId, {
-          ok: true,
-          idempotent: true,
-          jobId: req.params.jobId,
-          status: 'Completed',
-        });
-        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
+        const payload = { ok: true, idempotent: true, jobId: req.params.jobId, status: 'Completed' };
         return res.status(200).json(payload);
       }
       const r = completeProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      if (!r.ok) return res.status(400).json(r);
-      const payload = withProductionJobWriteDelta(db, req.params.jobId, r);
-      storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
-      res.status(200).json(payload);
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       apiError(res, {
@@ -7676,8 +7498,7 @@ export function registerHttpApi(app, db) {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = cancelProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7709,8 +7530,7 @@ export function registerHttpApi(app, db) {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = returnProductionJobToPlanned(db, req.params.jobId, req.body || {}, { actor: req.user });
-      if (!r.ok) return res.status(400).json(r);
-      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7725,11 +7545,9 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) => {
-          const r = applyProductionCompletionAdjustment(db, jid, stripped || {}, { actor: req.user });
-          if (!r.ok) return r;
-          return withProductionJobWriteDelta(db, jid, r);
-        });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyProductionCompletionAdjustment(db, jid, stripped || {}, { actor: req.user })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7745,11 +7563,9 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) => {
-          const r = applyCompletedProductionCoilCorrections(db, jid, stripped || {}, { actor: req.user });
-          if (!r.ok) return r;
-          return withProductionJobWriteDelta(db, jid, r);
-        });
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
+          applyCompletedProductionCoilCorrections(db, jid, stripped || {}, { actor: req.user })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7765,14 +7581,12 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) => {
-          const r = applyCompletedProductionAccessoryCorrections(db, jid, stripped || {}, {
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionAccessoryCorrections(db, jid, stripped || {}, {
             actor: req.user,
             outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
-          });
-          if (!r.ok) return r;
-          return withProductionJobWriteDelta(db, jid, r);
-        });
+          })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7788,14 +7602,12 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) => {
-          const r = applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, {
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionStoneFlatsheetCorrections(db, jid, stripped || {}, {
             actor: req.user,
             outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
-          });
-          if (!r.ok) return r;
-          return withProductionJobWriteDelta(db, jid, r);
-        });
+          })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7811,14 +7623,12 @@ export function registerHttpApi(app, db) {
         const jid = req.params.jobId;
         const jg = assertProductionJobIdInWorkspace(db, req, jid);
         if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) => {
-          const r = applyCompletedProductionStoneMetresCorrections(db, jid, stripped || {}, {
+        return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped, ctx) =>
+          applyCompletedProductionStoneMetresCorrections(db, jid, stripped || {}, {
             actor: req.user,
             outerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
-          });
-          if (!r.ok) return r;
-          return withProductionJobWriteDelta(db, jid, r);
-        });
+          })
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7871,7 +7681,7 @@ export function registerHttpApi(app, db) {
             );
           }
         }
-        return r.ok ? withProductionJobWriteDelta(db, jid, r) : r;
+        return r;
       });
     } catch (e) {
       console.error(e);
@@ -7889,11 +7699,9 @@ export function registerHttpApi(app, db) {
       if (!jobId) {
         return res.status(404).json({ ok: false, error: 'No production run for this cutting list.' });
       }
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'cutting_list', clid, (stripped) => {
-        const r = signOffProductionManagerReview(db, jobId, stripped || {}, { actor: req.user });
-        if (!r.ok) return r;
-        return withProductionJobWriteDelta(db, jobId, r);
-      });
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'cutting_list', clid, (stripped) =>
+        signOffProductionManagerReview(db, jobId, stripped || {}, { actor: req.user })
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7926,9 +7734,7 @@ export function registerHttpApi(app, db) {
       });
     }
     if (r.ok) syncInTransitLoadFromGrn(db, req.params.poId, entries || [], req.user);
-    if (!r.ok) return res.status(400).json(r);
-    const purchaseOrder = getPurchaseOrder(db, req.params.poId);
-    res.status(200).json(withWriteDelta({ ...r }, { purchaseOrders: purchaseOrder ? [purchaseOrder] : [] }));
+    res.status(r.ok ? 200 : 400).json(r);
   });
 
   app.post('/api/inventory/stone-receipt', requirePermission('inventory.receive'), (req, res) => {
@@ -9358,7 +9164,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/bank-charges', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'bank_charge.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const r = recordBankCharge(
@@ -9371,7 +9176,6 @@ export function registerHttpApi(app, db) {
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      if (r.ok) storeIdempotentSuccess(db, req, 'bank_charge.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9385,7 +9189,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/transfer', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer')) return;
       const r = write.transferTreasuryFunds(db, {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9393,7 +9196,6 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9403,7 +9205,6 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/treasury/transfer/:batchId', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.update')) return;
       const r = write.updateTreasuryTransfer(db, String(req.params.batchId || '').trim(), {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9411,7 +9212,6 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.update', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9421,13 +9221,11 @@ export function registerHttpApi(app, db) {
 
   app.delete('/api/treasury/transfer/:batchId', requireAuth, (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.delete')) return;
       const r = write.deleteTreasuryTransfer(db, String(req.params.batchId || '').trim(), req.user, {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
         note: req.body?.note,
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.delete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9525,7 +9323,6 @@ export function registerHttpApi(app, db) {
             'Direct expense posting is disabled. Submit an expense request for Branch Manager approval, then record treasury payout after approval.',
         });
       }
-      if (sendIdempotentReplayIfAny(db, req, res, 'expense.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const r = write.insertExpenseEntry(
@@ -9538,7 +9335,6 @@ export function registerHttpApi(app, db) {
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      if (r.ok) storeIdempotentSuccess(db, req, 'expense.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9985,11 +9781,7 @@ export function registerHttpApi(app, db) {
         req.user,
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(r.refundID || r.refundId || ''));
-        return res.status(201).json(withWriteDelta({ ...r }, { refunds: [refund] }));
-      }
-      res.status(400).json(r);
+      res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -10098,11 +9890,7 @@ export function registerHttpApi(app, db) {
           }
         }
       }
-      if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
-        return res.status(200).json(withWriteDelta({ ...r }, { refunds: [refund] }));
-      }
-      res.status(400).json(r);
+      res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -10122,11 +9910,7 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      if (r.ok) {
-        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
-        return res.status(201).json(withWriteDelta({ ...r }, { refunds: [refund] }));
-      }
-      res.status(400).json(r);
+      res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -10321,7 +10105,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
@@ -10338,7 +10121,6 @@ export function registerHttpApi(app, db) {
             r.costLineId = linked.costLineId || null;
           }
         }
-        storeIdempotentSuccess(db, req, 'payment_request.create', 201, r);
       }
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -10737,7 +10519,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.pay')) return;
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),
@@ -10748,7 +10529,6 @@ export function registerHttpApi(app, db) {
         workspaceViewAll: Boolean(req.workspaceViewAll),
         actor: req.user,
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'payment_request.pay', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -11802,24 +11582,7 @@ export function registerHttpApi(app, db) {
   app.get('/api/quotations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
-      const includeLines = String(req.query?.includeLines || '1') !== '0';
-      const q = String(req.query?.q || '').trim();
-      const listOpts = {
-        ...(unlimited ? { unlimited: true } : { limit, offset }),
-        includeLines,
-        ...(q ? { q } : {}),
-      };
-      const total = countQuotations(db, branchScope, q ? { q } : {});
-      const quotations = listQuotations(db, branchScope, listOpts);
-      return sendPaginatedList(res, {
-        items: quotations,
-        total,
-        limit: unlimited ? 0 : limit,
-        offset,
-        key: 'quotations',
-        cacheSeconds: q ? 15 : 60,
-      });
+      res.json({ ok: true, quotations: listQuotations(db, branchScope) });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load quotations' });
@@ -11883,7 +11646,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/quotations', requirePermission('quotations.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'quotation.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const duplicateWarnings = duplicateQuotationCreateSignals(db, {
@@ -11906,16 +11668,12 @@ export function registerHttpApi(app, db) {
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
-      const payload = withWriteDelta(
-        {
-          ok: true,
-          quotationId: id,
-          quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
-        },
-        { quotations: [quotation] }
-      );
+      const payload = {
+        ok: true,
+        quotationId: id,
+        quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+      };
       clearBootstrapPollCacheForUser(req.user?.id);
-      storeIdempotentSuccess(db, req, 'quotation.create', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12249,7 +12007,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.advance')) return;
       const { customerID, customerName, amountNgn, paymentMethod, bankReference, purpose, dateISO } =
         req.body || {};
       if (!customerID) return res.status(400).json({ ok: false, error: 'customerID is required' });
@@ -12436,7 +12193,6 @@ export function registerHttpApi(app, db) {
             })
           : [];
       const payload = { ok: true, entry, bankDepositAllocation: bankDepositAllocation ?? null, similarUnlinkedDeposits };
-      storeIdempotentSuccess(db, req, 'ledger.advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12458,7 +12214,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.apply_advance')) return;
       const { customerID, customerName, quotationRef, amountNgn, dateISO } = req.body || {};
       if (!customerID || !quotationRef) {
         return res.status(400).json({ ok: false, error: 'customerID and quotationRef are required' });
@@ -12517,7 +12272,6 @@ export function registerHttpApi(app, db) {
         return saved;
       })();
       const payload = { ok: true, entry };
-      storeIdempotentSuccess(db, req, 'ledger.apply_advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12575,7 +12329,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
       try {
-        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.apply_refund_credit')) return;
         const {
           customerID,
           targetQuotationRef,
@@ -12619,7 +12372,6 @@ export function registerHttpApi(app, db) {
           return res.status(status).json(applied);
         }
         const payload = { ok: true, ...applied };
-        storeIdempotentSuccess(db, req, 'ledger.apply_refund_credit', 201, payload);
         res.status(201).json(payload);
       } catch (e) {
         console.error(e);
@@ -12645,7 +12397,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
       try {
-        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.reverse_refund_credit')) return;
         const applicationId = String(req.body?.applicationId || req.body?.application_id || '').trim();
         if (!applicationId) {
           return res.status(400).json({ ok: false, error: 'applicationId is required' });
@@ -12660,7 +12411,6 @@ export function registerHttpApi(app, db) {
           return res.status(status).json(reversed);
         }
         const payload = { ok: true, ...reversed };
-        storeIdempotentSuccess(db, req, 'ledger.reverse_refund_credit', 200, payload);
         res.json(payload);
       } catch (e) {
         console.error(e);
@@ -12701,7 +12451,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.receipt')) return;
       const {
         customerID,
         customerName,
@@ -12966,24 +12715,14 @@ export function registerHttpApi(app, db) {
               bankReference: resolvedBankReference,
             })
           : [];
-      const deskReceipt = receipt?.id ? getSalesReceiptByLedgerEntryId(db, receipt.id) : null;
-      const quotation = quotationId ? getQuotation(db, quotationId) : null;
-      const payload = withWriteDelta(
-        {
-          ok: true,
-          receipt,
-          overpay,
-          entries: saved,
-          bankDepositAllocation: bankDepositAllocation ?? null,
-          similarUnlinkedDeposits,
-        },
-        {
-          receipts: deskReceipt ? [deskReceipt] : [],
-          ledgerEntries: Array.isArray(saved) ? saved : [],
-          quotations: quotation ? [quotation] : [],
-        }
-      );
-      storeIdempotentSuccess(db, req, 'ledger.receipt', 201, payload);
+      const payload = {
+        ok: true,
+        receipt,
+        overpay,
+        entries: saved,
+        bankDepositAllocation: bankDepositAllocation ?? null,
+        similarUnlinkedDeposits,
+      };
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -13092,7 +12831,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.refund_advance')) return;
       const { customerID, customerName, amountNgn, note, dateISO } = req.body || {};
       if (!customerID) return res.status(400).json({ ok: false, error: 'customerID is required' });
       const branchScope = resolveBootstrapBranchScope(req);
@@ -13163,7 +12901,6 @@ export function registerHttpApi(app, db) {
         return saved;
       })();
       const payload = { ok: true, entry };
-      storeIdempotentSuccess(db, req, 'ledger.refund_advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);

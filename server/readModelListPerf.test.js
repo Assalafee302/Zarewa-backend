@@ -4,12 +4,10 @@ import {
   listCuttingLists,
   listPurchaseOrders,
   listQuotations,
-  listRefunds,
   listStockMovements,
-  countQuotations,
   countStockMovements,
 } from './readModel.js';
-import { buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
+import { buildDashboardBootstrap } from './bootstrap.js';
 import { insertCustomer, insertSupplier } from './writeOps.js';
 
 function mysqlAvailable() {
@@ -57,13 +55,6 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     const limited = listQuotations(db, 'BR-KD', { limit: 2 });
     expect(limited).toHaveLength(2);
     expect(limited[0].id).toBe('Q-5');
-
-    const page2 = listQuotations(db, 'BR-KD', { limit: 2, offset: 2 });
-    expect(page2).toHaveLength(2);
-    expect(page2[0].id).toBe('Q-3');
-    expect(page2.map((q) => q.id)).not.toEqual(limited.map((q) => q.id));
-
-    expect(countQuotations(db, 'BR-KD')).toBe(5);
     db.close();
   });
 
@@ -80,7 +71,7 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     db.close();
   });
 
-  it('buildDashboardBootstrap is shell-first and defers desk registers', () => {
+  it('buildDashboardBootstrap defers heavy desk registers and trims movements', () => {
     const db = createDatabase(':memory:', { seed: false });
     for (let i = 1; i <= 5; i += 1) {
       db.prepare(
@@ -95,50 +86,15 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
       limit: 2,
     });
     expect(snap.ok).toBe(true);
-    expect(snap.bootstrapMeta?.mode).toBe('dashboard');
-    expect(snap.movements).toEqual([]);
+    expect(snap.bootstrapMeta?.mode).toBeUndefined();
+    expect(snap.movements).toHaveLength(2);
     expect(snap.customers).toEqual([]);
     expect(snap.expenses).toEqual([]);
     expect(snap.coilLots).toEqual([]);
     expect(snap.productionJobCoils).toEqual([]);
     expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
-      expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils', 'quotations'])
+      expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils'])
     );
-    db.close();
-  });
-
-  it('buildShellBootstrap stays lean and defers desk registers', () => {
-    const db = createDatabase(':memory:', { seed: false });
-    for (let i = 1; i <= 5; i += 1) {
-      db.prepare(
-        `INSERT INTO stock_movements (id, type, product_id, qty, at_iso, date_iso, branch_id)
-         VALUES (?, 'ADJUSTMENT', 'P1', 1, ?, ?, 'BR-KD')`
-      ).run(`M-${i}`, `2026-07-0${i}T12:00:00Z`, `2026-07-0${i}`);
-    }
-    const snap = buildShellBootstrap(db, {
-      user: { id: 1, roleKey: 'md', displayName: 'MD' },
-      session: { authenticated: true, user: { id: 1, roleKey: 'md' }, permissions: ['dashboard.view'] },
-      branchScope: 'BR-KD',
-    });
-    expect(snap.ok).toBe(true);
-    expect(snap.bootstrapMeta?.mode).toBe('shell');
-    expect(snap.workspaceBranches.length).toBeGreaterThan(0);
-    expect(snap.customers).toEqual([]);
-    expect(snap.quotations).toEqual([]);
-    expect(snap.receipts).toEqual([]);
-    expect(snap.productionJobs).toEqual([]);
-    expect(snap.purchaseOrders).toEqual([]);
-    expect(snap.movements).toEqual([]);
-    expect(snap.masterData).toEqual(
-      expect.objectContaining({
-        gauges: expect.any(Array),
-        materialTypes: expect.any(Array),
-      })
-    );
-    expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
-      expect.arrayContaining(['quotations', 'receipts', 'productionJobs', 'customers'])
-    );
-    expect(snap.bootstrapMeta?.deferredDeskArrays).not.toContain('masterData');
     db.close();
   });
 
@@ -179,24 +135,6 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(slim[0].materialGauge).toBe('0.5');
     const full = listQuotations(db, 'BR-KD', { includeLines: true });
     expect(full[0].quotationLines?.products?.length).toBe(1);
-    db.close();
-  });
-
-  it('listRefunds omits previewSnapshot unless opted in', () => {
-    const db = createDatabase(':memory:', { seed: false });
-    insertCustomer(db, { customerID: 'C1', name: 'Customer' }, 'BR-KD');
-    const fat = JSON.stringify({ lines: [{ a: 1 }], meta: 'x'.repeat(2000) });
-    db.prepare(
-      `INSERT INTO customer_refunds (
-         refund_id, customer_id, customer_name, amount_ngn, status, requested_at_iso, branch_id,
-         preview_snapshot_json, calculation_lines_json
-       ) VALUES ('RF-SLIM', 'C1', 'Customer', 5000, 'Pending', '2026-07-01T00:00:00.000Z', 'BR-KD', ?, '[]')`
-    ).run(fat);
-    const slim = listRefunds(db, 'BR-KD');
-    expect(slim).toHaveLength(1);
-    expect(slim[0].previewSnapshot).toBeNull();
-    const full = listRefunds(db, 'BR-KD', { includePreviewSnapshot: true });
-    expect(full[0].previewSnapshot?.meta).toBeTruthy();
     db.close();
   });
 

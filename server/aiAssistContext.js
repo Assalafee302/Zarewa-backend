@@ -1,4 +1,4 @@
-import { buildShellBootstrap } from './bootstrap.js';
+import { buildDashboardBootstrap } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { userHasPermission, userMayViewManagementReports } from './auth.js';
 import { resolveBootstrapBranchScope } from './branchScope.js';
@@ -572,7 +572,7 @@ export function buildAiContextForRequest(db, req, opts = {}) {
   const builder = DOMAIN_SNAPSHOT_BUILDERS[mode];
   const snapshot = builder
     ? builder(db, { user: req.user, branchScope })
-    : buildShellBootstrap(db, {
+    : buildDashboardBootstrap(db, {
         user: req.user,
         session: req.session,
         includeControls: false,

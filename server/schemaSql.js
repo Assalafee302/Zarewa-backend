@@ -32,14 +32,6 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE INDEX IF NOT EXISTS idx_customers_branch_name ON customers(branch_id, name);
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
 
-CREATE TABLE IF NOT EXISTS workspace_domain_revisions (
-  branch_id TEXT NOT NULL,
-  domain_key TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at_iso TEXT NOT NULL,
-  PRIMARY KEY (branch_id, domain_key)
-);
-
 CREATE TABLE IF NOT EXISTS customer_crm_interactions (
   id TEXT PRIMARY KEY,
   customer_id TEXT NOT NULL,
@@ -370,8 +362,6 @@ CREATE TABLE IF NOT EXISTS cutting_lists (
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_cutting_lists_quotation_ref ON cutting_lists(quotation_ref);
-
 CREATE TABLE IF NOT EXISTS cutting_list_lines (
   cutting_list_id TEXT NOT NULL,
   sort_order INTEGER NOT NULL,
@@ -420,8 +410,6 @@ CREATE TABLE IF NOT EXISTS production_jobs (
   offcut_supply_json TEXT,
   FOREIGN KEY (cutting_list_id) REFERENCES cutting_lists(id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_production_jobs_quotation_ref ON production_jobs(quotation_ref);
 
 CREATE TABLE IF NOT EXISTS material_incidents (
   id TEXT PRIMARY KEY,
@@ -680,11 +668,6 @@ CREATE TABLE IF NOT EXISTS customer_refunds (
   credit_confirmation_status TEXT,
   FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_customer_refunds_branch_requested
-  ON customer_refunds(branch_id, requested_at_iso DESC);
-CREATE INDEX IF NOT EXISTS idx_customer_refunds_quotation_ref
-  ON customer_refunds(quotation_ref);
 
 CREATE TABLE IF NOT EXISTS refund_credit_applications (
   application_id TEXT PRIMARY KEY,

@@ -984,7 +984,7 @@ export const CORE_LIFECYCLE_100 = [
     prevId: 'LC100-091',
     nextId: 'LC100-093',
     riskTags: ['fraud', 'financial_failure'],
-    runner: { kind: 'vitest', file: 'server/idempotency.test.js' },
+    runner: { kind: 'manual', note: 'HTTP idempotency middleware removed; rely on domain duplicate guards' },
   },
   {
     id: 'LC100-093',

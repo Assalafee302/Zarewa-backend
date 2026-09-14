@@ -546,42 +546,25 @@ export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const includeLines = opts.includeLines !== false;
-  const q = String(opts.q || '').trim();
   const b = branchWhere(db, 'quotations', branchScope);
   const page = sqlLimitOffsetClause(limit, offset);
-  let searchSql = '';
-  const searchArgs = [];
-  if (q) {
-    const like = `%${q.replace(/[%_\\]/g, '')}%`;
-    if (like.length > 2) {
-      searchSql = ` AND (
-        id LIKE ? OR customer_name LIKE ? OR customer_id LIKE ? OR project_name LIKE ?
-        OR handled_by LIKE ? OR CAST(total_ngn AS CHAR) LIKE ?
-      )`;
-      searchArgs.push(like, like, like, like, like, like);
-    }
-  }
-  const args = [...b.args, ...searchArgs, ...page.args];
+  const args = [...b.args, ...page.args];
   let rows;
   if (!includeLines) {
     try {
       rows = db
         .prepare(
-          `SELECT ${QUOTATION_DESK_LIST_SELECT} FROM quotations WHERE 1=1${b.sql}${searchSql} ORDER BY date_iso DESC, id DESC${page.sql}`
+          `SELECT ${QUOTATION_DESK_LIST_SELECT} FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`
         )
         .all(...args);
     } catch {
       rows = db
-        .prepare(
-          `SELECT * FROM quotations WHERE 1=1${b.sql}${searchSql} ORDER BY date_iso DESC, id DESC${page.sql}`
-        )
+        .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`)
         .all(...args);
     }
   } else {
     rows = db
-      .prepare(
-        `SELECT * FROM quotations WHERE 1=1${b.sql}${searchSql} ORDER BY date_iso DESC, id DESC${page.sql}`
-      )
+      .prepare(`SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`)
       .all(...args);
   }
   const mapped = rows.map((row) => mapQuotationRow(db, row, { includeLines }));
@@ -618,24 +601,9 @@ export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
 }
 
 /** @param {import('better-sqlite3').Database} db */
-export function countQuotations(db, branchScope = 'ALL', opts = {}) {
+export function countQuotations(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'quotations', branchScope);
-  const q = String(opts.q || '').trim();
-  let searchSql = '';
-  const searchArgs = [];
-  if (q) {
-    const like = `%${q.replace(/[%_\\]/g, '')}%`;
-    if (like.length > 2) {
-      searchSql = ` AND (
-        id LIKE ? OR customer_name LIKE ? OR customer_id LIKE ? OR project_name LIKE ?
-        OR handled_by LIKE ? OR CAST(total_ngn AS CHAR) LIKE ?
-      )`;
-      searchArgs.push(like, like, like, like, like, like);
-    }
-  }
-  const row = db
-    .prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}${searchSql}`)
-    .get(...b.args, ...searchArgs);
+  const row = db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}`).get(...b.args);
   return Number(row?.c) || 0;
 }
 

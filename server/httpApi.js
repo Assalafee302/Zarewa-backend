@@ -3578,7 +3578,8 @@ export function registerHttpApi(app, db) {
       const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '')
         .trim()
         .toLowerCase();
-      const mode = modeRaw === 'dashboard' ? modeRaw : '';
+      // `shell` was retired; map it to dashboard so older clients do not fall through to full.
+      const mode = modeRaw === 'dashboard' || modeRaw === 'shell' ? 'dashboard' : '';
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';

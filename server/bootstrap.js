@@ -685,6 +685,7 @@ export function buildDashboardBootstrap(db, opts = {}) {
     ...partial,
     bootstrapMeta: {
       ...(partial.bootstrapMeta || {}),
+      mode: 'dashboard',
       deferredDeskArrays,
       truncated: {
         ...(partial.bootstrapMeta?.truncated || {}),

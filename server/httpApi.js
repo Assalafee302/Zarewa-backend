@@ -11804,17 +11804,21 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
       const includeLines = String(req.query?.includeLines || '1') !== '0';
-      const total = countQuotations(db, branchScope);
-      const quotations = listQuotations(db, branchScope, {
+      const q = String(req.query?.q || '').trim();
+      const listOpts = {
         ...(unlimited ? { unlimited: true } : { limit, offset }),
         includeLines,
-      });
+        ...(q ? { q } : {}),
+      };
+      const total = countQuotations(db, branchScope, q ? { q } : {});
+      const quotations = listQuotations(db, branchScope, listOpts);
       return sendPaginatedList(res, {
         items: quotations,
         total,
         limit: unlimited ? 0 : limit,
         offset,
         key: 'quotations',
+        cacheSeconds: q ? 15 : 60,
       });
     } catch (e) {
       console.error(e);

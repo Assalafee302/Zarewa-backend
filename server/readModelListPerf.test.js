@@ -5,7 +5,6 @@ import {
   listPurchaseOrders,
   listQuotations,
   listStockMovements,
-  countQuotations,
   countStockMovements,
 } from './readModel.js';
 import { buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
@@ -56,13 +55,6 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     const limited = listQuotations(db, 'BR-KD', { limit: 2 });
     expect(limited).toHaveLength(2);
     expect(limited[0].id).toBe('Q-5');
-
-    const page2 = listQuotations(db, 'BR-KD', { limit: 2, offset: 2 });
-    expect(page2).toHaveLength(2);
-    expect(page2[0].id).toBe('Q-3');
-    expect(page2.map((q) => q.id)).not.toEqual(limited.map((q) => q.id));
-
-    expect(countQuotations(db, 'BR-KD')).toBe(5);
     db.close();
   });
 

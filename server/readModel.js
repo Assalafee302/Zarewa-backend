@@ -552,12 +552,10 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
 
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
-  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const includeLines = opts.includeLines !== false;
   const b = branchWhere(db, 'quotations', branchScope);
-  const page = sqlLimitOffsetClause(limit, offset);
-  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, limit] : b.args;
   const mapped = db
     .prepare(sql)
     .all(...args)
@@ -597,7 +595,6 @@ export function countQuotations(db, branchScope = 'ALL') {
   const row = db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}`).get(...b.args);
   return Number(row?.c) || 0;
 }
-
 /**
  * Quotations linked to cutting lists or production jobs — for store/ops users without full sales domain.
  * Needed so production register can detect stone-coated jobs (stoneMeterQuote) in the workspace snapshot.

@@ -493,7 +493,6 @@ import {
   listCustomers,
   countCustomers,
   listQuotations,
-  countQuotations,
   listQuotationsForCustomer,
   listProductionJobsForQuotationRefs,
   listQuotationIds,
@@ -11616,20 +11615,7 @@ export function registerHttpApi(app, db) {
   app.get('/api/quotations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 100, maxLimit: 5000 });
-      const includeLines = String(req.query?.includeLines || '1') !== '0';
-      const total = countQuotations(db, branchScope);
-      const quotations = listQuotations(db, branchScope, {
-        ...(unlimited ? { unlimited: true } : { limit, offset }),
-        includeLines,
-      });
-      return sendPaginatedList(res, {
-        items: quotations,
-        total,
-        limit: unlimited ? 0 : limit,
-        offset,
-        key: 'quotations',
-      });
+      res.json({ ok: true, quotations: listQuotations(db, branchScope) });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load quotations' });

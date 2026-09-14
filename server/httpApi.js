@@ -6305,11 +6305,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  // Auth only, not office.use: every signed-in desk needs the workspace.data invalidations
-  // that keep a colleague's saved quotation from taking ninety seconds to appear. Room and
-  // presence traffic is still office-gated — broadcastWorkspaceEvent filters per client on
-  // the canOffice flag registered below, so one stream serves both without leaking chat.
-  app.get('/api/workspace/realtime', requireAuth, (req, res) => {
+  app.get('/api/workspace/realtime', requireAuth, requirePermission('office.use'), (req, res) => {
     // Cookie/session auth via requireAuth; EventSource clients must set withCredentials: true.
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -6324,7 +6320,6 @@ export function registerHttpApi(app, db) {
       userId: req.user?.id,
       branchId: scope?.branchId,
       viewAll: Boolean(scope?.viewAll),
-      canOffice: userHasPermission(req.user, 'office.use'),
     });
     const heartbeat = setInterval(() => {
       try {

@@ -60,7 +60,7 @@ import {
   saveStockRegisterPrintSnapshot,
   saveStockRegisterStoreChecklist,
 } from './stockRegisterOps.js';
-import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
+import { buildBootstrap, buildDashboardBootstrap } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
 import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
@@ -3581,11 +3581,11 @@ export function registerHttpApi(app, db) {
       const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '')
         .trim()
         .toLowerCase();
-      const mode = modeRaw === 'shell' || modeRaw === 'dashboard' ? modeRaw : '';
+      const mode = modeRaw === 'dashboard' ? modeRaw : '';
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
-      const skipWorkItemSync = skipSideEffects || mode === 'dashboard' || mode === 'shell';
+      const skipWorkItemSync = skipSideEffects || mode === 'dashboard';
       const bootstrapOpts = {
         user: req.user,
         session: req.session,
@@ -3597,19 +3597,16 @@ export function registerHttpApi(app, db) {
         skipWorkItemSync,
       };
       const payload =
-        mode === 'shell'
-          ? buildShellBootstrap(db, bootstrapOpts)
-          : mode === 'dashboard'
-            ? buildDashboardBootstrap(db, {
-                ...bootstrapOpts,
-                limit,
-              })
-            : buildBootstrap(db, bootstrapOpts);
+        mode === 'dashboard'
+          ? buildDashboardBootstrap(db, {
+              ...bootstrapOpts,
+              limit,
+            })
+          : buildBootstrap(db, bootstrapOpts);
       const ifNoneMatch = String(req.headers['if-none-match'] || '');
       const revision = buildWorkspaceRevision(db, branchScope).revision;
       const etagMeta = { revision, mode: mode || 'full' };
-      const useShortLivedBootstrapCache =
-        skipSideEffects || mode === 'dashboard' || mode === 'shell';
+      const useShortLivedBootstrapCache = skipSideEffects || mode === 'dashboard';
       if (useShortLivedBootstrapCache) {
         const cacheKey = bootstrapPollCacheKey(req, {
           branchScope,

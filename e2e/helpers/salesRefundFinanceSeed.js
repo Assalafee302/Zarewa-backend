@@ -52,7 +52,7 @@ export async function seedPaidQuotationAndPendingRefund(page) {
   const customerName = `E2E RF ${Date.now()}`;
   const phone = `080${String(Date.now()).slice(-8)}`;
 
-  const bootRes = await page.request.get('/api/bootstrap');
+  const bootRes = await page.request.get('/api/bootstrap?mode=full');
   expect(bootRes.status()).toBe(200);
   const treasuryAccountId = (await bootRes.json()).treasuryAccounts[0].id;
 

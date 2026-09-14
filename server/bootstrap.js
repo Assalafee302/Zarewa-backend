@@ -661,6 +661,29 @@ export function buildDashboardBootstrap(db, opts = {}) {
 }
 
 /**
+ * Resolve `GET /api/bootstrap?mode=`.
+ *
+ * Returns `shell` | `dashboard` | `''` (empty = full desk dump).
+ * Outside tests, omitted mode defaults to **shell** so login cannot rebuild the
+ * multi-MB workspace pack. Pass `?mode=full` or set `ZAREWA_BOOTSTRAP_DEFAULT_MODE=full`
+ * when a caller truly needs the legacy dump (tests, scripts, e2e fixtures).
+ *
+ * @param {unknown} queryMode
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {'' | 'shell' | 'dashboard'}
+ */
+export function resolveBootstrapMode(queryMode, env = process.env) {
+  const q = String(queryMode ?? '').trim().toLowerCase();
+  if (q === 'shell' || q === 'dashboard') return q;
+  if (q === 'full') return '';
+  const fromEnv = String(env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '').trim().toLowerCase();
+  if (fromEnv === 'shell' || fromEnv === 'dashboard') return fromEnv;
+  if (fromEnv === 'full') return '';
+  if (String(env.NODE_ENV || '').toLowerCase() === 'test') return '';
+  return 'shell';
+}
+
+/**
  * Desk register arrays deferred on the first-paint shell. Domains refill via
  * `/api/workspace/{domain}-snapshot` (and optional background prefetch).
  *

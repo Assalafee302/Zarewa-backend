@@ -45,7 +45,7 @@ test.describe('Production register — API on E2E stack', () => {
     const totalNgn = Math.round(Number(qBody.quotation?.totalNgn) || 0);
     expect(totalNgn).toBeGreaterThan(0);
 
-    const boot0 = await page.request.get('/api/bootstrap');
+    const boot0 = await page.request.get('/api/bootstrap?mode=full');
     expect(boot0.status()).toBe(200);
     const treasuryAccountId = (await boot0.json()).treasuryAccounts[0].id;
 
@@ -101,7 +101,7 @@ test.describe('Production register — API on E2E stack', () => {
     const jobID = jobJson.jobID;
     expect(jobID).toBeTruthy();
 
-    const boot = await page.request.get('/api/bootstrap');
+    const boot = await page.request.get('/api/bootstrap?mode=full');
     expect(boot.status()).toBe(200);
     const bootJson = await boot.json();
     const cl = bootJson.cuttingLists.find((row) => row.id === cuttingListId);
@@ -224,7 +224,7 @@ test.describe('Production register — API on E2E stack', () => {
     const totalNgn = Math.round(Number(qBody.quotation?.totalNgn) || 0);
     expect(totalNgn).toBeGreaterThan(0);
 
-    const boot0 = await page.request.get('/api/bootstrap');
+    const boot0 = await page.request.get('/api/bootstrap?mode=full');
     expect(boot0.status()).toBe(200);
     const treasuryAccountId = (await boot0.json()).treasuryAccounts[0].id;
 
@@ -306,7 +306,7 @@ test.describe('Production register — API on E2E stack', () => {
     const prevJson = await prevRes.json();
     expect(prevJson.totalOutputMeters).toBeCloseTo(102, 2);
 
-    const boot1 = await page.request.get('/api/bootstrap');
+    const boot1 = await page.request.get('/api/bootstrap?mode=full');
     expect(boot1.status()).toBe(200);
     const boot1Json = await boot1.json();
     const fgBefore = Number(boot1Json.products.find((p) => p.productID === 'FG-101')?.stockLevel ?? 0);
@@ -331,7 +331,7 @@ test.describe('Production register — API on E2E stack', () => {
     const doneJson = await doneRes.json();
     expect(doneJson.actualMeters).toBeCloseTo(102, 2);
 
-    const boot2 = await page.request.get('/api/bootstrap');
+    const boot2 = await page.request.get('/api/bootstrap?mode=full');
     expect(boot2.status()).toBe(200);
     const boot2Json = await boot2.json();
     const pj = boot2Json.productionJobs.find((j) => j.jobID === jobID);

@@ -60,10 +60,11 @@ import {
   saveStockRegisterPrintSnapshot,
   saveStockRegisterStoreChecklist,
 } from './stockRegisterOps.js';
-import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
+import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap, resolveBootstrapMode } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
 import { withWriteDelta } from './workspaceWriteDelta.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
+import { writeCounterTrusted, writeSequence } from './writeCounter.js';
 import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
 import {
   ASSOCIATED_STAFF_MANAGE_PERMS,
@@ -759,6 +760,27 @@ function bootstrapPayloadEtag(payload, meta = {}) {
     ];
   }
   return jsonWeakEtag(fingerprint);
+}
+
+/**
+ * ETag that can be computed WITHOUT building the payload.
+ *
+ * Identity (who is asking, for which scope and shape) plus the process write
+ * sequence. Any write bumps the sequence, so an unchanged ETag proves the
+ * snapshot this caller would receive is unchanged. Deliberately coarse: a write
+ * on any desk invalidates every caller, which costs a rebuild but never serves
+ * stale data.
+ */
+function bootstrapConditionalEtag(req, { branchScope, mode, includeControls, includeUsers }) {
+  return jsonWeakEtag({
+    kind: 'bootstrap-seq',
+    mode: mode || 'full',
+    userId: req.user?.id ?? '',
+    branchScope: branchScope ?? '',
+    includeControls: includeControls ? 1 : 0,
+    includeUsers: includeUsers ? 1 : 0,
+    writeSeq: writeSequence(),
+  });
 }
 
 function bootstrapPollCacheKey(req, { branchScope, mode, includeControls, includeUsers }) {
@@ -3577,10 +3599,7 @@ export function registerHttpApi(app, db) {
       const includeUsers = userHasPermission(req.user, 'settings.view');
       const includeRegisteredPasswords = includeUsers && canRevealUserPasswords(req.user);
       const branchScope = resolveBootstrapBranchScope(req);
-      const modeRaw = String(req.query?.mode ?? process.env.ZAREWA_BOOTSTRAP_DEFAULT_MODE ?? '')
-        .trim()
-        .toLowerCase();
-      const mode = modeRaw === 'shell' || modeRaw === 'dashboard' ? modeRaw : '';
+      const mode = resolveBootstrapMode(req.query?.mode);
       const limit = parseInt(String(req.query?.limit ?? '600'), 10) || 600;
       const skipSideEffects =
         String(req.query?.poll ?? req.query?.workspacePoll ?? '').trim() === '1';
@@ -3595,6 +3614,23 @@ export function registerHttpApi(app, db) {
         skipSideEffects,
         skipWorkItemSync,
       };
+      const ifNoneMatch = String(req.headers['if-none-match'] || '');
+
+      /*
+       * Answer unchanged polls before doing any work. Previously a 304 still
+       * rebuilt the entire workspace snapshot just to derive its ETag, so a
+       * polling desk cost as much as a cold load. The write counter changes iff
+       * this process wrote something, so a matching ETag means nothing can have
+       * changed — no build, no revision query.
+       */
+      const trustWriteCounter = writeCounterTrusted();
+      const fastEtag = trustWriteCounter
+        ? bootstrapConditionalEtag(req, { branchScope, mode, includeControls, includeUsers })
+        : '';
+      if (fastEtag && ifNoneMatch && ifNoneMatch === fastEtag) {
+        return res.status(304).end();
+      }
+
       const payload =
         mode === 'shell'
           ? buildShellBootstrap(db, bootstrapOpts)
@@ -3604,9 +3640,10 @@ export function registerHttpApi(app, db) {
                 limit,
               })
             : buildBootstrap(db, bootstrapOpts);
-      const ifNoneMatch = String(req.headers['if-none-match'] || '');
-      const revision = buildWorkspaceRevision(db, branchScope).revision;
+      /* Revision only still needed for the legacy payload-derived ETag. */
+      const revision = trustWriteCounter ? '' : buildWorkspaceRevision(db, branchScope).revision;
       const etagMeta = { revision, mode: mode || 'full' };
+      res.setHeader('X-Zarewa-Bootstrap-Mode', mode || 'full');
       const useShortLivedBootstrapCache =
         skipSideEffects || mode === 'dashboard' || mode === 'shell';
       if (useShortLivedBootstrapCache) {
@@ -3624,7 +3661,7 @@ export function registerHttpApi(app, db) {
           res.setHeader('ETag', hit.etag);
           return res.json(hit.payload);
         }
-        const etag = bootstrapPayloadEtag(payload, etagMeta);
+        const etag = fastEtag || bootstrapPayloadEtag(payload, etagMeta);
         if (ifNoneMatch && ifNoneMatch === etag) {
           return res.status(304).end();
         }
@@ -3634,6 +3671,11 @@ export function registerHttpApi(app, db) {
           etag,
           expires: Date.now() + BOOTSTRAP_POLL_CACHE_MS,
         });
+        return res.json(payload);
+      }
+      if (fastEtag) {
+        if (ifNoneMatch && ifNoneMatch === fastEtag) return res.status(304).end();
+        res.setHeader('ETag', fastEtag);
         return res.json(payload);
       }
       return respondBootstrap(res, payload, ifNoneMatch, etagMeta);

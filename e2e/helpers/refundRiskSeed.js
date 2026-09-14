@@ -50,7 +50,7 @@ export async function seedOverpaidQuotation(page) {
   const customerName = `E2E Overpay ${Date.now()}`;
   const phone = `081${String(Date.now()).slice(-8)}`;
 
-  const bootRes = await page.request.get('/api/bootstrap');
+  const bootRes = await page.request.get('/api/bootstrap?mode=full');
   expect(bootRes.status()).toBe(200);
   const treasuryAccountId = (await bootRes.json()).treasuryAccounts[0].id;
 

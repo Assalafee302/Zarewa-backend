@@ -7,7 +7,7 @@ export async function waitForRefundApprovedInBootstrap(page, refundID, { timeout
   const deadline = Date.now() + timeoutMs;
   let lastStatus = '';
   while (Date.now() < deadline) {
-    const r = await page.request.get('/api/bootstrap');
+    const r = await page.request.get('/api/bootstrap?mode=full');
     if (r.ok()) {
       const j = await r.json();
       const rf = (j.refunds || []).find((x) => String(x.refundID) === id);

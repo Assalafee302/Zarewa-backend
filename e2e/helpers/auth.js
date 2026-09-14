@@ -129,6 +129,6 @@ export async function acceptRequiredHrPoliciesViaApi(page, signatureName = 'Play
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Modules' })).toBeVisible({ timeout: 30_000 });
   await syncCsrfHeader(page);
-  const boot = await page.request.get('/api/bootstrap');
+  const boot = await page.request.get('/api/bootstrap?mode=full');
   expect(boot.status(), await boot.text()).toBe(200);
 }

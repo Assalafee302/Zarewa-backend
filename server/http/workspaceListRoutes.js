@@ -16,8 +16,6 @@ import {
   countCuttingLists,
   countExpenses,
   countProductionJobs,
-  countProducts,
-  countPurchaseOrders,
   countSalesReceipts,
   countStockMovements,
   listCoilLots,
@@ -27,8 +25,6 @@ import {
   listEligibleCuttingListQuotations,
   listEligibleProductionCoils,
   listProductionJobs,
-  listProducts,
-  listPurchaseOrders,
   listSalesReceipts,
   listStockMovements,
 } from '../readModel.js';
@@ -44,8 +40,6 @@ const COIL_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS
 const CUTTING_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...SALES_DOMAIN_PERMS];
 const MOVEMENTS_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS];
 const PRODUCTION_JOBS_PERMS = [...OPERATIONS_DOMAIN_PERMS, 'production.manage'];
-const PRODUCT_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS, ...SALES_DOMAIN_PERMS];
-const PO_LIST_PERMS = [...PROCUREMENT_DOMAIN_PERMS, ...OPERATIONS_DOMAIN_PERMS, 'inventory.receive'];
 
 function listOptsFromQuery(parsed) {
   if (parsed.unlimited) return { unlimited: true };
@@ -57,18 +51,14 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req);
-      const q = String(req.query?.q || '').trim();
-      const listOpts = { ...listOptsFromQuery(parsed), ...(q ? { q } : {}) };
-      const items = listCustomers(db, branchScope, listOpts);
-      const total = parsed.unlimited ? items.length : countCustomers(db, branchScope, q ? { q } : {});
+      const items = listCustomers(db, branchScope, listOptsFromQuery(parsed));
+      const total = parsed.unlimited ? items.length : countCustomers(db, branchScope);
       return sendPaginatedList(res, {
         items,
         total,
         limit: parsed.unlimited ? 0 : parsed.limit,
         offset: parsed.offset,
         key: 'customers',
-        // Typeahead results should not stick in a private browser cache for long.
-        cacheSeconds: q ? 15 : 60,
       });
     } catch (e) {
       console.error(e);
@@ -236,65 +226,6 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load sales receipts.' });
-    }
-  });
-
-  app.get('/api/products', requirePermission(PRODUCT_LIST_PERMS), (req, res) => {
-    try {
-      const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 40, maxLimit: 500 });
-      const q = String(req.query?.q || '').trim();
-      const prefix = String(req.query?.prefix || '').trim();
-      const listOpts = {
-        ...listOptsFromQuery(parsed),
-        ...(q ? { q } : {}),
-        ...(prefix ? { prefix } : {}),
-      };
-      const items = listProducts(db, branchScope, listOpts);
-      const total = parsed.unlimited
-        ? items.length
-        : countProducts(db, branchScope, { ...(q ? { q } : {}), ...(prefix ? { prefix } : {}) });
-      return sendPaginatedList(res, {
-        items,
-        total,
-        limit: parsed.unlimited ? 0 : parsed.limit,
-        offset: parsed.offset,
-        key: 'products',
-        cacheSeconds: q || prefix ? 15 : 60,
-      });
-    } catch (e) {
-      console.error(e);
-      return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load products.' });
-    }
-  });
-
-  app.get('/api/purchase-orders', requirePermission(PO_LIST_PERMS), (req, res) => {
-    try {
-      const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 40, maxLimit: 500 });
-      const q = String(req.query?.q || '').trim();
-      const status = String(req.query?.status || '').trim();
-      const listOpts = {
-        ...listOptsFromQuery(parsed),
-        skipSideEffects: true,
-        ...(q ? { q } : {}),
-        ...(status ? { status } : {}),
-      };
-      const items = listPurchaseOrders(db, branchScope, listOpts);
-      const total = parsed.unlimited
-        ? items.length
-        : countPurchaseOrders(db, branchScope, { ...(q ? { q } : {}), ...(status ? { status } : {}) });
-      return sendPaginatedList(res, {
-        items,
-        total,
-        limit: parsed.unlimited ? 0 : parsed.limit,
-        offset: parsed.offset,
-        key: 'purchaseOrders',
-        cacheSeconds: q ? 15 : 60,
-      });
-    } catch (e) {
-      console.error(e);
-      return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load purchase orders.' });
     }
   });
 }

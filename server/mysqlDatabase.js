@@ -2,20 +2,15 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createSyncFn } from 'synckit';
 import { SCHEMA_SQL } from './schemaSql.js';
-import { attachAsyncMysql } from './mysqlAsyncAttach.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'mysqlWorker.mjs');
 
-/**
- * synckit caches the worker by path — first timeout wins for the process.
- * Production default 10s so one stuck query cannot freeze the API for minutes.
- * One-shot migrate/boot jobs should set ZAREWA_MYSQL_SYNC_TIMEOUT_MS=900000.
- */
-export function mysqlSyncTimeoutMs() {
+/** synckit caches the worker by path — first timeout wins for the process. */
+function mysqlSyncTimeoutMs() {
   const envTimeout = Number(process.env.ZAREWA_MYSQL_SYNC_TIMEOUT_MS || 0);
   if (envTimeout > 0) return envTimeout;
-  return process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' ? 300_000 : 10_000;
+  return process.env.NODE_ENV === 'test' || process.env.VITEST === 'true' ? 300_000 : 900_000;
 }
 
 function mysqlSyncFn() {
@@ -80,7 +75,7 @@ export function createMysqlDatabase(cfg, opts = {}) {
 
   let transactionDepth = 0;
 
-  const db = {
+  return {
     /** True while a {@link db.transaction} callback is running (avoids nested SAVEPOINTs on MySQL). */
     get inTransaction() {
       return transactionDepth > 0;
@@ -138,8 +133,4 @@ export function createMysqlDatabase(cfg, opts = {}) {
       syncFn({ op: 'close' });
     },
   };
-
-  // Async pool for HTTP hot paths — does not Atomics.wait the event loop.
-  attachAsyncMysql(db, cfg);
-  return db;
 }

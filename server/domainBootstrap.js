@@ -165,14 +165,12 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     domain: 'sales',
     customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
     quotations: salesOk
-      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: false })
+      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: true })
       : [],
     receipts: salesOk
       ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
       : [],
-    refunds: refundsOk
-      ? listRefunds(db, branchScope, { ...financeHistoryListOpts(), includePreviewSnapshot: false })
-      : [],
+    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
     cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
@@ -369,9 +367,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, financeHistoryListOpts()) : [],
     accountsPayable: finOk ? listAccountsPayable(db, branchScope, registerOpts) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope, registerOpts) : [],
-    refunds: refundsOk
-      ? listRefunds(db, branchScope, { ...financeHistoryListOpts(), includePreviewSnapshot: false })
-      : [],
+    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],

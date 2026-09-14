@@ -32,14 +32,6 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE INDEX IF NOT EXISTS idx_customers_branch_name ON customers(branch_id, name);
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone_number);
 
-CREATE TABLE IF NOT EXISTS workspace_domain_revisions (
-  branch_id TEXT NOT NULL,
-  domain_key TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at_iso TEXT NOT NULL,
-  PRIMARY KEY (branch_id, domain_key)
-);
-
 CREATE TABLE IF NOT EXISTS customer_crm_interactions (
   id TEXT PRIMARY KEY,
   customer_id TEXT NOT NULL,

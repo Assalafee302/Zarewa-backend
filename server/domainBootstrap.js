@@ -86,6 +86,8 @@ import {
 } from './workItems.js';
 import {
   coilDeskListOpts,
+  buildBackgroundHydrateMeta,
+  deskPageListOpts,
   financeHistoryListOpts,
   financeRegisterListOpts,
   productionHistoryListOpts,
@@ -100,13 +102,19 @@ const COIL_DESK_RECOVERY = {
   eligibleProduction: '/api/production/eligible-coils',
 };
 
+function deskPageLimit() {
+  const opts = deskPageListOpts();
+  return opts.unlimited ? 0 : Number(opts.limit) || 150;
+}
+
+/** Snapshot ledger / conversion checks stay on the same recent-first page budget. */
 const MAX_PROD_ROWS = Math.min(
   5000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 2000)
+  Math.max(50, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || deskPageLimit() || 150)
 );
 const MAX_LEDGER_ROWS = Math.min(
   10_000,
-  Math.max(500, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 3000)
+  Math.max(50, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || deskPageLimit() || 150)
 );
 
 /**
@@ -168,18 +176,28 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     ? getJsonBlob(db, 'customer_dashboard') ?? { orders: [], interactions: [], salesTrendByCustomer: {} }
     : { orders: [], interactions: [], salesTrendByCustomer: {} };
   const masterOk = canReadMasterData(user);
+  const customerOpts = { ...salesCustomersListOpts(), sort: 'recent' };
+  const quoteOpts = { ...productionHistoryListOpts(), includeLines: true };
+  const receiptOpts = receiptsHistoryListOpts();
+  const refundOpts = financeHistoryListOpts();
+  const cuttingOpts = productionHistoryListOpts();
+  const customers = salesOk ? listCustomers(db, branchScope, customerOpts) : [];
+  const quotations = salesOk ? listQuotations(db, branchScope, quoteOpts) : [];
+  const receipts = salesOk
+    ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptOpts)
+    : [];
+  const refunds = refundsOk ? listRefunds(db, branchScope, refundOpts) : [];
+  const cuttingLists = salesOk ? listCuttingLists(db, branchScope, cuttingOpts) : [];
+  const pageSize = deskPageLimit();
+  const lim = (optsObj) => (optsObj.unlimited ? 0 : Number(optsObj.limit) || pageSize);
   return {
     ok: true,
     domain: 'sales',
-    customers: salesOk ? listCustomers(db, branchScope, salesCustomersListOpts()) : [],
-    quotations: salesOk
-      ? listQuotations(db, branchScope, { ...productionHistoryListOpts(), includeLines: true })
-      : [],
-    receipts: salesOk
-      ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
-      : [],
-    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
-    cuttingLists: salesOk ? listCuttingLists(db, branchScope, productionHistoryListOpts()) : [],
+    customers,
+    quotations,
+    receipts,
+    refunds,
+    cuttingLists,
     priceListItems: salesOk ? listPriceListItems(db) : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
@@ -198,6 +216,69 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     partnerWalletPolicy: { enabled: partnerWalletEnabled() },
     // Receipt / advance account pickers — keep on sales so cashiers do not wait on finance pack.
     treasuryAccounts: f.treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
+    bootstrapMeta: {
+      deferredDeskArrays: [],
+      sort: { customers: 'recent', quotations: 'date_iso_desc', receipts: 'date_iso_desc' },
+      listLimitsApplied: {
+        customers: lim(customerOpts),
+        quotations: lim(quoteOpts),
+        receipts: lim(receiptOpts),
+        refunds: lim(refundOpts),
+        cuttingLists: lim(cuttingOpts),
+        ledgerEntries: MAX_LEDGER_ROWS,
+      },
+      truncated: {
+        customers: salesOk && lim(customerOpts) > 0 && customers.length >= lim(customerOpts),
+        quotations: salesOk && lim(quoteOpts) > 0 && quotations.length >= lim(quoteOpts),
+        receipts: salesOk && lim(receiptOpts) > 0 && receipts.length >= lim(receiptOpts),
+        refunds: refundsOk && lim(refundOpts) > 0 && refunds.length >= lim(refundOpts),
+        cuttingLists: salesOk && lim(cuttingOpts) > 0 && cuttingLists.length >= lim(cuttingOpts),
+        ledgerEntries: ledgerOk && ledgerRows.length >= MAX_LEDGER_ROWS,
+      },
+      // SPA should keep fetching older pages while the user works — no wait for search.
+      backgroundHydrate: buildBackgroundHydrateMeta(
+        [
+          {
+            key: 'customers',
+            path: '/api/customers',
+            limit: lim(customerOpts),
+            loaded: customers.length,
+            querySuffix: '&sort=recent',
+          },
+          {
+            key: 'quotations',
+            path: '/api/quotations',
+            limit: lim(quoteOpts),
+            loaded: quotations.length,
+          },
+          {
+            key: 'receipts',
+            path: '/api/receipts',
+            limit: lim(receiptOpts),
+            loaded: receipts.length,
+          },
+          {
+            key: 'refunds',
+            path: '/api/refunds',
+            limit: lim(refundOpts),
+            loaded: refunds.length,
+          },
+          {
+            key: 'cuttingLists',
+            path: '/api/cutting-lists',
+            limit: lim(cuttingOpts),
+            loaded: cuttingLists.length,
+          },
+          {
+            key: 'ledgerEntries',
+            path: '/api/ledger',
+            limit: MAX_LEDGER_ROWS,
+            loaded: ledgerRows.length,
+          },
+        ],
+        { pageSize }
+      ),
+    },
   };
 }
 
@@ -239,10 +320,16 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   const coilDesk = coilMovOk
     ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
     : { coilLots: [], truncated: false, mode: 'active' };
+  const historyLim = historyOpts.unlimited ? 0 : Number(historyOpts.limit) || deskPageLimit();
+  const cuttingLists = opsOk ? listCuttingLists(db, branchScope, historyOpts) : [];
+  const deliveries = opsOk ? listDeliveries(db, branchScope, historyOpts) : [];
+  const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
+  const coilControlEvents = coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [];
+  const pageSize = deskPageLimit();
   return {
     ok: true,
     domain: 'operations',
-    cuttingLists: opsOk ? listCuttingLists(db, branchScope, historyOpts) : [],
+    cuttingLists,
     productionJobs: productionJobsList,
     productionJobAccessoryUsage: prodRollupOk
       ? listProductionJobAccessoryUsage(db, branchScope, { jobIds: productionJobIds })
@@ -259,13 +346,13 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       ? listProductionCompletionAdjustments(db, branchScope, historyOpts)
       : [],
     operationsInventoryAttention,
-    deliveries: opsOk ? listDeliveries(db, branchScope, historyOpts) : [],
+    deliveries,
     // Complete on-hand register (not recent-N). Production allocate: /api/production/eligible-coils.
     coilLots: coilDesk.coilLots,
-    coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [],
+    coilControlEvents,
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
-    movements: coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [],
+    movements,
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
@@ -276,29 +363,62 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     coilRequests: f.coilReqOk ? listCoilRequests(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: [],
+      sort: {
+        cuttingLists: 'date_iso_desc',
+        productionJobs: 'created_at_iso_desc',
+        movements: 'at_iso_desc',
+      },
       listLimitsApplied: {
+        ...(historyLim ? { cuttingLists: historyLim, productionJobs: historyLim, movements: historyLim } : {}),
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
-      // Forms needing an older eligible item must use their complete server-side selector.
       truncated: {
-        ...(opsOk ? { cuttingLists: true, deliveries: true } : {}),
+        ...(opsOk
+          ? {
+              cuttingLists: historyLim > 0 && cuttingLists.length >= historyLim,
+              deliveries: historyLim > 0 && deliveries.length >= historyLim,
+            }
+          : {}),
         ...(prodRollupOk
           ? {
-              productionJobs: true,
+              productionJobs: historyLim > 0 && productionJobsList.length >= historyLim,
               productionConversionChecks: true,
-              productionCompletionAdjustments: true,
+              productionCompletionAdjustments: historyLim > 0,
             }
           : {}),
         ...(coilMovOk
           ? {
               coilLots: coilDesk.truncated,
-              coilControlEvents: true,
-              movements: true,
+              coilControlEvents: historyLim > 0 && coilControlEvents.length >= historyLim,
+              movements: historyLim > 0 && movements.length >= historyLim,
             }
           : {}),
         ...(yardOk ? { yardCoilRegister: true } : {}),
       },
+      backgroundHydrate: buildBackgroundHydrateMeta(
+        [
+          {
+            key: 'cuttingLists',
+            path: '/api/cutting-lists',
+            limit: historyLim,
+            loaded: cuttingLists.length,
+          },
+          {
+            key: 'productionJobs',
+            path: '/api/production-jobs',
+            limit: historyLim,
+            loaded: productionJobsList.length,
+          },
+          {
+            key: 'movements',
+            path: '/api/stock-movements',
+            limit: historyLim,
+            loaded: movements.length,
+          },
+        ],
+        { pageSize }
+      ),
     },
   };
 }
@@ -356,29 +476,38 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const orgLimits = user ? getOrgGovernanceLimits(db) : null;
   const accountingRegisters = buildAccountingRegisterSnapshotFields(db, user, branchScope);
   const registerOpts = financeRegisterListOpts();
+  const historyOpts = financeHistoryListOpts();
+  const receiptOpts = receiptsHistoryListOpts();
+  const cuttingOpts = productionHistoryListOpts();
+  const receipts =
+    salesOk || finOk || treasuryMovementsOk
+      ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptOpts)
+      : [];
+  const cuttingLists =
+    salesOk || finOk || treasuryMovementsOk ? listCuttingLists(db, branchScope, cuttingOpts) : [];
+  const treasuryMovements = treasuryMovementsOk
+    ? listTreasuryMovements(db, branchScope, historyOpts)
+    : [];
+  const expenses = expensesSnapshotOk ? listExpenses(db, branchScope, historyOpts) : [];
+  const paymentRequests = payReqOk ? listPaymentRequests(db, branchScope, historyOpts) : [];
+  const refunds = refundsOk ? listRefunds(db, branchScope, historyOpts) : [];
+  const pageSize = deskPageLimit();
+  const lim = (o) => (o.unlimited ? 0 : Number(o.limit) || pageSize);
   return {
     ok: true,
     domain: 'finance',
     ...accountingRegisters,
     ledgerEntries: ledgerOk ? ledgerRows : [],
-    receipts:
-      salesOk || finOk || treasuryMovementsOk
-        ? listSalesReceiptsForDesk(db, branchScope, ledgerRows, receiptsHistoryListOpts())
-        : [],
-    cuttingLists:
-      salesOk || finOk || treasuryMovementsOk
-        ? listCuttingLists(db, branchScope, productionHistoryListOpts())
-        : [],
+    receipts,
+    cuttingLists,
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     treasuryAccounts: treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
-    treasuryMovements: treasuryMovementsOk
-      ? listTreasuryMovements(db, branchScope, financeHistoryListOpts())
-      : [],
-    expenses: expensesSnapshotOk ? listExpenses(db, branchScope, financeHistoryListOpts()) : [],
-    paymentRequests: payReqOk ? listPaymentRequests(db, branchScope, financeHistoryListOpts()) : [],
+    treasuryMovements,
+    expenses,
+    paymentRequests,
     accountsPayable: finOk ? listAccountsPayable(db, branchScope, registerOpts) : [],
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope, registerOpts) : [],
-    refunds: refundsOk ? listRefunds(db, branchScope, financeHistoryListOpts()) : [],
+    refunds,
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
@@ -425,6 +554,70 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
             }
           })()
         : null,
+    bootstrapMeta: {
+      deferredDeskArrays: [],
+      sort: {
+        expenses: 'date_iso_desc',
+        treasuryMovements: 'posted_at_iso_desc',
+        receipts: 'date_iso_desc',
+        ledgerEntries: 'at_iso_desc',
+      },
+      listLimitsApplied: {
+        expenses: lim(historyOpts),
+        treasuryMovements: lim(historyOpts),
+        paymentRequests: lim(historyOpts),
+        receipts: lim(receiptOpts),
+        refunds: lim(historyOpts),
+        ledgerEntries: MAX_LEDGER_ROWS,
+      },
+      truncated: {
+        expenses: expensesSnapshotOk && lim(historyOpts) > 0 && expenses.length >= lim(historyOpts),
+        treasuryMovements:
+          treasuryMovementsOk && lim(historyOpts) > 0 && treasuryMovements.length >= lim(historyOpts),
+        paymentRequests: payReqOk && lim(historyOpts) > 0 && paymentRequests.length >= lim(historyOpts),
+        receipts:
+          (salesOk || finOk || treasuryMovementsOk) &&
+          lim(receiptOpts) > 0 &&
+          receipts.length >= lim(receiptOpts),
+        refunds: refundsOk && lim(historyOpts) > 0 && refunds.length >= lim(historyOpts),
+        ledgerEntries: ledgerOk && ledgerRows.length >= MAX_LEDGER_ROWS,
+      },
+      backgroundHydrate: buildBackgroundHydrateMeta(
+        [
+          {
+            key: 'expenses',
+            path: '/api/expenses',
+            limit: lim(historyOpts),
+            loaded: expenses.length,
+          },
+          {
+            key: 'receipts',
+            path: '/api/receipts',
+            limit: lim(receiptOpts),
+            loaded: receipts.length,
+          },
+          {
+            key: 'refunds',
+            path: '/api/refunds',
+            limit: lim(historyOpts),
+            loaded: refunds.length,
+          },
+          {
+            key: 'ledgerEntries',
+            path: '/api/ledger',
+            limit: MAX_LEDGER_ROWS,
+            loaded: ledgerRows.length,
+          },
+          {
+            key: 'cuttingLists',
+            path: '/api/cutting-lists',
+            limit: lim(cuttingOpts),
+            loaded: cuttingLists.length,
+          },
+        ],
+        { pageSize }
+      ),
+    },
   };
 }
 
@@ -438,6 +631,13 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
   const coilDesk = coilMovOk
     ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
     : { coilLots: [], truncated: false, mode: 'active' };
+  const historyOpts = productionHistoryListOpts();
+  const historyLim = historyOpts.unlimited ? 0 : Number(historyOpts.limit) || deskPageLimit();
+  const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
+  const purchaseOrders = poListOk
+    ? listPurchaseOrders(db, branchScope, { ...deskPageListOpts(), skipSideEffects: true })
+    : [];
+  const pageSize = deskPageLimit();
   return {
     ok: true,
     domain: 'procurement',
@@ -447,11 +647,11 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     associatedStaffPolicy: {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
-    purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, { skipSideEffects: true }) : [],
+    purchaseOrders,
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
     coilLots: coilDesk.coilLots,
-    movements: coilMovOk ? listStockMovements(db, branchScope, productionHistoryListOpts()) : [],
+    movements,
     inTransitLoads: f.user ? listInTransitLoads(db, branchScope) : [],
     poTransportAwaitingTreasury:
       finOk || procOk ? listPoTransportAwaitingTreasury(db, branchScope) : [],
@@ -461,14 +661,32 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
       finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: [],
+      sort: { purchaseOrders: 'order_date_iso_desc', movements: 'at_iso_desc' },
       listLimitsApplied: {
+        ...(historyLim ? { movements: historyLim, purchaseOrders: historyLim } : {}),
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       truncated: {
-        ...(poListOk ? { purchaseOrders: true } : {}),
-        ...(coilMovOk ? { coilLots: coilDesk.truncated, movements: true } : {}),
+        ...(poListOk ? { purchaseOrders: historyLim > 0 && purchaseOrders.length >= historyLim } : {}),
+        ...(coilMovOk
+          ? {
+              coilLots: coilDesk.truncated,
+              movements: historyLim > 0 && movements.length >= historyLim,
+            }
+          : {}),
       },
+      backgroundHydrate: buildBackgroundHydrateMeta(
+        [
+          {
+            key: 'movements',
+            path: '/api/stock-movements',
+            limit: historyLim,
+            loaded: movements.length,
+          },
+        ],
+        { pageSize }
+      ),
     },
   };
 }

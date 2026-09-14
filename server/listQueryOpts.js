@@ -1,6 +1,16 @@
 const DEFAULT_LIST_LIMIT = Math.min(
   50_000,
-  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 500)
+  Math.max(50, Number(process.env.ZAREWA_DEFAULT_LIST_LIMIT) || 150)
+);
+
+/**
+ * First desk page size: recent rows only. SPA background-hydrates older pages via
+ * `bootstrapMeta.backgroundHydrate` without waiting for search.
+ * Override with `ZAREWA_DESK_PAGE_SIZE` (positive int) or `0` for unlimited history.
+ */
+export const DEFAULT_DESK_PAGE_SIZE = Math.min(
+  50_000,
+  Math.max(50, Number(process.env.ZAREWA_DESK_PAGE_SIZE) || 150)
 );
 
 /**
@@ -23,70 +33,81 @@ export function resolveListLimit(opts) {
 export { DEFAULT_LIST_LIMIT };
 
 /**
- * List opts for production queue / cutting-list history.
- * Default: capped recent history (desk responsiveness). Opt into full history with
- * `ZAREWA_PRODUCTION_HISTORY_LIMIT=0` or a positive integer override.
+ * @param {string} envKey
+ * @param {number} fallback
  * @returns {{ unlimited: true } | { limit: number }}
  */
-export function productionHistoryListOpts() {
-  const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
+function envCappedListOpts(envKey, fallback) {
+  const raw = process.env[envKey];
   if (raw == null || String(raw).trim() === '') {
-    // Desk queues stay usable; older jobs load via search / paginated APIs.
-    // Desk queues stay usable; older jobs load via search / paginated APIs.
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_PRODUCTION_HISTORY_DEFAULT) || 500)) };
+    return { limit: Math.min(50_000, Math.max(50, fallback)) };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
-/** Desk-safe default for finance history lists (recent live volume; override via env). */
-export const DEFAULT_FINANCE_HISTORY_LIMIT = Math.min(
-  50_000,
-  Math.max(200, Number(process.env.ZAREWA_FINANCE_HISTORY_DEFAULT) || 800)
-);
+/**
+ * Shared recent-first desk page (snapshots + background hydrate).
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function deskPageListOpts() {
+  const raw = process.env.ZAREWA_DESK_PAGE_SIZE;
+  if (raw != null && String(raw).trim() !== '') {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+    return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+  }
+  return { limit: DEFAULT_DESK_PAGE_SIZE };
+}
+
+/**
+ * List opts for production queue / cutting-list history.
+ * Default: recent desk page. Opt into full history with `ZAREWA_PRODUCTION_HISTORY_LIMIT=0`.
+ * @returns {{ unlimited: true } | { limit: number }}
+ */
+export function productionHistoryListOpts() {
+  const raw = process.env.ZAREWA_PRODUCTION_HISTORY_LIMIT;
+  if (raw == null || String(raw).trim() === '') {
+    return deskPageListOpts();
+  }
+  return envCappedListOpts('ZAREWA_PRODUCTION_HISTORY_LIMIT', DEFAULT_DESK_PAGE_SIZE);
+}
+
+/** Desk-safe default for finance history lists (recent-first page). */
+export const DEFAULT_FINANCE_HISTORY_LIMIT = DEFAULT_DESK_PAGE_SIZE;
 
 /**
  * List opts for Finance desk expenses / payment requests / treasury movements.
- * Default: capped recent history for bootstrap/desk responsiveness (live KD branch ~2k treasury rows).
- * Set `ZAREWA_FINANCE_HISTORY_LIMIT=0` for unlimited, or a positive integer to override the cap.
+ * Set `ZAREWA_FINANCE_HISTORY_LIMIT=0` for unlimited.
  * @returns {{ unlimited: true } | { limit: number }}
  */
 export function financeHistoryListOpts() {
   const raw = process.env.ZAREWA_FINANCE_HISTORY_LIMIT;
-  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_FINANCE_HISTORY_LIMIT };
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
-  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+  if (raw == null || String(raw).trim() === '') {
+    return deskPageListOpts();
+  }
+  return envCappedListOpts('ZAREWA_FINANCE_HISTORY_LIMIT', DEFAULT_FINANCE_HISTORY_LIMIT);
 }
 
 /**
- * List opts for Sales customer directory (quotations / receipts pickers).
- * Default: capped directory; use server search for large books.
+ * List opts for Sales customer directory (recently entered first on desks).
  * Cap/override with env `ZAREWA_SALES_CUSTOMERS_LIMIT` (0 = unlimited).
  * @returns {{ unlimited: true } | { limit: number }}
  */
 export function salesCustomersListOpts() {
   const raw = process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
   if (raw == null || String(raw).trim() === '') {
-    return { limit: Math.min(50_000, Math.max(200, Number(process.env.ZAREWA_SALES_CUSTOMERS_DEFAULT) || 2000)) };
+    return deskPageListOpts();
   }
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
-  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+  return envCappedListOpts('ZAREWA_SALES_CUSTOMERS_LIMIT', DEFAULT_DESK_PAGE_SIZE);
 }
 
-/** Desk-safe default for receipts history (~recent live KD volume; override via env). */
-export const DEFAULT_RECEIPTS_HISTORY_LIMIT = Math.min(
-  50_000,
-  Math.max(200, Number(process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT) || 800)
-);
+/** Desk-safe default for receipts history. */
+export const DEFAULT_RECEIPTS_HISTORY_LIMIT = DEFAULT_DESK_PAGE_SIZE;
 
-/** Open AP / bank-recon lines on finance snapshots (not full history dumps). */
-export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
-  50_000,
-  Math.max(100, Number(process.env.ZAREWA_FINANCE_REGISTER_DEFAULT) || 500)
-);
+/** Open AP / bank-recon lines on finance snapshots. */
+export const DEFAULT_FINANCE_REGISTER_LIMIT = DEFAULT_DESK_PAGE_SIZE;
 
 /**
  * List opts for accounts payable / bank reconciliation snapshot slices.
@@ -95,25 +116,25 @@ export const DEFAULT_FINANCE_REGISTER_LIMIT = Math.min(
  */
 export function financeRegisterListOpts() {
   const raw = process.env.ZAREWA_FINANCE_REGISTER_LIMIT;
-  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_FINANCE_REGISTER_LIMIT };
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
-  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+  if (raw == null || String(raw).trim() === '') {
+    return deskPageListOpts();
+  }
+  return envCappedListOpts('ZAREWA_FINANCE_REGISTER_LIMIT', DEFAULT_FINANCE_REGISTER_LIMIT);
 }
 
 /**
  * List opts for sales receipts (Sales filters + Cashier desk confirmation queue).
- * Default: capped recent history. Uncleared/pending receipts are merged in separately
- * so cashier queues are not silently truncated.
- * Set `ZAREWA_RECEIPTS_HISTORY_LIMIT=0` for unlimited, or a positive integer to override.
+ * Uncleared/pending receipts are merged in separately so cashier queues are not
+ * silently truncated.
+ * Set `ZAREWA_RECEIPTS_HISTORY_LIMIT=0` for unlimited.
  * @returns {{ unlimited: true } | { limit: number }}
  */
 export function receiptsHistoryListOpts() {
   const raw = process.env.ZAREWA_RECEIPTS_HISTORY_LIMIT;
-  if (raw == null || String(raw).trim() === '') return { limit: DEFAULT_RECEIPTS_HISTORY_LIMIT };
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
-  return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
+  if (raw == null || String(raw).trim() === '') {
+    return deskPageListOpts();
+  }
+  return envCappedListOpts('ZAREWA_RECEIPTS_HISTORY_LIMIT', DEFAULT_RECEIPTS_HISTORY_LIMIT);
 }
 
 /**
@@ -137,6 +158,37 @@ export function coilDeskListOpts() {
     if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
   }
   return { activeOnly: true };
+}
+
+/**
+ * SPA hint: keep loading older pages in the background (newest/recent first already shipped).
+ * Does not require the user to search or open a row.
+ *
+ * @param {{ key: string; path: string; limit: number; loaded: number; querySuffix?: string }[]} resources
+ * @param {{ pageSize?: number }} [opts]
+ */
+export function buildBackgroundHydrateMeta(resources, opts = {}) {
+  const pageSize = Math.max(1, Number(opts.pageSize) || DEFAULT_DESK_PAGE_SIZE);
+  const cont = (resources || [])
+    .filter((r) => Number(r.loaded) >= Number(r.limit) && Number(r.limit) > 0)
+    .map((r) => {
+      const limit = Number(r.limit) || pageSize;
+      const offset = limit;
+      const suffix = r.querySuffix ? String(r.querySuffix) : '';
+      const join = r.path.includes('?') ? '&' : '?';
+      return {
+        key: r.key,
+        href: `${r.path}${join}limit=${limit}&offset=${offset}${suffix}`,
+        offset,
+        limit,
+      };
+    });
+  return {
+    enabled: cont.length > 0,
+    strategy: 'recent_first',
+    pageSize,
+    resources: cont,
+  };
 }
 
 /** @param {number} limit */

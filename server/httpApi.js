@@ -494,6 +494,7 @@ import {
   listCustomers,
   countCustomers,
   listQuotations,
+  countQuotations,
   listQuotationsForCustomer,
   listProductionJobsForQuotationRefs,
   listQuotationIds,
@@ -11686,7 +11687,21 @@ export function registerHttpApi(app, db) {
   app.get('/api/quotations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      res.json({ ok: true, quotations: listQuotations(db, branchScope) });
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const includeLines = String(req.query?.includeLines ?? '1') !== '0';
+      const quotations = listQuotations(
+        db,
+        branchScope,
+        unlimited ? { unlimited: true, includeLines } : { limit, offset, includeLines }
+      );
+      const total = unlimited ? quotations.length : countQuotations(db, branchScope);
+      return sendPaginatedList(res, {
+        items: quotations,
+        total,
+        limit: unlimited ? 0 : limit,
+        offset,
+        key: 'quotations',
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to load quotations' });
@@ -12052,7 +12067,7 @@ export function registerHttpApi(app, db) {
     try {
       const customerId = req.query.customerId;
       const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       if (customerId) {
         const cid = String(customerId);
         const total = countLedgerEntriesForCustomer(db, cid, branchScope);
@@ -12092,7 +12107,7 @@ export function registerHttpApi(app, db) {
   app.get('/api/refunds', requirePermission(REFUNDS_VISIBLE_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const refunds = listRefunds(
         db,
         branchScope,

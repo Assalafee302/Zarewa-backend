@@ -274,13 +274,25 @@ export function listCustomers(db, branchScope = 'ALL', opts = {}) {
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const b = branchWhere(db, 'customers', branchScope);
   const lo = sqlLimitOffsetClause(limit, offset);
+  // Desk browse / background hydrate: newest entered first. Search keeps name order
+  // unless the caller forces sort=recent.
+  const sortRecent =
+    opts.sort === 'recent' ||
+    opts.recent === true ||
+    (!opts.q && opts.sort !== 'name');
+  const orderSql = sortRecent
+    ? 'created_at_iso DESC, customer_id DESC'
+    : 'name COLLATE NOCASE';
   if (staffSalesCustomerJoinReady(db)) {
     const s = customerSearchClause(opts.q, 'c.');
-    const sql = `${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')}${s.sql} ORDER BY c.name COLLATE NOCASE${lo.sql}`;
+    const order = sortRecent
+      ? 'c.created_at_iso DESC, c.customer_id DESC'
+      : 'c.name COLLATE NOCASE';
+    const sql = `${STAFF_LINKED_CUSTOMER_SELECT} WHERE 1=1${b.sql.replace(/branch_id/g, 'c.branch_id')}${s.sql} ORDER BY ${order}${lo.sql}`;
     return db.prepare(sql).all(...b.args, ...s.args, ...lo.args).map((row) => mapCustomerRow(row));
   }
   const s = customerSearchClause(opts.q);
-  const sql = `SELECT * FROM customers WHERE 1=1${b.sql}${s.sql} ORDER BY name COLLATE NOCASE${lo.sql}`;
+  const sql = `SELECT * FROM customers WHERE 1=1${b.sql}${s.sql} ORDER BY ${orderSql}${lo.sql}`;
   return db.prepare(sql).all(...b.args, ...s.args, ...lo.args).map((row) => mapCustomerRow(row));
 }
 
@@ -552,13 +564,14 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
 
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const includeLines = opts.includeLines !== false;
   const b = branchWhere(db, 'quotations', branchScope);
-  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  const lo = sqlLimitOffsetClause(limit, offset);
+  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${lo.sql}`;
   const mapped = db
     .prepare(sql)
-    .all(...args)
+    .all(...b.args, ...lo.args)
     .map((row) => mapQuotationRow(db, row, { includeLines }));
   if (!includeLines) return mapped;
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
@@ -1206,17 +1219,9 @@ export function listLedgerEntries(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'ledger_entries', branchScope);
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts?.offset) || 0));
-  let sql = `SELECT * FROM ledger_entries WHERE 1=1${b.sql} ORDER BY at_iso DESC, id DESC`;
-  const args = [...b.args];
-  if (limit > 0) {
-    sql += sqlLimitClause(limit);
-    args.push(limit);
-    if (offset > 0) {
-      sql += ' OFFSET ?';
-      args.push(offset);
-    }
-  }
-  return db.prepare(sql).all(...args).map(mapLedgerRow);
+  const lo = sqlLimitOffsetClause(limit, offset);
+  const sql = `SELECT * FROM ledger_entries WHERE 1=1${b.sql} ORDER BY at_iso DESC, id DESC${lo.sql}`;
+  return db.prepare(sql).all(...b.args, ...lo.args).map(mapLedgerRow);
 }
 
 export function countLedgerEntries(db, branchScope = 'ALL') {
@@ -2920,6 +2925,8 @@ export function listTreasuryAccounts(db, branchScope = 'ALL') {
 
 export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const lo = sqlLimitOffsetClause(limit, offset);
   const scopeSql =
     branchScope === 'ALL' || !branchScope || !hasColumn(db, 'treasury_accounts', 'branch_id')
       ? { sql: '', args: [] }
@@ -2929,11 +2936,10 @@ export function listTreasuryMovements(db, branchScope = 'ALL', opts = {}) {
        FROM treasury_movements tm
        LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
        WHERE 1=1${scopeSql.sql}
-       ORDER BY tm.posted_at_iso DESC, tm.id DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...scopeSql.args, limit] : scopeSql.args;
+       ORDER BY tm.posted_at_iso DESC, tm.id DESC${lo.sql}`;
   return db
     .prepare(sql)
-    .all(...args)
+    .all(...scopeSql.args, ...lo.args)
     .map((row) => ({
       id: row.id,
       postedAtISO: row.posted_at_iso,

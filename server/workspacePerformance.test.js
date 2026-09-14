@@ -51,6 +51,14 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
       })
     );
     expect(snap).not.toHaveProperty('productionJobs');
+    expect(snap.bootstrapMeta?.sort?.customers).toBe('recent');
+    expect(snap.bootstrapMeta?.backgroundHydrate).toEqual(
+      expect.objectContaining({
+        strategy: 'recent_first',
+        enabled: expect.any(Boolean),
+        resources: expect.any(Array),
+      })
+    );
     db.close();
   });
 

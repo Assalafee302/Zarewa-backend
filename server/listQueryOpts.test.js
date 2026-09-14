@@ -5,12 +5,15 @@ import {
   sqlLimitOffsetClause,
   rowListOpts,
   DEFAULT_LIST_LIMIT,
+  DEFAULT_DESK_PAGE_SIZE,
   productionHistoryListOpts,
   financeHistoryListOpts,
   financeRegisterListOpts,
   salesCustomersListOpts,
   receiptsHistoryListOpts,
   coilDeskListOpts,
+  buildBackgroundHydrateMeta,
+  deskPageListOpts,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
@@ -22,6 +25,8 @@ describe('listQueryOpts', () => {
     delete process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT;
     delete process.env.ZAREWA_COIL_DESK_FULL;
     delete process.env.ZAREWA_COIL_DESK_LIMIT;
+    delete process.env.ZAREWA_DESK_PAGE_SIZE;
+    delete process.env.ZAREWA_DEFAULT_LIST_LIMIT;
   });
 
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
@@ -61,8 +66,15 @@ describe('listQueryOpts', () => {
     expect(rowListOpts({ listLimits: { quotations: 0 } }, 'quotations')).toEqual({ unlimited: true });
   });
 
-  it('productionHistoryListOpts defaults to capped desk limit', () => {
-    expect(productionHistoryListOpts()).toEqual({ limit: 500 });
+  it('desk pages default to recent ~150 rows (not thousands)', () => {
+    expect(DEFAULT_DESK_PAGE_SIZE).toBe(150);
+    expect(DEFAULT_LIST_LIMIT).toBe(150);
+    expect(deskPageListOpts()).toEqual({ limit: 150 });
+    expect(productionHistoryListOpts()).toEqual({ limit: 150 });
+    expect(financeHistoryListOpts()).toEqual({ limit: 150 });
+    expect(salesCustomersListOpts()).toEqual({ limit: 150 });
+    expect(receiptsHistoryListOpts()).toEqual({ limit: 150 });
+    expect(financeRegisterListOpts()).toEqual({ limit: 150 });
   });
 
   it('productionHistoryListOpts honors ZAREWA_PRODUCTION_HISTORY_LIMIT', () => {
@@ -72,19 +84,11 @@ describe('listQueryOpts', () => {
     expect(productionHistoryListOpts()).toEqual({ unlimited: true });
   });
 
-  it('financeHistoryListOpts defaults to capped desk limit', () => {
-    expect(financeHistoryListOpts()).toEqual({ limit: 800 });
-  });
-
   it('financeHistoryListOpts honors ZAREWA_FINANCE_HISTORY_LIMIT', () => {
     process.env.ZAREWA_FINANCE_HISTORY_LIMIT = '8000';
     expect(financeHistoryListOpts()).toEqual({ limit: 8000 });
     process.env.ZAREWA_FINANCE_HISTORY_LIMIT = '0';
     expect(financeHistoryListOpts()).toEqual({ unlimited: true });
-  });
-
-  it('salesCustomersListOpts defaults to capped directory', () => {
-    expect(salesCustomersListOpts()).toEqual({ limit: 2000 });
   });
 
   it('salesCustomersListOpts honors ZAREWA_SALES_CUSTOMERS_LIMIT', () => {
@@ -94,19 +98,11 @@ describe('listQueryOpts', () => {
     expect(salesCustomersListOpts()).toEqual({ unlimited: true });
   });
 
-  it('receiptsHistoryListOpts defaults to capped desk limit', () => {
-    expect(receiptsHistoryListOpts()).toEqual({ limit: 800 });
-  });
-
   it('receiptsHistoryListOpts honors ZAREWA_RECEIPTS_HISTORY_LIMIT', () => {
     process.env.ZAREWA_RECEIPTS_HISTORY_LIMIT = '4000';
     expect(receiptsHistoryListOpts()).toEqual({ limit: 4000 });
     process.env.ZAREWA_RECEIPTS_HISTORY_LIMIT = '0';
     expect(receiptsHistoryListOpts()).toEqual({ unlimited: true });
-  });
-
-  it('financeRegisterListOpts defaults to capped register slice', () => {
-    expect(financeRegisterListOpts()).toEqual({ limit: 500 });
   });
 
   it('coilDeskListOpts defaults to active on-hand pack (not recent-N)', () => {
@@ -119,5 +115,32 @@ describe('listQueryOpts', () => {
     delete process.env.ZAREWA_COIL_DESK_FULL;
     process.env.ZAREWA_COIL_DESK_LIMIT = '0';
     expect(coilDeskListOpts()).toEqual({ unlimited: true });
+  });
+
+  it('buildBackgroundHydrateMeta lists next recent-first pages for the SPA to prefetch', () => {
+    const meta = buildBackgroundHydrateMeta(
+      [
+        { key: 'quotations', path: '/api/quotations', limit: 150, loaded: 150 },
+        { key: 'customers', path: '/api/customers', limit: 150, loaded: 40, querySuffix: '&sort=recent' },
+        { key: 'receipts', path: '/api/receipts', limit: 150, loaded: 150 },
+      ],
+      { pageSize: 150 }
+    );
+    expect(meta.enabled).toBe(true);
+    expect(meta.strategy).toBe('recent_first');
+    expect(meta.resources).toEqual([
+      {
+        key: 'quotations',
+        href: '/api/quotations?limit=150&offset=150',
+        offset: 150,
+        limit: 150,
+      },
+      {
+        key: 'receipts',
+        href: '/api/receipts?limit=150&offset=150',
+        offset: 150,
+        limit: 150,
+      },
+    ]);
   });
 });

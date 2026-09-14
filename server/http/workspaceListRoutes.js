@@ -48,9 +48,15 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/customers', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req);
-      const items = listCustomers(db, branchScope, listOptsFromQuery(parsed));
-      const total = parsed.unlimited ? items.length : countCustomers(db, branchScope);
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const sort = String(req.query?.sort || '').trim().toLowerCase();
+      const q = String(req.query?.q || '').trim();
+      const items = listCustomers(db, branchScope, {
+        ...listOptsFromQuery(parsed),
+        q: q || undefined,
+        sort: sort === 'name' ? 'name' : 'recent',
+      });
+      const total = parsed.unlimited ? items.length : countCustomers(db, branchScope, { q: q || undefined });
       return sendPaginatedList(res, {
         items,
         total,
@@ -67,7 +73,7 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/expenses', requirePermission(EXPENSE_LIST_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const items = listExpenses(db, branchScope, listOptsFromQuery(parsed));
       const total = parsed.unlimited ? items.length : countExpenses(db, branchScope);
       return sendPaginatedList(res, {
@@ -86,7 +92,7 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/coil-lots', requirePermission(COIL_LIST_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const items = listCoilLots(db, branchScope, listOptsFromQuery(parsed));
       const total = parsed.unlimited ? items.length : countCoilLots(db, branchScope);
       return sendPaginatedList(res, {
@@ -129,7 +135,7 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/production-jobs', requirePermission(PRODUCTION_JOBS_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 200, maxLimit: 5000 });
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const items = listProductionJobs(db, branchScope, listOptsFromQuery(parsed));
       const total = parsed.unlimited ? items.length : countProductionJobs(db, branchScope);
       return sendPaginatedList(res, {
@@ -148,7 +154,7 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/stock-movements', requirePermission(MOVEMENTS_LIST_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 500, maxLimit: 5000 });
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const items = listStockMovements(db, branchScope, listOptsFromQuery(parsed));
       const total = parsed.unlimited ? items.length : countStockMovements(db, branchScope);
       return sendPaginatedList(res, {
@@ -167,7 +173,7 @@ export function registerWorkspaceListRoutes(app, db) {
   app.get('/api/cutting-lists', requirePermission(CUTTING_LIST_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
-      const parsed = parseListQuery(req, { defaultLimit: 200, maxLimit: 5000 });
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const items = listCuttingLists(db, branchScope, listOptsFromQuery(parsed));
       const total = parsed.unlimited ? items.length : countCuttingLists(db, branchScope);
       return sendPaginatedList(res, {

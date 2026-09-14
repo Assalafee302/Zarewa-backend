@@ -62,6 +62,7 @@ import {
 } from './stockRegisterOps.js';
 import { buildBootstrap, buildDashboardBootstrap, buildShellBootstrap } from './bootstrap.js';
 import { DOMAIN_SNAPSHOT_BUILDERS } from './domainBootstrap.js';
+import { withWriteDelta } from './workspaceWriteDelta.js';
 import { ifNoneMatchHit, jsonWeakEtag, setWeakEtag } from './httpEtag.js';
 import { buildWorkspaceRevision, workspaceRevisionEtag } from './workspaceRevision.js';
 import {
@@ -498,6 +499,7 @@ import {
   getQuotation,
   quotationLinkedToProductionContext,
   getCuttingList,
+  getSalesReceiptByLedgerEntryId,
   countCuttingLists,
   countProductionJobs,
   listLedgerEntries,
@@ -5811,7 +5813,17 @@ export function registerHttpApi(app, db) {
         if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
         return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'sales_receipt', rid, (stripped) => {
           const confirmed = Boolean(stripped?.confirmed);
-          return write.patchSalesReceiptBankConfirmation(db, rid, confirmed, req.user);
+          const r = write.patchSalesReceiptBankConfirmation(db, rid, confirmed, req.user);
+          if (!r.ok) return r;
+          const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+          /** @type {Record<string, unknown[]>} */
+          const bags = { receipts: receipt ? [receipt] : [] };
+          const qRef = String(receipt?.quotationRef || '').trim();
+          if (qRef) {
+            const quotation = getQuotation(db, qRef);
+            if (quotation) bags.quotations = [quotation];
+          }
+          return withWriteDelta({ ...r }, bags);
         });
       } catch (e) {
         console.error(e);
@@ -5855,7 +5867,32 @@ export function registerHttpApi(app, db) {
           req.body || {},
           'sales_receipt',
           rid,
-          (stripped) => write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user),
+          (stripped) => {
+            const r = write.patchSalesReceiptFinanceSettlement(db, rid, stripped || {}, req.user);
+            if (!r.ok) return r;
+            const [receipt] = listSalesReceipts(db, 'ALL', { ids: [rid], limit: 1 });
+            /** @type {Record<string, unknown[]>} */
+            const bags = { receipts: receipt ? [receipt] : [] };
+            const qRef = String(receipt?.quotationRef || '').trim();
+            if (qRef) {
+              const quotation = getQuotation(db, qRef);
+              if (quotation) bags.quotations = [quotation];
+            }
+            const sourceIds = Array.isArray(stripped?.refundCreditApply?.sourceIds)
+              ? stripped.refundCreditApply.sourceIds
+              : [];
+            const refunds = [];
+            for (const sid of sourceIds) {
+              const raw = String(sid || '').trim();
+              if (!raw.toLowerCase().startsWith('refund:')) continue;
+              const refundId = raw.slice(raw.indexOf(':') + 1).trim();
+              if (!refundId) continue;
+              const row = getCustomerRefundDetail(db, refundId);
+              if (row) refunds.push(row);
+            }
+            if (refunds.length) bags.refunds = refunds;
+            return withWriteDelta({ ...r }, bags);
+          },
           {
             requiresEditApproval: (database, user, receiptId) =>
               receiptFinanceSettlementRequiresEditApproval(database, user, receiptId),
@@ -7025,7 +7062,9 @@ export function registerHttpApi(app, db) {
       const r = write.insertCuttingList(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       if (!r.ok) return res.status(400).json(r);
       const cuttingList = getCuttingList(db, r.id);
-      res.status(201).json({ ok: true, id: r.id, cuttingList });
+      res.status(201).json(
+        withWriteDelta({ ok: true, id: r.id, cuttingList }, { cuttingLists: cuttingList ? [cuttingList] : [] })
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7052,7 +7091,10 @@ export function registerHttpApi(app, db) {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
           const cuttingList = getCuttingList(db, cid);
-          return { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) };
+          return withWriteDelta(
+            { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) },
+            { cuttingLists: cuttingList ? [cuttingList] : [] }
+          );
         },
         { requiresEditApproval: cuttingListEditRequiresEditApproval }
       );
@@ -7088,7 +7130,12 @@ export function registerHttpApi(app, db) {
         const r = write.recordCuttingListPrint(db, clId, req.user);
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, clId);
-        res.json({ ok: true, printCount: r.printCount, cuttingList });
+        res.json(
+          withWriteDelta(
+            { ok: true, printCount: r.printCount, cuttingList },
+            { cuttingLists: cuttingList ? [cuttingList] : [] }
+          )
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7106,7 +7153,7 @@ export function registerHttpApi(app, db) {
         const r = write.clearCuttingListProductionHold(db, req.params.id, req.user);
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, req.params.id);
-        res.json({ ok: true, cuttingList });
+        res.json(withWriteDelta({ ok: true, cuttingList }, { cuttingLists: cuttingList ? [cuttingList] : [] }));
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -9784,7 +9831,11 @@ export function registerHttpApi(app, db) {
         req.user,
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      res.status(r.ok ? 201 : 400).json(r);
+      if (r.ok) {
+        const refund = getCustomerRefundDetail(db, String(r.refundID || r.refundId || ''));
+        return res.status(201).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+      }
+      res.status(400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -9893,7 +9944,11 @@ export function registerHttpApi(app, db) {
           }
         }
       }
-      res.status(r.ok ? 200 : 400).json(r);
+      if (r.ok) {
+        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+        return res.status(200).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+      }
+      res.status(400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -9913,7 +9968,11 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      res.status(r.ok ? 201 : 400).json(r);
+      if (r.ok) {
+        const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
+        return res.status(201).json(withWriteDelta({ ...r }, { refunds: refund ? [refund] : [] }));
+      }
+      res.status(400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -11671,11 +11730,18 @@ export function registerHttpApi(app, db) {
       const quotation = getQuotation(db, id);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
-      const payload = {
-        ok: true,
-        quotationId: id,
-        quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
-      };
+      const payload = withWriteDelta(
+        {
+          ok: true,
+          quotationId: id,
+          quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+        },
+        {
+          quotations: [
+            { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+          ],
+        }
+      );
       clearBootstrapPollCacheForUser(req.user?.id);
       res.status(201).json(payload);
     } catch (e) {
@@ -12718,14 +12784,23 @@ export function registerHttpApi(app, db) {
               bankReference: resolvedBankReference,
             })
           : [];
-      const payload = {
-        ok: true,
-        receipt,
-        overpay,
-        entries: saved,
-        bankDepositAllocation: bankDepositAllocation ?? null,
-        similarUnlinkedDeposits,
-      };
+      const deskReceipt = receipt?.id ? getSalesReceiptByLedgerEntryId(db, receipt.id) : null;
+      const quotation = quotationId ? getQuotation(db, quotationId) : null;
+      const payload = withWriteDelta(
+        {
+          ok: true,
+          receipt,
+          overpay,
+          entries: saved,
+          bankDepositAllocation: bankDepositAllocation ?? null,
+          similarUnlinkedDeposits,
+        },
+        {
+          receipts: deskReceipt ? [deskReceipt] : [],
+          ledgerEntries: Array.isArray(saved) ? saved : [],
+          quotations: quotation ? [quotation] : [],
+        }
+      );
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);

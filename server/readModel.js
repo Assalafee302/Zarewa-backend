@@ -2222,8 +2222,12 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
     ? ` AND (status IS NULL OR TRIM(LOWER(status)) NOT IN ('reversed', 'cleared', 'confirmed'))
         AND (finance_reconciliation_saved_at_iso IS NULL OR TRIM(finance_reconciliation_saved_at_iso) = '')`
     : '';
-  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const idList = Array.isArray(opts.ids)
+    ? [...new Set(opts.ids.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+  const idSql = idList.length ? ` AND id IN (${idList.map(() => '?').join(',')})` : '';
+  const sql = `SELECT * FROM sales_receipts WHERE 1=1${b.sql}${unclearedSql}${idSql} ORDER BY date_iso DESC, id DESC${page.sql}`;
+  const args = [...b.args, ...idList, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const actorIds = [
     ...new Set(
@@ -2269,6 +2273,23 @@ export function listSalesReceipts(db, branchScope = 'ALL', opts = {}) {
       financeReconciliationSavedBy: savedById ? displayByUserId.get(savedById) || '' : '',
     };
   });
+}
+
+/**
+ * Desk-shaped sales receipt by ledger entry id (writer delta after POST /api/ledger/receipt).
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} ledgerEntryId
+ */
+export function getSalesReceiptByLedgerEntryId(db, ledgerEntryId) {
+  const lid = String(ledgerEntryId || '').trim();
+  if (!lid) return null;
+  const row = db.prepare(`SELECT * FROM sales_receipts WHERE ledger_entry_id = ? LIMIT 1`).get(lid);
+  if (!row) return null;
+  const [mapped] = listSalesReceipts(db, row.branch_id || 'ALL', {
+    ids: [row.id],
+    limit: 1,
+  });
+  return mapped || null;
 }
 
 function ngnListDisplay(n) {

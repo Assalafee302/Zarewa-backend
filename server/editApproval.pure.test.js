@@ -134,7 +134,12 @@ describe('editApproval (no MySQL)', () => {
     const finance = { roleKey: 'finance_manager' };
     const quotation = { id: 'Q-1', status: 'Pending' };
     handlePatchWithEditApprovalQuotation(res, db, finance, { lines: {}, editApprovalId: '123456' }, 'Q-1', () => quotation);
-    expect(res.payload).toEqual({ ok: true, quotation, autoOverpayAppliedNgn: 0 });
+    expect(res.payload).toEqual({
+      ok: true,
+      quotation,
+      autoOverpayAppliedNgn: 0,
+      delta: { quotations: [quotation] },
+    });
   });
 
   it('handlePatchWithEditApprovalQuotation: gated user without receipts skips token', () => {
@@ -157,7 +162,12 @@ describe('editApproval (no MySQL)', () => {
     const executeWrite = vi.fn(() => quotation);
     handlePatchWithEditApprovalQuotation(res, db, sales, { lines: {} }, 'Q-1', executeWrite);
     expect(executeWrite).toHaveBeenCalled();
-    expect(res.payload).toEqual({ ok: true, quotation, autoOverpayAppliedNgn: 0 });
+    expect(res.payload).toEqual({
+      ok: true,
+      quotation,
+      autoOverpayAppliedNgn: 0,
+      delta: { quotations: [quotation] },
+    });
   });
 
   it('handlePatchWithEditApprovalQuotation: gated user with receipts requires token', () => {

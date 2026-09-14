@@ -5,6 +5,7 @@
 import { editMutationRequiresSecondApproval, userCanApproveEditMutations } from './auth.js';
 import { appendAuditLog } from './controlOps.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
+import { withWriteDelta } from './workspaceWriteDelta.js';
 
 function formatNgnContext(n) {
   const v = Math.round(Number(n) || 0);
@@ -684,10 +685,17 @@ function quotationPatchResultPayload(result) {
 
 export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotationId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
+  const respondOk = (quotation, autoOverpayAppliedNgn) =>
+    res.json(
+      withWriteDelta(
+        { ok: true, quotation, autoOverpayAppliedNgn },
+        { quotations: quotation ? [quotation] : [] }
+      )
+    );
   if (!quotationEditRequiresEditApproval(db, user, quotationId)) {
     try {
       const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(executeWrite(stripped));
-      return res.json({ ok: true, quotation, autoOverpayAppliedNgn });
+      return respondOk(quotation, autoOverpayAppliedNgn);
     } catch (e) {
       if (e?.statusCode === 422 && e?.code) {
         return res.status(422).json({
@@ -717,7 +725,7 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
       return executeWrite(stripped);
     })();
     const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(raw);
-    return res.json({ ok: true, quotation, autoOverpayAppliedNgn });
+    return respondOk(quotation, autoOverpayAppliedNgn);
   } catch (e) {
     if (e?.statusCode === 422 && e?.code) {
       return res.status(422).json({

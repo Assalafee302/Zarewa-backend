@@ -3,7 +3,6 @@ import path from 'node:path';
 import { createSyncFn } from 'synckit';
 import { SCHEMA_SQL } from './schemaSql.js';
 import { attachAsyncMysql } from './mysqlAsyncAttach.js';
-import { debugSessionLog } from './debugSessionLog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'mysqlWorker.mjs');
@@ -119,15 +118,9 @@ export function createMysqlDatabase(cfg, opts = {}) {
       return (...args) => {
         syncFn({ op: 'txBegin' });
         transactionDepth += 1;
-        const depthAtEnter = transactionDepth;
         try {
           const ret = fn(...args);
           syncFn({ op: 'txCommit' });
-          // #region agent log
-          if (depthAtEnter === 1) {
-            debugSessionLog({ hypothesisId: 'E', location: 'mysqlDatabase.js:txCommit', message: 'outer db.transaction committed', data: { depth: depthAtEnter } });
-          }
-          // #endregion
           return ret;
         } catch (e) {
           try {
@@ -135,11 +128,6 @@ export function createMysqlDatabase(cfg, opts = {}) {
           } catch {
             /* ignore */
           }
-          // #region agent log
-          if (depthAtEnter === 1) {
-            debugSessionLog({ hypothesisId: 'E', location: 'mysqlDatabase.js:txRollback', message: 'outer db.transaction rolled back', data: { depth: depthAtEnter, err: String(e?.message || e || '').slice(0, 120) } });
-          }
-          // #endregion
           throw e;
         } finally {
           transactionDepth = Math.max(0, transactionDepth - 1);

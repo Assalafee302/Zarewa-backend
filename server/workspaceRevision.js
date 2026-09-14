@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { branchWhere } from './readModel.js';
 import { jsonWeakEtag } from './httpEtag.js';
-import { debugSessionLog } from './debugSessionLog.js';
 
 /** @type {ReadonlyArray<[table: string, dateCol: string]>} */
 const REVISION_TABLES = [
@@ -100,13 +99,7 @@ export function bumpWorkspaceRevisions(db, { branchId = '', domains = [], shell 
         }
       }
     })();
-    // #region agent log
-    debugSessionLog({ hypothesisId: 'B', location: 'workspaceRevision.js:bumpOk', message: 'bumpWorkspaceRevisions persisted', data: { branch, scopes, domainKeys, updatedAtIso } });
-    // #endregion
-  } catch (e) {
-    // #region agent log
-    debugSessionLog({ hypothesisId: 'B', location: 'workspaceRevision.js:bumpFail', message: 'bumpWorkspaceRevisions swallowed error', data: { branch, domainKeys, err: String(e?.message || e || '').slice(0, 160) } });
-    // #endregion
+  } catch {
     // Invalidation must never turn an already-committed business write into an HTTP failure.
   }
 }

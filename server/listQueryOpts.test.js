@@ -10,6 +10,7 @@ import {
   financeRegisterListOpts,
   salesCustomersListOpts,
   receiptsHistoryListOpts,
+  coilDeskListOpts,
 } from './listQueryOpts.js';
 
 describe('listQueryOpts', () => {
@@ -19,6 +20,8 @@ describe('listQueryOpts', () => {
     delete process.env.ZAREWA_SALES_CUSTOMERS_LIMIT;
     delete process.env.ZAREWA_RECEIPTS_HISTORY_LIMIT;
     delete process.env.ZAREWA_RECEIPTS_HISTORY_DEFAULT;
+    delete process.env.ZAREWA_COIL_DESK_FULL;
+    delete process.env.ZAREWA_COIL_DESK_LIMIT;
   });
 
   it('resolveListLimit returns DEFAULT_LIST_LIMIT when opts omitted', () => {
@@ -104,5 +107,17 @@ describe('listQueryOpts', () => {
 
   it('financeRegisterListOpts defaults to capped register slice', () => {
     expect(financeRegisterListOpts()).toEqual({ limit: 500 });
+  });
+
+  it('coilDeskListOpts defaults to active on-hand pack (not recent-N)', () => {
+    expect(coilDeskListOpts()).toEqual({ activeOnly: true });
+  });
+
+  it('coilDeskListOpts escape hatch restores full historical register', () => {
+    process.env.ZAREWA_COIL_DESK_FULL = '1';
+    expect(coilDeskListOpts()).toEqual({ unlimited: true });
+    delete process.env.ZAREWA_COIL_DESK_FULL;
+    process.env.ZAREWA_COIL_DESK_LIMIT = '0';
+    expect(coilDeskListOpts()).toEqual({ unlimited: true });
   });
 });

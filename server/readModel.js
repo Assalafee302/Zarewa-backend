@@ -1898,6 +1898,44 @@ export function listCoilLots(db, branchScope = 'ALL', opts = {}) {
     .map((row) => mapCoilLotRow(db, row, masterData));
 }
 
+/**
+ * Bootstrap / domain-snapshot coil pack.
+ *
+ * Ships the **complete on-hand register** (remaining or reserved qty). Does **not** apply a
+ * recent-N date trim — that hid live coils (e.g. CL-26-2043) from Stock Management.
+ * Consumed/finished history is omitted unless `unlimited` / full-desk env escape hatch.
+ *
+ * Clients needing a missing number: `GET /api/coil-lots/search`. Production picker:
+ * `GET /api/production/eligible-coils` (complete active queue). Paged browse: `GET /api/coil-lots`.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {{ unlimited?: boolean; activeOnly?: boolean }} [opts]
+ * @returns {{ coilLots: object[]; truncated: boolean; mode: 'active' | 'full' }}
+ */
+export function listCoilLotsForDesk(db, branchScope = 'ALL', opts = {}) {
+  if (opts.unlimited === true || opts.activeOnly === false) {
+    return {
+      coilLots: listCoilLots(db, branchScope, { unlimited: true }),
+      truncated: false,
+      mode: 'full',
+    };
+  }
+  const masterData = masterDataColoursFromDb(db);
+  const b = branchWhere(db, 'coil_lots', branchScope);
+  // Complete on-hand set — no ORDER BY … LIMIT that can drop older live stock.
+  const coilLots = db
+    .prepare(
+      `SELECT * FROM coil_lots
+       WHERE 1=1${b.sql}
+         AND (qty_remaining > 0.0001 OR qty_reserved > 0.0001)
+       ORDER BY received_at_iso DESC, coil_no DESC`
+    )
+    .all(...b.args)
+    .map((row) => mapCoilLotRow(db, row, masterData));
+  return { coilLots, truncated: true, mode: 'active' };
+}
+
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
 export function countCoilLots(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'coil_lots', branchScope);

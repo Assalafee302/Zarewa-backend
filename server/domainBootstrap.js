@@ -7,7 +7,7 @@ import {
   listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
-  listCoilLots,
+  listCoilLotsForDesk,
   listCoilControlEvents,
   listStockMovements,
   getWipByProduct,
@@ -85,12 +85,20 @@ import {
   listMaterialRequests,
 } from './workItems.js';
 import {
+  coilDeskListOpts,
   financeHistoryListOpts,
   financeRegisterListOpts,
   productionHistoryListOpts,
   receiptsHistoryListOpts,
   salesCustomersListOpts,
 } from './listQueryOpts.js';
+
+/** Escape hatches for consumed/finished coils omitted from active desk packs. */
+const COIL_DESK_RECOVERY = {
+  page: '/api/coil-lots',
+  search: '/api/coil-lots/search',
+  eligibleProduction: '/api/production/eligible-coils',
+};
 
 const MAX_PROD_ROWS = Math.min(
   5000,
@@ -228,6 +236,9 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
         []
       )
     : [];
+  const coilDesk = coilMovOk
+    ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
+    : { coilLots: [], truncated: false, mode: 'active' };
   return {
     ok: true,
     domain: 'operations',
@@ -249,8 +260,8 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       : [],
     operationsInventoryAttention,
     deliveries: opsOk ? listDeliveries(db, branchScope, historyOpts) : [],
-    // Full coil register for production-register selectors (browse + allocate any in-stock coil).
-    coilLots: coilMovOk ? listCoilLots(db, branchScope, { unlimited: true }) : [],
+    // Complete on-hand register (not recent-N). Production allocate: /api/production/eligible-coils.
+    coilLots: coilDesk.coilLots,
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
@@ -265,6 +276,10 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     coilRequests: f.coilReqOk ? listCoilRequests(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: [],
+      listLimitsApplied: {
+        ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
+      },
+      coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       // Forms needing an older eligible item must use their complete server-side selector.
       truncated: {
         ...(opsOk ? { cuttingLists: true, deliveries: true } : {}),
@@ -277,7 +292,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
           : {}),
         ...(coilMovOk
           ? {
-              coilLots: true,
+              coilLots: coilDesk.truncated,
               coilControlEvents: true,
               movements: true,
             }
@@ -420,6 +435,9 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
 export function buildProcurementDomainSnapshot(db, opts = {}) {
   const f = domainFlags(db, opts);
   const { branchScope, procOk, poListOk, productsOk, finOk, coilMovOk } = f;
+  const coilDesk = coilMovOk
+    ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
+    : { coilLots: [], truncated: false, mode: 'active' };
   return {
     ok: true,
     domain: 'procurement',
@@ -432,7 +450,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, { skipSideEffects: true }) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
+    coilLots: coilDesk.coilLots,
     movements: coilMovOk ? listStockMovements(db, branchScope, productionHistoryListOpts()) : [],
     inTransitLoads: f.user ? listInTransitLoads(db, branchScope) : [],
     poTransportAwaitingTreasury:
@@ -443,9 +461,13 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
       finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: [],
+      listLimitsApplied: {
+        ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
+      },
+      coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       truncated: {
         ...(poListOk ? { purchaseOrders: true } : {}),
-        ...(coilMovOk ? { coilLots: true, movements: true } : {}),
+        ...(coilMovOk ? { coilLots: coilDesk.truncated, movements: true } : {}),
       },
     },
   };

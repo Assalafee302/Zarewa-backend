@@ -8,7 +8,7 @@ import {
   listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
-  listCoilLots,
+  listCoilLotsForDesk,
   listCoilControlEvents,
   listStockMovements,
   getWipByProduct,
@@ -100,12 +100,20 @@ import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } f
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
 import { listGlJournalsForWorkspaceSearch } from './glOps.js';
 import {
+  coilDeskListOpts,
   financeHistoryListOpts,
   productionHistoryListOpts,
   receiptsHistoryListOpts,
   rowListOpts,
   salesCustomersListOpts,
 } from './listQueryOpts.js';
+
+/** Escape hatches for consumed/finished coils omitted from active desk packs. */
+const COIL_DESK_RECOVERY = {
+  page: '/api/coil-lots',
+  search: '/api/coil-lots/search',
+  eligibleProduction: '/api/production/eligible-coils',
+};
 import {
   countPendingStaffPurchaseCreditRequests,
   summarizePendingStaffPurchaseCreditByBranch,
@@ -316,6 +324,10 @@ export function buildBootstrap(db, opts = {}) {
           listProductionJobCoils(db, branchScope, { limit: 0 })
         )
       : [];
+  const coilDesk =
+    coilMovOk && !omitDesk.coilLots
+      ? listCoilLotsForDesk(db, branchScope, coilDeskListOpts())
+      : { coilLots: [], truncated: Boolean(omitDesk.coilLots), mode: 'active' };
 
   return {
     ok: true,
@@ -342,7 +354,8 @@ export function buildBootstrap(db, opts = {}) {
     refundCreditApplications: snapshotRefundCreditApplications(db, { refundsOk, ledgerOk, branchScope }),
     products: productsOk ? listProducts(db, branchScope) : [],
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, poListOpts) : [],
-    coilLots: coilMovOk && !omitDesk.coilLots ? listCoilLots(db, branchScope) : [],
+    // Complete on-hand register (not recent-N). History: /api/coil-lots/search.
+    coilLots: coilDesk.coilLots,
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
@@ -511,7 +524,9 @@ export function buildBootstrap(db, opts = {}) {
           ? 0
           : Number(productionJobsHistoryOpts.limit) || listLimit('productionJobs'),
         ledgerEntries: ledgerRowLimit,
+        ...(coilMovOk && !omitDesk.coilLots ? { coilLots: coilDesk.mode } : {}),
       },
+      coilLotsRecovery: coilMovOk && !omitDesk.coilLots ? COIL_DESK_RECOVERY : undefined,
       truncated: {
         /** Only truncated when an explicit positive customers cap is configured — or deferred on dashboard shell. */
         customers: (salesOk && !customersHistoryOpts.unlimited) || Boolean(omitDesk.customers),
@@ -526,7 +541,8 @@ export function buildBootstrap(db, opts = {}) {
         cuttingLists: (opsOk || salesOk) && !cuttingListHistoryOpts.unlimited,
         productionJobs: prodRollupOk && !productionJobsHistoryOpts.unlimited,
         ledgerEntries: ledgerOk,
-        coilLots: Boolean(omitDesk.coilLots),
+        /** Active on-hand pack omits consumed/finished — not a recent-N hide of live stock. */
+        coilLots: Boolean(omitDesk.coilLots) || coilDesk.truncated,
         productionJobCoils: Boolean(omitDesk.productionJobCoils),
       },
       deferredDeskArrays: [],

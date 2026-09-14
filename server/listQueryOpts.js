@@ -116,6 +116,29 @@ export function receiptsHistoryListOpts() {
   return { limit: Math.min(50_000, Math.max(1, Math.floor(n))) };
 }
 
+/**
+ * Coil register for bootstrap / domain snapshots.
+ *
+ * Default `activeOnly`: complete on-hand pack (qty remaining or reserved). Never a
+ * recent-N slice — that previously hid live stock (e.g. CL-26-2043) from Stock Management.
+ * Consumed/finished history loads via `/api/coil-lots`, `/api/coil-lots/search`, or
+ * `/api/production/eligible-coils`.
+ *
+ * Escape hatch: `ZAREWA_COIL_DESK_FULL=1` or `ZAREWA_COIL_DESK_LIMIT=0` → full historical register.
+ * @returns {{ unlimited: true } | { activeOnly: true }}
+ */
+export function coilDeskListOpts() {
+  if (/^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_COIL_DESK_FULL || ''))) {
+    return { unlimited: true };
+  }
+  const raw = process.env.ZAREWA_COIL_DESK_LIMIT;
+  if (raw != null && String(raw).trim() !== '') {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return { unlimited: true };
+  }
+  return { activeOnly: true };
+}
+
 /** @param {number} limit */
 export function sqlLimitClause(limit) {
   return limit > 0 ? ' LIMIT ?' : '';

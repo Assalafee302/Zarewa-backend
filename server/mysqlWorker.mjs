@@ -466,6 +466,31 @@ runAsWorker(async (payload) => {
     });
   }
 
+  /*
+   * Batched reads — one worker round trip for N SELECTs. The bridge hop costs
+   * ~0.15 ms even for an empty result, so callers that need many independent
+   * lists (bootstrap) pay that once instead of once per query.
+   */
+  if (op === 'allMany') {
+    const queries = Array.isArray(payload.queries) ? payload.queries : [];
+    if (!queries.length) return [];
+    return withDeadlockRetry(async () => {
+      const conn = execTarget();
+      const out = [];
+      for (const q of queries) {
+        const { sql, args } = adaptSqlForMysql(q?.sql, q?.args || []);
+        assertBindCount(sql, args);
+        try {
+          const [rows] = await conn.query(sql, args);
+          out.push(/** @type {Record<string, unknown>[]} */ (rows));
+        } catch (e) {
+          throw annotateSqlError(e, sql, args);
+        }
+      }
+      return out;
+    });
+  }
+
   if (op === 'txBegin') {
     if (!pool) throw new Error('MySQL pool not initialized');
     if (txDepth === 0) {

@@ -67,11 +67,43 @@ export function expandNamedBindParams(sql, args) {
   return { sql: sql2, args: values };
 }
 
+/**
+ * Adapted-SQL plan cache. Every query on the hot path (bootstrap alone issues
+ * hundreds) used to re-run the full regex rewrite chain below; the rewrite is a
+ * pure function of the SQL string, so memoise it and keep only the arg handling
+ * per call. `fixedArgs === null` means "pass the caller's args through".
+ * @type {Map<string, { sql: string, fixedArgs: unknown[] | null }>}
+ */
+const adaptPlanCache = new Map();
+const ADAPT_PLAN_CACHE_MAX = 5000;
+
+/** Drop memoised rewrites (schema-shape changes cannot alter them, but tests may want a clean slate). */
+export function clearAdaptSqlCache() {
+  adaptPlanCache.clear();
+}
+
 export function adaptSqlForMysql(sql, args) {
   const expanded = expandNamedBindParams(sql, args);
   const s0 = String(expanded.sql || '').trim();
-  let s = adaptExecSqlForMysql(s0);
   const outArgs = expanded.args != null ? [...expanded.args] : [];
+
+  let plan = adaptPlanCache.get(s0);
+  if (!plan) {
+    plan = buildAdaptPlan(s0);
+    /* Unbounded growth would only come from generated SQL; reset wholesale rather than track LRU. */
+    if (adaptPlanCache.size >= ADAPT_PLAN_CACHE_MAX) adaptPlanCache.clear();
+    adaptPlanCache.set(s0, plan);
+  }
+  return { sql: plan.sql, args: plan.fixedArgs ? [...plan.fixedArgs] : outArgs };
+}
+
+/**
+ * Pure SQL→SQL rewrite, independent of bind values.
+ * @param {string} s0 named-bind-expanded, trimmed SQL
+ * @returns {{ sql: string, fixedArgs: unknown[] | null }}
+ */
+function buildAdaptPlan(s0) {
+  let s = adaptExecSqlForMysql(s0);
 
   const pragma = /^PRAGMA\s+table_info\((['"`]?)([\w]+)\1\)\s*$/i.exec(s0);
   if (pragma) {
@@ -86,7 +118,7 @@ export function adaptSqlForMysql(sql, args) {
         'FROM INFORMATION_SCHEMA.COLUMNS ' +
         'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ' +
         'ORDER BY ORDINAL_POSITION',
-      args: [table],
+      fixedArgs: [table],
     };
   }
 
@@ -98,7 +130,7 @@ export function adaptSqlForMysql(sql, args) {
       sql:
         "SELECT 1 AS `1` FROM information_schema.tables WHERE table_schema = DATABASE() " +
         "AND table_type = 'BASE TABLE' AND table_name = ? LIMIT 1",
-      args: [smLit[1]],
+      fixedArgs: [smLit[1]],
     };
   }
 
@@ -111,7 +143,7 @@ export function adaptSqlForMysql(sql, args) {
       sql:
         "SELECT 1 AS `1` FROM information_schema.tables WHERE table_schema = DATABASE() " +
         "AND table_type = 'BASE TABLE' AND table_name = ? LIMIT 1",
-      args: outArgs,
+      fixedArgs: null,
     };
   }
 
@@ -124,7 +156,7 @@ export function adaptSqlForMysql(sql, args) {
         'SELECT TABLE_NAME AS name FROM information_schema.tables ' +
         "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' " +
         "ORDER BY TABLE_NAME",
-      args: [],
+      fixedArgs: [],
     };
   }
 
@@ -137,7 +169,7 @@ export function adaptSqlForMysql(sql, args) {
 
   s = adaptSqliteUpsertToMysql(s);
 
-  return { sql: s, args: outArgs };
+  return { sql: s, fixedArgs: null };
 }
 
 /**

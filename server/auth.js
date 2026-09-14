@@ -7,14 +7,11 @@ import { payrollGroupMayHaveLogin } from '../shared/lib/hrStaffCohorts.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { detachAppUserReferences } from './hrUserOperationalCleanup.js';
 import { validateStaffRoleForPayrollGroup } from './hrStaffAccessPolicy.js';
+import { tableHasColumn } from './schemaCache.js';
 
 function appUsersHasColumn(db, name) {
-  try {
-    const cols = db.prepare(`PRAGMA table_info(app_users)`).all();
-    return cols.some((c) => c.name === name);
-  } catch {
-    return false;
-  }
+  /* Sits on the per-request auth path — memoised, since the shape only moves on migration. */
+  return tableHasColumn(db, 'app_users', name);
 }
 
 /** Phase 12: plaintext password storage removed — no-op for backward compatibility. */

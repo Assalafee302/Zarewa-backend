@@ -1503,6 +1503,54 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   });
 }
 
+/** Single PO for write-delta merges (avoids full procurement list). */
+export function getPurchaseOrder(db, poId) {
+  const id = String(poId || '').trim();
+  if (!id) return null;
+  const row = db.prepare(`SELECT * FROM purchase_orders WHERE po_id = ?`).get(id);
+  if (!row) return null;
+  const linesByPoId = purchaseOrderLinesByPoIds(db, [id]);
+  const rawLines = linesByPoId.get(id) || [];
+  return {
+    poID: row.po_id,
+    supplierID: row.supplier_id,
+    supplierName: row.supplier_name,
+    orderDateISO: row.order_date_iso,
+    expectedDeliveryISO: row.expected_delivery_iso,
+    status: row.status,
+    invoiceNo: row.invoice_no ?? '',
+    invoiceDateISO: row.invoice_date_iso ?? '',
+    deliveryDateISO: row.delivery_date_iso ?? '',
+    transportAgentId: row.transport_agent_id ?? '',
+    transportAgentName: row.transport_agent_name ?? '',
+    transportReference: row.transport_reference ?? '',
+    transportNote: row.transport_note ?? '',
+    transportFinanceAdvice: row.transport_finance_advice ?? '',
+    transportTreasuryMovementId: row.transport_treasury_movement_id ?? '',
+    transportAmountNgn: Number(row.transport_amount_ngn) || 0,
+    transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
+    transportPaidNgn: Number(row.transport_paid_ngn) || 0,
+    transportPaid: Boolean(row.transport_paid),
+    transportPaidAtISO: row.transport_paid_at_iso ?? '',
+    supplierPaidNgn: row.supplier_paid_ngn ?? 0,
+    procurementKind: procurementKindFromPoRow(row, rawLines),
+    lines: rawLines.map((l) => ({
+      lineKey: l.line_key,
+      lineType: l.line_type ?? '',
+      productID: l.product_id,
+      productName: l.product_name,
+      color: l.color ?? '',
+      gauge: l.gauge ?? '',
+      metersOffered: l.meters_offered,
+      conversionKgPerM: roundConv2(l.conversion_kg_per_m),
+      unitPricePerKgNgn: l.unit_price_per_kg_ngn,
+      unitPriceNgn: l.unit_price_ngn,
+      qtyOrdered: l.qty_ordered,
+      qtyReceived: l.qty_received,
+    })),
+  };
+}
+
 /**
  * POs with a quoted transport fee and transporter assigned, where treasury payments are still below the fee.
  * Used on Finance → Treasury (same pattern as refunds / payment requests awaiting payout).
@@ -2434,6 +2482,96 @@ function fgAdjustmentTotalsByJobId(db, branchScope) {
   return m;
 }
 
+function fgAdjustmentTotalForJob(db, jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return 0;
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_completion_adjustments'`).get()) {
+    return 0;
+  }
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(delta_finished_goods_m), 0) AS total
+       FROM production_completion_adjustments WHERE job_id = ?`
+    )
+    .get(id);
+  return Number(row?.total) || 0;
+}
+
+function mapProductionJobRow(row, fgAdj = 0) {
+  const baseActual = Number(row.actual_meters) || 0;
+  const actualRoofM = Number(row.actual_roof_m) || 0;
+  const actualCladdingM = Number(row.actual_cladding_m) || 0;
+  const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
+  const totalBase = jobTotalOutputMetres({
+    actualMeters: baseActual,
+    actualRoofM,
+    actualCladdingM,
+    actualFlatsheetM,
+  });
+  return {
+    jobID: row.job_id,
+    cuttingListId: row.cutting_list_id ?? '',
+    quotationRef: row.quotation_ref ?? '',
+    customerID: row.customer_id ?? '',
+    customerName: row.customer_name ?? '',
+    productID: row.product_id ?? '',
+    productName: row.product_name ?? '',
+    plannedMeters: Number(row.planned_meters) || 0,
+    plannedSheets: Number(row.planned_sheets) || 0,
+    plannedRoofM: Number(row.planned_roof_m) || 0,
+    plannedCladdingM: Number(row.planned_cladding_m) || 0,
+    plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
+    machineName: row.machine_name ?? '',
+    startDateISO: row.start_date_iso ?? '',
+    endDateISO: row.end_date_iso ?? '',
+    materialsNote: row.materials_note ?? '',
+    status: row.status ?? 'Planned',
+    createdAtISO: row.created_at_iso,
+    completedAtISO: row.completed_at_iso ?? '',
+    productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
+    actualMeters: baseActual,
+    fgAdjustmentMetersTotal: fgAdj,
+    effectiveOutputMeters: totalBase + fgAdj,
+    actualRoofM,
+    actualCladdingM,
+    actualFlatsheetM,
+    actualWeightKg: Number(row.actual_weight_kg) || 0,
+    conversionAlertState: row.conversion_alert_state ?? 'Pending',
+    managerReviewRequired: Boolean(row.manager_review_required),
+    managerReviewSignedAtISO: row.manager_review_signed_at_iso ?? '',
+    managerReviewSignedByUserId: row.manager_review_signed_by_user_id ?? '',
+    managerReviewSignedByName: row.manager_review_signed_by_name ?? '',
+    managerReviewRemark: row.manager_review_remark ?? '',
+    conversionVarianceReasonCode: row.conversion_variance_reason_code ?? '',
+    conversionVarianceReasonText: row.conversion_variance_reason_text ?? '',
+    conversionVarianceBand: row.conversion_variance_band ?? '',
+    operatorName: row.operator_name ?? '',
+    branchId: row.branch_id ?? '',
+    coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
+    offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
+    offcutSupplyJson: row.offcut_supply_json ?? '',
+    offcutSupply: (() => {
+      const raw = row.offcut_supply_json;
+      if (!raw || !String(raw).trim()) return [];
+      try {
+        const parsed = JSON.parse(String(raw));
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    })(),
+  };
+}
+
+/** Single production job for write-delta merges (avoids full desk list). */
+export function getProductionJob(db, jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const row = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(id);
+  if (!row) return null;
+  return mapProductionJobRow(row, fgAdjustmentTotalForJob(db, id));
+}
+
 export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
@@ -2445,72 +2583,7 @@ export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
   return db
     .prepare(sql)
     .all(...args)
-    .map((row) => {
-      const baseActual = Number(row.actual_meters) || 0;
-      const fgAdj = adjByJob.get(row.job_id) || 0;
-      const actualRoofM = Number(row.actual_roof_m) || 0;
-      const actualCladdingM = Number(row.actual_cladding_m) || 0;
-      const actualFlatsheetM = Number(row.actual_flatsheet_m) || 0;
-      const totalBase = jobTotalOutputMetres({
-        actualMeters: baseActual,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-      });
-      return {
-        jobID: row.job_id,
-        cuttingListId: row.cutting_list_id ?? '',
-        quotationRef: row.quotation_ref ?? '',
-        customerID: row.customer_id ?? '',
-        customerName: row.customer_name ?? '',
-        productID: row.product_id ?? '',
-        productName: row.product_name ?? '',
-        plannedMeters: Number(row.planned_meters) || 0,
-        plannedSheets: Number(row.planned_sheets) || 0,
-        plannedRoofM: Number(row.planned_roof_m) || 0,
-        plannedCladdingM: Number(row.planned_cladding_m) || 0,
-        plannedFlatsheetM: Number(row.planned_flatsheet_m) || 0,
-        machineName: row.machine_name ?? '',
-        startDateISO: row.start_date_iso ?? '',
-        endDateISO: row.end_date_iso ?? '',
-        materialsNote: row.materials_note ?? '',
-        status: row.status ?? 'Planned',
-        createdAtISO: row.created_at_iso,
-        completedAtISO: row.completed_at_iso ?? '',
-        productionDateISO: row.production_date_iso ?? row.completed_at_iso ?? row.end_date_iso ?? '',
-        actualMeters: baseActual,
-        fgAdjustmentMetersTotal: fgAdj,
-        effectiveOutputMeters: totalBase + fgAdj,
-        actualRoofM,
-        actualCladdingM,
-        actualFlatsheetM,
-        actualWeightKg: Number(row.actual_weight_kg) || 0,
-        conversionAlertState: row.conversion_alert_state ?? 'Pending',
-        managerReviewRequired: Boolean(row.manager_review_required),
-        managerReviewSignedAtISO: row.manager_review_signed_at_iso ?? '',
-        managerReviewSignedByUserId: row.manager_review_signed_by_user_id ?? '',
-        managerReviewSignedByName: row.manager_review_signed_by_name ?? '',
-        managerReviewRemark: row.manager_review_remark ?? '',
-        conversionVarianceReasonCode: row.conversion_variance_reason_code ?? '',
-        conversionVarianceReasonText: row.conversion_variance_reason_text ?? '',
-        conversionVarianceBand: row.conversion_variance_band ?? '',
-        operatorName: row.operator_name ?? '',
-        branchId: row.branch_id ?? '',
-        coilSpecMismatchPending: Boolean(row.coil_spec_mismatch_pending),
-        offcutInventoryMeters: Number(row.offcut_inventory_meters) || 0,
-        offcutSupplyJson: row.offcut_supply_json ?? '',
-        offcutSupply: (() => {
-          const raw = row.offcut_supply_json;
-          if (!raw || !String(raw).trim()) return [];
-          try {
-            const parsed = JSON.parse(String(raw));
-            return Array.isArray(parsed) ? parsed : [];
-          } catch {
-            return [];
-          }
-        })(),
-      };
-    });
+    .map((row) => mapProductionJobRow(row, adjByJob.get(row.job_id) || 0));
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */

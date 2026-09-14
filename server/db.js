@@ -7,6 +7,8 @@ import { isEmptySeedMode } from './emptySeed.js';
 import { legacyDemoPackActive } from './legacyDemoPackPolicy.js';
 import { createMysqlDatabase, databaseLabel, mysqlConfigFromEnv } from './mysqlDatabase.js';
 import { withDeadlockRetry } from './migrationLock.js';
+import { resetSchemaCache } from './schemaCache.js';
+import { clearReadModelSchemaCache } from './readModel.js';
 
 /** Last boot phase reached (for degraded /api/health and 503 payloads). */
 export let lastBootPhase = 'not_started';
@@ -89,6 +91,9 @@ export function createDatabase(pathOrOpts = {}, maybeOpts) {
 
       setBootPhase('migrations');
       runMigrations(db);
+      /* Migrations add columns/tables — drop memoised schema probes taken against the old shape. */
+      resetSchemaCache();
+      clearReadModelSchemaCache();
       setBootPhase('migrations_ok');
 
       try {

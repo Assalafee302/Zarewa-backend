@@ -501,6 +501,8 @@ import {
   getQuotation,
   quotationLinkedToProductionContext,
   getCuttingList,
+  getProductionJob,
+  getPurchaseOrder,
   getSalesReceiptByLedgerEntryId,
   countCuttingLists,
   countProductionJobs,
@@ -6928,7 +6930,8 @@ export function registerHttpApi(app, db) {
       const body = req.body || {};
       const poID = body.poID || write.nextPoIdFromDb(db, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       const r = write.insertPurchaseOrder(db, { ...body, poID }, req.workspaceBranchId || DEFAULT_BRANCH_ID);
-      res.status(201).json({ ok: true, ...r });
+      if (!r.ok) return res.status(400).json(r);
+      res.status(201).json(withPurchaseOrderWriteDelta(db, r.poID || poID, { ok: true, ...r }));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -6940,9 +6943,11 @@ export function registerHttpApi(app, db) {
       const poId = req.params.poId;
       const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
       if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) =>
-        write.updatePurchaseOrderCoilDraft(db, poId, stripped, req.workspaceBranchId || DEFAULT_BRANCH_ID)
-      );
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
+        const r = write.updatePurchaseOrderCoilDraft(db, poId, stripped, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+        if (!r.ok) return r;
+        return withPurchaseOrderWriteDelta(db, poId, r);
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7051,9 +7056,11 @@ export function registerHttpApi(app, db) {
     const poId = req.params.poId;
     const poGate = assertPurchaseOrderIdInWorkspace(db, req, poId);
     if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
-    return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, () =>
-      write.markTransportPaid(db, poId)
-    );
+    return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, () => {
+      const r = write.markTransportPaid(db, poId);
+      if (!r.ok) return r;
+      return withPurchaseOrderWriteDelta(db, poId, r);
+    });
   });
 
   app.post('/api/purchase-orders/:poId/supplier-payment', requirePermission('finance.pay'), (req, res) => {
@@ -7069,7 +7076,8 @@ export function registerHttpApi(app, db) {
       workspaceBranchId: req.workspaceBranchId,
       workspaceViewAll: Boolean(req.workspaceViewAll),
     });
-    res.status(r.ok ? 200 : 400).json(r);
+    if (!r.ok) return res.status(400).json(r);
+    res.status(200).json(withPurchaseOrderWriteDelta(db, req.params.poId, r));
   });
 
   app.patch('/api/purchase-orders/:poId/status', requirePermission('purchase_orders.manage'), (req, res) => {
@@ -7078,10 +7086,12 @@ export function registerHttpApi(app, db) {
     if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
       const { status, acknowledgeTransportGap } = stripped || {};
-      return write.setPoStatus(db, poId, status, {
+      const r = write.setPoStatus(db, poId, status, {
         acknowledgeTransportGap: Boolean(acknowledgeTransportGap),
         actor: req.user,
       });
+      if (!r.ok) return r;
+      return withPurchaseOrderWriteDelta(db, poId, r);
     });
   });
 
@@ -7091,7 +7101,9 @@ export function registerHttpApi(app, db) {
     if (!poGate.ok) return res.status(poGate.status).json({ ok: false, error: poGate.error });
     return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'purchase_order', poId, (stripped) => {
       const { invoiceNo, invoiceDateISO, deliveryDateISO } = stripped || {};
-      return write.attachSupplierInvoice(db, poId, invoiceNo, invoiceDateISO, deliveryDateISO);
+      const r = write.attachSupplierInvoice(db, poId, invoiceNo, invoiceDateISO, deliveryDateISO);
+      if (!r.ok) return r;
+      return withPurchaseOrderWriteDelta(db, poId, r);
     });
   });
 
@@ -7133,9 +7145,11 @@ export function registerHttpApi(app, db) {
         (stripped) => {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
+          // Stale autosave race — nothing changed; skip reloading lines.
+          if (r.skipped) return { ok: true, id: cid, skipped: true };
           const cuttingList = getCuttingList(db, cid);
           return withWriteDelta(
-            { ok: true, cuttingList, ...(r.skipped ? { skipped: true } : {}) },
+            { ok: true, cuttingList, ...(stripped?.autosave ? { autosave: true } : {}) },
             { cuttingLists: cuttingList ? [cuttingList] : [] }
           );
         },
@@ -7160,6 +7174,28 @@ export function registerHttpApi(app, db) {
     const cl = getCuttingList(dbConn, cuttingListId);
     if (!cl || !cl.productionRegistered) return null;
     return productionJobIdForCuttingList(dbConn, cuttingListId);
+  }
+
+  /** Desk-ready job (+ linked cutting list) for SPA write-delta merges — skip full snapshot wait. */
+  function withProductionJobWriteDelta(dbConn, jobId, base = {}) {
+    const productionJob = getProductionJob(dbConn, jobId);
+    const clId = String(productionJob?.cuttingListId || '').trim();
+    const cuttingList = clId ? getCuttingList(dbConn, clId) : null;
+    return withWriteDelta(
+      { ...base, productionJob, cuttingList },
+      {
+        productionJobs: productionJob ? [productionJob] : [],
+        cuttingLists: cuttingList ? [cuttingList] : [],
+      }
+    );
+  }
+
+  function withPurchaseOrderWriteDelta(dbConn, poId, base = {}) {
+    const purchaseOrder = getPurchaseOrder(dbConn, poId);
+    return withWriteDelta(
+      { ...base, purchaseOrder },
+      { purchaseOrders: purchaseOrder ? [purchaseOrder] : [] }
+    );
   }
 
   app.post(
@@ -7237,7 +7273,16 @@ export function registerHttpApi(app, db) {
         );
         if (!r.ok) return res.status(400).json(r);
         const cuttingList = getCuttingList(db, clId);
-        res.status(201).json({ ok: true, jobID: r.jobID, cuttingList });
+        const productionJob = getProductionJob(db, r.jobID);
+        res.status(201).json(
+          withWriteDelta(
+            { ok: true, jobID: r.jobID, cuttingList, productionJob },
+            {
+              cuttingLists: cuttingList ? [cuttingList] : [],
+              productionJobs: productionJob ? [productionJob] : [],
+            }
+          )
+        );
       } catch (e) {
         console.error(e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7275,7 +7320,8 @@ export function registerHttpApi(app, db) {
         append: Boolean(req.body?.append),
         workspaceBranchId: req.workspaceBranchId,
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7291,7 +7337,18 @@ export function registerHttpApi(app, db) {
         return res.status(404).json({ ok: false, error: 'No production run for this cutting list.' });
       }
       const r = startProductionJob(db, jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      const cuttingList = getCuttingList(db, req.params.id);
+      const productionJob = getProductionJob(db, jobId);
+      res.status(200).json(
+        withWriteDelta(
+          { ...r, cuttingList, productionJob },
+          {
+            cuttingLists: cuttingList ? [cuttingList] : [],
+            productionJobs: productionJob ? [productionJob] : [],
+          }
+        )
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7308,11 +7365,31 @@ export function registerHttpApi(app, db) {
       }
       const existing = db.prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`).get(jobId);
       if (String(existing?.status || '') === 'Completed') {
-        const payload = { ok: true, idempotent: true, jobId, status: 'Completed' };
-        return res.status(200).json(payload);
+        const cuttingList = getCuttingList(db, req.params.id);
+        const productionJob = getProductionJob(db, jobId);
+        return res.status(200).json(
+          withWriteDelta(
+            { ok: true, idempotent: true, jobId, status: 'Completed', cuttingList, productionJob },
+            {
+              cuttingLists: cuttingList ? [cuttingList] : [],
+              productionJobs: productionJob ? [productionJob] : [],
+            }
+          )
+        );
       }
       const r = completeProductionJob(db, jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      const cuttingList = getCuttingList(db, req.params.id);
+      const productionJob = getProductionJob(db, jobId);
+      res.status(200).json(
+        withWriteDelta(
+          { ...r, cuttingList, productionJob },
+          {
+            cuttingLists: cuttingList ? [cuttingList] : [],
+            productionJobs: productionJob ? [productionJob] : [],
+          }
+        )
+      );
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7357,7 +7434,8 @@ export function registerHttpApi(app, db) {
       const cg = assertCuttingListIdInWorkspace(db, req, clId);
       if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
       const r = write.insertProductionJob(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
-      res.status(r.ok ? 201 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(201).json(withProductionJobWriteDelta(db, r.jobID, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7369,9 +7447,11 @@ export function registerHttpApi(app, db) {
       const jid = req.params.jobId;
       const jg = assertProductionJobIdInWorkspace(db, req, jid);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) =>
-        write.setProductionJobStatus(db, jid, stripped?.status)
-      );
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'production_job', jid, (stripped) => {
+        const r = write.setProductionJobStatus(db, jid, stripped?.status);
+        if (!r.ok) return r;
+        return withProductionJobWriteDelta(db, jid, r);
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7413,7 +7493,8 @@ export function registerHttpApi(app, db) {
         append: Boolean(req.body?.append),
         workspaceBranchId: req.workspaceBranchId,
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7428,7 +7509,8 @@ export function registerHttpApi(app, db) {
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7444,7 +7526,8 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         extraCoilNos: Array.isArray(req.body?.extraCoilNos) ? req.body.extraCoilNos : [],
       });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7456,7 +7539,8 @@ export function registerHttpApi(app, db) {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = startProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7471,11 +7555,20 @@ export function registerHttpApi(app, db) {
         .prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`)
         .get(req.params.jobId);
       if (String(existing?.status || '') === 'Completed') {
-        const payload = { ok: true, idempotent: true, jobId: req.params.jobId, status: 'Completed' };
-        return res.status(200).json(payload);
+        return res
+          .status(200)
+          .json(
+            withProductionJobWriteDelta(db, req.params.jobId, {
+              ok: true,
+              idempotent: true,
+              jobId: req.params.jobId,
+              status: 'Completed',
+            })
+          );
       }
       const r = completeProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       apiError(res, {
@@ -11799,7 +11892,7 @@ export function registerHttpApi(app, db) {
           ],
         }
       );
-      clearBootstrapPollCacheForUser(req.user?.id);
+      // Delta lets the SPA merge — no need to bust poll cache for a full rebuild.
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -11892,7 +11985,6 @@ export function registerHttpApi(app, db) {
       if (!getQuotation(db, qid)) {
         return res.status(404).json({ ok: false, error: 'Quotation not found' });
       }
-      clearBootstrapPollCacheForUser(req.user?.id);
       return handlePatchWithEditApprovalQuotation(res, db, req.user, req.body, qid, (stripped) => {
         const { autoOverpayAppliedNgn } = write.updateQuotation(db, qid, stripped || {}, req.user);
         syncQuotationStaffPurchaseFlag(db, qid);

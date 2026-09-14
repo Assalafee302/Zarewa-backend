@@ -3,6 +3,8 @@
  * @module server/hrTableChecks
  */
 
+import { tableExists as cachedTableExists } from './schemaCache.js';
+
 const CORE_HR_TABLES = [
   'hr_staff_profiles',
   'hr_requests',
@@ -28,22 +30,8 @@ const PHASE9_TABLES = [
  * @param {string} tableName
  */
 export function hrTableExists(db, tableName) {
-  const name = String(tableName || '').trim();
-  if (!name) return false;
-  try {
-    return Boolean(
-      db
-        .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`)
-        .get(name)
-    );
-  } catch {
-    try {
-      db.prepare(`SELECT 1 FROM \`${name.replace(/`/g, '')}\` LIMIT 1`).get();
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  /* Readiness helpers below probe 5+ tables per call — memoised to avoid a round trip each. */
+  return cachedTableExists(db, tableName);
 }
 
 /**

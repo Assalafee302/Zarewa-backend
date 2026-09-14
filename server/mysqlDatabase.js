@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createSyncFn } from 'synckit';
 import { SCHEMA_SQL } from './schemaSql.js';
+import { noteWrite } from './writeCounter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'mysqlWorker.mjs');
@@ -88,12 +89,14 @@ export function createMysqlDatabase(cfg, opts = {}) {
       }
     },
     exec(sql) {
+      noteWrite();
       syncFn({ op: 'exec', sql: String(sql || '') });
     },
     prepare(sql) {
       const s = String(sql || '');
       return {
         run(...args) {
+          noteWrite();
           return syncFn({ op: 'run', sql: s, args });
         },
         get(...args) {
@@ -107,7 +110,23 @@ export function createMysqlDatabase(cfg, opts = {}) {
     runMany(statements) {
       const list = Array.isArray(statements) ? statements : [];
       if (!list.length) return { changes: 0 };
+      noteWrite();
       return syncFn({ op: 'runMany', statements: list });
+    },
+    /**
+     * Run several read-only statements in ONE worker round trip.
+     * Each entry is `{ sql, args }`; the result is an array of row arrays in the
+     * same order. Callers must only pass SELECTs — the batch does not bump the
+     * write counter and shares one pooled connection.
+     * @param {{ sql: string, args?: unknown[] }[]} queries
+     */
+    allMany(queries) {
+      const list = Array.isArray(queries) ? queries : [];
+      if (!list.length) return [];
+      return syncFn({
+        op: 'allMany',
+        queries: list.map((q) => ({ sql: String(q?.sql || ''), args: q?.args || [] })),
+      });
     },
     transaction(fn) {
       return (...args) => {

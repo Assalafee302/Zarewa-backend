@@ -15,4 +15,20 @@ describe('withWriteDelta', () => {
     const base = { ok: true };
     expect(withWriteDelta(base, { receipts: [] })).toBe(base);
   });
+
+  it('supports production and purchase-order desk bags', () => {
+    const out = withWriteDelta(
+      { ok: true },
+      {
+        productionJobs: [{ jobID: 'PJ-1' }],
+        cuttingLists: [{ id: 'CL-1' }],
+        purchaseOrders: [{ poID: 'PO-1' }],
+      }
+    );
+    expect(out.delta).toEqual({
+      productionJobs: [{ jobID: 'PJ-1' }],
+      cuttingLists: [{ id: 'CL-1' }],
+      purchaseOrders: [{ poID: 'PO-1' }],
+    });
+  });
 });

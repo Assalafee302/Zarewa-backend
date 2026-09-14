@@ -193,7 +193,6 @@ import {
   assertRefundIdInWorkspace,
   assertSalesReceiptIdInWorkspace,
 } from './workspaceBranchGuards.js';
-import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
@@ -1431,7 +1430,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/accounting/settlements/:settlementId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'register_settlement.pay')) return;
       const result = payRegisterSettlement(db, req.params.settlementId, {
         ...(req.body || {}),
         paidBy: req.user?.displayName,
@@ -1477,7 +1475,6 @@ export function registerHttpApi(app, db) {
           console.error('[register-settlement-pay-work-item-sync]', syncErr);
         }
       }
-      if (result.ok) storeIdempotentSuccess(db, req, 'register_settlement.pay', 201, result);
       return res.status(result.ok ? 201 : 400).json(result);
     } catch (e) {
       console.error('[accounting-settlement-pay]', e);
@@ -4281,17 +4278,15 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'gl.journal.manual')) return;
       const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
       if (lines.length > 20) {
         return res.status(400).json({ ok: false, error: 'Too many journal lines (max 20).', code: 'GL_LINE_CAP' });
       }
-      const idemKey = normalizeIdempotencyKey(req.get('Idempotency-Key') || req.get('idempotency-key'));
       const r = postBalancedJournal(db, {
         entryDateISO: req.body?.entryDateISO,
         memo: req.body?.memo,
         sourceKind: 'MANUAL_JOURNAL',
-        sourceId: idemKey || undefined,
+        sourceId: req.body?.sourceId || undefined,
         branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,
         createdByUserId: req.user?.id,
         lines,
@@ -4312,7 +4307,6 @@ export function registerHttpApi(app, db) {
           note: String(req.body?.memo || 'Manual journal').slice(0, 240),
           details: { journalId: r.journalId, duplicate: Boolean(r.duplicate), lineCount: lines.length },
         });
-        storeIdempotentSuccess(db, req, 'gl.journal.manual', r.duplicate ? 200 : 201, r);
       }
       res.status(r.ok ? (r.duplicate ? 200 : 201) : 400).json(r);
     } catch (e) {
@@ -4400,7 +4394,6 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_balance')) return;
       const body = req.body || {};
       const lines = Array.isArray(body.lines) ? body.lines : [];
       if (lines.length > 20) {
@@ -4416,7 +4409,6 @@ export function registerHttpApi(app, db) {
         lines,
       });
       if (!result.ok) return res.status(400).json(result);
-      storeIdempotentSuccess(db, req, 'finance.opening_balance', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-balance-post]', e);
@@ -4457,7 +4449,6 @@ export function registerHttpApi(app, db) {
       return res.status(403).json({ ok: false, error: 'finance.post required.', code: 'FORBIDDEN' });
     }
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'finance.opening_pack.post')) return;
       ensureArchitecturalGlAccounts(db);
       const body = req.body || {};
       const branchScope = resolveExecDashboardBranchScope(req.user, req, body.branchId);
@@ -4468,7 +4459,6 @@ export function registerHttpApi(app, db) {
         createdByUserId: req.user?.id,
       });
       if (!result.ok) return res.status(400).json(result);
-      storeIdempotentSuccess(db, req, 'finance.opening_pack.post', result.duplicate ? 200 : 201, result);
       return res.status(result.duplicate ? 200 : 201).json(result);
     } catch (e) {
       console.error('[opening-pack-post]', e);
@@ -7217,7 +7207,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/cutting-lists/:id/production/complete', requirePermission('production.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const wg = assertCuttingListIdInWorkspace(db, req, req.params.id);
       if (!wg.ok) return res.status(wg.status).json({ ok: false, error: wg.error });
       const jobId = resolveCuttingListProductionJob(db, req.params.id);
@@ -7227,11 +7216,9 @@ export function registerHttpApi(app, db) {
       const existing = db.prepare(`SELECT status FROM production_jobs WHERE job_id = ? LIMIT 1`).get(jobId);
       if (String(existing?.status || '') === 'Completed') {
         const payload = { ok: true, idempotent: true, jobId, status: 'Completed' };
-        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
         return res.status(200).json(payload);
       }
       const r = completeProductionJob(db, jobId, req.body || {}, { actor: req.user });
-      if (r.ok) storeIdempotentSuccess(db, req, 'production.complete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -7385,7 +7372,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/production-jobs/:jobId/complete', requirePermission('production.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'production.complete')) return;
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return apiError(res, { status: jg.status, code: 'FORBIDDEN', error: jg.error });
       const existing = db
@@ -7393,11 +7379,9 @@ export function registerHttpApi(app, db) {
         .get(req.params.jobId);
       if (String(existing?.status || '') === 'Completed') {
         const payload = { ok: true, idempotent: true, jobId: req.params.jobId, status: 'Completed' };
-        storeIdempotentSuccess(db, req, 'production.complete', 200, payload);
         return res.status(200).json(payload);
       }
       const r = completeProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      if (r.ok) storeIdempotentSuccess(db, req, 'production.complete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9180,7 +9164,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/bank-charges', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'bank_charge.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const r = recordBankCharge(
@@ -9193,7 +9176,6 @@ export function registerHttpApi(app, db) {
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      if (r.ok) storeIdempotentSuccess(db, req, 'bank_charge.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9207,7 +9189,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/treasury/transfer', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer')) return;
       const r = write.transferTreasuryFunds(db, {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9215,7 +9196,6 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9225,7 +9205,6 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/treasury/transfer/:batchId', requirePermission(['treasury.manage', 'finance.pay']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.update')) return;
       const r = write.updateTreasuryTransfer(db, String(req.params.batchId || '').trim(), {
         ...(req.body || {}),
         createdBy: req.user.displayName,
@@ -9233,7 +9212,6 @@ export function registerHttpApi(app, db) {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.update', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9243,13 +9221,11 @@ export function registerHttpApi(app, db) {
 
   app.delete('/api/treasury/transfer/:batchId', requireAuth, (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'treasury.transfer.delete')) return;
       const r = write.deleteTreasuryTransfer(db, String(req.params.batchId || '').trim(), req.user, {
         workspaceBranchId: req.workspaceBranchId,
         workspaceViewAll: Boolean(req.workspaceViewAll),
         note: req.body?.note,
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'treasury.transfer.delete', 200, r);
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -9347,7 +9323,6 @@ export function registerHttpApi(app, db) {
             'Direct expense posting is disabled. Submit an expense request for Branch Manager approval, then record treasury payout after approval.',
         });
       }
-      if (sendIdempotentReplayIfAny(db, req, res, 'expense.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const r = write.insertExpenseEntry(
@@ -9360,7 +9335,6 @@ export function registerHttpApi(app, db) {
         },
         req.workspaceBranchId || DEFAULT_BRANCH_ID
       );
-      if (r.ok) storeIdempotentSuccess(db, req, 'expense.create', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -10131,7 +10105,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests', requirePermission(['finance.post', 'expenses.create']), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return res.status(400).json({ ok: false, error: createGate.error });
       const r = insertPaymentRequest(db, { ...(req.body || {}), workspaceBranchId: req.workspaceBranchId }, req.user);
@@ -10148,7 +10121,6 @@ export function registerHttpApi(app, db) {
             r.costLineId = linked.costLineId || null;
           }
         }
-        storeIdempotentSuccess(db, req, 'payment_request.create', 201, r);
       }
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -10547,7 +10519,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/payment-requests/:requestId/pay', requirePermission('finance.pay'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'payment_request.pay')) return;
       const treasuryLines = normalizeTreasuryLines(req.body || {});
       const r = write.payPaymentRequest(db, req.params.requestId, {
         ...(req.body || {}),
@@ -10558,7 +10529,6 @@ export function registerHttpApi(app, db) {
         workspaceViewAll: Boolean(req.workspaceViewAll),
         actor: req.user,
       });
-      if (r.ok) storeIdempotentSuccess(db, req, 'payment_request.pay', 201, r);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -11676,7 +11646,6 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/quotations', requirePermission('quotations.manage'), (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'quotation.create')) return;
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
       const duplicateWarnings = duplicateQuotationCreateSignals(db, {
@@ -11705,7 +11674,6 @@ export function registerHttpApi(app, db) {
         quotation: { ...quotation, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
       };
       clearBootstrapPollCacheForUser(req.user?.id);
-      storeIdempotentSuccess(db, req, 'quotation.create', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12039,7 +12007,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.advance')) return;
       const { customerID, customerName, amountNgn, paymentMethod, bankReference, purpose, dateISO } =
         req.body || {};
       if (!customerID) return res.status(400).json({ ok: false, error: 'customerID is required' });
@@ -12226,7 +12193,6 @@ export function registerHttpApi(app, db) {
             })
           : [];
       const payload = { ok: true, entry, bankDepositAllocation: bankDepositAllocation ?? null, similarUnlinkedDeposits };
-      storeIdempotentSuccess(db, req, 'ledger.advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12248,7 +12214,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.apply_advance')) return;
       const { customerID, customerName, quotationRef, amountNgn, dateISO } = req.body || {};
       if (!customerID || !quotationRef) {
         return res.status(400).json({ ok: false, error: 'customerID and quotationRef are required' });
@@ -12307,7 +12272,6 @@ export function registerHttpApi(app, db) {
         return saved;
       })();
       const payload = { ok: true, entry };
-      storeIdempotentSuccess(db, req, 'ledger.apply_advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12365,7 +12329,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
       try {
-        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.apply_refund_credit')) return;
         const {
           customerID,
           targetQuotationRef,
@@ -12409,7 +12372,6 @@ export function registerHttpApi(app, db) {
           return res.status(status).json(applied);
         }
         const payload = { ok: true, ...applied };
-        storeIdempotentSuccess(db, req, 'ledger.apply_refund_credit', 201, payload);
         res.status(201).json(payload);
       } catch (e) {
         console.error(e);
@@ -12435,7 +12397,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
       try {
-        if (sendIdempotentReplayIfAny(db, req, res, 'ledger.reverse_refund_credit')) return;
         const applicationId = String(req.body?.applicationId || req.body?.application_id || '').trim();
         if (!applicationId) {
           return res.status(400).json({ ok: false, error: 'applicationId is required' });
@@ -12450,7 +12411,6 @@ export function registerHttpApi(app, db) {
           return res.status(status).json(reversed);
         }
         const payload = { ok: true, ...reversed };
-        storeIdempotentSuccess(db, req, 'ledger.reverse_refund_credit', 200, payload);
         res.json(payload);
       } catch (e) {
         console.error(e);
@@ -12491,7 +12451,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.receipt')) return;
       const {
         customerID,
         customerName,
@@ -12764,7 +12723,6 @@ export function registerHttpApi(app, db) {
         bankDepositAllocation: bankDepositAllocation ?? null,
         similarUnlinkedDeposits,
       };
-      storeIdempotentSuccess(db, req, 'ledger.receipt', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);
@@ -12873,7 +12831,6 @@ export function registerHttpApi(app, db) {
     ledgerPostRateLimit(),
     (req, res) => {
     try {
-      if (sendIdempotentReplayIfAny(db, req, res, 'ledger.refund_advance')) return;
       const { customerID, customerName, amountNgn, note, dateISO } = req.body || {};
       if (!customerID) return res.status(400).json({ ok: false, error: 'customerID is required' });
       const branchScope = resolveBootstrapBranchScope(req);
@@ -12944,7 +12901,6 @@ export function registerHttpApi(app, db) {
         return saved;
       })();
       const payload = { ok: true, entry };
-      storeIdempotentSuccess(db, req, 'ledger.refund_advance', 201, payload);
       res.status(201).json(payload);
     } catch (e) {
       console.error(e);

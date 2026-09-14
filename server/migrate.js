@@ -6378,16 +6378,6 @@ function migrateBranches(db) {
       updated_by_user_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch ON fixed_assets(branch_id);
-    CREATE TABLE IF NOT EXISTS http_idempotency (
-      user_id TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      idempotency_key TEXT NOT NULL,
-      status_code INTEGER NOT NULL,
-      body_json TEXT NOT NULL,
-      created_at_iso TEXT NOT NULL,
-      PRIMARY KEY (user_id, scope, idempotency_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_http_idempotency_created ON http_idempotency(created_at_iso);
     CREATE TABLE IF NOT EXISTS product_standard_costs (
       product_id TEXT PRIMARY KEY,
       standard_material_cost_ngn_per_kg INTEGER,

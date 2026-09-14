@@ -94,11 +94,11 @@ import {
 
 const MAX_PROD_ROWS = Math.min(
   5000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 400)
+  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_PRODUCTION_ROWS) || 2000)
 );
 const MAX_LEDGER_ROWS = Math.min(
   10_000,
-  Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 500)
+  Math.max(500, Number(process.env.ZAREWA_BOOTSTRAP_MAX_LEDGER_ROWS) || 3000)
 );
 
 /**
@@ -249,18 +249,14 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
       : [],
     operationsInventoryAttention,
     deliveries: opsOk ? listDeliveries(db, branchScope, historyOpts) : [],
-    // Coil register for production selectors — capped; search API covers older lots.
-    coilLots: coilMovOk
-      ? listCoilLots(db, branchScope, {
-          limit: Math.min(2000, Math.max(200, Number(process.env.ZAREWA_BOOTSTRAP_COIL_LOTS_LIMIT) || 500)),
-        })
-      : [],
+    // Full coil register for production-register selectors (browse + allocate any in-stock coil).
+    coilLots: coilMovOk ? listCoilLots(db, branchScope, { unlimited: true }) : [],
     coilControlEvents: coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [],
     materialIncidents: coilMovOk ? listMaterialIncidents(db, branchScope) : [],
     materialPoolSummary: coilMovOk ? computePoolSummary(db, branchScope) : null,
     movements: coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [],
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
-    yardCoilRegister: yardOk ? listYardCoils(db, branchScope, { useDefaultLimit: true }) : [],
+    yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     machines: user ? listMachines(db, workScope) : [],
@@ -436,7 +432,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, { skipSideEffects: true }) : [],
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
-    coilLots: coilMovOk ? listCoilLots(db, branchScope, { useDefaultLimit: true }) : [],
+    coilLots: coilMovOk ? listCoilLots(db, branchScope) : [],
     movements: coilMovOk ? listStockMovements(db, branchScope, productionHistoryListOpts()) : [],
     inTransitLoads: f.user ? listInTransitLoads(db, branchScope) : [],
     poTransportAwaitingTreasury:

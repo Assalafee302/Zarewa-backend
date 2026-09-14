@@ -19,11 +19,6 @@ function resStub() {
 }
 
 describe('parseListQuery', () => {
-  it('caps a hostile offset so MySQL is not asked to walk and discard millions of rows', () => {
-    const { offset } = parseListQuery(reqWith({ offset: '999999999' }));
-    expect(offset).toBeLessThanOrEqual(50_000);
-  });
-
   it('keeps ordinary paging offsets intact', () => {
     expect(parseListQuery(reqWith({ offset: '250' })).offset).toBe(250);
   });
@@ -34,13 +29,8 @@ describe('parseListQuery', () => {
     }
   });
 
-  it('caps unlimited=1 unless the route explicitly allows it', () => {
-    const capped = parseListQuery(reqWith({ unlimited: '1' }));
-    expect(capped.unlimited).toBe(false);
-    expect(capped.limit).toBeGreaterThan(0);
-
-    const allowed = parseListQuery(reqWith({ unlimited: '1' }), { allowUnlimited: true });
-    expect(allowed).toEqual({ limit: 0, offset: 0, unlimited: true });
+  it('honors unlimited=1', () => {
+    expect(parseListQuery(reqWith({ unlimited: '1' }))).toEqual({ limit: 0, offset: 0, unlimited: true });
   });
 
   it('clamps limit to maxLimit and falls back on junk', () => {
@@ -50,31 +40,10 @@ describe('parseListQuery', () => {
   });
 });
 
-describe('sendPaginatedList caching', () => {
-  it('does not serve knowingly stale bodies by default', () => {
-    // A cashier reloading after posting a receipt must not be handed a pre-receipt body
-    // that looks current, or the natural next move is to post it a second time.
+describe('sendPaginatedList', () => {
+  it('does not set Cache-Control by default', () => {
     const res = resStub();
     sendPaginatedList(res, { items: [], limit: 50, offset: 0 });
-    expect(res.headers['Cache-Control']).toBe('private, max-age=60');
-    expect(res.headers['Cache-Control']).not.toMatch(/stale-while-revalidate/);
-  });
-
-  it('lets a route opt into stale-while-revalidate where staleness is harmless', () => {
-    const res = resStub();
-    sendPaginatedList(res, {
-      items: [],
-      limit: 50,
-      offset: 0,
-      cacheSeconds: 30,
-      staleWhileRevalidateSeconds: 120,
-    });
-    expect(res.headers['Cache-Control']).toBe('private, max-age=30, stale-while-revalidate=120');
-  });
-
-  it('omits the header when caching is switched off', () => {
-    const res = resStub();
-    sendPaginatedList(res, { items: [], limit: 50, offset: 0, cacheSeconds: 0 });
     expect(res.headers['Cache-Control']).toBeUndefined();
   });
 

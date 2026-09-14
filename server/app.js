@@ -7,7 +7,6 @@ import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
-import { idempotencyMiddleware } from './idempotency.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
 import { scheduleWorkspaceMaintenance } from './workspaceMaintenance.js';
 import { auditControlFlagsOnBoot } from './controlFlagAudit.js';
@@ -146,8 +145,6 @@ export function createApp(db) {
     );
   }
   app.use(attachAuthContext(db));
-  // Claim authenticated mutation IDs before route handlers can create duplicate side effects.
-  app.use('/api', idempotencyMiddleware(db));
 
   registerHttpApi(app, db);
   scheduleHelpAnalytics(db);

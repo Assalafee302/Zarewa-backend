@@ -534,12 +534,6 @@ export function buildBootstrap(db, opts = {}) {
   };
 }
 
-function take(list, limit) {
-  if (!Array.isArray(list)) return [];
-  if (!limit || limit <= 0) return list;
-  return list.slice(0, limit);
-}
-
 /**
  * Dashboard bootstrap previously trimmed cutting lists and production jobs independently.
  * Lists sort by different keys (`date_iso` vs `created_at_iso`), so joins could break when
@@ -627,73 +621,196 @@ export function repairDashboardReceivablePurchaseOrders(full, partial) {
 }
 
 /**
- * Dashboard-focused snapshot: same shape as bootstrap, but defers desk-owned heavy arrays
- * (customers, expenses, coilLots, productionJobCoils) so first paint stays fast.
- * Desks refill via `/api/workspace/{domain}-snapshot` when opened.
+ * Dashboard bootstrap is shell-first: same first-paint contract as `buildShellBootstrap`.
+ * Desk registers hydrate via `/api/workspace/{domain}-snapshot` (and optional prefetch).
+ * Avoids building a full desk dump then discarding rows (CPU + DB cost on slow links).
  */
 export function buildDashboardBootstrap(db, opts = {}) {
   const limit = Math.min(5000, Math.max(200, Number(opts.limit) || 600));
-  const full = buildBootstrap(db, {
+  const shell = buildShellBootstrap(db, {
     ...opts,
     skipSideEffects: true,
     skipWorkItemSync: true,
-    omitDeskArrays: {
-      customers: true,
-      expenses: true,
-      coilLots: true,
-      productionJobCoils: true,
-      ...(opts.omitDeskArrays || {}),
-    },
-    listLimits: {
-      quotations: limit,
-      purchaseOrders: limit,
-      movements: limit,
-      ledgerEntries: Math.min(limit, 300),
-    },
   });
-  const partial = {
-    ...full,
-    quotations: full.quotations,
-    /** Manager / production queues need cutting lists + jobs; coil join rows deferred to operations domain. */
-    cuttingLists: full.cuttingLists,
-    purchaseOrders: full.purchaseOrders,
-    deliveries: take(full.deliveries, limit),
-    refunds: take(full.refunds, limit),
-    paymentRequests: full.paymentRequests,
-    treasuryMovements: full.treasuryMovements,
-    movements: take(full.movements, limit),
-    coilControlEvents: take(full.coilControlEvents ?? [], limit),
-    productionJobs: full.productionJobs,
-    productionJobCoils: full.productionJobCoils,
-    productionConversionChecks: take(full.productionConversionChecks, limit),
-    productionCompletionAdjustments: full.productionCompletionAdjustments,
-    unifiedWorkItems: take(full.unifiedWorkItems, Math.min(limit, 180)),
-    materialRequests: take(full.materialRequests, Math.min(limit, 120)),
-    inTransitLoads: take(full.inTransitLoads, Math.min(limit, 120)),
-    machines: take(full.machines, Math.min(limit, 120)),
-    maintenancePlans: take(full.maintenancePlans, Math.min(limit, 120)),
-    maintenanceWorkOrders: take(full.maintenanceWorkOrders, Math.min(limit, 120)),
-    hrPerformanceReviews: take(full.hrPerformanceReviews, Math.min(limit, 120)),
-    ledgerEntries: full.ledgerEntries,
-    /** Full receipts — trimming hid older Draft/pending rows so Sales counts diverged from Cashier desk. */
-    receipts: full.receipts,
-  };
-  repairDashboardProductionJoins(full, partial);
-  repairDashboardReceivablePurchaseOrders(full, partial);
-  const deferredDeskArrays = ['customers', 'expenses', 'coilLots', 'productionJobCoils'];
   return {
-    ...partial,
+    ...shell,
     bootstrapMeta: {
-      ...(partial.bootstrapMeta || {}),
+      ...(shell.bootstrapMeta || {}),
       mode: 'dashboard',
-      deferredDeskArrays,
-      truncated: {
-        ...(partial.bootstrapMeta?.truncated || {}),
-        customers: true,
-        expenses: true,
-        coilLots: true,
-        productionJobCoils: true,
-      },
+      deferredDeskArrays: [...SHELL_DEFERRED_DESK_ARRAYS],
+      listLimitsApplied: { dashboardCap: limit },
+      truncated: Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, true])),
+    },
+  };
+}
+
+/**
+ * Desk register arrays deferred on the first-paint shell. Domains refill via
+ * `/api/workspace/{domain}-snapshot` (and optional background prefetch).
+ *
+ * Not deferred: masterData, treasuryAccounts, suppliers, transportAgents, associatedStaff —
+ * small reference lists that pickers need before desk packs arrive.
+ */
+export const SHELL_DEFERRED_DESK_ARRAYS = [
+  'customers',
+  'quotations',
+  'receipts',
+  'refunds',
+  'cuttingLists',
+  'expenses',
+  'paymentRequests',
+  'treasuryMovements',
+  'ledgerEntries',
+  'purchaseOrders',
+  'products',
+  'coilLots',
+  'coilControlEvents',
+  'materialIncidents',
+  'movements',
+  'deliveries',
+  'productionJobs',
+  'productionJobCoils',
+  'productionJobAccessoryUsage',
+  'productionJobStoneFlatsheetUsage',
+  'productionConversionChecks',
+  'productionCompletionAdjustments',
+  'materialRequests',
+  'inTransitLoads',
+  'machines',
+  'maintenancePlans',
+  'maintenanceWorkOrders',
+  'bankReconciliation',
+  'bankDeposits',
+  'coilRequests',
+  'yardCoilRegister',
+  'procurementCatalog',
+  'accountsPayable',
+  'advanceInEvents',
+  'glJournalSearchSlice',
+  'materialPricingRows',
+  'priceListItems',
+  'salesAvailableStock',
+  'registerSettlementsAwaitingPayment',
+  'staffRecoveriesDue',
+  'staffRepayableObligations',
+  'partnerWalletBalancesDue',
+  'poTransportAwaitingTreasury',
+  'poTransportMissingLink',
+  'poTransportCatchUp',
+  'orphanHaulageTreasuryMovements',
+  'refundCreditApplications',
+  'hrPerformanceReviews',
+];
+
+/**
+ * Minimal first-paint bootstrap: auth, branches, form options, and inbox slice only.
+ * Does not run the full desk list builder (avoids multi-thousand-row JSON on slow links).
+ *
+ * @param {import('./db.js').Database} db
+ * @param {{
+ *   user?: object | null;
+ *   session?: {authenticated: boolean, user?: object | null, permissions?: string[]};
+ *   branchScope?: 'ALL' | string;
+ *   includeControls?: boolean;
+ *   includeUsers?: boolean;
+ *   includeRegisteredPasswords?: boolean;
+ * }} [opts]
+ */
+export function buildShellBootstrap(db, opts = {}) {
+  const branchScope = opts.branchScope ?? 'ALL';
+  const user = opts.user ?? opts.session?.user ?? null;
+  const session = opts.session ?? { authenticated: false, user: null, permissions: [] };
+  const workScope = {
+    viewAll: branchScope === 'ALL',
+    branchId:
+      branchScope === 'ALL'
+        ? DEFAULT_BRANCH_ID
+        : String(branchScope || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID,
+  };
+
+  const orgManagerTargetsRaw = getJsonBlob(db, 'org.manager_targets.v1');
+  const orgManagerTargets = (() => {
+    if (!orgManagerTargetsRaw || typeof orgManagerTargetsRaw !== 'object') return null;
+    const n = Number(orgManagerTargetsRaw.nairaTargetPerMonth);
+    const m = Number(orgManagerTargetsRaw.meterTargetPerMonth);
+    const o = {};
+    if (Number.isFinite(n) && n > 0) o.nairaTargetPerMonth = n;
+    if (Number.isFinite(m) && m > 0) o.meterTargetPerMonth = m;
+    return Object.keys(o).length ? o : null;
+  })();
+
+  const emptyDesk = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, []]));
+  const truncated = Object.fromEntries(SHELL_DEFERRED_DESK_ARRAYS.map((k) => [k, true]));
+  const masterOk = canReadMasterData(user);
+  const salesOk = canReadSalesDomain(user);
+  const procOk = canReadProcurementDomain(user);
+  const refundsOk = canSeeRefundsList(user);
+
+  return {
+    ok: true,
+    session,
+    permissions: session.permissions ?? [],
+    workspaceBranches: listBranches(db),
+    branchScope,
+    ...emptyDesk,
+    /** Setup gauges / material types / colours — required for quotation form on first paint. */
+    masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
+    /**
+     * Reference data, not a register: a mill has a dozen or so bank and cash accounts that
+     * change a few times a year. Deferring them with the thousand-row desk arrays meant the
+     * receipt screen could not offer a bank until the whole sales pack had downloaded —
+     * minutes, on a Kaduna link. A few hundred gzipped bytes here buys that back.
+     */
+    treasuryAccounts: canListTreasuryAccounts(user) ? listTreasuryAccounts(db, branchScope) : [],
+    /**
+     * Reference data, same reasoning as treasury accounts. Agreement bodies are already
+     * stripped from list rows, so the whole set is a few KB gzipped.
+     */
+    suppliers: procOk ? listSuppliers(db, branchScope) : [],
+    transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
+    // Refund payout splits need drivers/installers before the sales pack arrives.
+    associatedStaff: procOk || salesOk || refundsOk ? listAssociatedStaff(db, branchScope) : [],
+    associatedStaffPolicy: {
+      enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
+    },
+    materialPoolSummary: null,
+    wipByProduct: {},
+    productionMetrics: {
+      jobCount: 0,
+      byStatus: {},
+      totalPlannedMeters: 0,
+      totalActualMeters: 0,
+      completedActualMeters: 0,
+    },
+    operationsInventoryAttention: emptyOperationsInventoryAttention(),
+    customerDashboard: { orders: [], interactions: [], salesTrendByCustomer: {} },
+    pricingPolicyBundle: null,
+    appUsers: opts.includeUsers
+      ? listAppUsers(db, { revealRegisteredPasswords: Boolean(opts.includeRegisteredPasswords) })
+      : [],
+    periodLocks: opts.includeControls ? listPeriodLocks(db) : [],
+    approvalActions: opts.includeControls ? listApprovalActions(db) : [],
+    auditLog: opts.includeControls ? listAuditLog(db) : [],
+    dashboardPrefs:
+      session?.user?.id != null ? getJsonBlob(db, `user_dashboard_prefs:${session.user.id}`) ?? {} : {},
+    orgManagerTargets,
+    orgStoreRestock: normalizeOrgStoreRestock(getJsonBlob(db, 'org.store_restock.v1')),
+    orgGovernanceLimits: user ? getOrgGovernanceLimits(db) : null,
+    /** Small inbox slice for Workspace home — desks still load full queues via domain packs. */
+    unifiedWorkItems: user
+      ? sanitizeWorkItemsForClient(listUnifiedWorkItems(db, workScope, user, { limit: 40 }))
+      : [],
+    /** Lazy via GET /api/staff-purchase-credits/pending-count — shell stays free of credit scans. */
+    staffPurchaseCreditPendingCount: 0,
+    staffPurchaseCreditCrossBranch: null,
+    workspaceDepartmentIds: [...WORKSPACE_DEPARTMENT_IDS],
+    suggestedRoleByDepartment: { ...SUGGESTED_ROLE_BY_DEPARTMENT },
+    helpPersonalization: null,
+    bootstrapMeta: {
+      mode: 'shell',
+      deferredDeskArrays: [...SHELL_DEFERRED_DESK_ARRAYS],
+      truncated,
+      listLimitsApplied: {},
     },
   };
 }

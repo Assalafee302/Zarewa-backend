@@ -71,7 +71,7 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     db.close();
   });
 
-  it('buildDashboardBootstrap defers heavy desk registers and trims movements', () => {
+  it('buildDashboardBootstrap is shell-first and defers desk registers', () => {
     const db = createDatabase(':memory:', { seed: false });
     for (let i = 1; i <= 5; i += 1) {
       db.prepare(
@@ -86,14 +86,14 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
       limit: 2,
     });
     expect(snap.ok).toBe(true);
-    expect(snap.bootstrapMeta?.mode).toBeUndefined();
-    expect(snap.movements).toHaveLength(2);
+    expect(snap.bootstrapMeta?.mode).toBe('dashboard');
+    expect(snap.movements).toEqual([]);
     expect(snap.customers).toEqual([]);
     expect(snap.expenses).toEqual([]);
     expect(snap.coilLots).toEqual([]);
     expect(snap.productionJobCoils).toEqual([]);
     expect(snap.bootstrapMeta?.deferredDeskArrays).toEqual(
-      expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils'])
+      expect.arrayContaining(['customers', 'expenses', 'coilLots', 'productionJobCoils', 'movements'])
     );
     db.close();
   });

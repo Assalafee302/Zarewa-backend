@@ -16,6 +16,7 @@
  * instant; the revision poll reads the database and remains the guarantee.
  */
 import { broadcastWorkspaceEvent } from './workspaceRoomsOps.js';
+import { bumpWorkspaceRevisions } from './workspaceRevision.js';
 
 /** Domains a desk pack can be invalidated for. */
 const KNOWN_DOMAINS = new Set(['sales', 'operations', 'finance', 'procurement']);
@@ -209,7 +210,7 @@ export function isShellApiPath(path) {
  * Only on a 2xx that did not carry `ok: false`, because several routes report refusals
  * that way rather than by status code.
  */
-export function workspaceDataEventMiddleware(req, res, next) {
+function runWorkspaceDataEventMiddleware(db, req, res, next) {
   if (!MUTATING_METHODS.has(String(req.method || '').toUpperCase())) return next();
   const path = req.originalUrl || req.url || '';
   const domains = domainsForApiPath(path);
@@ -218,10 +219,16 @@ export function workspaceDataEventMiddleware(req, res, next) {
 
   const sendJson = res.json.bind(res);
   res.json = (body) => {
-    const out = sendJson(body);
     try {
       const okStatus = res.statusCode >= 200 && res.statusCode < 300;
       if (okStatus && body?.ok !== false) {
+        if (db) {
+          bumpWorkspaceRevisions(db, {
+            domains,
+            shell,
+            branchId: shell ? null : req.workspaceBranchId || null,
+          });
+        }
         broadcastWorkspaceDataChanged({
           domains,
           shell,
@@ -235,7 +242,19 @@ export function workspaceDataEventMiddleware(req, res, next) {
     } catch {
       // Never let announcing a write disturb the write's own response.
     }
-    return out;
+    return sendJson(body);
   };
   next();
+}
+
+/**
+ * Express middleware factory in production; direct three-argument form remains available
+ * for pure unit tests that only verify event routing.
+ */
+export function workspaceDataEventMiddleware(dbOrReq, res, next) {
+  if (arguments.length === 1 && dbOrReq && typeof dbOrReq.prepare === 'function') {
+    const db = dbOrReq;
+    return (req, response, nextFn) => runWorkspaceDataEventMiddleware(db, req, response, nextFn);
+  }
+  return runWorkspaceDataEventMiddleware(null, dbOrReq, res, next);
 }

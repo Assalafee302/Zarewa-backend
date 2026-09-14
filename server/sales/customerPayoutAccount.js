@@ -130,13 +130,9 @@ export function listClaimingStaffForRefunds(db, branchScope = 'ALL') {
       ? hasUserBranch
         ? ` AND (
              trim(IFNULL(p.branch_id, '')) = ?
-             OR trim(IFNULL(p.branch_id, '')) = ''
              OR trim(IFNULL(u.workspace_branch_id, '')) = ?
            )`
-        : ` AND (
-             trim(IFNULL(p.branch_id, '')) = ?
-             OR trim(IFNULL(p.branch_id, '')) = ''
-           )`
+        : ` AND trim(IFNULL(p.branch_id, '')) = ?`
       : '';
   const args =
     scope && scope !== 'ALL' ? (hasUserBranch ? [scope, scope] : [scope]) : [];
@@ -528,7 +524,6 @@ export function listHandledByStaffForQuotations(db, opts = {}) {
     branchId && branchId !== 'ALL'
       ? ` AND (
            trim(IFNULL(p.branch_id, '')) = ?
-           OR trim(IFNULL(p.branch_id, '')) = ''
            OR trim(IFNULL(u.workspace_branch_id, '')) = ?
          )`
       : '';

@@ -182,7 +182,11 @@ import {
 import {
   assertCuttingListIdInWorkspace,
   assertCuttingListRowInWorkspace,
+  assertCoilRequestIdInWorkspace,
+  assertCustomerIdInWorkspace,
   assertDeliveryIdInWorkspace,
+  assertExpenseIdInWorkspace,
+  assertMaterialIncidentIdInWorkspace,
   assertPaymentRequestIdInWorkspace,
   assertProductIdInWorkspace,
   assertProductionJobIdInWorkspace,
@@ -2750,6 +2754,11 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/staff-purchase-credits', requireAuth, (req, res) => {
     try {
+      const quotationRef = String(req.body?.quotationRef || req.body?.quotationId || '').trim();
+      if (quotationRef) {
+        const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+        if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error, code: 'FORBIDDEN' });
+      }
       const r = createStaffPurchaseCreditRequest(db, req.user, req.body || {});
       return res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
@@ -3512,7 +3521,7 @@ export function registerHttpApi(app, db) {
   // After requireAuth, which is what sets req.workspaceBranchId — a broadcast without it
   // would reach every branch instead of the one that changed. Mounted before the route
   // registrations below so it wraps them all.
-  app.use('/api', workspaceDataEventMiddleware);
+  app.use('/api', workspaceDataEventMiddleware(db));
 
   registerWorkspaceListRoutes(app, db);
   registerHrApi(app, db);
@@ -3546,27 +3555,32 @@ export function registerHttpApi(app, db) {
       asyncRoute(
         async (req, res) => {
           const branchScope = resolveBootstrapBranchScope(req);
+          const before = await buildWorkspaceRevisionAsync(db, branchScope);
+          const beforeRevision = before.domains?.[domain] || before.revision;
+          const beforeEtag = jsonWeakEtag({
+            domain,
+            branchScope,
+            revision: beforeRevision,
+            userId: req.user?.id ?? '',
+          });
+          // Compare the cheap durable domain revision before building a potentially large pack.
+          if (ifNoneMatchHit(req, beforeEtag)) {
+            return res.status(304).end();
+          }
           // Yield once so concurrent health/revision can run before the sync desk build.
           await Promise.resolve();
           const payload = buildSnapshot(db, {
             user: req.user,
             branchScope,
           });
-          const revision = (await buildWorkspaceRevisionAsync(db, branchScope)).revision;
+          const after = await buildWorkspaceRevisionAsync(db, branchScope);
+          const revision = after.domains?.[domain] || after.revision;
           const etag = jsonWeakEtag({
             domain,
             branchScope,
             revision,
             userId: req.user?.id ?? '',
-            // Length fingerprint — avoids hashing multi-MB domain JSON bodies.
-            lens: Object.keys(payload)
-              .filter((k) => Array.isArray(payload[k]))
-              .sort()
-              .map((k) => `${k}:${payload[k].length}`),
           });
-          if (ifNoneMatchHit(req, etag)) {
-            return res.status(304).end();
-          }
           setWeakEtag(res, etag);
           return res.json(payload);
         },
@@ -5823,6 +5837,8 @@ export function registerHttpApi(app, db) {
   app.get('/api/quotations/:id/pricing-violations', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {
       const qid = String(req.params.id || '').trim();
+      const qg = assertQuotationIdInWorkspace(db, req, qid);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       const raw = db.prepare(`SELECT id, lines_json, branch_id, date_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
       if (!raw) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const v = quotationPriceViolations(db, raw);
@@ -8552,6 +8568,8 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/material-incidents/:id', requirePermission(materialIncidentReadPerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const incident = getMaterialIncident(db, req.params.id);
       if (!incident) return res.status(404).json({ ok: false, error: 'Incident not found.' });
       res.json({ ok: true, incident });
@@ -8563,6 +8581,8 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/material-incidents/:id/print-payload', requirePermission(materialIncidentReadPerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const payload = getMaterialIncidentPrintPayload(db, req.params.id);
       if (!payload) return res.status(404).json({ ok: false, error: 'Incident not found.' });
       res.json({ ok: true, payload });
@@ -8574,6 +8594,8 @@ export function registerHttpApi(app, db) {
 
   app.get('/api/material-incidents/:id/attachments/:attachmentId', requirePermission(materialIncidentReadPerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const att = getMaterialIncidentAttachment(db, req.params.id, req.params.attachmentId);
       if (!att) return res.status(404).json({ ok: false, error: 'Attachment not found.' });
       const buf = Buffer.from(att.dataBase64, 'base64');
@@ -8601,6 +8623,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/material-incidents/:id', requirePermission(materialIncidentWritePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = updateMaterialIncidentDraft(db, req.params.id, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
@@ -8614,6 +8638,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/submit', requirePermission(materialIncidentWritePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = submitMaterialIncident(db, req.params.id, { actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -8624,6 +8650,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/approve', requirePermission(materialIncidentApprovePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = approveMaterialIncident(db, req.params.id, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
@@ -8637,6 +8665,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/reject', requirePermission(materialIncidentApprovePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = rejectMaterialIncident(db, req.params.id, req.body || {}, { actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -8647,6 +8677,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/unlock-edit', requirePermission(materialIncidentApprovePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = unlockMaterialIncidentEdit(db, req.params.id, { actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -8657,6 +8689,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/void', requirePermission(materialIncidentApprovePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = voidMaterialIncident(db, req.params.id, req.body || {}, { actor: req.user });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -8667,6 +8701,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/issue', requirePermission(materialIncidentWritePerms), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = issueMaterialIncidentMeters(db, req.params.id, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
@@ -8680,6 +8716,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/material-incidents/:id/create-refund', requirePermission(['refunds.request', ...materialIncidentWritePerms]), (req, res) => {
     try {
+      const ig = assertMaterialIncidentIdInWorkspace(db, req, req.params.id);
+      if (!ig.ok) return res.status(ig.status).json({ ok: false, error: ig.error });
       const r = createRefundFromMaterialIncident(db, req.params.id, req.body || {}, {
         workspaceBranchId: req.workspaceBranchId,
         actor: req.user,
@@ -8809,6 +8847,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/coil-requests/:id/acknowledge', requirePermission(['operations.manage', 'production.manage', 'sales.manage']), (req, res) => {
     const crid = req.params.id;
+    const cg = assertCoilRequestIdInWorkspace(db, req, crid);
+    if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
     const rk = String(req.user?.roleKey || '').trim().toLowerCase();
     const mayBm =
       rk === 'admin' ||
@@ -8831,6 +8871,8 @@ export function registerHttpApi(app, db) {
 
   app.patch('/api/coil-requests/:id/approve', requirePermission(['sales.manage', 'operations.manage', 'production.manage']), (req, res) => {
     const crid = req.params.id;
+    const cg = assertCoilRequestIdInWorkspace(db, req, crid);
+    if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
     const rk = String(req.user?.roleKey || '').trim().toLowerCase();
     const mayBm =
       rk === 'admin' ||
@@ -9667,6 +9709,11 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/refunds/preview', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
+      const quotationRef = String(req.body?.quotationRef || req.body?.quotation_ref || '').trim();
+      if (quotationRef) {
+        const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+        if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
+      }
       const r = previewRefundRequest(db, req.body || {});
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
@@ -9678,11 +9725,13 @@ export function registerHttpApi(app, db) {
   app.get('/api/refunds/eligible-quotations', requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']), (req, res) => {
     try {
       // Default 50. The pick list uses cheap overpay / unproduced / cancelled hints — not full preview.
+      // Scope to workspace branch so Kaduna never lists Yola (or other) quotations.
+      const branchScope = resolveBootstrapBranchScope(req);
       const requestedLimit = Math.floor(Number(req.query.limit) || 50);
       const resultLimit = Math.max(1, Math.min(100, requestedLimit));
       const candidateLimit = Math.min(250, Math.max(resultLimit * 4, 80));
-      const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit });
-      res.json({ ok: true, quotations: rows });
+      const rows = getEligibleRefundQuotations(db, { candidateLimit, resultLimit, branchScope });
+      res.json({ ok: true, branchId: branchScope, quotations: rows });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Failed to fetch eligible quotations' });
@@ -9696,6 +9745,8 @@ export function registerHttpApi(app, db) {
       if (!quotationRef) {
         return res.status(400).json({ ok: false, error: 'quotationRef query parameter is required (exact quotation id, e.g. QT-…).' });
       }
+      const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       const meets = quotationMeetsRefundEligibility(db, quotationRef);
       const preview = meets.ok
         ? previewRefundRequest(db, { quotationRef })
@@ -9838,6 +9889,8 @@ export function registerHttpApi(app, db) {
       if (!quotationRef) {
         return res.status(400).json({ ok: false, error: 'quotationRef is required' });
       }
+      const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       const excludeRefundId =
         String(req.query.excludeRefundId || req.query.refundId || '').trim() || null;
       const branchScope = resolveBootstrapBranchScope(req);
@@ -9905,6 +9958,11 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/refunds', requirePermission('refunds.request'), (req, res) => {
     try {
+      const quotationRef = String(req.body?.quotationRef || req.body?.quotation_ref || '').trim();
+      if (quotationRef) {
+        const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+        if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
+      }
       const r = insertRefundRequest(
         db,
         req.body || {},
@@ -9931,6 +9989,8 @@ export function registerHttpApi(app, db) {
         res.status(400).json({ ok: false, error: 'quotationRef is required.' });
         return;
       }
+      const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+      if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
       const result = validateRefundProductionAlignmentAtSubmit(db, quotationRef, reasonCategory, {
         actor: req.user,
         acknowledgedCodes: body.productionAlignmentAcknowledgedCodes ?? body.productionAlignmentAcknowledged ?? [],
@@ -9955,6 +10015,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
+      if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const refund = getCustomerRefundDetail(db, String(req.params.refundId || ''));
       if (!refund) {
         res.status(404).json({ ok: false, error: 'Refund not found.' });
@@ -9969,6 +10031,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/refunds/:refundId/decision', requirePermission(['refunds.approve', 'finance.approve']), (req, res) => {
     try {
+      const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
+      if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const r = decideRefundRequest(db, req.params.refundId, req.body || {}, req.user);
       if (r.ok) {
         const outcome = String(req.body?.status || '').trim() || 'reviewed';
@@ -10058,6 +10122,8 @@ export function registerHttpApi(app, db) {
     requirePermission(['refunds.approve', 'finance.approve', 'finance.pay']),
     (req, res) => {
       try {
+        const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
+        if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
         const r = cancelApprovedRefundBeforePay(db, req.params.refundId, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -10075,6 +10141,8 @@ export function registerHttpApi(app, db) {
       try {
         const refundId = String(req.params.refundId || '').trim();
         if (!refundId) return res.status(400).json({ ok: false, error: 'Refund ID is required.' });
+        const refundGate = assertRefundIdInWorkspace(db, req, refundId);
+        if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
         return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'refund', refundId, (_stripped, ctx) =>
           write.reverseRefundTreasuryPayouts(db, refundId, {
             ...(_stripped || {}),
@@ -10443,6 +10511,8 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/expenses/:expenseId/reclassify-category', requirePermission('finance.post'), (req, res) => {
     try {
+      const eg = assertExpenseIdInWorkspace(db, req, req.params.expenseId);
+      if (!eg.ok) return res.status(eg.status).json({ ok: false, error: eg.error });
       const r = reclassifyPaidExpenseCategory(
         db,
         String(req.params.expenseId || ''),
@@ -10462,6 +10532,8 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      const eg = assertExpenseIdInWorkspace(db, req, req.params.expenseId);
+      if (!eg.ok) return res.status(eg.status).json({ ok: false, error: eg.error });
       const preview = getPaidExpenseCategoryReclassPreview(db, {
         expenseId: String(req.params.expenseId || ''),
         expenseCategory: req.query.expenseCategory || req.query.category || '',
@@ -10483,8 +10555,13 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      let branchScope = resolveBootstrapBranchScope(req);
+      const requested = String(req.query.branchScope || '').trim();
+      if (branchScope === 'ALL' && requested && requested !== 'ALL' && canUseAllBranchesRollup(req.user)) {
+        branchScope = requested;
+      }
       const alert = buildExpenseCategoryMonthlyAlert(db, {
-        branchScope: req.query.branchScope || req.workspaceBranchId,
+        branchScope,
         startISO: req.query.startDate || req.query.startISO,
         endISO: req.query.endDate || req.query.endISO,
         orgLimits: getOrgGovernanceLimits(db),
@@ -10506,10 +10583,15 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      let branchScope = resolveBootstrapBranchScope(req);
+      const requested = String(req.query.branchScope || '').trim();
+      if (branchScope === 'ALL' && requested && requested !== 'ALL' && canUseAllBranchesRollup(req.user)) {
+        branchScope = requested;
+      }
       const report = buildExpenseCategoryExceptionReport(db, {
         startISO: req.query.startDate || req.query.startISO,
         endISO: req.query.endDate || req.query.endISO,
-        branchScope: req.query.branchScope || req.workspaceBranchId,
+        branchScope,
       });
       if (String(req.query.format || '').toLowerCase() === 'csv') {
         const csv = buildExpenseCategoryExceptionCsv(report);
@@ -10537,10 +10619,15 @@ export function registerHttpApi(app, db) {
         res.status(403).json({ ok: false, error: 'Forbidden' });
         return;
       }
+      let branchScope = resolveBootstrapBranchScope(req);
+      const requested = String(req.query.branchScope || '').trim();
+      if (branchScope === 'ALL' && requested && requested !== 'ALL' && canUseAllBranchesRollup(req.user)) {
+        branchScope = requested;
+      }
       const report = buildExpenseCategoryOthersTrendReport(db, {
         months: req.query.months,
         endISO: req.query.endISO || req.query.endDate,
-        branchScope: req.query.branchScope || req.workspaceBranchId || 'ALL',
+        branchScope,
       });
       res.json(report);
     } catch (e) {
@@ -11094,6 +11181,8 @@ export function registerHttpApi(app, db) {
         return res.status(403).json({ ok: false, error: 'Forbidden.' });
       }
       const cid = String(req.params.customerId || '').trim();
+      const cg = assertCustomerIdInWorkspace(db, req, cid);
+      if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
       const staffUserId = String(req.body?.staffUserId ?? req.body?.linkedStaffUserId ?? '').trim();
       if (!staffUserId) {
         const r = unlinkSalesCustomerFromStaff(db, cid, req.user);

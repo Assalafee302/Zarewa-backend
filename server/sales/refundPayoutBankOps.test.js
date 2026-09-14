@@ -58,6 +58,7 @@ describe.skipIf(!mysqlOk)('saveRefundPayoutBank', () => {
       .get('CUS-BANK-INLINE');
     expect(row.bank_name).toBe('Zenith Bank');
     expect(row.bank_account_no).toBe('1234567890');
+    expect(r.staffBankAccountMatch).toBe(false);
   });
 
   it('saves associated staff bank for refund payout', () => {
@@ -74,5 +75,6 @@ describe.skipIf(!mysqlOk)('saveRefundPayoutBank', () => {
       .get('AST-BANK-INLINE');
     expect(row.bank_name).toBe('GTB');
     expect(row.bank_account_no).toBe('0987654321');
+    expect(r.staffBankAccountMatch).toBe(false);
   });
 });

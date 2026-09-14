@@ -194,7 +194,25 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     treasuryAccounts: f.treasuryOk ? listTreasuryAccounts(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: ledgerOk ? ['advanceInEvents'] : [],
-      truncated: ledgerOk ? { advanceInEvents: true } : {},
+      // These are recent desk windows, not authoritative selector datasets.
+      truncated: {
+        ...(salesOk
+          ? {
+              customers: true,
+              quotations: true,
+              receipts: true,
+              cuttingLists: true,
+            }
+          : {}),
+        ...(refundsOk ? { refunds: true } : {}),
+        ...(ledgerOk
+          ? {
+              advanceInEvents: true,
+              ledgerEntries: true,
+              refundCreditApplications: true,
+            }
+          : {}),
+      },
     },
   };
 }
@@ -273,6 +291,28 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     maintenancePlans: user ? listMaintenancePlans(db, workScope) : [],
     maintenanceWorkOrders: user ? listMaintenanceWorkOrders(db, workScope) : [],
     coilRequests: f.coilReqOk ? listCoilRequests(db, branchScope) : [],
+    bootstrapMeta: {
+      deferredDeskArrays: [],
+      // Forms needing an older eligible item must use their complete server-side selector.
+      truncated: {
+        ...(opsOk ? { cuttingLists: true, deliveries: true } : {}),
+        ...(prodRollupOk
+          ? {
+              productionJobs: true,
+              productionConversionChecks: true,
+              productionCompletionAdjustments: true,
+            }
+          : {}),
+        ...(coilMovOk
+          ? {
+              coilLots: true,
+              coilControlEvents: true,
+              movements: true,
+            }
+          : {}),
+        ...(yardOk ? { yardCoilRegister: true } : {}),
+      },
+    },
   };
 }
 
@@ -401,7 +441,17 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         : null,
     bootstrapMeta: {
       deferredDeskArrays: ledgerOk ? ['advanceInEvents'] : [],
-      truncated: ledgerOk ? { advanceInEvents: true } : {},
+      truncated: {
+        ...(ledgerOk ? { ledgerEntries: true, advanceInEvents: true } : {}),
+        ...(salesOk || finOk || treasuryMovementsOk
+          ? { receipts: true, cuttingLists: true }
+          : {}),
+        ...(treasuryMovementsOk ? { treasuryMovements: true } : {}),
+        ...(expensesSnapshotOk ? { expenses: true } : {}),
+        ...(payReqOk ? { paymentRequests: true } : {}),
+        ...(finOk ? { accountsPayable: true, bankReconciliation: true } : {}),
+        ...(refundsOk ? { refunds: true, refundCreditApplications: true } : {}),
+      },
     },
   };
 }
@@ -434,6 +484,13 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     poTransportCatchUp: procOk || finOk ? listPoTransportCatchUp(db, branchScope) : [],
     orphanHaulageTreasuryMovements:
       finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
+    bootstrapMeta: {
+      deferredDeskArrays: [],
+      truncated: {
+        ...(poListOk ? { purchaseOrders: true } : {}),
+        ...(coilMovOk ? { coilLots: true, movements: true } : {}),
+      },
+    },
   };
 }
 

@@ -6,7 +6,8 @@
  * @param {import('express').Express} app
  * @param {object} db
  */
-import { requireAuth, userHasPermission } from '../auth.js';
+import { requireAuth, userHasPermission, canUseAllBranchesRollup } from '../auth.js';
+import { resolveBootstrapBranchScope } from '../branchScope.js';
 import { readFinanceFeatureFlags } from '../financeFeatureFlags.js';
 import {
   userMayViewFinanceTrialExceptions,
@@ -29,9 +30,13 @@ import { buildFinanceTrialExceptionSummary } from '../financeTrialExceptions.js'
 import { buildAp1cDryRunReport } from '../ap1cDryRunOps.js';
 import { buildAp1cReclassPreview, postAp1cReclassBatch } from '../ap1cReclassOps.js';
 
+/** Workspace-trusted branch for diagnostics. Client ?branchId= only when HQ rollup is on. */
 function queryBranchId(req) {
+  const workspaceScope = resolveBootstrapBranchScope(req);
+  if (workspaceScope !== 'ALL') return workspaceScope;
   const branchRaw = String(req.query?.branchId || req.query?.branch || '').trim();
-  return branchRaw && branchRaw !== 'ALL' ? branchRaw : null;
+  if (branchRaw && branchRaw !== 'ALL' && canUseAllBranchesRollup(req.user)) return branchRaw;
+  return null;
 }
 
 export function registerFinanceDiagnosticRoutes(app, db) {

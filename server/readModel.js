@@ -572,6 +572,31 @@ export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
 }
 
+/**
+ * Complete active quotation queue for creating cutting lists. Final save still executes
+ * the authoritative cash/price/override gates in writeOps.
+ */
+export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
+  const branch = branchWhere(db, 'quotations', branchScope);
+  const branchSql = branch.sql.replace(/\bbranch_id\b/g, 'q.branch_id');
+  const rows = db
+    .prepare(
+      `SELECT q.*
+       FROM quotations q
+       LEFT JOIN branches b ON b.id = q.branch_id
+       WHERE q.total_ngn > 0
+         AND (
+           q.paid_ngn >= q.total_ngn * COALESCE(b.cutting_list_min_paid_fraction, 0.7)
+           OR q.manager_production_approved_at_iso IS NOT NULL
+         )
+         ${branchSql}
+       ORDER BY q.date_iso DESC, q.id DESC`
+    )
+    .all(...branch.args)
+    .map((row) => mapQuotationRow(db, row));
+  return enrichQuotationsWithLineTableBatch(db, rows, branchScope);
+}
+
 /** @param {import('better-sqlite3').Database} db */
 export function countQuotations(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'quotations', branchScope);
@@ -2005,6 +2030,34 @@ export function countCoilLots(db, branchScope = 'ALL') {
   const b = branchWhere(db, 'coil_lots', branchScope);
   const row = db.prepare(`SELECT COUNT(*) AS n FROM coil_lots WHERE 1=1${b.sql}`).get(...b.args);
   return Number(row?.n) || 0;
+}
+
+/**
+ * Complete active queue for the production register coil picker. Coils already attached
+ * to the selected job remain visible even if their balance reached zero.
+ */
+export function listEligibleProductionCoils(db, branchScope = 'ALL', jobId = '') {
+  const masterData = masterDataColoursFromDb(db);
+  const branch = branchWhere(db, 'coil_lots', branchScope);
+  const selected = String(jobId || '').trim()
+    ? db
+        .prepare(`SELECT DISTINCT coil_no FROM production_job_coils WHERE job_id = ?`)
+        .all(String(jobId).trim())
+        .map((row) => String(row.coil_no || '').trim())
+        .filter(Boolean)
+    : [];
+  const selectedClause = selected.length
+    ? ` OR coil_no IN (${selected.map(() => '?').join(',')})`
+    : '';
+  return db
+    .prepare(
+      `SELECT * FROM coil_lots
+       WHERE 1=1${branch.sql}
+         AND ((qty_remaining > 0.0001 AND current_status NOT IN ('Consumed', 'Finished'))${selectedClause})
+       ORDER BY received_at_iso ASC, coil_no ASC`
+    )
+    .all(...branch.args, ...selected)
+    .map((row) => mapCoilLotRow(db, row, masterData));
 }
 
 /**

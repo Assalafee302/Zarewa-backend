@@ -127,6 +127,7 @@ import {
   unclearedReceiptFloatBySalesCustomerIds,
   unclearedTotalsMap,
 } from './sales/refundClaimingStaffUnclearedReceipts.js';
+import { markRefundSplitsStaffBankMatch } from './sales/refundPayoutStaffBankMatch.js';
 import {
   buildDerivedRefundCategoryCapsNgn,
   mergeRefundCategoryCapsNgn,
@@ -2850,11 +2851,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     }
 
     // Company-cut waive is approval-only (MD/BM). Ignore any create-time waive flags.
-    const splitsWithWaiverAuth = resolvedSplits.map((s) => ({
-      ...s,
-      companyCutWaived: false,
-      companyCutWaiverNote: '',
-    }));
+    // Payee account matching an HR staff payroll bank → force claiming-staff 20% cut.
+    const splitsWithWaiverAuth = markRefundSplitsStaffBankMatch(
+      db,
+      resolvedSplits.map((s) => ({
+        ...s,
+        companyCutWaived: false,
+        companyCutWaiverNote: '',
+      }))
+    );
 
     const overpaymentOnly = refundCategoriesAreOverpaymentOnly(
       requestedCats,
@@ -3299,6 +3304,8 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
                 payoutHeldForUnclearedReceipts: Boolean(r.payoutHeldForUnclearedReceipts),
                 companyCutWaived: Boolean(r.companyCutWaived),
                 companyCutWaiverNote: String(r.companyCutWaiverNote || '').trim() || undefined,
+                forceClaimingStaffCut: Boolean(r.forceClaimingStaffCut),
+                staffBankAccountMatch: Boolean(r.staffBankAccountMatch),
                 note: r.note,
                 payoutAccount: {
                   payeeName: r.payoutAccount.payeeName,
@@ -3592,11 +3599,14 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       }
       if (storedSplits.length) {
         const quoteCustomerId = String(row.customer_id || '').trim();
-        const waivedBase = storedSplits.map((s) => ({
-          ...s,
-          companyCutWaived: true,
-          companyCutWaiverNote: waiverNote,
-        }));
+        const waivedBase = markRefundSplitsStaffBankMatch(
+          db,
+          storedSplits.map((s) => ({
+            ...s,
+            companyCutWaived: true,
+            companyCutWaiverNote: waiverNote,
+          }))
+        );
         const decisionCatsForCut = resolveRefundReasonCategoriesForDecision(
           row,
           payload,
@@ -5541,13 +5551,22 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  *
  * Listing path batches cash-in and closed production jobs for SQL candidates and never scans
  * an unbounded quotation table — candidate pool is hard-capped even when limits are omitted.
- * @param {{ candidateLimit?: number; resultLimit?: number }} [opts]
+ * Workspace branch scopes the pick list (Kaduna must not see Yola quotes); `'ALL'` is HQ rollup only.
+ * @param {{ candidateLimit?: number; resultLimit?: number; branchScope?: 'ALL' | string }} [opts]
  */
 export function getEligibleRefundQuotations(db, opts = {}) {
   const candidateLimit = Math.max(0, Math.min(250, Math.floor(Number(opts.candidateLimit) || 0)));
   const resultLimit = Math.max(0, Math.min(200, Math.floor(Number(opts.resultLimit) || 0)));
   // Always bound the candidate scan — unlimited used to walk every paid closed quote and was very slow.
   const effectiveCandidateLimit = candidateLimit > 0 ? candidateLimit : 250;
+  const branchScope = String(opts.branchScope ?? 'ALL').trim() || 'ALL';
+  const branchArgs = [];
+  let branchSql = '';
+  // quotations.branch_id is core — always filter when workspace is a single branch.
+  if (branchScope !== 'ALL') {
+    branchSql = ` AND trim(IFNULL(q.branch_id, '')) = ?`;
+    branchArgs.push(branchScope);
+  }
   const sql = `
     SELECT q.id, q.customer_id, q.customer_name, q.date_iso, q.total_ngn, q.paid_ngn, q.status,
            q.handled_by, q.handled_by_user_id, q.agent_customer_id, q.agent_customer_name, q.branch_id, q.lines_json,
@@ -5576,10 +5595,11 @@ export function getEligibleRefundQuotations(db, opts = {}) {
         )
         OR TRIM(COALESCE(q.status, '')) = 'Void'
       )
+      ${branchSql}
     ORDER BY q.date_iso DESC
     LIMIT ${effectiveCandidateLimit}
   `;
-  const rows = db.prepare(sql).all();
+  const rows = db.prepare(sql).all(...branchArgs);
 
   // Cheap SQL-row filters before any cash / preview work.
   const candidates = [];

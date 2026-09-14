@@ -3,6 +3,7 @@
  */
 import { requirePermission } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
+import { resolveBootstrapBranchScope } from '../branchScope.js';
 import {
   claimingStaffPayeeForUserId,
   defaultRefundPayeeForQuotation,
@@ -11,6 +12,10 @@ import {
 } from '../sales/customerPayoutAccount.js';
 import { saveRefundPayoutBank } from '../sales/refundPayoutBankOps.js';
 import { hasColumn } from '../ap2ReceivedBasisOps.js';
+import {
+  assertCustomerIdInWorkspace,
+  assertQuotationIdInWorkspace,
+} from '../workspaceBranchGuards.js';
 
 /**
  * @param {import('express').Express} app
@@ -23,9 +28,8 @@ export function registerRefundClaimingStaffRoutes(app, db) {
     requirePermission(['refunds.request', 'refunds.approve', 'finance.approve']),
     (req, res) => {
       try {
-        const branchScope =
-          String(req.query.branchId || req.workspaceBranchId || DEFAULT_BRANCH_ID).trim() ||
-          DEFAULT_BRANCH_ID;
+        // Trust session workspace only — never client ?branchId= (Yola leak on Kaduna desk).
+        const branchScope = resolveBootstrapBranchScope(req);
         const claimingStaff = listClaimingStaffForRefunds(db, branchScope);
         res.json({ ok: true, branchId: branchScope, claimingStaff });
       } catch (e) {
@@ -45,6 +49,11 @@ export function registerRefundClaimingStaffRoutes(app, db) {
     (req, res) => {
       try {
         const quotationRef = String(req.query.quotationRef || '').trim();
+        if (!quotationRef) {
+          return res.status(400).json({ ok: false, error: 'quotationRef is required.' });
+        }
+        const qg = assertQuotationIdInWorkspace(db, req, quotationRef);
+        if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
         const r = defaultRefundPayeeForQuotation(db, quotationRef);
         if (!r.ok) return res.status(r.error === 'Quotation not found.' ? 404 : 400).json(r);
         res.json(r);
@@ -61,9 +70,11 @@ export function registerRefundClaimingStaffRoutes(app, db) {
     requirePermission(['quotations.manage', 'sales.view', 'sales.manage', 'refunds.request']),
     (req, res) => {
       try {
-        const branchId = String(req.query.branchId || req.workspaceBranchId || '').trim();
-        const staff = listHandledByStaffForQuotations(db, { branchId });
-        res.json({ ok: true, staff });
+        const branchScope = resolveBootstrapBranchScope(req);
+        const staff = listHandledByStaffForQuotations(db, {
+          branchId: branchScope === 'ALL' ? '' : branchScope,
+        });
+        res.json({ ok: true, branchId: branchScope, staff });
       } catch (e) {
         console.error('[quotations/handled-by-staff]', e);
         res.status(500).json({ ok: false, error: 'Failed to load handled-by staff.' });
@@ -78,6 +89,12 @@ export function registerRefundClaimingStaffRoutes(app, db) {
     (req, res) => {
       try {
         const body = req.body || {};
+        const kind = String(body.kind || '').trim().toLowerCase();
+        const id = String(body.id || '').trim();
+        if (kind === 'customer' && id) {
+          const cg = assertCustomerIdInWorkspace(db, req, id);
+          if (!cg.ok) return res.status(cg.status).json({ ok: false, error: cg.error });
+        }
         const r = saveRefundPayoutBank(db, {
           ...body,
           branchId: req.workspaceBranchId || DEFAULT_BRANCH_ID,

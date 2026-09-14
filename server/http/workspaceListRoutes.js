@@ -24,6 +24,8 @@ import {
   listCustomers,
   listCuttingLists,
   listExpenses,
+  listEligibleCuttingListQuotations,
+  listEligibleProductionCoils,
   listProductionJobs,
   listProducts,
   listPurchaseOrders,
@@ -112,6 +114,30 @@ export function registerWorkspaceListRoutes(app, db) {
     }
   });
 
+  app.get('/api/production/eligible-coils', requirePermission(PRODUCTION_JOBS_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const jobId = String(req.query?.jobId || '').trim();
+      const items = listEligibleProductionCoils(db, branchScope, jobId);
+      // This is an active workflow queue, intentionally complete rather than a history page.
+      return res.json({
+        ok: true,
+        branchId: branchScope,
+        jobId,
+        coilLots: items,
+        total: items.length,
+        complete: true,
+      });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, {
+        status: 500,
+        code: 'LOAD_FAILED',
+        error: 'Failed to load eligible production coils.',
+      });
+    }
+  });
+
   app.get('/api/production-jobs', requirePermission(PRODUCTION_JOBS_PERMS), (req, res) => {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
@@ -168,6 +194,31 @@ export function registerWorkspaceListRoutes(app, db) {
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load cutting lists.' });
     }
   });
+
+  app.get(
+    '/api/cutting-lists/eligible-quotations',
+    requirePermission(CUTTING_LIST_PERMS),
+    (req, res) => {
+      try {
+        const branchScope = resolveBootstrapBranchScope(req);
+        const items = listEligibleCuttingListQuotations(db, branchScope);
+        return res.json({
+          ok: true,
+          branchId: branchScope,
+          quotations: items.map((item) => ({ ...item, serverCuttingListEligible: true })),
+          total: items.length,
+          complete: true,
+        });
+      } catch (e) {
+        console.error(e);
+        return apiError(res, {
+          status: 500,
+          code: 'LOAD_FAILED',
+          error: 'Failed to load eligible cutting-list quotations.',
+        });
+      }
+    }
+  );
 
   app.get('/api/sales-receipts', requirePermission(SALES_DOMAIN_PERMS), (req, res) => {
     try {

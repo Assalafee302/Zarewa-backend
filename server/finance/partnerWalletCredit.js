@@ -12,6 +12,11 @@ import {
 import { refundCategoriesAreOverpaymentOnly } from '../../shared/lib/refundCreditApply.js';
 import { unclearedReceiptFloatBySalesCustomerIds } from '../sales/refundClaimingStaffUnclearedReceipts.js';
 import {
+  buildHrStaffBankAccountKeySet,
+  markRefundSplitsStaffBankMatch,
+  payeeAccountMatchesHrStaffBank,
+} from '../sales/refundPayoutStaffBankMatch.js';
+import {
   getRefundStaffAllocationDeductionRate,
   getRefundAssociatedStaffDeductionRate,
 } from '../orgPolicy.js';
@@ -113,8 +118,10 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     const quoteCustomerId = String(refundRow.customer_id || '').trim();
     // Company/claiming staff (a customer-kind payee that isn't the quote's own customer) and
     // associated staff (drivers/installers) take different company-cut rates.
+    // Payee bank matching HR staff payroll → force claiming-staff 20%.
     const claimingStaffDeductionRate = getRefundStaffAllocationDeductionRate(db);
     const associatedStaffDeductionRate = getRefundAssociatedStaffDeductionRate(db);
+    const usableMarked = markRefundSplitsStaffBankMatch(db, usable);
     let calculationLines = [];
     try {
       const parsed = JSON.parse(String(refundRow.calculation_lines_json || '[]'));
@@ -128,14 +135,14 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     );
     const unclearedFloatByCustomerId = unclearedReceiptFloatBySalesCustomerIds(
       db,
-      usable.map((s) => s.recipientCustomerID).filter(Boolean),
+      usableMarked.map((s) => s.recipientCustomerID).filter(Boolean),
       { branchId: String(refundRow.branch_id || '').trim() }
     );
-    const splitSum = usable.reduce((s, r) => s + r.amountNgn, 0) || 1;
+    const splitSum = usableMarked.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
-    return usable
+    return usableMarked
       .map((s, idx) => {
-        const isLast = idx === usable.length - 1;
+        const isLast = idx === usableMarked.length - 1;
         const share = isLast
           ? Math.max(0, approved - allocated)
           : roundMoney((approved * s.amountNgn) / splitSum);
@@ -250,16 +257,83 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     calculationLinesNoSplit
   );
   const resolved = savedCustomerPayoutAccount(db, customerId);
+  const payeeAccountNo = String(
+    refundRow.payee_account_no || resolved?.payeeAccountNo || ''
+  ).trim();
+  const hrKeys = buildHrStaffBankAccountKeySet(db);
+  const staffBankMatch = payeeAccountMatchesHrStaffBank(payeeAccountNo, hrKeys);
   const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(db, [customerId], {
     branchId: String(refundRow.branch_id || '').trim(),
   }).get(customerId);
-  // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal).
-  const unclearedHoldNgn = overpaymentOnlyNoSplit ? 0 : roundMoney(noSplitUncleared?.totalNgn);
-  const unclearedReceiptIds = overpaymentOnlyNoSplit
-    ? []
-    : Array.isArray(noSplitUncleared?.receiptIds)
-      ? noSplitUncleared.receiptIds
-      : [];
+  // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal),
+  // unless the payee account is an HR staff bank (forced claiming-staff cut path).
+  const unclearedHoldNgn =
+    overpaymentOnlyNoSplit && !staffBankMatch ? 0 : roundMoney(noSplitUncleared?.totalNgn);
+  const unclearedReceiptIds =
+    overpaymentOnlyNoSplit && !staffBankMatch
+      ? []
+      : Array.isArray(noSplitUncleared?.receiptIds)
+        ? noSplitUncleared.receiptIds
+        : [];
+
+  if (staffBankMatch) {
+    const claimingStaffDeductionRate = getRefundStaffAllocationDeductionRate(db);
+    const withDeduction = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: customerId,
+        amountNgn: approved,
+        forceClaimingStaffCut: true,
+        staffBankAccountMatch: true,
+        payoutAccount: {
+          partyKind: 'customer',
+          partyId: customerId,
+          payeeAccountNo,
+          payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
+          payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
+        },
+      },
+      customerId,
+      {
+        claimingStaffDeductionRate,
+        unclearedReceiptHoldNgn: unclearedHoldNgn,
+        honorCompanyCutWaiver: true,
+        overpaymentOnly: overpaymentOnlyNoSplit,
+      }
+    );
+    const companyDeductionNgn = roundMoney(withDeduction.companyDeductionNgn);
+    const netAmount = roundMoney(withDeduction.netPayoutNgn ?? approved);
+    const cutPct = Math.round((Number(withDeduction.deductionRate) || 0) * 100);
+    const noteParts = [`net after ${cutPct}% company cut (payee account matches HR staff bank)`];
+    if (withDeduction.payoutHeldForUnclearedReceipts && unclearedHoldNgn > 0) {
+      const heldSlice = Math.min(netAmount, unclearedHoldNgn);
+      const readySlice = Math.max(0, netAmount - heldSlice);
+      noteParts.push(
+        readySlice > 0
+          ? `₦${heldSlice.toLocaleString('en-NG')} held for uncleared receipts; ₦${readySlice.toLocaleString('en-NG')} ready`
+          : `₦${heldSlice.toLocaleString('en-NG')} uncleared receipts pending — till payout held until cleared`
+      );
+    }
+    return [
+      {
+        partyKind: 'customer',
+        partyId: customerId,
+        partyName: String(resolved?.partyName || refundRow.customer_name || customerId).trim(),
+        amountNgn: netAmount,
+        grossNgn: approved,
+        companyDeductionNgn,
+        unclearedReceiptHoldNgn: unclearedHoldNgn,
+        unclearedReceiptIds,
+        payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
+        staffBankAccountMatch: true,
+        payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
+        payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
+        payeeAccountNo,
+        note: `Refund ${refundRow.refund_id} approved (${noteParts.join('; ')})`,
+      },
+    ];
+  }
+
   const payoutHeldForUnclearedReceipts = unclearedHoldNgn > 0 && approved > 0;
   return [
     {
@@ -272,7 +346,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       payoutHeldForUnclearedReceipts,
       payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
       payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),
-      payeeAccountNo: String(refundRow.payee_account_no || resolved?.payeeAccountNo || '').trim(),
+      payeeAccountNo,
       note: payoutHeldForUnclearedReceipts
         ? `Refund ${refundRow.refund_id} approved (₦${unclearedHoldNgn.toLocaleString('en-NG')} uncleared receipts pending — ₦${Math.max(0, approved - unclearedHoldNgn).toLocaleString('en-NG')} ready when confirmed)`
         : `Refund ${refundRow.refund_id} approved`,

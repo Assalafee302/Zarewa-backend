@@ -220,6 +220,63 @@ describe('refundStaffAllocationDeduction', () => {
     expect(row.netPayoutNgn).toBe(50_000);
   });
 
+  it('forces 20% claiming-staff cut when payee bank matches HR staff (quote customer)', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: 'CUS-QUOTE',
+        amountNgn: 50_000,
+        staffBankAccountMatch: true,
+      },
+      'CUS-QUOTE',
+      { associatedStaffDeductionRate: 0.03, claimingStaffDeductionRate: 0.2 }
+    );
+    expect(row.forceClaimingStaffCut).toBe(true);
+    expect(row.staffBankAccountMatch).toBe(true);
+    expect(row.deductionRate).toBe(0.2);
+    expect(row.companyDeductionNgn).toBe(10_000);
+    expect(row.netPayoutNgn).toBe(40_000);
+  });
+
+  it('forces 20% (not 3%) when associated-staff payee bank matches HR staff', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'associated_staff',
+        recipientAssociatedStaffID: 'AS-1',
+        amountNgn: 10_000,
+        forceClaimingStaffCut: true,
+        staffBankAccountMatch: true,
+      },
+      'CUS-QUOTE',
+      { associatedStaffDeductionRate: 0.03, claimingStaffDeductionRate: 0.2 }
+    );
+    expect(row.deductionRate).toBe(0.2);
+    expect(row.companyDeductionNgn).toBe(2_000);
+    expect(row.netPayoutNgn).toBe(8_000);
+  });
+
+  it('lets Admin/MD waive the forced 20% staff-bank cut at approval', () => {
+    const row = applyRefundStaffAllocationDeduction(
+      {
+        recipientKind: 'customer',
+        recipientCustomerID: 'CUS-QUOTE',
+        amountNgn: 50_000,
+        staffBankAccountMatch: true,
+        forceClaimingStaffCut: true,
+        companyCutWaived: true,
+        companyCutWaiverNote: 'MD waived staff-bank cut for this refund',
+      },
+      'CUS-QUOTE',
+      { claimingStaffDeductionRate: 0.2 }
+    );
+    expect(row.staffBankAccountMatch).toBe(true);
+    expect(row.forceClaimingStaffCut).toBe(true);
+    expect(row.companyCutWaived).toBe(true);
+    expect(row.companyDeductionNgn).toBe(0);
+    expect(row.deductionRate).toBe(0);
+    expect(row.netPayoutNgn).toBe(50_000);
+  });
+
   it('skips uncleared hold on pure overpayment to the quote customer', () => {
     const held = applyRefundStaffAllocationDeduction(
       { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 80_000 },

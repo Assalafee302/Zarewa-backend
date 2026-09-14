@@ -146,6 +146,15 @@ function runMigrationsUnlocked(db) {
   repairMaterialIncidentIndexesMysql(db);
   ensureSchemaMigrationsTable(db);
   db.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_domain_revisions (
+      branch_id TEXT NOT NULL,
+      domain_key TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_at_iso TEXT NOT NULL,
+      PRIMARY KEY (branch_id, domain_key)
+    );
+  `);
+  db.exec(`
     CREATE TABLE IF NOT EXISTS help_query_log (
       id TEXT PRIMARY KEY,
       occurred_at_iso TEXT NOT NULL,
@@ -7139,6 +7148,8 @@ function migrateOpsDeskPerformanceIndexes(db) {
       CREATE INDEX IF NOT EXISTS idx_cutting_lists_branch_date ON cutting_lists(branch_id, date_iso DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_production_jobs_branch_created ON production_jobs(branch_id, created_at_iso DESC, job_id DESC);
       CREATE INDEX IF NOT EXISTS idx_coil_lots_branch_received ON coil_lots(branch_id, received_at_iso DESC, coil_no DESC);
+      CREATE INDEX IF NOT EXISTS idx_coil_lots_branch_status_received
+        ON coil_lots(branch_id, current_status, received_at_iso, coil_no);
       CREATE INDEX IF NOT EXISTS idx_deliveries_branch_id ON deliveries(branch_id, id DESC);
     `);
   } catch {

@@ -85,6 +85,47 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(rows[0].remaining_ngn).toBe(120_000);
   });
 
+  it('scopes the candidate SQL to the workspace branch (Kaduna must not pull Yola quotes)', () => {
+    let seenSql = '';
+    let seenArgs = [];
+    const base = overpaymentDb();
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        const inner = base.prepare(sql);
+        return {
+          all(...args) {
+            if (text.includes('FROM quotations q')) {
+              seenSql = text;
+              seenArgs = args;
+            }
+            return inner.all(...args);
+          },
+          get(...args) {
+            return inner.get(...args);
+          },
+        };
+      },
+    };
+    getEligibleRefundQuotations(db, {
+      candidateLimit: 20,
+      resultLimit: 20,
+      branchScope: 'BR-KD',
+    });
+    expect(seenSql).toMatch(/trim\(IFNULL\(q\.branch_id,\s*''\)\)\s*=\s*\?/);
+    expect(seenArgs).toEqual(['BR-KD']);
+
+    seenSql = '';
+    seenArgs = [];
+    getEligibleRefundQuotations(db, {
+      candidateLimit: 20,
+      resultLimit: 20,
+      branchScope: 'ALL',
+    });
+    expect(seenSql).not.toMatch(/trim\(IFNULL\(q\.branch_id/);
+    expect(seenArgs).toEqual([]);
+  });
+
   it('does not keep an already-refunded overpayment on the pick list via the fast path', () => {
     // cash − quote total still looks like ₦20k overpay, but Overpayment was already refunded.
     // Fast path must not re-list it; without other categories the quote drops out.

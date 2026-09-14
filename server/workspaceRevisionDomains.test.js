@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildWorkspaceRevision } from './workspaceRevision.js';
+import { buildWorkspaceRevision, bumpWorkspaceRevisions } from './workspaceRevision.js';
 
 /**
  * Stub db whose COUNT/MAX answer comes from a per-table fixture, so a test can move one
@@ -84,5 +84,46 @@ describe('workspace revision domains', () => {
     const kd = buildWorkspaceRevision(stubDb(BASE), 'KD').domains;
     const yl = buildWorkspaceRevision(stubDb(BASE), 'YL').domains;
     expect(kd.sales).not.toBe(yl.sales);
+  });
+
+  it('moves a domain revision for an in-place HTTP update with unchanged row dates', () => {
+    const counters = new Map();
+    const db = {
+      prepare(sql) {
+        if (/SELECT domain_key, revision/i.test(sql)) {
+          return {
+            all: (branchId) =>
+              [...counters.entries()]
+                .filter(([key]) => key.startsWith(`${branchId}:`))
+                .map(([key, revision]) => ({
+                  domain_key: key.slice(String(branchId).length + 1),
+                  revision,
+                })),
+          };
+        }
+        if (/INSERT INTO workspace_domain_revisions/i.test(sql)) {
+          return {
+            run: (branchId, domain) => {
+              const key = `${branchId}:${domain}`;
+              counters.set(key, (counters.get(key) || 0) + 1);
+            },
+          };
+        }
+        const table = /FROM\s+(\w+)/.exec(sql)?.[1] ?? '';
+        return { get: () => BASE[table] ?? { c: 0, m: '' } };
+      },
+      transaction(fn) {
+        return fn;
+      },
+    };
+
+    const before = buildWorkspaceRevision(db, 'KD').domains;
+    bumpWorkspaceRevisions(db, { branchId: 'KD', domains: ['sales'] });
+    const after = buildWorkspaceRevision(db, 'KD').domains;
+    const hq = buildWorkspaceRevision(db, 'ALL').domains;
+
+    expect(after.sales).not.toBe(before.sales);
+    expect(after.operations).toBe(before.operations);
+    expect(hq.sales).not.toBe(buildWorkspaceRevision(stubDb(BASE), 'ALL').domains.sales);
   });
 });

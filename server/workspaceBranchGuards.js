@@ -143,6 +143,86 @@ export function assertRefundIdInWorkspace(db, req, refundId) {
   return { ok: true };
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} customerId
+ */
+export function assertCustomerIdInWorkspace(db, req, customerId) {
+  const id = String(customerId ?? '').trim();
+  if (!id) return { ok: false, error: 'Customer id is required.', status: 400 };
+  const row = db.prepare(`SELECT customer_id, branch_id FROM customers WHERE customer_id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Customer not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} expenseId
+ */
+export function assertExpenseIdInWorkspace(db, req, expenseId) {
+  const id = String(expenseId ?? '').trim();
+  if (!id) return { ok: false, error: 'Expense id is required.', status: 400 };
+  const row = db.prepare(`SELECT expense_id, branch_id FROM expenses WHERE expense_id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Expense not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} incidentId
+ */
+export function assertMaterialIncidentIdInWorkspace(db, req, incidentId) {
+  const id = String(incidentId ?? '').trim();
+  if (!id) return { ok: false, error: 'Material incident id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM material_incidents WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Incident not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
+ * @param {string} coilRequestId
+ */
+export function assertCoilRequestIdInWorkspace(db, req, coilRequestId) {
+  const id = String(coilRequestId ?? '').trim();
+  if (!id) return { ok: false, error: 'Coil request id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM coil_requests WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Coil request not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
 export function assertProductIdInWorkspace(db, req, productID) {
   const pid = String(productID ?? '').trim();
   if (!pid) return { ok: false, error: 'Product is required.', status: 400 };

@@ -44,6 +44,66 @@ const TABLE_DOMAINS = Object.freeze({
 
 const REVISION_DOMAIN_KEYS = Object.freeze(['sales', 'operations', 'finance', 'procurement']);
 
+function readPersistedRevisionCounters(db, branchScope) {
+  const counters = Object.fromEntries([...REVISION_DOMAIN_KEYS, 'shell'].map((key) => [key, 0]));
+  try {
+    const rows = db
+      .prepare(
+        `SELECT domain_key, revision
+         FROM workspace_domain_revisions
+         WHERE branch_id = ?`
+      )
+      .all(String(branchScope || 'ALL'));
+    for (const row of rows) {
+      const key = String(row.domain_key || '').trim().toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(counters, key)) {
+        counters[key] = Math.max(0, Number(row.revision) || 0);
+      }
+    }
+  } catch {
+    // Older databases use the table fingerprints until migrations create counters.
+  }
+  return counters;
+}
+
+/**
+ * Persist a monotonic invalidation for every domain affected by a successful HTTP write.
+ * Branch writes also bump ALL so head-office rollups cannot miss branch activity.
+ */
+export function bumpWorkspaceRevisions(db, { branchId = '', domains = [], shell = false } = {}) {
+  const domainKeys = [
+    ...new Set(
+      (Array.isArray(domains) ? domains : [])
+        .map((domain) => String(domain || '').trim().toLowerCase())
+        .filter((domain) => REVISION_DOMAIN_KEYS.includes(domain))
+    ),
+  ];
+  if (shell) domainKeys.push('shell');
+  if (!domainKeys.length) return;
+
+  const branch = String(branchId || '').trim() || 'ALL';
+  const scopes = branch === 'ALL' ? ['ALL'] : [branch, 'ALL'];
+  const updatedAtIso = new Date().toISOString();
+  try {
+    const upsert = db.prepare(
+      `INSERT INTO workspace_domain_revisions (branch_id, domain_key, revision, updated_at_iso)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(branch_id, domain_key) DO UPDATE SET
+         revision = workspace_domain_revisions.revision + 1,
+         updated_at_iso = excluded.updated_at_iso`
+    );
+    db.transaction(() => {
+      for (const scope of scopes) {
+        for (const domain of new Set(domainKeys)) {
+          upsert.run(scope, domain, updatedAtIso);
+        }
+      }
+    })();
+  } catch {
+    // Invalidation must never turn an already-committed business write into an HTTP failure.
+  }
+}
+
 /**
  * Per-domain revisions from the same table fingerprints the global hash is built from.
  * Lets a poll answer "did *my* desk change" instead of "did anything anywhere change" —
@@ -51,9 +111,14 @@ const REVISION_DOMAIN_KEYS = Object.freeze(['sales', 'operations', 'finance', 'p
  * @param {ReadonlyArray<string>} parts `table:count:max` fingerprints, scope entry first
  * @param {string} branchScope
  */
-function domainRevisions(parts, branchScope) {
+function domainRevisions(parts, branchScope, counters = {}) {
   /** @type {Record<string, string[]>} */
-  const byDomain = Object.fromEntries(REVISION_DOMAIN_KEYS.map((d) => [d, [`scope:${branchScope}`]]));
+  const byDomain = Object.fromEntries(
+    REVISION_DOMAIN_KEYS.map((d) => [
+      d,
+      [`scope:${branchScope}`, `counter:${Math.max(0, Number(counters[d]) || 0)}`],
+    ])
+  );
   for (const part of parts) {
     const table = String(part).split(':')[0];
     for (const domain of TABLE_DOMAINS[table] || []) {
@@ -75,6 +140,7 @@ function domainRevisions(parts, branchScope) {
  */
 export function buildWorkspaceRevision(db, branchScope = 'ALL') {
   const parts = [`scope:${branchScope}`];
+  const counters = readPersistedRevisionCounters(db, branchScope);
   for (const [table, dateCol] of REVISION_TABLES) {
     try {
       const b = branchWhere(db, table, branchScope);
@@ -97,11 +163,15 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
       parts.push(`${table}:na`);
     }
   }
+  parts.push(
+    ...REVISION_DOMAIN_KEYS.map((domain) => `counter:${domain}:${counters[domain]}`),
+    `counter:shell:${counters.shell}`
+  );
   const revision = crypto.createHash('sha256').update(parts.join('|')).digest('base64url').slice(0, 24);
   return {
     ok: true,
     revision,
-    domains: domainRevisions(parts.slice(1), branchScope),
+    domains: domainRevisions(parts.slice(1), branchScope, counters),
     branchScope,
     checkedAtIso: new Date().toISOString(),
   };
@@ -117,6 +187,7 @@ export async function buildWorkspaceRevisionAsync(db, branchScope = 'ALL') {
   if (!db?.async?.prepare) return buildWorkspaceRevision(db, branchScope);
   const parts = new Array(REVISION_TABLES.length + 1);
   parts[0] = `scope:${branchScope}`;
+  const counters = readPersistedRevisionCounters(db, branchScope);
   await Promise.all(
     REVISION_TABLES.map(async ([table, dateCol], i) => {
       try {
@@ -140,11 +211,15 @@ export async function buildWorkspaceRevisionAsync(db, branchScope = 'ALL') {
       }
     })
   );
+  parts.push(
+    ...REVISION_DOMAIN_KEYS.map((domain) => `counter:${domain}:${counters[domain]}`),
+    `counter:shell:${counters.shell}`
+  );
   const revision = crypto.createHash('sha256').update(parts.join('|')).digest('base64url').slice(0, 24);
   return {
     ok: true,
     revision,
-    domains: domainRevisions(parts.slice(1), branchScope),
+    domains: domainRevisions(parts.slice(1), branchScope, counters),
     branchScope,
     checkedAtIso: new Date().toISOString(),
   };

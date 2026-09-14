@@ -6,6 +6,11 @@
  *   - Associated staff — drivers (Transport) and installers/roofers (Installation),
  *     recipientKind 'associated_staff' — 3%.
  *   - The quote customer themselves — 0%, no cut at all.
+ * Exception: when the payee bank account number matches an HR staff payroll account
+ * (`forceClaimingStaffCut` / `staffBankAccountMatch`), the claiming-staff 20% rate is forced
+ * even for the quote customer or associated staff (closes “route my payroll account as customer”).
+ * Admin/MD/BM may still waive that cut at approval (`companyCutWaived`) — the force only sets the
+ * default rate, it does not block a privileged waiver.
  * Gross allocation stays on the refund for headroom; net after company cut is what Finance pays out.
  * Uncleared receipt float is informational only — it may block payout until cleared but is never
  * auto-settled into paid_amount at approval.
@@ -120,7 +125,8 @@ export function refundStaffAllocationDeductionAmounts(
  * Amount on the split remains the gross allocation.
  * Admin/MD/BM may set companyCutWaived at approval to skip the company % (uncleared hold still applies
  * for cashiers; admin may override the hold at payout). Quote-customer lines skip the
- * company cut but still take the uncleared-receipt hold.
+ * company cut but still take the uncleared-receipt hold — unless `forceClaimingStaffCut` when the
+ * payee account number matches an HR staff payroll account (then 20% claiming-staff cut applies).
  *
  * @param {object} split
  * @param {string} [quoteCustomerId]
@@ -131,10 +137,13 @@ export function refundStaffAllocationDeductionAmounts(
  *   unclearedReceiptHoldNgn?: number,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
+ *   forceClaimingStaffCut?: boolean,
  * }} [opts] `deductionRate` forces one exact rate regardless of category (used by callers that
  *   already resolved the right rate, and by tests). Otherwise the rate is picked by category:
  *   `associatedStaffDeductionRate` for drivers/installers, `claimingStaffDeductionRate` for
  *   company/claiming staff — each falling back to that category's own default.
+ *   `forceClaimingStaffCut` (or split.forceClaimingStaffCut / staffBankAccountMatch) forces the
+ *   claiming-staff rate even for quote-customer or associated-staff lines.
  */
 export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '', opts = {}) {
   const amountNgn = roundRefundStaffMoney(split?.amountNgn ?? split?.amount_ngn);
@@ -148,7 +157,12 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
   const waiverNote = String(
     split?.companyCutWaiverNote ?? split?.company_cut_waiver_note ?? ''
   ).trim();
-  const isAssociatedStaffKind = refundSplitIsAssociatedStaff(split);
+  const forceClaimingStaffCut =
+    opts.forceClaimingStaffCut === true ||
+    split?.forceClaimingStaffCut === true ||
+    split?.staffBankAccountMatch === true;
+  // Staff-bank match → claiming-staff category (20%), not the associated-staff 3%.
+  const isAssociatedStaffKind = !forceClaimingStaffCut && refundSplitIsAssociatedStaff(split);
   const categoryDefaultRate = isAssociatedStaffKind
     ? REFUND_ASSOCIATED_STAFF_DEDUCTION_RATE
     : REFUND_STAFF_ALLOCATION_DEDUCTION_RATE;
@@ -163,13 +177,16 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
       );
   const unclearedHoldNgn = Math.max(0, roundRefundStaffMoney(opts.unclearedReceiptHoldNgn));
   const overpaymentOnly = opts.overpaymentOnly === true;
+  const staffBankAccountMatch = Boolean(split?.staffBankAccountMatch);
   const base = {
     ...split,
     amountNgn,
     companyCutWaived,
     companyCutWaiverNote: companyCutWaived ? waiverNote : '',
+    forceClaimingStaffCut,
+    staffBankAccountMatch,
   };
-  if (!refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
+  if (!forceClaimingStaffCut && !refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
     // Quote customer overpayment: customer's own money — no uncleared-receipt hold (RefundModal).
     const skipUnclearedHold = overpaymentOnly;
     const holdForGate = skipUnclearedHold ? 0 : unclearedHoldNgn;
@@ -181,6 +198,8 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
       deductionRate: 0,
       companyCutWaived: false,
       companyCutWaiverNote: '',
+      forceClaimingStaffCut: false,
+      staffBankAccountMatch: false,
       unclearedReceiptHoldNgn: holdForGate,
       unclearedReceiptOffsetNgn: 0,
       payoutHeldForUnclearedReceipts: holdForGate > 0 && amountNgn > 0,
@@ -212,6 +231,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
  *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
+ *   forceClaimingStaffCut?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
@@ -231,6 +251,7 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
       unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
       honorCompanyCutWaiver: opts.honorCompanyCutWaiver,
       overpaymentOnly,
+      forceClaimingStaffCut: opts.forceClaimingStaffCut,
     })
   );
 }

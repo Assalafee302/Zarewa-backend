@@ -17,6 +17,7 @@
  */
 import { broadcastWorkspaceEvent } from './workspaceRoomsOps.js';
 import { bumpWorkspaceRevisions } from './workspaceRevision.js';
+import { debugSessionLog } from './debugSessionLog.js';
 
 /** Domains a desk pack can be invalidated for. */
 const KNOWN_DOMAINS = new Set(['sales', 'operations', 'finance', 'procurement']);
@@ -215,6 +216,11 @@ function runWorkspaceDataEventMiddleware(db, req, res, next) {
   const path = req.originalUrl || req.url || '';
   const domains = domainsForApiPath(path);
   const shell = isShellApiPath(path);
+  // #region agent log
+  if (!domains.length && !shell) {
+    debugSessionLog({ hypothesisId: 'A', location: 'workspaceDataEvents.js:unmapped', message: 'mutating write not mapped to domains/shell', data: { method: String(req.method || ''), path: String(path).slice(0, 120) } });
+  }
+  // #endregion
   if (!domains.length && !shell) return next();
 
   const sendJson = res.json.bind(res);
@@ -222,6 +228,9 @@ function runWorkspaceDataEventMiddleware(db, req, res, next) {
     try {
       const okStatus = res.statusCode >= 200 && res.statusCode < 300;
       if (okStatus && body?.ok !== false) {
+        // #region agent log
+        debugSessionLog({ hypothesisId: 'A', location: 'workspaceDataEvents.js:announce', message: 'post-commit revision bump + SSE invalidate', data: { method: String(req.method || ''), path: String(path).slice(0, 120), domains, shell, status: res.statusCode, branchId: shell ? null : (req.workspaceBranchId || null), hasDelta: Boolean(body?.delta) } });
+        // #endregion
         if (db) {
           bumpWorkspaceRevisions(db, {
             domains,
@@ -238,6 +247,10 @@ function runWorkspaceDataEventMiddleware(db, req, res, next) {
           reason: String(req.method),
           entityIds: entityIdsFromWriteBody(body),
         });
+      } else {
+        // #region agent log
+        debugSessionLog({ hypothesisId: 'A', location: 'workspaceDataEvents.js:skipAnnounce', message: 'write response skipped invalidation', data: { method: String(req.method || ''), path: String(path).slice(0, 80), status: res.statusCode, ok: body?.ok } });
+        // #endregion
       }
     } catch {
       // Never let announcing a write disturb the write's own response.

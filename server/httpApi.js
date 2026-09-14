@@ -197,6 +197,7 @@ import {
 } from './workspaceBranchGuards.js';
 import { sendIdempotentReplayIfAny, storeIdempotentSuccess, normalizeIdempotencyKey } from './idempotency.js';
 import { workspaceDataEventMiddleware } from './workspaceDataEvents.js';
+import { debugSessionLog } from './debugSessionLog.js';
 import { parseListQuery, sendPaginatedList } from './listPagination.js';
 import { financeHistoryListOpts, productionHistoryListOpts } from './listQueryOpts.js';
 import { apiError, apiForbidden, safeErrorMessage } from './apiError.js';
@@ -3540,8 +3541,14 @@ export function registerHttpApi(app, db) {
         const payload = await buildWorkspaceRevisionAsync(db, branchScope);
         const etag = jsonWeakEtag(payload);
         if (ifNoneMatchHit(req, etag)) {
+          // #region agent log
+          debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:revision304', message: 'workspace revision 304', data: { branchScope, revision: payload?.revision, domains: payload?.domains } });
+          // #endregion
           return res.status(304).end();
         }
+        // #region agent log
+        debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:revision200', message: 'workspace revision 200', data: { branchScope, revision: payload?.revision, domains: payload?.domains } });
+        // #endregion
         setWeakEtag(res, etag);
         return res.json(payload);
       },
@@ -3565,6 +3572,9 @@ export function registerHttpApi(app, db) {
           });
           // Compare the cheap durable domain revision before building a potentially large pack.
           if (ifNoneMatchHit(req, beforeEtag)) {
+            // #region agent log
+            debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:snapshot304', message: 'domain snapshot 304', data: { domain, branchScope, beforeRevision } });
+            // #endregion
             return res.status(304).end();
           }
           // Yield once so concurrent health/revision can run before the sync desk build.
@@ -3575,6 +3585,9 @@ export function registerHttpApi(app, db) {
           });
           const after = await buildWorkspaceRevisionAsync(db, branchScope);
           const revision = after.domains?.[domain] || after.revision;
+          // #region agent log
+          debugSessionLog({ hypothesisId: 'D', location: 'httpApi.js:snapshot200', message: 'domain snapshot rebuilt', data: { domain, branchScope, beforeRevision, revision, payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [] } });
+          // #endregion
           const etag = jsonWeakEtag({
             domain,
             branchScope,
@@ -3631,6 +3644,9 @@ export function registerHttpApi(app, db) {
         });
         const hit = bootstrapPollCache.get(cacheKey);
         if (hit && Date.now() < hit.expires) {
+          // #region agent log
+          debugSessionLog({ hypothesisId: 'C', location: 'httpApi.js:bootstrapCacheHit', message: 'bootstrap poll cache hit', data: { mode, branchScope, etagMatch: Boolean(ifNoneMatch && ifNoneMatch === hit.etag), msLeft: hit.expires - Date.now() } });
+          // #endregion
           if (ifNoneMatch && ifNoneMatch === hit.etag) {
             return res.status(304).end();
           }

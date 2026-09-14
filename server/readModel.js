@@ -573,9 +573,8 @@ export function listQuotations(db, branchScope = 'ALL', opts = {}) {
 }
 
 /**
- * Complete active quotation queue for creating cutting lists.
- * Headers only — product lines are fetched for the selected quote via GET /api/quotations/:id.
- * Final save still executes the authoritative cash/price/override gates in writeOps.
+ * Complete active quotation queue for creating cutting lists. Final save still executes
+ * the authoritative cash/price/override gates in writeOps.
  */
 export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
   const branch = branchWhere(db, 'quotations', branchScope);
@@ -593,11 +592,9 @@ export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
          ${branchSql}
        ORDER BY q.date_iso DESC, q.id DESC`
     )
-    .all(...branch.args);
-  // Omit quotationLines here: the picker only needs headers; CuttingListModal hydrates the
-  // selected quote. Returning every lines_json blob made the modal look empty when a slim
-  // desk row later overwrote the hydrated copy.
-  return rows.map((row) => mapQuotationRow(db, row, { includeLines: false }));
+    .all(...branch.args)
+    .map((row) => mapQuotationRow(db, row));
+  return enrichQuotationsWithLineTableBatch(db, rows, branchScope);
 }
 
 /** @param {import('better-sqlite3').Database} db */

@@ -1453,15 +1453,16 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const statusStmt = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`);
   return pos.map((row) => {
     const rawLines = linesByPoId.get(String(row.po_id || '').trim()) || [];
+    let effectiveStatus = row.status;
     if (
       !opts.skipSideEffects &&
       RECEIPT_PENDING_PO_STATUS_KEYS.has(normalizePoStatusKey(row.status)) &&
       poLinesFullyReceived(rawLines, mapPoLineFromDb)
     ) {
       reconcilePoReceiptStatusIfComplete(db, row.po_id);
+      // Re-read only when reconcile may have flipped status — avoid N+1 on desk bootstrap.
+      effectiveStatus = statusStmt.get(row.po_id)?.status ?? row.status;
     }
-    const refreshedPo = statusStmt.get(row.po_id);
-    const effectiveStatus = refreshedPo?.status ?? row.status;
     return {
       poID: row.po_id,
       supplierID: row.supplier_id,

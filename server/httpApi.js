@@ -7006,6 +7006,7 @@ export function registerHttpApi(app, db) {
         syncInTransitLoadFromPoLink(db, poId, req.user, syncOpts);
         const st = db.prepare(`SELECT status FROM purchase_orders WHERE po_id = ?`).get(poId);
         if (st?.status === 'In Transit') syncInTransitLoadFromTransportPost(db, poId, req.user, syncOpts);
+        return withPurchaseOrderWriteDelta(db, poId, r);
       }
       return r;
     });
@@ -7044,8 +7045,9 @@ export function registerHttpApi(app, db) {
       if (r.ok) {
         syncFinancePoTransportWorkItem(db, poId, req.user);
         syncInTransitLoadFromTransportPost(db, poId, req.user);
+        return res.status(200).json(withPurchaseOrderWriteDelta(db, poId, r));
       }
-      return res.status(r.ok ? 200 : 400).json(r);
+      return res.status(400).json(r);
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7920,7 +7922,8 @@ export function registerHttpApi(app, db) {
       });
     }
     if (r.ok) syncInTransitLoadFromGrn(db, req.params.poId, entries || [], req.user);
-    res.status(r.ok ? 200 : 400).json(r);
+    if (!r.ok) return res.status(400).json(r);
+    res.status(200).json(withPurchaseOrderWriteDelta(db, req.params.poId, r));
   });
 
   app.post('/api/inventory/stone-receipt', requirePermission('inventory.receive'), (req, res) => {

@@ -114,6 +114,22 @@ import {
   userMayApproveStaffPurchaseCredit,
   userMayRejectStaffPurchaseCredit,
 } from './staffPurchaseCreditOps.js';
+import { listRefundCreditApplications } from './refundCreditApplyOps.js';
+
+function snapshotRefundCreditApplications(db, { refundsOk, ledgerOk, branchScope }) {
+  if (!(refundsOk || ledgerOk)) return [];
+  try {
+    return listRefundCreditApplications(
+      db,
+      '',
+      branchScope === 'ALL' ? 'ALL' : branchScope,
+      financeHistoryListOpts()
+    );
+  } catch (e) {
+    console.error('[bootstrap] refundCreditApplications', e);
+    return [];
+  }
+}
 
 function userMayReceiveBranchExpenseCoachAlert(user) {
   if (!user) return false;
@@ -317,10 +333,13 @@ export function buildBootstrap(db, opts = {}) {
     advanceInEvents: ledgerOk ? listAdvanceInEvents(db, branchScope) : [],
     suppliers: procOk ? listSuppliers(db, branchScope) : [],
     transportAgents: procOk ? listTransportAgents(db, branchScope) : [],
-    associatedStaff: procOk || salesOk ? listAssociatedStaff(db, branchScope) : [],
+    // Refund-only desks need drivers/installers for payout splits without sales/procurement.
+    associatedStaff: procOk || salesOk || refundsOk ? listAssociatedStaff(db, branchScope) : [],
     associatedStaffPolicy: {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
+    // Credit-apply / settle UI — same rows sales/finance packs already ship.
+    refundCreditApplications: snapshotRefundCreditApplications(db, { refundsOk, ledgerOk, branchScope }),
     products: productsOk ? listProducts(db, branchScope) : [],
     purchaseOrders: poListOk ? listPurchaseOrders(db, branchScope, poListOpts) : [],
     coilLots: coilMovOk && !omitDesk.coilLots ? listCoilLots(db, branchScope) : [],

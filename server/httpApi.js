@@ -600,6 +600,7 @@ import { insertLedgerRows } from './writeOps.js';
 import { resolveQuotedUnitPrice } from './pricingResolve.js';
 import { ensureStoneFlatsheetProduct, ensureStoneProduct, isStoneMeterQuotationLinesJson } from './stoneInventory.js';
 import * as write from './writeOps.js';
+import { payRefundEntryWithOptionalWalletRelease } from './sales/refundPayWithWalletOps.js';
 import { recordBankCharge } from './bankChargeOps.js';
 import * as refundCreditApplyOps from './refundCreditApplyOps.js';
 import {
@@ -10110,9 +10111,13 @@ export function registerHttpApi(app, db) {
       const refundGate = assertRefundIdInWorkspace(db, req, req.params.refundId);
       if (!refundGate.ok) return res.status(refundGate.status).json({ ok: false, error: refundGate.error });
       const treasuryLines = normalizeTreasuryLines(req.body || {});
-      const r = write.payRefundEntry(db, req.params.refundId, {
-        ...(req.body || {}),
+      const body = req.body || {};
+      const r = payRefundEntryWithOptionalWalletRelease(db, req.params.refundId, {
+        ...body,
         paymentLines: treasuryLines,
+        releasePartnerWallet: Boolean(
+          body.releasePartnerWallet ?? body.releaseWallet ?? body.release_partner_wallet
+        ),
         paidBy: req.user.displayName,
         actor: req.user,
         workspaceBranchId: req.workspaceBranchId,

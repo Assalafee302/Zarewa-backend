@@ -149,7 +149,7 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
     expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(10_000);
   });
 
-  it('blocks cashier payout while the payee has unconfirmed receipts', () => {
+  it('blocks cashier payout while the payee has unconfirmed receipts (no override note)', () => {
     const r = payRefundEntry(db, REFUND_ID, {
       treasuryAccountId,
       actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
@@ -157,7 +157,98 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
       dateISO: '2026-05-22',
     });
     expect(r.ok).toBe(false);
-    expect(r.code).toBe('REFUND_PAYOUT_HELD_UNCLEARED');
+    // ₦10k hold is within cashier small-hold cap — note required to override.
+    expect(r.code).toBe('REFUND_UNCLEARED_OVERRIDE_NOTE_REQUIRED');
+  });
+
+  it('lets cashier override a small uncleared hold with a mandatory note', () => {
+    const r = payRefundEntry(db, REFUND_ID, {
+      treasuryAccountId,
+      actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
+      paidBy: 'Cashier',
+      dateISO: '2026-05-22',
+      paymentNote: 'Confirmed verbally with BM — receipts clearing tomorrow.',
+    });
+    expect(r.ok).toBe(true);
+    const updated = db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+    expect(Number(updated.paid_amount_ngn)).toBe(10_000);
+  });
+
+  it('does not hold payout for receipts on a different quotation than the refund', () => {
+    db.prepare(`UPDATE customer_refunds SET quotation_ref = ? WHERE refund_id = ?`).run(
+      'QT-REFUND-JOB',
+      REFUND_ID
+    );
+    try {
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      // Pending receipt is on QT-OTHER — must not freeze this job.
+      expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(0);
+      const r = payRefundEntry(db, REFUND_ID, {
+        treasuryAccountId,
+        actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
+        paidBy: 'Cashier',
+        dateISO: '2026-05-22',
+      });
+      expect(r.ok).toBe(true);
+    } finally {
+      db.prepare(`UPDATE customer_refunds SET quotation_ref = '' WHERE refund_id = ?`).run(REFUND_ID);
+      db.prepare(
+        `UPDATE customer_refunds
+         SET status = 'Approved', paid_amount_ngn = 0, paid_at_iso = NULL, paid_by = NULL, paid_by_user_id = NULL,
+             payment_note = 'Settled at approval: company cut ₦0 → retention ledger.'
+         WHERE refund_id = ?`
+      ).run(REFUND_ID);
+    }
+  });
+
+  it('still holds when an unconfirmed receipt is on the same quotation as the refund', () => {
+    db.prepare(`UPDATE customer_refunds SET quotation_ref = ? WHERE refund_id = ?`).run(
+      'QT-REFUND-JOB',
+      REFUND_ID
+    );
+    db.prepare(`UPDATE sales_receipts SET quotation_ref = ? WHERE id = ?`).run(
+      'QT-REFUND-JOB',
+      'RC-UNCLR-PAYEE'
+    );
+    try {
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(refundHeldNetCashDueNgn(db, row, 10_000)).toBe(10_000);
+      const targets = resolveCreditTargets(db, row, 10_000);
+      expect(targets[0].unclearedReceiptIds).toEqual(['RC-UNCLR-PAYEE']);
+      expect(targets[0].unclearedReceipts?.[0]?.quotationRef).toBe('QT-REFUND-JOB');
+    } finally {
+      db.prepare(`UPDATE customer_refunds SET quotation_ref = '' WHERE refund_id = ?`).run(REFUND_ID);
+      db.prepare(`UPDATE sales_receipts SET quotation_ref = 'QT-OTHER' WHERE id = ?`).run('RC-UNCLR-PAYEE');
+    }
+  });
+
+  it('blocks cashier override when the uncleared hold exceeds the small-hold cap', () => {
+    db.prepare(`UPDATE customer_refunds SET approved_amount_ngn = ?, amount_ngn = ? WHERE refund_id = ?`).run(
+      80_000,
+      80_000,
+      REFUND_ID
+    );
+    db.prepare(`UPDATE sales_receipts SET amount_ngn = ? WHERE id = ?`).run(80_000, 'RC-UNCLR-PAYEE');
+    try {
+      const row = db.prepare(`SELECT * FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(refundHeldNetCashDueNgn(db, row, 80_000)).toBe(80_000);
+      const r = payRefundEntry(db, REFUND_ID, {
+        treasuryAccountId,
+        actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
+        paidBy: 'Cashier',
+        dateISO: '2026-05-22',
+        paymentNote: 'Trying to override a large hold without manager.',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.code).toBe('REFUND_PAYOUT_HELD_UNCLEARED');
+      expect(Array.isArray(r.unclearedReceiptIds)).toBe(true);
+      expect(r.unclearedReceiptIds).toContain('RC-UNCLR-PAYEE');
+    } finally {
+      db.prepare(`UPDATE customer_refunds SET approved_amount_ngn = 10000, amount_ngn = 10000 WHERE refund_id = ?`).run(
+        REFUND_ID
+      );
+      db.prepare(`UPDATE sales_receipts SET amount_ngn = 25000 WHERE id = ?`).run('RC-UNCLR-PAYEE');
+    }
   });
 
   it('lets admin pay out as an exemption while receipts are still unconfirmed', () => {

@@ -3,6 +3,9 @@
  * Till/bank payout is held until cashier confirms those receipts — admin may override at pay time.
  * Small pending receipts under UNCLEARED_RECEIPT_PAYOUT_HOLD_MIN_NGN do not hold payout
  * (payment completions below that floor are ignored for the hold gate).
+ *
+ * When the refund has a quotation_ref, only receipts on that quotation (same job) hold payout —
+ * unrelated pending cash on the same customer must not freeze an approved refund.
  */
 import { receiptEffectiveCashNgn, isReceiptPendingClearance } from '../../shared/lib/receiptClearance.js';
 import { staffPurchaseCreditColumnsReady } from '../staffPurchaseCreditOps.js';
@@ -20,7 +23,7 @@ function roundMoney(v) {
 }
 
 function emptyFloat() {
-  return { totalNgn: 0, receiptCount: 0, receiptIds: [] };
+  return { totalNgn: 0, receiptCount: 0, receiptIds: [], receipts: [] };
 }
 
 function accumulateUnclearedRow(out, customerId, row) {
@@ -36,6 +39,12 @@ function accumulateUnclearedRow(out, customerId, row) {
   prev.totalNgn += amt;
   prev.receiptCount += 1;
   if (rid) prev.receiptIds.push(rid);
+  prev.receipts.push({
+    id: rid || null,
+    amountNgn: amt,
+    quotationRef: trim(row.quotation_ref),
+    customerId: cid,
+  });
   out.set(cid, prev);
 }
 
@@ -56,11 +65,21 @@ function branchFilterSql(db, branchId) {
 }
 
 /**
+ * Scope hold to the refund quotation when present — unrelated jobs on the same customer do not block.
+ * @param {string} [quotationRef]
+ */
+function quotationFilterSql(quotationRef) {
+  const qref = trim(quotationRef);
+  if (!qref) return { sql: '', args: [] };
+  return { sql: ` AND trim(IFNULL(sr.quotation_ref, '')) = ?`, args: [qref] };
+}
+
+/**
  * Receipts posted by claiming staff (HR login) that finance has not confirmed.
  * @param {import('better-sqlite3').Database} db
  * @param {string[]} salesCustomerIds
- * @param {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[] }>} [out]
- * @param {{ branchId?: string }} [opts]
+ * @param {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[], receipts: object[] }>} [out]
+ * @param {{ branchId?: string, quotationRef?: string }} [opts]
  */
 export function addUnclearedReceiptsPostedByClaimingStaff(db, salesCustomerIds, out = new Map(), opts = {}) {
   const ids = [...new Set((salesCustomerIds || []).map((id) => trim(id)).filter(Boolean))];
@@ -70,12 +89,14 @@ export function addUnclearedReceiptsPostedByClaimingStaff(db, salesCustomerIds, 
 
   const ph = ids.map(() => '?').join(',');
   const branch = branchFilterSql(db, opts.branchId);
+  const quote = quotationFilterSql(opts.quotationRef);
   let rows = [];
   try {
     rows = db
       .prepare(
         `SELECT h.sales_customer_id AS customer_id,
                 sr.id AS receipt_id,
+                sr.quotation_ref,
                 sr.amount_ngn,
                 sr.bank_received_amount_ngn,
                 sr.status,
@@ -86,9 +107,9 @@ export function addUnclearedReceiptsPostedByClaimingStaff(db, salesCustomerIds, 
          JOIN sales_receipts sr
            ON trim(IFNULL(sr.ledger_entry_id, '')) = trim(IFNULL(le.id, ''))
          WHERE trim(IFNULL(h.sales_customer_id, '')) IN (${ph})
-           AND ${PENDING_RECEIPT_SQL}${branch.sql}`
+           AND ${PENDING_RECEIPT_SQL}${branch.sql}${quote.sql}`
       )
-      .all(...ids, ...branch.args);
+      .all(...ids, ...branch.args, ...quote.args);
   } catch {
     return out;
   }
@@ -101,10 +122,11 @@ export function addUnclearedReceiptsPostedByClaimingStaff(db, salesCustomerIds, 
 
 /**
  * Receipts sitting on the customer account that finance has not confirmed.
+ * When opts.quotationRef is set, only that quotation's receipts hold payout.
  * @param {import('better-sqlite3').Database} db
  * @param {string[]} customerIds
- * @param {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[] }>} [out]
- * @param {{ branchId?: string }} [opts]
+ * @param {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[], receipts: object[] }>} [out]
+ * @param {{ branchId?: string, quotationRef?: string }} [opts]
  */
 export function addUnclearedReceiptsOnCustomerAccounts(db, customerIds, out = new Map(), opts = {}) {
   const ids = [...new Set((customerIds || []).map((id) => trim(id)).filter(Boolean))];
@@ -112,21 +134,23 @@ export function addUnclearedReceiptsOnCustomerAccounts(db, customerIds, out = ne
 
   const ph = ids.map(() => '?').join(',');
   const branch = branchFilterSql(db, opts.branchId);
+  const quote = quotationFilterSql(opts.quotationRef);
   let rows = [];
   try {
     rows = db
       .prepare(
         `SELECT sr.customer_id AS customer_id,
                 sr.id AS receipt_id,
+                sr.quotation_ref,
                 sr.amount_ngn,
                 sr.bank_received_amount_ngn,
                 sr.status,
                 sr.finance_reconciliation_saved_at_iso
          FROM sales_receipts sr
          WHERE trim(IFNULL(sr.customer_id, '')) IN (${ph})
-           AND ${PENDING_RECEIPT_SQL}${branch.sql}`
+           AND ${PENDING_RECEIPT_SQL}${branch.sql}${quote.sql}`
       )
-      .all(...ids, ...branch.args);
+      .all(...ids, ...branch.args, ...quote.args);
   } catch {
     return out;
   }
@@ -141,9 +165,8 @@ export function addUnclearedReceiptsOnCustomerAccounts(db, customerIds, out = ne
  * Combined uncleared float for refund payees: receipts they posted (staff) plus receipts on their account.
  * @param {import('better-sqlite3').Database} db
  * @param {string[]} salesCustomerIds
- * @param {{ branchId?: string }} [opts] scope to one branch (a cashier can only confirm receipts on
- *   their own branch, so a hold from another branch's receipt would otherwise be unresolvable)
- * @returns {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[] }>}
+ * @param {{ branchId?: string, quotationRef?: string }} [opts] scope to one branch + optional quotation
+ * @returns {Map<string, { totalNgn: number, receiptCount: number, receiptIds: string[], receipts: object[] }>}
  */
 export function unclearedReceiptFloatBySalesCustomerIds(db, salesCustomerIds, opts = {}) {
   const out = new Map();
@@ -155,7 +178,7 @@ export function unclearedReceiptFloatBySalesCustomerIds(db, salesCustomerIds, op
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} salesCustomerId
- * @param {{ branchId?: string }} [opts]
+ * @param {{ branchId?: string, quotationRef?: string }} [opts]
  */
 export function unclearedReceiptFloatForSalesCustomer(db, salesCustomerId, opts = {}) {
   const map = unclearedReceiptFloatBySalesCustomerIds(db, [salesCustomerId], opts);
@@ -173,4 +196,15 @@ export function unclearedTotalsMap(floatMap) {
     out.set(cid, roundMoney(info?.totalNgn));
   }
   return out;
+}
+
+/**
+ * Scope opts used when resolving uncleared float for a refund row.
+ * @param {Record<string, unknown>} refundRow
+ */
+export function unclearedFloatOptsForRefund(refundRow) {
+  return {
+    branchId: trim(refundRow?.branch_id),
+    quotationRef: trim(refundRow?.quotation_ref ?? refundRow?.quotationRef),
+  };
 }

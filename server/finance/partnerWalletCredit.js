@@ -10,7 +10,10 @@ import {
   applyRefundStaffAllocationDeduction,
 } from '../../shared/lib/refundStaffAllocationDeduction.js';
 import { refundCategoriesAreOverpaymentOnly } from '../../shared/lib/refundCreditApply.js';
-import { unclearedReceiptFloatBySalesCustomerIds } from '../sales/refundClaimingStaffUnclearedReceipts.js';
+import {
+  unclearedFloatOptsForRefund,
+  unclearedReceiptFloatBySalesCustomerIds,
+} from '../sales/refundClaimingStaffUnclearedReceipts.js';
 import {
   buildHrStaffBankAccountKeySet,
   markRefundSplitsStaffBankMatch,
@@ -136,7 +139,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     const unclearedFloatByCustomerId = unclearedReceiptFloatBySalesCustomerIds(
       db,
       usableMarked.map((s) => s.recipientCustomerID).filter(Boolean),
-      { branchId: String(refundRow.branch_id || '').trim() }
+      unclearedFloatOptsForRefund(refundRow)
     );
     const splitSum = usableMarked.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
@@ -150,6 +153,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         const liveUncleared = unclearedFloatByCustomerId.get(String(s.recipientCustomerID || '').trim());
         const liveUnclearedHoldNgn = roundMoney(liveUncleared?.totalNgn);
         const unclearedReceiptIds = Array.isArray(liveUncleared?.receiptIds) ? liveUncleared.receiptIds : [];
+        const unclearedReceipts = Array.isArray(liveUncleared?.receipts) ? liveUncleared.receipts : [];
         // Live float only — never floor on legacy unclearedReceiptOffsetNgn (that sticky floor
         // kept holds after receipts were confirmed).
         const unclearedReceiptHoldNgn = liveUnclearedHoldNgn;
@@ -207,6 +211,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
             companyDeductionNgn,
             unclearedReceiptHoldNgn,
             unclearedReceiptIds,
+            unclearedReceipts,
             payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
             payeeName,
             payeeBankName,
@@ -233,6 +238,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
           companyDeductionNgn,
           unclearedReceiptHoldNgn,
           unclearedReceiptIds,
+          unclearedReceipts,
           payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
           payeeName,
           payeeBankName,
@@ -262,9 +268,11 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   ).trim();
   const hrKeys = buildHrStaffBankAccountKeySet(db);
   const staffBankMatch = payeeAccountMatchesHrStaffBank(payeeAccountNo, hrKeys);
-  const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(db, [customerId], {
-    branchId: String(refundRow.branch_id || '').trim(),
-  }).get(customerId);
+  const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(
+    db,
+    [customerId],
+    unclearedFloatOptsForRefund(refundRow)
+  ).get(customerId);
   // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal),
   // unless the payee account is an HR staff bank (forced claiming-staff cut path).
   const unclearedHoldNgn =
@@ -274,6 +282,12 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       ? []
       : Array.isArray(noSplitUncleared?.receiptIds)
         ? noSplitUncleared.receiptIds
+        : [];
+  const unclearedReceipts =
+    overpaymentOnlyNoSplit && !staffBankMatch
+      ? []
+      : Array.isArray(noSplitUncleared?.receipts)
+        ? noSplitUncleared.receipts
         : [];
 
   if (staffBankMatch) {
@@ -324,6 +338,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
         companyDeductionNgn,
         unclearedReceiptHoldNgn: unclearedHoldNgn,
         unclearedReceiptIds,
+        unclearedReceipts,
         payoutHeldForUnclearedReceipts: Boolean(withDeduction.payoutHeldForUnclearedReceipts),
         staffBankAccountMatch: true,
         payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
@@ -343,6 +358,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       amountNgn: approved,
       unclearedReceiptHoldNgn: unclearedHoldNgn,
       unclearedReceiptIds,
+      unclearedReceipts,
       payoutHeldForUnclearedReceipts,
       payeeName: String(refundRow.payee_name || resolved?.payeeName || '').trim(),
       payeeBankName: String(refundRow.payee_bank_name || resolved?.payeeBankName || '').trim(),

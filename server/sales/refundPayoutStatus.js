@@ -10,8 +10,11 @@ import {
   refundHeldNetCashDueNgn,
   refundNetCashDueNgn,
   refundSettledAtApprovalNgn,
+  resolveCreditTargets,
+  listPartnerWalletOpenCreditsForRefund,
 } from '../finance/partnerWalletCredit.js';
 import { refundTillPayableNgn } from '../refundHandlers.js';
+import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../../shared/lib/refundUnclearedPayoutHold.js';
 import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
 import { refundCreditSettledNgn } from './refundCreditLedger.js';
 
@@ -163,7 +166,7 @@ export function refundHasPayeeMoneyOut(db, row) {
  * Unified settlement snapshot for list/detail APIs and cashier UX.
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} row
- * @param {{ walletOpenNgn?: number }} [opts]
+ * @param {{ walletOpenNgn?: number, actor?: object, hasPermission?: (p: string) => boolean }} [opts]
  */
 export function buildRefundSettlementSummary(db, row, opts = {}) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
@@ -187,6 +190,40 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       : partnerWalletEnabled() && refundId
         ? openWalletCreditNgnForRefund(db, refundId)
         : 0;
+
+  let unclearedReceipts = [];
+  let unclearedReceiptIds = [];
+  if (heldUnclearedNgn > 0 || PAYOUT_LIFECYCLE_STATUSES.has(storedStatus)) {
+    try {
+      const targets = resolveCreditTargets(db, row, approvedNgn);
+      const seen = new Set();
+      for (const t of targets) {
+        for (const r of Array.isArray(t.unclearedReceipts) ? t.unclearedReceipts : []) {
+          const id = String(r?.id || '').trim();
+          if (id && seen.has(id)) continue;
+          if (id) seen.add(id);
+          unclearedReceipts.push({
+            id: id || null,
+            amountNgn: roundMoney(r?.amountNgn),
+            quotationRef: String(r?.quotationRef || '').trim(),
+            customerId: String(r?.customerId || t.partyId || '').trim(),
+          });
+        }
+        for (const id of Array.isArray(t.unclearedReceiptIds) ? t.unclearedReceiptIds : []) {
+          const rid = String(id || '').trim();
+          if (rid && !seen.has(rid)) {
+            seen.add(rid);
+            unclearedReceiptIds.push(rid);
+          }
+        }
+      }
+      unclearedReceiptIds = [...seen];
+    } catch {
+      unclearedReceipts = [];
+      unclearedReceiptIds = [];
+    }
+  }
+
   const tillPayableNgn = refundTillPayableNgn({
     cashOutstandingNgn,
     heldNetNgn: heldUnclearedNgn,
@@ -222,12 +259,85 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     }
   }
 
+  /** @type {{ code: string, message: string, action: string }[]} */
+  const payoutBlockers = [];
+  if (heldUnclearedNgn > 0 && tillPayableNgn <= 0 && walletOpenNgn <= 0) {
+    payoutBlockers.push({
+      code: 'REFUND_PAYOUT_HELD_UNCLEARED',
+      message: `₦${heldUnclearedNgn.toLocaleString('en-NG')} held until unconfirmed receipts on this quotation are confirmed.`,
+      action:
+        unclearedReceiptIds.length > 0
+          ? `Confirm receipt(s) ${unclearedReceiptIds.join(', ')}, then Pay.`
+          : 'Confirm unconfirmed receipts for this quotation, then Pay.',
+    });
+  } else if (heldUnclearedNgn > 0 && tillPayableNgn > 0) {
+    payoutBlockers.push({
+      code: 'REFUND_PAYOUT_PARTIAL_HOLD',
+      message: `₦${heldUnclearedNgn.toLocaleString('en-NG')} still held; ₦${tillPayableNgn.toLocaleString('en-NG')} ready from till/bank.`,
+      action:
+        unclearedReceiptIds.length > 0
+          ? `You can pay the ready slice now, or confirm ${unclearedReceiptIds.join(', ')} first.`
+          : 'You can pay the ready slice now, or confirm receipts first.',
+    });
+  }
+  if (walletOpenNgn > 0) {
+    payoutBlockers.push({
+      code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
+      message: `₦${walletOpenNgn.toLocaleString('en-NG')} sits on partner wallet for this refund.`,
+      action: 'Release partner wallet from this Pay dialog (same treasury account), then till/bank if anything remains.',
+    });
+  }
+
+  const nextActions = [];
+  if (unclearedReceiptIds.length > 0) {
+    nextActions.push({
+      code: 'confirm_receipts',
+      label: 'Confirm receipts',
+      receiptIds: unclearedReceiptIds,
+    });
+  }
+  if (walletOpenNgn > 0) {
+    nextActions.push({
+      code: 'release_partner_wallet',
+      label: 'Release partner wallet',
+      amountNgn: walletOpenNgn,
+    });
+  }
+  if (tillPayableNgn > 0) {
+    nextActions.push({
+      code: 'pay_till',
+      label: 'Pay till/bank',
+      amountNgn: tillPayableNgn,
+    });
+  }
+  if (
+    heldUnclearedNgn > 0 &&
+    heldUnclearedNgn <= CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN &&
+    tillPayableNgn <= 0
+  ) {
+    nextActions.push({
+      code: 'cashier_override_small_hold',
+      label: `Override small hold (≤ ₦${CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN.toLocaleString('en-NG')}) with note`,
+      amountNgn: heldUnclearedNgn,
+    });
+  }
+
+  let walletOpenCredits = [];
+  try {
+    walletOpenCredits = refundId ? listPartnerWalletOpenCreditsForRefund(db, refundId) : [];
+  } catch {
+    walletOpenCredits = [];
+  }
+
   return {
     approvedNgn,
     companyCutNgn,
     netCashDueNgn,
     heldUnclearedNgn,
+    unclearedReceiptIds,
+    unclearedReceipts,
     walletOpenNgn,
+    walletOpenCredits,
     walletWithdrawnNgn,
     treasuryPaidNgn,
     creditAppliedNgn,
@@ -242,6 +352,9 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
     tillPayableNgn,
     status: lifecycleStatus,
     publicLabel,
+    payoutBlockers,
+    nextActions,
+    cashierOverrideHoldMaxNgn: CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN,
     canCancelBeforePay: Boolean(
       (lifecycleStatus === 'Approved' || storedStatus === 'Approved') &&
         payeeSettledNgn <= 0 &&

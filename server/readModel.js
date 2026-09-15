@@ -3252,6 +3252,7 @@ function liveEnrichRefundSplitUnclearedHolds(db, row, splitDistributions, approv
       unclearedReceiptHoldNgn: live.unclearedReceiptHoldNgn,
       payoutHeldForUnclearedReceipts: live.payoutHeldForUnclearedReceipts,
       unclearedReceiptIds: live.unclearedReceiptIds || [],
+      unclearedReceipts: live.unclearedReceipts || [],
     };
   });
 }

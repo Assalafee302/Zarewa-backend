@@ -3,6 +3,12 @@
  * Enforced in decideRefundRequest (controlOps) and payRefundEntry (writeOps).
  */
 import { financeStrictBlockWouldApply } from './financeFeatureFlags.js';
+import {
+  CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN,
+  actorMayOverrideRefundUnclearedPayoutHold as actorMayOverrideRefundUnclearedPayoutHoldShared,
+} from '../shared/lib/refundUnclearedPayoutHold.js';
+
+export { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN };
 
 /** @param {unknown} name */
 export function normalizeRefundActorName(name) {
@@ -49,23 +55,14 @@ export function refundTillPayableNgn({
 }
 
 /**
- * Cashiers cannot till-pay a refund while the payee has unconfirmed receipts.
- * Branch manager, Head of Accounts, or admin may override (note required for non-admin).
+ * Cashiers cannot till-pay a large uncleared hold; small holds (≤ ₦50k) may be overridden with a note.
+ * Branch manager, Head of Accounts, or admin may override any size (note required for non-admin).
+ * @param {{ roleKey?: string, role_key?: string, permissions?: string[] } | null | undefined} actor
+ * @param {(perm: string) => boolean} [hasPermission]
+ * @param {{ heldNetNgn?: number }} [opts]
  */
-export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission) {
-  if (isRefundAdminTrialActor(actor, hasPermission)) return true;
-  const rk = String(actor?.roleKey || actor?.role_key || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_');
-  if (rk === 'cashier' || rk === 'md' || rk === 'ceo' || rk === 'chairman') return false;
-  if (rk === 'sales_manager' || rk === 'branch_manager' || rk === 'finance_manager' || rk === 'admin') {
-    return true;
-  }
-  if (typeof hasPermission === 'function') {
-    if (hasPermission('refunds.approve') || hasPermission('finance.approve')) return true;
-  }
-  return false;
+export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, opts = {}) {
+  return actorMayOverrideRefundUnclearedPayoutHoldShared(actor, hasPermission, opts);
 }
 
 /** True when override is admin trial / * — note still recommended but not required. */

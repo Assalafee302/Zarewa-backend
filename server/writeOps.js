@@ -139,12 +139,14 @@ import {
 import { isQuotationActiveRefundLockError } from '../shared/lib/refundCreditApply.js';
 import {
   assertRefundMoneyOutWithinApproved,
+  buildRefundSettlementSummary,
   refundCashOutstandingNgn,
   refundStatusAllowsTreasuryPayout,
   repairRefundPayoutStateTx,
   resolveRefundStatus,
 } from './sales/refundPayoutStatus.js';
 import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutHold, actorIsRefundUnclearedHoldAdminOverride, refundTillPayableNgn } from './refundHandlers.js';
+import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../shared/lib/refundUnclearedPayoutHold.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
 import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
 import {
@@ -8962,9 +8964,11 @@ export function payRefundEntry(db, refundId, payload) {
     return { ok: false, error: 'Refund has already been fully paid.' };
   }
   const hasPerm = (p) => userHasPermission(payload.actor, p);
-  const mayOverrideUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm);
-  const adminMayPayUncleared = mayOverrideUncleared;
   const heldNetNgn = refundHeldNetCashDueNgn(db, row, approvedAmountNgn);
+  const mayOverrideUncleared = actorMayOverrideRefundUnclearedPayoutHold(payload.actor, hasPerm, {
+    heldNetNgn,
+  });
+  const adminMayPayUncleared = mayOverrideUncleared;
   const openWalletNgn = partnerWalletEnabled() ? openWalletCreditNgnForRefund(db, refundId) : 0;
   const tillPayableNgn = refundTillPayableNgn({
     cashOutstandingNgn,
@@ -8972,20 +8976,50 @@ export function payRefundEntry(db, refundId, payload) {
     adminMayPayUncleared,
     openWalletNgn,
   });
+  const settlementHint = () => {
+    try {
+      return buildRefundSettlementSummary(db, row, { walletOpenNgn: openWalletNgn });
+    } catch {
+      return null;
+    }
+  };
   if (openWalletNgn > 0 && tillPayableNgn <= 0) {
+    const summary = settlementHint();
     return {
       ok: false,
       error:
-        'This refund still has partner-wallet balance. Release it from the refund payout dialog (Partner wallet section), then retry till/bank if anything remains.',
+        'This refund still has partner-wallet balance. Release it from the refund payout dialog (Partner wallet section), or send releasePartnerWallet: true on this pay request.',
       code: 'PARTNER_WALLET_WITHDRAWAL_REQUIRED',
+      heldUnclearedNgn: heldNetNgn,
+      tillPayableNgn,
+      walletOpenNgn: openWalletNgn,
+      unclearedReceiptIds: summary?.unclearedReceiptIds || [],
+      unclearedReceipts: summary?.unclearedReceipts || [],
+      payoutBlockers: summary?.payoutBlockers || [],
+      nextActions: summary?.nextActions || [],
+      walletOpenCredits: summary?.walletOpenCredits || [],
     };
   }
   if (!adminMayPayUncleared && tillPayableNgn <= 0 && heldNetNgn > 0) {
+    const summary = settlementHint();
+    const canCashierOverride =
+      String(payload.actor?.roleKey || payload.actor?.role_key || '')
+        .trim()
+        .toLowerCase() === 'cashier' && heldNetNgn <= CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN;
     return {
       ok: false,
       code: 'REFUND_PAYOUT_HELD_UNCLEARED',
-      error:
-        'Till/bank payout is held until uncleared receipts for the payee are confirmed. Branch manager, Head of Accounts, or an administrator can release with a note. Overpayment may still be used for cashier referral/confirmation on a receipt.',
+      error: canCashierOverride
+        ? `Till/bank payout is held for ₦${heldNetNgn.toLocaleString('en-NG')} of unconfirmed receipts on this quotation. Confirm those receipts, or override with a payment note (at least 10 characters) — held is within the cashier cap of ₦${CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN.toLocaleString('en-NG')}.`
+        : 'Till/bank payout is held until uncleared receipts for this quotation are confirmed. Branch manager, Head of Accounts, or an administrator can release with a note. Cashiers may override small holds (≤ ₦50,000) with a note.',
+      heldUnclearedNgn: heldNetNgn,
+      tillPayableNgn,
+      walletOpenNgn: openWalletNgn,
+      unclearedReceiptIds: summary?.unclearedReceiptIds || [],
+      unclearedReceipts: summary?.unclearedReceipts || [],
+      payoutBlockers: summary?.payoutBlockers || [],
+      nextActions: summary?.nextActions || [],
+      cashierOverrideHoldMaxNgn: CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN,
     };
   }
   const defaultPaidDay =

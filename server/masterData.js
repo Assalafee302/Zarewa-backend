@@ -3,6 +3,7 @@ import { voidRecentQuotationsAfterMasterPriceChange } from './quotationLifecycle
 import { canonicalColourName, normalizeColourKey } from '../shared/lib/colourCanonicalization.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { decorateSetupGaugesForBranch } from '../shared/lib/gaugeDisplayAlias.js';
+import { listBranches } from './branches.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -10,6 +11,165 @@ function roundMoney(value) {
 
 function trimText(value) {
   return String(value ?? '').trim();
+}
+
+function quoteItemBranchTableReady(db) {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_item_branch'`).get()
+  );
+}
+
+function normalizeWorkspaceBranchId(branchId) {
+  const bid = trimText(branchId);
+  if (!bid || bid.toUpperCase() === 'ALL') return '';
+  return bid;
+}
+
+/**
+ * Ensure every accessory quote item has a price/active overlay on every active branch.
+ * Copies base catalog prices when an overlay row is missing.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function ensureAccessoryQuoteItemBranchOverlays(db) {
+  if (!quoteItemBranchTableReady(db)) return;
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) {
+    return;
+  }
+  const branches = listBranches(db)
+    .filter((b) => b.active !== false)
+    .map((b) => String(b.id || '').trim())
+    .filter(Boolean);
+  if (!branches.length) return;
+
+  const sqiCols = new Set(
+    db.prepare(`PRAGMA table_info(setup_quote_items)`).all().map((c) => c.name)
+  );
+  const hasFloor = sqiCols.has('floor_unit_price_ngn');
+  const accessories = db
+    .prepare(
+      hasFloor
+        ? `SELECT item_id, default_unit_price_ngn, COALESCE(floor_unit_price_ngn, 0) AS floor_unit_price_ngn, active
+           FROM setup_quote_items WHERE lower(trim(item_type)) = 'accessory'`
+        : `SELECT item_id, default_unit_price_ngn, 0 AS floor_unit_price_ngn, active
+           FROM setup_quote_items WHERE lower(trim(item_type)) = 'accessory'`
+    )
+    .all();
+  if (!accessories.length) return;
+
+  const exists = db.prepare(
+    `SELECT 1 FROM setup_quote_item_branch WHERE item_id = ? AND branch_id = ?`
+  );
+  const ins = db.prepare(
+    `INSERT INTO setup_quote_item_branch (
+       item_id, branch_id, default_unit_price_ngn, floor_unit_price_ngn, active
+     ) VALUES (?,?,?,?,?)`
+  );
+  db.transaction(() => {
+    for (const row of accessories) {
+      const itemId = String(row.item_id || '').trim();
+      if (!itemId) continue;
+      const def = roundMoney(row.default_unit_price_ngn);
+      const floor = roundMoney(row.floor_unit_price_ngn);
+      const active = boolFlag(row.active);
+      for (const bid of branches) {
+        if (exists.get(itemId, bid)) continue;
+        ins.run(itemId, bid, def, floor, active);
+      }
+    }
+  })();
+}
+
+/**
+ * Create setup_quote_item_branch and seed overlays for accessory × active branch.
+ * @param {import('better-sqlite3').Database} db
+ */
+export function migrateSetupQuoteItemBranch(db) {
+  if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_items'`).get()) {
+    return;
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS setup_quote_item_branch (
+      item_id TEXT NOT NULL,
+      branch_id TEXT NOT NULL,
+      default_unit_price_ngn INTEGER NOT NULL DEFAULT 0,
+      floor_unit_price_ngn INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (item_id, branch_id),
+      FOREIGN KEY (item_id) REFERENCES setup_quote_items(item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_setup_quote_item_branch_branch
+      ON setup_quote_item_branch(branch_id);
+  `);
+  ensureAccessoryQuoteItemBranchOverlays(db);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} itemId
+ * @param {string} branchId
+ */
+function getQuoteItemBranchOverlay(db, itemId, branchId) {
+  if (!quoteItemBranchTableReady(db) || !itemId || !branchId) return null;
+  return db
+    .prepare(
+      `SELECT default_unit_price_ngn, floor_unit_price_ngn, active
+       FROM setup_quote_item_branch WHERE item_id = ? AND branch_id = ?`
+    )
+    .get(itemId, branchId);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} itemId
+ * @param {string} branchId
+ * @param {{ defaultUnitPriceNgn: number; floorUnitPriceNgn: number; active: number }} prices
+ */
+function upsertQuoteItemBranchOverlay(db, itemId, branchId, prices) {
+  if (!quoteItemBranchTableReady(db) || !itemId || !branchId) return;
+  db.prepare(
+    `INSERT INTO setup_quote_item_branch (
+       item_id, branch_id, default_unit_price_ngn, floor_unit_price_ngn, active
+     ) VALUES (?,?,?,?,?)
+     ON CONFLICT(item_id, branch_id) DO UPDATE SET
+       default_unit_price_ngn = excluded.default_unit_price_ngn,
+       floor_unit_price_ngn = excluded.floor_unit_price_ngn,
+       active = excluded.active`
+  ).run(
+    itemId,
+    branchId,
+    roundMoney(prices.defaultUnitPriceNgn),
+    roundMoney(prices.floorUnitPriceNgn),
+    boolFlag(prices.active)
+  );
+}
+
+/**
+ * Merge accessory quote items with per-branch price/active overlays.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object[]} quoteItems
+ * @param {string} branchId normalized workspace branch (empty = HQ / ALL base catalog)
+ */
+function applyAccessoryBranchOverlays(db, quoteItems, branchId) {
+  if (!branchId || !quoteItemBranchTableReady(db)) {
+    return quoteItems.map((q) => {
+      if (String(q.itemType || '').toLowerCase() !== 'accessory') return q;
+      return { ...q, branchId: '' };
+    });
+  }
+  return quoteItems.map((q) => {
+    if (String(q.itemType || '').toLowerCase() !== 'accessory') return q;
+    const overlay = getQuoteItemBranchOverlay(db, q.id, branchId);
+    if (!overlay) {
+      return { ...q, branchId };
+    }
+    return {
+      ...q,
+      branchId,
+      defaultUnitPriceNgn: roundMoney(overlay.default_unit_price_ngn),
+      floorUnitPriceNgn: roundMoney(overlay.floor_unit_price_ngn),
+      active: Boolean(overlay.active),
+    };
+  });
 }
 
 function boolFlag(value) {
@@ -631,14 +791,16 @@ function listRows(db, kind) {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ branchId?: string | null }} [opts] — when branchId is BR-YL, gauges get displayLabel / quotationOption
+ * @param {{ branchId?: string | null }} [opts] — when branchId is a real branch, gauges get display aliases
+ *   and accessory quote items merge per-branch price/active overlays
  */
 export function listMasterData(db, opts = {}) {
   const branchId = opts?.branchId != null ? String(opts.branchId).trim() : '';
-  const scopeOk = branchId && branchId.toUpperCase() !== 'ALL' ? branchId : '';
+  const scopeOk = normalizeWorkspaceBranchId(branchId);
   const gauges = decorateSetupGaugesForBranch(listRows(db, 'gauges'), scopeOk || null);
+  const quoteItems = applyAccessoryBranchOverlays(db, listRows(db, 'quote-items'), scopeOk);
   return {
-    quoteItems: listRows(db, 'quote-items'),
+    quoteItems,
     colours: listRows(db, 'colours'),
     gauges,
     materialTypes: listRows(db, 'material-types'),
@@ -771,6 +933,25 @@ function assertNoDuplicateSetupColour(db, row, excludeId) {
   }
 }
 
+function existingBasePrice(db, itemId, which) {
+  const col = which === 'floor' ? 'floor_unit_price_ngn' : 'default_unit_price_ngn';
+  try {
+    const r = db.prepare(`SELECT ${col} AS v FROM setup_quote_items WHERE item_id = ?`).get(itemId);
+    return r?.v;
+  } catch {
+    return 0;
+  }
+}
+
+function existingBaseActive(db, itemId) {
+  try {
+    const r = db.prepare(`SELECT active FROM setup_quote_items WHERE item_id = ?`).get(itemId);
+    return boolFlag(r?.active);
+  } catch {
+    return 1;
+  }
+}
+
 export function upsertMasterDataRecord(db, kind, payload, actor) {
   const resolved = resolveKind(kind);
   const cfg = MASTER_DATA_CONFIG[resolved];
@@ -785,7 +966,24 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
   if (resolved === 'colours' && row.active) {
     assertNoDuplicateSetupColour(db, row, existing ? id : null);
   }
-  const stmt = getStatements(resolved, row);
+
+  const accessoryBranchId =
+    resolved === 'quote-items' && String(row.itemType || '').toLowerCase() === 'accessory'
+      ? normalizeWorkspaceBranchId(payload?.branchId ?? payload?.branch_id)
+      : '';
+  const useAccessoryOverlay = Boolean(accessoryBranchId) && quoteItemBranchTableReady(db);
+
+  // Branch accessory write: keep shared catalog identity; preserve base prices on update.
+  const stmtRow = useAccessoryOverlay
+    ? {
+        ...row,
+        defaultUnitPriceNgn: existing ? roundMoney(existingBasePrice(db, id, 'default')) : row.defaultUnitPriceNgn,
+        floorUnitPriceNgn: existing ? roundMoney(existingBasePrice(db, id, 'floor')) : row.floorUnitPriceNgn,
+        active: existing ? existingBaseActive(db, id) : row.active,
+      }
+    : row;
+
+  const stmt = getStatements(resolved, stmtRow);
   db.transaction(() => {
     if (existing) {
       db.prepare(stmt.updateSql).run(...stmt.values, id);
@@ -807,6 +1005,32 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
         }
       }
     }
+
+    if (resolved === 'quote-items' && String(row.itemType || '').toLowerCase() === 'accessory') {
+      if (useAccessoryOverlay) {
+        upsertQuoteItemBranchOverlay(db, id, accessoryBranchId, {
+          defaultUnitPriceNgn: row.defaultUnitPriceNgn,
+          floorUnitPriceNgn: row.floorUnitPriceNgn,
+          active: row.active,
+        });
+      }
+      ensureAccessoryQuoteItemBranchOverlays(db);
+      if (!useAccessoryOverlay && quoteItemBranchTableReady(db)) {
+        // HQ / ALL update: sync prices+active onto every branch overlay from the base row.
+        const branches = listBranches(db)
+          .filter((b) => b.active !== false)
+          .map((b) => String(b.id || '').trim())
+          .filter(Boolean);
+        for (const bid of branches) {
+          upsertQuoteItemBranchOverlay(db, id, bid, {
+            defaultUnitPriceNgn: row.defaultUnitPriceNgn,
+            floorUnitPriceNgn: row.floorUnitPriceNgn,
+            active: row.active,
+          });
+        }
+      }
+    }
+
     if (actor) {
       appendAuditLog(db, {
         actor,
@@ -814,28 +1038,76 @@ export function upsertMasterDataRecord(db, kind, payload, actor) {
         entityKind: cfg.auditKind,
         entityId: id,
         note: `${row.label || row.name || row.itemName || id} saved in setup`,
-        details: { collection: resolved },
+        details: {
+          collection: resolved,
+          ...(accessoryBranchId ? { branchId: accessoryBranchId } : {}),
+        },
       });
     }
   })();
   if (resolved === 'quote-items' || resolved === 'price-list') {
     try {
-      voidRecentQuotationsAfterMasterPriceChange(db, 'ALL');
+      voidRecentQuotationsAfterMasterPriceChange(db, accessoryBranchId || 'ALL');
     } catch (e) {
       console.error('[zarewa] void quotations after master price change failed', e);
     }
   }
-  return { ok: true, id };
+  return { ok: true, id, ...(accessoryBranchId ? { branchId: accessoryBranchId } : {}) };
 }
 
-export function deleteMasterDataRecord(db, kind, recordId, actor) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} kind
+ * @param {string} recordId
+ * @param {object | null} actor
+ * @param {{ branchId?: string | null }} [opts]
+ */
+export function deleteMasterDataRecord(db, kind, recordId, actor, opts = {}) {
   const resolved = resolveKind(kind);
   const cfg = MASTER_DATA_CONFIG[resolved];
   const id = trimText(recordId);
   if (!id) return { ok: false, error: 'Record id is required.' };
   const row = db.prepare(`SELECT * FROM ${cfg.table} WHERE ${cfg.idColumn} = ?`).get(id);
   if (!row) return { ok: false, error: 'Setup record not found.' };
+
+  const branchId = normalizeWorkspaceBranchId(opts?.branchId ?? opts?.branch_id);
+  const isAccessory =
+    resolved === 'quote-items' && String(row.item_type || '').toLowerCase() === 'accessory';
+
+  // Branch-scoped accessory delete: deactivate overlay for that branch only.
+  if (isAccessory && branchId && quoteItemBranchTableReady(db)) {
+    const overlay = getQuoteItemBranchOverlay(db, id, branchId);
+    const baseDef = roundMoney(row.default_unit_price_ngn);
+    const baseFloor = roundMoney(row.floor_unit_price_ngn ?? 0);
+    db.transaction(() => {
+      upsertQuoteItemBranchOverlay(db, id, branchId, {
+        defaultUnitPriceNgn: overlay ? roundMoney(overlay.default_unit_price_ngn) : baseDef,
+        floorUnitPriceNgn: overlay ? roundMoney(overlay.floor_unit_price_ngn) : baseFloor,
+        active: 0,
+      });
+      if (actor) {
+        appendAuditLog(db, {
+          actor,
+          action: `${cfg.auditKind}.deactivate_branch`,
+          entityKind: cfg.auditKind,
+          entityId: id,
+          note: `${row.label || row.name || row.item_name || id} deactivated for branch ${branchId}`,
+          details: { collection: resolved, branchId },
+        });
+      }
+    })();
+    try {
+      voidRecentQuotationsAfterMasterPriceChange(db, branchId);
+    } catch (e) {
+      console.error('[zarewa] void quotations after master price delete failed', e);
+    }
+    return { ok: true, branchId, deactivated: true };
+  }
+
   db.transaction(() => {
+    if (isAccessory && quoteItemBranchTableReady(db)) {
+      db.prepare(`DELETE FROM setup_quote_item_branch WHERE item_id = ?`).run(id);
+    }
     db.prepare(`DELETE FROM ${cfg.table} WHERE ${cfg.idColumn} = ?`).run(id);
     appendAuditLog(db, {
       actor,
@@ -870,4 +1142,5 @@ export function seedMasterData(db) {
   for (const kind of MASTER_DATA_KINDS) {
     seedCollection(db, kind);
   }
+  ensureAccessoryQuoteItemBranchOverlays(db);
 }

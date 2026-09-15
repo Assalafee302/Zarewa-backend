@@ -524,7 +524,7 @@ export function registerMobileApi(app, db) {
         return res.status(403).json({ ok: false, error: 'You do not have permission to create quotations.' });
       }
       const { branchScope } = mobileBranchScope(req);
-      const master = listMasterData(db);
+      const master = listMasterData(db, { branchId: branchScope });
       const active = (rows) => (Array.isArray(rows) ? rows.filter((r) => r.active !== false) : []);
       const customers = listCustomers(db, branchScope, { limit: 200 }).map((c) => ({
         customerID: c.customerID,

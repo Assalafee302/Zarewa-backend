@@ -18,6 +18,7 @@ import { backfillRecoveryObligationsFromSchedules } from './staffRecoveryObligat
 import { backfillStaffSalesCustomerNames } from './staffPurchaseCreditOps.js';
 import { getHrPolicyPayload, updateHrPolicyPayload } from './hrBusinessRules.js';
 import { recomputeAllStaffRoleCompliance } from './hrRoleComplianceOps.js';
+import { migrateSetupQuoteItemBranch } from './masterData.js';
 import { closeHangingCoilShortReceipts } from './procurement/coilShortReceiptCloseOps.js';
 import {
   SCHEMA_MIGRATION_FTS,
@@ -1481,6 +1482,7 @@ function runMigrationsUnlocked(db) {
   migrateProductionCompletionAdjustments(db);
   migrateQuotationLineCatalog2026(db);
   migrateLinkUnpricedQuoteItems2026(db);
+  migrateSetupQuoteItemBranchOverlays(db);
   migrateCoilAluzincColours2026(db);
   migrateEnsureQuotationGauges2026(db);
   migrateYolaGaugeCustomerLabels2026(db);
@@ -4184,6 +4186,11 @@ function migratePriceListAndPayrollMd(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_sensitive_tokens_user ON hr_sensitive_tokens(user_id, expires_at_iso DESC);
   `);
+}
+
+/** Per-branch accessory quote-item prices/active overlays. */
+function migrateSetupQuoteItemBranchOverlays(db) {
+  migrateSetupQuoteItemBranch(db);
 }
 
 /** Quote item → inventory SKU mapping; per-job accessory fulfillment for refunds and stock. */

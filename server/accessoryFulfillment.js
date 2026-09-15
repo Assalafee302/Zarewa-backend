@@ -158,24 +158,45 @@ export function sumPriorAccessorySuppliedForLine(db, quotationRef, stableKey, op
  * @param {import('better-sqlite3').Database} db
  * @param {string} quoteLineId
  * @param {string} lineName
+ * @param {string} [branchId] when set, prefer accessories active on that branch overlay
  * @returns {string | null}
  */
-export function resolveAccessoryInventoryProductId(db, quoteLineId, lineName) {
+export function resolveAccessoryInventoryProductId(db, quoteLineId, lineName, branchId = '') {
   const id = String(quoteLineId || '').trim();
   const name = String(lineName || '').trim();
+  const bid = String(branchId || '').trim();
   if (id) {
     const byId = db.prepare(`SELECT inventory_product_id FROM setup_quote_items WHERE item_id = ?`).get(id);
     const pid = byId?.inventory_product_id != null ? String(byId.inventory_product_id).trim() : '';
     if (pid) return pid;
   }
   if (name) {
-    const byName = db
-      .prepare(
-        `SELECT inventory_product_id FROM setup_quote_items
-         WHERE item_type = 'accessory' AND active = 1 AND name = ?
-         ORDER BY sort_order ASC, item_id ASC LIMIT 1`
-      )
-      .get(name);
+    let byName = null;
+    if (
+      bid &&
+      bid.toUpperCase() !== 'ALL' &&
+      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_quote_item_branch'`).get()
+    ) {
+      byName = db
+        .prepare(
+          `SELECT q.inventory_product_id AS inventory_product_id
+           FROM setup_quote_items q
+           LEFT JOIN setup_quote_item_branch b ON b.item_id = q.item_id AND b.branch_id = ?
+           WHERE q.item_type = 'accessory' AND q.name = ?
+             AND COALESCE(b.active, q.active) = 1
+           ORDER BY q.sort_order ASC, q.item_id ASC LIMIT 1`
+        )
+        .get(bid, name);
+    }
+    if (!byName) {
+      byName = db
+        .prepare(
+          `SELECT inventory_product_id FROM setup_quote_items
+           WHERE item_type = 'accessory' AND active = 1 AND name = ?
+           ORDER BY sort_order ASC, item_id ASC LIMIT 1`
+        )
+        .get(name);
+    }
     const pid = byName?.inventory_product_id != null ? String(byName.inventory_product_id).trim() : '';
     if (pid) return pid;
   }
@@ -228,7 +249,7 @@ export function planAccessoryCompletion(db, jobRow, payload = {}) {
         error: `Accessory "${line.name}": supplied ${supplied} exceeds remaining ${remaining.toFixed(2)} (ordered ${line.orderedQty}, already issued ${prior.toFixed(2)}).`,
       };
     }
-    const inventoryProductId = resolveAccessoryInventoryProductId(db, lineKey, line.name);
+    const inventoryProductId = resolveAccessoryInventoryProductId(db, lineKey, line.name, branchId);
     if (inventoryProductId) {
       const p = getProductRowForWorkspace(db, inventoryProductId, branchId);
       if (!p) {

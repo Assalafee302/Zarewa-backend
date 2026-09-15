@@ -706,6 +706,17 @@ CREATE TABLE IF NOT EXISTS setup_quote_items (
   inventory_product_id TEXT
 );
 
+/** Per-branch default/floor prices and active flag for accessory quote items (shared item_id). */
+CREATE TABLE IF NOT EXISTS setup_quote_item_branch (
+  item_id TEXT NOT NULL,
+  branch_id TEXT NOT NULL,
+  default_unit_price_ngn INTEGER NOT NULL DEFAULT 0,
+  floor_unit_price_ngn INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (item_id, branch_id),
+  FOREIGN KEY (item_id) REFERENCES setup_quote_items(item_id)
+);
+
 CREATE TABLE IF NOT EXISTS setup_colours (
   colour_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

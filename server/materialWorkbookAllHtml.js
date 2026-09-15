@@ -59,7 +59,7 @@ export function buildMaterialWorkbookAllHtml(db, branchId, opts = {}) {
     sheets.push({ ...r, sectionTitle: m.title });
   }
 
-  const md = listMasterData(db);
+  const md = listMasterData(db, { branchId: bid });
   const accessories = (md.quoteItems || []).filter(
     (q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false
   );

@@ -5618,13 +5618,16 @@ export function registerHttpApi(app, db) {
   app.get(
     '/api/pricing/material-workbook-print-extras',
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
-    (_req, res) => {
+    (req, res) => {
       try {
-        const md = listMasterData(db);
+        const branchId = String(
+          req.query?.branchId || req.workspaceBranchId || ''
+        ).trim();
+        const md = listMasterData(db, { branchId });
         const accessories = (md.quoteItems || []).filter(
           (q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false
         );
-        res.json({ ok: true, accessories });
+        res.json({ ok: true, accessories, branchId: branchId || null });
       } catch (e) {
         console.error(e);
         res.status(500).json({ ok: false, error: 'Could not load workbook print extras.' });
@@ -10297,7 +10300,11 @@ export function registerHttpApi(app, db) {
 
   app.post('/api/setup/:kind', requirePermission('settings.manage'), (req, res) => {
     try {
-      const r = upsertMasterDataRecord(db, req.params.kind, req.body || {}, req.user);
+      const body = { ...(req.body || {}) };
+      if (!body.branchId && !body.branch_id && req.workspaceBranchId) {
+        body.branchId = req.workspaceBranchId;
+      }
+      const r = upsertMasterDataRecord(db, req.params.kind, body, req.user);
       res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {
       console.error(e);
@@ -10310,9 +10317,13 @@ export function registerHttpApi(app, db) {
       const kind = req.params.kind;
       const id = req.params.id;
       const entityId = `${kind}:${id}`;
-      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'setup_record', entityId, (stripped) =>
-        upsertMasterDataRecord(db, kind, { ...(stripped || {}), id }, req.user)
-      );
+      return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'setup_record', entityId, (stripped) => {
+        const body = { ...(stripped || {}), id };
+        if (!body.branchId && !body.branch_id && req.workspaceBranchId) {
+          body.branchId = req.workspaceBranchId;
+        }
+        return upsertMasterDataRecord(db, kind, body, req.user);
+      });
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -10321,7 +10332,10 @@ export function registerHttpApi(app, db) {
 
   app.delete('/api/setup/:kind/:id', requirePermission('settings.manage'), (req, res) => {
     try {
-      const r = deleteMasterDataRecord(db, req.params.kind, req.params.id, req.user);
+      const branchId = String(req.query?.branchId || req.workspaceBranchId || '').trim();
+      const r = deleteMasterDataRecord(db, req.params.kind, req.params.id, req.user, {
+        branchId: branchId || undefined,
+      });
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e) {
       console.error(e);

@@ -28,7 +28,7 @@ export function buildCustomerPriceBookHtml(db, asAtIso, opts = {}) {
   const asAt = normalizePricingAsAtIso(asAtIso);
   const branchId = opts.branchId != null ? String(opts.branchId).trim() : '';
   const items = listPriceListItemsAsOf(db, asAt, { branchId: branchId || null });
-  const md = listMasterData(db);
+  const md = listMasterData(db, { branchId: branchId || undefined });
   const accessories = (md.quoteItems || []).filter((q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false);
   const policy = getPricingPolicyBundle(db);
 

@@ -13,6 +13,7 @@
     "mysql:smoke": "node scripts/mysql-smoke.mjs",
     "finance:profile": "node scripts/finance-live-profile-readonly.mjs",
     "report:customer-quality": "node scripts/report-customer-master-quality.mjs",
+    "report:outage-duplicates": "node scripts/report-outage-duplicate-audit.mjs --summary",
     "report:refund-overlap": "node scripts/report-refund-category-overlap.mjs",
     "report:refund-overlap-review": "node scripts/report-refund-category-overlap.mjs --review-out refund-overlap-review.json",
     "preview:refund-quote": "node scripts/preview-refund-quote.mjs",

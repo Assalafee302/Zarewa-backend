@@ -1013,6 +1013,7 @@ function requireCoilSnapshotCapture(req, res, next) {
 import { registerMobileApi } from './mobileApi.js';
 import { registerLivenessRoutes } from './http/livenessRoutes.js';
 import { registerFinanceDiagnosticRoutes } from './http/financeDiagnosticRoutes.js';
+import { registerSalesDuplicateAuditRoutes } from './http/salesDuplicateAuditRoutes.js';
 import { registerPartnerWalletRoutes } from './http/partnerWalletRoutes.js';
 import { registerRefundCompanyRetentionRoutes } from './http/refundCompanyRetentionRoutes.js';
 import { registerRefundClaimingStaffRoutes, ensureQuotationHandlerSalesCustomer } from './http/refundClaimingStaffRoutes.js';
@@ -1084,6 +1085,7 @@ export function registerHttpApi(app, db) {
   });
 
   registerFinanceDiagnosticRoutes(app, db);
+  registerSalesDuplicateAuditRoutes(app, db);
   registerPartnerWalletRoutes(app, db);
   registerRefundCompanyRetentionRoutes(app, db);
   registerRefundClaimingStaffRoutes(app, db);

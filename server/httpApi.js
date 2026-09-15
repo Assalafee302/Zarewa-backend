@@ -180,6 +180,7 @@ import {
   userMayPostAcrossBranches,
 } from './branchScope.js';
 import {
+  assertAssociatedStaffIdInWorkspace,
   assertCuttingListIdInWorkspace,
   assertCuttingListRowInWorkspace,
   assertCoilRequestIdInWorkspace,
@@ -6807,6 +6808,8 @@ export function registerHttpApi(app, db) {
     requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
     (req, res) => {
       try {
+        const createGate = assertSingleBranchWorkspaceForCreate(req);
+        if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
         const id = write.insertAssociatedStaff(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
         res.status(201).json({ ok: true, id });
       } catch (e) {
@@ -6821,6 +6824,8 @@ export function registerHttpApi(app, db) {
     requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
     (req, res) => {
       const aid = req.params.id;
+      const staffGate = assertAssociatedStaffIdInWorkspace(db, req, aid);
+      if (!staffGate.ok) return res.status(staffGate.status || 403).json({ ok: false, error: staffGate.error });
       return handlePatchWithEditApproval(res, db, req.user, req.body || {}, 'associated_staff', aid, (stripped) =>
         write.updateAssociatedStaff(db, aid, stripped, req.workspaceBranchId || DEFAULT_BRANCH_ID)
       );
@@ -6831,6 +6836,8 @@ export function registerHttpApi(app, db) {
     '/api/associated-staff/:id',
     requirePermission(ASSOCIATED_STAFF_MANAGE_PERMS),
     (req, res) => {
+      const staffGate = assertAssociatedStaffIdInWorkspace(db, req, req.params.id);
+      if (!staffGate.ok) return res.status(staffGate.status || 403).json({ ok: false, error: staffGate.error });
       const r = write.deleteAssociatedStaff(db, req.params.id, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       res.status(r.ok ? 200 : 400).json(r);
     }

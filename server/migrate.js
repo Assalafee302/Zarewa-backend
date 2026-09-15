@@ -6354,7 +6354,10 @@ function migrateBranches(db) {
     db.prepare(`UPDATE transport_agents SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
   }
   if (tableCols('associated_staff').has('branch_id')) {
-    db.prepare(`UPDATE associated_staff SET branch_id = '' WHERE TRIM(COALESCE(branch_id, '')) != ''`).run();
+    // Drivers/installers are branch-local (unlike suppliers). Legacy empty tags → Kaduna once.
+    db.prepare(
+      `UPDATE associated_staff SET branch_id = 'BR-KD' WHERE branch_id IS NULL OR TRIM(COALESCE(branch_id, '')) = ''`
+    ).run();
   }
 
   db.exec(`

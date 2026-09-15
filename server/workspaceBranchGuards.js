@@ -166,6 +166,26 @@ export function assertCustomerIdInWorkspace(db, req, customerId) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {import('express').Request} req
+ * @param {string} associatedStaffId
+ */
+export function assertAssociatedStaffIdInWorkspace(db, req, associatedStaffId) {
+  const id = String(associatedStaffId ?? '').trim();
+  if (!id) return { ok: false, error: 'Associated staff id is required.', status: 400 };
+  const row = db.prepare(`SELECT id, branch_id FROM associated_staff WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Associated staff not found.', status: 404 };
+  const gate = assertEntityBranchForWorkspaceWrite(
+    req.user,
+    row.branch_id,
+    req.workspaceBranchId,
+    Boolean(req.workspaceViewAll)
+  );
+  if (!gate.ok) return { ok: false, error: gate.error, status: 403 };
+  return { ok: true };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('express').Request} req
  * @param {string} expenseId
  */
 export function assertExpenseIdInWorkspace(db, req, expenseId) {

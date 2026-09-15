@@ -1344,30 +1344,41 @@ export function listTransportAgents(db, _branchScope = 'ALL') {
     });
 }
 
-/** Company-wide associated-staff directory; branchScope is ignored. */
-export function listAssociatedStaff(db, _branchScope = 'ALL') {
+/** Drivers / installers scoped to the workspace branch (HQ rollup when scope is ALL). */
+export function listAssociatedStaff(db, branchScope = 'ALL') {
+  const mapRow = (row) => {
+    let profile = {};
+    try {
+      profile = JSON.parse(row.profile_json || '{}');
+    } catch {
+      profile = {};
+    }
+    return {
+      id: row.id,
+      name: row.name,
+      staffType: String(row.staff_type || '').trim(),
+      phone: row.phone || '',
+      status: String(row.status || 'Active').trim() || 'Active',
+      bankAccountName: String(row.bank_account_name || '').trim(),
+      bankName: String(row.bank_name || '').trim(),
+      bankAccountNo: String(row.bank_account_no || '').trim(),
+      branchId: row.branch_id ?? '',
+      profile,
+    };
+  };
+  if (branchScope === 'ALL' || !branchScope || !hasColumn(db, 'associated_staff', 'branch_id')) {
+    return db.prepare(`SELECT * FROM associated_staff ORDER BY name COLLATE NOCASE`).all().map(mapRow);
+  }
+  // Legacy empty branch_id posts as DEFAULT_BRANCH_ID after migrate — include those when on default branch.
   return db
-    .prepare(`SELECT * FROM associated_staff ORDER BY name COLLATE NOCASE`)
-    .all()
-    .map((row) => {
-      let profile = {};
-      try {
-        profile = JSON.parse(row.profile_json || '{}');
-      } catch {
-        profile = {};
-      }
-      return {
-        id: row.id,
-        name: row.name,
-        staffType: String(row.staff_type || '').trim(),
-        phone: row.phone || '',
-        status: String(row.status || 'Active').trim() || 'Active',
-        bankAccountName: String(row.bank_account_name || '').trim(),
-        bankName: String(row.bank_name || '').trim(),
-        bankAccountNo: String(row.bank_account_no || '').trim(),
-        profile,
-      };
-    });
+    .prepare(
+      `SELECT * FROM associated_staff
+       WHERE branch_id = ?
+          OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
+       ORDER BY name COLLATE NOCASE`
+    )
+    .all(branchScope, branchScope, DEFAULT_BRANCH_ID)
+    .map(mapRow);
 }
 
 export function listProducts(db, branchScope = 'ALL', opts = {}) {

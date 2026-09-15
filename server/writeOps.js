@@ -256,8 +256,9 @@ function associatedStaffPolicyEnabled() {
   return /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0'));
 }
 
-function assertServiceAssignments(db, linesJson) {
+function assertServiceAssignments(db, linesJson, quotationBranchId = null) {
   if (!associatedStaffPolicyEnabled()) return;
+  const quoteBranch = String(quotationBranchId || '').trim();
   const services = Array.isArray(linesJson?.services) ? linesJson.services : [];
   for (const line of services) {
     const name = String(line?.name ?? '').trim();
@@ -274,7 +275,7 @@ function assertServiceAssignments(db, linesJson) {
     }
     if (staffId) {
       const staffRow = db
-        .prepare(`SELECT id, staff_type, status FROM associated_staff WHERE id = ?`)
+        .prepare(`SELECT id, staff_type, status, branch_id FROM associated_staff WHERE id = ?`)
         .get(staffId);
       if (!staffRow) {
         throw new Error(`Assigned associated staff "${staffId}" was not found.`);
@@ -289,6 +290,14 @@ function assertServiceAssignments(db, linesJson) {
       }
       if (serviceNeedsInstallerAssignment(name) && !staffType.includes('install')) {
         throw new Error(`"${name}" must be assigned to an Installer profile.`);
+      }
+      if (quoteBranch) {
+        const staffBranch = String(staffRow.branch_id || '').trim() || DEFAULT_BRANCH_ID;
+        if (staffBranch !== quoteBranch) {
+          throw new Error(
+            `Assigned associated staff "${staffId}" belongs to another branch. Pick a driver/installer from this workspace.`
+          );
+        }
       }
     }
   }
@@ -5262,9 +5271,10 @@ function normalizeAssociatedStaffType(raw) {
   return 'Driver';
 }
 
-export function insertAssociatedStaff(db, row, _branchId = DEFAULT_BRANCH_ID) {
+export function insertAssociatedStaff(db, row, branchId = DEFAULT_BRANCH_ID) {
   const name = String(row.name ?? '').trim();
   if (!name) throw new Error('Associated staff name is required.');
+  const bid = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
   const id = String(row.id ?? '').trim() || nextAssociatedStaffIdFromDb(db);
   const profileJson = stringifyAssociatedStaffProfile(row);
   const staffType = normalizeAssociatedStaffType(row.staffType ?? row.staff_type ?? row.type);
@@ -5282,7 +5292,7 @@ export function insertAssociatedStaff(db, row, _branchId = DEFAULT_BRANCH_ID) {
     String(row.bankName ?? row.bank_name ?? '').trim(),
     String(row.bankAccountNo ?? row.bank_account_no ?? '').trim(),
     profileJson,
-    GLOBAL_MASTER_DATA_BRANCH
+    bid
   );
   return id;
 }
@@ -9525,7 +9535,7 @@ export function insertQuotation(db, payload, branchId = DEFAULT_BRANCH_ID) {
   if (payload.materialTypeId !== undefined) linesJson.materialTypeId = String(payload.materialTypeId ?? '').trim();
   assertQuotationMaterialHeaderRequired(linesJson);
   assertQuotationLineIntegrity(linesJson);
-  assertServiceAssignments(db, linesJson);
+  assertServiceAssignments(db, linesJson, bid);
   assertQuotationMaterialRules(db, linesJson);
   enrichQuotationLinesWithMaterialHeader(linesJson);
   const dateISO = payload.dateISO || new Date().toISOString().slice(0, 10);
@@ -9774,7 +9784,7 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
   }
   if (payload.lines != null) {
     assertQuotationLineIntegrity(linesJson);
-    assertServiceAssignments(db, linesJson);
+    assertServiceAssignments(db, linesJson, String(existing.branch_id || DEFAULT_BRANCH_ID).trim());
   }
   assertQuotationMaterialRules(db, linesJson);
 

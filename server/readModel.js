@@ -43,7 +43,18 @@ import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { quotationPaymentCashBreakdown } from './quotationPaymentCash.js';
 import { receiptEffectiveCashNgn } from '../shared/lib/receiptClearance.js';
 import { resolveListLimit, sqlLimitClause, sqlLimitOffsetClause } from './listQueryOpts.js';
-import { resolveCreditTargets as liveRefundCreditTargets, listPartnerWalletOpenCreditsForRefund } from './finance/partnerWalletCredit.js';
+import { resolveCreditTargets as liveRefundCreditTargets } from './finance/partnerWalletCredit.js';
+import { buildHrStaffBankAccountKeySet } from './sales/refundPayoutStaffBankMatch.js';
+
+/**
+ * Presence only — never LENGTH(attachment_data_b64); that forces MySQL to read the full blob.
+ * Writes always set attachment_name/mime with the bytes.
+ */
+const PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL = `(CASE
+  WHEN TRIM(COALESCE(pr.attachment_name, '')) != '' THEN 1
+  WHEN TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1
+  ELSE 0
+END)`;
 /** @param {import('better-sqlite3').Database} db */
 
 /** @type {Map<string, boolean>} */
@@ -730,7 +741,7 @@ export function listManagementItems(db, branchScope = 'ALL') {
   const pendingExpensesRaw = db.prepare(`
     SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.description, pr.approval_status,
            pr.request_reference, pr.line_items_json, pr.attachment_name,
-           (CASE WHEN LENGTH(COALESCE(pr.attachment_data_b64, '')) > 0 THEN 1 ELSE 0 END) AS attachment_present,
+           (CASE WHEN TRIM(COALESCE(pr.attachment_name, '')) != '' OR TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1 ELSE 0 END) AS attachment_present,
            ${prHasPayee ? 'pr.payee_name, pr.payee_account_no, pr.payee_bank_name,' : ''}
            e.category AS expense_category, e.category_lane AS expense_category_lane, e.branch_id AS branch_id
     FROM payment_requests pr
@@ -2937,31 +2948,21 @@ export function listRefunds(db, branchScope = 'ALL', opts = {}) {
        ORDER BY cr.requested_at_iso DESC${page.sql}`;
   const args = [...b.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
-  // Open payouts: stamp credit that already left via leftover-overpay applications so
-  // Finance waiting list drops (e.g. RF-KD-26-9578 still showing after OVERPAY_REVERSAL).
-  for (const row of rows) {
-    const st = String(row.status || '').trim();
-    if (st === 'Approved' || st === 'Partially paid') {
-      healRefundCreditAppliedFromApplicationsTx(db, row.refund_id);
-      const healed = db
-        .prepare(
-          `SELECT status, paid_amount_ngn, credit_applied_ngn, credit_applied_to_quotation_ref,
-                  payment_note, paid_at_iso, paid_by, paid_by_user_id, approved_amount_ngn
-           FROM customer_refunds WHERE refund_id = ?`
-        )
-        .get(row.refund_id);
-      if (healed) Object.assign(row, healed);
-    }
-  }
+  // Credit heal stays on getCustomerRefundDetail / pay — list uses the applications ledger
+  // batch below so the desk pack does not N+1 heal + resolveCreditTargets per open refund.
   const refundIds = rows.map((row) => row.refund_id).filter(Boolean);
   const payoutByRefundId = refundPayoutHistoryByIds(db, refundIds);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, refundIds);
   // One query for the whole page: the settlement summary needs applied credit per row,
   // and looking it up inside the mapper would be a query per refund.
   const creditAppliedByRefundId = refundCreditAppliedByIds(db, refundIds);
+  const hrKeys = buildHrStaffBankAccountKeySet(db);
   return rows.map((row) =>
     mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, {
       creditAppliedByRefundId,
+      hrKeys,
+      liveUnclearedEnrich: false,
+      includeWalletOpenCredits: false,
     })
   );
 }
@@ -3089,7 +3090,7 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
               pr.paid_by, pr.payment_note, pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_mime,
               pr.category_justification, pr.payee_name, pr.payee_account_no, pr.payee_bank_name,
               pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''},
-              (CASE WHEN LENGTH(COALESCE(pr.attachment_data_b64, '')) > 0 THEN 1 ELSE 0 END) AS attachment_present,
+              ${PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL} AS attachment_present,
               e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
        FROM payment_requests pr
@@ -3146,9 +3147,17 @@ export function listPaymentRequests(db, branchScope = 'ALL', opts = {}) {
 export function getPaymentRequestDetail(db, requestId) {
   const rid = String(requestId || '').trim();
   if (!rid) return null;
+  const prHasMachine = hasColumn(db, 'payment_requests', 'maintenance_machine_id');
   const row = db
     .prepare(
-      `SELECT pr.*, e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane, e.reference AS expense_reference,
+      `SELECT pr.request_id, pr.expense_id, pr.amount_requested_ngn, pr.request_date, pr.approval_status,
+              pr.description, pr.approved_by, pr.approved_at_iso, pr.approval_note, pr.paid_amount_ngn, pr.paid_at_iso,
+              pr.paid_by, pr.payment_note, pr.request_reference, pr.line_items_json, pr.attachment_name, pr.attachment_mime,
+              pr.category_justification, pr.payee_name, pr.payee_account_no, pr.payee_bank_name,
+              pr.maintenance_work_order_id, pr.maintenance_cost_kind${prHasMachine ? ', pr.maintenance_machine_id' : ''},
+              ${PAYMENT_REQUEST_ATTACHMENT_PRESENT_SQL} AS attachment_present,
+              e.branch_id AS expense_branch_id, e.category AS expense_category, e.category_lane AS expense_category_lane,
+              e.reference AS expense_reference,
               hr.user_id AS staff_user_id, u.display_name AS staff_display_name
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
@@ -3158,8 +3167,7 @@ export function getPaymentRequestDetail(db, requestId) {
     )
     .get(rid);
   if (!row) return null;
-  const b64 = row.attachment_data_b64;
-  const hasAttachment = Boolean(b64 && String(b64).length > 0);
+  const hasAttachment = Boolean(Number(row.attachment_present) || 0);
   return {
     requestID: row.request_id,
     expenseID: row.expense_id,
@@ -3216,7 +3224,10 @@ export function getCustomerRefundDetail(db, refundId) {
   if (!row) return null;
   const payoutByRefundId = refundPayoutHistoryByIds(db, [id]);
   const walletOpenByRefundId = partnerWalletOpenByRefundIds(db, [id]);
-  return mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId);
+  return mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundId, {
+    liveUnclearedEnrich: true,
+    includeWalletOpenCredits: true,
+  });
 }
 
 const REFUND_STATUSES_WITH_LIVE_UNCLEARED_HOLD = new Set(['Approved', 'Partially paid']);
@@ -3228,12 +3239,23 @@ const REFUND_STATUSES_WITH_LIVE_UNCLEARED_HOLD = new Set(['Approved', 'Partially
  * snapshot must not keep showing (and gating) a hold that no longer exists, and a cashier needs
  * to see which receipt to go find and confirm rather than an opaque total.
  */
-function liveEnrichRefundSplitUnclearedHolds(db, row, splitDistributions, approvedAmountNgn, resolvedStatus) {
+function liveEnrichRefundSplitUnclearedHolds(
+  db,
+  row,
+  splitDistributions,
+  approvedAmountNgn,
+  resolvedStatus,
+  enrichOpts = {}
+) {
   if (!REFUND_STATUSES_WITH_LIVE_UNCLEARED_HOLD.has(resolvedStatus)) return splitDistributions;
   if (!Array.isArray(splitDistributions) || !splitDistributions.length) return splitDistributions;
-  let liveTargets;
+  let liveTargets = Array.isArray(enrichOpts.targets) ? enrichOpts.targets : null;
   try {
-    liveTargets = liveRefundCreditTargets(db, row, approvedAmountNgn);
+    if (!liveTargets) {
+      liveTargets = liveRefundCreditTargets(db, row, approvedAmountNgn, {
+        hrKeys: enrichOpts.hrKeys,
+      });
+    }
   } catch {
     return splitDistributions;
   }
@@ -3290,23 +3312,41 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
       : approvedAmountNgn;
   const payoutHistory = payoutByRefundId.get(row.refund_id) || [];
   const walletOpenNgn = walletOpenByRefundId.get(row.refund_id) || 0;
-  const resolvedStatus = resolveRefundStatus(db, row, mapOpts.creditAppliedByRefundId);
-  splitDistributions = liveEnrichRefundSplitUnclearedHolds(
-    db,
-    row,
-    splitDistributions,
-    finalApprovedAmountNgn,
-    resolvedStatus
-  );
-  const settlementSummary = buildRefundSettlementSummary(db, row, { walletOpenNgn, creditAppliedByRefundId: mapOpts.creditAppliedByRefundId });
+  const settleOpts = {
+    walletOpenNgn,
+    creditAppliedByRefundId: mapOpts.creditAppliedByRefundId,
+    hrKeys: mapOpts.hrKeys,
+    includeWalletOpenCredits: mapOpts.includeWalletOpenCredits !== false,
+  };
+  const settlementSummary = buildRefundSettlementSummary(db, row, settleOpts);
+  const resolvedStatus =
+    settlementSummary?.status ||
+    resolveRefundStatus(db, row, mapOpts.creditAppliedByRefundId, {
+      hrKeys: mapOpts.hrKeys,
+    });
+  const creditTargets = settlementSummary.creditTargets;
+  if (mapOpts.liveUnclearedEnrich !== false) {
+    splitDistributions = liveEnrichRefundSplitUnclearedHolds(
+      db,
+      row,
+      splitDistributions,
+      finalApprovedAmountNgn,
+      resolvedStatus,
+      { hrKeys: mapOpts.hrKeys, targets: creditTargets }
+    );
+  }
+  if (settlementSummary && 'creditTargets' in settlementSummary) {
+    delete settlementSummary.creditTargets;
+  }
   // Prefer repaired payee-only paid amount when legacy rows still include company cut.
   const paidAmountForApi = settlementSummary.payeeSettledNgn;
-  let walletOpenCredits = [];
-  try {
-    walletOpenCredits = listPartnerWalletOpenCreditsForRefund(db, row.refund_id);
-  } catch {
-    walletOpenCredits = [];
-  }
+  const walletOpenCredits = Array.isArray(settlementSummary.walletOpenCredits)
+    ? settlementSummary.walletOpenCredits
+    : [];
+  const creditAppliedNgn = Math.max(
+    Number(row.credit_applied_ngn) || 0,
+    Number(settlementSummary.creditAppliedNgn) || 0
+  );
   return {
     refundID: row.refund_id,
     customerID: row.customer_id,
@@ -3344,7 +3384,7 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
     companyCutNgn: settlementSummary.companyCutNgn,
     settlementSummary,
     branchId: row.branch_id ?? '',
-    creditAppliedNgn: Number(row.credit_applied_ngn) || 0,
+    creditAppliedNgn,
     creditAppliedToQuotationRef: row.credit_applied_to_quotation_ref ?? '',
     creditConfirmationStatus: row.credit_confirmation_status ?? '',
     quotationRefundsBlockedAtISO: row.quotation_refunds_blocked_at_iso ?? null,

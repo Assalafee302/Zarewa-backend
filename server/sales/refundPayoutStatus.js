@@ -49,12 +49,12 @@ export function refundWalletWithdrawnNgn(db, refundId) {
 /**
  * Net till/bank/wallet/credit still owed to payees (after company cut).
  */
-export function refundCashOutstandingNgn(db, row, creditAppliedByRefundId = null) {
+export function refundCashOutstandingNgn(db, row, creditAppliedByRefundId = null, resolveOpts = {}) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
   if (!refundId) return 0;
 
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
-  const netCashDue = refundNetCashDueNgn(db, row, approved);
+  const netCashDue = refundNetCashDueNgn(db, row, approved, resolveOpts);
   const treasuryPaid = refundTreasuryPaidNgn(db, refundId);
   const walletWithdrawn = refundWalletWithdrawnNgn(db, refundId);
   const creditApplied = refundCreditSettledNgn(db, row, creditAppliedByRefundId);
@@ -85,13 +85,17 @@ export function refundStatusAllowsTreasuryPayout(status) {
 /**
  * Paid when till + wallet withdrawals + credit cover net cash due to payees.
  * Company cut alone never marks Paid.
+ * @param {import('better-sqlite3').Database} db
+ * @param {Record<string, unknown>} row
+ * @param {Map<string, number> | null} [creditAppliedByRefundId]
+ * @param {{ targets?: object[], hrKeys?: Set<string>, skipUnclearedFloat?: boolean }} [resolveOpts]
  */
-export function resolveRefundStatus(db, row, creditAppliedByRefundId = null) {
+export function resolveRefundStatus(db, row, creditAppliedByRefundId = null, resolveOpts = {}) {
   const stored = String(row?.status || '').trim();
   if (!PAYOUT_LIFECYCLE_STATUSES.has(stored)) return stored;
 
   const approved = roundMoney(row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn);
-  const netCashDue = refundNetCashDueNgn(db, row, approved);
+  const netCashDue = refundNetCashDueNgn(db, row, approved, resolveOpts);
   const payeeSettled = refundPayeeSettledNgn(db, row, creditAppliedByRefundId);
 
   if (payeeCoversNetCashDue(payeeSettled, netCashDue)) {
@@ -166,7 +170,14 @@ export function refundHasPayeeMoneyOut(db, row) {
  * Unified settlement snapshot for list/detail APIs and cashier UX.
  * @param {import('better-sqlite3').Database} db
  * @param {Record<string, unknown>} row
- * @param {{ walletOpenNgn?: number, actor?: object, hasPermission?: (p: string) => boolean }} [opts]
+ * @param {{
+ *   walletOpenNgn?: number,
+ *   actor?: object,
+ *   hasPermission?: (p: string) => boolean,
+ *   creditAppliedByRefundId?: Map<string, number> | null,
+ *   hrKeys?: Set<string>,
+ *   targets?: object[],
+ * }} [opts]
  */
 export function buildRefundSettlementSummary(db, row, opts = {}) {
   const refundId = String(row?.refund_id || row?.refundID || '').trim();
@@ -174,15 +185,39 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   const approvedNgn = roundMoney(
     row.approved_amount_ngn ?? row.approvedAmountNgn ?? row.amount_ngn ?? row.amountNgn
   );
-  const companyCutNgn = refundSettledAtApprovalNgn(db, row, approvedNgn);
-  const netCashDueNgn = refundNetCashDueNgn(db, row, approvedNgn);
+  // Open payouts need live company-cut + uncleared holds. Paid history only needs cut math
+  // (skip uncleared float). Pending/Rejected skip resolveCreditTargets entirely.
+  const needsOpenTargets =
+    storedStatus === 'Approved' || storedStatus === REFUND_STATUS_PARTIALLY_PAID;
+  const needsPaidTargets = storedStatus === 'Paid';
+  const resolveOpts = {
+    hrKeys: opts.hrKeys instanceof Set ? opts.hrKeys : undefined,
+    skipUnclearedFloat: needsPaidTargets && !needsOpenTargets,
+  };
+  let targets = Array.isArray(opts.targets) ? opts.targets : null;
+  if ((needsOpenTargets || needsPaidTargets) && approvedNgn > 0) {
+    if (!targets) {
+      targets = resolveCreditTargets(db, row, approvedNgn, resolveOpts);
+    }
+  } else {
+    targets = targets || [];
+  }
+  const targetOpts = { ...resolveOpts, targets };
+  const companyCutNgn =
+    needsOpenTargets || needsPaidTargets
+      ? refundSettledAtApprovalNgn(db, row, approvedNgn, targetOpts)
+      : 0;
+  const netCashDueNgn =
+    needsOpenTargets || needsPaidTargets
+      ? refundNetCashDueNgn(db, row, approvedNgn, targetOpts)
+      : Math.max(0, approvedNgn);
   const treasuryPaidNgn = refundId ? refundTreasuryPaidNgn(db, refundId) : 0;
   const walletWithdrawnNgn = refundId ? refundWalletWithdrawnNgn(db, refundId) : 0;
   const creditAppliedNgn = refundCreditSettledNgn(db, row, opts.creditAppliedByRefundId ?? null);
   const payeeSettledNgn = Math.max(0, treasuryPaidNgn + walletWithdrawnNgn + creditAppliedNgn);
   const cashOutstandingNgn = Math.max(0, netCashDueNgn - payeeSettledNgn);
-  const heldUnclearedNgn = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus) || storedStatus === 'Paid'
-    ? refundHeldNetCashDueNgn(db, row, approvedNgn)
+  const heldUnclearedNgn = needsOpenTargets
+    ? refundHeldNetCashDueNgn(db, row, approvedNgn, targetOpts)
     : 0;
   const walletOpenNgn =
     opts.walletOpenNgn != null
@@ -193,9 +228,8 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
 
   let unclearedReceipts = [];
   let unclearedReceiptIds = [];
-  if (heldUnclearedNgn > 0 || PAYOUT_LIFECYCLE_STATUSES.has(storedStatus)) {
+  if (heldUnclearedNgn > 0 || needsOpenTargets) {
     try {
-      const targets = resolveCreditTargets(db, row, approvedNgn);
       const seen = new Set();
       for (const t of targets) {
         for (const r of Array.isArray(t.unclearedReceipts) ? t.unclearedReceipts : []) {
@@ -232,7 +266,7 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   });
 
   const lifecycleStatus = PAYOUT_LIFECYCLE_STATUSES.has(storedStatus)
-    ? resolveRefundStatus(db, row)
+    ? resolveRefundStatus(db, row, opts.creditAppliedByRefundId ?? null, targetOpts)
     : storedStatus;
 
   let publicLabel = lifecycleStatus || 'Pending';
@@ -323,10 +357,12 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   }
 
   let walletOpenCredits = [];
-  try {
-    walletOpenCredits = refundId ? listPartnerWalletOpenCreditsForRefund(db, refundId) : [];
-  } catch {
-    walletOpenCredits = [];
+  if (opts.includeWalletOpenCredits !== false) {
+    try {
+      walletOpenCredits = refundId ? listPartnerWalletOpenCreditsForRefund(db, refundId) : [];
+    } catch {
+      walletOpenCredits = [];
+    }
   }
 
   return {
@@ -360,6 +396,8 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
         payeeSettledNgn <= 0 &&
         walletWithdrawnNgn <= 0
     ),
+    /** Internal: reuse for split live-enrich without a second resolveCreditTargets. */
+    creditTargets: targets,
   };
 }
 

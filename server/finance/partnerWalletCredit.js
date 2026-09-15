@@ -68,9 +68,19 @@ function branchFilter(scope) {
  * @param {Record<string, unknown>} refundRow
  * @param {number} approvedAmountNgn
  */
-export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {Record<string, unknown>} refundRow
+ * @param {number} approvedAmountNgn
+ * @param {{ hrKeys?: Set<string>, skipUnclearedFloat?: boolean }} [opts]
+ *   Pass `hrKeys` when resolving many refunds in one request (list/snapshot) so HR bank
+ *   decrypt runs once. `skipUnclearedFloat` skips live receipt holds (Paid / history rows).
+ */
+export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}) {
   const approved = roundMoney(approvedAmountNgn);
   if (approved <= 0) return [];
+  const hrKeys = opts.hrKeys instanceof Set ? opts.hrKeys : null;
+  const skipUnclearedFloat = Boolean(opts.skipUnclearedFloat);
   let splits = [];
   try {
     const parsed = JSON.parse(String(refundRow.split_distributions_json || '[]'));
@@ -124,7 +134,9 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
     // Payee bank matching HR staff payroll → force claiming-staff 20%.
     const claimingStaffDeductionRate = getRefundStaffAllocationDeductionRate(db);
     const associatedStaffDeductionRate = getRefundAssociatedStaffDeductionRate(db);
-    const usableMarked = markRefundSplitsStaffBankMatch(db, usable);
+    const usableMarked = markRefundSplitsStaffBankMatch(db, usable, {
+      hrKeys: hrKeys || undefined,
+    });
     let calculationLines = [];
     try {
       const parsed = JSON.parse(String(refundRow.calculation_lines_json || '[]'));
@@ -136,11 +148,13 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
       refundRow.reason_category,
       calculationLines
     );
-    const unclearedFloatByCustomerId = unclearedReceiptFloatBySalesCustomerIds(
-      db,
-      usableMarked.map((s) => s.recipientCustomerID).filter(Boolean),
-      unclearedFloatOptsForRefund(refundRow)
-    );
+    const unclearedFloatByCustomerId = skipUnclearedFloat
+      ? new Map()
+      : unclearedReceiptFloatBySalesCustomerIds(
+          db,
+          usableMarked.map((s) => s.recipientCustomerID).filter(Boolean),
+          unclearedFloatOptsForRefund(refundRow)
+        );
     const splitSum = usableMarked.reduce((s, r) => s + r.amountNgn, 0) || 1;
     let allocated = 0;
     return usableMarked
@@ -266,13 +280,15 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
   const payeeAccountNo = String(
     refundRow.payee_account_no || resolved?.payeeAccountNo || ''
   ).trim();
-  const hrKeys = buildHrStaffBankAccountKeySet(db);
-  const staffBankMatch = payeeAccountMatchesHrStaffBank(payeeAccountNo, hrKeys);
-  const noSplitUncleared = unclearedReceiptFloatBySalesCustomerIds(
-    db,
-    [customerId],
-    unclearedFloatOptsForRefund(refundRow)
-  ).get(customerId);
+  const resolvedHrKeys = hrKeys || buildHrStaffBankAccountKeySet(db);
+  const staffBankMatch = payeeAccountMatchesHrStaffBank(payeeAccountNo, resolvedHrKeys);
+  const noSplitUncleared = skipUnclearedFloat
+    ? null
+    : unclearedReceiptFloatBySalesCustomerIds(
+        db,
+        [customerId],
+        unclearedFloatOptsForRefund(refundRow)
+      ).get(customerId);
   // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal),
   // unless the payee account is an HR staff bank (forced claiming-staff cut path).
   const unclearedHoldNgn =
@@ -371,8 +387,10 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn) {
 }
 
 /** Net cash still owed to payees (wallet/treasury) after company cut. */
-export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn) {
-  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn, opts = {}) {
+  const targets = Array.isArray(opts.targets)
+    ? opts.targets
+    : resolveCreditTargets(db, refundRow, approvedAmountNgn, opts);
   return targets.reduce((sum, t) => sum + roundMoney(t.amountNgn), 0);
 }
 
@@ -382,16 +400,20 @@ export function refundNetCashDueNgn(db, refundRow, approvedAmountNgn) {
  * any net payout above that slice remains payable (a payee is not blocked beyond what they
  * actually owe in unconfirmed receipts, and unrelated payees/refunds are never touched by this).
  */
-export function refundHeldNetCashDueNgn(db, refundRow, approvedAmountNgn) {
-  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+export function refundHeldNetCashDueNgn(db, refundRow, approvedAmountNgn, opts = {}) {
+  const targets = Array.isArray(opts.targets)
+    ? opts.targets
+    : resolveCreditTargets(db, refundRow, approvedAmountNgn, opts);
   return targets
     .filter((t) => Boolean(t.payoutHeldForUnclearedReceipts))
     .reduce((sum, t) => sum + Math.min(roundMoney(t.amountNgn), roundMoney(t.unclearedReceiptHoldNgn)), 0);
 }
 
 /** Company cut settled at BM approval (non-treasury). Uncleared holds are not auto-settled. */
-export function refundSettledAtApprovalNgn(db, refundRow, approvedAmountNgn) {
-  const targets = resolveCreditTargets(db, refundRow, approvedAmountNgn);
+export function refundSettledAtApprovalNgn(db, refundRow, approvedAmountNgn, opts = {}) {
+  const targets = Array.isArray(opts.targets)
+    ? opts.targets
+    : resolveCreditTargets(db, refundRow, approvedAmountNgn, opts);
   return targets.reduce((sum, t) => sum + roundMoney(t.companyDeductionNgn), 0);
 }
 

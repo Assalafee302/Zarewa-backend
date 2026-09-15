@@ -2445,18 +2445,70 @@ export function decidePaymentRequest(db, requestID, payload, actor) {
 function hasApprovedHrLoanLink(db, requestId) {
   const prId = String(requestId || '').trim();
   if (!prId) return false;
-  const rows = db
-    .prepare(`SELECT payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
-    .all();
-  for (const r of rows) {
-    try {
-      const p = JSON.parse(String(r.payload_json || '{}'));
-      if (String(p.financePaymentRequestId || '') === prId) return true;
-    } catch {
-      /* skip */
+  try {
+    if (hasColumn(db, 'hr_staff_obligation_accounts', 'finance_payment_request_id')) {
+      const hit = db
+        .prepare(
+          `SELECT 1 AS ok FROM hr_staff_obligation_accounts WHERE finance_payment_request_id = ? LIMIT 1`
+        )
+        .get(prId);
+      if (hit) return true;
     }
+  } catch {
+    /* obligation table optional */
   }
-  return false;
+  try {
+    const hit = db
+      .prepare(
+        `SELECT 1 AS ok FROM hr_requests
+         WHERE kind = 'loan' AND status = 'approved'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.financePaymentRequestId')) = ?
+         LIMIT 1`
+      )
+      .get(prId);
+    if (hit) return true;
+  } catch {
+    /* JSON_EXTRACT may be unavailable — fall through */
+  }
+  // Last resort: LIKE on the quoted id (avoids loading/parsing every loan payload when possible).
+  const safe = prId.replace(/[%_\\]/g, '');
+  if (!safe || safe !== prId) {
+    // Pathological id — scan payloads safely.
+    const rows = db
+      .prepare(`SELECT payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
+      .all();
+    for (const r of rows) {
+      try {
+        const p = JSON.parse(String(r.payload_json || '{}'));
+        if (String(p.financePaymentRequestId || '') === prId) return true;
+      } catch {
+        /* skip */
+      }
+    }
+    return false;
+  }
+  try {
+    const hit = db
+      .prepare(
+        `SELECT 1 AS ok FROM hr_requests
+         WHERE kind = 'loan' AND status = 'approved'
+           AND payload_json LIKE ?
+         LIMIT 1`
+      )
+      .get(`%"financePaymentRequestId":"${safe}"%`);
+    if (hit) return true;
+    const hitSpaced = db
+      .prepare(
+        `SELECT 1 AS ok FROM hr_requests
+         WHERE kind = 'loan' AND status = 'approved'
+           AND payload_json LIKE ?
+         LIMIT 1`
+      )
+      .get(`%"financePaymentRequestId": "${safe}"%`);
+    return Boolean(hitSpaced);
+  } catch {
+    return false;
+  }
 }
 
 function buildPaymentRequestPayoutGatePreview(db, row, actor) {
@@ -2464,7 +2516,12 @@ function buildPaymentRequestPayoutGatePreview(db, row, actor) {
   const category = mapLegacyExpenseCategoryToCanonical(row.expense_category || 'Others');
   const lane = getExpenseCategoryLane(category);
   const assetDescription = String(row.expense_reference || row.description || '').trim();
-  const hasAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+  const hasAttachment = Boolean(
+    Number(row.attachment_present) ||
+      String(row.attachment_name || '').trim() ||
+      String(row.attachment_mime || '').trim() ||
+      String(row.attachment_data_b64 || '').trim()
+  );
   const hasHrLoanLink = hasApprovedHrLoanLink(db, requestId);
   const bypassHrLoanLink = actorMayBypassStaffLoanHrLink(actor, (p) => userHasPermission(actor, p));
 
@@ -2527,7 +2584,13 @@ export function getPaymentRequestGlPreview(db, requestId, actor) {
   const row = db
     .prepare(
       `SELECT pr.request_id, pr.amount_requested_ngn, pr.paid_amount_ngn, pr.description,
-              pr.attachment_data_b64, e.category AS expense_category, e.reference AS expense_reference
+              pr.attachment_name, pr.attachment_mime,
+              (CASE
+                WHEN TRIM(COALESCE(pr.attachment_name, '')) != '' THEN 1
+                WHEN TRIM(COALESCE(pr.attachment_mime, '')) != '' THEN 1
+                ELSE 0
+              END) AS attachment_present,
+              e.category AS expense_category, e.reference AS expense_reference
        FROM payment_requests pr
        LEFT JOIN expenses e ON e.expense_id = pr.expense_id
        WHERE pr.request_id = ?`
@@ -2590,7 +2653,11 @@ export function reclassifyPaymentRequestCategory(db, requestID, payload, actor) 
     payload.categoryJustification ?? row.category_justification ?? ''
   ).trim();
   const amountRequestedNgn = roundMoney(row.amount_requested_ngn);
-  const hasAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+  const hasAttachment = Boolean(
+    String(row.attachment_name || '').trim() ||
+      String(row.attachment_mime || '').trim() ||
+      String(row.attachment_data_b64 || '').trim()
+  );
 
   const catCheck = validateExpenseCategorySelection({
     actor,

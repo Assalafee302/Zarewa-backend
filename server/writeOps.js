@@ -1168,6 +1168,36 @@ function parseHrLoanPayloadJson(raw) {
 function findApprovedHrLoanForPaymentRequest(db, paymentRequestId) {
   const prId = String(paymentRequestId || '').trim();
   if (!prId) return null;
+  try {
+    if (hasColumn(db, 'hr_staff_obligation_accounts', 'finance_payment_request_id')) {
+      const viaObligation = db
+        .prepare(
+          `SELECT hr.id, hr.payload_json
+           FROM hr_staff_obligation_accounts oa
+           JOIN hr_requests hr ON hr.id = oa.hr_request_id
+           WHERE oa.finance_payment_request_id = ?
+             AND hr.kind = 'loan' AND hr.status = 'approved'
+           LIMIT 1`
+        )
+        .get(prId);
+      if (viaObligation) return viaObligation;
+    }
+  } catch {
+    /* optional */
+  }
+  try {
+    const hit = db
+      .prepare(
+        `SELECT id, payload_json FROM hr_requests
+         WHERE kind = 'loan' AND status = 'approved'
+           AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.financePaymentRequestId')) = ?
+         LIMIT 1`
+      )
+      .get(prId);
+    if (hit) return hit;
+  } catch {
+    /* fall through */
+  }
   const rows = db
     .prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
     .all();
@@ -1182,9 +1212,8 @@ function syncStaffLoanDisbursementOnFullPay(db, paymentRequestId, paidAtISO) {
   const prId = String(paymentRequestId || '').trim();
   if (!prId) return;
   const day = String(paidAtISO || '').trim().slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const rows = db
-    .prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
-    .all();
+  const loan = findApprovedHrLoanForPaymentRequest(db, prId);
+  const rows = loan ? [loan] : [];
   for (const r of rows) {
     const p = parseHrLoanPayloadJson(r.payload_json);
     if (String(p.financePaymentRequestId || '') !== prId) continue;
@@ -1219,20 +1248,16 @@ function syncStaffLoanDisbursementOnFullPay(db, paymentRequestId, paidAtISO) {
 function syncStaffLoanDisbursementOnPayoutReversal(db, paymentRequestId) {
   const prId = String(paymentRequestId || '').trim();
   if (!prId) return;
-  const rows = db
-    .prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`)
-    .all();
-  for (const r of rows) {
-    const p = parseHrLoanPayloadJson(r.payload_json);
-    if (String(p.financePaymentRequestId || '') !== prId) continue;
-    const merged = { ...p };
-    delete merged.loanDisbursedAtIso;
-    merged.deductionsActive = false;
-    merged.disbursementQueueStatus = 'Pending';
-    delete merged.principalOutstandingNgn;
-    db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), r.id);
-    return;
-  }
+  const r = findApprovedHrLoanForPaymentRequest(db, prId);
+  if (!r) return;
+  const p = parseHrLoanPayloadJson(r.payload_json);
+  if (String(p.financePaymentRequestId || '') !== prId) return;
+  const merged = { ...p };
+  delete merged.loanDisbursedAtIso;
+  merged.deductionsActive = false;
+  merged.disbursementQueueStatus = 'Pending';
+  delete merged.principalOutstandingNgn;
+  db.prepare(`UPDATE hr_requests SET payload_json = ? WHERE id = ?`).run(JSON.stringify(merged), r.id);
 }
 
 /**
@@ -8657,7 +8682,11 @@ export function payPaymentRequest(db, requestID, payload) {
   }
 
   const payoutCategory = mapLegacyExpenseCategoryToCanonical(linkedExpense?.category || 'Others');
-  const hasPrAttachment = Boolean(String(row.attachment_data_b64 || '').trim());
+  const hasPrAttachment = Boolean(
+    String(row.attachment_name || '').trim() ||
+      String(row.attachment_mime || '').trim() ||
+      String(row.attachment_data_b64 || '').trim()
+  );
   const assetDescription = String(linkedExpense?.reference || row.description || '').trim();
   const treasuryCatCheck = validateSpecialLaneTreasuryPayout({
     category: payoutCategory,

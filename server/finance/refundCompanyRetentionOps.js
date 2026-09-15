@@ -19,6 +19,7 @@ export {
   creditCompanyRetentionFromRefundTx,
   getCompanyRetentionSummary,
   refundCompanyCutHoldDays,
+  refundCompanyCutWithdrawalCooldownDays,
   refundCompanyRetentionTablesReady,
   voidCompanyRetentionForRefundTx,
 } from './refundCompanyRetentionLedger.js';
@@ -49,10 +50,32 @@ export function requestCompanyRetentionWithdrawal(db, payload = {}) {
   if (amountNgn <= 0) return { ok: false, error: 'Withdrawal amount must be positive.' };
 
   const summary = getCompanyRetentionSummary(db, branchId);
+  if (summary.pendingWithdrawals?.length) {
+    return {
+      ok: false,
+      error: 'A company-cut withdrawal is already pending Branch Manager or cashier. Finish or reject it before requesting another.',
+      code: 'WITHDRAWAL_PENDING',
+    };
+  }
+  if (summary.cooldownActive) {
+    const until = summary.nextWithdrawalAllowedAtIso
+      ? new Date(summary.nextWithdrawalAllowedAtIso).toLocaleString('en-NG', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })
+      : `${summary.cooldownDays} days after the last paid withdrawal`;
+    return {
+      ok: false,
+      error: `Next company-cut withdrawal is allowed ${summary.cooldownDays} days after the last paid withdrawal. Try again after ${until}.`,
+      code: 'WITHDRAWAL_COOLDOWN',
+      nextWithdrawalAllowedAtIso: summary.nextWithdrawalAllowedAtIso,
+      lastWithdrawalPaidAtIso: summary.lastWithdrawalPaidAtIso,
+    };
+  }
   if (amountNgn > summary.availableNgn) {
     return {
       ok: false,
-      error: `Only ₦${summary.availableNgn.toLocaleString('en-NG')} is available after the ${summary.holdDays}-day hold (₦${summary.heldNgn.toLocaleString('en-NG')} still held).`,
+      error: `Only ₦${summary.availableNgn.toLocaleString('en-NG')} company-cut balance is available to withdraw.`,
     };
   }
 
@@ -154,6 +177,14 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
   }
 
   const summary = getCompanyRetentionSummary(db, trim(row.branch_id));
+  if (summary.cooldownActive) {
+    return {
+      ok: false,
+      error: `Cannot approve while the ${summary.cooldownDays}-day gap after the last paid withdrawal is still active.`,
+      code: 'WITHDRAWAL_COOLDOWN',
+      nextWithdrawalAllowedAtIso: summary.nextWithdrawalAllowedAtIso,
+    };
+  }
   if (roundMoney(row.amount_ngn) > summary.availableNgn) {
     return {
       ok: false,
@@ -219,7 +250,21 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
 
   const branchId = trim(row.branch_id) || DEFAULT_BRANCH_ID;
   const now = new Date().toISOString();
-  const availableCredits = getCompanyRetentionSummary(db, branchId).credits.filter((c) => c.available);
+  const summary = getCompanyRetentionSummary(db, branchId);
+  // Paying this request is fine; block only if another withdrawal was already paid inside the cooldown window.
+  if (
+    summary.cooldownActive &&
+    summary.lastWithdrawalPaidAtIso &&
+    trim(summary.lastWithdrawalPaidAtIso)
+  ) {
+    return {
+      ok: false,
+      error: `Another company-cut withdrawal was paid less than ${summary.cooldownDays} days ago. Next payout allowed after ${summary.nextWithdrawalAllowedAtIso}.`,
+      code: 'WITHDRAWAL_COOLDOWN',
+      nextWithdrawalAllowedAtIso: summary.nextWithdrawalAllowedAtIso,
+    };
+  }
+  const availableCredits = summary.credits.filter((c) => c.openNgn > 0);
   let remaining = amountNgn;
   const allocations = [];
   for (const c of availableCredits) {

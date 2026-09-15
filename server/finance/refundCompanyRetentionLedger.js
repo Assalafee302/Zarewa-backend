@@ -1,6 +1,11 @@
 /**
  * Company-cut retention ledger (credits + balances). No controlOps/writeOps imports
  * so partner-wallet approval can credit without circular deps.
+ *
+ * Policy: company-cut credits are available as soon as they settle on the ledger.
+ * Withdrawals are rate-limited — another request is allowed only after
+ * `cooldownDays` from the last *paid* withdrawal (not from credit age).
+ *
  * @module server/finance/refundCompanyRetentionLedger
  */
 import { actorId, actorName } from '../auth.js';
@@ -8,7 +13,11 @@ import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { allocateHumanId } from '../humanId.js';
 import { hasColumn, tableExists } from '../ap2ReceivedBasisOps.js';
 
-export const REFUND_COMPANY_CUT_HOLD_DAYS_DEFAULT = 14;
+/** Days after a paid company-cut withdrawal before another may be requested. */
+export const REFUND_COMPANY_CUT_WITHDRAWAL_COOLDOWN_DAYS_DEFAULT = 14;
+/** @deprecated Use REFUND_COMPANY_CUT_WITHDRAWAL_COOLDOWN_DAYS_DEFAULT */
+export const REFUND_COMPANY_CUT_HOLD_DAYS_DEFAULT =
+  REFUND_COMPANY_CUT_WITHDRAWAL_COOLDOWN_DAYS_DEFAULT;
 
 function roundMoney(value) {
   const n = Number(value);
@@ -20,10 +29,19 @@ function trim(v) {
   return String(v ?? '').trim();
 }
 
-export function refundCompanyCutHoldDays() {
+/**
+ * Cooldown between paid company-cut withdrawals (env: ZAREWA_REFUND_COMPANY_CUT_HOLD_DAYS).
+ * Kept env name for deploy compatibility; semantics are withdrawal spacing, not credit aging.
+ */
+export function refundCompanyCutWithdrawalCooldownDays() {
   const raw = Number(process.env.ZAREWA_REFUND_COMPANY_CUT_HOLD_DAYS);
   if (Number.isFinite(raw) && raw >= 0 && raw <= 365) return Math.round(raw);
-  return REFUND_COMPANY_CUT_HOLD_DAYS_DEFAULT;
+  return REFUND_COMPANY_CUT_WITHDRAWAL_COOLDOWN_DAYS_DEFAULT;
+}
+
+/** @deprecated Use refundCompanyCutWithdrawalCooldownDays */
+export function refundCompanyCutHoldDays() {
+  return refundCompanyCutWithdrawalCooldownDays();
 }
 
 export function refundCompanyRetentionTablesReady(db) {
@@ -73,8 +91,8 @@ export function creditCompanyRetentionFromRefundTx(db, {
 
   const bid = trim(branchId) || DEFAULT_BRANCH_ID;
   const at = new Date().toISOString();
-  const holdDays = refundCompanyCutHoldDays();
-  const availableAfterIso = addDaysIso(at, holdDays);
+  // Credits are withdrawable immediately; spacing is enforced between paid withdrawals.
+  const availableAfterIso = null;
   const id = nextRetentionEntryId(db, bid);
   db.prepare(
     `INSERT INTO refund_company_retention_entries (
@@ -101,7 +119,12 @@ export function creditCompanyRetentionFromRefundTx(db, {
 
   return {
     ok: true,
-    entry: { id, amountNgn: amt, availableAfterIso, holdDays },
+    entry: {
+      id,
+      amountNgn: amt,
+      availableAfterIso,
+      cooldownDays: refundCompanyCutWithdrawalCooldownDays(),
+    },
   };
 }
 
@@ -157,7 +180,55 @@ export function mapWithdrawalRow(r) {
   };
 }
 
+/**
+ * Last paid company-cut withdrawal for the branch (or any branch when scope is ALL).
+ * @returns {{ paidAtIso: string, id: string } | null}
+ */
+export function getLastPaidCompanyRetentionWithdrawal(db, branchScope = 'ALL') {
+  if (!tableExists(db, 'refund_company_retention_withdrawals')) return null;
+  const { sql, args } = branchScopeSql('w', branchScope);
+  const row = db
+    .prepare(
+      `SELECT w.id, w.paid_at_iso
+       FROM refund_company_retention_withdrawals w
+       WHERE w.status = 'paid' AND w.paid_at_iso IS NOT NULL AND trim(w.paid_at_iso) <> ''${sql}
+       ORDER BY w.paid_at_iso DESC
+       LIMIT 1`
+    )
+    .get(...args);
+  if (!row?.paid_at_iso) return null;
+  return { id: trim(row.id), paidAtIso: trim(row.paid_at_iso) };
+}
+
+/**
+ * When the next withdrawal may be requested given the last paid one.
+ * @returns {{ cooldownActive: boolean, nextWithdrawalAllowedAtIso: string | null, lastWithdrawalPaidAtIso: string | null, lastWithdrawalId: string | null }}
+ */
+export function companyRetentionWithdrawalCooldown(db, branchScope = 'ALL', nowIso = null) {
+  const cooldownDays = refundCompanyCutWithdrawalCooldownDays();
+  const last = getLastPaidCompanyRetentionWithdrawal(db, branchScope);
+  if (!last?.paidAtIso || cooldownDays <= 0) {
+    return {
+      cooldownDays,
+      cooldownActive: false,
+      nextWithdrawalAllowedAtIso: null,
+      lastWithdrawalPaidAtIso: last?.paidAtIso || null,
+      lastWithdrawalId: last?.id || null,
+    };
+  }
+  const nextAt = addDaysIso(last.paidAtIso, cooldownDays);
+  const now = trim(nowIso) || new Date().toISOString();
+  return {
+    cooldownDays,
+    cooldownActive: nextAt > now,
+    nextWithdrawalAllowedAtIso: nextAt,
+    lastWithdrawalPaidAtIso: last.paidAtIso,
+    lastWithdrawalId: last.id,
+  };
+}
+
 export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
+  const cooldownDays = refundCompanyCutWithdrawalCooldownDays();
   const tablesReady = refundCompanyRetentionTablesReady(db);
   if (!tablesReady) {
     return {
@@ -166,12 +237,15 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
       totalOpenNgn: 0,
       availableNgn: 0,
       heldNgn: 0,
-      holdDays: refundCompanyCutHoldDays(),
+      holdDays: cooldownDays,
+      cooldownDays: cooldownDays,
+      cooldownActive: false,
+      nextWithdrawalAllowedAtIso: null,
+      lastWithdrawalPaidAtIso: null,
       credits: [],
       pendingWithdrawals: [],
     };
   }
-  const now = new Date().toISOString();
   const { sql, args } = branchScopeSql('e', branchScope);
   const credits = db
     .prepare(
@@ -184,23 +258,24 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
     .all(...args)
     .map((r) => {
       const openNgn = roundMoney(r.open_ngn);
-      const availableAfterIso = trim(r.available_after_iso);
-      const available = !availableAfterIso || availableAfterIso <= now;
       return {
         id: r.id,
         branchId: trim(r.branch_id),
         amountNgn: roundMoney(r.amount_ngn),
         openNgn,
         refundId: trim(r.refund_id || r.source_id),
-        availableAfterIso,
-        available,
+        // Legacy column kept; credits are no longer aged — always available re: credit age.
+        availableAfterIso: trim(r.available_after_iso) || null,
+        available: true,
         note: trim(r.note),
         createdAtIso: trim(r.created_at_iso),
       };
     });
 
   const totalOpenNgn = credits.reduce((s, c) => s + c.openNgn, 0);
-  const availableNgn = credits.filter((c) => c.available).reduce((s, c) => s + c.openNgn, 0);
+  const cooldown = companyRetentionWithdrawalCooldown(db, branchScope);
+  // During inter-withdrawal cooldown the open balance is locked (not withdrawable yet).
+  const availableNgn = cooldown.cooldownActive ? 0 : totalOpenNgn;
   const heldNgn = Math.max(0, totalOpenNgn - availableNgn);
 
   const { sql: wSql, args: wArgs } = branchScopeSql('w', branchScope);
@@ -221,7 +296,11 @@ export function getCompanyRetentionSummary(db, branchScope = 'ALL') {
     totalOpenNgn,
     availableNgn,
     heldNgn,
-    holdDays: refundCompanyCutHoldDays(),
+    holdDays: cooldownDays,
+    cooldownDays,
+    cooldownActive: cooldown.cooldownActive,
+    nextWithdrawalAllowedAtIso: cooldown.nextWithdrawalAllowedAtIso,
+    lastWithdrawalPaidAtIso: cooldown.lastWithdrawalPaidAtIso,
     credits,
     pendingWithdrawals,
   };

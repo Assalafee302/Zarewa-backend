@@ -6,27 +6,31 @@ Canonical role keys live in `server/auth.js` → `ROLE_DEFINITIONS`. UI labels m
 
 | Role key | Label | Primary route | Also uses |
 |----------|-------|---------------|-----------|
-| `md` | Managing Director | `/exec` (Control Center) | `/executive-hr`, `/procurement`, `/accounting`, `/manager` (oversight) |
-| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations`, `/cashier` (cover) — **not** `/hr`, `/executive-hr`, `/accounting` |
+| `md` | Managing Director | `/exec` (Control Center) | `/executive-hr`, `/procurement`, `/accounting` — **not** `/manager`, **not** Workspace/Office |
+| `sales_manager` | Branch manager | `/manager` | `/team-hr`, `/sales`, `/operations`, `/cashier` (cover) — **not** `/exec`, `/hr`, `/executive-hr`, `/accounting`, Workspace/Office |
 | `finance_manager` | Accountant / Head of Accounts | `/accounting` | `/accounts` (reconciliation tabs), `/reports` |
 | `cashier` | Cashier | `/cashier` | `/sales` (quotations, receipts, cutting lists); limited `/accounts` tabs only — **not** `/accounting` |
 | `hr_admin` | HR / Admin | `/hr` | `/reports` |
 | `gmhr` | GM HR | `/hr` | `/reports` |
-| `sales_staff` | Sales officer | `/` (workspace) | `/sales`, `/my-profile` |
+| `sales_staff` | Sales officer | `/sales` | `/my-profile` |
 | `operations_officer` | Operations officer | `/operations` | `/procurement` (floor) |
 | `ceo` | CEO | `/exec` | `/reports` (read-only) |
 | `admin` | Administrator | All modules | Break-glass `*` |
-| `viewer` | Read-only viewer | `/` | Workspace only |
+| `viewer` | Read-only viewer | `/me` | No Office desk while Workspace is paused |
 
 ## Restricted modules (default seed)
 
 | Role | Must NOT access |
 |------|-----------------|
-| Branch manager | Main `/hr`, `/executive-hr`, `/accounting`, GL/audit tabs on `/accounts`, org payroll/bank, executive benefits |
+| Branch manager | `/exec`, Workspace/Office, main `/hr`, `/executive-hr`, `/accounting`, GL/audit tabs on `/accounts`, org payroll/bank, executive benefits |
 | Cashier | `/accounting`, GL/audit tabs on `/accounts` |
 | Accountant | Branch production ops, cashier desk (default), HR admin |
 | Staff | `/hr`, `/team-hr` (unless granted), finance desks |
-| MD | Full HR **admin** shell optional; uses `/executive-hr` + approvals (not day-to-day `/hr` ops) |
+| MD | `/manager`, Workspace/Office; full HR **admin** shell optional; uses `/executive-hr` + approvals (not day-to-day `/hr` ops) |
+
+## Office / Workspace desk (paused)
+
+Seeded roles no longer include `office.use`. The Office desk (`/`, `/office`) stays offline until that permission is re-granted per role. Branch scope / bootstrap “workspace” APIs remain — that is not the Office UI.
 
 ## Approvals (summary)
 

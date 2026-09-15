@@ -87,11 +87,17 @@ test.describe('Role-based access (API + UI)', () => {
     expect(Array.isArray(sJson.results)).toBe(true);
   });
 
-  test('MD: home route lands on manager dashboard', async ({ page }) => {
+  test('MD: home route lands on executive dashboard', async ({ page }) => {
     await signInViaApi(page, 'md', 'Md@1234567890!');
     await page.goto('/');
-    await expect(page).toHaveURL(/\/manager$/, { timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /stock note/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/exec$/, { timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /company overview/i })).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('MD: manager dashboard deep link is denied', async ({ page }) => {
+    await signInViaApi(page, 'md', 'Md@1234567890!');
+    await page.goto('/manager');
+    await expect(page).toHaveURL(/access-denied|\/exec/, { timeout: 15_000 });
   });
 
   test('branch manager: refunds list readable (approval lane)', async ({ page }) => {
@@ -101,6 +107,14 @@ test.describe('Role-based access (API + UI)', () => {
     const body = await refunds.json();
     expect(body.ok).toBe(true);
     expect(Array.isArray(body.refunds)).toBe(true);
+  });
+
+  test('branch manager: home lands on manager; exec deep link denied', async ({ page }) => {
+    await signInViaApi(page, 'sales.manager', 'Sales@123');
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/manager$/, { timeout: 20_000 });
+    await page.goto('/exec');
+    await expect(page).toHaveURL(/access-denied|\/manager/, { timeout: 15_000 });
   });
 
 });

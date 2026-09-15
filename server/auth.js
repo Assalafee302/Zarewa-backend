@@ -174,7 +174,6 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
  */
 export const OPERATIONS_FLOOR_ROLE_PERMISSIONS = [
   'dashboard.view',
-  'office.use',
   'operations.view',
   'operations.manage',
   'production.manage',
@@ -206,11 +205,11 @@ export const ROLE_DEFINITIONS = {
   md: {
     label: 'Managing Director',
     // Executive + org-wide rollups (merged former CEO scope). Procurement is centralized here, not a separate job role.
+    // Office / Workspace desk (`office.use`) paused for all seeded roles — re-enable per role when ready.
     permissions: [
       'hq.view_all_branches',
       'exec.dashboard.view',
       'dashboard.view',
-      'office.use',
       'reports.view',
       'sales.view',
       'procurement.view',
@@ -248,7 +247,6 @@ export const ROLE_DEFINITIONS = {
     label: 'Head of Accounts',
     permissions: [
       'dashboard.view',
-      'office.use',
       'procurement.view',
       'finance.view',
       'finance.post',
@@ -273,7 +271,6 @@ export const ROLE_DEFINITIONS = {
     label: 'Cashier',
     permissions: [
       'dashboard.view',
-      'office.use',
       'sales.view',
       'customers.manage',
       'quotations.manage',
@@ -301,7 +298,6 @@ export const ROLE_DEFINITIONS = {
     label: 'Branch Manager',
     permissions: [
       'dashboard.view',
-      'office.use',
       'reports.view',
       'sales.view',
       'sales.manage',
@@ -338,7 +334,6 @@ export const ROLE_DEFINITIONS = {
     label: 'Sales officer',
     permissions: [
       'dashboard.view',
-      'office.use',
       'sales.view',
       'customers.manage',
       'quotations.manage',
@@ -357,7 +352,6 @@ export const ROLE_DEFINITIONS = {
     label: 'HR Administrator',
     permissions: [
       'dashboard.view',
-      'office.use',
       'reports.view',
       'notices.manage',
       ...HR_ROLE_PERMISSION_BUNDLES.hrAdmin,
@@ -367,7 +361,6 @@ export const ROLE_DEFINITIONS = {
     label: 'General Manager, HR',
     permissions: [
       'dashboard.view',
-      'office.use',
       'reports.view',
       'hq.view_all_branches',
       'notices.manage',
@@ -383,7 +376,6 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'exec.dashboard.view',
       'dashboard.view',
-      'office.use',
       'reports.view',
       'notices.manage',
       'hq.view_all_branches',
@@ -395,7 +387,6 @@ export const ROLE_DEFINITIONS = {
     permissions: [
       'exec.dashboard.view',
       'dashboard.view',
-      'office.use',
       'reports.view',
       'notices.manage',
       'hq.view_all_branches',
@@ -774,7 +765,6 @@ export function ensureStoreFloorPermissions(permissions, ctx = {}) {
 /** Sales desk permissions — quotations, receipts, expense requests, refunds. */
 export const SALES_DESK_PERMISSION_KEYS = [
   'dashboard.view',
-  'office.use',
   'sales.view',
   'customers.manage',
   'quotations.manage',

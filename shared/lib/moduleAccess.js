@@ -87,7 +87,8 @@ export const MODULE_ACCESS_POLICY = {
     'hr.executive.benefits.manage',
     'hr.chairman.manage',
   ],
-  exec: ['exec.dashboard.view', 'dashboard.view'],
+  /** Full Command Centre only — `dashboard.view` must not open `/exec` (branch managers hold it). */
+  exec: ['exec.dashboard.view'],
 };
 
 /**
@@ -128,7 +129,8 @@ export function canAccessModuleWithPermissions(permissions, moduleKey) {
       // Settings is an administrative module; audit viewers should not automatically gain access.
       return MODULE_ACCESS_POLICY.settings.some(has);
     case 'office':
-      return MODULE_ACCESS_POLICY.office.some(has) || has('*');
+      // Office / Workspace desk paused: require explicit `office.use` (wildcard `*` alone does not unlock).
+      return Array.isArray(permissions) && permissions.includes('office.use');
     case 'hr':
       return MODULE_ACCESS_POLICY.hr.some(has);
     case 'team_hr':

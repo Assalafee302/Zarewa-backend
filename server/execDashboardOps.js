@@ -548,25 +548,26 @@ function canActOnWorkItemKind(user, kind) {
 
 function workItemRoute(kind, row = {}) {
   const k = String(kind || '').toLowerCase();
-  if (k === 'refunds') return '/manager';
+  // Exec work tray only — never deep-link to `/manager` (MD/CEO cannot open that desk).
+  if (k === 'refunds') return '/exec?tab=decide';
   if (k === 'register_settlement') return '/exec?tab=decide';
-  if (k === 'payments') return '/manager';
+  if (k === 'payments') return '/exec?tab=decide';
   if (k === 'material') return '/operations/material-exceptions';
-  if (k === 'edit_approvals') return '/manager';
+  if (k === 'edit_approvals') return '/exec?tab=decide';
   if (k === 'payroll') return '/exec?tab=decide';
   if (k === 'inter_branch_loan') return '/exec?tab=decide';
   if (k === 'stock_register') return '/exec?tab=decide';
   if (k === 'staff_purchase_credit') return '/exec?tab=decide';
-  if (k === 'price_exception') return '/exec';
-  if (k === 'conversions') return '/exec';
-  if (k === 'office_memo' || k === 'work_item') return '/office';
+  if (k === 'price_exception') return '/exec?tab=decide';
+  if (k === 'conversions') return '/exec?tab=decide';
+  if (k === 'office_memo' || k === 'work_item') return '/exec?tab=decide';
   if (k === 'overtime' || k === 'ot_request') return '/exec?tab=decide';
   if (k === 'governance') return '/exec?tab=decide';
   if (k === 'clearance' || k === 'flagged' || k === 'production') {
     const ref = row.quotationRef || row.quotation_ref || row.title;
-    return ref ? `/sales?quotation=${encodeURIComponent(ref)}` : '/manager';
+    return ref ? `/sales?quotation=${encodeURIComponent(ref)}` : '/exec?tab=decide';
   }
-  return '/manager';
+  return '/exec?tab=decide';
 }
 
 function mapAttentionToWorkTray(db, attention, user, readOnly) {

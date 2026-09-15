@@ -49,6 +49,18 @@ describe('moduleAccess', () => {
     expect(canAccessModuleWithPermissions(['dashboard.view'], 'edit_approvals')).toBe(true);
   });
 
+  it('exec module requires exec.dashboard.view, not bare dashboard.view', () => {
+    expect(canAccessModuleWithPermissions(['dashboard.view'], 'exec')).toBe(false);
+    expect(canAccessModuleWithPermissions(['exec.dashboard.view'], 'exec')).toBe(true);
+    expect(canAccessModuleWithPermissions(['*'], 'exec')).toBe(true);
+  });
+
+  it('office module requires explicit office.use (wildcard alone does not unlock)', () => {
+    expect(canAccessModuleWithPermissions(['*'], 'office')).toBe(false);
+    expect(canAccessModuleWithPermissions(['office.use'], 'office')).toBe(true);
+    expect(canAccessModuleWithPermissions(['dashboard.view'], 'office')).toBe(false);
+  });
+
   it('cashier opens Sales with quote/view keys, not receipts.post alone', () => {
     expect(userMayAccessSalesModule('cashier', ['receipts.post'])).toBe(false);
     expect(userMayAccessSalesModule('cashier', ['receipts.post', 'sales.view'])).toBe(true);

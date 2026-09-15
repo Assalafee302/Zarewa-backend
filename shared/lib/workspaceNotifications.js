@@ -12,6 +12,7 @@ import {
   buildLastUsedByCoilNo,
   summarizeCriticalIdleForPromotion,
 } from './storeIdle.js';
+import { approvalAttentionPathForRole, approvalDeskHomeForRole } from './approvalDeskPaths.js';
 
 /** @typedef {'critical' | 'warning' | 'info'} NotificationSeverity */
 
@@ -67,7 +68,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
       detail: `${parts.join(' · ')}. Paid quotes from the sales office need branch manager review — with or without a refund.`,
       severity: flagged > 0 ? 'critical' : 'warning',
       priority: flagged > 0 ? 95 : 82,
-      path: '/manager?inbox=orders',
+      path: approvalAttentionPathForRole(roleKey, 'orders'),
       state: {},
     });
   }
@@ -85,7 +86,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
       detail: parts.join(' · '),
       severity: 'warning',
       priority: 88,
-      path: '/manager?inbox=cash_out',
+      path: approvalAttentionPathForRole(roleKey, 'cash_out'),
       state: {},
     });
   }
@@ -99,7 +100,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
       detail: `${qc} completed job(s) need conversion sign-off — separate from order sign-off.`,
       severity: 'warning',
       priority: 72,
-      path: '/manager?inbox=qc',
+      path: approvalAttentionPathForRole(roleKey, 'qc'),
       state: {},
     });
   }
@@ -114,7 +115,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
       detail: `${pendingMex.length} incident(s) awaiting branch manager approval before stock posts.`,
       severity: 'warning',
       priority: 78,
-      path: '/manager?inbox=material',
+      path: approvalAttentionPathForRole(roleKey, 'material'),
       state: {},
     });
   }
@@ -133,7 +134,7 @@ function pushBranchManagerAlerts(items, { snapshot, roleKey, hasPermission }) {
         detail: `${editPending.length} sensitive edit(s) waiting for second-party OK.`,
         severity: 'warning',
         priority: 80,
-      path: '/manager?inbox=attention',
+      path: approvalAttentionPathForRole(roleKey, 'attention'),
       state: {},
       });
     }
@@ -276,7 +277,7 @@ export function buildWorkspaceNotifications({
       detail: `${pendingCoils.length} store stock request(s) awaiting branch manager approval before buy.`,
       severity: 'warning',
       priority: 73,
-      path: '/manager',
+      path: approvalDeskHomeForRole(roleKey),
       state: {},
     });
   }

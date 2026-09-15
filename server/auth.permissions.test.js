@@ -109,6 +109,15 @@ describe('operations_officer role aliases', () => {
     expect(md).not.toContain('ot.pay');
   });
 
+  it('pauses Office desk for MD and branch manager; keeps desks separate', () => {
+    const md = permissionsForRole('md');
+    const bm = permissionsForRole('sales_manager');
+    expect(md).toContain('exec.dashboard.view');
+    expect(md).not.toContain('office.use');
+    expect(bm).not.toContain('exec.dashboard.view');
+    expect(bm).not.toContain('office.use');
+  });
+
   it('includes HR self-service so floor staff can use My Profile', () => {
     const ops = permissionsForRole('operations_officer');
     expect(ops).toContain('hr.self');

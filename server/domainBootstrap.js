@@ -199,7 +199,11 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
     receipts,
     refunds,
     cuttingLists,
-    priceListItems: salesOk ? listPriceListItems(db) : [],
+    priceListItems: salesOk
+      ? listPriceListItems(db, undefined, {
+          branchId: branchScope === 'ALL' ? null : branchScope,
+        })
+      : [],
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     pricingRidgeAddOns: salesOk ? getPricingPolicyBundle(db).ridgeAddOns : [],
     /** Quotation form material type / gauge / colour options (shell may also include this). */

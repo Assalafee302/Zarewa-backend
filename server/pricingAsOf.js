@@ -103,6 +103,9 @@ export function selectPriceListRowsAsOf(allRows, asAtIso) {
 }
 
 /**
+ * Collapse published price_list_items as-of a date.
+ * When `opts.branchId` is set (and not ALL), returns that branch’s rows plus global
+ * (null/empty branch_id) rows — other branches are excluded. HQ “ALL” / omit = no filter.
  * @param {import('better-sqlite3').Database} db
  * @param {string} [asAtIso]
  * @param {{ branchId?: string | null }} [opts]
@@ -110,8 +113,8 @@ export function selectPriceListRowsAsOf(allRows, asAtIso) {
 export function listPriceListItemsAsOf(db, asAtIso, opts = {}) {
   if (!canReadPriceListItems(db)) return [];
   const asAt = normalizePricingAsAtIso(asAtIso);
-  const branchFilter =
-    opts.branchId != null && String(opts.branchId).trim() ? String(opts.branchId).trim() : null;
+  const rawBranch = opts.branchId != null ? String(opts.branchId).trim() : '';
+  const branchFilter = rawBranch && rawBranch.toUpperCase() !== 'ALL' ? rawBranch : null;
   let rows = db.prepare(`SELECT * FROM price_list_items`).all();
   if (branchFilter) {
     rows = rows.filter(

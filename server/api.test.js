@@ -4295,10 +4295,11 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(r300.addOnNgn).toBe(100);
     expect(r300.listAddOnNgn).toBe(120);
 
-    const book = await agent.get('/api/pricing/customer-price-book.html');
+    const book = await agent.get('/api/pricing/customer-price-book.html').query({ branchId: 'BR-KD' });
     expect(book.status).toBe(200);
     expect(String(book.headers['content-type'] || '')).toMatch(/html/i);
     expect(book.text.length).toBeGreaterThan(100);
+    expect(book.text).toMatch(/BR-KD/);
 
     const pl = await agent.post('/api/pricing/price-list').send({
       gaugeKey: '0.55mm',
@@ -4396,7 +4397,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(ens.body.ok).toBe(true);
     expect(String(ens.body.productId || '')).toMatch(/^STONE-/);
 
-    const csvExport = await agent.get('/api/pricing/price-list/export.csv');
+    const csvExport = await agent.get('/api/pricing/price-list/export.csv').query({ branchId: 'BR-KD' });
     expect(csvExport.status).toBe(200);
     expect(String(csvExport.headers['content-type'] || '')).toMatch(/csv/i);
     expect(csvExport.text).toMatch(/gauge_key/);

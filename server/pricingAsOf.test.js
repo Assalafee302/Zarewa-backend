@@ -92,6 +92,24 @@ describe('pricingAsOf', () => {
     expect(items.some((x) => x.unitPricePerMeterNgn === 4200)).toBe(false);
   });
 
+  it('listPriceListItemsAsOf filters by branch and keeps global rows', () => {
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso)
+       VALUES ('PL-KD', '0.30mm', 'iv', 5000, 0, 'BR-KD', '2024-01-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso)
+       VALUES ('PL-YL', '0.30mm', 'iv', 5100, 0, 'BR-YL', '2024-01-01')`
+    ).run();
+    const kd = listPriceListItemsAsOf(db, '2024-06-01', { branchId: 'BR-KD' });
+    expect(kd.some((x) => x.id === 'PL-KD')).toBe(true);
+    expect(kd.some((x) => x.id === 'PL-YL')).toBe(false);
+    // Global (null branch) rows still apply to every branch.
+    expect(kd.some((x) => x.gaugeKey === '0.24mm')).toBe(true);
+    const all = listPriceListItemsAsOf(db, '2024-06-01', { branchId: 'ALL' });
+    expect(all.some((x) => x.id === 'PL-YL')).toBe(true);
+  });
+
   it('workbookFloorPerMeterAsOf uses event history', () => {
     expect(workbookFloorPerMeterAsOf(db, 'alu', '0.24', 'iv', 'BR-KD', '2024-06-01')).toBe(2000);
     expect(workbookFloorPerMeterAsOf(db, 'alu', '0.24', 'iv', 'BR-KD', '2025-06-01')).toBe(2200);

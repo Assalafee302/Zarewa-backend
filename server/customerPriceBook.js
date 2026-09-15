@@ -22,15 +22,19 @@ function fmtNgn(n) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string | null | undefined} [asAtIso]
+ * @param {{ branchId?: string | null; branchLabel?: string | null }} [opts]
  */
-export function buildCustomerPriceBookHtml(db, asAtIso) {
+export function buildCustomerPriceBookHtml(db, asAtIso, opts = {}) {
   const asAt = normalizePricingAsAtIso(asAtIso);
-  const items = listPriceListItemsAsOf(db, asAt);
+  const branchId = opts.branchId != null ? String(opts.branchId).trim() : '';
+  const items = listPriceListItemsAsOf(db, asAt, { branchId: branchId || null });
   const md = listMasterData(db);
   const accessories = (md.quoteItems || []).filter((q) => String(q.itemType || '').toLowerCase() === 'accessory' && q.active !== false);
   const policy = getPricingPolicyBundle(db);
 
   const effectiveLabel = asAt;
+  const branchLabel =
+    String(opts.branchLabel || '').trim() || (branchId ? branchId : 'All branches');
 
   const normMt = (s) =>
     String(s ?? '')
@@ -113,7 +117,7 @@ export function buildCustomerPriceBookHtml(db, asAtIso) {
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Zarewa price list — ${esc(effectiveLabel)}</title>
+  <title>Zarewa price list — ${esc(branchLabel)} — ${esc(effectiveLabel)}</title>
   <style>
     body { font-family: 'Segoe UI', system-ui, Roboto, sans-serif; color: #0f172a; margin: 24px; max-width: 1000px; }
     h1 { font-size: 1.35rem; color: #134e4a; border-bottom: 2px solid #134e4a; padding-bottom: 8px; }
@@ -128,7 +132,7 @@ export function buildCustomerPriceBookHtml(db, asAtIso) {
 </head>
 <body>
   <h1>Price list (customer)</h1>
-  <p class="muted">Effective ${esc(effectiveLabel)} · All roofing rates in Naira per running metre unless noted.
+  <p class="muted">Branch ${esc(branchLabel)} · Effective ${esc(effectiveLabel)} · All roofing rates in Naira per running metre unless noted.
   Metcoppo / Steptiles column is <strong>3.5%</strong> above base (rounded: &lt; ₦5,000 → nearest ₦50; ≥ ₦5,000 → nearest ₦100).</p>
 
   <p class="muted">Sections follow material family (Aluminium, Aluzinc, other coil, stone-coated, accessories). Premium column = 3.5% on base + rounding rule.</p>

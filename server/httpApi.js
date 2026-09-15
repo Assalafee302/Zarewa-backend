@@ -5532,11 +5532,25 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Query branchId/branch, else session workspace (null when view-all / ALL). */
+  function resolvePriceListReadBranchId(req) {
+    const q = String(req.query?.branchId || req.query?.branch || '').trim();
+    if (q) return q.toUpperCase() === 'ALL' ? null : q;
+    if (req.workspaceViewAll) return null;
+    return String(req.workspaceBranchId || '').trim() || null;
+  }
+
   app.get('/api/pricing/price-list', requirePermission(['pricing.manage', 'md.price_exception.approve']), (req, res) => {
     try {
       const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
       const pricingAsAtIso = asAtIso || normalizePricingAsAtIso(null);
-      res.json({ ok: true, items: listPriceListItems(db, asAtIso), pricingAsAtIso });
+      const branchId = resolvePriceListReadBranchId(req);
+      res.json({
+        ok: true,
+        items: listPriceListItems(db, asAtIso, { branchId }),
+        pricingAsAtIso,
+        branchId,
+      });
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, error: 'Could not load price list.' });
@@ -5549,9 +5563,15 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
-        const csv = priceListItemsToCsv(listPriceListItems(db, asAtIso));
+        const branchId = resolvePriceListReadBranchId(req);
+        if (!branchId) {
+          res.status(400).setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send('branchId query parameter is required.');
+          return;
+        }
+        const csv = priceListItemsToCsv(listPriceListItems(db, asAtIso, { branchId }));
         const label = asAtIso || new Date().toISOString().slice(0, 10);
-        const name = `price-list-items-${label}.csv`;
+        const name = `price-list-items-${branchId}-${label}.csv`;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
         res.send(`\uFEFF${csv}`);
@@ -5825,7 +5845,17 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
-        const html = buildCustomerPriceBookHtml(db, asAtIso);
+        const branchId = resolvePriceListReadBranchId(req);
+        if (!branchId) {
+          res.status(400).setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send('branchId query parameter is required.');
+          return;
+        }
+        const branchLabel = String(req.query.branchName || req.query.branchLabel || '').trim();
+        const html = buildCustomerPriceBookHtml(db, asAtIso, {
+          branchId,
+          branchLabel: branchLabel || undefined,
+        });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
       } catch (e) {

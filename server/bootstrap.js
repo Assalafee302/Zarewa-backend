@@ -383,7 +383,11 @@ export function buildBootstrap(db, opts = {}) {
     refunds,
     masterData: masterOk ? listMasterData(db, { branchId: branchScope }) : EMPTY_MASTER_DATA,
     /** Floor list (₦/m) synced from material pricing workbook — used by quotations UI for coil products. */
-    priceListItems: salesOk ? listPriceListItems(db) : [],
+    priceListItems: salesOk
+      ? listPriceListItems(db, undefined, {
+          branchId: branchScope === 'ALL' ? null : branchScope,
+        })
+      : [],
     /** Material pricing workbook rows (floor + commission) — quotations auto-price roofing / flat sheet. */
     materialPricingRows: salesOk ? listMaterialPricingRowsForSnapshot(db, branchScope) : [],
     /** Ridge / flashing strip add-ons for trim auto-pricing on quotations. */

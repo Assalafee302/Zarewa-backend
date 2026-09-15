@@ -327,12 +327,14 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string} [asAtIso]
+ * @param {{ branchId?: string | null }} [opts]
  */
-export function listPriceListItems(db, asAtIso) {
+export function listPriceListItems(db, asAtIso, opts = {}) {
   if (!canReadPriceListItems(db)) {
     return [];
   }
-  return listPriceListItemsAsOf(db, asAtIso);
+  return listPriceListItemsAsOf(db, asAtIso, opts);
 }
 
 /**

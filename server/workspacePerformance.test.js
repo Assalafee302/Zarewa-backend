@@ -69,6 +69,7 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.domain).toBe('finance');
     expect(Array.isArray(snap.receipts)).toBe(true);
     expect(Array.isArray(snap.cuttingLists)).toBe(true);
+    expect(Array.isArray(snap.purchasePaymentCashierAcksPending)).toBe(true);
     db.close();
   });
 

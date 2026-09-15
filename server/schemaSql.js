@@ -2649,4 +2649,30 @@ CREATE TABLE IF NOT EXISTS chairman_office_loan_events (
 );
 CREATE INDEX IF NOT EXISTS idx_chairman_office_loan_events_loan
   ON chairman_office_loan_events(loan_id, at_iso ASC);
+
+CREATE TABLE IF NOT EXISTS purchase_payment_cashier_acks (
+  ack_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  treasury_movement_id TEXT NOT NULL UNIQUE,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  po_id TEXT,
+  ap_id TEXT,
+  supplier_id TEXT,
+  supplier_name TEXT,
+  amount_ngn INTEGER NOT NULL,
+  paid_at_iso TEXT NOT NULL,
+  paid_by_user_id TEXT,
+  paid_by_name TEXT,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  acknowledged_at_iso TEXT,
+  acknowledged_by_user_id TEXT,
+  acknowledged_by_name TEXT,
+  acknowledgment_note TEXT,
+  created_at_iso TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ppca_branch_status
+  ON purchase_payment_cashier_acks(branch_id, status, paid_at_iso);
+CREATE INDEX IF NOT EXISTS idx_ppca_source
+  ON purchase_payment_cashier_acks(source_kind, source_id);
 `;

@@ -51,6 +51,7 @@ import {
 } from './finance/partnerWalletCredit.js';
 import { listStaffRepayableObligationsForCashier, staffObligationTablesReady } from './staffObligationOps.js';
 import { listRegisterSettlementsAwaitingPayment } from './accountingRegisterSettlementOps.js';
+import { listPurchasePaymentCashierAcksPending } from './finance/purchasePaymentCashierAckOps.js';
 import { listFixedAssets } from './accountingPhase2Ops.js';
 import { userMayViewAccountingSubledger } from './financeDeskAccess.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
@@ -528,6 +529,13 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     registerSettlementsAwaitingPayment:
       payReqOk || userHasPermission(user, 'finance.pay')
         ? listRegisterSettlementsAwaitingPayment(db, branchScope)
+        : [],
+    purchasePaymentCashierAcksPending:
+      finOk ||
+      userHasPermission(user, 'finance.pay') ||
+      userHasPermission(user, 'cashier.receipts.confirm') ||
+      userHasPermission(user, 'cashier.desk.view')
+        ? listPurchasePaymentCashierAcksPending(db, branchScope)
         : [],
     expenseCategoryMonthlyAlert:
       canSeeCategoryAlert && finOk

@@ -1537,6 +1537,7 @@ function runMigrationsUnlocked(db) {
   migratePartnerWallet2026(db);
   migrateRefundCompanyRetention2026(db);
   migrateChairmanOfficeLoans2026(db);
+  migratePurchasePaymentCashierAcks2026(db);
   try {
     if (!schemaMigrationDone(db, SCHEMA_MIGRATION_COIL_SHORT_CLOSE)) {
       closeHangingCoilShortReceipts(db);
@@ -1598,7 +1599,7 @@ function migratePartnerWallet2026(db) {
   `);
 }
 
-/** Accumulated refund staff company cuts — hold period, then BM-approved withdrawal. */
+/** Accumulated refund staff company cuts — BM-approved withdrawal; 14-day gap between paid withdrawals. */
 function migrateRefundCompanyRetention2026(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS refund_company_retention_entries (
@@ -1649,6 +1650,39 @@ function migrateRefundCompanyRetention2026(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_rcw_branch_status
       ON refund_company_retention_withdrawals(branch_id, status);
+  `);
+}
+
+/**
+ * Branch cashier bookkeeping queue after MD/Finance posts treasury-backed supplier/AP pay.
+ */
+function migratePurchasePaymentCashierAcks2026(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS purchase_payment_cashier_acks (
+      ack_id TEXT PRIMARY KEY,
+      branch_id TEXT NOT NULL,
+      treasury_movement_id TEXT NOT NULL UNIQUE,
+      source_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      po_id TEXT,
+      ap_id TEXT,
+      supplier_id TEXT,
+      supplier_name TEXT,
+      amount_ngn INTEGER NOT NULL,
+      paid_at_iso TEXT NOT NULL,
+      paid_by_user_id TEXT,
+      paid_by_name TEXT,
+      status TEXT NOT NULL DEFAULT 'Pending',
+      acknowledged_at_iso TEXT,
+      acknowledged_by_user_id TEXT,
+      acknowledged_by_name TEXT,
+      acknowledgment_note TEXT,
+      created_at_iso TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ppca_branch_status
+      ON purchase_payment_cashier_acks(branch_id, status, paid_at_iso);
+    CREATE INDEX IF NOT EXISTS idx_ppca_source
+      ON purchase_payment_cashier_acks(source_kind, source_id);
   `);
 }
 

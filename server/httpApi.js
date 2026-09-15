@@ -1019,6 +1019,7 @@ import { registerRefundClaimingStaffRoutes, ensureQuotationHandlerSalesCustomer 
 import { registerWorkspaceListRoutes } from './http/workspaceListRoutes.js';
 import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
 import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
+import { registerPurchasePaymentCashierAckRoutes } from './http/purchasePaymentCashierAckRoutes.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -1088,6 +1089,7 @@ export function registerHttpApi(app, db) {
   registerRefundClaimingStaffRoutes(app, db);
   registerMaintenanceRoutes(app, db);
   registerChairmanOfficeRoutes(app, db);
+  registerPurchasePaymentCashierAckRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
   function accountingListBranchId(req) {

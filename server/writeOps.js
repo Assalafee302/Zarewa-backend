@@ -130,6 +130,7 @@ import {
 } from '../shared/lib/paymentOutstandingTolerance.js';
 import { appendAuditLog, assertPeriodOpen, insertPaymentRequest, parseRefundCalculationLinesFromRow, quotationCashInNgn, quotationUnlinkedOverpayCreditOutNgn, validateRefundFinancialGuards, assertQuotationProductionNotBlockedByRefund } from './controlOps.js';
 import { partnerWalletEnabled, refundHasOpenWalletCredit, openWalletCreditNgnForRefund, creditRefundToPartnerWalletTx, ensureRefundCompanyRetentionCreditTx, refundHeldNetCashDueNgn } from './finance/partnerWalletCredit.js';
+import { insertPurchasePaymentCashierAckTx } from './finance/purchasePaymentCashierAckOps.js';
 import {
   applyRefundCreditToQuotation,
   reverseRefundCreditApplication,
@@ -2046,6 +2047,22 @@ export function recordSupplierPayment(db, poID, amountNgn, note, opts = {}) {
         if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
           throw new Error(glPay.error || 'Supplier payment GL posting failed.');
         }
+        const poBranchId =
+          String(row.branch_id || '').trim() || String(opts.workspaceBranchId || '').trim() || DEFAULT_BRANCH_ID;
+        const ack = insertPurchasePaymentCashierAckTx(db, {
+          treasuryMovementId: tm.id,
+          branchId: poBranchId,
+          sourceKind: 'PURCHASE_ORDER',
+          sourceId: poID,
+          poId: poID,
+          supplierId: row.supplier_id,
+          supplierName: row.supplier_name,
+          amountNgn: amt,
+          paidAtISO: tm.postedAtISO || opts.dateISO,
+          paidByUserId: opts.actor?.id,
+          paidByName: opts.actor?.displayName || opts.createdBy,
+        });
+        if (!ack.ok) throw new Error(ack.error || 'Failed to queue cashier acknowledgment.');
       }
       appendAuditLog(db, {
         actor: opts.actor,
@@ -8857,6 +8874,24 @@ export function payAccountsPayable(db, apId, payload) {
       if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
         throw new Error(glPay.error || 'AP payment GL posting failed.');
       }
+      const ackBranch =
+        String(poBranchId || '').trim() ||
+        String(payload.workspaceBranchId || '').trim() ||
+        DEFAULT_BRANCH_ID;
+      const ack = insertPurchasePaymentCashierAckTx(db, {
+        treasuryMovementId: tm.id,
+        branchId: ackBranch,
+        sourceKind: 'ACCOUNTS_PAYABLE',
+        sourceId: apId,
+        poId: row.po_ref || null,
+        apId,
+        supplierName: row.supplier_name,
+        amountNgn: apply,
+        paidAtISO: tm.postedAtISO,
+        paidByUserId: payload.actor?.id,
+        paidByName: payload.actor?.displayName || payload.createdBy,
+      });
+      if (!ack.ok) throw new Error(ack.error || 'Failed to queue cashier acknowledgment.');
       appendAuditLog(db, {
         actor: payload.actor,
         action: 'accounts_payable.pay',

@@ -145,4 +145,66 @@ describe('materialWorkbookQuotationPrice', () => {
     });
     expect(n).toBe(4200);
   });
+
+  it('resolvePublishedListUnitNgnFromItems prefers branch publish over richer global PL-MPS', () => {
+    const items = [
+      {
+        id: 'PL-MPS-GL',
+        gaugeKey: '0.28mm',
+        designKey: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: '',
+        unitPricePerMeterNgn: 4000,
+        effectiveFromIso: '2026-09-01',
+      },
+      {
+        id: 'PL-MPS-YL',
+        gaugeKey: '0.28',
+        designKey: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: 'BR-YL',
+        unitPricePerMeterNgn: 4550,
+        effectiveFromIso: '2026-09-01',
+      },
+    ];
+    expect(
+      resolvePublishedListUnitNgnFromItems(items, {
+        gaugeLabel: '0.35mm',
+        designLabel: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: 'BR-YL',
+      })
+    ).toBe(4550);
+  });
+
+  it('resolvePublishedListUnitNgnFromItems maps Yola 0.30 trade label to canonical 0.24 publish', () => {
+    const items = [
+      {
+        id: 'PL-MPS-TRUE30',
+        gaugeKey: '0.30mm',
+        designKey: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: 'BR-YL',
+        unitPricePerMeterNgn: 9999,
+        effectiveFromIso: '2026-09-01',
+      },
+      {
+        id: 'PL-MPS-024',
+        gaugeKey: '0.24mm',
+        designKey: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: 'BR-YL',
+        unitPricePerMeterNgn: 3800,
+        effectiveFromIso: '2026-09-01',
+      },
+    ];
+    expect(
+      resolvePublishedListUnitNgnFromItems(items, {
+        gaugeLabel: '0.30mm',
+        designLabel: 'longspan',
+        materialTypeKey: 'alu',
+        branchId: 'BR-YL',
+      })
+    ).toBe(3800);
+  });
 });

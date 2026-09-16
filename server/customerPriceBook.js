@@ -71,7 +71,8 @@ export function buildCustomerPriceBookHtml(db, asAtIso, opts = {}) {
       .map((it) => {
         const base = Math.round(Number(it.unitPricePerMeterNgn) || 0);
         const prem = premiumProfilePriceFromBase(base);
-        return `<tr><td>${esc(it.materialTypeKey || '—')}</td><td>${esc(it.gaugeKey)}</td><td>${esc(it.designKey)}</td><td class="num">${esc(fmtNgn(base))}</td><td class="num">${esc(fmtNgn(prem))}</td></tr>`;
+        const gaugeLabel = it.gaugeDisplayKey || it.gaugeKey;
+        return `<tr><td>${esc(it.materialTypeKey || '—')}</td><td>${esc(gaugeLabel)}</td><td>${esc(it.designKey)}</td><td class="num">${esc(fmtNgn(base))}</td><td class="num">${esc(fmtNgn(prem))}</td></tr>`;
       })
       .join('');
     return `
@@ -93,7 +94,7 @@ export function buildCustomerPriceBookHtml(db, asAtIso, opts = {}) {
   const stoneHtml = stoneSorted
     .map(
       (it) =>
-        `<tr><td>${esc(it.gaugeKey)}</td><td class="num">${esc(fmtNgn(it.unitPricePerMeterNgn))}</td><td>${esc(it.notes || '')}</td></tr>`
+        `<tr><td>${esc(it.gaugeDisplayKey || it.gaugeKey)}</td><td class="num">${esc(fmtNgn(it.unitPricePerMeterNgn))}</td><td>${esc(it.notes || '')}</td></tr>`
     )
     .join('');
 

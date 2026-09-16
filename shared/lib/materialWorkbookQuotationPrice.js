@@ -3,6 +3,8 @@
  * Frontend copies via `npm run sync:shared` → src/shared/lib/materialWorkbookQuotationPrice.js
  */
 
+import { canonicalGaugeLabelForBranchInput } from './gaugeDisplayAlias.js';
+
 export function normPricingKey(s) {
   return String(s ?? '')
     .trim()
@@ -18,6 +20,16 @@ export function gaugeMmKeyFromLabel(label) {
     .replace(/\s+/g, ' ');
   const m = s.match(/^(\d+(?:\.\d+)?)/);
   return m ? m[1] : normPricingKey(s);
+}
+
+/**
+ * Gauge mm key after branch trade-label → canonical (Yola 0.35→0.28, 0.30→0.24).
+ * @param {string | null | undefined} branchId
+ * @param {unknown} label
+ */
+export function gaugeMmKeyForBranch(branchId, label) {
+  const canonical = canonicalGaugeLabelForBranchInput(branchId, label);
+  return gaugeMmKeyFromLabel(canonical || label);
 }
 
 /**
@@ -159,14 +171,16 @@ export function designKeysToTry(designLabel, extraDesignKeys = []) {
  */
 export function resolvePublishedListUnitNgnFromItems(items, ctx) {
   if (!Array.isArray(items) || items.length === 0) return 0;
-  const gaugeK = gaugeMmKeyFromLabel(ctx?.gaugeLabel ?? ctx?.gaugeMm);
-  const materialKey = normPricingKey(ctx?.materialTypeKey ?? ctx?.materialKey);
   const branchId = String(ctx?.branchId ?? '').trim();
+  // Yola trade labels (0.35 / 0.30) must resolve against canonical published keys (0.28 / 0.24).
+  const gaugeK = gaugeMmKeyForBranch(branchId, ctx?.gaugeLabel ?? ctx?.gaugeMm);
+  const materialKey = normPricingKey(ctx?.materialTypeKey ?? ctx?.materialKey);
   const designKeys = ctx?.skipDesign ? [] : designKeysToTry(ctx?.designLabel, ctx?.designKeys);
 
   let bestScore = -1;
   let bestN = 0;
   let bestEff = '';
+  let bestBranchMatch = false;
   for (const row of items) {
     const rg = gaugeMmKeyFromLabel(row.gaugeKey ?? row.gaugeMm);
     const rd = normPricingKey(row.designKey);
@@ -186,21 +200,27 @@ export function resolvePublishedListUnitNgnFromItems(items, ctx) {
     const n = Math.round(Number(row.unitPricePerMeterNgn) || 0);
     if (n <= 0) continue;
 
+    const branchMatch = Boolean(branchId && rb === branchId);
     let score = 0;
     if (gaugeK && rg === gaugeK) score += 4;
     if (designHit && rd) score += 6;
     else if (designKeys.length && !rd) score += 1;
     if (rmt && materialKey) score += 2;
-    if (rb && branchId) score += 1;
+    // Branch publish must beat richer global rows (colour/profile extras land elsewhere).
+    if (branchMatch) score += 8;
     if (String(row.id ?? '').startsWith('PL-MPS-')) score += 2;
     const eff = String(row.effectiveFromIso ?? '').slice(0, 10);
 
     const betterScore = score > bestScore;
-    const newerSameScore = score === bestScore && score > 0 && eff > bestEff;
-    if (betterScore || newerSameScore) {
+    const preferBranchTie =
+      score === bestScore && score > 0 && branchMatch && !bestBranchMatch;
+    const newerSameScore =
+      score === bestScore && score > 0 && branchMatch === bestBranchMatch && eff > bestEff;
+    if (betterScore || preferBranchTie || newerSameScore) {
       bestScore = score;
       bestN = n;
       bestEff = eff;
+      bestBranchMatch = branchMatch;
     }
   }
   return bestScore > 0 ? bestN : 0;
@@ -213,8 +233,8 @@ export function resolvePublishedListUnitNgnFromItems(items, ctx) {
  */
 export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   const mk = normPricingKey(ctx.materialKey);
-  const g = gaugeMmKeyFromLabel(ctx.gaugeMm);
   const bid = String(ctx.branchId || '').trim();
+  const g = gaugeMmKeyForBranch(bid, ctx.gaugeMm);
   if (!mk || !g || !bid || !Array.isArray(rows)) return null;
 
   const designKeys = designKeysToTry(ctx.designLabel, ctx.designKeys);

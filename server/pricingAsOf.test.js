@@ -5,6 +5,7 @@ import {
   listPriceListItemsAsOf,
   normalizePricingAsAtIso,
   quotationPricingAsAtIso,
+  resolvePriceListItemFloorNgnAsOf,
   resolveWorkbookRowStateAsOf,
   selectPriceListRowsAsOf,
   workbookFloorPerMeterAsOf,
@@ -104,10 +105,50 @@ describe('pricingAsOf', () => {
     const kd = listPriceListItemsAsOf(db, '2024-06-01', { branchId: 'BR-KD' });
     expect(kd.some((x) => x.id === 'PL-KD')).toBe(true);
     expect(kd.some((x) => x.id === 'PL-YL')).toBe(false);
-    // Global (null branch) rows still apply to every branch.
+    // Global (null branch) rows still apply when the branch has no override.
     expect(kd.some((x) => x.gaugeKey === '0.24mm')).toBe(true);
     const all = listPriceListItemsAsOf(db, '2024-06-01', { branchId: 'ALL' });
     expect(all.some((x) => x.id === 'PL-YL')).toBe(true);
+  });
+
+  it('listPriceListItemsAsOf hides global when branch publish exists for same product', () => {
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso, material_type_key)
+       VALUES ('PL-GL-LS', '0.28mm', 'longspan', 4000, 0, NULL, '2024-01-01', 'alu')`
+    ).run();
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso, material_type_key)
+       VALUES ('PL-MPS-YL', '0.28mm', 'longspan', 4550, 0, 'BR-YL', '2024-06-01', 'alu')`
+    ).run();
+    const yl = listPriceListItemsAsOf(db, '2024-08-01', { branchId: 'BR-YL' });
+    const longspan = yl.filter((x) => x.designKey === 'longspan' && String(x.gaugeKey).includes('0.28'));
+    expect(longspan).toHaveLength(1);
+    expect(longspan[0].id).toBe('PL-MPS-YL');
+    expect(longspan[0].unitPricePerMeterNgn).toBe(4550);
+    expect(longspan[0].gaugeDisplayKey).toBe('0.35mm');
+  });
+
+  it('resolvePriceListItemFloorNgnAsOf prefers branch publish over richer global', () => {
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso, material_type_key, colour_key, profile_key)
+       VALUES ('PL-GL-RICH', '0.28mm', 'longspan', 3900, 0, NULL, '2024-01-01', 'alu', 'red', 'longspan')`
+    ).run();
+    db.prepare(
+      `INSERT INTO price_list_items (id, gauge_key, design_key, unit_price_per_meter_ngn, sort_order, branch_id, effective_from_iso, material_type_key)
+       VALUES ('PL-MPS-YL2', '0.28mm', 'longspan', 4600, 0, 'BR-YL', '2024-06-01', 'alu')`
+    ).run();
+    const hit = resolvePriceListItemFloorNgnAsOf(
+      db,
+      {
+        gaugeLabel: '0.35mm',
+        designLabel: 'longspan',
+        materialTypeName: 'alu',
+        branchId: 'BR-YL',
+      },
+      '2024-08-01'
+    );
+    expect(hit?.unitPricePerMeterNgn).toBe(4600);
+    expect(hit?.id).toBe('PL-MPS-YL2');
   });
 
   it('workbookFloorPerMeterAsOf uses event history', () => {
@@ -157,6 +198,69 @@ describe('pricingAsOf', () => {
     // 5000 quoted − 2000 floor (Jun 2024 event) × 10 m
     expect(sub.amountNgn).toBe(30_000);
     expect(prev.preview.substitutionPerMeterBreakdown[0].producedListPricePerMeterNgn).toBe(2000);
+  });
+
+  it('substitution includes quoted-above-floor margin (not floor-to-floor only)', () => {
+    // Quoted gauge has its own workbook floor below the customer selling ₦/m.
+    // Credit must use blended selling − coil floor, not quoted-floor − coil-floor.
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_rows (
+        id, material_key, gauge_mm, branch_id, design_key,
+        minimum_price_per_m_ngn, commission_ngn_per_m, updated_at_iso
+      ) VALUES ('MPS-028', 'alu', '0.28', 'BR-KD', 'iv', 4500, 500, '2024-06-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_events (
+        id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
+      ) VALUES (
+        'EV-028', 'MPS-028', 'alu', '0.28', 'BR-KD', 'iv',
+        ?, '2024-03-01T10:00:00.000Z', NULL, 'upsert'
+      )`
+    ).run(
+      JSON.stringify({
+        before: null,
+        after: { minimumPricePerMeterNgn: 4500, commissionNgnPerM: 500 },
+      })
+    );
+    const linesSub = JSON.stringify({
+      materialGauge: '0.28mm',
+      materialDesign: 'IV',
+      products: [{ name: 'Roofing', qty: 10, unitPrice: 5000, gauge: '0.28mm', design: 'IV' }],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id)
+       VALUES ('QT-ABOVE-FLOOR-SUB', 'CUS-001', 'Test', '2024-06-01', 50000, 50000, 'Paid', 'Finished', ?, 'BR-KD')`
+    ).run(linesSub);
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-ABOVE', 'Longspan', 0, 'm', 'BR-KD', '0.24mm', 'IV', 'Aluminium')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-ABOVE', 'QT-ABOVE-FLOOR-SUB', 'FG-ABOVE', 'Longspan', 10, 'Completed', '2024-06-02T10:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO coil_lots (coil_no, product_id, qty_received, qty_remaining, current_weight_kg, current_status, gauge_label, colour)
+       VALUES ('CL-ABOVE', 'FG-ABOVE', 1000, 1000, 1000, 'Available', '0.24mm', 'IV')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_job_coils (id, job_id, sequence_no, coil_no, gauge_label, opening_weight_kg, closing_weight_kg, consumed_weight_kg, meters_produced, allocation_status, allocated_at_iso)
+       VALUES ('PJC-ABOVE', 'JOB-ABOVE', 1, 'CL-ABOVE', '0.24mm', 100, 0, 100, 10, 'Completed', '2024-06-02T10:00:00Z')`
+    ).run();
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-ABOVE-FLOOR-SUB' });
+    expect(prev.ok).toBe(true);
+    const sub = prev.preview.suggestedLines.find((l) => l.category === 'Substitution Difference');
+    expect(sub).toBeDefined();
+    // Floor-to-floor would be (4500 − 2000) × 10 = 25_000; must also refund ₦500/m above floor.
+    expect(sub.amountNgn).toBe(30_000);
+    const bd = prev.preview.substitutionPerMeterBreakdown[0];
+    expect(bd.creditBasis).toBe('blended_to_coil_floor');
+    expect(bd.quotedFloorPricePerMeterNgn).toBe(4500);
+    expect(bd.quotedPricePerMeterNgn).toBe(5000);
+    expect(bd.deltaPerMeterNgn).toBe(3000);
   });
 
   it('substitution credits only the thinner-gauge metres when one job has mixed coils', () => {

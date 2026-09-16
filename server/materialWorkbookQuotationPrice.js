@@ -6,6 +6,7 @@ import { listMaterialPricingRowsAsOf } from './pricingAsOf.js';
 import {
   designKeysToTry,
   gaugeMmKeyFromLabel,
+  gaugeMmKeyForBranch,
   materialKeyFromMaterialTypeRow,
   publishedListPriceFromWorkbook,
   resolveMaterialWorkbookPriceFromRows,
@@ -13,6 +14,7 @@ import {
 
 export {
   gaugeMmKeyFromLabel,
+  gaugeMmKeyForBranch,
   materialKeyFromMaterialTypeRow,
   publishedListPriceFromWorkbook,
   resolveMaterialWorkbookPriceFromRows,
@@ -124,7 +126,7 @@ export function listMaterialPricingRowsForQuotationLookup(db, branchId, material
   if (!canReadMaterialPricingSheetRows(db)) return [];
   const bid = String(branchId || '').trim();
   const mk = normKey(materialKey);
-  const g = gaugeMmKeyFromLabel(gaugeMm);
+  const g = gaugeMmKeyForBranch(bid, gaugeMm);
   if (!bid || !mk || !g) return [];
   const rows = db
     .prepare(
@@ -170,7 +172,7 @@ export function resolveMaterialWorkbookPriceForQuotation(db, ctx) {
   const mk =
     normKey(ctx.materialKey) ||
     materialKeyFromMaterialTypeId(db, ctx.materialTypeId);
-  const g = gaugeMmKeyFromLabel(ctx.gaugeLabel);
+  const g = gaugeMmKeyForBranch(bid, ctx.gaugeLabel);
   if (!mk || !g) return null;
 
   const designKeys = expandedDesignKeys(db, ctx.designLabel);

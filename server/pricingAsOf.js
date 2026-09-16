@@ -6,9 +6,11 @@
 import {
   publishedListPriceFromWorkbook,
   gaugeMmKeyFromLabel,
+  gaugeMmKeyForBranch,
   priceListDesignKeysMatch,
   designKeysToTry,
 } from '../shared/lib/materialWorkbookQuotationPrice.js';
+import { displayGaugeLabelForBranch } from '../shared/lib/gaugeDisplayAlias.js';
 
 const DEFAULT_EFFECTIVE_FROM = '2020-01-01';
 
@@ -102,10 +104,51 @@ export function selectPriceListRowsAsOf(allRows, asAtIso) {
   return [...bestByScope.values()];
 }
 
+/** Product scope without branch — used to drop globals when a branch row exists. */
+function priceListProductKey(row) {
+  return [
+    normKey(row.gauge_key ?? row.gaugeKey),
+    normKey(row.design_key ?? row.designKey),
+    normKey(row.material_type_key ?? row.materialTypeKey ?? ''),
+    normKey(row.colour_key ?? row.colourKey ?? ''),
+    normKey(row.profile_key ?? row.profileKey ?? ''),
+  ].join('\0');
+}
+
+/**
+ * When listing for a branch, hide global (null branch) rows superseded by a
+ * same-product branch publish so desks don't show two conflicting ₦/m.
+ * @param {Record<string, unknown>[]} rows
+ * @param {string} branchFilter
+ */
+function preferBranchRowsOverGlobal(rows, branchFilter) {
+  if (!branchFilter) return rows;
+  /** @type {Map<string, Record<string, unknown>>} */
+  const byProduct = new Map();
+  for (const r of rows) {
+    const key = priceListProductKey(r);
+    const rb =
+      r.branch_id != null && String(r.branch_id).trim() ? String(r.branch_id).trim() : '';
+    const prev = byProduct.get(key);
+    if (!prev) {
+      byProduct.set(key, r);
+      continue;
+    }
+    const prevB =
+      prev.branch_id != null && String(prev.branch_id).trim() ? String(prev.branch_id).trim() : '';
+    if (rb === branchFilter && prevB !== branchFilter) {
+      byProduct.set(key, r);
+    }
+  }
+  return [...byProduct.values()];
+}
+
 /**
  * Collapse published price_list_items as-of a date.
  * When `opts.branchId` is set (and not ALL), returns that branch’s rows plus global
- * (null/empty branch_id) rows — other branches are excluded. HQ “ALL” / omit = no filter.
+ * (null/empty branch_id) rows — other branches are excluded. When a branch row
+ * exists for the same product keys, the global row is omitted from the list.
+ * HQ “ALL” / omit = no filter.
  * @param {import('better-sqlite3').Database} db
  * @param {string} [asAtIso]
  * @param {{ branchId?: string | null }} [opts]
@@ -124,24 +167,34 @@ export function listPriceListItemsAsOf(db, asAtIso, opts = {}) {
         String(r.branch_id).trim() === branchFilter
     );
   }
-  const collapsed = selectPriceListRowsAsOf(rows, asAt);
+  let collapsed = selectPriceListRowsAsOf(rows, asAt);
+  if (branchFilter) {
+    collapsed = preferBranchRowsOverGlobal(collapsed, branchFilter);
+  }
   return collapsed
-    .map((row) => ({
-      id: row.id,
-      gaugeKey: row.gauge_key,
-      designKey: row.design_key,
-      unitPricePerMeterNgn: Math.round(Number(row.unit_price_per_meter_ngn) || 0),
-      sortOrder: Number(row.sort_order) || 0,
-      notes: row.notes ?? '',
-      branchId: row.branch_id ?? null,
-      effectiveFromIso: priceListRowEffectiveFrom(row),
-      updatedAtIso: row.updated_at_iso ?? null,
-      updatedByUserId: row.updated_by_user_id ?? null,
-      materialTypeKey: row.material_type_key ?? '',
-      colourKey: row.colour_key ?? '',
-      profileKey: row.profile_key ?? '',
-      pricingAsAtIso: asAt,
-    }))
+    .map((row) => {
+      const gaugeKey = row.gauge_key;
+      return {
+        id: row.id,
+        gaugeKey,
+        // Desk/print: Yola trade label when listing for BR-YL (storage stays canonical).
+        gaugeDisplayKey: branchFilter
+          ? displayGaugeLabelForBranch(branchFilter, gaugeKey) || gaugeKey
+          : gaugeKey,
+        designKey: row.design_key,
+        unitPricePerMeterNgn: Math.round(Number(row.unit_price_per_meter_ngn) || 0),
+        sortOrder: Number(row.sort_order) || 0,
+        notes: row.notes ?? '',
+        branchId: row.branch_id ?? null,
+        effectiveFromIso: priceListRowEffectiveFrom(row),
+        updatedAtIso: row.updated_at_iso ?? null,
+        updatedByUserId: row.updated_by_user_id ?? null,
+        materialTypeKey: row.material_type_key ?? '',
+        colourKey: row.colour_key ?? '',
+        profileKey: row.profile_key ?? '',
+        pricingAsAtIso: asAt,
+      };
+    })
     .sort((a, b) => {
       const g = String(a.gaugeKey).localeCompare(String(b.gaugeKey));
       if (g !== 0) return g;
@@ -157,13 +210,14 @@ export function listPriceListItemsAsOf(db, asAtIso, opts = {}) {
 export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
   if (!canReadPriceListItems(db)) return null;
   const asAt = normalizePricingAsAtIso(asAtIso ?? ctx?.asAtIso);
-  const g = gaugeMmKeyFromLabel(ctx.gaugeLabel || ctx.gaugeId);
+  const bid = ctx.branchId != null ? String(ctx.branchId).trim() || null : null;
+  // Yola desk trade names must match canonical price_list_items.gauge_key.
+  const g = gaugeMmKeyForBranch(bid, ctx.gaugeLabel || ctx.gaugeId);
   const d = normKey(ctx.designLabel || ctx.profileName || ctx.colourName);
   const designKeys = d ? designKeysToTry(d) : [];
   const mt = normKey(ctx.materialTypeName || ctx.materialTypeId);
   const col = normKey(ctx.colourName);
   const prof = normKey(ctx.profileName);
-  const bid = ctx.branchId != null ? String(ctx.branchId).trim() || null : null;
 
   const rows = selectPriceListRowsAsOf(db.prepare(`SELECT * FROM price_list_items`).all(), asAt);
   let best = null;
@@ -174,14 +228,17 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
     const rmt = normKey(r.material_type_key || '');
     const rcol = normKey(r.colour_key || '');
     const rprof = normKey(r.profile_key || '');
+    const rb =
+      r.branch_id != null && String(r.branch_id).trim() ? String(r.branch_id).trim() : '';
     if (g && rg && rg !== g) continue;
     const designHit = designKeys.length ? priceListDesignKeysMatch(rd, designKeys) : !rd;
     if (designKeys.length && rd && !designHit) continue;
     if (rmt && mt && !mt.includes(rmt) && !rmt.includes(mt)) continue;
     if (rcol && col && rcol !== col) continue;
     if (rprof && prof && rprof !== prof) continue;
-    if (bid && r.branch_id != null && String(r.branch_id).trim() && String(r.branch_id).trim() !== bid) continue;
+    if (bid && rb && rb !== bid) continue;
 
+    const branchMatch = Boolean(bid && rb === bid);
     let score = 0;
     if (g && rg === g) score += 2;
     if (designHit && rd) score += 4;
@@ -189,7 +246,15 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
     if (rmt) score += 2;
     if (rcol) score += 2;
     if (rprof) score += 2;
-    if (score > bestScore) {
+    // Prefer this branch’s publish over equally specific global / HQ rows.
+    if (branchMatch) score += 8;
+    const betterScore = score > bestScore;
+    const preferBranchTie =
+      score === bestScore &&
+      score > 0 &&
+      branchMatch &&
+      !(best?.branch_id != null && String(best.branch_id).trim() === bid);
+    if (betterScore || preferBranchTie) {
       bestScore = score;
       best = r;
     }
@@ -214,10 +279,10 @@ export function resolvePriceListItemFloorNgnAsOf(db, ctx, asAtIso) {
  * @param {string | null | undefined} asAtIso
  */
 export function floorPricePerMeterForGaugeDesignAsOf(db, gaugeKey, designKey, branchId, asAtIso) {
-  const g = gaugeMmKeyFromLabel(gaugeKey);
+  const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
+  const g = gaugeMmKeyForBranch(bid, gaugeKey);
   const d = normKey(designKey);
   if (!g || !d) return null;
-  const bid = branchId && String(branchId).trim() ? String(branchId).trim() : null;
   const asAt = normalizePricingAsAtIso(asAtIso);
   const rows = selectPriceListRowsAsOf(db.prepare(`SELECT * FROM price_list_items`).all(), asAt);
   let best = null;

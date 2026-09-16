@@ -4538,8 +4538,10 @@ export function previewRefundRequest(db, payload) {
 
   /**
    * Substitution (simplified): **quotation gauge** vs **allocated coil gauge** (per coil metres when mixed).
-   * Credit = max(0, quoted blended ₦/m − workbook **floor** ₦/m for coil gauge + design as at **quotation date**,
-   * else published list from `price_list_items`) × metres for each thinner-gauge allocation.
+   * Credit = max(0, quoted selling blended ₦/m − workbook **floor** ₦/m for coil gauge + design as at
+   * **quotation date**, else published list) × metres for each thinner-gauge allocation.
+   * When quoted selling is above the quoted-gauge workbook floor, that margin is included (not floor-to-floor only).
+   * Falls back to quoted workbook floor ₦/m only when blended selling ₦/m is unavailable.
    * Does not use job product name or FG card gauge for the comparison trigger.
    */
   const substitutionPerMeterBreakdown = [];
@@ -4633,15 +4635,19 @@ export function previewRefundRequest(db, payload) {
           continue;
         }
 
-        // Floor-to-floor when both workbook floors exist; else customer blended ₦/m vs coil floor/list.
+        // Prefer quoted selling blended ₦/m vs coil floor so price-above-floor is refunded too.
+        // Fall back to quoted workbook floor only when blended ₦/m is missing.
         let creditPpm;
         let quotedPricePerMeterNgn;
-        if (quotedFloorPpm != null && quotedFloorPpm > 0 && producedPpm > 0) {
-          creditPpm = Math.max(0, quotedFloorPpm - producedPpm);
-          quotedPricePerMeterNgn = Math.round(quotedFloorPpm);
-        } else if (pricePerMeter) {
+        let creditBasis;
+        if (pricePerMeter) {
           creditPpm = Math.max(0, pricePerMeter - producedPpm);
           quotedPricePerMeterNgn = Math.round(pricePerMeter);
+          creditBasis = 'blended_to_coil_floor';
+        } else if (quotedFloorPpm != null && quotedFloorPpm > 0 && producedPpm > 0) {
+          creditPpm = Math.max(0, quotedFloorPpm - producedPpm);
+          quotedPricePerMeterNgn = Math.round(quotedFloorPpm);
+          creditBasis = 'floor_to_floor';
         } else {
           continue;
         }
@@ -4668,15 +4674,14 @@ export function previewRefundRequest(db, payload) {
           creditNgn: credit,
           quotedGaugeForComparison: quotedGaugeRaw,
           coilGaugeFromAllocations: coilGauge,
-          creditBasis:
-            quotedFloorPpm != null && quotedFloorPpm > 0 ? 'floor_to_floor' : 'blended_to_coil_floor',
+          creditBasis,
         });
       }
     }
 
     if (anyGaugeVsCoilCase || missingCoilGaugeLabels.length > 0) {
       const fmtN = (n) => `₦${Math.round(n).toLocaleString('en-NG')}`;
-      const hasFloorToFloor = substitutionPerMeterBreakdown.some((b) => b.creditBasis === 'floor_to_floor');
+      const usedBlended = substitutionPerMeterBreakdown.some((b) => b.creditBasis === 'blended_to_coil_floor');
       const canPrice =
         Boolean(pricePerMeter) || (quotedFloorPpm != null && quotedFloorPpm > 0);
       let label;
@@ -4685,9 +4690,9 @@ export function previewRefundRequest(db, payload) {
           (b) =>
             `${b.meters.toFixed(2)}m × ${fmtN(b.deltaPerMeterNgn)}/m (quote ${b.quotedGaugeForComparison || 'gauge'} vs coil ${b.coilGaugeFromAllocations || '—'}; ${String(b.productName || 'job').trim()})`
         );
-        const fromRate = hasFloorToFloor
-          ? `${fmtN(quotedFloorPpm)}/m quoted workbook floor`
-          : `${fmtN(pricePerMeter)}/m blended quote`;
+        const fromRate = usedBlended
+          ? `${fmtN(pricePerMeter)}/m blended quote`
+          : `${fmtN(quotedFloorPpm)}/m quoted workbook floor`;
         label = `Substitution credit (quoted ${quotedGaugeRaw} vs thinner coil; ${fromRate} minus workbook floor coil rate × metres): ${parts.join('; ')}`;
       } else if (!canPrice) {
         label =

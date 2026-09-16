@@ -157,11 +157,11 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
       dateISO: '2026-05-22',
     });
     expect(r.ok).toBe(false);
-    // ₦10k hold is within cashier small-hold cap — note required to override.
+    // Cashier may override any hold size — note required.
     expect(r.code).toBe('REFUND_UNCLEARED_OVERRIDE_NOTE_REQUIRED');
   });
 
-  it('lets cashier override a small uncleared hold with a mandatory note', () => {
+  it('lets cashier override an uncleared hold with a mandatory note', () => {
     const r = payRefundEntry(db, REFUND_ID, {
       treasuryAccountId,
       actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
@@ -222,7 +222,7 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
     }
   });
 
-  it('blocks cashier override when the uncleared hold exceeds the small-hold cap', () => {
+  it('lets cashier override a large uncleared hold with a mandatory note', () => {
     db.prepare(`UPDATE customer_refunds SET approved_amount_ngn = ?, amount_ngn = ? WHERE refund_id = ?`).run(
       80_000,
       80_000,
@@ -237,17 +237,23 @@ describe.skipIf(!mysqlOk)('uncleared receipts on refund payees', () => {
         actor: { id: 'USR-CASH', displayName: 'Cashier', roleKey: 'cashier', permissions: ['finance.pay'] },
         paidBy: 'Cashier',
         dateISO: '2026-05-22',
-        paymentNote: 'Trying to override a large hold without manager.',
+        paymentNote: 'Confirmed with BM — clearing large hold on this job.',
+        paymentLines: [{ treasuryAccountId, amountNgn: 80_000 }],
       });
-      expect(r.ok).toBe(false);
-      expect(r.code).toBe('REFUND_PAYOUT_HELD_UNCLEARED');
-      expect(Array.isArray(r.unclearedReceiptIds)).toBe(true);
-      expect(r.unclearedReceiptIds).toContain('RC-UNCLR-PAYEE');
+      expect(r.ok).toBe(true);
+      const updated = db.prepare(`SELECT paid_amount_ngn FROM customer_refunds WHERE refund_id = ?`).get(REFUND_ID);
+      expect(Number(updated.paid_amount_ngn)).toBe(80_000);
     } finally {
       db.prepare(`UPDATE customer_refunds SET approved_amount_ngn = 10000, amount_ngn = 10000 WHERE refund_id = ?`).run(
         REFUND_ID
       );
       db.prepare(`UPDATE sales_receipts SET amount_ngn = 25000 WHERE id = ?`).run('RC-UNCLR-PAYEE');
+      db.prepare(
+        `UPDATE customer_refunds
+         SET status = 'Approved', paid_amount_ngn = 0, paid_at_iso = NULL, paid_by = NULL, paid_by_user_id = NULL,
+             payment_note = 'Settled at approval: company cut ₦0 → retention ledger.'
+         WHERE refund_id = ?`
+      ).run(REFUND_ID);
     }
   });
 

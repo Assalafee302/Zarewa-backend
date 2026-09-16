@@ -344,14 +344,10 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
       amountNgn: tillPayableNgn,
     });
   }
-  if (
-    heldUnclearedNgn > 0 &&
-    heldUnclearedNgn <= CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN &&
-    tillPayableNgn <= 0
-  ) {
+  if (heldUnclearedNgn > 0 && tillPayableNgn <= 0) {
     nextActions.push({
-      code: 'cashier_override_small_hold',
-      label: `Override small hold (≤ ₦${CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN.toLocaleString('en-NG')}) with note`,
+      code: 'cashier_override_hold',
+      label: 'Override uncleared hold with payment note',
       amountNgn: heldUnclearedNgn,
     });
   }

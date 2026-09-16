@@ -1,10 +1,17 @@
 /**
  * Uncleared-receipt till hold override rules for refund payout.
  * Frontend copies via `npm run sync:shared` → src/shared/lib/refundUnclearedPayoutHold.js
+ *
+ * Till payable is already net of company cut and any refund-fund credit applied from a
+ * confirmed receipt. Uncleared holds only gate the remaining cash slice — cashiers may
+ * release that slice with a mandatory note (any size). BM/HoA/admin same path.
  */
 
-/** Cashiers may override a small held slice (with a mandatory note); larger holds need BM/HoA/admin. */
-export const CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN = 50_000;
+/**
+ * Legacy UI hint for “small hold” copy. Cashiers may override any held size with a note;
+ * this cap is no longer enforced on the override gate.
+ */
+export const CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN = Number.MAX_SAFE_INTEGER;
 
 function normalizeRoleKey(actor) {
   return String(actor?.roleKey || actor?.role_key || '')
@@ -22,11 +29,9 @@ function isAdminTrialActor(actor, hasPermission) {
 
 /**
  * Who may till-pay while the payee still has unconfirmed receipts on this refund's job.
- * Cashiers: only when held ≤ CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN (note still required at pay).
- * BM / HoA / admin / refunds.approve / finance.approve: full override.
- * MD/CEO/chairman: never (they are blocked from customer-refund pay entirely).
- * Cashier role is checked before approve permissions so a cashier with finance.approve
- * still only gets the small-hold path (not a full BM-style override).
+ * Cashiers / BM / HoA / admin / refunds.approve / finance.approve: override with note
+ * (pay path still requires ≥10-char note for non-admin).
+ * MD/CEO/chairman: never (blocked from customer-refund pay entirely).
  *
  * @param {{ roleKey?: string, role_key?: string, permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} [hasPermission]
@@ -38,7 +43,7 @@ export function actorMayOverrideRefundUnclearedPayoutHold(actor, hasPermission, 
   if (rk === 'md' || rk === 'ceo' || rk === 'chairman') return false;
   if (rk === 'cashier') {
     const held = Math.max(0, Math.round(Number(opts?.heldNetNgn) || 0));
-    return held > 0 && held <= CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN;
+    return held > 0;
   }
   if (rk === 'sales_manager' || rk === 'branch_manager' || rk === 'finance_manager' || rk === 'admin') {
     return true;

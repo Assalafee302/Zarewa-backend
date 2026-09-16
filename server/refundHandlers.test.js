@@ -30,7 +30,7 @@ describe('refundHandlers (Phase 11A)', () => {
     expect(isRefundAdminTrialActor({ roleKey: 'md' }, () => false)).toBe(false);
   });
 
-  it('lets admin override uncleared-receipt payout hold; cashier only for small holds', () => {
+  it('lets admin and cashier override uncleared-receipt payout hold (cashier needs held > 0)', () => {
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'admin' }, () => false)).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false)).toBe(false);
     expect(
@@ -40,8 +40,8 @@ describe('refundHandlers (Phase 11A)', () => {
       actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false, { heldNetNgn: 50_000 })
     ).toBe(true);
     expect(
-      actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false, { heldNetNgn: 50_001 })
-    ).toBe(false);
+      actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, () => false, { heldNetNgn: 500_001 })
+    ).toBe(true);
     expect(actorMayOverrideRefundUnclearedPayoutHold({ roleKey: 'cashier' }, (p) => p === 'finance.approve')).toBe(
       false
     );

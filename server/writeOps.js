@@ -9036,13 +9036,13 @@ export function payRefundEntry(db, refundId, payload) {
     const canCashierOverride =
       String(payload.actor?.roleKey || payload.actor?.role_key || '')
         .trim()
-        .toLowerCase() === 'cashier' && heldNetNgn <= CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN;
+        .toLowerCase() === 'cashier' && heldNetNgn > 0;
     return {
       ok: false,
       code: 'REFUND_PAYOUT_HELD_UNCLEARED',
       error: canCashierOverride
-        ? `Till/bank payout is held for ₦${heldNetNgn.toLocaleString('en-NG')} of unconfirmed receipts on this quotation. Confirm those receipts, or override with a payment note (at least 10 characters) — held is within the cashier cap of ₦${CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN.toLocaleString('en-NG')}.`
-        : 'Till/bank payout is held until uncleared receipts for this quotation are confirmed. Branch manager, Head of Accounts, or an administrator can release with a note. Cashiers may override small holds (≤ ₦50,000) with a note.',
+        ? `Till/bank payout is held for ₦${heldNetNgn.toLocaleString('en-NG')} of unconfirmed receipts on this quotation. Confirm those receipts, or override with a payment note (at least 10 characters). Payable amount is already net of company cut and any refund already used on a confirmed receipt.`
+        : 'Till/bank payout is held until uncleared receipts for this quotation are confirmed. Branch manager, Head of Accounts, cashier, or an administrator can release with a note.',
       heldUnclearedNgn: heldNetNgn,
       tillPayableNgn,
       walletOpenNgn: openWalletNgn,

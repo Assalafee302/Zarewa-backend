@@ -55,7 +55,7 @@ export function refundTillPayableNgn({
 }
 
 /**
- * Cashiers cannot till-pay a large uncleared hold; small holds (≤ ₦50k) may be overridden with a note.
+ * Cashiers may override any uncleared hold size with a mandatory payment note.
  * Branch manager, Head of Accounts, or admin may override any size (note required for non-admin).
  * @param {{ roleKey?: string, role_key?: string, permissions?: string[] } | null | undefined} actor
  * @param {(perm: string) => boolean} [hasPermission]

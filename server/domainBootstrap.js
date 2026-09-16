@@ -95,6 +95,7 @@ import {
   receiptsHistoryListOpts,
   salesCustomersListOpts,
 } from './listQueryOpts.js';
+import { RECEIPT_PENDING_PO_STATUS_KEYS } from '../shared/lib/inTransitVisibility.js';
 
 /** Escape hatches for consumed/finished coils omitted from active desk packs. */
 const COIL_DESK_RECOVERY = {
@@ -301,7 +302,7 @@ export function buildSalesDomainSnapshot(db, opts = {}) {
  */
 export function buildOperationsDomainSnapshot(db, opts = {}) {
   const f = domainFlags(db, opts);
-  const { branchScope, opsOk, prodRollupOk, coilMovOk, yardOk, productionOk, user } = f;
+  const { branchScope, opsOk, poListOk, prodRollupOk, coilMovOk, yardOk, productionOk, user } = f;
   const productionMetrics = productionOk
     ? computeProductionMetricsRollup(db, branchScope)
     : {
@@ -338,6 +339,17 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
   const deliveries = opsOk ? listDeliveries(db, branchScope, historyOpts) : [];
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
   const coilControlEvents = coilMovOk ? listCoilControlEvents(db, branchScope, historyOpts) : [];
+  // Store GRN list needs Approved POs even before transport creates an in_transit_loads row.
+  // Shell/dashboard defer purchaseOrders; ops hydrate must ship receivable ones.
+  const poDeskOpts = deskPageListOpts();
+  const poDeskLim = poDeskOpts.unlimited ? 0 : Number(poDeskOpts.limit) || deskPageLimit();
+  const purchaseOrders = poListOk
+    ? listPurchaseOrders(db, branchScope, {
+        ...poDeskOpts,
+        skipSideEffects: true,
+        statusKeys: [...RECEIPT_PENDING_PO_STATUS_KEYS],
+      })
+    : [];
   const pageSize = deskPageLimit();
   return {
     ok: true,
@@ -368,6 +380,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
     movements,
     wipByProduct: opsOk ? getWipByProduct(db, branchScope) : {},
     yardCoilRegister: yardOk ? listYardCoils(db, branchScope) : [],
+    purchaseOrders,
     inTransitLoads: user ? listInTransitLoads(db, branchScope) : [],
     materialRequests: user ? listMaterialRequests(db, workScope) : [],
     machines: user ? listMachines(db, workScope) : [],
@@ -380,10 +393,12 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
         cuttingLists: 'date_iso_desc',
         productionJobs: 'created_at_iso_desc',
         movements: 'at_iso_desc',
+        purchaseOrders: 'order_date_iso_desc',
       },
       listLimitsApplied: {
         ...(historyLim ? { cuttingLists: historyLim, productionJobs: historyLim, movements: historyLim } : {}),
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
+        ...(poListOk && poDeskLim ? { purchaseOrders: poDeskLim } : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       productionDeskRecovery:
@@ -410,6 +425,7 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
             }
           : {}),
         ...(yardOk ? { yardCoilRegister: true } : {}),
+        ...(poListOk ? { purchaseOrders: poDeskLim > 0 && purchaseOrders.length >= poDeskLim } : {}),
       },
       backgroundHydrate: buildBackgroundHydrateMeta(
         [

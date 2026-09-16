@@ -573,19 +573,51 @@ export function listProductionJobsForQuotationRefs(db, quotationRefs, branchScop
     });
 }
 
+/**
+ * Text search for quotations — applied in SQL before LIMIT so Sales browse can
+ * find older quotes outside the recent desk page (id / customer / project).
+ * @param {string} [q]
+ * @param {string} [colPrefix]
+ */
+function quotationSearchClause(q, colPrefix = '') {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  const col = (name) => `${colPrefix}${name}`;
+  return {
+    sql: ` AND (${col('id')} LIKE ? OR IFNULL(${col('customer_name')},'') LIKE ? OR IFNULL(${col('customer_id')},'') LIKE ? OR IFNULL(${col('project_name')},'') LIKE ? OR IFNULL(${col('agent_customer_name')},'') LIKE ? OR IFNULL(${col('handled_by')},'') LIKE ? OR IFNULL(${col('status')},'') LIKE ? OR IFNULL(${col('payment_status')},'') LIKE ?)`,
+    args: [like, like, like, like, like, like, like, like],
+  };
+}
+
 export function listQuotations(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const includeLines = opts.includeLines !== false;
   const b = branchWhere(db, 'quotations', branchScope);
+  const s = quotationSearchClause(opts.q);
   const lo = sqlLimitOffsetClause(limit, offset);
-  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql} ORDER BY date_iso DESC, id DESC${lo.sql}`;
+  const sql = `SELECT * FROM quotations WHERE 1=1${b.sql}${s.sql} ORDER BY date_iso DESC, id DESC${lo.sql}`;
   const mapped = db
     .prepare(sql)
-    .all(...b.args, ...lo.args)
+    .all(...b.args, ...s.args, ...lo.args)
     .map((row) => mapQuotationRow(db, row, { includeLines }));
   if (!includeLines) return mapped;
   return enrichQuotationsWithLineTableBatch(db, mapped, branchScope);
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {{ q?: string }} [opts]
+ */
+export function countQuotations(db, branchScope = 'ALL', opts = {}) {
+  const b = branchWhere(db, 'quotations', branchScope);
+  const s = quotationSearchClause(opts.q);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}${s.sql}`)
+    .get(...b.args, ...s.args);
+  return Number(row?.c) || 0;
 }
 
 /**
@@ -613,12 +645,6 @@ export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
   return enrichQuotationsWithLineTableBatch(db, rows, branchScope);
 }
 
-/** @param {import('better-sqlite3').Database} db */
-export function countQuotations(db, branchScope = 'ALL') {
-  const b = branchWhere(db, 'quotations', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE 1=1${b.sql}`).get(...b.args);
-  return Number(row?.c) || 0;
-}
 /**
  * Quotations linked to cutting lists or production jobs — for store/ops users without full sales domain.
  * Needed so production register can detect stone-coated jobs (stoneMeterQuote) in the workspace snapshot.
@@ -1465,8 +1491,16 @@ function purchaseOrderLinesByPoIds(db, poIds) {
 export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const b = branchWhere(db, 'purchase_orders', branchScope);
-  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+  /** Optional LOWER(status) filter — e.g. ops GRN desk only needs receipt-pending keys. */
+  const statusKeys = Array.isArray(opts.statusKeys)
+    ? opts.statusKeys.map((s) => normalizePoStatusKey(s)).filter(Boolean)
+    : [];
+  const statusSql =
+    statusKeys.length > 0
+      ? ` AND LOWER(TRIM(IFNULL(status,''))) IN (${statusKeys.map(() => '?').join(',')})`
+      : '';
+  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
+  const args = limit > 0 ? [...b.args, ...statusKeys, limit] : [...b.args, ...statusKeys];
   const pos = db.prepare(sql).all(...args);
   const linesByPoId = purchaseOrderLinesByPoIds(
     db,

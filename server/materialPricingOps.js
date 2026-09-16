@@ -601,7 +601,14 @@ export function upsertMaterialPricingSheetRow(db, body, actor, opts = {}) {
     if (hasKey) {
       const raw = body.conversionUsedKgPerM;
       if (raw === null || raw === undefined || raw === '') {
-        used = suggested;
+        // Blank Used in the UI means “keep current / use suggested” — do not clobber a
+        // stored Used with a newly drifted live average on every Save.
+        const priorUsed =
+          existing?.conversion_used_kg_per_m != null ? Number(existing.conversion_used_kg_per_m) : null;
+        used =
+          priorUsed != null && Number.isFinite(priorUsed) && priorUsed > 0
+            ? roundConv2(priorUsed)
+            : suggested;
       } else {
         const n = Number(raw);
         used = Number.isFinite(n) && n > 0 ? roundConv2(n) : suggested;
@@ -871,50 +878,70 @@ export function publishMaterialPricingSheet(db, body, actor) {
 
   const published = [];
   const errors = [];
-  for (const raw of rows) {
-    const row = mapRow(raw);
-    const listPrice = Number(row.publishedListPriceNgn) || 0;
-    if (listPrice <= 0) {
-      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'List price must be > 0.' });
-      continue;
-    }
-    let syncDesign = String(row.syncDesignKey || '').trim();
-    if (materialKey === 'stone-coated') syncDesign = syncDesign || 'stone-coated';
-    if (!syncDesign) {
-      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'syncDesignKey is required to publish.' });
-      continue;
-    }
-    const plId = `PL-MPS-${String(row.id).replace(/^MPS-/i, '').slice(0, 16)}`;
-    const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
-    const pl = upsertPriceListItem(
-      db,
-      {
-        id: plId,
-        gaugeKey: gaugeMmKeyFromLabel(row.gaugeMm) || row.gaugeMm,
+  const runPublish = db.transaction(() => {
+    for (const raw of rows) {
+      const row = mapRow(raw);
+      const listPrice = Number(row.publishedListPriceNgn) || 0;
+      if (listPrice <= 0) {
+        errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'List price must be > 0.' });
+        continue;
+      }
+      let syncDesign = String(row.syncDesignKey || '').trim();
+      if (materialKey === 'stone-coated') syncDesign = syncDesign || 'stone-coated';
+      if (!syncDesign) {
+        errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'syncDesignKey is required to publish.' });
+        continue;
+      }
+      const plId = `PL-MPS-${String(row.id).replace(/^MPS-/i, '').slice(0, 16)}`;
+      const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
+      const pl = upsertPriceListItem(
+        db,
+        {
+          id: plId,
+          gaugeKey: gaugeMmKeyFromLabel(row.gaugeMm) || row.gaugeMm,
+          designKey: syncDesign,
+          unitPricePerMeterNgn: listPrice,
+          branchId,
+          // Local calendar day when body omits effectiveFromIso (same default as upsertPriceListItem).
+          effectiveFromIso:
+            String(body?.effectiveFromIso || '').trim().slice(0, 10) ||
+            defaultPriceListEffectiveFromIso(),
+          notes: `Published from material pricing workbook (${materialKey}): floor + commission.`,
+          materialTypeKey: mtKey,
+        },
+        actor
+      );
+      if (!pl?.ok) {
+        errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: pl?.error || 'Price list upsert failed.' });
+        continue;
+      }
+      published.push({
+        rowId: row.id,
+        gaugeMm: row.gaugeMm,
         designKey: syncDesign,
-        unitPricePerMeterNgn: listPrice,
-        branchId,
-        // Local calendar day when body omits effectiveFromIso (same default as upsertPriceListItem).
-        effectiveFromIso:
-          String(body?.effectiveFromIso || '').trim().slice(0, 10) ||
-          defaultPriceListEffectiveFromIso(),
-        notes: `Published from material pricing workbook (${materialKey}): floor + commission.`,
-        materialTypeKey: mtKey,
-      },
-      actor
-    );
-    if (!pl?.ok) {
-      errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: pl?.error || 'Price list upsert failed.' });
-      continue;
+        floorNgn: row.minimumPricePerMeterNgn,
+        listNgn: listPrice,
+        priceListId: pl.id || plId,
+      });
     }
-    published.push({
-      rowId: row.id,
-      gaugeMm: row.gaugeMm,
-      designKey: syncDesign,
-      floorNgn: row.minimumPricePerMeterNgn,
-      listNgn: listPrice,
-      priceListId: pl.id || plId,
-    });
+    // All-or-nothing: any row failure rolls back successful upserts in this batch.
+    if (errors.length) {
+      const fail = new Error(`${errors.length} row(s) failed to publish.`);
+      fail.publishErrors = errors;
+      throw fail;
+    }
+  });
+
+  try {
+    runPublish();
+  } catch (e) {
+    const publishErrors = Array.isArray(e?.publishErrors) ? e.publishErrors : errors;
+    return {
+      ok: false,
+      published: [],
+      errors: publishErrors,
+      error: e?.message || 'Publish failed.',
+    };
   }
 
   appendAuditLog(db, {
@@ -922,13 +949,12 @@ export function publishMaterialPricingSheet(db, body, actor) {
     action: 'pricing.material_sheet_publish',
     entityKind: 'material_pricing_sheet',
     entityId: `${materialKey}:${branchId}`,
-    note: `Published ${published.length} row(s); ${errors.length} error(s)`,
+    note: `Published ${published.length} row(s)`,
   });
 
   return {
-    ok: errors.length === 0,
+    ok: true,
     published,
-    errors,
-    error: errors.length ? `${errors.length} row(s) failed to publish.` : undefined,
+    errors: [],
   };
 }

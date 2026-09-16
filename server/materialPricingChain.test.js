@@ -40,6 +40,9 @@ function mockDbForPublish() {
     exec() {
       return undefined;
     },
+    transaction(fn) {
+      return () => fn();
+    },
     prepare(sql) {
       const s = String(sql);
       if (s.includes('sqlite_master') && s.includes('material_pricing_sheet_rows')) {

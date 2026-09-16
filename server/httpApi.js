@@ -5605,10 +5605,30 @@ export function registerHttpApi(app, db) {
     }
   });
 
+  /** Material workbook: branch staff may only mutate their workspace branch; HQ All-branches may edit any. */
+  function assertMaterialPricingWorkbookBranchWrite(req, branchId) {
+    const eb = String(branchId || '').trim();
+    if (!eb) return { ok: false, status: 400, error: 'branchId is required.' };
+    if (req.workspaceViewAll && canUseAllBranchesRollup(req.user)) return { ok: true };
+    const gate = assertEntityBranchForWorkspaceWrite(
+      req.user,
+      eb,
+      req.workspaceBranchId,
+      false
+    );
+    if (!gate.ok) return { ok: false, status: 403, error: gate.error };
+    return { ok: true };
+  }
+
   app.get('/api/pricing/material-sheet', requirePermission(['pricing.manage', 'md.price_exception.approve']), (req, res) => {
     try {
       const materialKey = String(req.query.materialKey || '').trim();
       const branchId = String(req.query.branchId || '').trim();
+      const branchGate = assertMaterialPricingWorkbookBranchWrite(req, branchId);
+      if (!branchGate.ok) {
+        res.status(branchGate.status).json({ ok: false, error: branchGate.error });
+        return;
+      }
       const asAtIso = String(req.query?.asAtIso || req.query?.asOf || '').trim().slice(0, 10) || undefined;
       const r = listMaterialPricingSheet(db, materialKey, branchId, asAtIso);
       res.status(r.ok ? 200 : 400).json(r);
@@ -5686,6 +5706,12 @@ export function registerHttpApi(app, db) {
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
     (req, res) => {
       try {
+        const branchId = String(req.body?.branchId || '').trim();
+        const branchGate = assertMaterialPricingWorkbookBranchWrite(req, branchId);
+        if (!branchGate.ok) {
+          res.status(branchGate.status).json({ ok: false, error: branchGate.error });
+          return;
+        }
         const r = upsertMaterialPricingSheetRow(db, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -5700,6 +5726,12 @@ export function registerHttpApi(app, db) {
     requirePermission(['pricing.manage', 'md.price_exception.approve']),
     (req, res) => {
       try {
+        const branchId = String(req.body?.branchId || '').trim();
+        const branchGate = assertMaterialPricingWorkbookBranchWrite(req, branchId);
+        if (!branchGate.ok) {
+          res.status(branchGate.status).json({ ok: false, error: branchGate.error });
+          return;
+        }
         const r = upsertMaterialPricingSheetRowsBulk(db, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -5715,6 +5747,18 @@ export function registerHttpApi(app, db) {
     (req, res) => {
       try {
         const id = String(req.params.id || '').trim();
+        const existing = db
+          .prepare(`SELECT branch_id FROM material_pricing_sheet_rows WHERE id = ?`)
+          .get(id);
+        if (!existing) {
+          res.status(404).json({ ok: false, error: 'Row not found.' });
+          return;
+        }
+        const branchGate = assertMaterialPricingWorkbookBranchWrite(req, existing.branch_id);
+        if (!branchGate.ok) {
+          res.status(branchGate.status).json({ ok: false, error: branchGate.error });
+          return;
+        }
         const r = deleteMaterialPricingSheetRow(db, id, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
@@ -5729,6 +5773,12 @@ export function registerHttpApi(app, db) {
     requirePermission('pricing.manage'),
     (req, res) => {
       try {
+        const branchId = String(req.body?.branchId || '').trim();
+        const branchGate = assertMaterialPricingWorkbookBranchWrite(req, branchId);
+        if (!branchGate.ok) {
+          res.status(branchGate.status).json({ ok: false, error: branchGate.error });
+          return;
+        }
         const r = publishMaterialPricingSheet(db, req.body || {}, req.user);
         res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {

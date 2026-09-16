@@ -55,12 +55,79 @@ export function normalizePricingAsAtIso(iso) {
   return localCalendarDateIso();
 }
 
-/** @param {{ date_iso?: string | null; created_at_iso?: string | null }} quoteRow */
-export function quotationPricingAsAtIso(quoteRow) {
-  const d = String(quoteRow?.date_iso ?? '').trim().slice(0, 10);
+/** @param {{ date_iso?: string | null; created_at_iso?: string | null; dateISO?: string | null }} quoteRow */
+function quotationDateIsoOnly(quoteRow) {
+  const d = String(quoteRow?.date_iso ?? quoteRow?.dateISO ?? '')
+    .trim()
+    .slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
   const c = String(quoteRow?.created_at_iso ?? '').trim().slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(c)) return c;
+  return '';
+}
+
+/**
+ * First customer payment date on a quotation (sales_receipts), if any.
+ * Quote price commitment locks when money is taken — not at quote create.
+ * @param {import('better-sqlite3').Database | null | undefined} db
+ * @param {string | null | undefined} quotationId
+ * @returns {string | null} YYYY-MM-DD
+ */
+export function quotationFirstPaymentDateIso(db, quotationId) {
+  const qid = String(quotationId || '').trim();
+  if (!db || !qid) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT MIN(substr(trim(date_iso), 1, 10)) AS d
+         FROM sales_receipts
+         WHERE quotation_ref = ?
+           AND COALESCE(amount_ngn, 0) > 0
+           AND lower(trim(COALESCE(status, ''))) NOT IN ('void', 'voided', 'cancelled', 'canceled', 'reversed')
+           AND length(trim(COALESCE(date_iso, ''))) >= 10`
+      )
+      .get(qid);
+    const d = String(row?.d ?? '').trim().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pricing lock date for a quotation.
+ * - Paid (receipt or paid_ngn): first payment date, else quotation date.
+ * - Unpaid: null → callers should use **live** floors (quote not yet committed).
+ * @param {import('better-sqlite3').Database | null | undefined} db
+ * @param {{ id?: string; date_iso?: string | null; paid_ngn?: number | null; paidNgn?: number | null }} quoteRow
+ * @returns {string | null}
+ */
+export function quotationPricingLockAsAtIso(db, quoteRow) {
+  const qid = String(quoteRow?.id ?? '').trim();
+  const payIso = quotationFirstPaymentDateIso(db, qid);
+  if (payIso) return payIso;
+  const paid = Math.round(Number(quoteRow?.paid_ngn ?? quoteRow?.paidNgn) || 0);
+  if (paid > 0) {
+    const qd = quotationDateIsoOnly(quoteRow);
+    return qd || null;
+  }
+  return null;
+}
+
+/**
+ * As-of date for refunds / historical maths.
+ * Prefers first payment date when `db` is passed (deal locks on payment);
+ * otherwise quotation date.
+ * @param {{ date_iso?: string | null; created_at_iso?: string | null; id?: string; paid_ngn?: number }} quoteRow
+ * @param {import('better-sqlite3').Database | null | undefined} [db]
+ */
+export function quotationPricingAsAtIso(quoteRow, db = null) {
+  if (db) {
+    const lock = quotationPricingLockAsAtIso(db, quoteRow);
+    if (lock) return lock;
+  }
+  const d = quotationDateIsoOnly(quoteRow);
+  if (d) return d;
   return normalizePricingAsAtIso(null);
 }
 

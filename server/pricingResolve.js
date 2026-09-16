@@ -13,6 +13,8 @@ import {
 export {
   normalizePricingAsAtIso,
   quotationPricingAsAtIso,
+  quotationPricingLockAsAtIso,
+  quotationFirstPaymentDateIso,
   listPriceListItemsAsOf,
   listMaterialPricingRowsAsOf,
   floorPricePerMeterForGaugeDesignAsOf,

@@ -1146,7 +1146,7 @@ export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   if (qref) {
     const quote = db
       .prepare(
-        `SELECT id, lines_json, branch_id, date_iso,
+        `SELECT id, lines_json, branch_id, date_iso, paid_ngn,
                 md_price_exception_approved_at_iso, price_exception_md_confirmed_at_iso
          FROM quotations WHERE id = ?`
       )

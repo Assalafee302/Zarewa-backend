@@ -6989,6 +6989,7 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
     lines_json: qrow.lines_json,
     branch_id: qrow.branch_id,
     date_iso: qrow.date_iso,
+    paid_ngn: qrow.paid_ngn,
   };
   const { violations, hasFloorRows } = quotationPriceViolations(db, priceRow);
   // Draft and finalize both sync the MD review flag; draft must not skip silently.
@@ -9435,23 +9436,24 @@ function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dat
     dateIsoOverride != null && String(dateIsoOverride).trim()
       ? String(dateIsoOverride).trim().slice(0, 10)
       : undefined;
-  if (!date_iso && qid && qid !== 'draft-floor-check') {
+  let paid_ngn = 0;
+  if (qid && qid !== 'draft-floor-check') {
     try {
-      const q = db.prepare(`SELECT date_iso FROM quotations WHERE id = ?`).get(qid);
-      date_iso = q?.date_iso ?? undefined;
+      const q = db.prepare(`SELECT date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
+      if (!date_iso) date_iso = q?.date_iso ?? undefined;
+      paid_ngn = Math.round(Number(q?.paid_ngn) || 0);
     } catch {
-      date_iso = undefined;
+      date_iso = date_iso ?? undefined;
     }
   }
   const row = {
     id: qid,
     lines_json: JSON.stringify(linesJson),
     branch_id: branchId,
+    paid_ngn,
     ...(date_iso ? { date_iso } : {}),
   };
-  const { violations, hasFloorRows } = quotationPriceViolations(db, row, {
-    pricingMode: date_iso ? 'quotation_date' : 'current',
-  });
+  const { violations, hasFloorRows } = quotationPriceViolations(db, row);
   return {
     violations,
     hasFloorRows,

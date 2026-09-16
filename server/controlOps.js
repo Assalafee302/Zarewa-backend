@@ -1626,7 +1626,7 @@ export function refundSubstitutionDataQualityIssues(db, quotationRef) {
   const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
   const quotedGdIssue = firstQuotedProductGaugeDesign(quote?.lines_json ?? '');
   const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
-  const pricingAsAtIso = quotationPricingAsAtIso(quote);
+  const pricingAsAtIso = quotationPricingAsAtIso(quote, db);
   const issues = [];
 
   const hasPositiveMetres = productionJobs.some((j) => (Number(j.actual_meters) || 0) > 0);
@@ -3129,7 +3129,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         .reduce((s, l) => s + roundMoney(l.amountNgn), 0);
       if (commissionRefundSum > 0) {
         const quoteRow = db.prepare(`SELECT date_iso FROM quotations WHERE id = ?`).get(quotationRef);
-        const { maxNgn } = maxCustomerCommissionRefundNgn(db, quotationRef, quotationPricingAsAtIso(quoteRow));
+        const { maxNgn } = maxCustomerCommissionRefundNgn(db, quotationRef, quotationPricingAsAtIso(quoteRow, db));
         if (commissionRefundSum > maxNgn) {
           return {
             ok: false,
@@ -4194,7 +4194,7 @@ export function previewRefundRequest(db, payload) {
     : roundMoney(paidOnQuoteNgn + overpayAdvanceNgn);
   const receiptCashNgn = cashBreakdown?.receiptCashNgn ?? paidOnQuoteNgn;
   const quoteTotalNgn = roundMoney(quote?.total_ngn);
-  const pricingAsAtIso = quotationPricingAsAtIso(quote);
+  const pricingAsAtIso = quotationPricingAsAtIso(quote, db);
   const excludeRefundIdForOverpay = String(payload.excludeRefundId ?? payload.refundId ?? '').trim() || null;
   const overpayAlreadyRefundedNgn = overpaymentAlreadyRefundedNgn(
     existingRefunds,
@@ -5344,7 +5344,7 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
   const pricingAsAtIso =
     pricingAsAtIsoOverride != null && String(pricingAsAtIsoOverride).trim()
       ? String(pricingAsAtIsoOverride).trim().slice(0, 10)
-      : quotationPricingAsAtIso(quote);
+      : quotationPricingAsAtIso(quote, db);
   const headerCtx = { asAtIso: pricingAsAtIso };
   let linesParsed;
   try {

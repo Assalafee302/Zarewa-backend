@@ -5797,7 +5797,7 @@ export function registerHttpApi(app, db) {
         const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
@@ -5840,7 +5840,7 @@ export function registerHttpApi(app, db) {
         const r = approveMdPriceExceptionForQuotation(db, qid, req.user);
         if (!r.ok) return res.status(400).json(r);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return res.json({
           ok: true,
@@ -5926,7 +5926,7 @@ export function registerHttpApi(app, db) {
       const qid = String(req.params.id || '').trim();
       const qg = assertQuotationIdInWorkspace(db, req, qid);
       if (!qg.ok) return res.status(qg.status).json({ ok: false, error: qg.error });
-      const raw = db.prepare(`SELECT id, lines_json, branch_id, date_iso, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
+      const raw = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn, md_price_exception_approved_at_iso FROM quotations WHERE id = ?`).get(qid);
       if (!raw) return res.status(404).json({ ok: false, error: 'Quotation not found' });
       const v = quotationPriceViolations(db, raw);
       res.json({
@@ -11922,12 +11922,14 @@ export function registerHttpApi(app, db) {
       const branchScope = resolveBootstrapBranchScope(req);
       const { limit, offset, unlimited } = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
       const includeLines = String(req.query?.includeLines ?? '1') !== '0';
-      const quotations = listQuotations(
-        db,
-        branchScope,
-        unlimited ? { unlimited: true, includeLines } : { limit, offset, includeLines }
-      );
-      const total = unlimited ? quotations.length : countQuotations(db, branchScope);
+      const q = String(req.query?.q || '').trim();
+      const listOpts = unlimited
+        ? { unlimited: true, includeLines, q: q || undefined }
+        : { limit, offset, includeLines, q: q || undefined };
+      const quotations = listQuotations(db, branchScope, listOpts);
+      const total = unlimited
+        ? quotations.length
+        : countQuotations(db, branchScope, { q: q || undefined });
       return sendPaginatedList(res, {
         items: quotations,
         total,
@@ -11981,7 +11983,7 @@ export function registerHttpApi(app, db) {
       const amountDueNgn = policyFlags.accountingPolicyV1Labels
         ? paymentPolicy.amountDueNgn
         : amountDueOnQuotationFromEntries(quoteLedger, row);
-      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(req.params.id);
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(req.params.id);
       const pv = quotationPriceViolations(db, rawPv);
       res.json({
         ok: true,
@@ -12018,7 +12020,7 @@ export function registerHttpApi(app, db) {
       syncQuotationStaffPurchaseFlag(db, id);
       ensureQuotationHandlerSalesCustomer(db, id);
       const quotation = getQuotation(db, id);
-      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(id);
+      const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(id);
       const pv = quotationPriceViolations(db, rawPv);
       const payload = withWriteDelta(
         {
@@ -12130,7 +12132,7 @@ export function registerHttpApi(app, db) {
         syncQuotationStaffPurchaseFlag(db, qid);
         ensureQuotationHandlerSalesCustomer(db, qid);
         const quotation = getQuotation(db, qid);
-        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso FROM quotations WHERE id = ?`).get(qid);
+        const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(qid);
         const pv = quotationPriceViolations(db, rawPv);
         return {
           quotation: {

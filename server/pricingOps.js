@@ -7,9 +7,19 @@ import {
   pricingPolicyNumbersForServiceLine,
 } from './pricingPolicyResolve.js';
 import { canReadPriceListItems } from './pricingResolve.js';
-import { listPriceListItemsAsOf, floorPricePerMeterForGaugeDesignAsOf } from './pricingAsOf.js';
+import {
+  listPriceListItemsAsOf,
+  floorPricePerMeterForGaugeDesignAsOf,
+  quotationPricingLockAsAtIso,
+} from './pricingAsOf.js';
 
-export { quotationPricingAsAtIso, listPriceListItemsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
+export {
+  quotationPricingAsAtIso,
+  quotationPricingLockAsAtIso,
+  quotationFirstPaymentDateIso,
+  listPriceListItemsAsOf,
+  normalizePricingAsAtIso,
+} from './pricingAsOf.js';
 import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
 import { quotationTrimWorkbookFloorViolations } from '../shared/lib/materialWorkbookTrimPrice.js';
@@ -185,11 +195,18 @@ function quotationHasPricingFloorData(db) {
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ id?: string; lines_json?: string | null; branch_id?: string | null; date_iso?: string | null }} quoteRow
- * @param {{ pricingMode?: 'current' | 'quotation_date' }} [opts]
- *   Default: when the quotation has `date_iso`, evaluate floors **as of that date** so a later
- *   workbook save / publish cannot re-flag or reprice older deals.
- *   Pass `pricingMode: 'current'` only for explicit live checks (rare).
+ * @param {{
+ *   id?: string;
+ *   lines_json?: string | null;
+ *   branch_id?: string | null;
+ *   date_iso?: string | null;
+ *   paid_ngn?: number | null;
+ * }} quoteRow
+ * @param {{ pricingMode?: 'current' | 'quotation_date' | 'payment_lock' }} [opts]
+ *   Default (`payment_lock`): unpaid quotes use **live** floors; once payment is taken,
+ *   floors are frozen as of the **first payment date** (else quotation date).
+ *   `quotation_date` — force quotation date even if unpaid.
+ *   `current` — always live.
  */
 export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const violations = [];
@@ -212,10 +229,16 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     .trim()
     .slice(0, 10);
   const hasQuoteDate = /^\d{4}-\d{2}-\d{2}$/.test(quoteDateIso);
-  // Prefer quotation-date floors unless caller explicitly asks for live (`current`).
-  const useQuoteDate =
-    opts.pricingMode === 'quotation_date' || (opts.pricingMode !== 'current' && hasQuoteDate);
-  const pricingAsAtIso = useQuoteDate && hasQuoteDate ? quoteDateIso : undefined;
+  const lockIso = quotationPricingLockAsAtIso(db, quoteRow);
+  let pricingAsAtIso;
+  if (opts.pricingMode === 'current') {
+    pricingAsAtIso = undefined;
+  } else if (opts.pricingMode === 'quotation_date') {
+    pricingAsAtIso = hasQuoteDate ? quoteDateIso : undefined;
+  } else {
+    // payment_lock (default): unpaid → live; paid → first payment / quote date.
+    pricingAsAtIso = lockIso || undefined;
+  }
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
     materialGauge: headerGauge,

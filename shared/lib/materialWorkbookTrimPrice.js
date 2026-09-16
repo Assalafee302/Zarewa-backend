@@ -189,6 +189,10 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
     const floor = Number(meta?.floorPerMeter) || 0;
     if (floor <= 0) return;
 
+    const stampedFloor = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
+    // Stamp freezes against later raises; never raise the gate above workbook floor (list stamps).
+    const gateFloor = stampedFloor > 0 ? Math.min(stampedFloor, floor) : floor;
+
     const unit = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0) || 0;
     let effectivePerMeter = unit;
     if (effectivePerMeter <= 0 && meters > 0) {
@@ -196,7 +200,7 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
       if (total > 0) effectivePerMeter = total / meters;
     }
     if (effectivePerMeter <= 0) return;
-    if (effectivePerMeter + 0.0001 < floor) {
+    if (effectivePerMeter + 0.0001 < gateFloor) {
       violations.push({
         // MD gate is workbook floor (+ ridge add-on). Selling below list but ≥ floor is allowed.
         code: 'below_floor',
@@ -208,9 +212,9 @@ export function quotationTrimWorkbookFloorViolations(ctx) {
         design: designLabel || `girth ${girthMm}mm`,
         girthMm,
         quotedPerMeter: Math.round(effectivePerMeter * 100) / 100,
-        floorPerMeter: floor,
-        minimumPerMeter: floor,
-        recommendedPerMeter: Number(meta?.suggestedListPerMeter) || floor,
+        floorPerMeter: gateFloor,
+        minimumPerMeter: gateFloor,
+        recommendedPerMeter: Number(meta?.suggestedListPerMeter) || gateFloor,
         trimWorkbook: true,
         message: 'Below trim workbook floor',
       });

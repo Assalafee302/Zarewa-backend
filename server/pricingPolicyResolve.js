@@ -261,7 +261,11 @@ export function applyPricingSnapshotsToServices(db, services, branchId, headerCt
   for (const line of services) {
     if (!line || typeof line !== 'object') continue;
     const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx);
-    if (nums.floor != null) line.floorPricePerMeter = nums.floor;
+    if (nums.floor != null) {
+      const prev = Math.round(Number(line.floorPricePerMeter) || 0);
+      // Never raise a prior stamp to list/higher live — freeze can only stay or drop to workbook min.
+      line.floorPricePerMeter = prev > 0 ? Math.min(prev, nums.floor) : nums.floor;
+    }
     if (nums.recommended != null) {
       const had = Number(line.recommendedPricePerMeter);
       if (!Number.isFinite(had) || had <= 0) {

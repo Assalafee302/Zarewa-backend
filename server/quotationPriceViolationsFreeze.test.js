@@ -79,10 +79,23 @@ describe('quotationPriceViolations freeze after floor raise', () => {
     // Live workbook is 4500; stamped floor keeps this OK.
     const live = quotationPriceViolations(db, row, { pricingMode: 'current' });
     expect(live.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
-    expect(live.violations.every((v) => v.floorSource !== 'line_stamp' || true)).toBe(true);
 
     const frozen = quotationPriceViolations(db, row);
     expect(frozen.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
+  });
+
+  it('does not treat a list-price stamp as the floor gate', () => {
+    // Older clients stamped floor+commission into floorPricePerMeter.
+    const row = {
+      id: 'QT-FZ-LIST',
+      branch_id: 'BR-KD',
+      date_iso: '2026-03-15',
+      paid_ngn: 0,
+      lines_json: linesJson({ unitPrice: 4000, stampedFloor: 4800 }),
+    };
+    const pv = quotationPriceViolations(db, row);
+    expect(pv.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
+    // Gate uses workbook min (4000 on quote date), not the inflated stamp.
   });
 
   it('unpaid dated quote freezes to quote-date workbook floor (not live)', () => {

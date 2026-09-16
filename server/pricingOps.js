@@ -280,15 +280,22 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
 
     const lineHeaderCtx = { ...headerCtx, productName: line?.name };
     const resolvedFloor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
-    // Prefer the floor stamped when the line was priced — later workbook raises must not
-    // re-flag deals that were OK at pass/payment time.
+    // Stamp freezes against later raises, but must never raise the gate above the
+    // workbook minimum (older clients sometimes stamped list = floor+commission).
     const stampedFloor = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
-    const floor =
-      stampedFloor > 0
-        ? stampedFloor
-        : resolvedFloor != null && resolvedFloor > 0
-          ? resolvedFloor
-          : null;
+    const resolved =
+      resolvedFloor != null && resolvedFloor > 0 ? Math.round(resolvedFloor) : null;
+    let floor = null;
+    let floorSource = 'workbook';
+    if (resolved != null && stampedFloor > 0) {
+      floor = Math.min(stampedFloor, resolved);
+      floorSource = floor === stampedFloor ? 'line_stamp' : 'workbook';
+    } else if (stampedFloor > 0) {
+      floor = stampedFloor;
+      floorSource = 'line_stamp';
+    } else if (resolved != null) {
+      floor = resolved;
+    }
     if (floor == null || floor <= 0) return;
     const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, lineHeaderCtx);
     const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
@@ -301,10 +308,14 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     if (effectivePerMeter <= 0) return;
 
     const design = nums.designKey || designRaw || profileRaw || gauge;
-    const minAllowed =
-      stampedFloor > 0
-        ? stampedFloor
-        : nums.minAllowed;
+    // Meter-sheet MD gate is workbook floor only (not trading band / list).
+    const minAllowed = isProductMeterSheet
+      ? floor
+      : stampedFloor > 0 && resolved != null
+        ? Math.min(stampedFloor, nums.minAllowed ?? floor)
+        : stampedFloor > 0
+          ? stampedFloor
+          : nums.minAllowed;
 
     if (effectivePerMeter + 0.0001 < floor) {
       violations.push({
@@ -319,7 +330,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
         recommendedPerMeter: nums.recommended ?? floor,
         bandNgn: nums.band,
         minAllowedPerMeter: minAllowed,
-        floorSource: stampedFloor > 0 ? 'line_stamp' : 'workbook',
+        floorSource,
       });
       return;
     }

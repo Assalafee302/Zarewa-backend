@@ -2451,13 +2451,31 @@ export function listAdvanceInEvents(db, branchScope = 'ALL', opts = {}) {
   }));
 }
 
+/**
+ * Text search for cutting lists — applied in SQL before LIMIT so older rows
+ * outside the desk page remain findable (production register / Sales browse).
+ * @param {string} [q]
+ * @param {string} [colPrefix]
+ */
+function cuttingListSearchClause(q, colPrefix = '') {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  const col = (name) => `${colPrefix}${name}`;
+  return {
+    sql: ` AND (${col('id')} LIKE ? OR IFNULL(${col('customer_name')},'') LIKE ? OR IFNULL(${col('customer_id')},'') LIKE ? OR IFNULL(${col('quotation_ref')},'') LIKE ? OR IFNULL(${col('product_id')},'') LIKE ? OR IFNULL(${col('product_name')},'') LIKE ?)`,
+    args: [like, like, like, like, like, like],
+  };
+}
+
 export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
   const b = branchWhere(db, 'cutting_lists', branchScope);
-  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql} ORDER BY date_iso DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const s = cuttingListSearchClause(opts.q);
+  const sql = `SELECT * FROM cutting_lists WHERE 1=1${b.sql}${s.sql} ORDER BY date_iso DESC${page.sql}`;
+  const args = [...b.args, ...s.args, ...page.args];
   const rows = db.prepare(sql).all(...args);
   const linesById = cuttingListLinesByListIds(
     db,
@@ -2472,11 +2490,35 @@ export function listCuttingLists(db, branchScope = 'ALL', opts = {}) {
   );
 }
 
-/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countCuttingLists(db, branchScope = 'ALL') {
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] @param {{ q?: string }} [opts] */
+export function countCuttingLists(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'cutting_lists', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM cutting_lists WHERE 1=1${b.sql}`).get(...b.args);
+  const s = cuttingListSearchClause(opts.q);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM cutting_lists WHERE 1=1${b.sql}${s.sql}`)
+    .get(...b.args, ...s.args);
   return Number(row?.n) || 0;
+}
+
+/**
+ * Find cutting lists by id / customer / quote fragment when not in the recent desk page.
+ * Mirrors `searchCoilLots` for production-register and Sales typeahead.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {string} [rawQuery]
+ * @param {number} [limit]
+ */
+export function searchCuttingLists(db, branchScope = 'ALL', rawQuery = '', limit = 80) {
+  const q = String(rawQuery || '').trim();
+  if (q.length < 2) return [];
+  const safe = q.replace(/[%_\\]/g, '');
+  if (!safe) return [];
+  return listCuttingLists(db, branchScope, {
+    q: safe,
+    limit: Math.min(200, Math.max(1, Number(limit) || 80)),
+    offset: 0,
+    useDefaultLimit: true,
+  });
 }
 
 export function getCuttingList(db, id) {
@@ -2595,25 +2637,65 @@ export function getProductionJob(db, jobId) {
   return mapProductionJobRow(row, fgAdjustmentTotalForJob(db, id));
 }
 
+/**
+ * Text search for production jobs — applied before LIMIT (same desk-page problem as cutting lists).
+ * @param {string} [q]
+ * @param {string} [colPrefix]
+ */
+function productionJobSearchClause(q, colPrefix = '') {
+  const term = String(q || '').trim();
+  if (!term) return { sql: '', args: [] };
+  const like = `%${term}%`;
+  const col = (name) => `${colPrefix}${name}`;
+  return {
+    sql: ` AND (${col('job_id')} LIKE ? OR IFNULL(${col('cutting_list_id')},'') LIKE ? OR IFNULL(${col('quotation_ref')},'') LIKE ? OR IFNULL(${col('customer_id')},'') LIKE ? OR IFNULL(${col('customer_name')},'') LIKE ? OR IFNULL(${col('product_id')},'') LIKE ? OR IFNULL(${col('product_name')},'') LIKE ?)`,
+    args: [like, like, like, like, like, like, like],
+  };
+}
+
 export function listProductionJobs(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const page = sqlLimitOffsetClause(limit, offset);
   const adjByJob = fgAdjustmentTotalsByJobId(db, branchScope);
   const b = branchWhere(db, 'production_jobs', branchScope);
-  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql} ORDER BY created_at_iso DESC, job_id DESC${page.sql}`;
-  const args = [...b.args, ...page.args];
+  const s = productionJobSearchClause(opts.q);
+  const sql = `SELECT * FROM production_jobs WHERE 1=1${b.sql}${s.sql} ORDER BY created_at_iso DESC, job_id DESC${page.sql}`;
+  const args = [...b.args, ...s.args, ...page.args];
   return db
     .prepare(sql)
     .all(...args)
     .map((row) => mapProductionJobRow(row, adjByJob.get(row.job_id) || 0));
 }
 
-/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
-export function countProductionJobs(db, branchScope = 'ALL') {
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] @param {{ q?: string }} [opts] */
+export function countProductionJobs(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'production_jobs', branchScope);
-  const row = db.prepare(`SELECT COUNT(*) AS n FROM production_jobs WHERE 1=1${b.sql}`).get(...b.args);
+  const s = productionJobSearchClause(opts.q);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM production_jobs WHERE 1=1${b.sql}${s.sql}`)
+    .get(...b.args, ...s.args);
   return Number(row?.n) || 0;
+}
+
+/**
+ * Find production jobs by id / cutting list / customer / quote when not in the recent desk page.
+ * @param {import('better-sqlite3').Database} db
+ * @param {'ALL' | string} [branchScope]
+ * @param {string} [rawQuery]
+ * @param {number} [limit]
+ */
+export function searchProductionJobs(db, branchScope = 'ALL', rawQuery = '', limit = 80) {
+  const q = String(rawQuery || '').trim();
+  if (q.length < 2) return [];
+  const safe = q.replace(/[%_\\]/g, '');
+  if (!safe) return [];
+  return listProductionJobs(db, branchScope, {
+    q: safe,
+    limit: Math.min(200, Math.max(1, Number(limit) || 80)),
+    offset: 0,
+    useDefaultLimit: true,
+  });
 }
 
 export function listProductionCompletionAdjustments(db, branchScope = 'ALL', opts = {}) {

@@ -25,6 +25,8 @@ import {
   listEligibleProductionCoils,
   listProductionJobs,
   listStockMovements,
+  searchCuttingLists,
+  searchProductionJobs,
 } from '../readModel.js';
 import {
   FINANCE_DOMAIN_PERMS,
@@ -136,8 +138,14 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
-      const items = listProductionJobs(db, branchScope, listOptsFromQuery(parsed));
-      const total = parsed.unlimited ? items.length : countProductionJobs(db, branchScope);
+      const q = String(req.query?.q || '').trim();
+      const items = listProductionJobs(db, branchScope, {
+        ...listOptsFromQuery(parsed),
+        q: q || undefined,
+      });
+      const total = parsed.unlimited
+        ? items.length
+        : countProductionJobs(db, branchScope, { q: q || undefined });
       return sendPaginatedList(res, {
         items,
         total,
@@ -148,6 +156,19 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load production jobs.' });
+    }
+  });
+
+  app.get('/api/production-jobs/search', requirePermission(PRODUCTION_JOBS_PERMS), (req, res) => {
+    try {
+      const q = String(req.query?.q ?? '').trim();
+      const lim = req.query?.limit != null ? Number(req.query.limit) : 80;
+      const branchScope = resolveBootstrapBranchScope(req);
+      const productionJobs = searchProductionJobs(db, branchScope, q, lim);
+      return res.json({ ok: true, productionJobs });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, { status: 500, code: 'SEARCH_FAILED', error: 'Failed to search production jobs.' });
     }
   });
 
@@ -174,8 +195,14 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
-      const items = listCuttingLists(db, branchScope, listOptsFromQuery(parsed));
-      const total = parsed.unlimited ? items.length : countCuttingLists(db, branchScope);
+      const q = String(req.query?.q || '').trim();
+      const items = listCuttingLists(db, branchScope, {
+        ...listOptsFromQuery(parsed),
+        q: q || undefined,
+      });
+      const total = parsed.unlimited
+        ? items.length
+        : countCuttingLists(db, branchScope, { q: q || undefined });
       return sendPaginatedList(res, {
         items,
         total,
@@ -186,6 +213,20 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load cutting lists.' });
+    }
+  });
+
+  /** Typeahead when a cutting list is outside the recent desk page (production register / Sales). */
+  app.get('/api/cutting-lists/search', requirePermission(CUTTING_LIST_PERMS), (req, res) => {
+    try {
+      const q = String(req.query?.q ?? '').trim();
+      const lim = req.query?.limit != null ? Number(req.query.limit) : 80;
+      const branchScope = resolveBootstrapBranchScope(req);
+      const cuttingLists = searchCuttingLists(db, branchScope, q, lim);
+      return res.json({ ok: true, cuttingLists });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, { status: 500, code: 'SEARCH_FAILED', error: 'Failed to search cutting lists.' });
     }
   });
 

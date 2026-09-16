@@ -103,6 +103,14 @@ const COIL_DESK_RECOVERY = {
   eligibleProduction: '/api/production/eligible-coils',
 };
 
+/** Escape hatches when a cutting list / job is older than the recent desk page. */
+const PRODUCTION_DESK_RECOVERY = {
+  cuttingListsPage: '/api/cutting-lists',
+  cuttingListsSearch: '/api/cutting-lists/search',
+  productionJobsPage: '/api/production-jobs',
+  productionJobsSearch: '/api/production-jobs/search',
+};
+
 function deskPageLimit() {
   const opts = deskPageListOpts();
   return opts.unlimited ? 0 : Number(opts.limit) || 150;
@@ -378,6 +386,8 @@ export function buildOperationsDomainSnapshot(db, opts = {}) {
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
+      productionDeskRecovery:
+        opsOk || prodRollupOk ? PRODUCTION_DESK_RECOVERY : undefined,
       truncated: {
         ...(opsOk
           ? {

@@ -67,7 +67,7 @@ function quotationDateIsoOnly(quoteRow) {
 }
 
 /**
- * First customer payment date on a quotation (sales_receipts), if any.
+ * First customer payment date on a quotation (sales_receipts or advance/overpay apply), if any.
  * Quote price commitment locks when money is taken — not at quote create.
  * @param {import('better-sqlite3').Database | null | undefined} db
  * @param {string | null | undefined} quotationId
@@ -76,6 +76,7 @@ function quotationDateIsoOnly(quoteRow) {
 export function quotationFirstPaymentDateIso(db, quotationId) {
   const qid = String(quotationId || '').trim();
   if (!db || !qid) return null;
+  const dates = [];
   try {
     const row = db
       .prepare(
@@ -88,16 +89,36 @@ export function quotationFirstPaymentDateIso(db, quotationId) {
       )
       .get(qid);
     const d = String(row?.d ?? '').trim().slice(0, 10);
-    return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) dates.push(d);
   } catch {
-    return null;
+    /* ignore */
   }
+  try {
+    const adv = db
+      .prepare(
+        `SELECT MIN(substr(trim(COALESCE(at_iso, date_iso, '')), 1, 10)) AS d
+         FROM ledger_entries
+         WHERE quotation_ref = ?
+           AND type IN ('ADVANCE_APPLIED', 'OVERPAY_APPLIED')
+           AND COALESCE(amount_ngn, 0) > 0
+           AND length(trim(COALESCE(at_iso, date_iso, ''))) >= 10`
+      )
+      .get(qid);
+    const d = String(adv?.d ?? '').trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) dates.push(d);
+  } catch {
+    /* ledger table / columns may differ */
+  }
+  if (!dates.length) return null;
+  dates.sort();
+  return dates[0];
 }
 
 /**
  * Pricing lock date for a quotation.
  * - Paid (receipt or paid_ngn): first payment date, else quotation date.
- * - Unpaid: null → callers should use **live** floors (quote not yet committed).
+ * - Unpaid: null — MD / below-floor gates still freeze on **quotation date**
+ *   (see `quotationPriceViolations`); refund maths may use live until payment.
  * @param {import('better-sqlite3').Database | null | undefined} db
  * @param {{ id?: string; date_iso?: string | null; paid_ngn?: number | null; paidNgn?: number | null }} quoteRow
  * @returns {string | null}

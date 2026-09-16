@@ -28,6 +28,7 @@ import { buildMdCockpitPulses, buildChampionCustomerSnippet } from './mdCockpitO
 import { buildMdOperationsPack } from './mdOperationsPack.js';
 import { getOrgGovernanceLimits } from './orgPolicy.js';
 import { quotationHasPaymentForMdBelowFloorQueue } from '../shared/lib/quotationPriceException.js';
+import { reconcileStaleMdBelowFloorFlags } from './pricingOps.js';
 import { listOfficeThreads, officeTablesReady } from './officeOps.js';
 import { listStockRegisterInbox } from './stockRegisterOps.js';
 import { listUnifiedWorkItems, workRegistryTablesReady } from './workItems.js';
@@ -253,6 +254,7 @@ export function buildScopedExecutiveCounts(db, branchScope) {
   let priceExceptionsPendingMd = { count: 0, scopeBasis: isAll ? 'company' : 'branch' };
   try {
     const bQuo = branchWhere(db, 'quotations', scope);
+    reconcileStaleMdBelowFloorFlags(db, { branchId: isAll ? null : scope, limit: 200 });
     priceExceptionsPendingMd = countRow(
       `SELECT COUNT(*) AS c FROM quotations
        WHERE ${SQL_MD_BELOW_FLOOR_QUEUE}${bQuo.sql}`,
@@ -698,6 +700,10 @@ function listExecutiveExtras(db, branchScope) {
   }
 
   try {
+    reconcileStaleMdBelowFloorFlags(db, {
+      branchId: branchScope === 'ALL' ? null : branchScope,
+      limit: 200,
+    });
     const bQuo = branchWhere(db, 'quotations', branchScope);
     const priceRows = db
       .prepare(

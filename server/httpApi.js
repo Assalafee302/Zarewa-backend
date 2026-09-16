@@ -571,6 +571,7 @@ import { auditQuotationLineIntegrity } from './quotationLineIntegrityAudit.js';
 import {
   approveMdPriceExceptionForQuotation,
   approveBranchManagerPriceExceptionForQuotation,
+  clearStaleMdBelowFloorReviewFlag,
   deletePriceListItem,
   listPriceListItems,
   priceListItemsToCsv,
@@ -11984,10 +11985,16 @@ export function registerHttpApi(app, db) {
         ? paymentPolicy.amountDueNgn
         : amountDueOnQuotationFromEntries(quoteLedger, row);
       const rawPv = db.prepare(`SELECT id, lines_json, branch_id, date_iso, paid_ngn FROM quotations WHERE id = ?`).get(req.params.id);
-      const pv = quotationPriceViolations(db, rawPv);
+      const pv = clearStaleMdBelowFloorReviewFlag(db, rawPv);
+      const quotationOut = {
+        ...row,
+        pricingViolations: pv.violations,
+        pricingHasFloorRows: pv.hasFloorRows,
+      };
+      if (pv.cleared) quotationOut.priceExceptionMdReviewRequired = false;
       res.json({
         ok: true,
-        quotation: { ...row, pricingViolations: pv.violations, pricingHasFloorRows: pv.hasFloorRows },
+        quotation: quotationOut,
         amountDueNgn,
         paymentPolicy: policyFlags.accountingPolicyV1Labels ? paymentPolicy : undefined,
         accountingPolicyV1Labels: policyFlags.accountingPolicyV1Labels,

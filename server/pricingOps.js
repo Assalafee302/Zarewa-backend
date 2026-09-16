@@ -203,10 +203,10 @@ function quotationHasPricingFloorData(db) {
  *   paid_ngn?: number | null;
  * }} quoteRow
  * @param {{ pricingMode?: 'current' | 'quotation_date' | 'payment_lock' }} [opts]
- *   Default (`payment_lock`): unpaid quotes use **live** floors; once payment is taken,
- *   floors are frozen as of the **first payment date** (else quotation date).
- *   `quotation_date` — force quotation date even if unpaid.
- *   `current` — always live.
+ *   Default (`payment_lock`): paid → floors as of **first payment**; unpaid dated quotes →
+ *   floors as of **quotation date** (never live — a later publish must not mass-flag MD).
+ *   Brand-new drafts without a date use live floors.
+ *   `quotation_date` — force quotation date. `current` — always live.
  */
 export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const violations = [];
@@ -236,8 +236,8 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   } else if (opts.pricingMode === 'quotation_date') {
     pricingAsAtIso = hasQuoteDate ? quoteDateIso : undefined;
   } else {
-    // payment_lock (default): unpaid → live; paid → first payment / quote date.
-    pricingAsAtIso = lockIso || undefined;
+    // payment_lock (default): paid → payment date; unpaid → quotation date (not live).
+    pricingAsAtIso = lockIso || (hasQuoteDate ? quoteDateIso : undefined);
   }
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
@@ -279,7 +279,16 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     if (!isProductMeterSheet && lineKind !== 'stone_coated' && !designRaw && !profileRaw) return;
 
     const lineHeaderCtx = { ...headerCtx, productName: line?.name };
-    const floor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
+    const resolvedFloor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
+    // Prefer the floor stamped when the line was priced — later workbook raises must not
+    // re-flag deals that were OK at pass/payment time.
+    const stampedFloor = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
+    const floor =
+      stampedFloor > 0
+        ? stampedFloor
+        : resolvedFloor != null && resolvedFloor > 0
+          ? resolvedFloor
+          : null;
     if (floor == null || floor <= 0) return;
     const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, lineHeaderCtx);
     const meters = Number(line?.meters ?? line?.qtyMeters ?? line?.qty ?? 0) || 0;
@@ -292,7 +301,10 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     if (effectivePerMeter <= 0) return;
 
     const design = nums.designKey || designRaw || profileRaw || gauge;
-    const minAllowed = nums.minAllowed;
+    const minAllowed =
+      stampedFloor > 0
+        ? stampedFloor
+        : nums.minAllowed;
 
     if (effectivePerMeter + 0.0001 < floor) {
       violations.push({
@@ -307,6 +319,7 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
         recommendedPerMeter: nums.recommended ?? floor,
         bandNgn: nums.band,
         minAllowedPerMeter: minAllowed,
+        floorSource: stampedFloor > 0 ? 'line_stamp' : 'workbook',
       });
       return;
     }
@@ -349,6 +362,66 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
     }
   }
   return { violations, hasFloorRows: true };
+}
+
+/**
+ * Clear a false-positive MD below-floor review flag when the quote is OK under
+ * payment/quote-date floors (and stamped line floors). Idempotent.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ id?: string; lines_json?: string; branch_id?: string; date_iso?: string; paid_ngn?: number } | null} quoteRow
+ * @returns {{ cleared: boolean; violations: object[]; hasFloorRows: boolean }}
+ */
+export function clearStaleMdBelowFloorReviewFlag(db, quoteRow) {
+  const pv = quotationPriceViolations(db, quoteRow);
+  const qid = String(quoteRow?.id || '').trim();
+  if (!qid || !pv.hasFloorRows || pv.violations.length > 0) {
+    return { cleared: false, ...pv };
+  }
+  try {
+    const r = db
+      .prepare(
+        `UPDATE quotations SET price_exception_md_review_required = 0
+         WHERE id = ? AND price_exception_md_review_required = 1`
+      )
+      .run(qid);
+    return { cleared: Number(r?.changes || 0) > 0, ...pv };
+  } catch {
+    return { cleared: false, ...pv };
+  }
+}
+
+/**
+ * Sweep MD queue candidates and drop flags that a later workbook raise wrongly set.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ branchId?: string | null; limit?: number }} [opts]
+ * @returns {{ scanned: number; cleared: number }}
+ */
+export function reconcileStaleMdBelowFloorFlags(db, opts = {}) {
+  const limit = Math.min(500, Math.max(1, Number(opts.limit) || 200));
+  const branchId = String(opts.branchId || '').trim();
+  let sql = `SELECT id, lines_json, branch_id, date_iso, paid_ngn
+             FROM quotations
+             WHERE price_exception_md_review_required = 1
+               AND (md_price_exception_approved_at_iso IS NULL OR TRIM(IFNULL(md_price_exception_approved_at_iso,'')) = '')
+               AND (price_exception_md_confirmed_at_iso IS NULL OR TRIM(IFNULL(price_exception_md_confirmed_at_iso,'')) = '')`;
+  const args = [];
+  if (branchId && branchId !== 'ALL') {
+    sql += ` AND branch_id = ?`;
+    args.push(branchId);
+  }
+  sql += ` ORDER BY date_iso DESC LIMIT ?`;
+  args.push(limit);
+  let rows = [];
+  try {
+    rows = db.prepare(sql).all(...args);
+  } catch {
+    return { scanned: 0, cleared: 0 };
+  }
+  let cleared = 0;
+  for (const row of rows) {
+    if (clearStaleMdBelowFloorReviewFlag(db, row).cleared) cleared += 1;
+  }
+  return { scanned: rows.length, cleared };
 }
 
 /**

@@ -29,7 +29,7 @@ function mockDb(receipts) {
 }
 
 describe('quotation payment pricing lock', () => {
-  it('unpaid quotes have no lock (live floors)', () => {
+  it('unpaid quotes have no payment lock (MD gates use quote date separately)', () => {
     const db = mockDb([]);
     expect(quotationPricingLockAsAtIso(db, { id: 'QT-1', date_iso: '2026-01-10', paid_ngn: 0 })).toBeNull();
     expect(quotationFirstPaymentDateIso(db, 'QT-1')).toBeNull();

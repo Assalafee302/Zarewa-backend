@@ -7001,7 +7001,9 @@ function validateQuotationForCuttingList(db, quotationRef, excludeCuttingListId,
       linesJson = {};
     }
     syncQuotationBelowFloorReviewFlag(db, qref, linesJson, qrow.branch_id, qrow.date_iso, {
+      // Draft CL: clear false flags when OK, but do not newly raise MD review from a later floor.
       clearApprovalOnViolations: false,
+      setReviewOnViolations: !forDraft,
     });
   } catch {
     /* non-blocking sync */
@@ -9483,11 +9485,14 @@ function syncQuotationBelowFloorReviewFlag(
   opts = {}
 ) {
   const clearApprovalOnViolations = opts.clearApprovalOnViolations !== false;
+  const setReviewOnViolations = opts.setReviewOnViolations !== false;
   const snap = quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dateIsoOverride);
   const qid = String(quotationId || '').trim();
   if (qid) {
     if (snap.needsMdException) {
-      if (clearApprovalOnViolations) {
+      if (!setReviewOnViolations) {
+        // Soft path (e.g. draft cutting list): leave existing flag alone.
+      } else if (clearApprovalOnViolations) {
         // Force re-approve after line/price updates that still violate the floor.
         try {
           db.prepare(
@@ -9526,6 +9531,7 @@ function syncQuotationBelowFloorReviewFlag(
         db.prepare(`UPDATE quotations SET price_exception_md_review_required = 0 WHERE id = ?`).run(qid);
       }
     } else {
+      // Soft sync (cutting list): still clear false positives after a later floor raise.
       db.prepare(`UPDATE quotations SET price_exception_md_review_required = 0 WHERE id = ?`).run(qid);
     }
   }

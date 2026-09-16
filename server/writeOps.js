@@ -7236,8 +7236,10 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId);
   if (!existing) return { ok: false, error: 'Cutting list not found.' };
   const isAutosave = Boolean(payload.autosave);
-  const finalize = Boolean(payload.finalize);
   const existingIsDraft = isCuttingListDraftStatus(existing.status);
+  // Save list: explicit finalize, or any non-autosave write while still Draft.
+  // Clients that PATCH without finalize were leaving status Draft so print stayed blocked.
+  const finalize = Boolean(payload.finalize) || (existingIsDraft && !isAutosave);
   // Stale draft autosave must not regress a list that was already finalized (Save list race).
   if (isAutosave && !existingIsDraft) {
     return { ok: true, id: cuttingListId, skipped: true };

@@ -72,6 +72,27 @@ describe.skipIf(!mysqlOk)('cutting list draft finalize', () => {
     expect(getCuttingList(db, draft.id)?.status).toBe('Waiting');
   });
 
+  it('non-autosave PATCH on Draft promotes to Waiting even without finalize flag', () => {
+    db = createDatabase(':memory:');
+    const draft = insertCuttingList(db, {
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01 (Longspan)',
+      draft: true,
+      lines: [{ sheets: 1, lengthM: 6, lineType: 'Roof' }],
+    });
+    expect(draft.ok).toBe(true);
+
+    // Mimic Save/confirm that omits finalize: true — must still leave Draft so print works.
+    const saved = updateCuttingList(db, draft.id, {
+      lines: [{ sheets: 1, lengthM: 6, lineType: 'Roof' }],
+      totalMeters: 6,
+    });
+    expect(saved.ok).toBe(true);
+    expect(getCuttingList(db, draft.id)?.status).toBe('Waiting');
+  });
+
   it('stale autosave after finalize does not regress status or metres', () => {
     db = createDatabase(':memory:');
     const draft = insertCuttingList(db, {

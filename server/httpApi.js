@@ -7192,9 +7192,15 @@ export function registerHttpApi(app, db) {
         (stripped) => {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
-          // Stale autosave race — nothing changed; skip reloading lines.
-          if (r.skipped) return { ok: true, id: cid, skipped: true };
+          // Stale autosave race — nothing changed; still return the list so the SPA
+          // can sync Waiting after Save list if a late autosave response arrives.
           const cuttingList = getCuttingList(db, cid);
+          if (r.skipped) {
+            return withWriteDelta(
+              { ok: true, id: cid, skipped: true, cuttingList },
+              { cuttingLists: cuttingList ? [cuttingList] : [] }
+            );
+          }
           return withWriteDelta(
             { ok: true, cuttingList, ...(stripped?.autosave ? { autosave: true } : {}) },
             { cuttingLists: cuttingList ? [cuttingList] : [] }

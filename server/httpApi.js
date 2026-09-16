@@ -7834,7 +7834,12 @@ export function registerHttpApi(app, db) {
    * Matches LiveProductionMonitor: BM/MD via production.release, store floor via operations.manage.
    */
   const productionCorrectionPerms = ['production.release', 'operations.manage'];
-  const returnToPlannedPerms = ['production.release'];
+  /**
+   * Recall a started run back to Planned (wrong coils / opening kg).
+   * Store keepers use production.manage / operations.manage; BM/MD also via production.release.
+   * Matches LiveProductionMonitor canReturnJobToPlanned.
+   */
+  const returnToPlannedPerms = ['production.release', 'operations.manage', 'production.manage'];
 
   app.post('/api/production-jobs/:jobId/return-to-planned', requirePermission(returnToPlannedPerms), (req, res) => {
     try {

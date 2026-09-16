@@ -168,7 +168,9 @@ export const FINANCE_DESK_PERMISSION_KEYS = [
 
 /**
  * Store / production floor: receive, run register, deliver, raise incidents.
- * Does NOT include production.release (hold clear / manager review / return-to-planned).
+ * Does NOT include production.release (hold clear / manager conversion sign-off).
+ * Wrong-entry recall: cancel Planned/Running via production.manage; return Running→Planned
+ * via production.manage / operations.manage (same as LiveProductionMonitor).
  * Post-complete qty corrections use operations.manage (same as the production monitor UI).
  * Does NOT include material_incidents.approve (BM write-offs / BM stock-register fields).
  */

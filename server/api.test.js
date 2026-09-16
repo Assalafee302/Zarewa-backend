@@ -2557,6 +2557,64 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(String(badStart.body.error || '')).toMatch(/cancel/i);
   });
 
+  it('store keeper (operations) can recall Planned cancel and Running return-to-planned', async () => {
+    const { coilA } = await seedTwoCoilsForProduction(agent);
+    const ops = request.agent(app);
+    await loginAs(ops, 'operations', 'Ops@123');
+
+    const plannedCl = await ops.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'Machine 01',
+      operatorName: 'Store',
+      lines: [{ sheets: 1, lengthM: 5 }],
+    });
+    expect(plannedCl.status).toBe(201);
+    const plannedJob = await ops.post('/api/production-jobs').send({
+      cuttingListId: plannedCl.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 10,
+      plannedSheets: 1,
+    });
+    expect(plannedJob.status).toBe(201);
+    const recallPlanned = await ops
+      .post(`/api/production-jobs/${encodeURIComponent(plannedJob.body.jobID)}/cancel`)
+      .send({ reason: 'Wrong cutting list registered — recalling for re-entry.' });
+    expect(recallPlanned.status).toBe(200);
+    expect(recallPlanned.body.ok).toBe(true);
+
+    /** Same cutting list is free after cancel — re-register and start, then recall Running→Planned. */
+    const runJob = await ops.post('/api/production-jobs').send({
+      cuttingListId: plannedCl.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 10,
+      plannedSheets: 1,
+    });
+    expect(runJob.status).toBe(201);
+    const jobId = runJob.body.jobID;
+    const alloc = await ops.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 400 }],
+    });
+    expect(alloc.status).toBe(200);
+    const started = await ops
+      .post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`)
+      .send({ startedAtISO: '2026-03-29' });
+    expect(started.status).toBe(200);
+    const recallRunning = await ops
+      .post(`/api/production-jobs/${encodeURIComponent(jobId)}/return-to-planned`)
+      .send({ reason: 'Wrong coil / opening kg after start — recalling to re-enter.' });
+    expect(recallRunning.status).toBe(200);
+    expect(recallRunning.body.ok).toBe(true);
+    const boot = await ops.get('/api/bootstrap');
+    const pj = boot.body.productionJobs.find((j) => j.jobID === jobId);
+    expect(pj?.status).toBe('Planned');
+  });
+
   it('GET /api/production-jobs/:jobId/coil-allocations lists allocations and 404s missing jobs', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const cutting = await agent.post('/api/cutting-lists').send({

@@ -11,6 +11,7 @@ import {
   refundCashOutstandingNgn,
   refundMoneyOutWithinApproved,
   buildRefundSettlementSummary,
+  buildRefundSituationBrief,
   refundHasPayeeMoneyOut,
 } from './refundPayoutStatus.js';
 import { cancelApprovedRefundBeforePay } from '../controlOps.js';
@@ -325,6 +326,44 @@ describe.skipIf(!mysqlOk)('refund payout status', () => {
       .prepare(`SELECT open_ngn FROM refund_company_retention_entries WHERE refund_id = ?`)
       .get(REFUND_ID);
     expect(Number(retention?.open_ngn ?? 0)).toBe(0);
+  });
+});
+
+describe('buildRefundSituationBrief', () => {
+  it('explains credit apply drop and how to reverse mistaken cash', () => {
+    const brief = buildRefundSituationBrief({
+      approvedNgn: 100_000,
+      companyCutNgn: 0,
+      netCashDueNgn: 100_000,
+      creditAppliedNgn: 40_000,
+      creditAppliedToQuotationRef: 'QT-OTHER',
+      treasuryPaidNgn: 60_000,
+      walletWithdrawnNgn: 0,
+      walletOpenNgn: 0,
+      cashOutstandingNgn: 0,
+      tillPayableNgn: 0,
+      heldUnclearedNgn: 0,
+      publicLabel: 'Settled',
+    });
+    expect(brief.headline).toMatch(/already applied|Already paid/i);
+    expect(brief.whatHappened.some((l) => /QT-OTHER/.test(l) && /cash due dropped/.test(l))).toBe(true);
+    expect(brief.howToResolve.some((l) => /reverse the treasury payout/i.test(l))).toBe(true);
+    expect(brief.howToResolve.some((l) => /reverse the credit apply/i.test(l))).toBe(true);
+  });
+
+  it('tells cashier to pay only leftover when credit used and till still due', () => {
+    const brief = buildRefundSituationBrief({
+      approvedNgn: 100_000,
+      creditAppliedNgn: 25_000,
+      creditAppliedToQuotationRef: 'QT-B',
+      treasuryPaidNgn: 0,
+      cashOutstandingNgn: 75_000,
+      tillPayableNgn: 75_000,
+      heldUnclearedNgn: 0,
+      walletOpenNgn: 0,
+    });
+    expect(brief.headline).toMatch(/only the leftover is payable/i);
+    expect(brief.howToResolve[0]).toMatch(/Pay only the leftover ₦75,000/i);
   });
 });
 

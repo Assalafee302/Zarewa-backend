@@ -9449,7 +9449,9 @@ function quotationFloorPricingSnapshot(db, quotationId, linesJson, branchId, dat
     branch_id: branchId,
     ...(date_iso ? { date_iso } : {}),
   };
-  const { violations, hasFloorRows } = quotationPriceViolations(db, row);
+  const { violations, hasFloorRows } = quotationPriceViolations(db, row, {
+    pricingMode: date_iso ? 'quotation_date' : 'current',
+  });
   return {
     violations,
     hasFloorRows,

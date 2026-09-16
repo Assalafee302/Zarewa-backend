@@ -15,7 +15,7 @@ import {
 } from './materialPricingConversionResolve.js';
 import { suggestedPricePerMeterNgn } from '../shared/lib/suggestedPricePerMeter.js';
 import { appendAuditLog } from './controlOps.js';
-import { upsertPriceListItem, defaultPriceListEffectiveFromIso } from './pricingOps.js';
+import { upsertPriceListItem, defaultPriceListEffectiveFromIso, findDuplicatePriceListItem } from './pricingOps.js';
 import { listMaterialPricingRowsAsOf, normalizePricingAsAtIso } from './pricingAsOf.js';
 import { STONE_COATED_GAUGES, roundPublishedPrice } from './pricingPolicyResolve.js';
 import { gaugeMmKeyFromLabel } from '../shared/lib/materialWorkbookQuotationPrice.js';
@@ -892,20 +892,40 @@ export function publishMaterialPricingSheet(db, body, actor) {
         errors.push({ id: row.id, gaugeMm: row.gaugeMm, error: 'syncDesignKey is required to publish.' });
         continue;
       }
-      const plId = `PL-MPS-${String(row.id).replace(/^MPS-/i, '').slice(0, 16)}`;
+      const gaugeKey = gaugeMmKeyFromLabel(row.gaugeMm) || row.gaugeMm;
       const mtKey = materialKey === 'stone-coated' ? 'stone-coated' : materialKey;
+      const effectiveFromIso =
+        String(body?.effectiveFromIso || '').trim().slice(0, 10) ||
+        defaultPriceListEffectiveFromIso();
+      // Version by effective date: same-day re-publish updates that day's row; a later
+      // publish inserts a new row so quotes dated before the new effective date keep
+      // the prior list price (as-of collapse).
+      const sameDay = findDuplicatePriceListItem(
+        db,
+        {
+          gaugeKey,
+          designKey: syncDesign,
+          branchId,
+          effectiveFromIso,
+          materialTypeKey: mtKey,
+          colourKey: '',
+          profileKey: '',
+        },
+        null
+      );
+      const rowShort = String(row.id).replace(/^MPS-/i, '').slice(0, 10);
+      const plId =
+        sameDay?.id ||
+        `PL-MPS-${rowShort}-${String(effectiveFromIso).replace(/-/g, '').slice(0, 8)}`;
       const pl = upsertPriceListItem(
         db,
         {
           id: plId,
-          gaugeKey: gaugeMmKeyFromLabel(row.gaugeMm) || row.gaugeMm,
+          gaugeKey,
           designKey: syncDesign,
           unitPricePerMeterNgn: listPrice,
           branchId,
-          // Local calendar day when body omits effectiveFromIso (same default as upsertPriceListItem).
-          effectiveFromIso:
-            String(body?.effectiveFromIso || '').trim().slice(0, 10) ||
-            defaultPriceListEffectiveFromIso(),
+          effectiveFromIso,
           notes: `Published from material pricing workbook (${materialKey}): floor + commission.`,
           materialTypeKey: mtKey,
         },

@@ -130,7 +130,7 @@ describe.skipIf(!mysqlOk)('MD below-floor price exception', () => {
     expect(clOk.body.ok).toBe(true);
   });
 
-  it('published list price at current floor does not block cutting list (current pricing gate)', async () => {
+  it('published list price at quotation-date floor does not block cutting list', async () => {
     const admin = request.agent(app);
     await loginAs(admin, 'admin', 'Admin@123');
 

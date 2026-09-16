@@ -187,8 +187,9 @@ function quotationHasPricingFloorData(db) {
  * @param {import('better-sqlite3').Database} db
  * @param {{ id?: string; lines_json?: string | null; branch_id?: string | null; date_iso?: string | null }} quoteRow
  * @param {{ pricingMode?: 'current' | 'quotation_date' }} [opts]
- *   `current` (default) — live workbook / price list for cutting list & production gates.
- *   `quotation_date` — historical floors (refunds / substitution only).
+ *   Default: when the quotation has `date_iso`, evaluate floors **as of that date** so a later
+ *   workbook save / publish cannot re-flag or reprice older deals.
+ *   Pass `pricingMode: 'current'` only for explicit live checks (rare).
  */
 export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const violations = [];
@@ -207,12 +208,14 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const products = Array.isArray(parsed?.products) ? parsed.products : [];
   const services = Array.isArray(parsed?.services) ? parsed.services : [];
   const branchId = quoteRow.branch_id != null ? String(quoteRow.branch_id).trim() || null : null;
-  const useQuoteDate = opts.pricingMode === 'quotation_date';
-  const pricingAsAtIso =
-    useQuoteDate &&
-    String(quoteRow?.date_iso ?? '').trim().slice(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)
-      ? String(quoteRow.date_iso).trim().slice(0, 10)
-      : undefined;
+  const quoteDateIso = String(quoteRow?.date_iso ?? '')
+    .trim()
+    .slice(0, 10);
+  const hasQuoteDate = /^\d{4}-\d{2}-\d{2}$/.test(quoteDateIso);
+  // Prefer quotation-date floors unless caller explicitly asks for live (`current`).
+  const useQuoteDate =
+    opts.pricingMode === 'quotation_date' || (opts.pricingMode !== 'current' && hasQuoteDate);
+  const pricingAsAtIso = useQuoteDate && hasQuoteDate ? quoteDateIso : undefined;
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
     materialGauge: headerGauge,

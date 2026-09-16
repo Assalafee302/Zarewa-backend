@@ -729,7 +729,8 @@ const CORE_HELP_ARTICLES = [
       'Open **Procurement → Pricing → Open pricing workbook** (or `/procurement/pricing`).',
       'Set branch, review Std / Ref / Hist, set Used, overhead, profit, Floor, and commission.',
       'Tick **Include in publish**, **Save** drafts, then **Publish to price list** — quotations **auto-fill unit price from the workbook floor** for that branch (list stays on the badge).',
-      'Quoted ₦/m below the workbook **floor** needs MD exception before cutting list, production, or refunds (at/above floor is allowed without MD).',
+      'A publish is effective from its publish date — older quotations, cutting-list / production below-floor checks, and refunds keep the floor that applied on the **quotation date**.',
+      'Quoted ₦/m below the workbook **floor** (as of the quote date) needs MD exception before cutting list, production, or refunds (at/above floor is allowed without MD).',
       'Keep workbook current — refunds and substitution also use quotation-date floors.',
     ],
     links: [

@@ -724,12 +724,12 @@ const CORE_HELP_ARTICLES = [
       'auto price quotation',
     ],
     answer:
-      'Quotations for coil/roofing lines pull **floor prices** from the material pricing workbook (gauge, design, branch). **Floor** is the minimum ₦/m; **List** is floor + commission after published rounding. Only **Publish** writes the list into the live price list used on quotes.',
+      'Quotations for coil/roofing lines pull **floor prices** from the material pricing workbook (gauge, design, branch). **Floor** is the default and minimum ₦/m on new quote lines; **List** is floor + commission after published rounding (reference / customer book). Only **Publish** writes the list into the live price list.',
     steps: [
       'Open **Procurement → Pricing → Open pricing workbook** (or `/procurement/pricing`).',
       'Set branch, review Std / Ref / Hist, set Used, overhead, profit, Floor, and commission.',
-      'Tick **Include in publish**, **Save** drafts, then **Publish to price list** — quotations auto-fill from the **published list**.',
-      'Quoted ₦/m below the workbook **floor** needs MD exception before cutting list, production, or refunds (below list but ≥ floor is allowed).',
+      'Tick **Include in publish**, **Save** drafts, then **Publish to price list** — quotations **auto-fill unit price from the workbook floor** for that branch (list stays on the badge).',
+      'Quoted ₦/m below the workbook **floor** needs MD exception before cutting list, production, or refunds (at/above floor is allowed without MD).',
       'Keep workbook current — refunds and substitution also use quotation-date floors.',
     ],
     links: [

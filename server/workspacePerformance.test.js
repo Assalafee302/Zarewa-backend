@@ -35,6 +35,24 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     db.close();
   });
 
+  it('buildWorkspaceRevision changes when a cutting list leaves Draft', () => {
+    const db = createDatabase(':memory:');
+    const before = buildWorkspaceRevision(db, 'ALL').revision;
+    const id = 'CL-REV-DRAFT-1';
+    db.prepare(
+      `INSERT INTO cutting_lists (
+        id, customer_id, customer_name, quotation_ref, date_label, date_iso,
+        sheets_to_cut, total_meters, total_label, status, handled_by, branch_id
+      ) VALUES (?, 'CUS-001', 'Test', 'QT-2026-005', '29 Mar', '2026-03-29', 1, 6, '6 m', 'Draft', 'Sales', 'BR-YL')`
+    ).run(id);
+    const asDraft = buildWorkspaceRevision(db, 'ALL').revision;
+    expect(asDraft).not.toBe(before);
+    db.prepare(`UPDATE cutting_lists SET status = 'Waiting' WHERE id = ?`).run(id);
+    const asWaiting = buildWorkspaceRevision(db, 'ALL').revision;
+    expect(asWaiting).not.toBe(asDraft);
+    db.close();
+  });
+
   it('sales domain snapshot includes associated staff for refund payout allocation', () => {
     const db = createDatabase(':memory:', { seed: false });
     const snap = buildSalesDomainSnapshot(db, { user: null, branchScope: 'ALL' });

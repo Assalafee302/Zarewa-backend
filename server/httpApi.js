@@ -789,12 +789,15 @@ function bootstrapConditionalEtag(req, { branchScope, mode, includeControls, inc
 }
 
 function bootstrapPollCacheKey(req, { branchScope, mode, includeControls, includeUsers }) {
+  // Include writeSeq so a Save list (Draft→Waiting) cannot be masked by a ~1s
+  // cached bootstrap that still shows Draft.
   return [
     String(req.user?.id || ''),
     String(branchScope || ''),
     String(mode || ''),
     includeControls ? '1' : '0',
     includeUsers ? '1' : '0',
+    String(writeSequence()),
   ].join(':');
 }
 
@@ -7161,9 +7164,22 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return res.status(403).json({ ok: false, error: createGate.error });
-      const r = write.insertCuttingList(db, req.body || {}, req.workspaceBranchId || DEFAULT_BRANCH_ID);
+      const body = req.body || {};
+      const isDraftCreate = Boolean(body.draft || body.isDraft);
+      const r = write.insertCuttingList(db, body, req.workspaceBranchId || DEFAULT_BRANCH_ID);
       if (!r.ok) return res.status(400).json(r);
       const cuttingList = getCuttingList(db, r.id);
+      // Draft create/autosave must not delta-merge into the desk store (late Draft can
+      // overwrite Waiting after Save list). Finalize responses still ship write-delta.
+      if (isDraftCreate || r.skipped) {
+        return res.status(201).json({
+          ok: true,
+          id: r.id,
+          cuttingList,
+          ...(isDraftCreate ? { autosave: true } : {}),
+          ...(r.skipped ? { skipped: true } : {}),
+        });
+      }
       res.status(201).json(
         withWriteDelta({ ok: true, id: r.id, cuttingList }, { cuttingLists: cuttingList ? [cuttingList] : [] })
       );
@@ -7192,17 +7208,22 @@ export function registerHttpApi(app, db) {
         (stripped) => {
           const r = write.updateCuttingList(db, cid, stripped || {}, req.user);
           if (!r.ok) return r;
-          // Stale autosave race — nothing changed; still return the list so the SPA
-          // can sync Waiting after Save list if a late autosave response arrives.
+          // Always re-read after write so a concurrent Save list is visible.
           const cuttingList = getCuttingList(db, cid);
           if (r.skipped) {
+            // Stale autosave after finalize — heal the SPA with current Waiting row.
             return withWriteDelta(
               { ok: true, id: cid, skipped: true, cuttingList },
               { cuttingLists: cuttingList ? [cuttingList] : [] }
             );
           }
+          // Autosave must not write-delta into the desk store: a late Draft body can
+          // overwrite Waiting after Save list. Form still gets cuttingList in the body.
+          if (stripped?.autosave) {
+            return { ok: true, cuttingList, autosave: true };
+          }
           return withWriteDelta(
-            { ok: true, cuttingList, ...(stripped?.autosave ? { autosave: true } : {}) },
+            { ok: true, cuttingList },
             { cuttingLists: cuttingList ? [cuttingList] : [] }
           );
         },

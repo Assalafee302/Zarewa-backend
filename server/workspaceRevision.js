@@ -30,10 +30,14 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
   for (const [table, dateCol] of REVISION_TABLES) {
     try {
       const b = branchWhere(db, table, branchScope);
+      // Refunds: credit/payout can change without date bumps.
+      // Cutting lists: Draft→Waiting (Save list) keeps the same date_iso — fingerprint status.
       const moneyExtra =
         table === 'customer_refunds'
           ? `, COALESCE(SUM(credit_applied_ngn),0) AS credit_sum, COALESCE(SUM(paid_amount_ngn),0) AS paid_sum`
-          : '';
+          : table === 'cutting_lists'
+            ? `, COALESCE(SUM(CASE WHEN TRIM(status) = 'Draft' THEN 1 ELSE 0 END),0) AS draft_n, COALESCE(SUM(CASE WHEN TRIM(status) = 'Waiting' THEN 1 ELSE 0 END),0) AS wait_n, COALESCE(SUM(print_count),0) AS print_sum`
+            : '';
       const row = db
         .prepare(
           `SELECT COUNT(*) AS c, MAX(${dateCol}) AS m${moneyExtra} FROM ${table} WHERE 1=1${b.sql}`
@@ -43,7 +47,9 @@ export function buildWorkspaceRevision(db, branchScope = 'ALL') {
       parts.push(
         table === 'customer_refunds'
           ? `${base}:${row?.credit_sum ?? 0}:${row?.paid_sum ?? 0}`
-          : base
+          : table === 'cutting_lists'
+            ? `${base}:${row?.draft_n ?? 0}:${row?.wait_n ?? 0}:${row?.print_sum ?? 0}`
+            : base
       );
     } catch {
       parts.push(`${table}:na`);

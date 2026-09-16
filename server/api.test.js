@@ -1701,6 +1701,8 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(draft.status).toBe(201);
     const draftId = draft.body.id || draft.body.cuttingList?.id;
     expect(draft.body.cuttingList?.status).toBe('Draft');
+    // Draft autosave must not desk-merge via write-delta (late Draft overwrites Waiting).
+    expect(draft.body.delta?.cuttingLists).toBeUndefined();
 
     const finalized = await agent.post('/api/cutting-lists').send({
       quotationRef: 'QT-2026-006',
@@ -1714,6 +1716,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(finalized.body.id).toBe(draftId);
     expect(finalized.body.cuttingList?.status).toBe('Waiting');
     expect(finalized.body.cuttingList?.totalMeters).toBe(10);
+    expect(finalized.body.delta?.cuttingLists?.[0]?.status).toBe('Waiting');
   });
 
 

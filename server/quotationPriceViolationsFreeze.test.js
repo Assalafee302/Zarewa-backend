@@ -48,7 +48,7 @@ describe('quotationPriceViolations freeze after floor raise', () => {
     db?.close();
   });
 
-  function linesJson({ unitPrice, stampedFloor }) {
+  function linesJson({ unitPrice, stampedFloor, recommended }) {
     return JSON.stringify({
       materialGauge: '0.24mm',
       materialDesign: 'IV',
@@ -59,6 +59,7 @@ describe('quotationPriceViolations freeze after floor raise', () => {
           meters: 10,
           unitPrice,
           floorPricePerMeter: stampedFloor,
+          ...(recommended != null ? { recommendedPricePerMeter: recommended } : {}),
           gauge: '0.24mm',
           design: 'IV',
           materialType: 'alu',
@@ -95,7 +96,36 @@ describe('quotationPriceViolations freeze after floor raise', () => {
     };
     const pv = quotationPriceViolations(db, row);
     expect(pv.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
-    // Gate uses workbook min (4000 on quote date), not the inflated stamp.
+  });
+
+  it('ignores stamp when it equals list badge so floor+commission is not the min', () => {
+    db.prepare(
+      `INSERT INTO material_pricing_sheet_events (
+        id, row_id, material_key, gauge_mm, branch_id, design_key, payload_json, changed_at_iso, changed_by_user_id, action
+      ) VALUES (
+        'EV-FZ-3850', 'MPS-FZ', 'alu', '0.24', 'BR-KD', 'iv',
+        ?, '2026-02-01T10:00:00.000Z', NULL, 'upsert'
+      )`
+    ).run(
+      JSON.stringify({
+        before: { minimumPricePerMeterNgn: 4000, commissionNgnPerM: 400 },
+        after: { minimumPricePerMeterNgn: 3850, commissionNgnPerM: 50 },
+      })
+    );
+    const row = {
+      id: 'QT-FZ-3850',
+      branch_id: 'BR-KD',
+      date_iso: '2026-03-15',
+      paid_ngn: 50000,
+      // List badge 3900 was wrongly saved as floorPricePerMeter; true floor is 3850.
+      lines_json: linesJson({
+        unitPrice: 3850,
+        stampedFloor: 3900,
+        recommended: 3900,
+      }),
+    };
+    const pv = quotationPriceViolations(db, row);
+    expect(pv.violations.filter((v) => v.code === 'below_floor')).toHaveLength(0);
   });
 
   it('unpaid dated quote freezes to quote-date workbook floor (not live)', () => {

@@ -280,14 +280,32 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
 
     const lineHeaderCtx = { ...headerCtx, productName: line?.name };
     const resolvedFloor = floorNgnForServiceLine(db, line, branchId, lineHeaderCtx);
-    // Stamp freezes against later raises, but must never raise the gate above the
-    // workbook minimum (older clients sometimes stamped list = floor+commission).
-    const stampedFloor = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
+    const stampedRaw = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
+    const listRec = Math.round(
+      Number(line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter) || 0
+    );
+    // Older quotes sometimes stamped list (floor+commission) into floorPricePerMeter.
+    // If stamp equals the list badge, it is not a workbook minimum — ignore it for the gate.
+    let stampedFloor = stampedRaw;
+    if (isProductMeterSheet && stampedFloor > 0 && listRec > 0 && stampedFloor === listRec) {
+      stampedFloor = 0;
+    }
     const resolved =
       resolvedFloor != null && resolvedFloor > 0 ? Math.round(resolvedFloor) : null;
     let floor = null;
     let floorSource = 'workbook';
-    if (resolved != null && stampedFloor > 0) {
+    if (isProductMeterSheet) {
+      // Roofing/flat sheet: gate on workbook minimum only. Stamp may freeze downward.
+      if (resolved != null && stampedFloor > 0) {
+        floor = Math.min(stampedFloor, resolved);
+        floorSource = floor === stampedFloor ? 'line_stamp' : 'workbook';
+      } else if (resolved != null) {
+        floor = resolved;
+      } else {
+        // No resolvable workbook floor → do not invent a min from a list stamp.
+        return;
+      }
+    } else if (resolved != null && stampedFloor > 0) {
       floor = Math.min(stampedFloor, resolved);
       floorSource = floor === stampedFloor ? 'line_stamp' : 'workbook';
     } else if (stampedFloor > 0) {

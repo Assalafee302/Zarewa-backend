@@ -170,13 +170,19 @@ export function mapWithdrawalRow(r) {
     payeeBankName: trim(r.payee_bank_name),
     payeeAccountNo: trim(r.payee_account_no),
     note: trim(r.note),
+    requestedByUserId: trim(r.requested_by_user_id),
     requestedByName: trim(r.requested_by_name),
     requestedAtIso: trim(r.requested_at_iso),
+    approvedByUserId: trim(r.approved_by_user_id),
     approvedByName: trim(r.approved_by_name),
     approvedAtIso: trim(r.approved_at_iso),
     approvalNote: trim(r.approval_note),
-    paidAtIso: trim(r.paid_at_iso),
+    cashConfirmedAtIso: trim(r.cash_confirmed_at_iso),
+    cashConfirmed: Boolean(trim(r.cash_confirmed_at_iso)),
     rejectedReason: trim(r.rejected_reason),
+    cancelledByName: trim(r.cancelled_by_name),
+    cancelledAtIso: trim(r.cancelled_at_iso),
+    paidAtIso: trim(r.paid_at_iso),
   };
 }
 

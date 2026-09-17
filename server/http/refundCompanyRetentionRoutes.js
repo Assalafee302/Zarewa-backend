@@ -1,11 +1,12 @@
 /**
- * Company retention from refund staff cuts — balance, BM approve withdraw, cashier pay.
+ * Company retention from refund staff cuts — balance, cancel, BM cash-approve, cashier pay.
  */
 import { requirePermission } from '../auth.js';
 import { resolveBootstrapBranchScope } from '../branchScope.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { backfillMissingRefundCompanyRetentionCredits } from '../finance/partnerWalletCredit.js';
 import {
+  cancelCompanyRetentionWithdrawal,
   decideCompanyRetentionWithdrawal,
   getCompanyRetentionSummary,
   payCompanyRetentionWithdrawal,
@@ -56,6 +57,26 @@ export function registerRefundCompanyRetentionRoutes(app, db) {
         res.status(r.ok ? 201 : 400).json(r);
       } catch (e) {
         console.error('[refund-company-retention/withdrawals]', e);
+        res.status(400).json({ ok: false, error: String(e.message || e) });
+      }
+    }
+  );
+
+  app.post(
+    '/api/refund-company-retention/withdrawals/:id/cancel',
+    requirePermission(['finance.pay', 'refunds.approve', 'finance.approve']),
+    (req, res) => {
+      try {
+        const r = cancelCompanyRetentionWithdrawal(db, {
+          ...(req.body || {}),
+          withdrawalId: req.params.id,
+          actor: req.user,
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        res.status(r.ok ? 200 : 400).json(r);
+      } catch (e) {
+        console.error('[refund-company-retention/cancel]', e);
         res.status(400).json({ ok: false, error: String(e.message || e) });
       }
     }

@@ -1643,7 +1643,11 @@ function migrateRefundCompanyRetention2026(db) {
       approved_by_name TEXT,
       approved_at_iso TEXT,
       approval_note TEXT,
+      cash_confirmed_at_iso TEXT,
       rejected_reason TEXT,
+      cancelled_by_user_id TEXT,
+      cancelled_by_name TEXT,
+      cancelled_at_iso TEXT,
       paid_by_user_id TEXT,
       paid_by_name TEXT,
       paid_at_iso TEXT,
@@ -1653,6 +1657,60 @@ function migrateRefundCompanyRetention2026(db) {
     CREATE INDEX IF NOT EXISTS idx_rcw_branch_status
       ON refund_company_retention_withdrawals(branch_id, status);
   `);
+
+  const rcwCols = (() => {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'refund_company_retention_withdrawals'`
+        )
+        .all();
+      if (rows.length) {
+        return new Set(
+          rows
+            .map((c) => String(c.column_name ?? c.COLUMN_NAME ?? '').toLowerCase())
+            .filter(Boolean)
+        );
+      }
+    } catch {
+      /* sqlite */
+    }
+    try {
+      return new Set(
+        db.prepare(`PRAGMA table_info(refund_company_retention_withdrawals)`).all().map((c) => c.name)
+      );
+    } catch {
+      return new Set();
+    }
+  })();
+  if (rcwCols.size) {
+    if (!rcwCols.has('cash_confirmed_at_iso')) {
+      db.exec(`ALTER TABLE refund_company_retention_withdrawals ADD COLUMN cash_confirmed_at_iso TEXT`);
+    }
+    if (!rcwCols.has('cancelled_by_user_id')) {
+      db.exec(`ALTER TABLE refund_company_retention_withdrawals ADD COLUMN cancelled_by_user_id TEXT`);
+    }
+    if (!rcwCols.has('cancelled_by_name')) {
+      db.exec(`ALTER TABLE refund_company_retention_withdrawals ADD COLUMN cancelled_by_name TEXT`);
+    }
+    if (!rcwCols.has('cancelled_at_iso')) {
+      db.exec(`ALTER TABLE refund_company_retention_withdrawals ADD COLUMN cancelled_at_iso TEXT`);
+    }
+    // Preserve in-flight BM approvals from before cash-confirm was required.
+    try {
+      db.exec(`
+        UPDATE refund_company_retention_withdrawals
+        SET cash_confirmed_at_iso = approved_at_iso
+        WHERE status = 'approved'
+          AND (cash_confirmed_at_iso IS NULL OR trim(cash_confirmed_at_iso) = '')
+          AND approved_at_iso IS NOT NULL
+          AND trim(approved_at_iso) <> ''
+      `);
+    } catch {
+      /* best-effort */
+    }
+  }
 }
 
 /**

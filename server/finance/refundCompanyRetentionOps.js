@@ -1,12 +1,13 @@
 /**
- * Company retention withdrawals — request, BM decide, cashier pay.
+ * Company retention withdrawals — request, cancel, BM cash-approve, cashier pay.
  * @module server/finance/refundCompanyRetentionOps
  */
-import { actorId, actorName } from '../auth.js';
+import { actorId, actorName, userHasPermission } from '../auth.js';
 import { DEFAULT_BRANCH_ID } from '../branches.js';
 import { assertEntityBranchForWorkspaceWrite } from '../branchScope.js';
 import { appendAuditLog, assertPeriodOpen } from '../controlOps.js';
 import { allocateHumanId } from '../humanId.js';
+import { isBranchManagerApprovalAuthority } from '../../shared/workspaceGovernance.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
 import {
   getCompanyRetentionSummary,
@@ -34,6 +35,21 @@ function trim(v) {
   return String(v ?? '').trim();
 }
 
+function actorRoleKey(actor) {
+  return String(actor?.roleKey || actor?.role_key || actor?.role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+/** Branch Manager (or admin/*) may cash-approve company-cut withdrawals before cashier pay. */
+export function actorMayCashApproveCompanyRetentionWithdrawal(actor) {
+  if (userHasPermission(actor, '*')) return true;
+  const rk = actorRoleKey(actor);
+  if (rk === 'admin') return true;
+  return isBranchManagerApprovalAuthority(rk);
+}
+
 function nextWithdrawalId(db, branchId) {
   return allocateHumanId(db, 'RCW', branchId || DEFAULT_BRANCH_ID, {
     table: 'refund_company_retention_withdrawals',
@@ -53,7 +69,8 @@ export function requestCompanyRetentionWithdrawal(db, payload = {}) {
   if (summary.pendingWithdrawals?.length) {
     return {
       ok: false,
-      error: 'A company-cut withdrawal is already pending Branch Manager or cashier. Finish or reject it before requesting another.',
+      error:
+        'A company-cut withdrawal is already pending Branch Manager cash approval or cashier payout. Cancel, finish, or reject it before requesting another.',
       code: 'WITHDRAWAL_PENDING',
     };
   }
@@ -130,6 +147,89 @@ export function requestCompanyRetentionWithdrawal(db, payload = {}) {
   };
 }
 
+/**
+ * Cancel an unpaid withdrawal request (pending BM or BM-approved awaiting pay).
+ * Requester, Branch Manager / finance approvers, or finance.pay may cancel.
+ */
+export function cancelCompanyRetentionWithdrawal(db, payload = {}) {
+  if (!refundCompanyRetentionTablesReady(db)) {
+    return { ok: false, error: 'Company retention tables are not ready.' };
+  }
+  const id = trim(payload.withdrawalId || payload.id);
+  if (!id) return { ok: false, error: 'withdrawalId is required.' };
+
+  const row = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);
+  if (!row) return { ok: false, error: 'Withdrawal request not found.' };
+
+  const status = trim(row.status);
+  if (status !== 'pending_bm' && status !== 'approved') {
+    return {
+      ok: false,
+      error: `Only pending or approved (unpaid) requests can be cancelled. Current status: ${status}.`,
+      code: 'WITHDRAWAL_NOT_CANCELLABLE',
+    };
+  }
+
+  const branchGate = assertEntityBranchForWorkspaceWrite(
+    payload.actor,
+    row.branch_id,
+    payload.workspaceBranchId,
+    Boolean(payload.workspaceViewAll)
+  );
+  if (!branchGate.ok) return { ok: false, error: branchGate.error };
+
+  const actor = payload.actor;
+  const requesterId = trim(row.requested_by_user_id);
+  const isRequester = requesterId && requesterId === String(actorId(actor) || '').trim();
+  const mayCancel =
+    isRequester ||
+    userHasPermission(actor, '*') ||
+    userHasPermission(actor, 'refunds.approve') ||
+    userHasPermission(actor, 'finance.approve') ||
+    userHasPermission(actor, 'finance.pay') ||
+    actorMayCashApproveCompanyRetentionWithdrawal(actor);
+  if (!mayCancel) {
+    return {
+      ok: false,
+      error: 'Only the requester, Branch Manager, or finance may cancel this company-cut withdrawal.',
+      code: 'WITHDRAWAL_CANCEL_FORBIDDEN',
+    };
+  }
+
+  const at = new Date().toISOString();
+  const reason = trim(payload.note || payload.reason) || 'Cancelled by requester';
+  db.prepare(
+    `UPDATE refund_company_retention_withdrawals
+     SET status = 'cancelled',
+         cancelled_by_user_id = ?,
+         cancelled_by_name = ?,
+         cancelled_at_iso = ?,
+         rejected_reason = ?
+     WHERE id = ? AND status IN ('pending_bm', 'approved')`
+  ).run(actorId(actor), actorName(actor), at, reason, id);
+
+  const fresh = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);
+  if (trim(fresh?.status) !== 'cancelled') {
+    return { ok: false, error: 'Could not cancel — status changed concurrently.' };
+  }
+
+  try {
+    appendAuditLog(db, {
+      actor,
+      action: 'refund_company_retention.withdraw_cancel',
+      entityKind: 'refund_company_retention_withdrawal',
+      entityId: id,
+      status: 'cancelled',
+      note: reason,
+      details: { previousStatus: status },
+    });
+  } catch {
+    /* best-effort */
+  }
+
+  return { ok: true, withdrawal: mapWithdrawalRow(fresh) };
+}
+
 export function decideCompanyRetentionWithdrawal(db, payload = {}) {
   if (!refundCompanyRetentionTablesReady(db)) {
     return { ok: false, error: 'Company retention tables are not ready.' };
@@ -176,6 +276,31 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
     };
   }
 
+  // Cash approval before cashier pay — Branch Manager must confirm cash handoff.
+  if (!actorMayCashApproveCompanyRetentionWithdrawal(payload.actor)) {
+    return {
+      ok: false,
+      error:
+        'Only the Branch Manager can cash-approve a company-cut withdrawal before payment. Finance may reject or cancel instead.',
+      code: 'BM_CASH_APPROVAL_REQUIRED',
+    };
+  }
+  const cashConfirmed =
+    payload.cashConfirmed === true ||
+    payload.cash_confirmed === true ||
+    String(payload.cashConfirmed || payload.cash_confirmed || '')
+      .trim()
+      .toLowerCase() === 'true' ||
+    String(payload.cashConfirmed || payload.cash_confirmed || '').trim() === '1';
+  if (!cashConfirmed) {
+    return {
+      ok: false,
+      error:
+        'Branch Manager must confirm cash approval (cashConfirmed: true) before this company-cut withdrawal can be paid.',
+      code: 'BM_CASH_CONFIRM_REQUIRED',
+    };
+  }
+
   const summary = getCompanyRetentionSummary(db, trim(row.branch_id));
   if (summary.cooldownActive) {
     return {
@@ -192,21 +317,39 @@ export function decideCompanyRetentionWithdrawal(db, payload = {}) {
     };
   }
 
+  const approvalNote =
+    trim(payload.note) || 'Branch Manager cash-approved company cut withdrawal';
   db.prepare(
     `UPDATE refund_company_retention_withdrawals
      SET status = 'approved',
          approved_by_user_id = ?,
          approved_by_name = ?,
          approved_at_iso = ?,
-         approval_note = ?
+         approval_note = ?,
+         cash_confirmed_at_iso = ?
      WHERE id = ?`
   ).run(
     actorId(payload.actor),
     actorName(payload.actor),
     at,
-    trim(payload.note) || 'Approved by Branch Manager',
+    approvalNote,
+    at,
     id
   );
+
+  try {
+    appendAuditLog(db, {
+      actor: payload.actor,
+      action: 'refund_company_retention.withdraw_bm_cash_approve',
+      entityKind: 'refund_company_retention_withdrawal',
+      entityId: id,
+      status: 'approved',
+      note: approvalNote,
+      details: { cashConfirmed: true, amountNgn: roundMoney(row.amount_ngn) },
+    });
+  } catch {
+    /* best-effort */
+  }
 
   return {
     ok: true,
@@ -225,7 +368,30 @@ export function payCompanyRetentionWithdrawal(db, payload = {}) {
   const row = db.prepare(`SELECT * FROM refund_company_retention_withdrawals WHERE id = ?`).get(id);
   if (!row) return { ok: false, error: 'Withdrawal request not found.' };
   if (trim(row.status) !== 'approved') {
-    return { ok: false, error: 'Only BM-approved withdrawals can be paid.' };
+    return {
+      ok: false,
+      error: 'Only Branch Manager cash-approved withdrawals can be paid.',
+      code: 'BM_CASH_APPROVAL_REQUIRED',
+    };
+  }
+  if (!trim(row.cash_confirmed_at_iso)) {
+    return {
+      ok: false,
+      error:
+        'Branch Manager cash confirmation is missing on this request. Ask the Branch Manager to re-approve with cashConfirmed: true.',
+      code: 'BM_CASH_CONFIRM_REQUIRED',
+    };
+  }
+
+  const approverId = trim(row.approved_by_user_id);
+  const payerId = String(actorId(payload.actor) || '').trim();
+  if (approverId && payerId && approverId === payerId) {
+    return {
+      ok: false,
+      error:
+        'You cannot pay a company-cut withdrawal you cash-approved. Another finance/cashier user must execute the payout.',
+      code: 'DUAL_CONTROL_PAY',
+    };
   }
 
   const branchGate = assertEntityBranchForWorkspaceWrite(

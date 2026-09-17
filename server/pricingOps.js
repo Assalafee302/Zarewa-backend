@@ -3,6 +3,7 @@ import { appendAuditLog } from './controlOps.js';
 import { actorName } from './auth.js';
 import {
   floorNgnForServiceLine,
+  lineParticipatesInSheetFloorGate,
   normKey as policyNormKey,
   pricingPolicyNumbersForServiceLine,
 } from './pricingPolicyResolve.js';
@@ -22,6 +23,8 @@ export {
 } from './pricingAsOf.js';
 import { canReadMaterialPricingSheetRows } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
+
+export { lineParticipatesInSheetFloorGate } from './pricingPolicyResolve.js';
 import { quotationTrimWorkbookFloorViolations } from '../shared/lib/materialWorkbookTrimPrice.js';
 import { isQuotationTrimProductLine } from '../shared/lib/cuttingListBlankConsumption.js';
 import {
@@ -266,12 +269,12 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   linesToCheck.forEach((line) => {
     const idx = line._pricingIdx;
     const cat = line._pricingCat;
+    if (!lineParticipatesInSheetFloorGate(line, cat)) return;
     const isProductMeterSheet = cat === 'products' && isMeterSheetProductLine(line?.name);
-    if (cat === 'products' && !isProductMeterSheet) return;
 
     const gauge = normKey(line?.gauge ?? line?.gaugeLabel ?? '');
     if (!gauge) return;
-    const lineKind = String(line?.lineKind ?? 'roofing')
+    const lineKind = String(line?.lineKind ?? (isProductMeterSheet ? 'roofing' : ''))
       .trim()
       .toLowerCase()
       .replace(/-/g, '_');

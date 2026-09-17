@@ -9,6 +9,27 @@ import {
 } from './materialWorkbookQuotationPrice.js';
 import { isMeterSheetProductLine } from '../shared/lib/materialWorkbookQuotationPrice.js';
 
+/**
+ * MD / workbook floor gates apply to roofing & flat sheet products, and to service
+ * lines that explicitly declare a sheet pricing kind (ridge / flashing / roofing).
+ * Labour services (Bending, Transport, Installation, …) must never inherit the
+ * header gauge Floor.
+ * @param {object} line
+ * @param {'products' | 'services' | string} category
+ */
+export function lineParticipatesInSheetFloorGate(line, category) {
+  const cat = String(category || '').trim().toLowerCase();
+  if (cat === 'products' || cat === 'product') {
+    return isMeterSheetProductLine(line?.name);
+  }
+  if (cat !== 'services' && cat !== 'service') return false;
+  const lk = String(line?.lineKind ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  return lk === 'roofing' || lk === 'ridge' || lk === 'flashing' || lk === 'stone_coated';
+}
+
 export const STONE_COATED_MATERIAL_KEY = 'stone-coated';
 export const STONE_COATED_DESIGN_KEY = 'stone-coated';
 export const STONE_COATED_GAUGES = ['0.20', '0.22', '0.24'];
@@ -267,6 +288,13 @@ export function applyPricingSnapshotsToServices(db, services, branchId, headerCt
   if (!Array.isArray(services)) return;
   for (const line of services) {
     if (!line || typeof line !== 'object') continue;
+    // Meter-sheet products always; services only with explicit sheet lineKind.
+    if (
+      !isMeterSheetProductLine(line?.name) &&
+      !lineParticipatesInSheetFloorGate(line, 'services')
+    ) {
+      continue;
+    }
     const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx);
     if (nums.floor != null) {
       const prev = Math.round(Number(line.floorPricePerMeter) || 0);

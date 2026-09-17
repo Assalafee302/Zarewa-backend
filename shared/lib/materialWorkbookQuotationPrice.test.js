@@ -46,15 +46,38 @@ describe('materialWorkbookQuotationPrice', () => {
     expect(designKeysToTry('Longspan (Indus6)')).toContain('longspan');
   });
 
-  it('resolveMaterialWorkbookPriceFromRows matches gauge material design branch', () => {
-    const hit = resolveMaterialWorkbookPriceFromRows(rows, {
+  it('prefers workbook blank/wb row over stale design_key=longspan duplicate', () => {
+    const mixed = [
+      {
+        id: 'MPS-LEGACY',
+        materialKey: 'aluzinc',
+        gaugeMm: '0.24',
+        branchId: 'BR-KD',
+        designKey: 'longspan',
+        minimumPricePerMeterNgn: 4800,
+        commissionNgnPerM: 0,
+        publishedListPriceNgn: 4800,
+      },
+      {
+        id: 'MPS-UI',
+        materialKey: 'aluzinc',
+        gaugeMm: '0.24',
+        branchId: 'BR-KD',
+        designKey: '',
+        syncDesignKey: 'longspan',
+        minimumPricePerMeterNgn: 4700,
+        commissionNgnPerM: 0,
+        publishedListPriceNgn: 4700,
+      },
+    ];
+    const hit = resolveMaterialWorkbookPriceFromRows(mixed, {
       materialKey: 'aluzinc',
-      gaugeMm: '0.45mm',
-      branchId: 'BR-001',
-      designLabel: 'Longspan',
+      gaugeMm: '0.24mm',
+      branchId: 'BR-KD',
+      designLabel: 'Longspan (Indus6)',
     });
-    expect(hit?.floorPerMeter).toBe(4000);
-    expect(hit?.suggestedListPerMeter).toBe(4200);
+    expect(hit?.floorPerMeter).toBe(4700);
+    expect(hit?.rowId).toBe('MPS-UI');
   });
 
   it('matches Longspan (Indus6) to published longspan workbook rows', () => {

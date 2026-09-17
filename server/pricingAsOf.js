@@ -570,6 +570,22 @@ export function listMaterialPricingRowsAsOf(db, branchId, asAtIso) {
   }
 
   const out = [];
+  /** @type {Map<string, string>} */
+  const syncByKey = new Map();
+  try {
+    const live = db
+      .prepare(
+        `SELECT material_key, gauge_mm, branch_id, design_key, sync_design_key
+         FROM material_pricing_sheet_rows WHERE branch_id = ?`
+      )
+      .all(bid);
+    for (const r of live) {
+      const k = `${normKey(r.material_key)}\0${String(r.gauge_mm).trim()}\0${String(r.branch_id).trim()}\0${normKey(r.design_key)}`;
+      syncByKey.set(k, String(r.sync_design_key ?? '').trim());
+    }
+  } catch {
+    /* sync_design_key may be missing on stale schema */
+  }
   for (const key of keySet) {
     const [mk, g, b, dk] = key.split('\0');
     const state = resolveWorkbookRowStateAsOf(db, mk, g, b, dk, asAt);
@@ -581,6 +597,7 @@ export function listMaterialPricingRowsAsOf(db, branchId, asAtIso) {
       gaugeMm: g,
       branchId: b,
       designKey: dk,
+      syncDesignKey: syncByKey.get(key) || '',
       minimumPricePerMeterNgn: floor,
       commissionNgnPerM: commission,
       publishedListPriceNgn: publishedListPriceFromWorkbook(floor, commission),

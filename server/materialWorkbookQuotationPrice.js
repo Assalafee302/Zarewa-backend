@@ -53,7 +53,7 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
   if (!allBranches) {
     rows = db
       .prepare(
-        `SELECT id, material_key, gauge_mm, branch_id, design_key,
+        `SELECT id, material_key, gauge_mm, branch_id, design_key, sync_design_key,
                 minimum_price_per_m_ngn, commission_ngn_per_m${labelCol}
          FROM material_pricing_sheet_rows
          WHERE branch_id = ?
@@ -63,7 +63,7 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
   } else {
     rows = db
       .prepare(
-        `SELECT id, material_key, gauge_mm, branch_id, design_key,
+        `SELECT id, material_key, gauge_mm, branch_id, design_key, sync_design_key,
                 minimum_price_per_m_ngn, commission_ngn_per_m${labelCol}
          FROM material_pricing_sheet_rows
          ORDER BY branch_id ASC, material_key ASC, gauge_mm ASC, design_key ASC`
@@ -79,6 +79,7 @@ export function listMaterialPricingRowsForSnapshot(db, branchScope = null) {
       gaugeMm: r.gauge_mm,
       branchId: r.branch_id,
       designKey: r.design_key ?? '',
+      syncDesignKey: String(r.sync_design_key ?? '').trim(),
       minimumPricePerMeterNgn: floor,
       commissionNgnPerM: commission,
       publishedListPriceNgn: publishedListPriceFromWorkbook(floor, commission),
@@ -130,7 +131,7 @@ export function listMaterialPricingRowsForQuotationLookup(db, branchId, material
   if (!bid || !mk || !g) return [];
   const rows = db
     .prepare(
-      `SELECT id, material_key, gauge_mm, branch_id, design_key,
+      `SELECT id, material_key, gauge_mm, branch_id, design_key, sync_design_key,
               minimum_price_per_m_ngn, commission_ngn_per_m
        FROM material_pricing_sheet_rows
        WHERE branch_id = ? AND material_key = ?
@@ -147,6 +148,7 @@ export function listMaterialPricingRowsForQuotationLookup(db, branchId, material
       gaugeMm: r.gauge_mm,
       branchId: r.branch_id,
       designKey: r.design_key ?? '',
+      syncDesignKey: String(r.sync_design_key ?? '').trim(),
       minimumPricePerMeterNgn: floor,
       commissionNgnPerM: commission,
       publishedListPriceNgn: publishedListPriceFromWorkbook(floor, commission),

@@ -227,7 +227,17 @@ export function resolvePublishedListUnitNgnFromItems(items, ctx) {
 }
 
 /**
- * @param {Array<{ materialKey?: string; gaugeMm?: string; branchId?: string; designKey?: string; minimumPricePerMeterNgn?: number; commissionNgnPerM?: number; publishedListPriceNgn?: number }>} rows
+ * Workbook economics lines use blank or `wb-*` design_key; publish design lives in syncDesignKey.
+ * Legacy rows may still store longspan/metcoppo in design_key — those must not beat the UI row.
+ * @param {unknown} designKey
+ */
+export function isWorkbookEconomicsDesignKey(designKey) {
+  const s = String(designKey ?? '').trim();
+  return s === '' || s.startsWith('wb-') || s.startsWith('wb_');
+}
+
+/**
+ * @param {Array<{ materialKey?: string; gaugeMm?: string; branchId?: string; designKey?: string; syncDesignKey?: string; minimumPricePerMeterNgn?: number; commissionNgnPerM?: number; publishedListPriceNgn?: number }>} rows
  * @param {{ materialKey: string; gaugeMm: string; branchId: string; designLabel?: string; designKeys?: string[] }} ctx
  * @returns {{ floorPerMeter: number; commissionPerMeter: number; suggestedListPerMeter: number; rowId?: string } | null}
  */
@@ -250,19 +260,27 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   );
   if (!pool.length) return null;
 
-  // Canonical design match (Longspan (Indus6) ↔ longspan). Prefer exact key, else blank design row.
-  // Never fall back to min floor across unrelated designs.
+  // Prefer sheet lines you edit in the workbook (blank / wb-*). Legacy design_key=longspan
+  // rows are ignored when economics rows exist — otherwise a stale ₦4800 longspan row can
+  // beat the live blank row at ₦4700 and false-flag MD below-floor.
+  const workbookPool = pool.filter((r) => isWorkbookEconomicsDesignKey(r.designKey));
+  const usePool = workbookPool.length > 0 ? workbookPool : pool;
+
+  // Canonical design match (Longspan (Indus6) ↔ longspan). Prefer syncDesignKey on workbook
+  // rows, else blank design row. Never fall back to min floor across unrelated designs.
   let best = null;
   let bestScore = -1;
-  for (const r of pool) {
+  for (const r of usePool) {
     const rd = normPricingKey(r.designKey);
+    const syncDk = normPricingKey(r.syncDesignKey);
     const floor = Math.round(Number(r.minimumPricePerMeterNgn) || 0);
     if (floor <= 0) continue;
 
     let score = 0;
     if (designKeys.length) {
-      if (priceListDesignKeysMatch(rd, designKeys)) score = 20;
-      else if (!rd) score = 8;
+      if (syncDk && priceListDesignKeysMatch(syncDk, designKeys)) score = 22;
+      else if (rd && priceListDesignKeysMatch(rd, designKeys)) score = 20;
+      else if (!rd && isWorkbookEconomicsDesignKey(r.designKey)) score = 8;
       else continue;
     } else if (!rd) {
       score = 10;
@@ -278,7 +296,7 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   }
 
   if (!best) {
-    const blank = pool.find(
+    const blank = usePool.find(
       (r) => !normPricingKey(r.designKey) && Math.round(Number(r.minimumPricePerMeterNgn) || 0) > 0
     );
     best = blank || null;

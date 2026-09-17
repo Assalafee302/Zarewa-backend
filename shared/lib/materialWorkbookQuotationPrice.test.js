@@ -80,6 +80,40 @@ describe('materialWorkbookQuotationPrice', () => {
     expect(hit?.rowId).toBe('MPS-UI');
   });
 
+  it('treats Flat sheet product name as unset design so primary gauge floor applies', () => {
+    const rows020 = [
+      {
+        id: 'MPS-020',
+        materialKey: 'aluzinc',
+        gaugeMm: '0.20',
+        branchId: 'BR-KD',
+        designKey: '',
+        syncDesignKey: 'longspan',
+        minimumPricePerMeterNgn: 3850,
+        commissionNgnPerM: 0,
+        publishedListPriceNgn: 3850,
+      },
+      {
+        id: 'MPS-020-LEGACY',
+        materialKey: 'aluzinc',
+        gaugeMm: '0.20',
+        branchId: 'BR-KD',
+        designKey: 'longspan',
+        minimumPricePerMeterNgn: 3900,
+        commissionNgnPerM: 0,
+        publishedListPriceNgn: 3900,
+      },
+    ];
+    const hit = resolveMaterialWorkbookPriceFromRows(rows020, {
+      materialKey: 'aluzinc',
+      gaugeMm: '0.20mm',
+      branchId: 'BR-KD',
+      designLabel: 'Flat sheet',
+    });
+    expect(hit?.floorPerMeter).toBe(3850);
+    expect(hit?.rowId).toBe('MPS-020');
+  });
+
   it('matches Longspan (Indus6) to published longspan workbook rows', () => {
     const hit = resolveMaterialWorkbookPriceFromRows(rows, {
       materialKey: 'aluzinc',

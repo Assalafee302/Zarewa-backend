@@ -242,7 +242,8 @@ export function quotationPriceViolations(db, quoteRow, opts = {}) {
   const headerCtx = {
     materialTypeId: headerMaterialTypeId,
     materialGauge: headerGauge,
-    materialDesign: headerDesign,
+    // Product names wrongly stored as profile must not drive workbook design matching.
+    materialDesign: isMeterSheetProductLine(headerDesign) ? '' : headerDesign,
     ...(pricingAsAtIso ? { asAtIso: pricingAsAtIso } : {}),
   };
 

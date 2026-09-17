@@ -237,6 +237,20 @@ export function isWorkbookEconomicsDesignKey(designKey) {
 }
 
 /**
+ * Quotation header sometimes stores a product name ("Flat sheet") as profile.
+ * Those are not workbook designs — treat as unset so the gauge's primary Floor applies.
+ * @param {unknown} designLabel
+ */
+export function normalizeWorkbookDesignLabelForFloor(designLabel) {
+  const raw = String(designLabel ?? '').trim();
+  if (!raw) return '';
+  if (isMeterSheetProductLine(raw)) return '';
+  const k = normPricingKey(raw);
+  if (k === 'flat sheet' || k === 'flatsheet' || k === 'roofing sheet' || k === 'roofingsheet') return '';
+  return raw;
+}
+
+/**
  * @param {Array<{ materialKey?: string; gaugeMm?: string; branchId?: string; designKey?: string; syncDesignKey?: string; minimumPricePerMeterNgn?: number; commissionNgnPerM?: number; publishedListPriceNgn?: number }>} rows
  * @param {{ materialKey: string; gaugeMm: string; branchId: string; designLabel?: string; designKeys?: string[] }} ctx
  * @returns {{ floorPerMeter: number; commissionPerMeter: number; suggestedListPerMeter: number; rowId?: string } | null}
@@ -247,7 +261,8 @@ export function resolveMaterialWorkbookPriceFromRows(rows, ctx) {
   const g = gaugeMmKeyForBranch(bid, ctx.gaugeMm);
   if (!mk || !g || !bid || !Array.isArray(rows)) return null;
 
-  const designKeys = designKeysToTry(ctx.designLabel, ctx.designKeys);
+  const designLabel = normalizeWorkbookDesignLabelForFloor(ctx.designLabel);
+  const designKeys = designKeysToTry(designLabel, ctx.designKeys);
   if (mk === 'stone-coated') {
     designKeys.push('stone-coated');
   }

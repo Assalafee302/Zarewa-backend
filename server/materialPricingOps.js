@@ -721,6 +721,46 @@ export function upsertMaterialPricingSheetRow(db, body, actor, opts = {}) {
     note: `${materialKey} · ${gaugeMm} mm · ${branchId}`,
   });
 
+  // Keep legacy design_key=longspan (etc.) rows in sync with the economics line you edit,
+  // so MD floor checks cannot keep an older ₦/m on a hidden duplicate.
+  if (
+    minimum > 0 &&
+    syncDesignKeyStored &&
+    (designKey === '' || designKey.startsWith('wb-') || designKey.startsWith('wb_'))
+  ) {
+    try {
+      db.prepare(
+        `UPDATE material_pricing_sheet_rows SET
+           minimum_price_per_m_ngn = ?,
+           commission_ngn_per_m = ?,
+           updated_at_iso = ?,
+           updated_by_user_id = ?
+         WHERE material_key = ?
+           AND gauge_mm = ?
+           AND branch_id = ?
+           AND id != ?
+           AND lower(trim(COALESCE(design_key, ''))) = ?
+           AND NOT (
+             trim(COALESCE(design_key, '')) = ''
+             OR lower(trim(COALESCE(design_key, ''))) LIKE 'wb-%'
+             OR lower(trim(COALESCE(design_key, ''))) LIKE 'wb_%'
+           )`
+      ).run(
+        minimum,
+        commission,
+        now,
+        actor?.id ?? null,
+        materialKey,
+        gaugeMm,
+        branchId,
+        id,
+        syncDesignKeyStored
+      );
+    } catch {
+      /* non-fatal heal */
+    }
+  }
+
   // Draft save only — price list updates go through publishMaterialPricingSheet.
   return { ok: true, id, row: after, priceListSync: null };
 }

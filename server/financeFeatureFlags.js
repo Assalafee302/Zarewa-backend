@@ -14,6 +14,7 @@ import { readDeliveryPaymentGateMode } from './deliveryReleaseGate.js';
  *   strictCashierRbac: boolean,
  *   allowAccountantReceiptConfirmation: boolean,
  *   enforceDualControlPayments: boolean,
+ *   refundCashierPayRelaxed: boolean,
  *   accountingPolicyV1Labels: boolean,
  *   accountingPolicyV1Diagnostics: boolean,
  *   accountingPolicyV1ReceiptGl: boolean,
@@ -45,6 +46,9 @@ export function readFinanceFeatureFlags() {
     // also paying it out, which breaks payouts when approve/pay aren't staffed by different
     // people. Set ENFORCE_DUAL_CONTROL_PAYMENTS=1 once those roles are actually separated.
     enforceDualControlPayments: envFlag('ENFORCE_DUAL_CONTROL_PAYMENTS', false),
+    // TEMP desk relief: skip uncleared till holds and pay-time production alignment.
+    // Set ZAREWA_REFUND_CASHIER_PAY_RELAXED=0 to restore.
+    refundCashierPayRelaxed: envFlag('ZAREWA_REFUND_CASHIER_PAY_RELAXED', true),
     accountingPolicyV1Labels: envFlag('ACCOUNTING_POLICY_V1_LABELS', false),
     accountingPolicyV1Diagnostics: envFlag('ACCOUNTING_POLICY_V1_DIAGNOSTICS', false),
     accountingPolicyV1ReceiptGl: envFlag('ACCOUNTING_POLICY_V1_RECEIPT_GL', false),
@@ -54,6 +58,11 @@ export function readFinanceFeatureFlags() {
     deliveryPaymentGateMode: readDeliveryPaymentGateMode(),
     allowMdDeliveryOverride: envFlag('ALLOW_MD_DELIVERY_OVERRIDE', false),
   };
+}
+
+/** Temporary cashier refund-pay desk relief (see readFinanceFeatureFlags). */
+export function refundCashierPayRelaxed() {
+  return readFinanceFeatureFlags().refundCashierPayRelaxed;
 }
 
 /** Surfaced on GET /api/health (deploy check). */

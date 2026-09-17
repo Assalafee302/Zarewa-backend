@@ -13,6 +13,7 @@ import {
   resolveCreditTargets,
   listPartnerWalletOpenCreditsForRefund,
 } from '../finance/partnerWalletCredit.js';
+import { refundCashierPayRelaxed } from '../financeFeatureFlags.js';
 import { refundTillPayableNgn } from '../refundHandlers.js';
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../../shared/lib/refundUnclearedPayoutHold.js';
 import { refundTreasuryPaidNgn } from '../refundCreditApplyOps.js';
@@ -353,7 +354,9 @@ export function buildRefundSettlementSummary(db, row, opts = {}) {
   const needsPaidTargets = storedStatus === 'Paid';
   const resolveOpts = {
     hrKeys: opts.hrKeys instanceof Set ? opts.hrKeys : undefined,
-    skipUnclearedFloat: needsPaidTargets && !needsOpenTargets,
+    // Paid history always skips live float; relaxed desk also skips for open Approved payouts.
+    skipUnclearedFloat:
+      (needsPaidTargets && !needsOpenTargets) || (needsOpenTargets && refundCashierPayRelaxed()),
   };
   let targets = Array.isArray(opts.targets) ? opts.targets : null;
   if ((needsOpenTargets || needsPaidTargets) && approvedNgn > 0) {

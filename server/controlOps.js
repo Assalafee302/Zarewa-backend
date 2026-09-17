@@ -38,6 +38,7 @@ import {
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import {
   quotedCuttingListSheetPoolMetresFromProducts,
   quotedTrimFinishedMetresFromProducts,
@@ -699,11 +700,14 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   if (!lineArithmetic.ok) return lineArithmetic;
 
   if (phase === 'pay') {
-    const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, {
-      ...(refundRow || {}),
-      refund_id: excludeId || refundRow?.refund_id || null,
-    });
-    if (!alignPay.ok) return alignPay;
+    // TEMP: skip pay-time production re-check while cashier desk is relaxed.
+    if (!refundCashierPayRelaxed()) {
+      const alignPay = validateRefundProductionAlignmentAtPayout(db, ref, reasonCategories, {
+        ...(refundRow || {}),
+        refund_id: excludeId || refundRow?.refund_id || null,
+      });
+      if (!alignPay.ok) return alignPay;
+    }
   }
 
   return { ok: true, preview, economicFloor, economicFloorOverrideHonoured: floorOverrideHonoured };

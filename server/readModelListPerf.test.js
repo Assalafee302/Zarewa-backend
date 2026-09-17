@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import {
   listCuttingLists,
+  listEligibleCuttingListQuotations,
   listPurchaseOrders,
   listQuotations,
   listStockMovements,
@@ -114,6 +115,25 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(lists).toHaveLength(2);
     expect(lists.find((c) => c.id === 'CL-1')?.lines).toHaveLength(1);
     expect(lists.find((c) => c.id === 'CL-2')?.lines).toHaveLength(2);
+    db.close();
+  });
+
+  it('listEligibleCuttingListQuotations excludes quotes that already have a cutting list', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertCustomer(db, { customerID: 'C1', name: 'Customer' }, 'BR-KD');
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer, date_iso, status, branch_id, total_ngn, paid_ngn)
+      VALUES ('Q-PAID-OPEN', 'C1', 'Customer', '2026-07-03', 'Open', 'BR-KD', 10000, 8000),
+             ('Q-PAID-HAS-CL', 'C1', 'Customer', '2026-07-02', 'Open', 'BR-KD', 10000, 10000),
+             ('Q-UNDERPAID', 'C1', 'Customer', '2026-07-01', 'Open', 'BR-KD', 10000, 1000);
+      INSERT INTO cutting_lists (id, customer_id, customer_name, quotation_ref, date_iso, date_label, status, branch_id, sheets_to_cut, total_meters)
+      VALUES ('CL-EXISTING', 'C1', 'Customer', 'Q-PAID-HAS-CL', '2026-07-02', '2 Jul', 'Waiting', 'BR-KD', 1, 5);
+    `);
+    const eligible = listEligibleCuttingListQuotations(db, 'BR-KD');
+    const ids = eligible.map((q) => q.id);
+    expect(ids).toContain('Q-PAID-OPEN');
+    expect(ids).not.toContain('Q-PAID-HAS-CL');
+    expect(ids).not.toContain('Q-UNDERPAID');
     db.close();
   });
 

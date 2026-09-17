@@ -621,8 +621,9 @@ export function countQuotations(db, branchScope = 'ALL', opts = {}) {
 }
 
 /**
- * Complete active quotation queue for creating cutting lists. Final save still executes
- * the authoritative cash/price/override gates in writeOps.
+ * Paid (or MD-approved) quotations with no cutting list yet — for the create-CL picker.
+ * Matches writeOps duplicate gate: any cutting_lists row for the quote blocks eligibility.
+ * Final save still executes the authoritative cash/price/override gates in writeOps.
  */
 export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
   const branch = branchWhere(db, 'quotations', branchScope);
@@ -636,6 +637,9 @@ export function listEligibleCuttingListQuotations(db, branchScope = 'ALL') {
          AND (
            q.paid_ngn >= q.total_ngn * COALESCE(b.cutting_list_min_paid_fraction, 0.7)
            OR q.manager_production_approved_at_iso IS NOT NULL
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM cutting_lists cl WHERE cl.quotation_ref = q.id
          )
          ${branchSql}
        ORDER BY q.date_iso DESC, q.id DESC`

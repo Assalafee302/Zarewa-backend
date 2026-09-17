@@ -182,15 +182,22 @@ export function floorNgnForServiceLine(db, line, branchId, headerCtx = null) {
     const mk =
       materialKeyFromMaterialTypeId(db, headerCtx.materialTypeId) ||
       normKey(line?.materialType ?? line?.materialTypeKey ?? '');
-    const wb = workbookFloorPerMeterForQuotation(db, {
+    const wbCtx = {
       materialKey: mk,
       materialTypeId: headerCtx.materialTypeId,
       gaugeLabel: headerCtx.materialGauge ?? line?.gauge ?? line?.gaugeLabel,
       designLabel: headerCtx.materialDesign ?? line?.design ?? line?.profile,
       branchId,
-      asAtIso,
-    });
-    if (wb != null && wb > 0) return wb;
+    };
+    const live = workbookFloorPerMeterForQuotation(db, wbCtx);
+    if (asAtIso) {
+      const asOf = workbookFloorPerMeterForQuotation(db, { ...wbCtx, asAtIso });
+      // Freeze against later raises (as-of), but allow a corrected lower live Floor to clear
+      // false MD flags the same day (e.g. sheet ₦4700 after an earlier ₦4800 save).
+      if (asOf != null && asOf > 0 && live != null && live > 0) return Math.min(asOf, live);
+      if (asOf != null && asOf > 0) return asOf;
+    }
+    if (live != null && live > 0) return live;
     // Published list is selling price (floor + commission), not the MD floor.
     // Do not treat price_list_items as the floor for roofing / flat sheet.
     return null;

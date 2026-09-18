@@ -173,6 +173,7 @@ function attachTreasuryToExpenseTx(db, exp, treasuryAccountId, actor, opts) {
     workspaceBranchId: String(opts.workspaceBranchId || exp.branch_id || DEFAULT_BRANCH_ID).trim(),
     workspaceViewAll: Boolean(opts.workspaceViewAll),
     actor,
+    allowNegativeBalance: true,
   });
 
   postGlForExpenseMovement(

@@ -358,6 +358,23 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
   },
   {
     kind: 'nav',
+    id: 'nav-expense-cash-catchup',
+    label: 'Post imported expenses to cash',
+    sublabel: 'Put upload rows on the statement and reduce the till',
+    path: '/expense-cash-catchup',
+    keywords: [
+      'expense import',
+      'post expenses',
+      'cashier statement',
+      'balance not changing',
+      'upload refunds',
+      'unposted expenses',
+      'attach treasury',
+    ],
+    permissions: ['finance.post', 'expenses.create'],
+  },
+  {
+    kind: 'nav',
     id: 'nav-manager',
     label: 'Management',
     sublabel: 'Manager dashboard',

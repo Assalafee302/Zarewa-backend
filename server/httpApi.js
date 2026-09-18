@@ -267,7 +267,7 @@ import {
   commitExpenseBulkImport,
   normalizeExpenseImportRows,
 } from './expenseBulkImport.js';
-import { isExpenseUnpostedForVoid, voidUnpostedImportedExpense } from './finance/expenseTreasuryCatchUpOps.js';
+import { isExpenseUnpostedForVoid, voidUnpostedImportedExpense, attachAllUnpostedImportedExpenses } from './finance/expenseTreasuryCatchUpOps.js';
 import { EXPENSE_CATEGORY_OPTIONS } from '../shared/expenseCategories.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
@@ -557,6 +557,7 @@ import {
   countSalesReceipts,
   listCuttingLists,
   enrichSalesReceiptRowsWithCashFromLedger,
+  listTreasuryAccounts,
   listTreasuryMovements,
   procurementDashboardSummary,
   procurementSpendTrend,
@@ -9781,7 +9782,65 @@ export function registerHttpApi(app, db) {
         defaultTreasuryAccountId: req.body?.treasuryAccountId,
         accountKey: req.body?.accountKey,
       });
-      return res.status(r.ok ? 201 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+
+      const paidFromId = Number(r.paidFromAccountId || r.created?.[0]?.treasuryAccountId) || 0;
+      if (paidFromId) {
+        const backfill = attachAllUnpostedImportedExpenses(db, req.user, {
+          treasuryAccountId: paidFromId,
+          workspaceBranchId: branchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        if (backfill.ok && backfill.postedCount) {
+          r.backfilledCount = backfill.postedCount;
+          r.message = `${r.message || ''} Also posted ${backfill.postedCount} earlier expense(s) that had no till/bank line.`.trim();
+        }
+      }
+
+      const branchScope = resolveBootstrapBranchScope(req);
+      const accounts = listTreasuryAccounts(db, branchScope);
+      const createdIds = (r.created || []).map((c) => String(c.expenseID || '').trim()).filter(Boolean);
+      let postedMovements = [];
+      if (createdIds.length) {
+        const ph = createdIds.map(() => '?').join(',');
+        postedMovements = db
+          .prepare(
+            `SELECT tm.*, ta.name AS account_name, ta.type AS account_type, ta.acc_no AS account_no,
+                    ta.bank_name AS bank_name
+             FROM treasury_movements tm
+             LEFT JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+             WHERE tm.source_kind = 'EXPENSE' AND tm.source_id IN (${ph})`
+          )
+          .all(...createdIds)
+          .map((row) => ({
+            id: row.id,
+            postedAtISO: row.posted_at_iso,
+            type: row.type,
+            treasuryAccountId: row.treasury_account_id,
+            accountName: row.account_name ?? '',
+            accountType: row.account_type ?? '',
+            accountNo: row.account_no ?? '',
+            bankName: row.bank_name ?? '',
+            amountNgn: row.amount_ngn,
+            reference: row.reference ?? '',
+            counterpartyKind: row.counterparty_kind ?? '',
+            counterpartyId: row.counterparty_id ?? '',
+            counterpartyName: row.counterparty_name ?? '',
+            sourceKind: row.source_kind ?? '',
+            sourceId: row.source_id ?? '',
+            note: row.note ?? '',
+            createdBy: row.created_by ?? '',
+          }));
+      }
+
+      return res.status(201).json(
+        withWriteDelta(r, {
+          treasuryAccounts: paidFromId
+            ? accounts.filter((a) => Number(a.id) === paidFromId)
+            : accounts,
+          treasuryMovements: postedMovements,
+        })
+      );
     } catch (e) {
       console.error(e);
       return apiError(res, {

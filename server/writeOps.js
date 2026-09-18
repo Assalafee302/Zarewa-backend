@@ -7965,6 +7965,7 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
           workspaceBranchId: bid,
           workspaceViewAll: payload.workspaceViewAll,
           actor: payload.actor,
+          allowNegativeBalance: Boolean(payload.allowNegativeBalance),
         });
         const glExp = tryPostExpensePaymentGlTx(db, {
           treasuryAccountId: payload.treasuryAccountId,

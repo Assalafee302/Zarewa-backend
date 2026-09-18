@@ -7,6 +7,7 @@ import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
 import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
+import { registerExpenseCashCatchupPage } from './http/expenseCashCatchupPage.js';
 import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
@@ -151,6 +152,7 @@ export function createApp(db) {
   registerHttpApi(app, db);
   registerExpenseMemoFilingRoutes(app, db);
   registerBranchRefundFreezePage(app, db);
+  registerExpenseCashCatchupPage(app, db);
   scheduleHelpAnalytics(db);
   scheduleWorkspaceMaintenance(db);
 
@@ -174,6 +176,7 @@ export function createApp(db) {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api')) return next();
       if (req.path === '/refund-lock') return next();
+      if (req.path === '/expense-cash-catchup') return next();
       res.sendFile(spaIndex, (err) => (err ? next(err) : undefined));
     });
   }

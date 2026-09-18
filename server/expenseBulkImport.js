@@ -195,7 +195,7 @@ export function listBranchTreasuryAccountsForImport(db, branchId = '') {
 }
 
 /**
- * Pick the branch till when AccountKey is blank: the only account, or the only Cash account.
+ * Pick the cashier book when AccountKey is blank: the only account, else the account with the latest movement (the desk they are using), else Cash/till, else the largest balance.
  * @param {import('better-sqlite3').Database} db
  * @param {string} [branchId]
  * @returns {{ id: number|null, account?: object, auto?: boolean, error?: string, accounts?: object[] }}
@@ -212,6 +212,27 @@ export function resolveDefaultBranchTreasuryAccount(db, branchId = '') {
   if (accounts.length === 1) {
     return { id: Number(accounts[0].id), account: accounts[0], auto: true };
   }
+
+  const ids = accounts.map((a) => Number(a.id)).filter((n) => n > 0);
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(',');
+    const last = db
+      .prepare(
+        `SELECT treasury_account_id AS id
+         FROM treasury_movements
+         WHERE treasury_account_id IN (${placeholders})
+         ORDER BY posted_at_iso DESC, id DESC
+         LIMIT 1`
+      )
+      .get(...ids);
+    const active = last?.id
+      ? accounts.find((a) => Number(a.id) === Number(last.id))
+      : null;
+    if (active) {
+      return { id: Number(active.id), account: active, auto: true };
+    }
+  }
+
   const cash = accounts.filter(isCashTreasuryType);
   if (cash.length === 1) {
     return { id: Number(cash[0].id), account: cash[0], auto: true };
@@ -222,12 +243,11 @@ export function resolveDefaultBranchTreasuryAccount(db, branchId = '') {
       return { id: Number(namedTill.id), account: namedTill, auto: true };
     }
   }
-  const names = accounts.map((a) => a.name || `#${a.id}`).join(', ');
-  return {
-    id: null,
-    accounts,
-    error: `This branch has more than one cash/bank account (${names}). Put the cashier account name in AccountKey, or send treasuryAccountId / accountKey for the till that paid these expenses.`,
-  };
+
+  const richest = [...accounts].sort(
+    (a, b) => Number(b.balance || 0) - Number(a.balance || 0)
+  )[0];
+  return { id: Number(richest.id), account: richest, auto: true };
 }
 
 /**
@@ -238,14 +258,16 @@ export function resolveDefaultBranchTreasuryAccount(db, branchId = '') {
  * @param {{ requireTreasury?: boolean, defaultTreasuryAccountId?: number|string, accountKey?: string }} [opts]
  */
 export function resolveImportRowTreasury(db, row, branchId, opts = {}) {
-  if (row.treasuryAccountId != null && Number.isFinite(Number(row.treasuryAccountId))) {
-    return resolveTreasuryAccountId(db, Number(row.treasuryAccountId), branchId);
+  const rowTid = Number(row.treasuryAccountId);
+  if (Number.isFinite(rowTid) && rowTid > 0) {
+    return resolveTreasuryAccountId(db, rowTid, branchId);
   }
   if (row.accountKey) {
     return resolveTreasuryAccountId(db, row.accountKey, branchId);
   }
-  if (opts.defaultTreasuryAccountId != null && String(opts.defaultTreasuryAccountId).trim() !== '') {
-    return resolveTreasuryAccountId(db, opts.defaultTreasuryAccountId, branchId);
+  const defaultTid = Number(opts.defaultTreasuryAccountId);
+  if (Number.isFinite(defaultTid) && defaultTid > 0) {
+    return resolveTreasuryAccountId(db, defaultTid, branchId);
   }
   if (opts.accountKey) {
     return resolveTreasuryAccountId(db, opts.accountKey, branchId);
@@ -632,7 +654,9 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
   const branchCheck = requireExplicitBranchId(branchId, 'expense import');
   if (!branchCheck.ok) return { ok: false, error: branchCheck.error };
   const bid = branchCheck.branchId;
-  const preview = previewExpenseBulkImport(db, rows, actor, { ...opts, branchId: bid });
+  // Import must hit the cashier book unless a catch-up test explicitly opts out.
+  const requireTreasury = opts.requireTreasury !== false;
+  const preview = previewExpenseBulkImport(db, rows, actor, { ...opts, branchId: bid, requireTreasury });
   const toPost = preview.previewTable.filter((r) => r.include && r.status === 'ok');
   if (!toPost.length) {
     return {
@@ -659,6 +683,18 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
       });
       continue;
     }
+    let treasuryAccountId = row.treasuryAccountId || null;
+    if (!treasuryAccountId && requireTreasury) {
+      const fallback = resolveDefaultBranchTreasuryAccount(db, bid);
+      if (!fallback.id) {
+        failed.push({
+          row: row.row,
+          error: fallback.error || 'Pick the cashier till these expenses were paid from.',
+        });
+        continue;
+      }
+      treasuryAccountId = fallback.id;
+    }
     const r = insertExpenseEntry(
       db,
       {
@@ -668,11 +704,12 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
         reference: row.reference || `IMPORT-${row.row}`,
         expenseType: row.description || row.category,
         paymentMethod: row.paymentMethod || 'Import',
-        treasuryAccountId: row.treasuryAccountId || undefined,
+        treasuryAccountId: treasuryAccountId || undefined,
         categoryJustification: row.description || row.reference || '',
         createdBy: actor?.displayName || actor?.username || 'expense-import',
         actor,
         workspaceViewAll: Boolean(opts.workspaceViewAll),
+        allowNegativeBalance: true,
         // Historical catch-up may post Refund / contra-revenue; regular expense form cannot.
         allowRevenue: true,
       },
@@ -688,7 +725,7 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
         reference: row.reference || '',
         paymentMethod: row.paymentMethod || 'Import',
         description: row.description || '',
-        treasuryAccountId: row.treasuryAccountId || null,
+        treasuryAccountId: treasuryAccountId || null,
       });
     } else {
       failed.push({ row: row.row, error: r.error || 'Could not create expense.' });

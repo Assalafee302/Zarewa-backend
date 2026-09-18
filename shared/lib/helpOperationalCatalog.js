@@ -239,6 +239,20 @@ const OPERATIONAL_TOPICS = [
   },
   {
     module: 'finance',
+    action: 'post imported expenses onto the cashier book',
+    title: 'Imported expenses not on the statement',
+    answer:
+      'A bulk upload writes expense memos. They only change the till balance and cashier statement after you post them to a cash/bank account.',
+    steps: [
+      'Sign in as Finance or Administrator.',
+      'Open **Post imported expenses to cash** (`/expense-cash-catchup`) — or type that in workspace search.',
+      'Pick the branch (e.g. Yola), category Refund, and the till those refunds were paid from, then **Post to statement and reduce balance**.',
+    ],
+    links: [{ label: 'Post imported expenses to cash', to: '/expense-cash-catchup' }],
+    extraKeywords: ['import expenses', 'statement', 'balance', 'refund upload', 'cashier book'],
+  },
+  {
+    module: 'finance',
     action: 'submit an expense payment request',
     title: 'Submit expense payment request',
     answer: 'Payment requests route for finance.approve before treasury payout.',

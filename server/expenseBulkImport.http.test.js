@@ -217,15 +217,7 @@ describe('expense bulk import HTTP (MySQL)', () => {
     expect(login.status).toBe(200);
     await agent.patch('/api/session/workspace').send({ currentBranchId: DEFAULT_BRANCH_ID, viewAllBranches: false });
 
-    const boot = await agent.get('/api/bootstrap');
-    const cash =
-      (boot.body.treasuryAccounts || []).find((a) => String(a.type || '').toLowerCase() === 'cash') ||
-      boot.body.treasuryAccounts?.[0];
-    expect(cash?.id).toBeTruthy();
-    db.prepare(`UPDATE treasury_accounts SET balance = GREATEST(COALESCE(balance, 0), ?) WHERE id = ?`).run(
-      5_000_000,
-      cash.id
-    );
+    await agent.get('/api/bootstrap');
 
     db.prepare(
       `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
@@ -240,7 +232,27 @@ describe('expense bulk import HTTP (MySQL)', () => {
     expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = 'EXP-REIMPORT-A'`).get()).toBeFalsy();
     expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = 'EXP-REIMPORT-B'`).get()).toBeFalsy();
 
-    const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cash.id).balance);
+    const previewPaid = await agent.post('/api/expenses/import/preview').send({
+      rows: [
+        {
+          date: '2026-07-08',
+          amountNgn: 11_000,
+          category: 'Refund',
+          reference: 'NEW-A',
+          description: 'Re-imported refund that must hit cashier statement',
+          include: true,
+        },
+      ],
+    });
+    expect(previewPaid.status, JSON.stringify(previewPaid.body)).toBe(200);
+    const paidFromId = Number(previewPaid.body.paidFromAccountId);
+    expect(paidFromId).toBeGreaterThan(0);
+    db.prepare(`UPDATE treasury_accounts SET balance = GREATEST(COALESCE(balance, 0), ?) WHERE id = ?`).run(
+      5_000_000,
+      paidFromId
+    );
+
+    const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(paidFromId).balance);
     const commit = await agent.post('/api/expenses/import/commit').send({
       rows: [
         {
@@ -263,10 +275,13 @@ describe('expense bulk import HTTP (MySQL)', () => {
     });
     expect(commit.status, JSON.stringify(commit.body)).toBe(201);
     expect(commit.body.createdCount).toBe(2);
-    expect(Number(commit.body.created[0].treasuryAccountId)).toBe(Number(cash.id));
-    expect(Number(commit.body.created[1].treasuryAccountId)).toBe(Number(cash.id));
+    expect(Number(commit.body.created[0].treasuryAccountId)).toBe(paidFromId);
+    expect(Number(commit.body.created[1].treasuryAccountId)).toBe(paidFromId);
+    expect(commit.body.delta?.treasuryAccounts?.some((a) => Number(a.id) === paidFromId)).toBe(true);
+    expect(Array.isArray(commit.body.delta?.treasuryMovements)).toBe(true);
+    expect(commit.body.delta.treasuryMovements.length).toBe(2);
 
-    const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cash.id).balance);
+    const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(paidFromId).balance);
     expect(after).toBe(before - 30_000);
 
     for (const row of commit.body.created) {
@@ -278,7 +293,7 @@ describe('expense bulk import HTTP (MySQL)', () => {
         .get(row.expenseID);
       expect(tm).toBeTruthy();
       expect(Number(tm.amount_ngn)).toBe(-row.amountNgn);
-      expect(Number(tm.treasury_account_id)).toBe(Number(cash.id));
+      expect(Number(tm.treasury_account_id)).toBe(paidFromId);
     }
   }, 120_000);
 });

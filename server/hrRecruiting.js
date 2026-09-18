@@ -3,19 +3,11 @@
  * @module server/hrRecruiting
  */
 
-import crypto from 'node:crypto';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
+import { hrTableExists } from './hrTableChecks.js';
 
 export function hrRecruitingTablesReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_job_postings'`).get());
+    return hrTableExists(db, 'hr_job_postings');
   } catch {
     return false;
   }
@@ -315,6 +307,7 @@ export function generateOfferLetter(db, applicantId, actor = {}, body = {}) {
 }
 
 import { allowRateLimit, clientIp } from './rateLimit.js';
+import { newId, nowIso } from './hrCommon.js';
 
 const careersApplyBuckets = new Map();
 const careersListBuckets = new Map();

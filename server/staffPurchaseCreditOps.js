@@ -25,6 +25,7 @@ import {
   notifyMdStaffPurchaseCreditSubmitted,
   syncStaffPurchaseCreditWorkItem,
 } from './staffPurchaseCreditWorkItems.js';
+import { tableHasColumn } from './schemaCache.js';
 
 export {
   countPendingStaffPurchaseCreditRequests,
@@ -36,12 +37,7 @@ function roleKey(actor) {
 }
 
 export function staffPurchaseCreditColumnsReady(db) {
-  try {
-    const cols = new Set(db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all().map((c) => c.name));
-    return cols.has('sales_customer_id');
-  } catch {
-    return false;
-  }
+  return tableHasColumn(db, 'hr_staff_profiles', 'sales_customer_id');
 }
 
 export function getStaffPurchaseCreditPolicy(db) {
@@ -583,12 +579,10 @@ function addDaysIso(isoDate, days) {
 }
 
 function quotationStaffPurchaseColumnsReady(db) {
-  try {
-    const cols = new Set(db.prepare(`PRAGMA table_info(quotations)`).all().map((c) => c.name));
-    return cols.has('is_staff_purchase') && cols.has('staff_purchase_credit_id');
-  } catch {
-    return false;
-  }
+  return (
+    tableHasColumn(db, 'quotations', 'is_staff_purchase') &&
+    tableHasColumn(db, 'quotations', 'staff_purchase_credit_id')
+  );
 }
 
 function linkQuotationToPurchaseCredit(db, quotationRef, accountId) {

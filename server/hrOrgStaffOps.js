@@ -16,6 +16,7 @@ import {
 } from './hrCompensationOps.js';
 import { isBeneficiaryOnlyPayrollGroup, isErpAccessRestrictedPayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { HR_PORTAL_ONLY_ROLE_KEY } from './hrStaffAccessPolicy.js';
+import { nowIso } from './hrCommon.js';
 
 /** designation id → suggested app role_key (permissions, not HR title) */
 export const DESIGNATION_APP_ROLE_HINTS = {
@@ -114,10 +115,6 @@ export function buildSupplementalPermissionsForRoles(roleKeys, primaryRoleKey) {
     }
   }
   return [...extra].sort();
-}
-
-function nowIso() {
-  return new Date().toISOString();
 }
 
 function parseExtra(raw) {

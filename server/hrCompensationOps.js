@@ -9,6 +9,8 @@ import {
   normalizeSecondaryRole,
   buildStaffMergedOffices,
 } from './hrOrgConstants.js';
+import { hrTableExists } from './hrTableChecks.js';
+import { nowIso } from './hrCommon.js';
 
 export const COMPENSATION_VARIANCE_TYPES = [
   { value: 'merit_outstanding', label: 'Merit / outstanding performance' },
@@ -43,10 +45,6 @@ function applyMatrixPayComponents(matrixRow, payAdditionNgn = 0) {
 
 export { isDirectorCorporateEligible, buildStaffMergedOffices };
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 export function totalCompensationNgn({ baseSalaryNgn = 0, housingAllowanceNgn = 0, transportAllowanceNgn = 0 } = {}) {
   return (
     Math.round(Number(baseSalaryNgn) || 0) +
@@ -56,13 +54,36 @@ export function totalCompensationNgn({ baseSalaryNgn = 0, housingAllowanceNgn = 
 }
 
 export function salaryMatrixReady(db) {
-  try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_salary_matrix'`).get()
-    );
-  } catch {
-    return false;
+  return hrTableExists(db, 'hr_salary_matrix');
+}
+
+const MATRIX_ROW_SELECT = `SELECT payroll_group AS payrollGroup, salary_level AS salaryLevel, salary_step AS salaryStep,
+              base_salary_ngn AS baseSalaryNgn, housing_allowance_ngn AS housingAllowanceNgn,
+              transport_allowance_ngn AS transportAllowanceNgn, notes
+       FROM hr_salary_matrix`;
+
+/** @returns {string|null} cell key, or null when the staff sits off the grid */
+function matrixCellKey(payrollGroup, salaryLevel, salaryStep) {
+  const level = Math.round(Number(salaryLevel) || 0);
+  const step = Math.round(Number(salaryStep) || 0);
+  if (level < 1 || step < 1) return null;
+  return `${String(payrollGroup || 'branch_ops').trim() || 'branch_ops'}|${level}|${step}`;
+}
+
+/**
+ * Whole salary grid as one Map, for callers summarising many staff at once —
+ * the per-staff lookup below is a query each, which is an N+1 over a list.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {Map<string, object>}
+ */
+export function loadHrSalaryMatrixIndex(db) {
+  const index = new Map();
+  if (!salaryMatrixReady(db)) return index;
+  for (const row of db.prepare(MATRIX_ROW_SELECT).all()) {
+    const key = matrixCellKey(row.payrollGroup, row.salaryLevel, row.salaryStep);
+    if (key) index.set(key, row);
   }
+  return index;
 }
 
 /**
@@ -70,18 +91,12 @@ export function salaryMatrixReady(db) {
  */
 export function lookupHrSalaryMatrixRow(db, payrollGroup, salaryLevel, salaryStep) {
   if (!salaryMatrixReady(db)) return null;
-  const group = String(payrollGroup || 'branch_ops').trim() || 'branch_ops';
-  const level = Math.round(Number(salaryLevel) || 0);
-  const step = Math.round(Number(salaryStep) || 0);
-  if (level < 1 || step < 1) return null;
+  const key = matrixCellKey(payrollGroup, salaryLevel, salaryStep);
+  if (!key) return null;
+  const [group, level, step] = key.split('|');
   const row = db
-    .prepare(
-      `SELECT payroll_group AS payrollGroup, salary_level AS salaryLevel, salary_step AS salaryStep,
-              base_salary_ngn AS baseSalaryNgn, housing_allowance_ngn AS housingAllowanceNgn,
-              transport_allowance_ngn AS transportAllowanceNgn, notes
-       FROM hr_salary_matrix WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`
-    )
-    .get(group, level, step);
+    .prepare(`${MATRIX_ROW_SELECT} WHERE payroll_group = ? AND salary_level = ? AND salary_step = ?`)
+    .get(group, Number(level), Number(step));
   return row || null;
 }
 
@@ -352,12 +367,18 @@ export function mergeCompensationProfileExtra(prevExtra, body, ctx = {}) {
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {object} staff
+ * @param {Map<string, object>|null} [matrixIndex] preloaded grid from {@link loadHrSalaryMatrixIndex}
  */
-export function buildStaffCompensationSummary(db, staff) {
+export function buildStaffCompensationSummary(db, staff, matrixIndex = null) {
   const payrollGroup = String(staff?.payrollGroup || 'branch_ops').trim() || 'branch_ops';
   const level = staff?.salaryLevel != null ? Number(staff.salaryLevel) : null;
   const step = staff?.salaryStep != null ? Number(staff.salaryStep) : 1;
-  const matrixRow = level && step ? lookupHrSalaryMatrixRow(db, payrollGroup, level, step) : null;
+  const cellKey = level && step ? matrixCellKey(payrollGroup, level, step) : null;
+  const matrixRow = !cellKey
+    ? null
+    : matrixIndex
+      ? matrixIndex.get(cellKey) || null
+      : lookupHrSalaryMatrixRow(db, payrollGroup, level, step);
   const actual = {
     baseSalaryNgn: staff?.baseSalaryNgn,
     housingAllowanceNgn: staff?.housingAllowanceNgn,
@@ -483,9 +504,7 @@ export function applyBulkMatrixRevisionToProfiles(db, scope = {}, opts = {}) {
   const rows = db.prepare(sql).all(...args);
   const updated = [];
   const skipped = [];
-  const hasHistory = Boolean(
-    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_salary_history'`).get()
-  );
+  const hasHistory = hrTableExists(db, 'hr_salary_history');
 
   for (const row of rows) {
     let profileExtra = {};
@@ -579,13 +598,7 @@ export function applyBulkMatrixRevisionToProfiles(db, scope = {}, opts = {}) {
 }
 
 function staffProfilesReady(db) {
-  try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_profiles'`).get()
-    );
-  } catch {
-    return false;
-  }
+  return hrTableExists(db, 'hr_staff_profiles');
 }
 
 function parseProfileExtraJson(raw) {

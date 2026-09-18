@@ -10,15 +10,8 @@ import { hrTablesReady, appendHrAuditEvent, nowIso } from './hrOps.js';
 import { actorName, userHasPermission } from './auth.js';
 import { assertPeriodOpen } from './controlOps.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { hrTableExists } from './hrTableChecks.js';
+import { parseJsonObject } from './hrCommon.js';
 
 export const OBLIGATION_KIND = {
   LOAN: 'loan',
@@ -66,23 +59,7 @@ function newReceiptRef(db, branchId) {
 }
 
 export function staffObligationTablesReady(db) {
-  try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_obligation_accounts'`).get()
-    );
-  } catch {
-    try {
-      return Boolean(
-        db
-          .prepare(
-            `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'hr_staff_obligation_accounts' LIMIT 1`
-          )
-          .get()
-      );
-    } catch {
-      return false;
-    }
-  }
+  return hrTableExists(db, 'hr_staff_obligation_accounts');
 }
 
 function nextObligationId(db, branchId) {
@@ -335,7 +312,7 @@ export function openLoanObligationFromHrApproval(db, requestRow, actor = null) {
     return { ok: true, accountId: existing.id, already: true };
   }
 
-  const payload = safeJsonParse(requestRow.payload_json, {});
+  const payload = parseJsonObject(requestRow.payload_json, {});
   const loanRow = db.prepare(`SELECT * FROM hr_request_loan WHERE request_id = ?`).get(hrId);
   const amountNgn = Math.round(Number(loanRow?.amount_ngn ?? payload.amountNgn) || 0);
   const termMonths = Math.round(Number(loanRow?.repayment_months ?? payload.repaymentMonths) || 0);
@@ -391,7 +368,7 @@ export function activateLoanObligationOnDisbursement(db, payload) {
   if (!account) {
     const rows = db.prepare(`SELECT id, payload_json FROM hr_requests WHERE kind = 'loan' AND status = 'approved'`).all();
     for (const r of rows) {
-      const p = safeJsonParse(r.payload_json, {});
+      const p = parseJsonObject(r.payload_json, {});
       if (String(p.financePaymentRequestId || '') !== prId) continue;
       account = db
         .prepare(`SELECT * FROM hr_staff_obligation_accounts WHERE hr_request_id = ?`)
@@ -734,7 +711,7 @@ export function syncLoanRequestPayloadFromObligation(db, accountIdOrHrRequestId)
   const loan = db.prepare(`SELECT id, payload_json FROM hr_requests WHERE id = ? AND kind = 'loan'`).get(hrRequestId);
   if (!loan) return { ok: false, skipped: true };
 
-  const p = safeJsonParse(loan.payload_json, {});
+  const p = parseJsonObject(loan.payload_json, {});
   const outstanding = Math.round(Number(account.principal_outstanding_ngn) || 0);
   const monthsPaid = Math.round(Number(account.months_paid) || 0);
   const termMonths = Math.round(Number(account.term_months) || 0);
@@ -1020,7 +997,7 @@ export function backfillStaffObligationsFromLoans(db) {
       skipped += 1;
       continue;
     }
-    const payload = safeJsonParse(row.payload_json, {});
+    const payload = parseJsonObject(row.payload_json, {});
     const disbursed = Boolean(payload.loanDisbursedAtIso);
     const opened = openLoanObligationFromHrApproval(db, row, null);
     if (!opened.ok) continue;

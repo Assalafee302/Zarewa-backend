@@ -6,6 +6,7 @@
  */
 
 import { hrTableExists } from './hrTableChecks.js';
+import { tableHasColumn as cachedTableHasColumn } from './schemaCache.js';
 
 function isIgnorableMissingTableError(e) {
   const msg = String(e?.message || e || '');
@@ -49,11 +50,8 @@ export function tableHasColumn(db, table, column) {
   const t = String(table || '').trim();
   const c = String(column || '').trim();
   if (!t || !c) return false;
-  try {
-    return db.prepare(`PRAGMA table_info(${t})`).all().some((row) => row.name === c);
-  } catch {
-    return false;
-  }
+  /* Purging one user probes ~15 table shapes; memoised so that is not 15 round trips. */
+  return cachedTableHasColumn(db, t, c);
 }
 
 /**

@@ -3,20 +3,12 @@
  * @module server/hrNotifications
  */
 
-import crypto from 'node:crypto';
 import { hrTableExists } from './hrTableChecks.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
+import { newId, nowIso } from './hrCommon.js';
 
 export function hrNotificationsTableReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_notifications'`).get());
+    return hrTableExists(db, 'hr_notifications');
   } catch {
     return false;
   }

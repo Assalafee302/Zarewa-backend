@@ -6,6 +6,7 @@
 import { updateAppUserStatus } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
+import { tableHasColumn } from './schemaCache.js';
 import { purgeUserHrOperationalData, detachAppUserReferences } from './hrUserOperationalCleanup.js';
 import { scanStaffIdentityDuplicates } from './hr/staffIdentityUniqueness.js';
 
@@ -281,18 +282,6 @@ export function scanHrStaffDuplicates(db) {
     nameSuspicions,
     proposedRemovals: [...toRemove.values()],
   };
-}
-
-/** @param {import('better-sqlite3').Database} db */
-function tableHasColumn(db, table, column) {
-  try {
-    return db
-      .prepare(`PRAGMA table_info(${table})`)
-      .all()
-      .some((c) => c.name === column);
-  } catch {
-    return false;
-  }
 }
 
 /** @param {import('better-sqlite3').Database} db */

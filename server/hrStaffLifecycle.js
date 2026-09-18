@@ -7,32 +7,21 @@ import {
   HR_SEPARATION_STATUSES,
   normalizeHrLifecycleState,
 } from '../shared/lib/hrStaffLifecycle.js';
+import { hrTableExists } from './hrTableChecks.js';
+import { nowIso, parseJsonValue } from './hrCommon.js';
 
 function hrTablesReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_profiles'`).get());
+    return hrTableExists(db, 'hr_staff_profiles');
   } catch {
     return false;
   }
 }
 
-function safeJsonParse(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  try {
-    return JSON.parse(String(raw));
-  } catch {
-    return fallback;
-  }
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function readProfileExtra(db, userId) {
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return null;
-  return safeJsonParse(row.profile_extra_json, {});
+  return parseJsonValue(row.profile_extra_json, {});
 }
 
 function writeProfileExtra(db, userId, extra) {

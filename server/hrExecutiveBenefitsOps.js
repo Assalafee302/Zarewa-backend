@@ -4,7 +4,6 @@
  * @module server/hrExecutiveBenefitsOps
  */
 
-import crypto from 'node:crypto';
 import {
   decryptBankAccount,
   encryptBankAccount,
@@ -14,6 +13,7 @@ import { appendHrAuditEvent } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { createHrNotification, notifyScholarshipPaymentApproved, notifyScholarshipPaymentPaid } from './hrNotifications.js';
 import { hrUserHas } from './hrPermissions.js';
+import { newId, nowIso } from './hrCommon.js';
 import {
   isDomesticStaff,
   isScholarshipBeneficiary,
@@ -22,14 +22,6 @@ import {
 } from '../shared/lib/hrStaffCohorts.js';
 
 const PAYMENT_STATUSES = ['draft', 'submitted', 'finance_review', 'md_review', 'approved', 'exported', 'paid', 'rejected', 'cancelled'];
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
 
 function csvEsc(v) {
   const t = String(v ?? '');

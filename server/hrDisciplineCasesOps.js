@@ -3,7 +3,6 @@
  * @module server/hrDisciplineCasesOps
  */
 
-import crypto from 'node:crypto';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { createHrNotification } from './hrNotifications.js';
 import { createDraftLetter, listEmploymentLettersByIds } from './hrLetterWorkflowOps.js';
@@ -20,23 +19,7 @@ import {
   DECISION_TYPES,
 } from './hrAccountabilityOps.js';
 import { createRecoverySchedulesFromCase } from './hrIncidentRecoveryOps.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export const DISCIPLINE_CASE_TYPES = [
   'query',
@@ -152,9 +135,9 @@ function mapCaseRow(row, db) {
     closureDateIso: row.closure_date_iso || null,
     openedAtIso: row.opened_at_iso,
     openedByUserId: row.opened_by_user_id,
-    relatedLetterIds: safeJsonParse(row.related_letter_ids_json, []),
-    payrollBlockFlags: safeJsonParse(row.payroll_block_flags_json, {}),
-    meta: safeJsonParse(row.meta_json, {}),
+    relatedLetterIds: parseJsonObject(row.related_letter_ids_json, []),
+    payrollBlockFlags: parseJsonObject(row.payroll_block_flags_json, {}),
+    meta: parseJsonObject(row.meta_json, {}),
     registryId: row.registry_id ?? null,
     assetId: row.asset_id ?? null,
     machineId: row.machine_id ?? null,
@@ -478,7 +461,7 @@ export function patchDisciplineCase(db, actor, caseId, body = {}) {
     updates.payroll_block_flags_json = JSON.stringify(body.payrollBlockFlags);
   }
   if (body.meta != null && typeof body.meta === 'object') {
-    const prev = safeJsonParse(existing.meta_json, {});
+    const prev = parseJsonObject(existing.meta_json, {});
     updates.meta_json = JSON.stringify({ ...prev, ...body.meta });
   }
 
@@ -776,7 +759,7 @@ export function applyDecisionActions(db, actor, caseId, decisionType, extra = {}
         const lr = generateDisciplineCaseLetter(db, actor, c.id, 'suspension', extra);
         if (!lr.ok) throw new Error(lr.error || 'Suspension letter failed.');
         const prof = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(c.userId);
-        const extraProf = safeJsonParse(prof?.profile_extra_json, {});
+        const extraProf = parseJsonObject(prof?.profile_extra_json, {});
         extraProf.employmentMeta = {
           ...(extraProf.employmentMeta || {}),
           salaryStatus: 'suspended',

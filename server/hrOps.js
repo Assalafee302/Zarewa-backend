@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { diffDays, isoDateShift, newId, nowIso, parseJsonObject } from './hrCommon.js';
 import { canUseAllBranchesRollup, createAppUserRecord, resolveStaffRegisterPassword, roleLabel, updateUserProfile, userHasPermission, applyHrStaffAuthUpdates, assertActorMayAssignRoleKey, publicUserFromId } from './auth.js';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import {
@@ -81,6 +82,7 @@ import {
 } from './hrRoleComplianceOps.js';
 import {
   buildStaffCompensationSummary,
+  loadHrSalaryMatrixIndex,
   lookupHrSalaryMatrixRow,
   resolveStaffCompensationForSave,
 } from './hrCompensationOps.js';
@@ -130,6 +132,8 @@ import {
   staffMeetsPensionPolicy,
 } from '../shared/lib/hrStaffCohorts.js';
 
+export { nowIso };
+
 const REQUEST_KINDS = new Set([
   'leave',
   'loan',
@@ -146,9 +150,16 @@ const REQUEST_KINDS = new Set([
   'scholarship_fee_request',
 ]);
 
-export function nowIso() {
-  return new Date().toISOString();
-}
+/** Request queues that still owe somebody an answer, in review order. */
+const HR_PENDING_REQUEST_STATUSES = ['hr_review', 'branch_manager_review', 'gm_hr_review'];
+/** Days a request may sit in a pending queue before it counts as overdue. */
+const HR_REQUEST_SLA_DAYS = 2;
+/** Next step shown to the requester for each pending queue. */
+const HR_REQUEST_NEXT_STEP = {
+  hr_review: 'HR_officer_review',
+  branch_manager_review: 'Branch_manager_endorse',
+  gm_hr_review: 'GM_HR_final',
+};
 
 /** @param {unknown} v */
 function normalizeRollTime(v) {
@@ -161,24 +172,11 @@ function normalizeRollTime(v) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(10).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function readStaffNumberConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
   const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'staff_number_config'`).get();
   if (!row?.value_json) return getDefaultStaffNumberConfig();
-  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
+  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...parseJsonObject(row.value_json, {}) });
 }
 
 function sha256(input) {
@@ -187,13 +185,6 @@ function sha256(input) {
 
 function yyyymmFromIso(iso) {
   return String(iso || '').slice(0, 7).replace('-', '');
-}
-
-function diffDays(fromIso, toIso) {
-  const a = Date.parse(String(fromIso || '').slice(0, 10));
-  const b = Date.parse(String(toIso || '').slice(0, 10));
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
-  return Math.floor((b - a) / (24 * 60 * 60 * 1000));
 }
 
 function normalizeToken(v) {
@@ -226,7 +217,7 @@ function orgNodeFromPayrollGroup(payrollGroup) {
 }
 
 function resolveStaffOrgNode(row) {
-  const extra = safeJsonParse(row.profileExtraJson, {});
+  const extra = parseJsonObject(row.profileExtraJson, {});
   const manual = String(extra.manualOrgNode || '').trim();
   if (manual && (SPECIAL_ORG_NODES.has(manual) || manual === 'branch_ops')) return manual;
   return normalizeOrgNode(row.department) || orgNodeFromPayrollGroup(row.payrollGroup);
@@ -351,7 +342,7 @@ function buildStaffDerived(row, complianceByUserId = new Map()) {
 
 export function appendHrAuditEvent(db, event = {}) {
   if (!hrTablesReady(db)) return;
-  const id = newId('HRAUD');
+  const id = newId('HRAUD', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_audit_events (
@@ -518,12 +509,13 @@ export function listHrStaff(db, scope, opts = {}) {
  * @param {object[]} rows
  */
 export function enrichHrStaffListRows(db, rows, opts = {}) {
+  if (!rows.length) return [];
   const lightweight = Boolean(opts.lightweight);
   const displayNameByUserId = new Map(rows.map((r) => [String(r.userId), r.displayName]));
-  const rowUserIds = rows.map((r) => String(r.userId)).filter(Boolean);
+  const rowUserIds = [...new Set(rows.map((r) => String(r.userId)).filter(Boolean))];
+  const ph = rowUserIds.map(() => '?').join(',');
   const ackByUserId = new Map();
   if (rowUserIds.length) {
-    const ph = rowUserIds.map(() => '?').join(',');
     const ackRows = db
       .prepare(
         `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
@@ -533,32 +525,31 @@ export function enrichHrStaffListRows(db, rows, opts = {}) {
       )
       .all(...rowUserIds);
     for (const r of ackRows) ackByUserId.set(String(r.user_id), String(r.accepted_at_iso || ''));
-  } else if (!lightweight) {
-    const ackRows = db
-      .prepare(
-        `SELECT user_id, MAX(accepted_at_iso) AS accepted_at_iso
-         FROM hr_policy_acknowledgements
-         WHERE policy_key = 'employee_handbook'
-         GROUP BY user_id`
-      )
-      .all();
-    for (const r of ackRows) ackByUserId.set(String(r.user_id), String(r.accepted_at_iso || ''));
   }
-  let overdueByUser = new Set();
-  if (!lightweight) {
-    const overdueRows = listHrRequests(db, { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {}).filter(
-      (r) => r.slaState === 'overdue'
-    );
-    overdueByUser = new Set(overdueRows.map((r) => String(r.userId)));
+  /* Same SLA rule as listHrRequests (>2 days in a pending queue), asked of the
+     rows on screen only — the old full-table request scan built the whole org's
+     request list just to keep the user IDs. */
+  const overdueByUser = new Set();
+  if (!lightweight && rowUserIds.length) {
+    const overdueBeforeIso = isoDateShift(-HR_REQUEST_SLA_DAYS);
+    const overdueRows = db
+      .prepare(
+        `SELECT DISTINCT user_id FROM hr_requests
+         WHERE status IN (${HR_PENDING_REQUEST_STATUSES.map(() => '?').join(',')})
+           AND user_id IN (${ph})
+           AND SUBSTR(COALESCE(NULLIF(submitted_at_iso, ''), created_at_iso), 1, 10) < ?`
+      )
+      .all(...HR_PENDING_REQUEST_STATUSES, ...rowUserIds, overdueBeforeIso);
+    for (const r of overdueRows) overdueByUser.add(String(r.user_id));
   }
   if (lightweight) {
     const managerIds = [
       ...new Set(rows.map((r) => String(r.lineManagerUserId || '').trim()).filter(Boolean)),
     ].filter((id) => !displayNameByUserId.has(id));
     if (managerIds.length) {
-      const ph = managerIds.map(() => '?').join(',');
+      const mgrPh = managerIds.map(() => '?').join(',');
       const mgrRows = db
-        .prepare(`SELECT id, display_name AS displayName FROM app_users WHERE id IN (${ph})`)
+        .prepare(`SELECT id, display_name AS displayName FROM app_users WHERE id IN (${mgrPh})`)
         .all(...managerIds);
       for (const m of mgrRows) displayNameByUserId.set(String(m.id), m.displayName);
     }
@@ -572,6 +563,8 @@ export function enrichHrStaffListRows(db, rows, opts = {}) {
       },
     ])
   );
+  /* One grid read for the whole page instead of a matrix query per staff row. */
+  const matrixIndex = lightweight ? null : loadHrSalaryMatrixIndex(db);
   return rows.map((row) => {
     const base = {
       ...row,
@@ -586,9 +579,9 @@ export function enrichHrStaffListRows(db, rows, opts = {}) {
       profileLocked: Boolean(Number(row.profileLocked)),
       profileSubmittedAtIso: row.profileSubmittedAtIso || null,
       profileVerifiedAtIso: row.profileVerifiedAtIso || null,
-      nextOfKin: safeJsonParse(row.nextOfKinJson, null),
+      nextOfKin: parseJsonObject(row.nextOfKinJson, null),
       nextOfKinJson: undefined,
-      profileExtra: safeJsonParse(row.profileExtraJson, {}),
+      profileExtra: parseJsonObject(row.profileExtraJson, {}),
       profileExtraJson: undefined,
       ...buildStaffDerived(row, complianceByUserId),
     };
@@ -597,7 +590,7 @@ export function enrichHrStaffListRows(db, rows, opts = {}) {
       handbookAcknowledged: compliance.handbookAcknowledged,
     });
     if (!lightweight && base.salaryLevel != null && base.salaryStep != null) {
-      base.compensation = buildStaffCompensationSummary(db, base);
+      base.compensation = buildStaffCompensationSummary(db, base, matrixIndex);
     }
     if (!lightweight) {
       base.mergedOffices = buildStaffMergedOffices(base);
@@ -949,7 +942,7 @@ export function listHrStaffDirectoryViews(db, userId) {
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
-      snapshot: safeJsonParse(r.snapshotJson, {}),
+      snapshot: parseJsonObject(r.snapshotJson, {}),
       createdAtIso: r.createdAtIso,
       updatedAtIso: r.updatedAtIso,
     }));
@@ -964,7 +957,7 @@ export function upsertHrStaffDirectoryView(db, userId, { id, name, snapshot }) {
   if (viewName.length < 2) return { ok: false, error: 'View name must be at least 2 characters.' };
   if (viewName.length > 48) return { ok: false, error: 'View name is too long.' };
   const now = nowIso();
-  const viewId = String(id || '').trim() || newId('HRV');
+  const viewId = String(id || '').trim() || newId('HRV', 10);
   const snapJson = JSON.stringify(snapshot || {});
   try {
     const existing = db.prepare(`SELECT id FROM hr_staff_directory_views WHERE user_id = ? AND name = ?`).get(userId, viewName);
@@ -1015,7 +1008,7 @@ export function updateHrStaffProbation(db, actor, userId, body = {}) {
   }
   const row = db.prepare(`SELECT probation_end_iso, date_joined_iso, profile_extra_json, branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
   if (!row) return { ok: false, error: 'Staff profile not found.' };
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   const today = nowIso().slice(0, 10);
   const patch = { userId: uid, profileExtra: { ...extra } };
   if (action === 'confirm') {
@@ -1171,7 +1164,7 @@ export function applyHrDataCleanupAction(db, actor, body = {}) {
   if (!userId || !action) return { ok: false, error: 'userId and action are required.' };
   const row = db.prepare(`SELECT * FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return { ok: false, error: 'Staff profile not found.' };
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   const now = nowIso();
   if (action === 'map_branch_alias') {
     const target = String(body.targetValue || '').trim();
@@ -1355,14 +1348,14 @@ export function appendHrDisciplinaryEvent(db, userId, body, actorUserId) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return { ok: false, error: 'No HR employee file for this user.' };
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   const events = Array.isArray(extra.disciplinaryEvents) ? extra.disciplinaryEvents : [];
   const kind = String(body?.kind || 'warning').trim();
   const summary = String(body?.summary || '').trim();
   if (summary.length < 3) return { ok: false, error: 'Summary must be at least 3 characters.' };
   const dateIso = String(body?.dateIso || '').trim().slice(0, 10) || nowIso().slice(0, 10);
   events.unshift({
-    id: newId('HRD'),
+    id: newId('HRD', 10),
     kind,
     dateIso,
     summary,
@@ -1574,7 +1567,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     resolvedLeaveBand = leaveBandFromSalaryLevel(resolvedSalaryLevel) || resolvedLeaveBand;
   }
 
-  const prevExtra = safeJsonParse(prevExtraRow?.profile_extra_json, {});
+  const prevExtra = parseJsonObject(prevExtraRow?.profile_extra_json, {});
   const personalPatch = body?.personal && typeof body.personal === 'object' ? body.personal : null;
   const profileExtraMerged = (() => {
     if (body?.profileExtra != null) return body.profileExtra;
@@ -1741,7 +1734,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       body?.secondaryRoles !== undefined
         ? body.secondaryRoles
         : profileExtraMerged?.employmentMeta?.secondaryRoles ??
-          safeJsonParse(prevExtraRow?.profile_extra_json, {})?.employmentMeta?.secondaryRoles,
+          parseJsonObject(prevExtraRow?.profile_extra_json, {})?.employmentMeta?.secondaryRoles,
   });
   if (!orgValidation.ok) {
     return { ok: false, error: orgValidation.errors[0], code: 'org_role_validation', errors: orgValidation.errors };
@@ -1775,7 +1768,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     resolvedSalaryStep,
     normalizedPayrollGroup,
     actorUserId,
-    prevExtra: profileExtraMerged || safeJsonParse(prevExtraRow?.profile_extra_json, {}),
+    prevExtra: profileExtraMerged || parseJsonObject(prevExtraRow?.profile_extra_json, {}),
     allowUndocumentedVariance: body?.allowUndocumentedVariance === true,
     titleById: (() => {
       try {
@@ -1791,7 +1784,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   }
 
   const profileExtraFinal = (() => {
-    const merged = { ...(profileExtraMerged || safeJsonParse(prevExtraRow?.profile_extra_json, {})) };
+    const merged = { ...(profileExtraMerged || parseJsonObject(prevExtraRow?.profile_extra_json, {})) };
     const patch = compensationResolved.profileExtraPatch || {};
     if (patch.employmentMeta) {
       merged.employmentMeta = { ...(merged.employmentMeta || {}), ...patch.employmentMeta };
@@ -1946,7 +1939,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     }
     if (prevBranchId && branchId && prevBranchId !== branchId) {
       try {
-        const hid = newId('HRBH');
+        const hid = newId('HRBH', 10);
         db.prepare(
           `INSERT INTO hr_staff_branch_history (
             id, user_id, from_branch_id, to_branch_id, effective_from_iso, reason, actor_user_id, created_at_iso
@@ -2032,7 +2025,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   if (existing && prevRow) {
     const before = compensationSnapshotFromProfileRow(prevRow);
     const after = compensationSnapshotFromProfileRow(row);
-    const prevExtraSnap = safeJsonParse(prevRow.profile_extra_json, {});
+    const prevExtraSnap = parseJsonObject(prevRow.profile_extra_json, {});
     const prevAddition = Math.round(Number(prevExtraSnap?.compensation?.payAdditionNgn) || 0);
     const newAddition = Math.round(Number(compensationResolved.payAdditionNgn) || 0);
     if (compensationChanged(before, after)) {
@@ -2205,7 +2198,7 @@ function compensationChanged(before, after) {
  */
 export function insertHrSalaryHistoryRow(db, actorUserId, userId, entry) {
   if (!hrTablesReady(db)) return null;
-  const id = newId('HRSH');
+  const id = newId('HRSH', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_salary_history (
@@ -2422,7 +2415,7 @@ export function salaryWelfareSnapshot(db, scope) {
 
   const rows = db.prepare(sql).all(...args);
   const approvedLoans = rows.map((row) => {
-    const payload = safeJsonParse(row.payload_json, {});
+    const payload = parseJsonObject(row.payload_json, {});
     const disbursed = Boolean(payload.loanDisbursedAtIso);
     const monthsTotal = Math.round(Number(payload.repaymentMonths) || 0);
     const monthsDone = Math.round(Number(payload.loanMonthsDeducted) || 0);
@@ -2525,6 +2518,7 @@ export function listHrRequests(db, scope, filter = {}) {
   }
   sql += ` ORDER BY r.created_at_iso DESC`;
   const todayIso = nowIso().slice(0, 10);
+  const daysOpenFor = (row) => diffDays(row.submitted_at_iso || row.created_at_iso, todayIso);
   return db
     .prepare(sql)
     .all(...args)
@@ -2536,7 +2530,7 @@ export function listHrRequests(db, scope, filter = {}) {
       status: row.status,
       title: row.title,
       body: row.body,
-      payload: safeJsonParse(row.payload_json, {}),
+      payload: parseJsonObject(row.payload_json, {}),
       submittedAtIso: row.submitted_at_iso,
       hrReviewerUserId: row.hr_reviewer_user_id,
       hrReviewerNote: row.hr_reviewer_note,
@@ -2550,28 +2544,13 @@ export function listHrRequests(db, scope, filter = {}) {
       createdAtIso: row.created_at_iso,
       staffDisplayName: row.staffDisplayName,
       staffUsername: row.staffUsername,
-      nextStepLabel:
-        row.status === 'hr_review'
-          ? 'HR_officer_review'
-          : row.status === 'branch_manager_review'
-            ? 'Branch_manager_endorse'
-            : row.status === 'gm_hr_review'
-              ? 'GM_HR_final'
-              : null,
-      slaState:
-        row.status === 'hr_review' ||
-        row.status === 'branch_manager_review' ||
-        row.status === 'gm_hr_review'
-          ? diffDays(row.submitted_at_iso || row.created_at_iso, todayIso) > 2
-            ? 'overdue'
-            : 'on_track'
-          : 'n/a',
-      daysOpen:
-        row.status === 'hr_review' ||
-        row.status === 'branch_manager_review' ||
-        row.status === 'gm_hr_review'
-          ? Math.max(0, diffDays(row.submitted_at_iso || row.created_at_iso, todayIso))
-          : 0,
+      nextStepLabel: HR_REQUEST_NEXT_STEP[row.status] || null,
+      slaState: !HR_REQUEST_NEXT_STEP[row.status]
+        ? 'n/a'
+        : daysOpenFor(row) > HR_REQUEST_SLA_DAYS
+          ? 'overdue'
+          : 'on_track',
+      daysOpen: HR_REQUEST_NEXT_STEP[row.status] ? Math.max(0, daysOpenFor(row)) : 0,
     }));
 }
 
@@ -2611,7 +2590,7 @@ export function createHrRequest(db, userId, body, actor = null) {
     }
   }
   const branchId = resolveStaffCashierBranchId(prof, DEFAULT_BRANCH_ID);
-  const id = newId('HRR');
+  const id = newId('HRR', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_requests (
@@ -2741,7 +2720,7 @@ export function submitHrRequest(db, requestId, actorOrUserId) {
 }
 
 export function applyApprovedProfileChange(db, requestRow, actor) {
-  const payload = safeJsonParse(requestRow.payload_json, {});
+  const payload = parseJsonObject(requestRow.payload_json, {});
   const field = String(payload.field || '').trim();
   const userId = String(requestRow.user_id || '').trim();
   if (!userId || !field) return { ok: false, error: 'Invalid profile change payload.' };
@@ -2823,12 +2802,12 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
 }
 
 function applyApprovedScholarshipProfileUpdate(db, requestRow, actor) {
-  const payload = safeJsonParse(requestRow.payload_json, {});
+  const payload = parseJsonObject(requestRow.payload_json, {});
   const userId = String(requestRow.user_id || '').trim();
   if (!userId) return { ok: false, error: 'Invalid scholarship profile update.' };
   const row = db.prepare(`SELECT profile_extra_json, job_title, department FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return { ok: false, error: 'Staff profile not found.' };
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   const schoolPatch = {};
   for (const key of [
     'classLevel',
@@ -2857,7 +2836,7 @@ function applyApprovedScholarshipProfileUpdate(db, requestRow, actor) {
 }
 
 function applyApprovedScholarshipFeeRequest(db, requestRow, actor) {
-  const payload = safeJsonParse(requestRow.payload_json, {});
+  const payload = parseJsonObject(requestRow.payload_json, {});
   const userId = String(requestRow.user_id || '').trim();
   if (!userId) return { ok: false, error: 'Invalid scholarship fee request.' };
   if (!hrTableExists(db, 'hr_chairman_school_fees')) {
@@ -2867,7 +2846,7 @@ function applyApprovedScholarshipFeeRequest(db, requestRow, actor) {
   const prof = db
     .prepare(`SELECT profile_extra_json, department, job_title FROM hr_staff_profiles WHERE user_id = ?`)
     .get(userId);
-  const extra = safeJsonParse(prof?.profile_extra_json, {});
+  const extra = parseJsonObject(prof?.profile_extra_json, {});
   const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
   const displayName = String(u?.display_name || '').trim();
   const term = String(payload.term || '').trim();
@@ -2889,7 +2868,7 @@ function applyApprovedScholarshipFeeRequest(db, requestRow, actor) {
   const amount = Math.round(
     Number(payload.amountRequestedNgn ?? school.schoolFeesNgn ?? 0) || 0
   );
-  const id = newId('EXSCH');
+  const id = newId('EXSCH', 10);
   const now = nowIso();
   const schoolName = String(school.schoolName || prof?.department || '').trim() || null;
   const classLevel = String(school.classLevel || prof?.job_title || '').trim() || null;
@@ -3182,7 +3161,7 @@ export function gmHrReviewRequest(db, requestId, actor, approve, note, reasonCod
   }
   const isLoan = String(row.kind) === 'loan';
   if (isLoan && approve) {
-    const p = safeJsonParse(row.payload_json, {});
+    const p = parseJsonObject(row.payload_json, {});
     if (Boolean(p.needsChairmanWaiver) && !actorMayChairmanWaiveObligation(actor)) {
       return {
         ok: false,
@@ -3281,7 +3260,7 @@ export function uploadHrAttendance(db, actor, body) {
   if (invalidUserRows.length) {
     return { ok: false, error: `Attendance rows contain user(s) outside branch ${branchId}.` };
   }
-  const id = newId('HRA');
+  const id = newId('HRA', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_attendance_uploads (id, branch_id, period_yyyymm, uploaded_by_user_id, notes, rows_json, created_at_iso)
@@ -3303,7 +3282,7 @@ export function uploadHrAttendance(db, actor, body) {
   const monthDate = `${periodYyyymm.slice(0, 4)}-${periodYyyymm.slice(4)}-01`;
   for (const row of rows) {
     eventIns.run(
-      newId('HRAE'),
+      newId('HRAE', 10),
       String(row.userId),
       branchId,
       monthDate,
@@ -3342,7 +3321,7 @@ export function listHrAttendance(db, scope) {
     periodYyyymm: row.period_yyyymm,
     uploadedByUserId: row.uploaded_by_user_id,
     notes: row.notes,
-    rows: safeJsonParse(row.rows_json, []),
+    rows: parseJsonObject(row.rows_json, []),
     createdAtIso: row.created_at_iso,
   }));
 }
@@ -3369,7 +3348,7 @@ export function getHrDailyRollCall(db, scope, branchId, dayIso) {
       id: row.id,
       branchId: row.branch_id,
       dayIso: row.day_iso,
-      rows: safeJsonParse(row.rows_json, []),
+      rows: parseJsonObject(row.rows_json, []),
       notes: row.notes,
       createdAtIso: row.created_at_iso,
       updatedAtIso: row.updated_at_iso,
@@ -3457,7 +3436,7 @@ export function upsertHrDailyRollCall(db, actor, scope, body) {
     .prepare(`SELECT id, created_at_iso FROM hr_daily_roll_calls WHERE branch_id = ? AND day_iso = ?`)
     .get(branchId, dayIso);
   const now = nowIso();
-  const id = existing?.id || newId('HRROLL');
+  const id = existing?.id || newId('HRROLL', 10);
   const createdAt = existing?.created_at_iso || now;
   const notes = String(body?.notes ?? '').trim() || null;
   if (existing) {
@@ -3600,7 +3579,7 @@ export function recomputeHrLeaveBalances(db, actor, body = {}) {
       const closing = Math.max(0, rawClosing);
       upsert.run(user.user_id, leaveType, periodYyyymm, 0, entitlement, used, adjusted, closing, now);
       ledgerIns.run(
-        newId('HRLVL'),
+        newId('HRLVL', 10),
         user.user_id,
         leaveType,
         periodYyyymm,
@@ -3641,7 +3620,7 @@ export function recomputeHrLeaveBalances(db, actor, body = {}) {
     const closing = Math.max(0, rawClosing);
     upsert.run(user.user_id, leaveType, periodYyyymm, opening, accrualPerMonth, used, adjusted, closing, now);
     ledgerIns.run(
-      newId('HRLVL'),
+      newId('HRLVL', 10),
       user.user_id,
       leaveType,
       periodYyyymm,
@@ -3724,7 +3703,7 @@ export function adjustHrLeaveBalance(db, actor, body = {}) {
       `INSERT INTO hr_leave_accrual_ledger (
         id, user_id, leave_type, period_yyyymm, movement_kind, days, reference_id, note, created_at_iso, created_by_user_id
       ) VALUES (?,?,?,?,?,?,?,?,?,?)`
-    ).run(newId('HRLVL'), userId, leaveType, periodYyyymm, 'manual_adjustment', days, null, note, now, actor?.id || null);
+    ).run(newId('HRLVL', 10), userId, leaveType, periodYyyymm, 'manual_adjustment', days, null, note, now, actor?.id || null);
   })();
   appendHrAuditEvent(db, {
     actorUserId: actor?.id || null,
@@ -3754,7 +3733,7 @@ function activeStaffLoanBreakdown(db, userId) {
     .all(userId);
   const loans = [];
   for (const r of rows) {
-    const p = safeJsonParse(r.payload_json, {});
+    const p = parseJsonObject(r.payload_json, {});
     if (!p.deductionsActive || !p.loanDisbursedAtIso) continue;
     const monthsTotal = Math.round(Number(p.repaymentMonths) || 0);
     const cur = Math.round(Number(p.loanMonthsDeducted) || 0);
@@ -3783,7 +3762,7 @@ function settleLoanAfterPayrollDeduction(db, loanId, userId, deductedNgn) {
     .prepare(`SELECT id, payload_json FROM hr_requests WHERE id = ? AND user_id = ? AND kind = 'loan' AND status = 'approved'`)
     .get(loanId, userId);
   if (!loan) return;
-  const p = safeJsonParse(loan.payload_json, {});
+  const p = parseJsonObject(loan.payload_json, {});
   if (!p.deductionsActive || !p.loanDisbursedAtIso) return;
   const ded = Math.max(0, Math.round(Number(deductedNgn) || 0));
   const merged = { ...p };
@@ -3873,7 +3852,7 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
     )
     .get(branchId, periodYyyymm);
   if (upload) {
-    const rows = safeJsonParse(upload.rows_json, []);
+    const rows = parseJsonObject(upload.rows_json, []);
     const hit = rows.find((r) => String(r?.userId || '').trim() === userId);
     if (hit) absentDays = Math.max(0, Math.round(Number(hit.absentDays) || 0));
   }
@@ -3887,7 +3866,7 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
       .prepare(`SELECT rows_json FROM hr_daily_roll_calls WHERE branch_id = ? AND substr(day_iso, 1, 7) = ?`)
       .all(branchId, ym);
     for (const dr of dayRows) {
-      const list = safeJsonParse(dr.rows_json, []);
+      const list = parseJsonObject(dr.rows_json, []);
       const hit = list.find((x) => String(x?.userId || '').trim() === userId);
       if (hit && String(hit.status || '').toLowerCase() === 'late') lateDays += 1;
     }
@@ -3905,7 +3884,7 @@ function attendanceDeductionForUser(db, userId, branchId, periodYyyymm) {
       )
       .all(userId);
     for (const r of excRows) {
-      const p = safeJsonParse(r.payload_json, {});
+      const p = parseJsonObject(r.payload_json, {});
       const dayIso = String(p.dayIso || p.dateIso || '').trim().slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dayIso)) continue;
       const excPeriod = dayIso.slice(0, 7).replace('-', '');
@@ -3963,7 +3942,7 @@ export function getHrAttendanceSummaryForUser(db, userId, periodYyyymm) {
     .all(branchId, ym);
   const days = [];
   for (const dr of dayRows) {
-    const list = safeJsonParse(dr.rows_json, []);
+    const list = parseJsonObject(dr.rows_json, []);
     const hit = list.find((x) => String(x?.userId || '').trim() === uid);
     if (hit) {
       days.push({
@@ -3985,7 +3964,7 @@ export function getHrAttendanceSummaryForUser(db, userId, periodYyyymm) {
     .get(branchId, period);
   let monthlyAbsentDays = null;
   if (upload) {
-    const rows = safeJsonParse(upload.rows_json, []);
+    const rows = parseJsonObject(upload.rows_json, []);
     const hit = rows.find((r) => String(r?.userId || '').trim() === uid);
     if (hit) monthlyAbsentDays = Math.max(0, Math.round(Number(hit.absentDays) || 0));
   }
@@ -3999,7 +3978,7 @@ export function getHrAttendanceSummaryForUser(db, userId, periodYyyymm) {
     )
     .all(uid);
   const exceptions = exceptionRows.map((row) => {
-    const payload = safeJsonParse(row.payload_json, {});
+    const payload = parseJsonObject(row.payload_json, {});
     return {
       id: row.id,
       status: row.status,
@@ -4023,10 +4002,7 @@ export function getHrAttendanceSummaryForUser(db, userId, periodYyyymm) {
 }
 
 function salaryMatrixReady(db) {
-  return Boolean(
-    hrTablesReady(db) &&
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_salary_matrix'`).get()
-  );
+  return hrTablesReady(db) && hrTableExists(db, 'hr_salary_matrix');
 }
 
 export function listHrSalaryMatrix(db) {
@@ -4116,7 +4092,7 @@ export function upsertHrBranchPayrollContribution(db, actor, body = {}) {
   const existing = db
     .prepare(`SELECT id FROM hr_branch_payroll_contributions WHERE branch_id = ? AND period_yyyymm = ?`)
     .get(branchId, periodYyyymm);
-  const id = existing?.id || newId('HRBC');
+  const id = existing?.id || newId('HRBC', 10);
   const list = listHrBranchPayrollContributions(db, periodYyyymm);
   const row = list.find((r) => r.branchId === branchId);
   const expectedNgn = row?.expectedNgn ?? Math.round(Number(body.expectedNgn) || 0);
@@ -4356,7 +4332,7 @@ export function createPayrollRun(db, actor, body) {
   const policy = getHrPolicyPayload(db);
   const penEmp = Number(policy.pensionEmployeePercent) || 8;
   const penEr = Number(policy.pensionEmployerPercent) || 10;
-  const id = newId('HRP');
+  const id = newId('HRP', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_payroll_runs (id, period_yyyymm, status, tax_percent, pension_percent, notes, created_at_iso, created_by_user_id)
@@ -4478,7 +4454,7 @@ export function computePayrollRun(db, runId) {
     });
     const pension = meetsPension ? Math.round((gross * penEmpP) / 100) : 0;
     const pensionEmployer = meetsPension ? Math.round((gross * penErP) / 100) : 0;
-    const extra = safeJsonParse(s.profile_extra_json, {});
+    const extra = parseJsonObject(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
     const useLegacyDisc = process.env.HR_LEGACY_DISC_DEDUCTION === '1';
     const discFix =
@@ -4507,7 +4483,7 @@ export function computePayrollRun(db, runId) {
     } catch {
       /* pension_employer_ngn optional until migrate */
     }
-    const extraHold = safeJsonParse(s.profile_extra_json, {});
+    const extraHold = parseJsonObject(s.profile_extra_json, {});
     const salaryHeld = ['held', 'suspended'].includes(
       String(extraHold?.employmentMeta?.salaryStatus || '').toLowerCase()
     );
@@ -5069,7 +5045,7 @@ export function listPayrollLines(db, runId) {
       );
       const otherDed = Math.round(Number(row.other_deduction_ngn) || 0);
       const discOther = Math.max(0, otherDed - loanTotal - recoveryTotal);
-      const profileExtra = safeJsonParse(row.profileExtraJson, {});
+      const profileExtra = parseJsonObject(row.profileExtraJson, {});
       const pensionAdministrator = profileExtra?.statutory?.pensionAdministrator || null;
       const earnings = buildPayslipEarningsBreakdown(db, {
         payrollGroup: row.payrollGroup,
@@ -5962,7 +5938,7 @@ export function patchHrLoanMaintenance(db, requestId, actorUserId, body) {
   if (String(row.kind) !== 'loan' || row.status !== 'approved') {
     return { ok: false, error: 'Only approved loan requests can be maintained.' };
   }
-  const p = safeJsonParse(row.payload_json, {});
+  const p = parseJsonObject(row.payload_json, {});
   if (!p.loanDisbursedAtIso) return { ok: false, error: 'Loan is not disbursed yet.' };
   const merged = { ...p };
   const nowDay = nowIso().slice(0, 10);
@@ -6074,7 +6050,7 @@ export function generateEmploymentLetter(db, actor, body) {
     `Human Resources (HQ)`,
   ].join('\n');
 
-  const id = newId('HRL');
+  const id = newId('HRL', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
@@ -6144,7 +6120,7 @@ export function generateStaffLoanAgreementLetter(db, actor, body) {
     'Signature: _________________________   Date: _________________',
   ].join('\n');
 
-  const id = newId('HRL');
+  const id = newId('HRL', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_employment_letters (id, user_id, letter_kind, content_text, issued_at_iso, issued_by_user_id)
@@ -6195,7 +6171,7 @@ export function acceptHrPolicy(db, actor, body) {
   const signatureName = String(body?.signatureName || actor?.displayName || '').trim() || null;
   const context = body?.context != null ? body.context : {};
   const recordHash = sha256(`${userId}|${policyKey}|${policyVersion}|${acceptedAtIso}|${JSON.stringify(context)}`);
-  const id = newId('HRACK');
+  const id = newId('HRACK', 10);
   db.prepare(
     `INSERT INTO hr_policy_acknowledgements (
       id, user_id, policy_key, policy_version, accepted_at_iso, signature_name, accepted_by_user_id, context_json, record_hash
@@ -6290,7 +6266,7 @@ export function listHrPolicyAcknowledgements(db, filter = {}) {
     acceptedAtIso: row.accepted_at_iso,
     signatureName: row.signature_name,
     acceptedByUserId: row.accepted_by_user_id,
-    context: safeJsonParse(row.context_json, {}),
+    context: parseJsonObject(row.context_json, {}),
     recordHash: row.record_hash,
   }));
 }
@@ -6344,7 +6320,7 @@ export function listHrObservability(db, scope) {
     entityId: row.entity_id,
     branchId: row.branch_id,
     reason: row.reason,
-    details: safeJsonParse(row.details_json, {}),
+    details: parseJsonObject(row.details_json, {}),
     correlationId: row.correlation_id,
   }));
   const summary = {
@@ -6403,7 +6379,7 @@ function eeoDecisionSummary(db, scope, opts = {}) {
   const byDept = {};
   let missingReasonCode = 0;
   for (const row of rows) {
-    const details = safeJsonParse(row.details_json, {});
+    const details = parseJsonObject(row.details_json, {});
     const rc = String(details.reasonCode || '').trim();
     if (!rc) missingReasonCode += 1;
     const kind = String(row.kind || details.kind || 'unknown');
@@ -6537,7 +6513,7 @@ export function getHrMeSchoolProfile(db, userId) {
   if (!p || !isScholarshipBeneficiary(p.payroll_group)) {
     return { ok: false, error: 'This profile is only for executive family beneficiaries.' };
   }
-  const extra = safeJsonParse(p.profile_extra_json, {});
+  const extra = parseJsonObject(p.profile_extra_json, {});
   const school = extra.schoolProfile && typeof extra.schoolProfile === 'object' ? extra.schoolProfile : {};
   const displayName = String(u.display_name || '').trim();
   const familyLink = resolveExecutiveFamilyBeneficiaryLink(db, displayName, school);
@@ -6713,7 +6689,7 @@ export function getHrMeScholarshipSummary(db, userId, opts = {}) {
 
   const uid = String(userId || '').trim();
   const p = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
-  const extra = safeJsonParse(p?.profile_extra_json, {});
+  const extra = parseJsonObject(p?.profile_extra_json, {});
   const beneficiaryId = String(extra?.schoolProfile?.beneficiaryId || '').trim();
   const displayName = String(base.profile?.displayName || '').trim();
   const docSummary = opts.documentSummary || {};
@@ -7470,18 +7446,18 @@ export function getHrMeProfile(db, userId) {
     payeTaxPercent: p.paye_tax_percent != null ? Number(p.paye_tax_percent) : null,
     payeTaxNgn: p.paye_tax_ngn != null ? Math.round(Number(p.paye_tax_ngn) || 0) : null,
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
-    nextOfKin: safeJsonParse(p.next_of_kin_json, null),
+    nextOfKin: parseJsonObject(p.next_of_kin_json, null),
     ninNumber: p.nin_number ?? null,
     gender: p.gender ?? null,
     dateOfBirthIso: p.date_of_birth ?? null,
-    profileExtra: safeJsonParse(p.profile_extra_json, {}),
+    profileExtra: parseJsonObject(p.profile_extra_json, {}),
     selfServiceEligible: Number(p.self_service_eligible) === 1,
     isProductionStaff:
       hasColumn(db, 'hr_staff_profiles', 'is_production_staff') && Number(p.is_production_staff) === 1,
     profileLocked: Number(p.profile_locked) === 1,
     profileSubmittedAtIso: p.profile_submitted_at_iso ?? null,
     profileVerifiedAtIso: p.profile_verified_at_iso ?? null,
-    legalDisplayName: composeLegalDisplayName(safeJsonParse(p.profile_extra_json, {}).personal || {}),
+    legalDisplayName: composeLegalDisplayName(parseJsonObject(p.profile_extra_json, {}).personal || {}),
     lineManagerUserId: p.line_manager_user_id ?? null,
     leaveEntitlementBand: p.leave_entitlement_band ?? null,
     qualificationRank: p.qualification_rank != null ? Number(p.qualification_rank) : null,
@@ -7549,7 +7525,7 @@ export function syncLegalDisplayNameFromProfile(db, userId) {
   if (!uid || !hrTablesReady(db)) return { ok: false };
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
   if (!row) return { ok: false };
-  const personal = safeJsonParse(row.profile_extra_json, {}).personal || {};
+  const personal = parseJsonObject(row.profile_extra_json, {}).personal || {};
   const legal = composeLegalDisplayName(personal);
   if (!legal) return { ok: false, error: 'Legal name is incomplete.' };
   db.prepare(`UPDATE app_users SET display_name = ? WHERE id = ?`).run(legal, uid);
@@ -7742,7 +7718,7 @@ export function listHrAuditEventsForStaff(db, userId, limit = 50) {
       .all(uid, uid, uid, cap);
     return rows.map((row) => ({
       ...row,
-      details: safeJsonParse(row.detailsJson, {}),
+      details: parseJsonObject(row.detailsJson, {}),
       detailsJson: undefined,
     }));
   } catch {
@@ -7784,7 +7760,7 @@ export function listHrAuditEventsGlobal(db, scope, opts = {}) {
   try {
     return db.prepare(sql).all(...args).map((row) => ({
       ...row,
-      details: safeJsonParse(row.detailsJson, {}),
+      details: parseJsonObject(row.detailsJson, {}),
       detailsJson: undefined,
     }));
   } catch {
@@ -7940,7 +7916,7 @@ export function listHrProfileWorkQueue(db, scope) {
   reqSql += ` ORDER BY r.created_at_iso DESC LIMIT 30`;
   const profileChangeRequests = db.prepare(reqSql).all(...reqArgs).map((row) => ({
     ...row,
-    payload: safeJsonParse(row.payloadJson, {}),
+    payload: parseJsonObject(row.payloadJson, {}),
     payloadJson: undefined,
   }));
 
@@ -8060,7 +8036,7 @@ export function createHrDisciplineCase(db, actor, body = {}) {
   if (!userId || summary.length < 3) return { ok: false, error: 'userId and summary are required.' };
   const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   const branchId = String(body.branchId || prof?.branch_id || DEFAULT_BRANCH_ID).trim();
-  const id = newId('HRDIS');
+  const id = newId('HRDIS', 10);
   const now = nowIso();
   try {
     db.prepare(
@@ -8096,7 +8072,7 @@ export function appendHrDisciplineEvent(db, actor, caseId, body = {}) {
   const eventKind = String(body.eventKind || 'note').trim();
   const note = String(body.note || '').trim();
   if (!cid || note.length < 2) return { ok: false, error: 'caseId and note are required.' };
-  const id = newId('HRDISev');
+  const id = newId('HRDISev', 10);
   const now = nowIso();
   try {
     db.prepare(
@@ -8140,7 +8116,7 @@ export function listHrAppraisalCycles(db) {
 }
 
 export function createHrAppraisalCycle(db, actor, body = {}) {
-  const id = newId('HRAPC');
+  const id = newId('HRAPC', 10);
   const now = nowIso();
   const year = Math.round(Number(body.year) || new Date().getFullYear());
   const label = String(body.label || `Appraisal ${year}`).trim();
@@ -8201,7 +8177,7 @@ export function upsertHrAppraisalForm(db, actor, body = {}) {
       );
       return { ok: true, id: existing.id };
     }
-    const id = newId('HRAPF');
+    const id = newId('HRAPF', 10);
     db.prepare(
       `INSERT INTO hr_appraisal_forms (id, cycle_id, subject_user_id, reviewer_user_id, scores_json, md_confirmed, status, created_at_iso, updated_at_iso)
        VALUES (?,?,?,?,?,?,?,?,?)`
@@ -8250,7 +8226,7 @@ export function createHrFeedbackNote(db, actor, body = {}, scope = null) {
     const gate = assertStaffUserIdInHrScope(db, scope, subjectUserId);
     if (!gate.ok) return gate;
   }
-  const id = newId('HRFB');
+  const id = newId('HRFB', 10);
   const now = nowIso();
   try {
     db.prepare(
@@ -8289,7 +8265,7 @@ export function getHrStaffAppraisalSummary(db, userId) {
     const history = rows.map((r) => ({
       ...r,
       mdConfirmed: Boolean(Number(r.mdConfirmed)),
-      scores: safeJsonParse(r.scoresJson, null),
+      scores: parseJsonObject(r.scoresJson, null),
       scoresJson: undefined,
     }));
     return { latest: history[0] || null, history };
@@ -8398,7 +8374,7 @@ export function bulkUpdateHrStaff(db, actor, body = {}) {
     if (ok && hasReviewFlag) {
       const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
       if (row) {
-        const extra = safeJsonParse(row.profile_extra_json, {});
+        const extra = parseJsonObject(row.profile_extra_json, {});
         extra.flaggedForReview = true;
         extra.flaggedForReviewAtIso = nowIso();
         extra.flaggedForReviewByUserId = actor?.id || null;
@@ -8596,7 +8572,7 @@ export function runHrScheduledJobs(db) {
     if (last && Date.now() - last < 60 * 60 * 1000) {
       return { ok: true, skipped: true, roleCompliance };
     }
-    const id = newId('HRJOB');
+    const id = newId('HRJOB', 10);
     const now = nowIso();
     db.prepare(
       `INSERT INTO hr_job_runs (id, job_key, started_at_iso, finished_at_iso, status, detail_json) VALUES (?,?,?,?,?,?)`
@@ -9023,7 +8999,7 @@ export function upsertHrBeneficiary(db, actorUserId, body) {
   const displayName = String(body?.displayName || '').trim();
   if (displayName.length < 2) return { ok: false, error: 'Display name is required.' };
   const now = nowIso();
-  const id = String(body?.id || '').trim() || newId('HRBEN');
+  const id = String(body?.id || '').trim() || newId('HRBEN', 10);
   const existing = db.prepare(`SELECT id FROM hr_beneficiaries WHERE id = ?`).get(id);
   const branchId = String(body?.branchId || '').trim() || null;
   const row = {
@@ -9101,7 +9077,7 @@ export function recordHrBenefitPayment(db, actorUserId, body) {
   if (!ben) return { ok: false, error: 'Beneficiary not found.' };
   const amountNgn = Math.max(0, Math.round(Number(body?.amountNgn ?? ben.monthly_amount_ngn) || 0));
   const now = nowIso();
-  const id = newId('HRBPAY');
+  const id = newId('HRBPAY', 10);
   db.prepare(
     `INSERT INTO hr_benefit_payments (id, beneficiary_id, period_yyyymm, amount_ngn, status, paid_at_iso, notes, created_at_iso, created_by_user_id)
      VALUES (?,?,?,?,?,?,?,?,?)
@@ -9155,7 +9131,7 @@ export function createHrIncidentMemo(db, actorUserId, body) {
   const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   const branchId = String(body?.branchId || prof?.branch_id || DEFAULT_BRANCH_ID).trim();
   const now = nowIso();
-  const id = newId('HRINC');
+  const id = newId('HRINC', 10);
   const dateIso = String(body?.incidentDateIso || '').slice(0, 10) || now.slice(0, 10);
   db.prepare(
     `INSERT INTO hr_incident_memos (id, branch_id, user_id, reported_by_user_id, incident_date_iso, summary, status, created_at_iso, updated_at_iso)
@@ -9202,7 +9178,7 @@ export function createHrTransferRecommendation(db, actorUserId, body) {
   const prof = db.prepare(`SELECT branch_id FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   const fromBranchId = String(prof?.branch_id || DEFAULT_BRANCH_ID).trim();
   const now = nowIso();
-  const id = newId('HRTR');
+  const id = newId('HRTR', 10);
   db.prepare(
     `INSERT INTO hr_transfer_recommendations (id, user_id, from_branch_id, to_branch_id, reason, status, recommended_by_user_id, created_at_iso)
      VALUES (?,?,?,?,?,?,?,?)`
@@ -9419,7 +9395,7 @@ export function seedHrIfEmpty(db) {
       ];
       const ins = db.prepare(`INSERT OR IGNORE INTO hr_salary_matrix (id, payroll_group, salary_level, salary_step, base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, notes, updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?)`);
       for (const r of defaultMatrix) {
-        ins.run(newId('HRMXSEED'), 'branch_ops', r.level, 1, r.min_ngn, 0, 0, r.label, now);
+        ins.run(newId('HRMXSEED', 10), 'branch_ops', r.level, 1, r.min_ngn, 0, 0, r.label, now);
       }
     }
   }
@@ -9438,7 +9414,7 @@ export function upsertChairmanSchoolFee(db, actorUser, data) {
       .run(data.childName,data.schoolName,data.term,data.academicYear,feeAmountNgn,data.feeType||'tuition',data.paymentStatus||'pending',amountPaidNgn,data.paymentDateIso||null,data.notes||null,now,data.id);
     return { ok:true, id:data.id };
   }
-  const id = newId('CHSF');
+  const id = newId('CHSF', 10);
   db.prepare(`INSERT INTO hr_chairman_school_fees (id,child_name,school_name,term,academic_year,fee_amount_ngn,fee_type,payment_status,amount_paid_ngn,payment_date_iso,notes,created_at_iso,created_by_user_id,updated_at_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id,data.childName,data.schoolName,data.term,data.academicYear,feeAmountNgn,data.feeType||'tuition',data.paymentStatus||'pending',amountPaidNgn,data.paymentDateIso||null,data.notes||null,now,actorUser.id,now);
   return { ok:true, id };
@@ -9461,7 +9437,7 @@ export function upsertChairmanExpense(db, actorUser, data) {
       .run(data.expenseType,data.description,amountNgn,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,data.id);
     return { ok:true, id:data.id };
   }
-  const id = newId('CHEX');
+  const id = newId('CHEX', 10);
   db.prepare(`INSERT INTO hr_chairman_expenses (id,expense_type,description,amount_ngn,quantity,unit,period_yyyymm,payment_status,payment_date_iso,vendor_name,notes,created_at_iso,created_by_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id,data.expenseType,data.description,amountNgn,data.quantity||1,data.unit||null,data.periodYyyymm,data.paymentStatus||'pending',data.paymentDateIso||null,data.vendorName||null,data.notes||null,now,actorUser.id);
   return { ok:true, id };
@@ -9485,7 +9461,7 @@ export function listHrIdCardRequests(db, userId) {
   return db.prepare(`${sql} ORDER BY r.requested_at_iso DESC`).all();
 }
 export function createHrIdCardRequest(db, actorUser, data) {
-  const id = newId('IDC');
+  const id = newId('IDC', 10);
   const now = nowIso();
   const uid = String(data?.userId || actorUser?.id || '').trim();
   if (!uid) return { ok: false, error: 'Employee is required.' };

@@ -3,9 +3,9 @@
  * @module server/hrIncidentRecoveryOps
  */
 
-import crypto from 'node:crypto';
 import { hrTableExists } from './hrTableChecks.js';
 import { appendHrAuditEvent } from './hrOps.js';
+import { newId, nowIso } from './hrCommon.js';
 import {
   activeRecoveryObligationBreakdownForPayroll,
   cancelRecoveryObligationAccount,
@@ -13,14 +13,6 @@ import {
   openRecoveryObligationFromSchedule,
   settleRecoveryObligationAfterPayroll,
 } from './staffRecoveryObligationOps.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
 
 function appendDisciplineCaseEventInline(db, actor, caseId, body = {}) {
   if (!hrTableExists(db, 'hr_discipline_events')) return;

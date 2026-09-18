@@ -17,15 +17,11 @@ import {
   settleObligationAfterPayrollDeduction,
   staffObligationTablesReady,
 } from './staffObligationOps.js';
+import { tableHasColumn } from './schemaCache.js';
 
 export function recoveryScheduleIdColumnReady(db) {
   if (!staffObligationTablesReady(db)) return false;
-  try {
-    const cols = new Set(db.prepare(`PRAGMA table_info(hr_staff_obligation_accounts)`).all().map((c) => c.name));
-    return cols.has('recovery_schedule_id');
-  } catch {
-    return false;
-  }
+  return tableHasColumn(db, 'hr_staff_obligation_accounts', 'recovery_schedule_id');
 }
 
 export function resolveObligationAccountIdForRecoverySchedule(db, scheduleId) {

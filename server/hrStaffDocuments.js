@@ -2,30 +2,14 @@
  * Staff onboarding documents (file store) and checklist helpers.
  * @module server/hrStaffDocuments
  */
-import crypto from 'node:crypto';
 import {
   HR_REQUIRED_DOC_KINDS,
   buildHrStaffOnboardingChecklist,
   hrStaffDocKindLabel,
 } from '../shared/lib/hrStaffDocuments.js';
 import { updateUserProfile } from './auth.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(10).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { hrTableExists } from './hrTableChecks.js';
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 const DOC_CATEGORY_BY_KIND = {
   nin_slip: 'identity',
@@ -48,13 +32,7 @@ const ALLOWED_MIME = new Set([
 ]);
 
 export function hrStaffDocumentsTableReady(db) {
-  try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_staff_documents'`).get()
-    );
-  } catch {
-    return false;
-  }
+  return hrTableExists(db, 'hr_staff_documents');
 }
 
 function mapDocRow(r) {
@@ -151,7 +129,7 @@ export function uploadHrStaffDocument(db, actorUserId, userId, body) {
   db.prepare(`DELETE FROM hr_staff_documents WHERE user_id = ? AND doc_kind = ?`).run(uid, norm.docKind);
 
   const now = nowIso();
-  const id = newId('HRDOC');
+  const id = newId('HRDOC', 10);
   try {
     db.prepare(
       `INSERT INTO hr_staff_documents (
@@ -231,7 +209,7 @@ function syncProfileDocumentsIndex(db, userId) {
   }));
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return;
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   extra.documents = documents;
   db.prepare(`UPDATE hr_staff_profiles SET profile_extra_json = ? WHERE user_id = ?`).run(
     JSON.stringify(extra),

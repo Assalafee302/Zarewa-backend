@@ -6,10 +6,7 @@
 import { HR_FUNCTIONAL_OFFICES, DESIGNATION_OFFICE_KEYS, DIRECTOR_CORPORATE_DESIGNATION_IDS } from './hrOrgConstants.js';
 import { hrMasterDataTablesReady } from './hrMasterData.js';
 import { salaryMatrixReady } from './hrCompensationOps.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
+import { nowIso } from './hrCommon.js';
 
 /**
  * @param {object} p

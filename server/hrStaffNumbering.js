@@ -3,7 +3,6 @@
  * @module server/hrStaffNumbering
  */
 
-import crypto from 'node:crypto';
 import {
   createEmployeeNumberAllocator,
   expandReservedEmployeeNumbers,
@@ -15,23 +14,7 @@ import {
 } from '../shared/lib/hrEmployeeNumber.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export { getDefaultStaffNumberConfig } from '../shared/lib/hrEmployeeNumber.js';
 
@@ -39,7 +22,7 @@ export function getStaffNumberConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultStaffNumberConfig();
   const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'staff_number_config'`).get();
   if (!row?.value_json) return getDefaultStaffNumberConfig();
-  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...safeJsonParse(row.value_json, {}) });
+  return normalizeStaffNumberConfig({ ...getDefaultStaffNumberConfig(), ...parseJsonObject(row.value_json, {}) });
 }
 
 export function saveStaffNumberConfig(db, config, actor) {

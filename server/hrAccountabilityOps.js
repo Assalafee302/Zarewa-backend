@@ -3,10 +3,10 @@
  * @module server/hrAccountabilityOps
  */
 
-import crypto from 'node:crypto';
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { nextIncidentRegistryHumanId } from './humanId.js';
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export const INCIDENT_KINDS = new Set(['hr_discipline', 'material', 'operational', 'performance']);
 export const RESPONSIBILITY_ROLES = new Set([
@@ -48,23 +48,6 @@ export function validateHighRiskDisciplinePayload(body = {}) {
 
 const TERMINAL_REGISTRY_STATUSES = new Set(['closed', 'cancelled', 'posted', 'voided', 'rejected']);
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function incidentRegistryTableReady(db) {
   return hrTableExists(db, 'incident_registry');
 }
@@ -85,7 +68,7 @@ export function mapRegistryRow(row) {
     branchId: row.branch_id,
     reporterUserId: row.reporter_user_id || null,
     subjectUserId: row.subject_user_id || null,
-    linkedEntities: safeJsonParse(row.linked_entities_json, []),
+    linkedEntities: parseJsonObject(row.linked_entities_json, []),
     summary: row.summary || '',
     createdAtIso: row.created_at_iso,
     updatedAtIso: row.updated_at_iso,
@@ -227,7 +210,7 @@ export function syncRegistryFromOperationalIncident(db, incidentId) {
 export function finalizeLinkedIncidentsOnCaseClose(db, caseId, caseStatus = 'closed') {
   const row = db.prepare(`SELECT * FROM hr_discipline_cases WHERE id = ?`).get(String(caseId || '').trim());
   if (!row) return { ok: false, error: 'Case not found.' };
-  const meta = safeJsonParse(row.meta_json, {});
+  const meta = parseJsonObject(row.meta_json, {});
   const terminalStatus = String(caseStatus || 'closed').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'closed';
   const now = nowIso();
   const synced = [];
@@ -418,7 +401,7 @@ export function assertCaseClosureReady(db, caseId) {
       }
     }
     if (parties.length) {
-      const letters = safeJsonParse(row.related_letter_ids_json, []);
+      const letters = parseJsonObject(row.related_letter_ids_json, []);
       if (!Array.isArray(letters) || letters.length < parties.length) {
         blockers.push('Salary recovery letters required for each responsible party before closure.');
       } else {
@@ -429,7 +412,7 @@ export function assertCaseClosureReady(db, caseId) {
 
   if (decisionType === 'suspension') {
     const prof = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(row.user_id);
-    const extra = safeJsonParse(prof?.profile_extra_json, {});
+    const extra = parseJsonObject(prof?.profile_extra_json, {});
     const st = String(extra?.employmentMeta?.salaryStatus || '').toLowerCase();
     if (!['held', 'suspended'].includes(st)) {
       blockers.push('Salary hold/suspension must be applied on staff profile for suspension decisions.');
@@ -437,7 +420,7 @@ export function assertCaseClosureReady(db, caseId) {
   }
 
   if (['warning', 'termination'].includes(decisionType)) {
-    const letters = safeJsonParse(row.related_letter_ids_json, []);
+    const letters = parseJsonObject(row.related_letter_ids_json, []);
     if (!Array.isArray(letters) || !letters.length) {
       blockers.push('At least one linked letter is required for this decision type.');
     } else {

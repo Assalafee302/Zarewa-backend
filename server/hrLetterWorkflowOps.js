@@ -3,13 +3,13 @@
  * @module server/hrLetterWorkflowOps
  */
 
-import crypto from 'node:crypto';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { buildHrLetterContent } from './hrLetterTemplates.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
 import { hrUserHas } from './hrPermissions.js';
 import { createHrNotification } from './hrNotifications.js';
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 const COMPANY = 'Zarewa Aluminium and Plastics Ltd';
 const DRAFT_WATERMARK = 'DRAFT — NOT VALID FOR OFFICIAL USE';
@@ -84,23 +84,6 @@ const LETTER_TYPE_CODES = {
   confidentiality_pledge: 'POL',
 };
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function loadStaffBrief(db, userId) {
   const u = db.prepare(`SELECT display_name, username FROM app_users WHERE id = ?`).get(userId);
   const p = db.prepare(
@@ -139,7 +122,7 @@ export function getLetterReferenceConfig(db) {
   if (!hrTableExists(db, 'hr_settings')) return getDefaultLetterRefConfig();
   const row = db.prepare(`SELECT value_json FROM hr_settings WHERE \`key\` = 'letter_reference_config'`).get();
   if (!row?.value_json) return getDefaultLetterRefConfig();
-  return { ...getDefaultLetterRefConfig(), ...safeJsonParse(row.value_json, {}) };
+  return { ...getDefaultLetterRefConfig(), ...parseJsonObject(row.value_json, {}) };
 }
 
 export function saveLetterReferenceConfig(db, config, actor) {

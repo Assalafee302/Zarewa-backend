@@ -4,6 +4,8 @@
  */
 import { DEFAULT_BRANCH_ID } from './branches.js';
 import { createHrNotification } from './hrNotifications.js';
+import { hrTableExists } from './hrTableChecks.js';
+import { nowIso } from './hrCommon.js';
 import {
   OBLIGATION_KIND,
   OBLIGATION_STATUS,
@@ -17,10 +19,6 @@ import {
 } from './workItems.js';
 
 export const STAFF_PURCHASE_CREDIT_WORK_SOURCE = 'staff_purchase_credit';
-
-function nowIso() {
-  return new Date().toISOString();
-}
 
 function listMdNotifyUsers(db) {
   try {
@@ -227,9 +225,7 @@ export function getStaffPurchaseCreditAuditTimeline(db, accountId) {
   const id = String(accountId || '').trim();
   if (!id) return [];
   try {
-    if (!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_audit_events'`).get()) {
-      return [];
-    }
+    if (!hrTableExists(db, 'hr_audit_events')) return [];
     const rows = db
       .prepare(
         `SELECT e.occurred_at_iso AS atIso, e.action, e.actor_user_id AS actorUserId,

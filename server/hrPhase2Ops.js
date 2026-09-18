@@ -3,7 +3,6 @@
  * @module server/hrPhase2Ops
  */
 
-import crypto from 'crypto';
 import { buildSimpleTextPdf } from '../shared/lib/simpleTextPdf.js';
 import { buildHrLetterContent } from './hrLetterTemplates.js';
 import {
@@ -17,19 +16,8 @@ import {
 } from './hrOps.js';
 import { patchHrStaffSeparation } from './hrStaffLifecycle.js';
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(10).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { hrTableExists } from './hrTableChecks.js';
+import { newId, parseJsonObject } from './hrCommon.js';
 
 function diffDays(fromIso, toIso) {
   const a = Date.parse(String(fromIso || '').slice(0, 10));
@@ -46,7 +34,7 @@ const PROPERTY_CATEGORIES = new Set(['id_card', 'keys', 'laptop', 'phone', 'docu
 
 export function hrPhase2TablesReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_absence_reports'`).get());
+    return hrTableExists(db, 'hr_absence_reports');
   } catch {
     return false;
   }
@@ -160,7 +148,7 @@ export function createHrAbsenceReport(db, actor, body) {
     const doc = db.prepare(`SELECT id FROM hr_staff_documents WHERE id = ? AND user_id = ?`).get(doctorNoteDocumentId, userId);
     if (!doc) return { ok: false, error: 'Doctor note document not found for this staff member.' };
   }
-  const id = newId('HRABS');
+  const id = newId('HRABS', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_absence_reports (
@@ -271,7 +259,7 @@ export function getHrAbsenceAlerts(db, scope) {
         .prepare(`SELECT day_iso, rows_json FROM hr_daily_roll_calls WHERE branch_id = ? AND day_iso >= ?`)
         .all(branchId, cutoffIso);
       for (const roll of rolls) {
-        const rows = safeJsonParse(roll.rows_json, []);
+        const rows = parseJsonObject(roll.rows_json, []);
         for (const r of rows) {
           if (r.userId === s.userId && String(r.status) === 'absent') absentDays.add(roll.day_iso);
         }
@@ -384,7 +372,7 @@ function getOutstandingLoansForUser(db, userId) {
     .all(userId);
   const out = [];
   for (const r of rows) {
-    const p = safeJsonParse(r.payload_json, {});
+    const p = parseJsonObject(r.payload_json, {});
     const outstanding = Number(p.principalOutstandingNgn);
     if (p.loanDisbursedAtIso && p.deductionsActive !== false && outstanding > 0) {
       out.push({ requestId: r.id, principalOutstandingNgn: Math.round(outstanding) });
@@ -430,7 +418,7 @@ export function createHrExitClearance(db, actor, body) {
   }
   const staff = loadStaffBrief(db, userId);
   if (!staff) return { ok: false, error: 'Staff not found.' };
-  const id = newId('HREX');
+  const id = newId('HREX', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_exit_clearance (
@@ -448,7 +436,7 @@ export function createHrExitClearance(db, actor, body) {
   ];
   const items = Array.isArray(body?.propertyItems) && body.propertyItems.length ? body.propertyItems : defaultItems;
   for (const it of items) {
-    const iid = newId('HREXI');
+    const iid = newId('HREXI', 10);
     db.prepare(
       `INSERT INTO hr_exit_property_items (
         id, clearance_id, item_name, item_category, serial_or_reference, expected_return, created_at_iso, updated_at_iso
@@ -485,7 +473,7 @@ export function createHrExitClearance(db, actor, body) {
 export function addHrExitPropertyItem(db, actor, clearanceId, body) {
   const ex = getHrExitClearance(db, clearanceId);
   if (!ex.ok) return ex;
-  const id = newId('HREXI');
+  const id = newId('HREXI', 10);
   const now = nowIso();
   db.prepare(
     `INSERT INTO hr_exit_property_items (
@@ -757,7 +745,7 @@ export function generateHrLetterFromTemplate(db, actor, body) {
   if (!staff) return { ok: false, error: 'Staff not found.' };
   const extra = body?.extraData || body?.extra || body;
   const content = buildHrLetterContent(letterKind, staff, extra);
-  const id = newId('HRL');
+  const id = newId('HRL', 10);
   const now = nowIso();
   const sourceRecordKind = String(body?.sourceRecordKind || extra?.sourceRecordKind || '').trim() || null;
   const sourceRecordId = String(body?.sourceRecordId || extra?.sourceRecordId || '').trim() || null;
@@ -798,7 +786,7 @@ export function generateLeaveDecisionLetter(db, actor, body) {
   if (kind === 'leave_rejection' && !['rejected', 'hr_rejected', 'gm_rejected'].includes(String(req.status))) {
     return { ok: false, error: 'Leave rejection letter requires a rejected request.' };
   }
-  const payload = safeJsonParse(req.payload_json, {});
+  const payload = parseJsonObject(req.payload_json, {});
   const leave = db.prepare(`SELECT * FROM hr_request_leave WHERE request_id = ?`).get(requestId);
   const extra = {
     leaveType: leave?.leave_type || payload.leaveType || 'leave',

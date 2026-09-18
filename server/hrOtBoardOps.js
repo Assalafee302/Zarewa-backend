@@ -1,3 +1,5 @@
+import { hrTableExists } from './hrTableChecks.js';
+
 function safeJsonParse(value) {
   try {
     const parsed = JSON.parse(String(value || '[]'));
@@ -8,19 +10,7 @@ function safeJsonParse(value) {
 }
 
 function tableReady(db) {
-  try {
-    return Boolean(
-      db.prepare(
-        `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?`
-      ).get('hr_daily_roll_calls')
-    );
-  } catch {
-    try {
-      return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get('hr_daily_roll_calls'));
-    } catch {
-      return false;
-    }
-  }
+  return hrTableExists(db, 'hr_daily_roll_calls');
 }
 
 /**

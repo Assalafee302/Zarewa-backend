@@ -3,6 +3,7 @@
  * Append-only amounts. Company-wide rows use branch_id = ''.
  */
 import { hasColumn } from './ap2ReceivedBasisOps.js';
+import { newTimeId, nowIso } from './hrCommon.js';
 import {
   isPayrollRunEligible,
   PAYROLL_RUN_ELIGIBLE_GROUPS,
@@ -24,14 +25,6 @@ export function salaryStructureTablesReady(db) {
   } catch {
     return false;
   }
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function todayIsoDate() {
@@ -172,7 +165,7 @@ export function proposeHrSalaryStructureVersion(db, body, actor) {
   }
   const branchId = normalizeStructureBranchId(body?.branchId ?? body?.branch_id);
   const ts = nowIso();
-  const id = String(body?.id || '').trim() || newId('SALV');
+  const id = String(body?.id || '').trim() || newTimeId('SALV');
   db.prepare(
     `INSERT INTO hr_salary_structure_versions (
       id, designation_id, branch_id, amount_ngn, effective_from_iso, status,

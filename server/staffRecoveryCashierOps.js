@@ -24,13 +24,10 @@ import {
   resolveObligationAccountIdForRecoverySchedule,
 } from './staffRecoveryObligationOps.js';
 import { insertTreasuryMovementTx } from './writeOps.js';
+import { nowIso } from './hrCommon.js';
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
-}
-
-function nowIso() {
-  return new Date().toISOString();
 }
 
 /**

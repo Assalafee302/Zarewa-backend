@@ -6,6 +6,7 @@
 import { listHrEngagementSurveys, getHrEngagementSurveySummary } from './hrEngagement.js';
 import { hrLearningTablesReady } from './hrLearning.js';
 import { listHrStaff } from './hrOps.js';
+import { parseJsonValue } from './hrCommon.js';
 import {
   getPromotionDueReport,
   getTemporaryEmployeeAlerts,
@@ -21,15 +22,6 @@ function esc(v) {
 
 function toCsv(headers, rows) {
   return [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\r\n');
-}
-
-function safeJsonParse(raw, fallback) {
-  if (raw == null || raw === '') return fallback;
-  try {
-    return JSON.parse(String(raw));
-  } catch {
-    return fallback;
-  }
 }
 
 export function exportHrHeadcountCsv(db, scope) {
@@ -54,7 +46,7 @@ export function exportHrTurnoverCsv(db, scope) {
   const headers = ['userId', 'displayName', 'status', 'branchId', 'separationStatus', 'lastWorkingDayIso', 'separationReason'];
   const rows = [];
   for (const s of staff) {
-    const sep = safeJsonParse(s.profileExtra?.lifecycle, {}).separation || {};
+    const sep = parseJsonValue(s.profileExtra?.lifecycle, {}).separation || {};
     if (String(s.status) !== 'inactive' && sep.status !== 'separating' && sep.status !== 'separated') continue;
     rows.push([
       s.userId,

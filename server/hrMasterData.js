@@ -4,16 +4,10 @@
  */
 
 import { hasColumn } from './ap2ReceivedBasisOps.js';
+import { hrTableExists } from './hrTableChecks.js';
 import { HR_STAFF_BANDS } from '../shared/lib/hrRoleCompliance.js';
 import { recomputeRoleComplianceForDesignation } from './hrRoleComplianceOps.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
+import { newTimeId, nowIso } from './hrCommon.js';
 
 function normalizeStaffBand(raw) {
   const v = String(raw || '')
@@ -72,7 +66,7 @@ function persistDesignationRoleRequirementColumns(db, id, body) {
 export function hrMasterDataTablesReady(db) {
   try {
     return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_departments'`).get()
+      hrTableExists(db, 'hr_departments')
     );
   } catch {
     return false;
@@ -109,7 +103,7 @@ export function upsertHrDepartment(db, body, actor) {
   const code = String(body?.code || '').trim().toUpperCase();
   if (!name) return { ok: false, error: 'Department name is required.' };
   if (!code) return { ok: false, error: 'Department code is required.' };
-  const id = String(body?.id || '').trim() || newId('dept');
+  const id = String(body?.id || '').trim() || newTimeId('dept');
   const ts = nowIso();
   const payload = {
     id,
@@ -176,7 +170,7 @@ export function upsertHrDesignation(db, body, actor) {
       error: 'staff_band must be director, manager, senior_staff, junior_staff, or entry_staff.',
     };
   }
-  const id = String(body?.id || '').trim() || newId('desig');
+  const id = String(body?.id || '').trim() || newTimeId('desig');
   const ts = nowIso();
   const payload = {
     id,

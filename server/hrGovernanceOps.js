@@ -3,26 +3,9 @@
  * @module server/hrGovernanceOps
  */
 
-import crypto from 'node:crypto';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export function hrGovernanceTablesReady(db) {
   return hrTableExists(db, 'hr_staff_skills');
@@ -104,7 +87,7 @@ export function getPromotionReadiness(db, userId) {
       )
       .get(uid);
     if (form?.scores_json) {
-      const scores = safeJsonParse(form.scores_json, {});
+      const scores = parseJsonObject(form.scores_json, {});
       appraisalScore = Number(scores.overall ?? scores.total) || null;
     }
   } catch {
@@ -277,7 +260,7 @@ export function getExitInterview(db, clearanceId) {
     id: row.id,
     clearanceId: row.clearance_id,
     userId: row.user_id,
-    responses: safeJsonParse(row.responses_json, {}),
+    responses: parseJsonObject(row.responses_json, {}),
     conductedAtIso: row.conducted_at_iso,
     conductedByUserId: row.conducted_by_user_id,
   };

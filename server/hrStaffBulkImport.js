@@ -22,6 +22,7 @@ import { getStaffNumberConfig } from './hrStaffNumbering.js';
 import { EMPLOYEE_DIRECTORY_GROUPS, isBeneficiaryOnlyPayrollGroup, normalizePayrollGroup } from '../shared/lib/hrStaffCohorts.js';
 import { BENEFICIARY_NO_LOGIN_ERROR } from './hrStaffAccessPolicy.js';
 import { listStaffIdentityRows } from './hr/staffIdentityUniqueness.js';
+import { newId, nowIso } from './hrCommon.js';
 import {
   namesLookSuspicious,
   normalizeStaffAccountKey,
@@ -242,14 +243,6 @@ export const BULK_IMPORT_COLUMNS = [
   { key: 'promotionGrade', header: 'Promotion Grade', required: false },
   { key: 'hrInternalNotes', header: 'HR Internal Notes', required: false },
 ];
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
 
 function normHeader(s) {
   return String(s ?? '')

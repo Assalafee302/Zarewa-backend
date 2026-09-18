@@ -3,34 +3,17 @@
  * @module server/hrPayrollControl
  */
 
-import crypto from 'node:crypto';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
 import { applyBonusToPayrollRun } from './hrOps.js';
 import { hrTableExists } from './hrTableChecks.js';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function safeJsonParse(raw, fallback) {
-  try {
-    const v = JSON.parse(String(raw || ''));
-    return v && typeof v === 'object' ? v : fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { newId, nowIso, parseJsonObject } from './hrCommon.js';
 
 export function hrPayrollControlTablesReady(db) {
   return hrTableExists(db, 'hr_bonus_requests');
 }
 
 function staffSalaryOnHold(profileExtra) {
-  const extra = profileExtra && typeof profileExtra === 'object' ? profileExtra : safeJsonParse(profileExtra, {});
+  const extra = profileExtra && typeof profileExtra === 'object' ? profileExtra : parseJsonObject(profileExtra, {});
   const status = String(extra?.employmentMeta?.salaryStatus || '').toLowerCase();
   return status === 'held' || status === 'suspended';
 }
@@ -70,7 +53,7 @@ export function setStaffSalaryHold(db, userId, { hold = true, reason = '' } = {}
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const row = db.prepare(`SELECT profile_extra_json FROM hr_staff_profiles WHERE user_id = ?`).get(userId);
   if (!row) return { ok: false, error: 'Staff profile not found.' };
-  const extra = safeJsonParse(row.profile_extra_json, {});
+  const extra = parseJsonObject(row.profile_extra_json, {});
   extra.employmentMeta = {
     ...(extra.employmentMeta || {}),
     salaryStatus: hold ? 'held' : 'active',

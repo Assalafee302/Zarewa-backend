@@ -3,19 +3,12 @@
  * @module server/hrLearning
  */
 
-import crypto from 'node:crypto';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
+import { hrTableExists } from './hrTableChecks.js';
+import { newId, nowIso } from './hrCommon.js';
 
 export function hrLearningTablesReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_training_records'`).get());
+    return hrTableExists(db, 'hr_training_records');
   } catch {
     return false;
   }

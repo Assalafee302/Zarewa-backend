@@ -3,15 +3,8 @@
  * @module server/hrEngagement
  */
 
-import crypto from 'node:crypto';
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function newId(prefix) {
-  return `${prefix}-${crypto.randomBytes(8).toString('hex')}`;
-}
+import { hrTableExists } from './hrTableChecks.js';
+import { newId, nowIso } from './hrCommon.js';
 
 function safeJsonParse(raw, fallback) {
   if (raw == null || raw === '') return fallback;
@@ -24,7 +17,7 @@ function safeJsonParse(raw, fallback) {
 
 export function hrEngagementTablesReady(db) {
   try {
-    return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_engagement_surveys'`).get());
+    return hrTableExists(db, 'hr_engagement_surveys');
   } catch {
     return false;
   }

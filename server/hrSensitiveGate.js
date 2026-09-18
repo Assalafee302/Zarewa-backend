@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { verifyUserPassword } from './auth.js';
 import { appendHrAuditEvent, hrTablesReady } from './hrOps.js';
+import { nowIso } from './hrCommon.js';
 
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 export const HR_SENSITIVE_COOKIE = 'zarewa_hr_sensitive';
@@ -51,10 +52,6 @@ function readHrSensitiveCookieToken(req) {
     if (k === HR_SENSITIVE_COOKIE) return decodeURIComponent(rest.join('=') || '');
   }
   return '';
-}
-
-function nowIso() {
-  return new Date().toISOString();
 }
 
 function newToken() {

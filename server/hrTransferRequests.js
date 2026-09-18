@@ -6,7 +6,9 @@
 import { hrTablesReady, listHrStaff, upsertHrStaffProfile } from './hrOps.js';
 import { userCanGmApproveHr } from './hrPermissions.js';
 import { serviceYearsFromJoinedIso } from './hrBusinessRules.js';
+import { hrTableExists } from './hrTableChecks.js';
 import { evaluateTransferTenurePolicy } from './hrPolicyConstants.js';
+import { nowIso } from './hrCommon.js';
 import {
   notifyHrTransferOutcome,
   notifyHrTransferQueueHandoff,
@@ -34,10 +36,6 @@ const TRANSFER_TYPES = [
   'temporary',
   'permanent',
 ];
-
-function nowIso() {
-  return new Date().toISOString();
-}
 
 function newId() {
   return `xfer_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -160,13 +158,7 @@ function mapRow(row) {
 }
 
 export function hrTransferRequestsTableReady(db) {
-  try {
-    return Boolean(
-      db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='hr_transfer_requests'`).get()
-    );
-  } catch {
-    return false;
-  }
+  return hrTableExists(db, 'hr_transfer_requests');
 }
 
 export function listHrTransferRequests(db, scope = {}, filters = {}) {

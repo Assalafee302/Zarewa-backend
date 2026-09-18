@@ -108,6 +108,7 @@ import {
   CUTTING_LIST_STATUS_CANCELLED,
   PRODUCTION_JOB_STATUS,
   isCancelledNotProducedStatus,
+  isInactiveProductionJobStatus,
   quotationLineEditBlockedByProductionStatus,
 } from '../shared/lib/productionJobStatus.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
@@ -7279,7 +7280,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
     return {
       ok: false,
       error:
-        'This cutting list was cancelled in production (not produced). That is a customer change of mind. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+        'This cutting list was cancelled in production (not produced). That is a customer change of mind. Raise a refund if the customer should be paid back.',
     };
   }
   if (Number(existing.production_registered)) {
@@ -7461,7 +7462,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
     }
     if (jobRow?.job_id) {
       const st = String(jobRow.status || '').trim();
-      if (st !== 'Completed' && st !== 'Cancelled' && st !== 'Returned') {
+      if (!isInactiveProductionJobStatus(st)) {
         const planTotals = productionPlannedTotalsForCuttingList(db, quotationRef, lines);
         db.prepare(
           `UPDATE production_jobs SET
@@ -7530,7 +7531,7 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     return {
       ok: false,
       error:
-        'This cutting list was cancelled in production (not produced). It cannot be re-queued. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+        'This cutting list was cancelled in production (not produced). It cannot be re-queued.',
     };
   }
   if (cuttingList?.production_registered) {

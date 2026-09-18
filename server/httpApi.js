@@ -7385,7 +7385,7 @@ export function registerHttpApi(app, db) {
           return res.status(400).json({
             ok: false,
             error:
-              'This cutting list was cancelled in production (not produced). It cannot be re-queued. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+              'This cutting list was cancelled in production (not produced). It cannot be re-queued.',
           });
         }
         if (cl.productionRegistered) {

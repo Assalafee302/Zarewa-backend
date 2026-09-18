@@ -132,7 +132,7 @@ export function buildProductionStatusReport(db, branchScope = 'ALL') {
     .prepare(`SELECT * FROM production_jobs WHERE 1=1${bJob.sql}`)
     .all(...bJob.args);
 
-  const statusMix = { Planned: 0, Running: 0, Completed: 0, Cancelled: 0 };
+  const statusMix = { Planned: 0, Running: 0, Completed: 0, Cancelled: 0, Returned: 0 };
   const jobTypes = { coil: 0, stone: 0, offcut: 0, no_coil_stone: 0, other: 0 };
   const plannedActualOutliers = [];
   const paymentGateExceptions = [];

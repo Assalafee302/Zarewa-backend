@@ -114,6 +114,7 @@ import {
 } from './pricingAsOf.js';
 import { pricingPolicyNumbersForServiceLine, resolveAliasForDesign } from './pricingPolicyResolve.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
+import { PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL } from '../shared/lib/productionJobStatus.js';
 import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfillment.js';
 import {
   buildRefundCategorySuggestedMaxNgn,
@@ -5235,7 +5236,7 @@ export function quotationHasNonRejectedOrderCancellationRefund(db, quotationRef)
   return rows.some((r) => refundReasonCategoriesIncludeOrderCancellation(r.reason_category));
 }
 
-/** True when any production row for the quote is not in a terminal state (Completed / Cancelled). */
+/** True when any production row for the quote is still on the shop-floor queue (Planned / Running). */
 function quotationHasOpenProductionJob(db, quotationRef) {
   const ref = String(quotationRef ?? '').trim();
   if (!ref) return null;
@@ -5247,7 +5248,7 @@ function quotationHasOpenProductionJob(db, quotationRef) {
        WHERE quotation_ref = ?
          AND LOWER(
            CASE WHEN TRIM(COALESCE(status, '')) = '' THEN 'planned' ELSE TRIM(LOWER(status)) END
-         ) NOT IN ('completed', 'cancelled')
+         ) NOT IN (${PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL})
        LIMIT 1`
     )
     .get(ref);
@@ -5689,7 +5690,7 @@ export function getEligibleRefundQuotations(db, opts = {}) {
         WHERE j2.quotation_ref = q.id
           AND LOWER(
             CASE WHEN TRIM(COALESCE(j2.status, '')) = '' THEN 'planned' ELSE TRIM(LOWER(j2.status)) END
-          ) NOT IN ('completed', 'cancelled')
+          ) NOT IN (${PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL})
       )
       AND (
         EXISTS (

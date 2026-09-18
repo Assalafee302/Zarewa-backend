@@ -10,6 +10,7 @@ export const HR_PERMISSION_KEYS = [
   'hr.my_payslip.view',
   'hr.my_documents.view',
   'hr.team.view',
+  'hr.team.assist',
   'hr.attendance.mark',
   'hr.leave.endorse',
   'hr.loan.endorse',

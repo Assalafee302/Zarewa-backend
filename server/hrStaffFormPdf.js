@@ -60,7 +60,7 @@ export function buildStaffRegistrationFormLines(staff = null) {
     `Residential address: ${val(personal.residentialAddress, 52)}`,
     row2('State of origin', personal.stateOfOrigin, 'L.G.A.', personal.localGovernment),
     row2('Nationality', personal.nationality || 'Nigerian', 'Blood group', personal.bloodGroup),
-    row2('NIN', staff?.ninNumber, 'BVN', staff?.bvnNumber ? '(on file)' : ''),
+    `NIN: ${val(staff?.ninNumber, 52)}`,
     '',
     'SECTION B — EMPLOYMENT',
     '----------------------------------------------------------------',

@@ -14,7 +14,6 @@ describe('hrLegalDisplayName', () => {
       gender: 'female',
       dateOfBirthIso: '1990-01-01',
       ninNumber: '12345678901',
-      bvnNumber: '10987654321',
       minimumQualification: 'B.Sc',
       profileExtra: {
         personal: {
@@ -35,7 +34,6 @@ describe('hrLegalDisplayName', () => {
       gender: 'female',
       dateOfBirth: '1990-01-01',
       ninNumber: '12345678901',
-      bvnNumber: '10987654321',
       minimumQualification: 'B.Sc',
       profileExtra: {
         personal: {

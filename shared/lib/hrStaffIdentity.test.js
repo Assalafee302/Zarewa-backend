@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   namesLookSuspicious,
   normalizeStaffAccountKey,
-  normalizeStaffBvnKey,
   normalizeStaffEmailKey,
   normalizeStaffNinKey,
   normalizeStaffPhoneKey,
@@ -15,10 +14,9 @@ describe('hrStaffIdentity', () => {
     expect(normalizeStaffPhoneKey('2348031234567')).toBe('8031234567');
   });
 
-  it('requires a full NIN / BVN', () => {
+  it('requires a full NIN', () => {
     expect(normalizeStaffNinKey('12345678901')).toBe('12345678901');
     expect(normalizeStaffNinKey('12345')).toBe('');
-    expect(normalizeStaffBvnKey('222 333 444 55')).toBe('22233344455');
   });
 
   it('normalizes email and account digits', () => {

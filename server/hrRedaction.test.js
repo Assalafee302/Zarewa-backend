@@ -30,21 +30,19 @@ describe('hrRedaction', () => {
   });
 
   it('redacts national IDs for non-privileged viewers', () => {
-    const row = { userId: 'U1', ninNumber: '12345678901', bvnNumber: '22222222222' };
+    const row = { userId: 'U1', ninNumber: '12345678901' };
     const out = redactStaffProfile(row, { canViewSensitive: false, canViewIdentity: false });
     expect(out.ninNumber).toBeNull();
-    expect(out.bvnNumber).toBeNull();
   });
 
   it('keeps national IDs for self-service subject', () => {
-    const row = { userId: 'U1', ninNumber: '12345678901', bvnNumber: '22222222222' };
+    const row = { userId: 'U1', ninNumber: '12345678901' };
     const out = redactStaffProfile(row, {
       canViewSensitive: false,
       canViewIdentity: true,
       isSelf: true,
     });
     expect(out.ninNumber).toBe('12345678901');
-    expect(out.bvnNumber).toBe('22222222222');
   });
 
   it('strips HR-only notes from profileExtra for self', () => {

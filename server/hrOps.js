@@ -104,6 +104,10 @@ import { getDepartmentHeadDepartmentIds, resolveHrScopeMode } from './hrTeamScop
 import { assertStaffUserIdInHrScope } from './hrStaffScope.js';
 import { bankAccountNameMatchesStaff, computeProfileCompleteness } from './hrProfileCompleteness.js';
 import { composeLegalDisplayName, validateEmployeeProfileSubmit } from '../shared/lib/hrLegalDisplayName.js';
+import {
+  HR_NEXT_OF_KIN_FLAT_FIELDS,
+  HR_SELF_SERVICE_PROFILE_FIELDS,
+} from '../shared/lib/hrStaffProfileFields.js';
 import { hrCoreTablesReady, hrTableExists } from './hrTableChecks.js';
 import { activeIncidentRecoveryBreakdown, incrementRecoveriesFromPayrollRun } from './hrIncidentRecoveryOps.js';
 import { countOpenIncidents } from './hrAccountabilityOps.js';
@@ -441,7 +445,6 @@ export function listHrStaff(db, scope, opts = {}) {
            ${isProductionStaffCol}
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
-           p.bvn_number AS bvnNumber,
            p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
            p.nhis_deduction_ngn AS nhisDeductionNgn,
            p.profile_extra_json AS profileExtraJson,
@@ -889,7 +892,6 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
            ${isProductionStaffCol}
            p.next_of_kin_json AS nextOfKinJson,
            p.nin_number AS ninNumber,
-           p.bvn_number AS bvnNumber,
            p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
            p.nhis_deduction_ngn AS nhisDeductionNgn,
            p.profile_extra_json AS profileExtraJson,
@@ -1620,7 +1622,22 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
     if (body?.professionalCertificates !== undefined) {
       extra.qualifications = { ...(extra.qualifications || {}), professionalCertificates: body.professionalCertificates || null };
     }
-    if (body?.firstName !== undefined || body?.phone !== undefined) {
+    if (
+      body?.firstName !== undefined ||
+      body?.middleName !== undefined ||
+      body?.surname !== undefined ||
+      body?.phone !== undefined ||
+      body?.personalEmail !== undefined ||
+      body?.maritalStatus !== undefined ||
+      body?.residentialAddress !== undefined ||
+      body?.stateOfOrigin !== undefined ||
+      body?.localGovernment !== undefined ||
+      body?.nationality !== undefined ||
+      body?.bloodGroup !== undefined ||
+      body?.institution !== undefined ||
+      body?.courseField !== undefined ||
+      body?.yearCompleted !== undefined
+    ) {
       extra.personal = {
         ...(extra.personal || {}),
         ...(body.firstName !== undefined ? { firstName: String(body.firstName || '').trim() || null } : {}),
@@ -1668,7 +1685,6 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
 
   const identityFields = { userId };
   if (body?.ninNumber !== undefined) identityFields.ninNumber = body.ninNumber;
-  if (body?.bvnNumber !== undefined) identityFields.bvnNumber = body.bvnNumber;
   if (body?.phone !== undefined) identityFields.phone = body.phone;
   if (body?.personalEmail !== undefined) identityFields.email = body.personalEmail;
   else if (body?.email !== undefined) identityFields.email = body.email;
@@ -1685,7 +1701,6 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
   const identityTouched =
     !existing ||
     body?.ninNumber !== undefined ||
-    body?.bvnNumber !== undefined ||
     body?.phone !== undefined ||
     body?.personalEmail !== undefined ||
     body?.email !== undefined ||
@@ -1821,10 +1836,6 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       body?.ninNumber !== undefined
         ? String(body.ninNumber ?? '').trim() || null
         : prevRow?.nin_number ?? null,
-    bvn_number:
-      body?.bvnNumber !== undefined
-        ? String(body.bvnNumber ?? '').trim() || null
-        : prevRow?.bvn_number ?? null,
     base_salary_ngn: resolvedBaseSalaryNgn,
     housing_allowance_ngn: resolvedHousingAllowanceNgn,
     transport_allowance_ngn: resolvedTransportAllowanceNgn,
@@ -1894,7 +1905,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number, bvn_number=@bvn_number,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
           base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
           transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
           minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
@@ -1918,7 +1929,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           department_id=@department_id, designation_id=@designation_id,
           employment_type=@employment_type, date_joined_iso=@date_joined_iso, probation_end_iso=@probation_end_iso,
           bank_account_name=@bank_account_name, bank_name=@bank_name, bank_account_no_masked=@bank_account_no_masked,
-          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number, bvn_number=@bvn_number,
+          tax_id=@tax_id, pension_rsa_pin=@pension_rsa_pin, next_of_kin_json=@next_of_kin_json, nin_number=@nin_number,
           base_salary_ngn=@base_salary_ngn, housing_allowance_ngn=@housing_allowance_ngn,
           transport_allowance_ngn=@transport_allowance_ngn, bonus_accrual_note=@bonus_accrual_note,
           minimum_qualification=@minimum_qualification, academic_qualification=@academic_qualification,
@@ -1968,7 +1979,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
         `INSERT INTO hr_staff_profiles (
           user_id, branch_id, employee_no, job_title, department, department_id, designation_id,
           employment_type, date_joined_iso, probation_end_iso,
-          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number, bvn_number,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
           paye_tax_percent, paye_tax_ngn, pension_percent_override, profile_extra_json, self_service_eligible,
@@ -1978,7 +1989,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
         ) VALUES (
           @user_id, @branch_id, @employee_no, @job_title, @department, @department_id, @designation_id,
           @employment_type, @date_joined_iso, @probation_end_iso,
-          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number, @bvn_number,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
           @paye_tax_percent, @paye_tax_ngn, @pension_percent_override, @profile_extra_json, @self_service_eligible,
@@ -1992,7 +2003,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
       db.prepare(
         `INSERT INTO hr_staff_profiles (
           user_id, branch_id, employee_no, job_title, department, employment_type, date_joined_iso, probation_end_iso,
-          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number, bvn_number,
+          bank_account_name, bank_name, bank_account_no_masked, tax_id, pension_rsa_pin, next_of_kin_json, nin_number,
           base_salary_ngn, housing_allowance_ngn, transport_allowance_ngn, bonus_accrual_note,
           minimum_qualification, academic_qualification, promotion_grade, welfare_notes, training_summary,
           paye_tax_percent, pension_percent_override, profile_extra_json, self_service_eligible,
@@ -2000,7 +2011,7 @@ export function upsertHrStaffProfile(db, actorUserId, body, opts = {}) {
           updated_at_iso, updated_by_user_id
         ) VALUES (
           @user_id, @branch_id, @employee_no, @job_title, @department, @employment_type, @date_joined_iso, @probation_end_iso,
-          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number, @bvn_number,
+          @bank_account_name, @bank_name, @bank_account_no_masked, @tax_id, @pension_rsa_pin, @next_of_kin_json, @nin_number,
           @base_salary_ngn, @housing_allowance_ngn, @transport_allowance_ngn, @bonus_accrual_note,
           @minimum_qualification, @academic_qualification, @promotion_grade, @welfare_notes, @training_summary,
           @paye_tax_percent, @pension_percent_override, @profile_extra_json, @self_service_eligible,
@@ -2491,6 +2502,12 @@ export function listHrRequests(db, scope, filter = {}) {
     sql += ` AND r.user_id = ?`;
     args.push(filter.userId);
   }
+  if (Array.isArray(filter.userIds)) {
+    const ids = [...new Set(filter.userIds.map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!ids.length) return [];
+    sql += ` AND r.user_id IN (${ids.map(() => '?').join(',')})`;
+    args.push(...ids);
+  }
   if (filter.kind) {
     sql += ` AND r.kind = ?`;
     args.push(String(filter.kind).trim());
@@ -2563,7 +2580,7 @@ export function listHrRequests(db, scope, filter = {}) {
  * @param {string} userId
  * @param {object} body
  */
-export function createHrRequest(db, userId, body) {
+export function createHrRequest(db, userId, body, actor = null) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const kind = String(body?.kind || '').trim();
   if (!REQUEST_KINDS.has(kind)) return { ok: false, error: 'Invalid request kind.' };
@@ -2665,13 +2682,15 @@ export function createHrRequest(db, userId, body) {
       String(p.purpose || '').trim() || null
     );
   }
+  const actorId = String(actor?.id || userId || '').trim();
+  const onBehalf = actorId && actorId !== String(userId);
   appendHrAuditEvent(db, {
-    actorUserId: userId,
-    action: 'hr.request.create',
+    actorUserId: actorId || userId,
+    action: onBehalf ? 'hr.request.create_on_behalf' : 'hr.request.create',
     entityKind: 'hr_request',
     entityId: id,
     branchId,
-    details: { kind },
+    details: onBehalf ? { kind, subjectUserId: userId } : { kind },
   });
   const reqRow = listHrRequests(db, { viewAll: true, branchId: DEFAULT_BRANCH_ID }, {}).find((r) => r.id === id);
   return { ok: true, request: reqRow };
@@ -2688,7 +2707,8 @@ export function submitHrRequest(db, requestId, actorOrUserId) {
     const onBehalf =
       userHasPermission(actor, '*') ||
       userHasPermission(actor, 'hr.staff.manage') ||
-      userHasPermission(actor, 'hr.requests.review');
+      userHasPermission(actor, 'hr.requests.review') ||
+      userHasPermission(actor, 'hr.team.assist');
     if (!onBehalf) return { ok: false, error: 'Request not found.' };
   }
   if (row.status !== 'draft') return { ok: false, error: 'Only draft requests can be submitted.' };
@@ -2748,13 +2768,7 @@ export function applyApprovedProfileChange(db, requestRow, actor) {
   }
 
   if (field === 'bvnNumber') {
-    const next = String(payload.requestedValue || '').trim() || null;
-    const identityCheck = assertStaffIdentityUnique(db, { userId, bvnNumber: next });
-    if (!identityCheck.ok) return identityCheck;
-    db.prepare(
-      `UPDATE hr_staff_profiles SET bvn_number = ?, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
-    ).run(next, now, actorId, userId);
-    return { ok: true };
+    return { ok: true, skipped: 'bvn_removed' };
   }
 
   if (field === 'nextOfKin') {
@@ -7458,7 +7472,6 @@ export function getHrMeProfile(db, userId) {
     pensionPercentOverride: p.pension_percent_override != null ? Number(p.pension_percent_override) : null,
     nextOfKin: safeJsonParse(p.next_of_kin_json, null),
     ninNumber: p.nin_number ?? null,
-    bvnNumber: p.bvn_number ?? null,
     gender: p.gender ?? null,
     dateOfBirthIso: p.date_of_birth ?? null,
     profileExtra: safeJsonParse(p.profile_extra_json, {}),
@@ -7544,10 +7557,11 @@ export function syncLegalDisplayNameFromProfile(db, userId) {
 }
 
 /** Employee submits completed profile — locks self-service edits until HR approves changes. */
-export function submitMyHrStaffProfile(db, userId) {
+export function submitMyHrStaffProfile(db, userId, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const uid = String(userId || '').trim();
   if (!uid) return { ok: false, error: 'Not authenticated.' };
+  const actorUserId = String(opts.actorUserId || uid).trim() || uid;
 
   const staff = getHrStaffOne(db, uid);
   if (!staff) return { ok: false, error: 'HR profile not found. Contact HR to open your employment file.' };
@@ -7573,14 +7587,15 @@ export function submitMyHrStaffProfile(db, userId) {
   const now = nowIso();
   db.prepare(
     `UPDATE hr_staff_profiles SET profile_submitted_at_iso = ?, profile_locked = 1, updated_at_iso = ?, updated_by_user_id = ? WHERE user_id = ?`
-  ).run(now, now, uid, uid);
+  ).run(now, now, actorUserId, uid);
 
+  const onBehalf = actorUserId !== uid;
   appendHrAuditEvent(db, {
-    actorUserId: uid,
-    action: 'hr.profile.submitted',
+    actorUserId,
+    action: onBehalf ? 'hr.profile.submit_on_behalf' : 'hr.profile.submitted',
     entityKind: 'hr_staff_profile',
     entityId: uid,
-    details: { profileSubmittedAtIso: now },
+    details: onBehalf ? { profileSubmittedAtIso: now, subjectUserId: uid } : { profileSubmittedAtIso: now },
   });
 
   return { ok: true, profileSubmittedAtIso: now, displayName: sync.displayName };
@@ -7634,10 +7649,12 @@ export function unlockHrStaffProfile(db, actorUserId, targetUserId, reason = '')
 }
 
 /** Employee self-service: update personal, NOK, and qualification fields only (bank via profile_change request). */
-export function updateMyHrStaffProfile(db, userId, body) {
+export function updateMyHrStaffProfile(db, userId, body, opts = {}) {
   if (!hrTablesReady(db)) return { ok: false, error: 'HR module not initialised.' };
   const uid = String(userId || '').trim();
   if (!uid) return { ok: false, error: 'Not authenticated.' };
+  const actorUserId = String(opts.actorUserId || uid).trim() || uid;
+  const action = String(opts.action || 'hr.profile.self_service_update').trim() || 'hr.profile.self_service_update';
 
   const existing = db.prepare(`SELECT user_id, profile_locked FROM hr_staff_profiles WHERE user_id = ?`).get(uid);
   if (!existing) {
@@ -7652,49 +7669,15 @@ export function updateMyHrStaffProfile(db, userId, body) {
   }
 
   const patch = { userId: uid };
-  const allowed = [
-    'ninNumber',
-    'bvnNumber',
-    'firstName',
-    'middleName',
-    'surname',
-    'phone',
-    'personalEmail',
-    'maritalStatus',
-    'residentialAddress',
-    'stateOfOrigin',
-    'localGovernment',
-    'nationality',
-    'bloodGroup',
-    'gender',
-    'dateOfBirthIso',
-    'minimumQualification',
-    'academicQualification',
-    'professionalCertificates',
-    'institution',
-    'courseField',
-    'yearCompleted',
-    'nextOfKin',
-    'nextOfKinName',
-    'nextOfKinPhone',
-    'nextOfKinRelationship',
-    'nextOfKinAddress',
-    'nextOfKinAltPhone',
-  ];
-  for (const key of allowed) {
+  for (const key of HR_SELF_SERVICE_PROFILE_FIELDS) {
     if (body && Object.prototype.hasOwnProperty.call(body, key)) {
       patch[key] = body[key];
     }
   }
   if (patch.nextOfKin === undefined) {
-    const nokKeys = [
-      'nextOfKinName',
-      'nextOfKinPhone',
-      'nextOfKinRelationship',
-      'nextOfKinAddress',
-      'nextOfKinAltPhone',
-    ];
-    const hasNokField = nokKeys.some((k) => Object.prototype.hasOwnProperty.call(body || {}, k));
+    const hasNokField = HR_NEXT_OF_KIN_FLAT_FIELDS.some((k) =>
+      Object.prototype.hasOwnProperty.call(body || {}, k)
+    );
     if (hasNokField) {
       const name = String(body.nextOfKinName ?? '').trim();
       const phone = String(body.nextOfKinPhone ?? '').trim();
@@ -7710,28 +7693,25 @@ export function updateMyHrStaffProfile(db, userId, body) {
           : null;
     }
   }
-  for (const k of [
-    'nextOfKinName',
-    'nextOfKinPhone',
-    'nextOfKinRelationship',
-    'nextOfKinAddress',
-    'nextOfKinAltPhone',
-  ]) {
+  for (const k of HR_NEXT_OF_KIN_FLAT_FIELDS) {
     delete patch[k];
   }
   if (Object.keys(patch).length <= 1) {
     return { ok: false, error: 'No profile fields to update.' };
   }
 
-  const r = upsertHrStaffProfile(db, uid, patch);
+  const r = upsertHrStaffProfile(db, actorUserId, patch);
   if (r.ok) {
     syncLegalDisplayNameFromProfile(db, uid);
     appendHrAuditEvent(db, {
-      actorUserId: uid,
-      action: 'hr.profile.self_service_update',
+      actorUserId,
+      action,
       entityKind: 'hr_staff_profile',
       entityId: uid,
-      details: { fields: Object.keys(patch).filter((k) => k !== 'userId') },
+      details: {
+        fields: Object.keys(patch).filter((k) => k !== 'userId'),
+        ...(actorUserId !== uid ? { subjectUserId: uid } : {}),
+      },
     });
   }
   return r;

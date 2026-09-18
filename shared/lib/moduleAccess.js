@@ -65,6 +65,7 @@ export const MODULE_ACCESS_POLICY = {
   ],
   team_hr: [
     'hr.team.view',
+    'hr.team.assist',
     'hr.attendance.mark',
     'hr.daily_roll.mark',
     'hr.leave.endorse',

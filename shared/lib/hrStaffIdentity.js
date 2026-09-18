@@ -1,6 +1,6 @@
 /**
  * Staff identity keys for duplicate detection.
- * NIN, phone, email, BVN, bank account, and employee ID must be unique.
+ * NIN, phone, email, bank account, and employee ID must be unique.
  * Similar names are suspicion only — people can share a name.
  */
 
@@ -28,7 +28,6 @@ export const STAFF_IDENTITY_FIELDS = [
   { key: 'nin', label: 'NIN' },
   { key: 'phone', label: 'phone number' },
   { key: 'email', label: 'email address' },
-  { key: 'bvn', label: 'BVN' },
   { key: 'account', label: 'account number' },
   { key: 'employeeNo', label: 'employee ID' },
 ];
@@ -49,11 +48,6 @@ export function normalizeStaffEmailKey(raw) {
 }
 
 export function normalizeStaffNinKey(raw) {
-  const d = digitsOnly(raw);
-  return d.length === 11 ? d : '';
-}
-
-export function normalizeStaffBvnKey(raw) {
   const d = digitsOnly(raw);
   return d.length === 11 ? d : '';
 }

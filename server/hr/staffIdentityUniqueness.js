@@ -1,5 +1,5 @@
 /**
- * Unique staff identity: NIN, phone, email, BVN, account number, employee ID.
+ * Unique staff identity: NIN, phone, email, account number, employee ID.
  * Similar names are returned as warnings only.
  * @module server/hr/staffIdentityUniqueness
  */
@@ -10,7 +10,6 @@ import {
   identityConflictMessage,
   namesLookSuspicious,
   normalizeStaffAccountKey,
-  normalizeStaffBvnKey,
   normalizeStaffEmailKey,
   normalizeStaffEmployeeNoKey,
   normalizeStaffNinKey,
@@ -48,7 +47,7 @@ export function listStaffIdentityRows(db) {
     rows = db
       .prepare(
         `SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.status, u.role_key AS roleKey,
-                p.employee_no AS employeeNo, p.nin_number AS ninNumber, p.bvn_number AS bvnNumber,
+                p.employee_no AS employeeNo, p.nin_number AS ninNumber,
                 p.bank_account_no AS bankAccountNo, p.profile_extra_json AS profileExtraJson,
                 p.job_title AS jobTitle, p.date_joined_iso AS dateJoinedIso, p.base_salary_ngn AS baseSalaryNgn,
                 p.department AS department
@@ -83,7 +82,6 @@ export function listStaffIdentityRows(db) {
       department: r.department,
       keys: {
         nin: normalizeStaffNinKey(r.ninNumber),
-        bvn: normalizeStaffBvnKey(r.bvnNumber),
         phone: normalizeStaffPhoneKey(personal.phone),
         email: normalizeStaffEmailKey(personal.email || r.email),
         account: normalizeStaffAccountKey(account),
@@ -121,20 +119,18 @@ function groupsFromMap(map, field) {
 }
 
 /**
- * Existing staff who already share NIN / phone / email / BVN / account / employee ID.
+ * Existing staff who already share NIN / phone / email / account / employee ID.
  * @param {import('better-sqlite3').Database} db
  */
 export function scanStaffIdentityDuplicates(db) {
   const rows = listStaffIdentityRows(db);
   const byNin = new Map();
-  const byBvn = new Map();
   const byPhone = new Map();
   const byEmail = new Map();
   const byAccount = new Map();
   const byEmp = new Map();
   for (const row of rows) {
     pushGroup(byNin, row.keys.nin, row);
-    pushGroup(byBvn, row.keys.bvn, row);
     pushGroup(byPhone, row.keys.phone, row);
     pushGroup(byEmail, row.keys.email, row);
     pushGroup(byAccount, row.keys.account, row);
@@ -143,7 +139,6 @@ export function scanStaffIdentityDuplicates(db) {
 
   const identityGroups = [
     ...groupsFromMap(byNin, 'nin'),
-    ...groupsFromMap(byBvn, 'bvn'),
     ...groupsFromMap(byPhone, 'phone'),
     ...groupsFromMap(byEmail, 'email'),
     ...groupsFromMap(byAccount, 'account'),
@@ -208,7 +203,6 @@ export function scanStaffIdentityDuplicates(db) {
  * @param {{
  *   userId: string;
  *   ninNumber?: string | null;
- *   bvnNumber?: string | null;
  *   phone?: string | null;
  *   email?: string | null;
  *   bankAccountNo?: string | null;
@@ -222,7 +216,6 @@ export function assertStaffIdentityUnique(db, fields = {}) {
 
   const checks = [
     { field: 'nin', label: 'NIN', key: normalizeStaffNinKey(fields.ninNumber) },
-    { field: 'bvn', label: 'BVN', key: normalizeStaffBvnKey(fields.bvnNumber) },
     { field: 'phone', label: 'phone number', key: normalizeStaffPhoneKey(fields.phone) },
     { field: 'email', label: 'email address', key: normalizeStaffEmailKey(fields.email) },
     { field: 'account', label: 'account number', key: normalizeStaffAccountKey(fields.bankAccountNo) },

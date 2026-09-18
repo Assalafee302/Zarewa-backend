@@ -40,6 +40,7 @@ describe('moduleAccess', () => {
     expect(canAccessModuleWithPermissions(['hr.payroll.md_approve'], 'hr')).toBe(false);
     expect(canAccessModuleWithPermissions(['hr.executive.view'], 'executive_hr')).toBe(true);
     expect(canAccessModuleWithPermissions(['hr.team.view'], 'team_hr')).toBe(true);
+    expect(canAccessModuleWithPermissions(['hr.team.assist'], 'team_hr')).toBe(true);
     expect(canAccessModuleWithPermissions(['hr.self'], 'my_profile_hr')).toBe(true);
     expect(canAccessModuleWithPermissions(['hr.directory.view'], 'my_profile_hr')).toBe(true);
     expect(canAccessModuleWithPermissions(['hr.team.view'], 'my_profile_hr')).toBe(true);

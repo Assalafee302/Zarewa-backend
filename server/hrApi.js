@@ -15,7 +15,6 @@ import {
   computePayrollRun,
   createHrRequest,
   createPayrollRun,
-  deleteHrRequestDraft,
   exportPayrollGlJournalTemplateCsv,
   exportPayrollPayslipsCsv,
   exportPayrollPayslipsPdf,
@@ -116,7 +115,6 @@ import {
   ensureHrStaffProfilesForUnlinkedUsers,
   registerNewStaffWithProfile,
   salaryWelfareSnapshot,
-  submitHrRequest,
   uploadHrAttendance,
   upsertHrBranchPayrollContribution,
   upsertHrDailyRollCall,
@@ -446,7 +444,16 @@ import {
   userCanPreparePayroll,
   userCanReviewHrRequests,
   userCanViewOrgSensitiveHr,
+  userCanAssistTeamHr,
 } from './hrPermissions.js';
+import {
+  createHrRequestForStaff,
+  deleteHrRequestDraftForStaff,
+  submitHrRequestForStaff,
+  submitTeamStaffProfile,
+  teamHrAssistCapabilities,
+  updateTeamStaffProfile,
+} from './hr/teamAssistOps.js';
 import {
   hrRedactionContextFromReq,
   redactHrRequest,
@@ -1480,18 +1487,42 @@ export function registerHrApi(app, db) {
     }
   });
 
-  app.patch('/api/hr/staff/:userId', requireHrAny('hr.staff.manage'), (req, res) => {
+  app.patch('/api/hr/staff/:userId', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       const userId = String(req.params.userId || '').trim();
       if (!staffScopeGate(req, res, userId)) return;
-      const body = { ...(req.body || {}), userId };
-      const r = upsertHrStaffProfile(db, req.user?.id, body);
-      if (!r.ok) return res.status(400).json(r);
+      const scope = hrListScope(req);
+      let r;
+      if (hrUserHas(req.user, 'hr.staff.manage')) {
+        const body = { ...(req.body || {}), userId };
+        r = upsertHrStaffProfile(db, req.user?.id, body);
+      } else if (userCanAssistTeamHr(req.user)) {
+        r = updateTeamStaffProfile(db, req.user, userId, req.body || {}, scope);
+      } else {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      if (!r.ok) return res.status(r.status || 400).json(r);
       const ctx = hrRedactionContextFromReq(req, { subjectUserId: req.params.userId });
       return res.json({ ok: true, profile: redactStaffProfile(r.profile, ctx) });
     } catch (e) {
             return hrApiFail(res, e, 'Could not update staff profile.');
+    }
+  });
+
+  app.post('/api/hr/staff/:userId/profile/submit', (req, res) => {
+    try {
+      if (!hrReady(res, db)) return;
+      if (!userCanAssistTeamHr(req.user)) {
+        return res.status(403).json({ ok: false, error: 'Permission denied.' });
+      }
+      const userId = String(req.params.userId || '').trim();
+      if (!staffScopeGate(req, res, userId)) return;
+      const r = submitTeamStaffProfile(db, req.user, userId, hrListScope(req));
+      if (!r.ok) return res.status(r.status || 400).json(r);
+      return res.json(r);
+    } catch (e) {
+            return hrApiFail(res, e, 'Could not submit staff profile.');
     }
   });
 
@@ -2069,7 +2100,7 @@ export function registerHrApi(app, db) {
   function canEditStaffFile(req, userId) {
     const uid = String(userId || '').trim();
     if (uid === req.user?.id) return userCanAccessMyProfileHr(req.user);
-    return hrUserHas(req.user, 'hr.staff.manage');
+    return hrUserHas(req.user, 'hr.staff.manage') || userCanAssistTeamHr(req.user);
   }
 
   app.get('/api/hr/staff/:userId/documents', (req, res) => {
@@ -2316,6 +2347,16 @@ export function registerHrApi(app, db) {
         if (!hrUserHas(req.user, 'hr.staff.manage') && !hrUserHas(req.user, 'hr.directory.view')) {
           return res.status(403).json({ ok: false, error: 'Permission denied.' });
         }
+      } else if (scopeParam === 'team') {
+        if (!userCanAccessTeamHr(req.user) && !hrUserHas(req.user, 'hr.staff.manage')) {
+          return res.status(403).json({ ok: false, error: 'Permission denied.' });
+        }
+        const teamStaff = listHrStaff(
+          db,
+          { ...scope, scopeMode: resolveHrScopeMode(req.user, 'team') },
+          { includeInactive: true }
+        );
+        filter.userIds = teamStaff.map((s) => s.userId);
       } else {
         return res.status(400).json({ ok: false, error: 'Invalid scope.' });
       }
@@ -2341,8 +2382,14 @@ export function registerHrApi(app, db) {
       if (!hrReady(res, db)) return;
       const forUserId = String(req.body?.userId || req.user?.id || '').trim();
       const isSelf = forUserId === req.user?.id;
-      if (!isSelf && !hrUserHas(req.user, 'hr.staff.manage')) {
-        return res.status(403).json({ ok: false, error: 'You can only create requests for yourself.' });
+      if (!isSelf) {
+        if (hrUserHas(req.user, 'hr.staff.manage')) {
+          /* org HR may file for any in-scope staff */
+        } else if (userCanAssistTeamHr(req.user)) {
+          if (!staffScopeGate(req, res, forUserId)) return;
+        } else {
+          return res.status(403).json({ ok: false, error: 'You can only create requests for yourself.' });
+        }
       }
       if (String(req.body?.kind) === 'loan' && isSelf) {
         const check = validateStaffLoanApplication(db, forUserId, {
@@ -2351,8 +2398,10 @@ export function registerHrApi(app, db) {
         });
         if (!check.ok) return res.status(400).json(check);
       }
-      const r = createHrRequest(db, forUserId, req.body || {});
-      if (!r.ok) return res.status(400).json(r);
+      const r = isSelf
+        ? createHrRequest(db, forUserId, req.body || {}, req.user)
+        : createHrRequestForStaff(db, req.user, forUserId, req.body || {}, hrListScope(req));
+      if (!r.ok) return res.status(r.status || 400).json(r);
       return res.status(201).json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Could not create HR request.');
@@ -2362,8 +2411,8 @@ export function registerHrApi(app, db) {
   app.patch('/api/hr/requests/:requestId/submit', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const r = submitHrRequest(db, req.params.requestId, req.user);
-      if (!r.ok) return res.status(400).json(r);
+      const r = submitHrRequestForStaff(db, req.params.requestId, req.user, hrListScope(req));
+      if (!r.ok) return res.status(r.status || 400).json(r);
       return res.json(r);
     } catch (e) {
             return hrApiFail(res, e, 'Could not submit request.');
@@ -2423,7 +2472,7 @@ export function registerHrApi(app, db) {
   app.delete('/api/hr/requests/:requestId', (req, res) => {
     try {
       if (!hrReady(res, db)) return;
-      const r = deleteHrRequestDraft(db, req.params.requestId, req.user?.id);
+      const r = deleteHrRequestDraftForStaff(db, req.params.requestId, req.user, hrListScope(req));
       if (!r.ok) return res.status(400).json(r);
       return res.json(r);
     } catch (e) {
@@ -3927,6 +3976,7 @@ export function registerHrApi(app, db) {
         openIncidents,
         onProbation,
         documentsExpiring,
+        capabilities: teamHrAssistCapabilities(req.user),
       });
     } catch (e) {
             return hrApiFail(res, e, 'Could not load team summary.');

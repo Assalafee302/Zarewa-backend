@@ -13,6 +13,7 @@ import {
   userCanViewOrgSensitiveHr,
   userCanViewScholarshipDomesticRegisters,
   userCanViewStaffCompensation,
+  userCanAssistTeamHr,
 } from './hrPermissions.js';
 
 describe('hrPermissions', () => {
@@ -35,6 +36,20 @@ describe('hrPermissions', () => {
   it('branch manager cannot access full HR module or org-sensitive pay', () => {
     expect(userCanAccessHrModule(branchManager)).toBe(false);
     expect(userCanViewOrgSensitiveHr(branchManager)).toBe(false);
+  });
+
+  it('branch manager role includes team assist without unlocking main HR', () => {
+    const bm = {
+      id: 'USR-BM-ROLE',
+      roleKey: 'sales_manager',
+      permissions: permissionsForRole('sales_manager'),
+    };
+    expect(userCanAssistTeamHr(bm)).toBe(true);
+    expect(userCanAccessHrModule(bm)).toBe(false);
+    expect(userCanViewOrgSensitiveHr(bm)).toBe(false);
+    expect(hrApiPathAllowedWithoutMainWorkspace('/api/hr/staff/USR-SS/profile/submit', { teamUser: true })).toBe(
+      true
+    );
   });
 
   it('HR admin can access module and sensitive compensation', () => {

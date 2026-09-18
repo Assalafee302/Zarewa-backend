@@ -254,6 +254,11 @@ export const HR_EXECUTIVE_SCHOLARSHIP_DOMESTIC_API_PATTERNS = [
   /^\/beneficiaries$/,
 ];
 
+/** Branch manager / supervisor may fill personal fields and file requests for scoped staff. */
+export function userCanAssistTeamHr(user) {
+  return hrUserHas(user, 'hr.team.assist') || hrUserHas(user, 'hr.staff.manage');
+}
+
 /** Additional paths branch managers / team HR may call without main HR workspace. */
 export const HR_TEAM_API_PATTERNS = [
   /^\/api\/hr\/staff$/,
@@ -284,6 +289,8 @@ export const HR_TEAM_API_PATTERNS = [
   /^\/discipline-cases(\/|$)/,
   /^\/api\/hr\/recruiting\/jobs$/,
   /^\/recruiting\/jobs$/,
+  /^\/api\/hr\/staff\/[^/]+\/profile\/submit$/,
+  /^\/staff\/[^/]+\/profile\/submit$/,
 ];
 
 /**
@@ -372,6 +379,7 @@ export function userCanAccessScholarshipDomesticExecutive(user) {
 export function userCanAccessTeamHr(user) {
   return (
     hrUserHas(user, 'hr.team.view') ||
+    hrUserHas(user, 'hr.team.assist') ||
     hrUserHas(user, 'hr.leave.endorse') ||
     hrUserHas(user, 'hr.attendance.mark') ||
     hrUserHas(user, 'hr.branch.endorse_staff')

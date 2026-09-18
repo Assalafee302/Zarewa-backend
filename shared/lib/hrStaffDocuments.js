@@ -19,7 +19,7 @@ export const HR_STAFF_DOC_KINDS = [
 
 export const HR_REQUIRED_DOC_KINDS = HR_STAFF_DOC_KINDS.map((d) => d.value);
 
-export const HR_STAFF_IDENTITY_FIELDS = ['ninNumber', 'bvnNumber', 'nextOfKin'];
+export const HR_STAFF_IDENTITY_FIELDS = ['ninNumber', 'nextOfKin'];
 
 /** @param {string} kind */
 export function hrStaffDocKindLabel(kind) {
@@ -29,7 +29,6 @@ export function hrStaffDocKindLabel(kind) {
 /**
  * @param {{
  *   ninNumber?: string | null;
- *   bvnNumber?: string | null;
  *   nextOfKin?: { name?: string; phone?: string; relationship?: string; address?: string } | null;
  *   avatarUrl?: string | null;
  *   uploadedDocKinds?: string[];
@@ -43,12 +42,6 @@ export function buildHrStaffOnboardingChecklist(input = {}) {
   if (!nin || nin.length < 11) {
     missing.push('ninNumber');
     missingLabels.push('NIN number');
-  }
-
-  const bvn = String(input.bvnNumber || '').trim();
-  if (!bvn || bvn.length < 11) {
-    missing.push('bvnNumber');
-    missingLabels.push('BVN number');
   }
 
   const nok = input.nextOfKin && typeof input.nextOfKin === 'object' ? input.nextOfKin : null;

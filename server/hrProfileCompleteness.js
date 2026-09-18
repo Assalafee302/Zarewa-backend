@@ -67,7 +67,6 @@ export function computeProfileCompleteness(staff, ctx = {}) {
         Boolean(staff.email || personal.email),
         Boolean(personal.phone || personal.mobilePhone),
         Boolean(staff.ninNumber),
-        Boolean(staff.bvnNumber),
       ],
     },
     {
@@ -152,7 +151,6 @@ export function computeProfileCompleteness(staff, ctx = {}) {
     missingCritical.push('core_employment');
   }
   if (!staff.ninNumber) missingCritical.push('nin');
-  if (!staff.bvnNumber) missingCritical.push('bvn');
   if (!staff.nextOfKin?.name) missingCritical.push('next_of_kin');
   if (sections.find((s) => s.id === 'documents')?.pct < 100) missingCritical.push('documents');
 

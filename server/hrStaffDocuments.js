@@ -254,7 +254,6 @@ export function enrichStaffWithOnboarding(db, staff, avatarUrl = null) {
   const uploadedDocKinds = [...new Set(metas.map((m) => m.docKind))];
   const checklist = buildHrStaffOnboardingChecklist({
     ninNumber: staff.ninNumber,
-    bvnNumber: staff.bvnNumber,
     nextOfKin: staff.nextOfKin,
     avatarUrl: avatarUrl ?? staff.avatarUrl,
     uploadedDocKinds,

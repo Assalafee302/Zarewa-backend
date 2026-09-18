@@ -5359,7 +5359,7 @@ function migrateHrLifecycleAndNotificationsSchema(db) {
   `);
 }
 
-/** Staff onboarding documents + NIN (Phase 7). */
+/** Staff onboarding documents + NIN (Phase 7). BVN is not stored. */
 function migrateHrStaffDocumentsSchema(db) {
   const tableCols = (name) => {
     try {
@@ -5373,9 +5373,7 @@ function migrateHrStaffDocumentsSchema(db) {
   if (hr.size && !hr.has('nin_number')) {
     db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN nin_number TEXT`);
   }
-  if (hr.size && !hr.has('bvn_number')) {
-    db.exec(`ALTER TABLE hr_staff_profiles ADD COLUMN bvn_number TEXT`);
-  }
+  retireHrStaffBvnColumn(db, hr);
   db.exec(`
     CREATE TABLE IF NOT EXISTS hr_staff_documents (
       id TEXT PRIMARY KEY,
@@ -5390,6 +5388,33 @@ function migrateHrStaffDocumentsSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_hr_staff_docs_user ON hr_staff_documents(user_id, doc_kind);
   `);
+}
+
+/** Wipe and drop BVN — too sensitive to keep on the staff file. */
+function retireHrStaffBvnColumn(db, hrCols) {
+  const hr = hrCols && hrCols.size ? hrCols : null;
+  let hasBvn = false;
+  if (hr) {
+    hasBvn = hr.has('bvn_number');
+  } else {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(hr_staff_profiles)`).all();
+      hasBvn = rows.some((c) => c.name === 'bvn_number');
+    } catch {
+      hasBvn = false;
+    }
+  }
+  if (!hasBvn) return;
+  try {
+    db.exec(`UPDATE hr_staff_profiles SET bvn_number = NULL WHERE bvn_number IS NOT NULL`);
+  } catch {
+    /* ignore */
+  }
+  try {
+    db.exec(`ALTER TABLE hr_staff_profiles DROP COLUMN bvn_number`);
+  } catch {
+    /* SQLite < 3.35 or locked column — values already cleared */
+  }
 }
 
 /** Benefits, incident memos, transfer recommendations (Phase 6–7). */

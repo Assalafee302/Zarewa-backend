@@ -31,11 +31,6 @@ export function validateEmployeeProfileSubmit(staff) {
       label: 'NIN (11 digits)',
       ok: /^\d{11}$/.test(String(staff.ninNumber || '').replace(/\D/g, '')),
     },
-    {
-      id: 'bvnNumber',
-      label: 'BVN (11 digits)',
-      ok: /^\d{11}$/.test(String(staff.bvnNumber || '').replace(/\D/g, '')),
-    },
     { id: 'residentialAddress', label: 'Residential address', ok: Boolean(String(personal.residentialAddress || '').trim()) },
     { id: 'nextOfKinName', label: 'Next of kin name', ok: Boolean(String(nok.name || '').trim()) },
     { id: 'nextOfKinPhone', label: 'Next of kin phone', ok: Boolean(String(nok.phone || '').trim()) },

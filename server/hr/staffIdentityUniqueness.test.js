@@ -44,10 +44,9 @@ describe('staff identity uniqueness', () => {
     );
   }
 
-  it('rejects a second staff with the same NIN, phone, email, BVN, or account', () => {
+  it('rejects a second staff with the same NIN, phone, email, or account', () => {
     const first = register('801', {
       ninNumber: '12345678901',
-      bvnNumber: '22233344455',
       phone: '08031234567',
       personalEmail: 'ada@zarewa.ng',
       bankAccountNo: '0123456789',
@@ -66,10 +65,6 @@ describe('staff identity uniqueness', () => {
     const email = register('804', { personalEmail: 'Ada@Zarewa.ng' });
     expect(email.ok).toBe(false);
     expect(email.field).toBe('email');
-
-    const bvn = register('805', { bvnNumber: '22233344455' });
-    expect(bvn.ok).toBe(false);
-    expect(bvn.field).toBe('bvn');
 
     const acct = register('806', { bankAccountNo: '0123456789' });
     expect(acct.ok).toBe(false);

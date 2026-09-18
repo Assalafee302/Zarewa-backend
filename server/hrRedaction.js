@@ -26,7 +26,7 @@ const STAFF_SENSITIVE_KEYS = [
   'trainingSummary',
 ];
 
-const IDENTITY_KEYS = ['ninNumber', 'bvnNumber'];
+const IDENTITY_KEYS = ['ninNumber'];
 
 const PAYROLL_LINE_SENSITIVE = [
   'grossNgn',
@@ -100,7 +100,10 @@ export function hrRedactionContextFromReq(req, opts = {}) {
     sensitiveUnlocked: Boolean(opts.sensitiveUnlocked ?? req?.hrSensitiveUnlocked),
   });
   const canViewIdentity =
-    isSelf || userCanViewOrgSensitiveHr(user) || hrUserHas(user, 'hr.staff.manage');
+    isSelf ||
+    userCanViewOrgSensitiveHr(user) ||
+    hrUserHas(user, 'hr.staff.manage') ||
+    hrUserHas(user, 'hr.team.assist');
   const canViewHrNotes = userCanViewOrgSensitiveHr(user) || hrUserHas(user, 'hr.staff.manage');
   const canViewDiscipline =
     isSelf ||

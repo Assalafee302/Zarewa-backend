@@ -146,7 +146,7 @@ import {
   mergeRefundCategoryCapsNgn,
 } from '../shared/lib/refundCategoryDerivedCaps.js';
 import { refundCuttingListQuotationMetreIssues } from './cuttingListQuotationConsumptionOps.js';
-import { buildUnproducedMetresRefundLine, validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
+import { buildUnproducedMetresRefundLine, validateMdDiscountPerMetreLines, validateRefundCalculationLineArithmetic } from '../shared/lib/refundLineArithmetic.js';
 import { refundPaymentIntegrityIssues } from './customerPaymentIntegrityOps.js';
 import {
   emptyQuotationPaymentCashBreakdown,
@@ -221,6 +221,10 @@ function refundPayeeSettledNgnForCancel(db, row) {
 
 function roundMoney(value) {
   return Math.round(Number(value) || 0);
+}
+
+function roundMetres(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 function refundLineAmountNgnFromPayload(line) {
@@ -1553,8 +1557,9 @@ function ppmValueFromWorkbookLookup(lookup) {
  * Minimum economic value delivered at workbook floor ₦/m — sanity check for refund requests.
  * When any completed job has metres but no resolvable ₦/m, `incompleteFloorPricing` is true and
  * `maxDefensibleRefundNgn` is null (missing ppm must not inflate the free-cash cap).
- * When MD already approved a below-floor price on the quotation, produced metres are valued at
- * min(workbook floor, quoted selling ₦/m) so the approved deal economics are not re-blocked on refund.
+ * Produced metres are valued at min(workbook floor, quoted selling ₦/m) so a quote sold at (or
+ * below) workbook is not re-blocked on unproduced-metre refunds. MD below-floor approval still
+ * sets `honouredMdPriceException` for audit; the cap applies even when that stamp is missing.
  * @returns {{
  *   producedOutputMeters: number,
  *   floorDeliveredValueNgn: number,
@@ -1564,6 +1569,7 @@ function ppmValueFromWorkbookLookup(lookup) {
  *   incompleteFloorPricing: boolean,
  *   usedPriceListFallback: boolean,
  *   honouredMdPriceException: boolean,
+ *   usedQuotedSellingCap: boolean,
  *   quotedSellingPpmNgn: number | null,
  *   ppmSourceByJob: Record<string, string>,
  *   jobRows: { jobId: string, outputMeters: number, floorPpmNgn: number | null, floorValueNgn: number, ppmSource: string | null }[],
@@ -1595,6 +1601,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   let incompleteFloorPricing = false;
   let usedPriceListFallback = false;
   let honouredMdPriceException = false;
+  let usedQuotedSellingCap = false;
 
   for (const j of productionJobs || []) {
     const st = String(j?.status ?? '').trim().toLowerCase();
@@ -1652,14 +1659,18 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
         ppmSource = 'quoted_selling_fallback';
       }
       if (
-        mdPriceExceptionHonoured &&
         quotedSellingPpmNgn != null &&
         floorPpmNgn != null &&
         quotedSellingPpmNgn < floorPpmNgn
       ) {
         floorPpmNgn = quotedSellingPpmNgn;
-        ppmSource = 'md_approved_quoted_selling';
-        honouredMdPriceException = true;
+        if (mdPriceExceptionHonoured) {
+          ppmSource = 'md_approved_quoted_selling';
+          honouredMdPriceException = true;
+        } else {
+          ppmSource = 'quoted_selling_cap';
+          usedQuotedSellingCap = true;
+        }
       }
       if (ppmSource === 'price_list') usedPriceListFallback = true;
       if (floorPpmNgn == null) jobIncomplete = true;
@@ -1668,7 +1679,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
       if (jobFloorPpmNgn == null && floorPpmNgn != null) jobFloorPpmNgn = floorPpmNgn;
       if (!jobPpmSource && ppmSource) jobPpmSource = ppmSource;
       sliceRows.push({
-        meters: roundMoney(sliceM),
+        meters: roundMetres(sliceM),
         coilGaugeLabel: slice.coilGaugeLabel,
         floorPpmNgn,
         floorValueNgn,
@@ -1681,7 +1692,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     floorDeliveredValueNgn += jobFloorValueNgn;
     jobRows.push({
       jobId,
-      outputMeters: roundMoney(outputM),
+      outputMeters: roundMetres(outputM),
       floorPpmNgn: gaugeGroups.length > 1 ? null : jobFloorPpmNgn,
       floorValueNgn: roundMoney(jobFloorValueNgn),
       ppmSource: jobPpmSource,
@@ -1694,7 +1705,9 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
   const maxDefensibleRefundNgn = incompleteFloorPricing
     ? null
     : Math.max(0, roundMoney(cashInNgn - floorDeliveredValueNgn - priorRefundedNgn));
-  const producedOutputMeters = roundMoney(jobRows.reduce((s, r) => s + (Number(r.outputMeters) || 0), 0));
+  const producedOutputMeters = roundMetres(
+    jobRows.reduce((s, r) => s + (Number(r.outputMeters) || 0), 0)
+  );
 
   return {
     producedOutputMeters,
@@ -1705,6 +1718,7 @@ export function buildRefundEconomicFloorSummary(db, quote, productionJobs, opts 
     incompleteFloorPricing,
     usedPriceListFallback,
     honouredMdPriceException,
+    usedQuotedSellingCap,
     quotedSellingPpmNgn,
     ppmSourceByJob,
     jobRows,
@@ -3304,7 +3318,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         if (mdNote.length < MIN_MD_DISCOUNT_REASON_LEN) {
           return {
             ok: false,
-            error: `MD discount requires a note (min ${MIN_MD_DISCOUNT_REASON_LEN} characters) explaining the requested amount for MD/CEO approval.`,
+            error: `MD discount requires a note (min ${MIN_MD_DISCOUNT_REASON_LEN} characters) explaining the ₦ per metre for MD/CEO approval.`,
           };
         }
         const completedProd = db
@@ -3347,6 +3361,15 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         quotationRef,
         includeCustomerCommission: requestedCats.includes('Customer commission'),
       });
+      if (mdDiscountRefundSum > 0 || requestedCats.includes('MD discount')) {
+        const mdMetres = Number(previewForCaps.preview?.quotedMeters) || 0;
+        const mdPerM = validateMdDiscountPerMetreLines(
+          calcLinesRaw,
+          mdMetres,
+          REFUND_AMOUNT_LINE_TOLERANCE_NGN
+        );
+        if (!mdPerM.ok) return mdPerM;
+      }
       const economicFloorAtCreate = previewForCaps.ok ? previewForCaps.preview?.economicFloor ?? null : null;
       const producedAtCreate = Number(economicFloorAtCreate?.producedOutputMeters || 0);
       const mayBypassFloor = actorMayBypassIncompleteRefundFloor(actor, (p) => userHasPermission(actor, p));
@@ -5230,6 +5253,10 @@ export function previewRefundRequest(db, payload) {
       warnings.push(
         'Economic floor uses MD-approved quoted selling ₦/m (below workbook minimum) — refund headroom matches the approved deal price.'
       );
+    } else if (economicFloor.usedQuotedSellingCap) {
+      warnings.push(
+        'Economic floor uses quoted selling ₦/m where it is below workbook minimum — refund headroom matches the deal price on this quotation (unproduced metres stay refundable at the sold rate).'
+      );
     }
     if (economicFloor.usedPriceListFallback) {
       warnings.push(
@@ -5250,7 +5277,7 @@ export function previewRefundRequest(db, payload) {
       const gatedSuggested = refundFloorGatedAmountNgn(suggestedForFloor);
       warnings.push(
         `Production-related refund preview ₦${gatedSuggested.toLocaleString('en-NG')} exceeds the economic floor cap ₦${Number(economicFloor.maxDefensibleRefundNgn).toLocaleString('en-NG')} (cash in minus floor value of ${economicFloor.producedOutputMeters.toFixed(2)} m produced at workbook minimum ₦/m, after prior refunds). Overpayment and quoted services are not counted against this cap.${
-          economicFloor.honouredMdPriceException
+          economicFloor.honouredMdPriceException || economicFloor.usedQuotedSellingCap
             ? ''
             : ' If MD already approved below-floor pricing on this quote, confirm the MD price exception is on file; otherwise MD/admin may override at create with a note.'
         }`
@@ -5355,6 +5382,7 @@ export function previewRefundRequest(db, payload) {
       remainingRefundableNgn,
       refundHardCapNgn,
       quotedMeters,
+      mdDiscountMetres: quotedMeters,
       actualMeters,
       coilProducedMeters,
       producedMetersForUnproduced,

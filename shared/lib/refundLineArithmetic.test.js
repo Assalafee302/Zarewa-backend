@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   auditRefundCalculationLineArithmetic,
+  buildMdDiscountRefundLine,
   buildUnproducedMetresRefundLine,
   expectedAmountFromRefundLineLabel,
   formatUnproducedMetresLabel,
+  mdDiscountRefundNgn,
   scaleRefundCalculationLinesToApprovedAmount,
   sumRefundCalculationLines,
+  validateMdDiscountPerMetreLines,
   validateRefundCalculationLineArithmetic,
 } from './refundLineArithmetic.js';
 
@@ -88,5 +91,28 @@ describe('refundLineArithmetic', () => {
         { amount_ngn: 250 },
       ])
     ).toBe(1250);
+  });
+
+  it('MD discount is ₦/m × quoted metres', () => {
+    const line = buildMdDiscountRefundLine(120, 100);
+    expect(line.amountNgn).toBe(12_000);
+    expect(line.label).toBe('MD discount (120m @ ₦100/m)');
+    expect(expectedAmountFromRefundLineLabel(line.label, 'MD discount')).toBe(12_000);
+    expect(mdDiscountRefundNgn(100, 120)).toBe(12_000);
+    const ok = validateMdDiscountPerMetreLines(
+      [{ category: 'MD discount', label: line.label, amountNgn: 12_000, mdDiscountNgnPerM: 100 }],
+      120
+    );
+    expect(ok.ok).toBe(true);
+    const lump = validateMdDiscountPerMetreLines(
+      [{ category: 'MD discount', label: 'MD goodwill', amountNgn: 12_000 }],
+      120
+    );
+    expect(lump.ok).toBe(false);
+    const mismatch = validateMdDiscountPerMetreLines(
+      [{ category: 'MD discount', label: line.label, amountNgn: 50_000, mdDiscountNgnPerM: 100 }],
+      120
+    );
+    expect(mismatch.ok).toBe(false);
   });
 });

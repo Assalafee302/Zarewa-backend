@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CUTTING_LIST_STATUS_CANCELLED,
+  PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL,
   PRODUCTION_JOB_STATUS,
   isActiveProductionQueueStatus,
   isCancelledNotProducedStatus,
@@ -40,5 +41,13 @@ describe('productionJobStatus', () => {
     expect(quotationLineEditBlockedByProductionStatus('Returned')).toBe(false);
     expect(quotationLineEditBlockedByProductionStatus('Completed')).toBe(false);
     expect(isInactiveProductionJobStatus('Returned')).toBe(true);
+  });
+
+  it('treats Returned as off the shop-floor queue so later completed jobs can refund', () => {
+    expect(PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL).toContain('returned');
+    expect(PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL).toContain('cancelled');
+    expect(PRODUCTION_JOB_OFF_QUEUE_STATUSES_SQL).toContain('completed');
+    expect(isActiveProductionQueueStatus('Returned')).toBe(false);
+    expect(isProductionClosedForRefundStatus('Returned')).toBe(false);
   });
 });

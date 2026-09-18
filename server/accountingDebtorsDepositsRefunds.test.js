@@ -95,6 +95,27 @@ describe.skipIf(!mysqlOk)('debtors deposits and refund payables register', () =>
     expect(backlog?.count).toBe(0);
   });
 
+  it('does not treat return-to-waiting as cancelled-not-produced for deposits', () => {
+    insertTestCustomer(db);
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso, branch_id)
+      VALUES ('QT-RET-1', 'CUS-1', 'Test Customer', 500000, 500000, 'Paid', 'Approved', '{}', '2026-05-01', '${DEFAULT_BRANCH_ID}');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso, branch_id,
+        finance_reconciliation_saved_at_iso, bank_received_amount_ngn)
+      VALUES ('SR-RET-1', 'CUS-1', 'Test Customer', 'QT-RET-1', 500000, 'Posted', '2026-05-01', '${DEFAULT_BRANCH_ID}',
+        '2026-05-01T10:00:00.000Z', 500000);
+      INSERT INTO production_jobs (job_id, quotation_ref, status, planned_meters, actual_meters, branch_id, created_at_iso)
+      VALUES ('JOB-RET-1', 'QT-RET-1', 'Returned', 100, 0, '${DEFAULT_BRANCH_ID}', '2026-05-02T10:00:00.000Z');
+    `);
+
+    const reg = buildDebtorsRegister(db, { branchId: DEFAULT_BRANCH_ID });
+    const onLine = reg.sections.find((s) => s.id === 'deposit_on_production_line');
+    const backlog = reg.sections.find((s) => s.id === 'deposit_paid_backlog');
+    expect(onLine?.count).toBe(0);
+    expect(backlog?.count).toBe(1);
+    expect(backlog?.items[0].quotationRef).toBe('QT-RET-1');
+  });
+
   it('lists approved unpaid refunds as refund payables', () => {
     insertTestCustomer(db);
     db.exec(`

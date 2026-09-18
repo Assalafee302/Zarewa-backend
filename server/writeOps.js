@@ -103,11 +103,10 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
   enrich(linesJson.products);
   enrich(linesJson.services);
 }
-import { isCuttingListProductionCompleted, linkedProductionJobForCuttingList } from './cuttingListProductionGate.js';
+import { isCuttingListProductionCompleted, isCuttingListCancelledNotProduced, linkedProductionJobForCuttingList } from './cuttingListProductionGate.js';
 import {
   CUTTING_LIST_STATUS_CANCELLED,
   PRODUCTION_JOB_STATUS,
-  isCancelledNotProducedStatus,
   isInactiveProductionJobStatus,
   quotationLineEditBlockedByProductionStatus,
 } from '../shared/lib/productionJobStatus.js';
@@ -7276,7 +7275,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   }
   const jobGate = linkedProductionJobForCuttingList(db, existing);
   const jobGateStatus = String(jobGate?.status || '').trim();
-  if (String(existing.status || '').trim() === CUTTING_LIST_STATUS_CANCELLED || isCancelledNotProducedStatus(jobGateStatus)) {
+  if (isCuttingListCancelledNotProduced(db, existing)) {
     return {
       ok: false,
       error:
@@ -9943,10 +9942,7 @@ function assertQuotationLineEditAgainstProduction(db, quotationId) {
     )
     .all(qid);
   for (const row of lists) {
-    const clCancelled = String(row.status || '').trim() === CUTTING_LIST_STATUS_CANCELLED;
-    const job = linkedProductionJobForCuttingList(db, row);
-    const jobStatus = job?.status;
-    if (clCancelled || isCancelledNotProducedStatus(jobStatus)) {
+    if (isCuttingListCancelledNotProduced(db, row)) {
       return {
         ok: false,
         code: 'PRODUCTION_CANCELLED_NOT_PRODUCED',
@@ -9954,6 +9950,8 @@ function assertQuotationLineEditAgainstProduction(db, quotationId) {
           'Production was cancelled (not produced) for a customer change of mind. Sales cannot edit this quotation on that path. Raise a refund if the customer should be paid back.',
       };
     }
+    const job = linkedProductionJobForCuttingList(db, row);
+    const jobStatus = job?.status;
     if (Number(row.production_registered) && quotationLineEditBlockedByProductionStatus(jobStatus)) {
       return {
         ok: false,

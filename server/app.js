@@ -6,6 +6,7 @@ import cors from 'cors';
 import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
+import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
 import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
@@ -149,6 +150,7 @@ export function createApp(db) {
 
   registerHttpApi(app, db);
   registerExpenseMemoFilingRoutes(app, db);
+  registerBranchRefundFreezePage(app, db);
   scheduleHelpAnalytics(db);
   scheduleWorkspaceMaintenance(db);
 
@@ -171,6 +173,7 @@ export function createApp(db) {
     app.use((req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api')) return next();
+      if (req.path === '/refund-lock') return next();
       res.sendFile(spaIndex, (err) => (err ? next(err) : undefined));
     });
   }

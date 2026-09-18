@@ -80,6 +80,20 @@ const OPERATIONAL_TOPICS = [
   },
   {
     module: 'sales',
+    action: 'lock historical refunds on a branch',
+    title: 'Lock refunds for a date range (Administrator)',
+    answer:
+      'Administrator opens **Lock refunds**, picks the branch and from/to dates, and saves. Quotations and receipts in that window cannot be refunded — they are treated as already paid.',
+    steps: [
+      'Sign in as Administrator.',
+      'Open **Lock refunds** (`/refund-lock`) — or type Lock refunds in workspace search.',
+      'Choose the branch (e.g. Yola), From date, To date, and a short reason, then **Lock these dates**.',
+    ],
+    links: [{ label: 'Lock refunds', to: '/refund-lock' }],
+    extraKeywords: ['lock refunds', 'block refunds', 'refund freeze', 'historical refund'],
+  },
+  {
+    module: 'sales',
     action: 'understand refund approval rules',
     title: 'Refund approval rules (guide)',
     answer: 'Managers with refunds.approve (or finance.approve) approve in Sales or Manager inbox — Zare only explains who can.',

@@ -349,6 +349,15 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
   },
   {
     kind: 'nav',
+    id: 'nav-refund-lock',
+    label: 'Lock refunds',
+    sublabel: 'Close quotations and receipts in a date window',
+    path: '/refund-lock',
+    keywords: ['refund lock', 'block refunds', 'freeze refunds', 'yola refund', 'historical refund'],
+    roleKeys: ['admin'],
+  },
+  {
+    kind: 'nav',
     id: 'nav-manager',
     label: 'Management',
     sublabel: 'Manager dashboard',

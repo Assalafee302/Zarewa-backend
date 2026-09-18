@@ -729,26 +729,33 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL date.' };
   ensureSupplementalGlAccounts(db);
   const revenueReview = Boolean(payload.needsRevenueReview);
+  const debitCode = String(payload.debitAccountCode || '2500').trim() || '2500';
   const memo = revenueReview
     ? `Customer refund payout ${refundId} [AP1c-4: post-production — revenue/AR review may be required]`
-    : `Customer refund payout ${refundId}`;
-  const result = postBalancedJournalTx(db, {
-    entryDateISO: date,
-    memo,
-    sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
-    sourceId: `${refundId}:paid:${movementIds.join('-')}`,
-    branchId: payload.branchId ?? null,
-    createdByUserId: payload.createdByUserId ?? null,
-    lines: [
-      { accountCode: '2500', debitNgn: amt, memo: refundId },
-      { accountCode: '1000', creditNgn: amt, memo: refundId },
-    ],
-  });
-  if (result.ok && revenueReview) {
-    result.refundPayoutGlWarning =
-      'Post-production refund: payout debits 2500 only; revenue/AR correction is not automated in AP1c-4.';
+    : debitCode === '4000'
+      ? `Customer refund payout ${refundId} (sales concession)`
+      : `Customer refund payout ${refundId}`;
+  try {
+    const result = postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo,
+      sourceKind: 'CUSTOMER_REFUND_PAYOUT_GL',
+      sourceId: `${refundId}:paid:${movementIds.join('-')}`,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: debitCode, debitNgn: amt, memo: refundId },
+        { accountCode: '1000', creditNgn: amt, memo: refundId },
+      ],
+    });
+    if (result.ok && revenueReview) {
+      result.refundPayoutGlWarning =
+        'Post-production refund: payout debits 2500 only; revenue/AR correction is not automated in AP1c-4.';
+    }
+    return result;
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
   }
-  return result;
 }
 
 /**
@@ -759,6 +766,31 @@ export function tryPostCustomerRefundPayoutGlTx(db, payload) {
  * @param {import('better-sqlite3').Database} db
  * @param {{ refundId: string, reversalAmountNgn: number, entryDateISO: string, branchId?: string|null, createdByUserId?: string|null, reversalMovementIds?: Array<string|number> }} payload
  */
+function originalRefundPayoutDebitAccount(db, refundId) {
+  const rid = String(refundId || '').trim();
+  if (!rid) return '2500';
+  try {
+    const row = db
+      .prepare(
+        `SELECT ga.code AS code
+         FROM gl_journal_entries je
+         INNER JOIN gl_journal_lines jl ON jl.journal_id = je.id
+         INNER JOIN gl_accounts ga ON ga.id = jl.account_id
+         WHERE je.source_kind = 'CUSTOMER_REFUND_PAYOUT_GL'
+           AND je.source_id LIKE ?
+           AND jl.debit_ngn > 0
+         ORDER BY je.created_at_iso DESC
+         LIMIT 1`
+      )
+      .get(`${rid}:paid:%`);
+    const code = String(row?.code || '').trim();
+    if (code) return code;
+  } catch {
+    /* GL tables missing */
+  }
+  return '2500';
+}
+
 export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
   const refundId = String(payload.refundId || '').trim();
   const amt = Math.round(Number(payload.reversalAmountNgn) || 0);
@@ -773,18 +805,28 @@ export function tryPostCustomerRefundPayoutReversalGlTx(db, payload) {
   const date = String(payload.entryDateISO || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid refund GL reversal date.' };
   ensureSupplementalGlAccounts(db);
-  return postBalancedJournalTx(db, {
-    entryDateISO: date,
-    memo: `Reverse customer refund payout ${refundId}`,
-    sourceKind: 'CUSTOMER_REFUND_PAYOUT_REVERSAL_GL',
-    sourceId: `${refundId}:full:${movementIds.join('-')}`,
-    branchId: payload.branchId ?? null,
-    createdByUserId: payload.createdByUserId ?? null,
-    lines: [
-      { accountCode: '2500', creditNgn: amt, memo: refundId },
-      { accountCode: '1000', debitNgn: amt, memo: refundId },
-    ],
-  });
+  const creditCode =
+    String(payload.debitAccountCode || originalRefundPayoutDebitAccount(db, refundId) || '2500').trim() ||
+    '2500';
+  try {
+    return postBalancedJournalTx(db, {
+      entryDateISO: date,
+      memo:
+        creditCode === '4000'
+          ? `Reverse customer refund payout ${refundId} (sales concession)`
+          : `Reverse customer refund payout ${refundId}`,
+      sourceKind: 'CUSTOMER_REFUND_PAYOUT_REVERSAL_GL',
+      sourceId: `${refundId}:full:${movementIds.join('-')}`,
+      branchId: payload.branchId ?? null,
+      createdByUserId: payload.createdByUserId ?? null,
+      lines: [
+        { accountCode: creditCode, creditNgn: amt, memo: refundId },
+        { accountCode: '1000', debitNgn: amt, memo: refundId },
+      ],
+    });
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 }
 
 /** Dr Cash (1000), Cr suspense (2150) — when Finance registers an unlinked bank deposit. */

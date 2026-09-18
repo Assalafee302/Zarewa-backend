@@ -34,7 +34,7 @@ function clearLegacyLedgerStorage() {
   }
 }
 
-/** @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'} LedgerEntryType */
+/** @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'REFUND_CONCESSION'} LedgerEntryType */
 
 /**
  * @typedef {{

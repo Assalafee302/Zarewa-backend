@@ -269,10 +269,26 @@ export function withdrawPartnerWallet(db, payload = {}) {
           refundId
         );
 
+        let walletCats = [];
+        try {
+          const raw = JSON.parse(String(fresh.reason_category || '[]'));
+          walletCats = Array.isArray(raw) ? raw : [fresh.reason_category];
+        } catch {
+          walletCats = [fresh.reason_category];
+        }
+        let walletLines = [];
+        try {
+          const parsed = JSON.parse(String(fresh.calculation_lines_json || '[]'));
+          walletLines = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          walletLines = [];
+        }
         const refundGlPolicy = evaluateRefundPayoutGlPolicy(db, {
           quotationRef: fresh.quotation_ref,
           customerId: fresh.customer_id,
           refundId,
+          reasonCategories: walletCats,
+          calculationLines: walletLines,
         });
         const glPay = tryPostCustomerRefundPayoutGlTx(db, {
           refundId,
@@ -282,6 +298,7 @@ export function withdrawPartnerWallet(db, payload = {}) {
           branchId: fresh.branch_id ?? null,
           createdByUserId: actor?.id != null ? String(actor.id) : null,
           needsRevenueReview: refundGlPolicy.needsRevenueReview,
+          debitAccountCode: refundGlPolicy.debitAccountCode,
         });
         if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
           throw new Error(glPay.error || 'Refund payout GL failed.');

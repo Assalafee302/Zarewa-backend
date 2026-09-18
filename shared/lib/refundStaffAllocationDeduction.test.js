@@ -287,6 +287,14 @@ describe('refundStaffAllocationDeduction', () => {
     expect(held.unclearedReceiptHoldNgn).toBe(0);
     expect(held.netPayoutNgn).toBe(80_000);
 
+    const concession = applyRefundStaffAllocationDeduction(
+      { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 80_000 },
+      'CUS-QUOTE',
+      { unclearedReceiptHoldNgn: 25_000, overpaymentOnly: false, priceConcession: true }
+    );
+    expect(concession.payoutHeldForUnclearedReceipts).toBe(false);
+    expect(concession.unclearedReceiptHoldNgn).toBe(0);
+
     const nonOverpay = applyRefundStaffAllocationDeduction(
       { recipientKind: 'customer', recipientCustomerID: 'CUS-QUOTE', amountNgn: 80_000 },
       'CUS-QUOTE',

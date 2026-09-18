@@ -2,6 +2,7 @@
  * AP1c-4 — receipt reversal account resolution and refund GL policy hints.
  */
 import { quotationHasCompletedProduction } from '../shared/lib/customerLedgerCore.js';
+import { refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 import { readFinanceFeatureFlags } from './financeFeatureFlags.js';
 import { listProductionJobs } from './readModel.js';
 import {
@@ -115,30 +116,66 @@ export function resolveReceiptReversalAccountFromMetaOrJournalLines(db, original
   };
 }
 
+function refundPayoutDepositGl() {
+  return {
+    glTreatment: 'deposit_2500',
+    debitAccountCode: '2500',
+    needsRevenueReview: false,
+    needsManualReview: false,
+    note: 'Refund payout GL: Dr 2500 / Cr 1000 (customer deposit / advance pool).',
+  };
+}
+
+function refundPayoutSalesConcessionGl() {
+  return {
+    glTreatment: 'revenue_4000',
+    debitAccountCode: '4000',
+    needsRevenueReview: false,
+    needsManualReview: false,
+    note: 'Commission / MD discount / floor-price difference: Dr 4000 (sales concession) · Cr 1000 cash.',
+  };
+}
+
 /**
- * Classify customer refund payout GL (deposit reduction vs post-production revenue review).
+ * Classify customer refund payout GL (deposit reduction vs post-production sales concession).
+ * Commission / MD discount / floor-price difference debit 4000 after production.
  * @param {import('better-sqlite3').Database} db
  * @param {{
  *   quotationRef?: string | null,
  *   customerId?: string | null,
  *   refundId?: string | null,
+ *   reasonCategories?: unknown,
+ *   calculationLines?: unknown,
  * }} ctx
  */
 export function evaluateRefundPayoutGlPolicy(db, ctx = {}) {
   const qref = String(ctx.quotationRef || '').trim();
-  const out = {
-    glTreatment: 'deposit_2500',
-    needsRevenueReview: false,
-    needsManualReview: false,
-    note: 'Refund payout GL: Dr 2500 / Cr 1000 (customer deposit / advance pool).',
-  };
+  const concession = refundRequestIsPriceConcession({
+    categories: ctx.reasonCategories,
+    calculationLines: ctx.calculationLines,
+  });
 
+  // Category-only classification (no quote loaded) — cashier still posts sales concession.
+  if (concession && !(qref && db)) {
+    return refundPayoutSalesConcessionGl();
+  }
+
+  const out = refundPayoutDepositGl();
   if (!qref) return out;
 
   const jobs = listProductionJobs(db, 'ALL').filter(
     (j) => String(j.quotationRef || '').trim() === qref
   );
   const hasProduction = quotationHasCompletedProduction(qref, jobs);
+
+  if (concession) {
+    return hasProduction
+      ? refundPayoutSalesConcessionGl()
+      : {
+          ...refundPayoutDepositGl(),
+          note: 'Concession refund before production completion — reduces deposit (2500), not revenue.',
+        };
+  }
 
   if (!hasProduction) {
     out.note = 'Refund before production completion on quote — reduces deposit (2500), not revenue.';

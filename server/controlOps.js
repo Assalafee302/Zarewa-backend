@@ -32,6 +32,7 @@ import {
   refundAmountExceedsEconomicFloorCap,
   refundFloorGatedAmountNgn,
   refundRequestIsEconomicFloorExempt,
+  refundRequestIsPriceConcession,
   refundRequestRequiresMdApproval,
 } from '../shared/refundConstants.js';
 import {
@@ -612,6 +613,11 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const preview = previewRefundRequest(db, {
     quotationRef: ref,
     excludeRefundId: excludeId,
+    includeCustomerCommission:
+      (Array.isArray(reasonCategories) &&
+        reasonCategories.some((c) => String(c || '').trim() === 'Customer commission')) ||
+      (Array.isArray(lines) &&
+        lines.some((l) => String(l?.category || '').trim() === 'Customer commission')),
   });
   if (!preview.ok) return preview;
 
@@ -669,21 +675,18 @@ export function validateRefundFinancialGuards(db, opts = {}) {
     totalRefundedNgn: totalRefundedExcluding,
     economicFloor: floorExempt ? null : economicFloor,
   });
-  const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
+  let livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
+  if (phase === 'pay') {
+    // Approved commission / MD discount / overpay must still pay out if live preview shrank
+    // (workbook floor fallback, later production). Cash-in residual still applies below.
+    livePreviewCaps = Object.fromEntries(
+      Object.entries(livePreviewCaps).filter(
+        ([cat]) => !refundRequestIsEconomicFloorExempt({ categories: [cat] })
+      )
+    );
+  }
 
   const quoteRow = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(ref);
-  const receiptsCover = quotationReceiptsCoverQuoteTotal({
-    quoteTotalNgn: preview.preview?.quoteTotalNgn ?? quoteRow?.total_ngn,
-    receiptCashNgn: preview.preview?.receiptCashNgn,
-    cashInNgn: preview.preview?.quotationCashInNgn,
-  });
-  if (!receiptsCover.ok) {
-    return {
-      ok: false,
-      code: 'QUOTATION_EXCEEDS_RECEIPTS',
-      error: receiptsCover.message,
-    };
-  }
   const bundledCheck = validateBundledTransportInstallCrossRequest(
     db,
     ref,
@@ -697,12 +700,15 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const overlapCheck = validateRefundSameRequestOverlapCategoriesNgn(lines);
   if (!overlapCheck.ok) return overlapCheck;
 
-  const capCheck = validateRefundCategorySuggestedCapsNgn({
-    calculationLines: lines,
-    categorySuggestedMaxNgn: livePreviewCaps,
-    derivedCategoryMaxNgn,
-    toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
-  });
+  const capCheck =
+    floorExempt && (phase === 'pay' || phase === 'approve')
+      ? { ok: true }
+      : validateRefundCategorySuggestedCapsNgn({
+          calculationLines: lines,
+          categorySuggestedMaxNgn: livePreviewCaps,
+          derivedCategoryMaxNgn,
+          toleranceNgn: REFUND_AMOUNT_LINE_TOLERANCE_NGN,
+        });
   if (!capCheck.ok) return capCheck;
 
   const overpayOnThis = roundMoney(sumRefundCalculationLinesByCategoryNgn(lines).Overpayment);
@@ -3099,6 +3105,10 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       requestedCats,
       payload.calculationLines
     );
+    const priceConcession = refundRequestIsPriceConcession({
+      categories: requestedCats,
+      calculationLines: payload.calculationLines,
+    });
 
     const splitsForStore = applyRefundStaffAllocationDeductions(splitsWithWaiverAuth, customerID, {
       claimingStaffDeductionRate: getRefundStaffAllocationDeductionRate(db),
@@ -3111,6 +3121,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       ),
       honorCompanyCutWaiver: true,
       overpaymentOnly,
+      priceConcession,
     });
 
     // No customer bank: full amount must be allocated to transport/install staff and/or claiming staff.
@@ -3925,6 +3936,13 @@ export function decideRefundRequest(db, refundID, payload, actor) {
             Array.isArray(payload.calculationLines) ? payload.calculationLines : null
           )
         );
+        const priceConcession = refundRequestIsPriceConcession({
+          categories: decisionCatsForCut,
+          calculationLines: parseRefundCalculationLinesFromRow(
+            row,
+            Array.isArray(payload.calculationLines) ? payload.calculationLines : null
+          ),
+        });
         const splitsForStore = applyRefundStaffAllocationDeductions(waivedBase, quoteCustomerId, {
           claimingStaffDeductionRate: getRefundStaffAllocationDeductionRate(db),
           associatedStaffDeductionRate: getRefundAssociatedStaffDeductionRate(db),
@@ -3936,6 +3954,7 @@ export function decideRefundRequest(db, refundID, payload, actor) {
           ),
           honorCompanyCutWaiver: true,
           overpaymentOnly,
+          priceConcession,
         });
         approvalSplitDistributionsJson = JSON.stringify(splitsForStore);
       }

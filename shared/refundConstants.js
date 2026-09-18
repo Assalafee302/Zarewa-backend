@@ -71,6 +71,8 @@ export const REFUND_ECONOMIC_FLOOR_EXEMPT_CATEGORIES = [
   'Installation issue',
   'Additional services',
   'MD discount',
+  /** Quoted ₦/m minus workbook floor — cash concession, not unproduced metres. */
+  'Customer commission',
 ];
 
 const FLOOR_EXEMPT_CAT_KEYS = new Set(
@@ -86,6 +88,10 @@ function refundCategoryIsEconomicFloorExempt(cat) {
   // Partial match for legacy / free-text overpayment labels.
   if (s.includes('overpay')) return true;
   if (s.includes('md discount')) return true;
+  if (s.includes('customer commission') || s.includes('agent commission')) return true;
+  if (s.includes('floor price') || s.includes('floor difference') || s.includes('quoted above floor')) {
+    return true;
+  }
   return false;
 }
 
@@ -113,6 +119,10 @@ function refundTextLooksFloorExempt(text) {
   if (s.includes('install')) return true;
   if (s.includes('additional service')) return true;
   if (s.includes('md discount')) return true;
+  if (s.includes('commission')) return true;
+  if (s.includes('floor price') || s.includes('floor difference') || s.includes('quoted above floor')) {
+    return true;
+  }
   return false;
 }
 
@@ -148,6 +158,62 @@ export function refundRequestIsEconomicFloorExempt({ categories, calculationLine
     refundCategoriesAreEconomicFloorExempt(categories) ||
     refundCalculationLinesAreEconomicFloorExempt(calculationLines)
   );
+}
+
+/**
+ * Agent commission, MD discount, and quoted-vs-floor difference — cash concessions on a paid quote.
+ * After production these debit sales (4000), not leftover deposits (2500).
+ * @param {{ categories?: unknown, calculationLines?: unknown }} p
+ */
+export function refundRequestIsPriceConcession({ categories, calculationLines } = {}) {
+  const cats = (Array.isArray(categories) ? categories : [])
+    .map((c) => String(c || '').trim())
+    .filter(Boolean);
+  const lines = (Array.isArray(calculationLines) ? calculationLines : []).filter((l) => {
+    if (l?.include === false) return false;
+    return Math.round(Number(l?.amountNgn) || 0) > 0;
+  });
+  const tokens = [
+    ...cats,
+    ...lines.flatMap((l) => {
+      const multi = Array.isArray(l?.appliesToCategories) ? l.appliesToCategories : [];
+      return [...multi, l?.category, l?.label];
+    }),
+  ];
+  const hasConcession = tokens.some((t) => refundTextLooksPriceConcession(t));
+  if (!hasConcession) return false;
+  const leftoverLines = lines.filter((l) => !refundLineLooksPriceConcession(l));
+  if (leftoverLines.length) return false;
+  const leftoverCats = cats.filter((c) => {
+    if (refundTextLooksPriceConcession(c)) return false;
+    const matching = lines.filter((l) => String(l?.category || '').trim() === c);
+    if (matching.length && matching.every((l) => refundLineLooksPriceConcession(l))) return false;
+    if (!lines.length) return true;
+    return matching.length === 0;
+  });
+  return leftoverCats.length === 0;
+}
+
+function refundTextLooksPriceConcession(value) {
+  const s = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return false;
+  if (s === 'md discount' || s.includes('md discount')) return true;
+  if (s.includes('md commission') || s.includes('md commision')) return true;
+  if (s === 'customer commission' || s.includes('agent commission') || s.includes('customer commission')) {
+    return true;
+  }
+  if (s.includes('floor price') || s.includes('floor difference') || s.includes('quoted above floor')) {
+    return true;
+  }
+  return false;
+}
+
+function refundLineLooksPriceConcession(line) {
+  const multi = Array.isArray(line?.appliesToCategories) ? line.appliesToCategories : [];
+  if (multi.some((c) => refundTextLooksPriceConcession(c))) return true;
+  return refundTextLooksPriceConcession(line?.category) || refundTextLooksPriceConcession(line?.label);
 }
 
 /**
@@ -235,6 +301,9 @@ export const REFUND_CATEGORY_LEGACY_ALIASES = {
   'managing director discount': 'MD discount',
   'md amount discount': 'MD discount',
   'director discount': 'MD discount',
+  'md commission': 'MD discount',
+  'md commision': 'MD discount',
+  'managing director commission': 'MD discount',
   adjustment: 'Other',
   'material shortage': 'Other',
 };
@@ -247,6 +316,8 @@ function refundTokenLooksLikeMdDiscount(value) {
   if (s === 'md discount') return true;
   if (s.includes('md discount')) return true;
   if (s.includes('managing director discount')) return true;
+  if (s.includes('md commission') || s.includes('md commision')) return true;
+  if (s.includes('managing director commission')) return true;
   return false;
 }
 

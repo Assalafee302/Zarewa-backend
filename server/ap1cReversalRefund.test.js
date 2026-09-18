@@ -21,6 +21,33 @@ describe('ap1cReversalRefund (pure)', () => {
     expect(r.glTreatment).toBe('deposit_2500');
     expect(r.needsRevenueReview).toBe(false);
   });
+
+  it('evaluateRefundPayoutGlPolicy posts commission and MD discount to sales 4000', () => {
+    const commission = evaluateRefundPayoutGlPolicy(null, {
+      reasonCategories: ['Customer commission'],
+      calculationLines: [{ category: 'Customer commission', amountNgn: 12_000 }],
+    });
+    expect(commission.glTreatment).toBe('revenue_4000');
+    expect(commission.debitAccountCode).toBe('4000');
+    expect(commission.needsRevenueReview).toBe(false);
+    const md = evaluateRefundPayoutGlPolicy(null, {
+      reasonCategories: ['MD discount'],
+      calculationLines: [{ category: 'MD discount', amountNgn: 12_000 }],
+    });
+    expect(md.debitAccountCode).toBe('4000');
+    const mixed = evaluateRefundPayoutGlPolicy(null, {
+      reasonCategories: ['Overpayment', 'Customer commission'],
+      calculationLines: [
+        { category: 'Overpayment', amountNgn: 5_000 },
+        { category: 'Customer commission', amountNgn: 12_000 },
+      ],
+    });
+    expect(mixed.debitAccountCode).toBe('2500');
+    const floorDiff = evaluateRefundPayoutGlPolicy(null, {
+      calculationLines: [{ category: 'Customer commission', amountNgn: 8_000, label: 'Floor price difference' }],
+    });
+    expect(floorDiff.debitAccountCode).toBe('4000');
+  });
 });
 
 describe.skipIf(!mysqlTestReady)('ap1cReversalRefund (integration)', () => {

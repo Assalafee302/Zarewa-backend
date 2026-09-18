@@ -5,7 +5,7 @@ import { jobHasPositiveOutputMetres } from './jobOutputMetres.js';
 /**
  * Pure customer-ledger rules (Zarewa payment model). Used by localStorage store and API server.
  * Frontend copies via `npm run sync:shared` → src/shared/lib/customerLedgerCore.js
- * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_APPLIED'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
+ * @typedef {'ADVANCE_IN'|'ADVANCE_APPLIED'|'RECEIPT'|'OVERPAY_ADVANCE'|'OVERPAY_APPLIED'|'OVERPAY_REVERSAL'|'REFUND_ADVANCE'|'REFUND_OVERPAY'|'REFUND_CONCESSION'|'RECEIPT_REVERSAL'|'ADVANCE_REVERSAL'} LedgerEntryType
  */
 
 /**

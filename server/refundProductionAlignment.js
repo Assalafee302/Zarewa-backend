@@ -14,7 +14,7 @@ import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundPro
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
 import { refundCuttingListQuotationMetreIssues, assessQuotationCuttingListConsumptionForRef } from './cuttingListQuotationConsumptionOps.js';
 import { isStoneMeterQuotationLinesJson } from './stoneInventory.js';
-import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
+import { normalizeRefundReasonCategoriesForApi, refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 
 /**
  * Preview/submit alignment: use explicit categories when provided; otherwise infer Overpayment-only
@@ -289,7 +289,8 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     });
   }
 
-  /* Overpayment-only refunds are cash vs quote total — do not block on CL↔quote metre data quality. */
+  /* Overpayment-only and price-concession (commission / MD discount / floor difference)
+   * refunds are cash vs quote — do not block on CL↔quote metre data quality. */
   const overpaymentOnly =
     currentHasOverpay &&
     !currentHasCancel &&
@@ -297,8 +298,13 @@ export function refundProductionAlignmentWarnings(db, quotationRef, selectedCate
     !currentHasStoneSfShortfall &&
     currentNorm.size > 0 &&
     [...currentNorm].every((c) => c.includes('overpay'));
+  const priceConcession = refundRequestIsPriceConcession({
+    categories: Array.isArray(selectedCategories)
+      ? selectedCategories
+      : parseReasonCategories(selectedCategories),
+  });
 
-  if (!overpaymentOnly) {
+  if (!overpaymentOnly && !priceConcession) {
     for (const clIssue of refundCuttingListQuotationMetreIssues(db, quotationRef)) {
       const code = String(clIssue.code || '').trim();
       issues.push({

@@ -412,6 +412,28 @@ describe('refundProductionAlignment', () => {
     expect(ok.ok).toBe(true);
   });
 
+  it('does not block commission or MD discount on cutting-list vs quotation metres', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-COMM',
+      lines_json: JSON.stringify({
+        products: [{ name: 'Roofing Sheet', qty: '100' }],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-COMM', quotation_ref: 'Q-COMM' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-COMM',
+      sheets: 1,
+      length_m: 12,
+      total_m: 12,
+      line_type: 'Roof',
+    });
+    const issues = refundProductionAlignmentWarnings(db, 'Q-COMM', ['Customer commission']);
+    expect(issues.some((i) => String(i.code || '').startsWith('cutting_list_'))).toBe(false);
+    const md = refundProductionAlignmentWarnings(db, 'Q-COMM', ['MD discount']);
+    expect(md.some((i) => String(i.code || '').startsWith('cutting_list_'))).toBe(false);
+  });
+
   it('stone SF quote with CL metres does not raise no_quoted_roofing when materialTypeId is in lines_json string', () => {
     const db = memDb();
     db.data.quotations.push({

@@ -137,6 +137,7 @@ export function refundStaffAllocationDeductionAmounts(
  *   unclearedReceiptHoldNgn?: number,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
+ *   priceConcession?: boolean,
  *   forceClaimingStaffCut?: boolean,
  * }} [opts] `deductionRate` forces one exact rate regardless of category (used by callers that
  *   already resolved the right rate, and by tests). Otherwise the rate is picked by category:
@@ -188,7 +189,7 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
   };
   if (!forceClaimingStaffCut && !refundSplitTakesStaffDeduction(base, quoteCustomerId)) {
     // Quote customer overpayment: customer's own money — no uncleared-receipt hold (RefundModal).
-    const skipUnclearedHold = overpaymentOnly;
+    const skipUnclearedHold = overpaymentOnly || opts.priceConcession === true;
     const holdForGate = skipUnclearedHold ? 0 : unclearedHoldNgn;
     return {
       ...base,
@@ -231,12 +232,14 @@ export function applyRefundStaffAllocationDeduction(split, quoteCustomerId = '',
  *   unclearedByCustomerId?: Map<string, number> | Record<string, number>,
  *   honorCompanyCutWaiver?: boolean,
  *   overpaymentOnly?: boolean,
+ *   priceConcession?: boolean,
  *   forceClaimingStaffCut?: boolean,
  * }} [opts]
  */
 export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '', opts = {}) {
   const byCust = opts.unclearedByCustomerId;
   const overpaymentOnly = opts.overpaymentOnly === true;
+  const priceConcession = opts.priceConcession === true;
   const getHold = (customerId) => {
     const id = String(customerId || '').trim();
     if (!id || !byCust) return 0;
@@ -251,6 +254,7 @@ export function applyRefundStaffAllocationDeductions(splits, quoteCustomerId = '
       unclearedReceiptHoldNgn: getHold(s?.recipientCustomerID),
       honorCompanyCutWaiver: opts.honorCompanyCutWaiver,
       overpaymentOnly,
+      priceConcession,
       forceClaimingStaffCut: opts.forceClaimingStaffCut,
     })
   );

@@ -169,7 +169,7 @@ import { assertActorMayPayCustomerRefund, actorMayOverrideRefundUnclearedPayoutH
 import { CASHIER_UNCLEARED_HOLD_OVERRIDE_MAX_NGN } from '../shared/lib/refundUnclearedPayoutHold.js';
 import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import { resolveRefundReasonCategoriesForDecision } from './refundProductionAlignment.js';
-import { normalizeRefundReasonCategoriesForApi } from '../shared/refundConstants.js';
+import { normalizeRefundReasonCategoriesForApi, refundRequestIsPriceConcession } from '../shared/refundConstants.js';
 import {
   overpaymentAlreadyRefundedNgn,
   quotationOverpaymentResidualNgn,
@@ -8205,7 +8205,7 @@ export function reverseRefundTreasuryPayouts(db, refundId, payload = {}, actor =
       postedAtISO,
     });
     db.prepare(
-      `DELETE FROM ledger_entries WHERE type IN ('REFUND_ADVANCE', 'REFUND_OVERPAY') AND bank_reference = ?`
+      `DELETE FROM ledger_entries WHERE type IN ('REFUND_ADVANCE', 'REFUND_OVERPAY', 'REFUND_CONCESSION') AND bank_reference = ?`
     ).run(rid);
     const glRev = tryPostCustomerRefundPayoutReversalGlTx(db, {
       refundId: rid,
@@ -9192,14 +9192,14 @@ export function payRefundEntry(db, refundId, payload) {
   const segPay = assertActorMayPayCustomerRefund(row, payload.actor, hasPerm);
   if (!segPay.ok) return { ok: false, error: segPay.error };
 
+  const payoutLines = parseRefundCalculationLinesFromRow(row, null);
+  const payoutCategories = resolveRefundReasonCategoriesForDecision(
+    row,
+    {},
+    normalizeRefundReasonCategoriesForApi
+  );
   if (qrefPay) {
     const approvedForGuard = roundMoney(row.approved_amount_ngn || row.amount_ngn);
-    const payoutLines = parseRefundCalculationLinesFromRow(row, null);
-    const payoutCategories = resolveRefundReasonCategoriesForDecision(
-      row,
-      {},
-      normalizeRefundReasonCategoriesForApi
-    );
     const payoutGuard = validateRefundFinancialGuards(db, {
       quotationRef: qrefPay,
       refundId: refundId,
@@ -9380,6 +9380,8 @@ export function payRefundEntry(db, refundId, payload) {
         quotationRef: fresh.quotation_ref,
         customerId: fresh.customer_id,
         refundId,
+        reasonCategories: payoutCategories,
+        calculationLines: payoutLines,
       });
       const glPay = tryPostCustomerRefundPayoutGlTx(db, {
         refundId,
@@ -9389,6 +9391,7 @@ export function payRefundEntry(db, refundId, payload) {
         branchId: fresh.branch_id ?? null,
         createdByUserId: payload.actor?.id != null ? String(payload.actor.id) : null,
         needsRevenueReview: refundGlPolicy.needsRevenueReview,
+        debitAccountCode: refundGlPolicy.debitAccountCode,
       });
       if (!glPay.ok && !glPay.skipped && !glPay.duplicate) {
         throw new Error(glPay.error || 'Refund payout GL failed.');
@@ -9438,6 +9441,29 @@ export function payRefundEntry(db, refundId, payload) {
             bankReference: refundId,
             purpose: 'Sales refund payout',
             note: `Refund ${refundId} — reduces overpayment credit (₦${fromOver.toLocaleString()} of ₦${payoutAmountNgn.toLocaleString()} payout).`,
+            atISO: normalizeIsoTimestamp(paidAtISO),
+            createdByUserId: payload.actor?.id ?? null,
+            createdByName: paidBy,
+          });
+        }
+        const concessionRemainder = Math.max(0, payoutAmountNgn - fromAdv - fromOver);
+        if (
+          concessionRemainder > 0 &&
+          refundRequestIsPriceConcession({
+            categories: payoutCategories,
+            calculationLines: payoutLines,
+          })
+        ) {
+          rows.push({
+            type: 'REFUND_CONCESSION',
+            customerID: cid,
+            customerName: String(row.customer_name || '').trim() || null,
+            amountNgn: concessionRemainder,
+            quotationRef: qrefPay || '',
+            paymentMethod: null,
+            bankReference: refundId,
+            purpose: 'Sales refund payout',
+            note: `Refund ${refundId} — commission / MD discount / floor-price difference (₦${concessionRemainder.toLocaleString()}).`,
             atISO: normalizeIsoTimestamp(paidAtISO),
             createdByUserId: payload.actor?.id ?? null,
             createdByName: paidBy,

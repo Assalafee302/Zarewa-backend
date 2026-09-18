@@ -8,6 +8,7 @@ import {
   refundAmountExceedsEconomicFloorCap,
   refundFloorGatedAmountNgn,
   refundCategoryDisplayLabel,
+  refundRequestIsPriceConcession,
 } from './refundConstants.js';
 
 describe('refundConstants', () => {
@@ -20,6 +21,7 @@ describe('refundConstants', () => {
     expect(normalizeRefundReasonCategoriesForApi('Substitution pricing')).toEqual(['Substitution Difference']);
     expect(normalizeRefundReasonCategoriesForApi('Agent commission')).toEqual(['Customer commission']);
     expect(normalizeRefundReasonCategoriesForApi('Managing director discount')).toEqual(['MD discount']);
+    expect(normalizeRefundReasonCategoriesForApi('MD commission')).toEqual(['MD discount']);
     expect(normalizeRefundReasonCategoriesForApi('Adjustment')).toEqual(['Other']);
     expect(normalizeRefundReasonCategoriesForApi('["Unproduced meterage"]')).toEqual(['Unproduced meterage']);
   });
@@ -113,6 +115,34 @@ describe('refundConstants', () => {
         maxDefensibleRefundNgn: 12_000,
       })
     ).toBe(false);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
+        amountNgn: 40_000,
+        calculationLines: [{ category: 'Customer commission', amountNgn: 40_000 }],
+        categories: ['Customer commission'],
+        maxDefensibleRefundNgn: 0,
+      })
+    ).toBe(false);
+    expect(refundRequestIsPriceConcession({ categories: ['Customer commission'] })).toBe(true);
+    expect(refundRequestIsPriceConcession({ categories: ['MD discount'] })).toBe(true);
+    expect(
+      refundRequestIsPriceConcession({
+        calculationLines: [{ category: 'Customer commission', amountNgn: 12_000, label: 'Floor price difference' }],
+      })
+    ).toBe(true);
+    expect(refundRequestIsPriceConcession({ categories: ['Overpayment'] })).toBe(false);
+    expect(
+      refundRequestIsPriceConcession({
+        categories: ['Overpayment', 'Customer commission'],
+      })
+    ).toBe(false);
+    expect(
+      refundRequestIsPriceConcession({
+        categories: ['Other'],
+        calculationLines: [{ category: 'Other', amountNgn: 12_000, label: 'Floor price difference' }],
+      })
+    ).toBe(true);
+    expect(normalizeRefundReasonCategoriesForApi('MD commission')).toEqual(['MD discount']);
     expect(
       refundAmountExceedsEconomicFloorCap({
         amountNgn: 115_960,

@@ -10,6 +10,7 @@ import {
   applyRefundStaffAllocationDeduction,
 } from '../../shared/lib/refundStaffAllocationDeduction.js';
 import { refundCategoriesAreOverpaymentOnly } from '../../shared/lib/refundCreditApply.js';
+import { refundRequestIsPriceConcession } from '../../shared/refundConstants.js';
 import {
   unclearedFloatOptsForRefund,
   unclearedReceiptFloatBySalesCustomerIds,
@@ -148,6 +149,17 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
       refundRow.reason_category,
       calculationLines
     );
+    const priceConcession = refundRequestIsPriceConcession({
+      categories: (() => {
+        try {
+          const raw = JSON.parse(String(refundRow.reason_category || '[]'));
+          return Array.isArray(raw) ? raw : [refundRow.reason_category];
+        } catch {
+          return [refundRow.reason_category];
+        }
+      })(),
+      calculationLines,
+    });
     const unclearedFloatByCustomerId = skipUnclearedFloat
       ? new Map()
       : unclearedReceiptFloatBySalesCustomerIds(
@@ -180,6 +192,7 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
             unclearedReceiptHoldNgn,
             honorCompanyCutWaiver: true,
             overpaymentOnly,
+            priceConcession,
           }
         );
         const companyDeductionNgn = roundMoney(withDeduction.companyDeductionNgn);
@@ -276,6 +289,17 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
     refundRow.reason_category,
     calculationLinesNoSplit
   );
+  const priceConcessionNoSplit = refundRequestIsPriceConcession({
+    categories: (() => {
+      try {
+        const raw = JSON.parse(String(refundRow.reason_category || '[]'));
+        return Array.isArray(raw) ? raw : [refundRow.reason_category];
+      } catch {
+        return [refundRow.reason_category];
+      }
+    })(),
+    calculationLines: calculationLinesNoSplit,
+  });
   const resolved = savedCustomerPayoutAccount(db, customerId);
   const payeeAccountNo = String(
     refundRow.payee_account_no || resolved?.payeeAccountNo || ''
@@ -291,16 +315,16 @@ export function resolveCreditTargets(db, refundRow, approvedAmountNgn, opts = {}
       ).get(customerId);
   // Pure overpayment to the quote customer: no uncleared-receipt hold (matches RefundModal),
   // unless the payee account is an HR staff bank (forced claiming-staff cut path).
-  const unclearedHoldNgn =
-    overpaymentOnlyNoSplit && !staffBankMatch ? 0 : roundMoney(noSplitUncleared?.totalNgn);
+  const skipQuoteCustomerHold = (overpaymentOnlyNoSplit || priceConcessionNoSplit) && !staffBankMatch;
+  const unclearedHoldNgn = skipQuoteCustomerHold ? 0 : roundMoney(noSplitUncleared?.totalNgn);
   const unclearedReceiptIds =
-    overpaymentOnlyNoSplit && !staffBankMatch
+    skipQuoteCustomerHold
       ? []
       : Array.isArray(noSplitUncleared?.receiptIds)
         ? noSplitUncleared.receiptIds
         : [];
   const unclearedReceipts =
-    overpaymentOnlyNoSplit && !staffBankMatch
+    skipQuoteCustomerHold
       ? []
       : Array.isArray(noSplitUncleared?.receipts)
         ? noSplitUncleared.receipts

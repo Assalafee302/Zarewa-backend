@@ -24,8 +24,10 @@ describe('expenseCategories', () => {
     expect(mapLegacyExpenseCategoryToCanonical('Rent & utilities')).toBe('Rent & utilities');
   });
 
-  it('mapLegacy maps Miscellaneous to Others', () => {
-    expect(mapLegacyExpenseCategoryToCanonical('Miscellaneous')).toBe('Others');
+  it('mapLegacy maps refund labels to Refund', () => {
+    expect(mapLegacyExpenseCategoryToCanonical('Refund')).toBe('Refund');
+    expect(mapLegacyExpenseCategoryToCanonical('refund')).toBe('Refund');
+    expect(mapLegacyExpenseCategoryToCanonical('Customer refund')).toBe('Refund');
   });
 
   it('mapLegacy maps prior canonical strings', () => {

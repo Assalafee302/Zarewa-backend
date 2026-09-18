@@ -43,4 +43,13 @@ describe('expenseBulkImport dates', () => {
     expect(rows[1].date).toBe('2026-07-15');
     expect(rows[2].expenseID).toBe('EXP-KEEP-ME');
   });
+
+  it('maps refund labels to canonical Refund for historical catch-up', () => {
+    const rows = normalizeExpenseImportRows([
+      { date: '2026-05-10', amountNgn: 80_000, category: 'refund' },
+      { date: '2026-05-11', amountNgn: 12_000, category: 'Customer refund' },
+    ]);
+    expect(rows[0].category).toBe('Refund');
+    expect(rows[1].category).toBe('Refund');
+  });
 });

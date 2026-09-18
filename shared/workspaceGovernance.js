@@ -84,6 +84,18 @@ export function userMayBlockQuotationRefunds(actor) {
 }
 
 /**
+ * Freeze or unfreeze customer refunds on one branch for quotations/receipts in a date window — Administrator only.
+ * @param {{ roleKey?: string; permissions?: string[] } | null | undefined} actor
+ */
+export function userMayBlockBranchRefunds(actor) {
+  if (!actor) return false;
+  const perms = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (perms.includes('*')) return true;
+  const rk = String(actor.roleKey || '').trim().toLowerCase();
+  return rk === 'admin';
+}
+
+/**
  * Override production metre alignment on refunds (branch manager / executive / admin).
  * @param {string | null | undefined} roleKey
  */

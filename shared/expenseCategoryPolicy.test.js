@@ -62,6 +62,38 @@ describe('expenseCategoryPolicy', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('allows Finance/Admin to select Refund on bulk import (allowRevenue)', () => {
+    const staffBlocked = validateExpenseCategorySelection({
+      actor: staff,
+      category: 'Refund',
+      amountNgn: 50_000,
+      description: 'Yola historical refund catch-up for cash book',
+      hasAttachment: true,
+      allowRevenue: true,
+    });
+    expect(staffBlocked.ok).toBe(false);
+
+    const financeOk = validateExpenseCategorySelection({
+      actor: finance,
+      category: 'Refund',
+      amountNgn: 50_000,
+      description: 'Yola historical refund catch-up for cash book',
+      hasAttachment: true,
+      allowRevenue: true,
+      hasPermission: hasFinancePerm,
+    });
+    expect(financeOk.ok).toBe(true);
+
+    const adminOk = validateExpenseCategorySelection({
+      actor: { roleKey: 'admin', permissions: ['*'] },
+      category: 'Refund',
+      amountNgn: 50_000,
+      allowRevenue: true,
+      hasPermission: (p) => p === '*',
+    });
+    expect(adminOk.ok).toBe(true);
+  });
+
   it('requires justification and attachment for Others', () => {
     const bad = validateExpenseCategorySelection({
       actor: staff,

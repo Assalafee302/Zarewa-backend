@@ -181,6 +181,7 @@ export function mapLegacyExpenseCategoryToCanonical(value) {
   if (/(security|guard)/i.test(s)) return 'Security';
   if (/(zakat|sallah|sadaqah)/i.test(s)) return 'Zakat & Sallah';
   if (/(depreciat)/i.test(s)) return 'Depreciation';
+  if (/^(customer\s+)?refunds?$/i.test(s)) return 'Refund';
   if (/(chairman|director).*(draw|withdraw)/i.test(s)) return 'Chairman withdrawal';
   if (/(chairman|director|owner).*(loan|advance)/i.test(s)) return 'Chairman loan';
   if (/(non[- ]?staff).*(loan|advance)/i.test(s)) return 'Chairman loan';

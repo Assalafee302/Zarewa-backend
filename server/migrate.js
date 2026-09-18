@@ -6385,6 +6385,24 @@ function migrateBranches(db) {
   if (branchesCols.size && !branchesCols.has('radius_km')) {
     db.exec(`ALTER TABLE branches ADD COLUMN radius_km REAL NOT NULL DEFAULT 75`);
   }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_from_iso')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_from_iso TEXT`);
+  }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_reason')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_reason TEXT`);
+  }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_by_user_id')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_by_user_id TEXT`);
+  }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_by_name')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_by_name TEXT`);
+  }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_set_at_iso')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_set_at_iso TEXT`);
+  }
+  if (branchesCols.size && !branchesCols.has('refunds_blocked_to_iso')) {
+    db.exec(`ALTER TABLE branches ADD COLUMN refunds_blocked_to_iso TEXT`);
+  }
   // Seed GPS centres for automatic location → workspace branch detection.
   const seedGeo = [
     ['BR-KD', 10.5105, 7.4165, 75],

@@ -238,7 +238,7 @@ export function buildExpenseImportTemplateXlsx() {
     ['Columns'],
     ['Date — REQUIRED. Use the real expense date (e.g. 2026-07-15 for July). Dates are NEVER auto-filled to today.'],
     ['Amount — NGN (blank/zero rows must be updated in preview before post)'],
-    ['Category — use a value from the Categories sheet'],
+    ['Category — use a value from the Categories sheet. Refund is allowed on this import for Finance/Admin historical catch-up (it is blocked on the regular expense form).'],
     ['AccountKey — treasury account name/id on the same branch'],
     ['Reference — voucher / invoice ref'],
     ['PaymentMethod — Cash, Transfer, etc.'],
@@ -576,6 +576,8 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
         createdBy: actor?.displayName || actor?.username || 'expense-import',
         actor,
         workspaceViewAll: Boolean(opts.workspaceViewAll),
+        // Historical catch-up may post Refund / contra-revenue; regular expense form cannot.
+        allowRevenue: true,
       },
       bid
     );

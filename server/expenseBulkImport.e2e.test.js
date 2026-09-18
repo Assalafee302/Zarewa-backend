@@ -172,4 +172,63 @@ describe('expense bulk import E2E (MySQL)', () => {
     expect(parseExpenseImportDate('')).toBe('');
     expect(parseExpenseImportDate('2026-07-01')).toBe('2026-07-01');
   });
+
+  it('lets admin import historical Refund rows to catch up cash', () => {
+    const staff = {
+      id: 'usr-expense-import-staff',
+      displayName: 'Staff',
+      roleKey: 'sales_staff',
+      permissions: ['expenses.create'],
+    };
+    const staffPreview = previewExpenseBulkImport(
+      db,
+      [
+        {
+          date: '2026-05-10',
+          amountNgn: 80_000,
+          category: 'Refund',
+          treasuryAccountId: treasuryId,
+          reference: 'YL-OLD-REF-1',
+          description: 'Yola historical customer refund catch-up',
+          include: true,
+        },
+      ],
+      staff,
+      { branchId: DEFAULT_BRANCH_ID, requireTreasury: true }
+    );
+    expect(staffPreview.ok).toBe(true);
+    expect(staffPreview.previewTable[0].status).not.toBe('ok');
+    expect(String(staffPreview.previewTable[0].errors?.[0] || '')).toMatch(/cannot select this expense category/i);
+
+    const preview = previewExpenseBulkImport(
+      db,
+      [
+        {
+          date: '2026-05-10',
+          amountNgn: 80_000,
+          category: 'Refund',
+          treasuryAccountId: treasuryId,
+          reference: 'YL-OLD-REF-1',
+          description: 'Yola historical customer refund catch-up',
+          include: true,
+        },
+      ],
+      ACTOR,
+      { branchId: DEFAULT_BRANCH_ID, requireTreasury: true }
+    );
+    expect(preview.ok).toBe(true);
+    expect(preview.previewTable[0].status).toBe('ok');
+    expect(preview.previewTable[0].category).toBe('Refund');
+
+    const committed = commitExpenseBulkImport(
+      db,
+      ACTOR,
+      preview.previewTable,
+      DEFAULT_BRANCH_ID,
+      { requireTreasury: true }
+    );
+    expect(committed.ok, JSON.stringify(committed)).toBe(true);
+    expect(committed.createdCount).toBe(1);
+    expect(committed.created[0].category).toBe('Refund');
+  });
 });

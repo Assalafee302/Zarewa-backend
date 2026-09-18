@@ -2,6 +2,7 @@ import {
   ACCOUNTING_OPENING_DATE_ISO,
   openingPeriodKeyFromDateISO,
 } from '../shared/lib/accountingCutover.js';
+import { branchRefundsFrozen } from '../shared/lib/branchRefundFreeze.js';
 
 /** Default branch for legacy rows and first login. */
 export const DEFAULT_BRANCH_ID = 'BR-KD';
@@ -57,6 +58,7 @@ function listBranchesUncached(db) {
       .map((c) => c.name)
   );
   const hasGeo = cols.has('latitude') && cols.has('longitude');
+  const hasRefundFreeze = cols.has('refunds_blocked_from_iso');
   return db
     .prepare(`SELECT * FROM branches WHERE active = 1 ORDER BY sort_order ASC, id ASC`)
     .all()
@@ -72,6 +74,12 @@ function listBranchesUncached(db) {
       latitude: hasGeo && row.latitude != null ? Number(row.latitude) : null,
       longitude: hasGeo && row.longitude != null ? Number(row.longitude) : null,
       radiusKm: cols.has('radius_km') ? Number(row.radius_km) || 75 : 75,
+      refundsBlockedFromISO: hasRefundFreeze ? row.refunds_blocked_from_iso || null : null,
+      refundsBlockedToISO: hasRefundFreeze ? row.refunds_blocked_to_iso || null : null,
+      refundsBlockedReason: hasRefundFreeze ? row.refunds_blocked_reason || '' : '',
+      refundsBlockedByName: hasRefundFreeze ? row.refunds_blocked_by_name || '' : '',
+      refundsBlockedSetAtISO: hasRefundFreeze ? row.refunds_blocked_set_at_iso || null : null,
+      refundsFrozen: hasRefundFreeze ? branchRefundsFrozen(row) : false,
     }));
 }
 
@@ -122,6 +130,7 @@ export function getBranch(db, id) {
   );
   const hasFrac = cols.has('cutting_list_min_paid_fraction');
   const hasGeo = cols.has('latitude') && cols.has('longitude');
+  const hasRefundFreeze = cols.has('refunds_blocked_from_iso');
   return {
     id: row.id,
     code: row.code,
@@ -134,6 +143,12 @@ export function getBranch(db, id) {
     latitude: hasGeo && row.latitude != null ? Number(row.latitude) : null,
     longitude: hasGeo && row.longitude != null ? Number(row.longitude) : null,
     radiusKm: cols.has('radius_km') ? Number(row.radius_km) || 75 : 75,
+    refundsBlockedFromISO: hasRefundFreeze ? row.refunds_blocked_from_iso || null : null,
+    refundsBlockedToISO: hasRefundFreeze ? row.refunds_blocked_to_iso || null : null,
+    refundsBlockedReason: hasRefundFreeze ? row.refunds_blocked_reason || '' : '',
+    refundsBlockedByName: hasRefundFreeze ? row.refunds_blocked_by_name || '' : '',
+    refundsBlockedSetAtISO: hasRefundFreeze ? row.refunds_blocked_set_at_iso || null : null,
+    refundsFrozen: hasRefundFreeze ? branchRefundsFrozen(row) : false,
   };
 }
 

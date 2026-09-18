@@ -76,6 +76,13 @@ import {
   QUOTATION_REFUNDS_BLOCK_REASON_MIN_LEN,
 } from '../shared/lib/quotationRefundsBlocked.js';
 import {
+  assertBranchRefundsNotFrozen,
+  assertQuotationBranchRefundsNotFrozen,
+  loadAllBranchRefundLocks,
+  quotationRowHitsBranchRefundLock,
+  receiptDateIsosByQuotationRef,
+} from './sales/branchRefundFreeze.js';
+import {
   firstGaugeMmFromLabel,
   quotedGaugeLabelForSubstitutionComparison,
 } from '../shared/lib/quotedGaugeForSubstitution.js';
@@ -2876,13 +2883,18 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
       error: `Refund amount must be at least ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} (got ₦${amountNgn.toLocaleString('en-NG')}).`,
     };
   }
-  const refundID = nextRefundHumanId(db, String(branchId || DEFAULT_BRANCH_ID).trim());
+  const refundBranchId = String(branchId || DEFAULT_BRANCH_ID).trim();
+  const refundID = nextRefundHumanId(db, refundBranchId);
   const requestedAtISO = String(payload.requestedAtISO ?? '').trim() || nowIso();
   let submitAlignmentResult = null;
   let economicFloorOverrideAtCreate = null;
   try {
     assertPeriodOpen(db, requestedAtISO, 'Refund request date');
     const quotationRef = String(payload.quotationRef ?? '').trim();
+    if (!quotationRef) {
+      const noQuoteFreeze = assertBranchRefundsNotFrozen(db, refundBranchId, requestedAtISO);
+      if (!noQuoteFreeze.ok) return noQuoteFreeze;
+    }
     const product = String(payload.product ?? '').trim() || '—';
     const requestedCats = normalizeRefundReasonCategoriesForApi(payload.reasonCategory);
     if (requestedCats.length === 0) {
@@ -3027,6 +3039,8 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
     if (!lineArithmetic.ok) return lineArithmetic;
 
     if (quotationRef) {
+      const quoteBranchFreeze = assertQuotationBranchRefundsNotFrozen(db, quotationRef, refundBranchId);
+      if (!quoteBranchFreeze.ok) return quoteBranchFreeze;
       if (quotationHasUnclearedReceipts(db, quotationRef)) {
         return {
           ok: false,
@@ -3516,6 +3530,14 @@ export function decideRefundRequest(db, refundID, payload, actor) {
         refundsBlocked: true,
       };
     }
+  }
+  if (status === 'Approved') {
+    const approveFreeze = assertQuotationBranchRefundsNotFrozen(
+      db,
+      qrefApprove,
+      row.branch_id
+    );
+    if (!approveFreeze.ok) return approveFreeze;
   }
   if (status === 'Approved') {
     const linesForGuard = parseRefundCalculationLinesFromRow(
@@ -5250,7 +5272,7 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
     existingRow ??
     db
       .prepare(
-        `SELECT id, paid_ngn, total_ngn, status,
+        `SELECT id, paid_ngn, total_ngn, status, branch_id, date_iso,
                 bm_price_exception_approved_at_iso, price_exception_md_review_required,
                 price_exception_md_confirmed_at_iso, md_price_exception_approved_at_iso,
                 refunds_blocked_at_iso, refunds_blocked_reason
@@ -5268,6 +5290,12 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
       refundsBlocked: true,
     };
   }
+  const quoteBranchFreeze = assertQuotationBranchRefundsNotFrozen(
+    db,
+    ref,
+    q.branch_id,
+  );
+  if (!quoteBranchFreeze.ok) return quoteBranchFreeze;
   const paidNgn = roundMoney(q.paid_ngn);
   const cashInNgn = quotationCashInNgn(db, ref);
   const quoteTotalNgn = roundMoney(q.total_ngn);
@@ -5677,10 +5705,20 @@ export function getEligibleRefundQuotations(db, opts = {}) {
   `;
   const rows = db.prepare(sql).all(...branchArgs);
 
+  const freezeByBranch = loadAllBranchRefundLocks(db);
+  const receiptDatesByRef =
+    freezeByBranch.size > 0
+      ? receiptDateIsosByQuotationRef(
+          db,
+          rows.map((r) => r.id)
+        )
+      : new Map();
+
   // Cheap SQL-row filters before any cash / preview work.
   const candidates = [];
   for (const row of rows) {
     if (quotationRefundsBlocked(row)) continue;
+    if (quotationRowHitsBranchRefundLock(row, freezeByBranch, receiptDatesByRef)) continue;
     const total = roundMoney(row.total_ngn);
     const paid = roundMoney(row.paid_ngn);
     if (total > 0 && !isEffectivelyFullyPaid(paid, total)) continue;

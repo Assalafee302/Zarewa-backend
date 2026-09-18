@@ -157,7 +157,7 @@ export function requiresFinanceReviewForCategory(category, amountNgn = 0, policy
  *   categoryJustification?: string;
  *   hasAttachment?: boolean;
  *   hasPermission?: (perm: string) => boolean;
- *   allowRevenue?: boolean;
+ *   allowRevenue?: boolean; // bulk expense import catch-up (Refund / Sales / Net sales) for Finance/Admin
  *   policyLimits?: { othersMinJustificationLen?: number; othersFinanceReviewThresholdNgn?: number };
  * }} input
  * @returns {{ ok: true; lane: string } | { ok: false; error: string }}
@@ -171,13 +171,22 @@ export function validateExpenseCategorySelection(input = {}) {
   if (!isAllowedExpenseCategory(category)) {
     return { ok: false, error: 'Expense category must be chosen from the standard list.' };
   }
-  if (isRevenueExpenseCategory(category) && !input.allowRevenue) {
-    return {
-      ok: false,
-      error: 'Revenue categories cannot be used on payment requests. Use the Refund module or Finance posting.',
-    };
-  }
-  if (!actorMaySelectExpenseCategory(input.actor, category, hasPermission)) {
+  if (isRevenueExpenseCategory(category)) {
+    // Bulk historical catch-up (expense import) may post Refund / contra-revenue when allowRevenue
+    // is set. Payment requests and the regular expense form still cannot.
+    if (!input.allowRevenue) {
+      return {
+        ok: false,
+        error: 'Revenue categories cannot be used on payment requests. Use the Refund module or Finance posting.',
+      };
+    }
+    if (!actorMaySelectRestrictedExpenseCategories(input.actor, hasPermission)) {
+      return {
+        ok: false,
+        error: 'You cannot select this expense category. Ask Finance or your manager.',
+      };
+    }
+  } else if (!actorMaySelectExpenseCategory(input.actor, category, hasPermission)) {
     return {
       ok: false,
       error: 'You cannot select this expense category. Ask Finance or your manager.',

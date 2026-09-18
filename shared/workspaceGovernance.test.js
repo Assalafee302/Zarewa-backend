@@ -9,6 +9,8 @@ import {
   isBranchExpenseApproverRoleKey,
   userMayReviewPaymentRequests,
   userMayOverrideProductionAlignment,
+  userMayBlockBranchRefunds,
+  userMayBlockQuotationRefunds,
 } from './workspaceGovernance.js';
 
 describe('workspaceGovernance', () => {
@@ -96,5 +98,14 @@ describe('workspaceGovernance', () => {
     expect(userMayOverrideProductionAlignment('md')).toBe(true);
     expect(userMayOverrideProductionAlignment('admin')).toBe(true);
     expect(userMayOverrideProductionAlignment('sales_staff')).toBe(false);
+  });
+
+  it('restricts branch refund lock windows to administrator; quotation block stays MD/admin', () => {
+    expect(userMayBlockBranchRefunds({ roleKey: 'admin' })).toBe(true);
+    expect(userMayBlockBranchRefunds({ permissions: ['*'] })).toBe(true);
+    expect(userMayBlockBranchRefunds({ roleKey: 'md' })).toBe(false);
+    expect(userMayBlockBranchRefunds({ roleKey: 'sales_manager' })).toBe(false);
+    expect(userMayBlockQuotationRefunds({ roleKey: 'md' })).toBe(true);
+    expect(userMayBlockQuotationRefunds({ roleKey: 'admin' })).toBe(true);
   });
 });

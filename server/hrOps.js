@@ -387,6 +387,51 @@ function hrRoleComplianceSelectSql(db) {
 }
 
 /**
+ * Column list for the staff register — shared by the flat list and the paged
+ * directory so both hand `enrichHrStaffListRows` exactly the same row shape.
+ * The two schema-dependent groups are passed in because they depend on which
+ * migrations have run.
+ * @param {import('better-sqlite3').Database} db
+ */
+function hrStaffSelectColumnsSql(db) {
+  return `
+    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
+           u.avatar_url AS avatarUrl,
+           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
+           p.department_id AS departmentId, p.designation_id AS designationId,
+           ${hrRoleComplianceSelectSql(db)}
+           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
+           p.contract_end_iso AS contractEndIso,
+           p.probation_end_iso AS probationEndIso,
+           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
+           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
+           p.academic_qualification AS academicQualification,
+           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
+           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
+           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
+           p.bonus_accrual_note AS bonusAccrualNote,
+           p.paye_tax_percent AS payeTaxPercent,
+           p.paye_tax_ngn AS payeTaxNgn,
+           p.pension_percent_override AS pensionPercentOverride,
+           p.self_service_eligible AS selfServiceEligible,
+           ${hrIsProductionStaffSelectSql(db)}
+           p.next_of_kin_json AS nextOfKinJson,
+           p.nin_number AS ninNumber,
+           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
+           p.nhis_deduction_ngn AS nhisDeductionNgn,
+           p.profile_extra_json AS profileExtraJson,
+           p.line_manager_user_id AS lineManagerUserId,
+           p.leave_entitlement_band AS leaveEntitlementBand,
+           p.payroll_group AS payrollGroup,
+           p.salary_level AS salaryLevel,
+           p.salary_step AS salaryStep,
+           p.profile_submitted_at_iso AS profileSubmittedAtIso,
+           p.profile_locked AS profileLocked,
+           p.profile_verified_at_iso AS profileVerifiedAtIso,
+           p.sales_customer_id AS salesCustomerId`;
+}
+
+/**
  * @param {{ user: object; workspaceBranchId?: string; workspaceViewAll?: boolean }} req
  */
 export function hrListScope(req) {
@@ -410,44 +455,9 @@ export function listHrStaff(db, scope, opts = {}) {
   const scopeMode = scope.scopeMode || 'branch';
   const orgWide = Boolean(viewAll) || scopeMode === 'org';
   const joinType = requireProfile ? 'INNER' : 'LEFT';
-  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
-  const roleComplianceCol = hrRoleComplianceSelectSql(db);
 
   let sql = `
-    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
-           u.avatar_url AS avatarUrl,
-           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
-           p.department_id AS departmentId, p.designation_id AS designationId,
-           ${roleComplianceCol}
-           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
-           p.contract_end_iso AS contractEndIso,
-           p.probation_end_iso AS probationEndIso,
-           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
-           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
-           p.academic_qualification AS academicQualification,
-           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
-           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
-           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
-           p.bonus_accrual_note AS bonusAccrualNote,
-           p.paye_tax_percent AS payeTaxPercent,
-           p.paye_tax_ngn AS payeTaxNgn,
-           p.pension_percent_override AS pensionPercentOverride,
-           p.self_service_eligible AS selfServiceEligible,
-           ${isProductionStaffCol}
-           p.next_of_kin_json AS nextOfKinJson,
-           p.nin_number AS ninNumber,
-           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
-           p.nhis_deduction_ngn AS nhisDeductionNgn,
-           p.profile_extra_json AS profileExtraJson,
-           p.line_manager_user_id AS lineManagerUserId,
-           p.leave_entitlement_band AS leaveEntitlementBand,
-           p.payroll_group AS payrollGroup,
-           p.salary_level AS salaryLevel,
-           p.salary_step AS salaryStep,
-           p.profile_submitted_at_iso AS profileSubmittedAtIso,
-           p.profile_locked AS profileLocked,
-           p.profile_verified_at_iso AS profileVerifiedAtIso,
-           p.sales_customer_id AS salesCustomerId
+    ${hrStaffSelectColumnsSql(db)}
     FROM app_users u
     ${joinType} JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1
@@ -858,45 +868,10 @@ export function listHrStaffDirectory(db, scope, opts = {}) {
   }
   const page = Math.max(1, Math.round(Number(opts.page) || 1));
   const pageSize = Math.min(100, Math.max(10, Math.round(Number(opts.pageSize) || 20)));
-  const isProductionStaffCol = hrIsProductionStaffSelectSql(db);
-  const roleComplianceCol = hrRoleComplianceSelectSql(db);
   const { sql: filterSql, args: filterArgs, today, in30, in60, quick } = buildHrStaffDirectoryFilterSql(db, scope, opts);
 
   let sql = `
-    SELECT u.id AS userId, u.username, u.display_name AS displayName, u.email, u.role_key AS roleKey, u.status,
-           u.avatar_url AS avatarUrl,
-           p.branch_id AS branchId, p.employee_no AS employeeNo, p.job_title AS jobTitle, p.department,
-           p.department_id AS departmentId, p.designation_id AS designationId,
-           ${roleComplianceCol}
-           p.employment_type AS employmentType, p.date_joined_iso AS dateJoinedIso,
-           p.contract_end_iso AS contractEndIso,
-           p.probation_end_iso AS probationEndIso,
-           p.base_salary_ngn AS baseSalaryNgn, p.housing_allowance_ngn AS housingAllowanceNgn,
-           p.transport_allowance_ngn AS transportAllowanceNgn, p.minimum_qualification AS minimumQualification,
-           p.academic_qualification AS academicQualification,
-           p.promotion_grade AS promotionGrade, p.welfare_notes AS welfareNotes, p.training_summary AS trainingSummary,
-           p.tax_id AS taxId, p.pension_rsa_pin AS pensionRsaPin, p.bank_name AS bankName,
-           p.bank_account_name AS bankAccountName, p.bank_account_no_masked AS bankAccountNoMasked,
-           p.bonus_accrual_note AS bonusAccrualNote,
-           p.paye_tax_percent AS payeTaxPercent,
-           p.paye_tax_ngn AS payeTaxNgn,
-           p.pension_percent_override AS pensionPercentOverride,
-           p.self_service_eligible AS selfServiceEligible,
-           ${isProductionStaffCol}
-           p.next_of_kin_json AS nextOfKinJson,
-           p.nin_number AS ninNumber,
-           p.gender, p.date_of_birth AS dateOfBirthIso, p.nhis_provider AS nhisProvider,
-           p.nhis_deduction_ngn AS nhisDeductionNgn,
-           p.profile_extra_json AS profileExtraJson,
-           p.line_manager_user_id AS lineManagerUserId,
-           p.leave_entitlement_band AS leaveEntitlementBand,
-           p.payroll_group AS payrollGroup,
-           p.salary_level AS salaryLevel,
-           p.salary_step AS salaryStep,
-           p.profile_submitted_at_iso AS profileSubmittedAtIso,
-           p.profile_locked AS profileLocked,
-           p.profile_verified_at_iso AS profileVerifiedAtIso,
-           p.sales_customer_id AS salesCustomerId
+    ${hrStaffSelectColumnsSql(db)}
     FROM app_users u
     INNER JOIN hr_staff_profiles p ON p.user_id = u.id
     WHERE 1=1${filterSql}

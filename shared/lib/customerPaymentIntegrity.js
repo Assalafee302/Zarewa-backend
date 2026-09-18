@@ -4,6 +4,8 @@
  * Frontend copies via `npm run sync:shared` → src/shared/lib/customerPaymentIntegrity.js
  */
 
+import { quotationReceiptsCoverQuoteTotal } from './refundQuotationMoney.js';
+
 export const SETTLED_QUOTE_OVERPAY_NOTE_SNIP = 'already settled in records';
 
 function normYmd(iso) {
@@ -62,16 +64,28 @@ export function findDuplicateQuotationCandidateIds(quotations, focus) {
  *   duplicateQuotationIds?: string[],
  *   customerReceiptCountSameAmount?: number,
  * }} ctx
- * @returns {{ code: string, severity: 'warning' | 'critical', message: string, relatedQuotationId?: string }[]}
+ * @returns {{ code: string, severity: 'warning' | 'critical' | 'error', message: string, relatedQuotationId?: string }[]}
  */
 export function paymentIntegrityIssuesForQuotation(ctx) {
-  /** @type {{ code: string, severity: 'warning' | 'critical', message: string, relatedQuotationId?: string }[]} */
+  /** @type {{ code: string, severity: 'warning' | 'critical' | 'error', message: string, relatedQuotationId?: string }[]} */
   const issues = [];
   const quoteTotal = Math.round(Number(ctx.quoteTotalNgn) || 0);
   const receiptCash = Math.round(Number(ctx.receiptCashNgn) || 0);
   const cashIn = Math.round(Number(ctx.cashInNgn) || 0);
   const settledFull = Math.round(Number(ctx.settledQuoteFullOverpayNgn) || 0);
   const dupIds = Array.isArray(ctx.duplicateQuotationIds) ? ctx.duplicateQuotationIds : [];
+  const receiptsCover = quotationReceiptsCoverQuoteTotal({
+    quoteTotalNgn: quoteTotal,
+    receiptCashNgn: receiptCash,
+    cashInNgn: cashIn,
+  });
+  if (!receiptsCover.ok && receiptsCover.message) {
+    issues.push({
+      code: 'quotation_exceeds_receipts',
+      severity: 'error',
+      message: receiptsCover.message,
+    });
+  }
 
   for (const otherId of dupIds) {
     issues.push({

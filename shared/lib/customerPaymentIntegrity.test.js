@@ -32,4 +32,16 @@ describe('customerPaymentIntegrity', () => {
     expect(issues.some((i) => i.code === 'settled_quote_repeat_payment')).toBe(true);
     expect(issues.some((i) => i.code === 'duplicate_quotation_same_total')).toBe(true);
   });
+
+  it('flags quotation total above receipts as an error', () => {
+    const issues = paymentIntegrityIssuesForQuotation({
+      quotationId: 'QT-UNDER',
+      quoteTotalNgn: 500_000,
+      receiptCashNgn: 200_000,
+      cashInNgn: 200_000,
+    });
+    expect(issues.some((i) => i.code === 'quotation_exceeds_receipts' && i.severity === 'error')).toBe(
+      true
+    );
+  });
 });

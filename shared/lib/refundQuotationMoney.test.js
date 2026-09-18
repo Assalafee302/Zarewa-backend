@@ -4,6 +4,7 @@ import {
   quotationActualCashInNgn,
   quotationIndependentRefundLinesSumNgn,
   quotationOverpaymentExcessNgn,
+  quotationReceiptsCoverQuoteTotal,
   quotationOverpaymentResidualNgn,
   overpaymentAlreadyRefundedNgn,
   quotationRefundHardCapNgn,
@@ -18,6 +19,40 @@ describe('refundQuotationMoney', () => {
     expect(
       quotationOverpaymentExcessNgn({ cashInNgn: 5_150_000, quoteTotalNgn: 3_934_200 })
     ).toBe(1_215_800);
+  });
+
+  it('blocks when quotation total is more than receipts', () => {
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 300_000,
+        cashInNgn: 300_000,
+      }).ok
+    ).toBe(false);
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 500_000,
+        cashInNgn: 500_000,
+      }).ok
+    ).toBe(true);
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 620_000,
+        cashInNgn: 620_000,
+      }).ok
+    ).toBe(true);
+  });
+
+  it('uses cash-in when there are no receipt rows', () => {
+    expect(
+      quotationReceiptsCoverQuoteTotal({
+        quoteTotalNgn: 500_000,
+        receiptCashNgn: 0,
+        cashInNgn: 500_000,
+      }).ok
+    ).toBe(true);
   });
 
   it('remaining refundable adds overpayment and independent category lines', () => {

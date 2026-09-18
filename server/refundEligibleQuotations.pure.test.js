@@ -614,4 +614,68 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(rows[0].eligible_refund_categories).toContain('MD discount');
     expect(rows[0].suggested_preview_amount_ngn).toBe(450_000);
   });
+
+  it('excludes quotations whose total is more than receipts even when paid_ngn looks settled', () => {
+    const quote = {
+      id: 'QT-RECEIPT-SHORT',
+      customer_id: 'CUS-1',
+      customer_name: 'Short Receipts',
+      date_iso: '2026-08-18',
+      total_ngn: 100_000,
+      paid_ngn: 100_000,
+      status: 'Finished',
+      refunds_blocked_at_iso: null,
+      total_refunded: 0,
+      lines_json: JSON.stringify({
+        products: [{ name: 'Roofing sheet', qty: 50, unitPrice: 2000 }],
+        accessories: [],
+        services: [],
+      }),
+    };
+    const job = {
+      job_id: 'JOB-RECEIPT-SHORT',
+      quotation_ref: 'QT-RECEIPT-SHORT',
+      actual_meters: 20,
+      status: 'Completed',
+    };
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        return {
+          all() {
+            if (text.includes('FROM quotations q')) return [quote];
+            if (text.includes('FROM sales_receipts')) {
+              return [
+                {
+                  id: 'RCT-SHORT',
+                  quotation_ref: 'QT-RECEIPT-SHORT',
+                  amount_ngn: 40_000,
+                  ledger_entry_id: null,
+                  finance_reconciliation_saved_at_iso: null,
+                  bank_received_amount_ngn: null,
+                  status: 'Confirmed',
+                },
+              ];
+            }
+            if (text.includes('FROM production_jobs') && text.includes('IN (')) return [job];
+            if (text.includes('FROM ledger_entries')) return [];
+            if (text.includes('FROM customer_refunds')) return [];
+            if (text.includes('FROM production_jobs')) return [];
+            return [];
+          },
+          get() {
+            if (text.includes('FROM customer_refunds')) return { s: 0 };
+            if (text.includes('FROM production_job_coils')) return { s: 0 };
+            if (text.includes('FROM production_jobs') && text.includes('NOT IN')) return undefined;
+            if (text.includes('FROM production_jobs')) return { 1: 1 };
+            if (text.includes('FROM ledger_entries')) return { s: 0 };
+            if (text.includes('FROM quotations')) return quote;
+            return undefined;
+          },
+        };
+      },
+    };
+
+    expect(getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 })).toHaveLength(0);
+  });
 });

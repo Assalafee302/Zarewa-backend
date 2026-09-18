@@ -359,6 +359,32 @@ describe('refundProductionAlignment', () => {
     expect(ok.issues.some((i) => i.code === 'cutting_list_quotation_metre_under')).toBe(true);
   });
 
+  it('does not block refund when cutting list is below quotation including trim blank', () => {
+    const db = memDb();
+    db.data.quotations.push({
+      id: 'Q-CL-UNDER-TRIM',
+      lines_json: JSON.stringify({
+        products: [
+          { name: 'Roofing Sheet', qty: '120' },
+          { name: 'Ridge Cap', qty: '3', girthMm: 400 },
+        ],
+      }),
+    });
+    db.data.cutting_lists.push({ id: 'CL-UT', quotation_ref: 'Q-CL-UNDER-TRIM' });
+    db.data.cutting_list_lines.push({
+      cutting_list_id: 'CL-UT',
+      sheets: 50,
+      length_m: 2,
+      total_m: 100,
+      line_type: 'Roof',
+    });
+    const ok = validateRefundProductionAlignmentAtSubmit(db, 'Q-CL-UNDER-TRIM', ['Unproduced meterage'], {
+      actor: { roleKey: 'sales' },
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.issues.some((i) => i.submitAction === 'block')).toBe(false);
+  });
+
   it('does not block overpayment-only refunds on cutting-list metre data-quality issues', () => {
     const db = memDb();
     db.data.quotations.push({

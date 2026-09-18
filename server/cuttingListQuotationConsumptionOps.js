@@ -136,6 +136,9 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
   ]);
   const code = String(assessment.code || '').trim();
   const totalAlreadyHardBlocked = !assessment.ok && hardMismatchCodes.has(code);
+  const cuttingListUnderQuote =
+    code === 'cutting_list_quotation_metre_under' ||
+    (Number(assessment.signedDeltaM) < -1e-6 && !totalAlreadyHardBlocked);
 
   if (!assessment.ok && assessment.message && hardMismatchCodes.has(code)) {
     issues.push({
@@ -173,6 +176,7 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
 
   for (const warning of assessment.warnings || []) {
     if (totalAlreadyHardBlocked && String(warning).includes('Flatsheet section')) continue;
+    if (cuttingListUnderQuote) continue;
     if (code === 'cutting_list_quotation_metre_under' && String(warning) === String(assessment.message || '')) {
       continue;
     }
@@ -185,7 +189,8 @@ export function refundCuttingListQuotationMetreIssues(db, quotationRef) {
       trimBlankGapM: assessment.trimBlankGapM,
     });
   }
-  if (assessment.trimBlankProductionBlocked && !totalAlreadyHardBlocked) {
+  // CL below quote: leftover roof/trim is unproduced — do not hard-block refunds on missing trim blank.
+  if (assessment.trimBlankProductionBlocked && !totalAlreadyHardBlocked && !cuttingListUnderQuote) {
     issues.push({
       code: 'trim_blank_cl_missing',
       severity: 'error',

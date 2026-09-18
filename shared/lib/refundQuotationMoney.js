@@ -8,6 +8,7 @@
  */
 
 import { REFUND_DERIVED_CAP_CATEGORIES, mergeRefundCategoryCapsNgn } from './refundCategoryDerivedCaps.js';
+import { isEffectivelyFullyPaid } from './paymentOutstandingTolerance.js';
 
 export function roundRefundMoney(value) {
   return Math.round(Number(value) || 0);
@@ -53,6 +54,30 @@ export function quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn }) {
   const quoteTotal = roundRefundMoney(quoteTotalNgn);
   if (quoteTotal <= 0 || cashIn <= quoteTotal) return 0;
   return cashIn - quoteTotal;
+}
+
+/**
+ * Refunds require receipts (or cash-in when no receipt rows exist) to cover the quotation total.
+ * Quote above receipts is a hard block — do not pay out against an unpaid balance.
+ * @param {{ quoteTotalNgn?: number, receiptCashNgn?: number, cashInNgn?: number }} p
+ * @returns {{ ok: boolean, quoteTotalNgn: number, receiptsTotalNgn: number, shortfallNgn: number, message?: string }}
+ */
+export function quotationReceiptsCoverQuoteTotal(p) {
+  const quoteTotal = roundRefundMoney(p?.quoteTotalNgn);
+  const receiptCash = roundRefundMoney(p?.receiptCashNgn);
+  const cashIn = roundRefundMoney(p?.cashInNgn);
+  const receiptsTotal = receiptCash > 0 ? receiptCash : cashIn;
+  if (quoteTotal <= 0 || isEffectivelyFullyPaid(receiptsTotal, quoteTotal)) {
+    return { ok: true, quoteTotalNgn: quoteTotal, receiptsTotalNgn: receiptsTotal, shortfallNgn: 0 };
+  }
+  const shortfallNgn = Math.max(0, quoteTotal - receiptsTotal);
+  return {
+    ok: false,
+    quoteTotalNgn: quoteTotal,
+    receiptsTotalNgn: receiptsTotal,
+    shortfallNgn,
+    message: `Quotation total (₦${quoteTotal.toLocaleString('en-NG')}) is more than total receipts (₦${receiptsTotal.toLocaleString('en-NG')}). Collect the remaining ₦${shortfallNgn.toLocaleString('en-NG')} before requesting a refund.`,
+  };
 }
 
 function refundCalculationLinesFromRecord(refund) {

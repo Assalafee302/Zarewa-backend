@@ -59,4 +59,22 @@ describe('quotation payment integrity (duplicate entry)', () => {
     const issues = refundPaymentIntegrityIssues(db, 'QT-A');
     expect(issues.some((i) => i.code === 'settled_quote_repeat_payment')).toBe(true);
   });
+
+  it('blocks eligibility when quotation total is more than receipts', () => {
+    db.exec(`
+      INSERT INTO quotations (id, customer_id, customer_name, total_ngn, paid_ngn, payment_status, status, lines_json, date_iso)
+      VALUES ('QT-UNDERPAID', 'CUS-2', 'Test', 500000, 500000, 'Paid', 'Finished', '{}', '2026-05-11');
+      INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+      VALUES ('RCT-UNDER', 'CUS-2', 'Test', 'QT-UNDERPAID', 200000, 'Posted', '2026-05-11');
+      INSERT INTO production_jobs (job_id, quotation_ref, status)
+      VALUES ('PRO-UNDER', 'QT-UNDERPAID', 'Completed');
+    `);
+    const meets = quotationMeetsRefundEligibility(db, 'QT-UNDERPAID');
+    expect(meets.ok).toBe(false);
+    expect(meets.code).toBe('QUOTATION_EXCEEDS_RECEIPTS');
+    const issues = refundPaymentIntegrityIssues(db, 'QT-UNDERPAID');
+    expect(issues.some((i) => i.code === 'quotation_exceeds_receipts' && i.severity === 'error')).toBe(
+      true
+    );
+  });
 });

@@ -123,6 +123,7 @@ import { stoneFlatsheetShortfallRefundSuggestions } from './stoneFlatsheetFulfil
 import {
   buildRefundCategorySuggestedMaxNgn,
   quotationOverpaymentExcessNgn,
+  quotationReceiptsCoverQuoteTotal,
   quotationOverpaymentResidualNgn,
   overpaymentAlreadyRefundedNgn,
   quotationRefundHardCapNgn,
@@ -671,6 +672,18 @@ export function validateRefundFinancialGuards(db, opts = {}) {
   const livePreviewCaps = buildRefundCategorySuggestedMaxNgn(preview.preview?.suggestedLines || []);
 
   const quoteRow = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(ref);
+  const receiptsCover = quotationReceiptsCoverQuoteTotal({
+    quoteTotalNgn: preview.preview?.quoteTotalNgn ?? quoteRow?.total_ngn,
+    receiptCashNgn: preview.preview?.receiptCashNgn,
+    cashInNgn: preview.preview?.quotationCashInNgn,
+  });
+  if (!receiptsCover.ok) {
+    return {
+      ok: false,
+      code: 'QUOTATION_EXCEEDS_RECEIPTS',
+      error: receiptsCover.message,
+    };
+  }
   const bundledCheck = validateBundledTransportInstallCrossRequest(
     db,
     ref,
@@ -5483,6 +5496,7 @@ export function quotationCashInNgn(db, quotationRef) {
 /**
  * Single-quotation checks aligned with {@link getEligibleRefundQuotations} listing rules, plus
  * remaining headroom from cash on this quote minus quote total (when overpaid) or cash minus refunds.
+ * Quotation total must not exceed receipts (or cash-in when there are no receipt rows).
  */
 export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = null) {
   const ref = String(quotationRef ?? '').trim();
@@ -5516,10 +5530,23 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
   );
   if (!quoteBranchFreeze.ok) return quoteBranchFreeze;
   const paidNgn = roundMoney(q.paid_ngn);
-  const cashInNgn = quotationCashInNgn(db, ref);
+  const cash = quotationPaymentCashBreakdown(db, ref);
+  const cashInNgn = roundMoney(cash.cashInNgn);
   const quoteTotalNgn = roundMoney(q.total_ngn);
   if (cashInNgn <= 0 && paidNgn <= 0) {
     return { ok: false, error: 'This quotation has no recorded payment toward a refund.' };
+  }
+  const receiptsCover = quotationReceiptsCoverQuoteTotal({
+    quoteTotalNgn,
+    receiptCashNgn: cash.receiptCashNgn,
+    cashInNgn,
+  });
+  if (!receiptsCover.ok) {
+    return {
+      ok: false,
+      code: 'QUOTATION_EXCEEDS_RECEIPTS',
+      error: receiptsCover.message,
+    };
   }
   const totalRefundedNgn = quotationActiveRefundedTotalNgn(db, ref);
   const remainingNgn = quotationRefundHardCapNgn({
@@ -5893,7 +5920,8 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
 /**
  * Returns quotations with money at risk (paid in), room left to refund, and production closed out:
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
- * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
+ * Order must be covered by receipts (or cash-in when there are no receipt rows) when total is set
+ * ({@link quotationReceiptsCoverQuoteTotal}). Booked paid_ngn alone is not enough.
  * The pick list never runs {@link previewRefundRequest}. Obvious overpayments (residual), void/cancelled jobs
  * (when Order cancellation is not already claimed), unproduced metres, and quoted-above-floor (same-gauge)
  * are classified cheaply so a follow-up commission refund still appears after overpay/unproduced is claimed.
@@ -6017,6 +6045,12 @@ export function getEligibleRefundQuotations(db, opts = {}) {
     if (remainingNgn < MIN_REFUND_QUOTATION_REMAINING_NGN) continue;
 
     const quoteTotalNgn = roundMoney(row.total_ngn);
+    const receiptsCover = quotationReceiptsCoverQuoteTotal({
+      quoteTotalNgn,
+      receiptCashNgn: cash.receiptCashNgn,
+      cashInNgn,
+    });
+    if (!receiptsCover.ok) continue;
     const overpayExcess = quotationOverpaymentExcessNgn({ cashInNgn, quoteTotalNgn });
     const hint = refundPickerListHint(db, row, jobsByRef.get(row.id) || [], {
       overpayExcess,

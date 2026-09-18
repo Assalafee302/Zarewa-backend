@@ -54,7 +54,7 @@ describe('cuttingListQuotationConsumptionOps', () => {
     expect(refundCuttingListQuotationMetreIssues(db, 'Q1')).toEqual([]);
   });
 
-  it('treats under-quote cutting list as info (not hard block) and still flags missing trim blank', () => {
+  it('treats under-quote cutting list as info and does not hard-block missing trim blank', () => {
     const db = memDb({
       quote: {
         id: 'Q1',
@@ -69,7 +69,7 @@ describe('cuttingListQuotationConsumptionOps', () => {
         {
           id: 'CL1',
           quotation_ref: 'Q1',
-          lines: [{ sheets: 50, length_m: 2, total_m: 100, line_type: 'Roof' }],
+          lines: [{ sheets: 40, length_m: 2, total_m: 80, line_type: 'Roof' }],
         },
       ],
     });
@@ -78,7 +78,8 @@ describe('cuttingListQuotationConsumptionOps', () => {
       true
     );
     expect(issues.some((i) => i.code === 'cutting_list_quotation_metre_mismatch')).toBe(false);
-    expect(issues.some((i) => i.code === 'trim_blank_cl_missing')).toBe(true);
+    expect(issues.some((i) => i.code === 'trim_blank_cl_missing')).toBe(false);
+    expect(issues.some((i) => i.severity === 'error')).toBe(false);
   });
 
   it('hard-flags when cutting list exceeds quotation metres', () => {
@@ -124,7 +125,9 @@ describe('cuttingListQuotationConsumptionOps', () => {
     });
     const issues = refundCuttingListQuotationMetreIssues(db, 'Q1');
     expect(issues.some((i) => i.code === 'cutting_list_quotation_metre_under')).toBe(true);
-    expect(issues.some((i) => i.code === 'trim_blank_cl_missing')).toBe(true);
+    expect(issues.some((i) => i.code === 'trim_blank_cl_missing')).toBe(false);
+    expect(issues.some((i) => i.code === 'trim_blank_cl_soft_warning')).toBe(false);
+    expect(issues.some((i) => i.severity === 'error')).toBe(false);
   });
 
   it('flags trim blank missing when total matches but flatsheet section is short', () => {

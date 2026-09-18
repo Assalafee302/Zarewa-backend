@@ -229,6 +229,10 @@ describe('Accessory fulfillment', () => {
     expect(screw.ordered).toBe(17);
     expect(screw.supplied).toBe(15);
     expect(screw.shortfall).toBe(2);
+    // Aliases for refund approval UIs that still read issuedQty/quotedQty.
+    expect(screw.quotedQty).toBe(17);
+    expect(screw.issuedQty).toBe(15);
+    expect(screw.label).toBe(screw.name);
   });
 
   it('rejects accessory supplied above remaining for the quotation line', async () => {

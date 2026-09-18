@@ -71,6 +71,11 @@ import {
   payoutLinePostedDay,
 } from '../shared/lib/treasuryPayoutDates.js';
 
+/**
+ * Stamp header material onto product/service lines.
+ * Header is source of truth: when materialGauge/color/design is set, overwrite
+ * stamped line fields so print/UI that read products[0].gauge stay in sync.
+ */
 function enrichQuotationLinesWithMaterialHeader(linesJson) {
   if (!linesJson || typeof linesJson !== 'object') return;
   const hg = String(linesJson.materialGauge ?? '').trim();
@@ -80,10 +85,19 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
     if (!Array.isArray(arr)) return;
     for (const line of arr) {
       if (!line || typeof line !== 'object') continue;
-      if (!line.gauge && !line.gaugeLabel && hg) line.gauge = hg;
-      if (!line.colour && !line.color && hc) line.colour = hc;
-      if (!line.design && hd) line.design = hd;
-      if (!line.profile && !line.profileName && !line.profileKey && hd) line.profile = hd;
+      if (hg) {
+        line.gauge = hg;
+        if (line.gaugeLabel) line.gaugeLabel = hg;
+        if (line.materialGauge) line.materialGauge = hg;
+      }
+      if (hc) {
+        if (line.colour || !line.color) line.colour = hc;
+        if (line.color) line.color = hc;
+      }
+      if (hd) {
+        if (line.design || (!line.profile && !line.profileName && !line.profileKey)) line.design = hd;
+        if (!line.profile && !line.profileName && !line.profileKey) line.profile = hd;
+      }
     }
   };
   enrich(linesJson.products);

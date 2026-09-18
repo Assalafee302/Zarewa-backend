@@ -72,17 +72,30 @@ function quotationLines(quote) {
   return ql && typeof ql === 'object' ? ql : {};
 }
 
-function quotationGaugeLabel(quote) {
+export function quotationGaugeLabel(quote) {
   const ql = quotationLines(quote);
+  // API rows put header on quote.materialGauge* and strip it from quotationLines —
+  // prefer header (display first for customer-facing labels) before stamped product lines.
   const g = String(
-    ql.materialGauge || ql.products?.[0]?.gauge || ql.products?.[0]?.gaugeLabel || ''
+    quote?.materialGaugeDisplay ||
+      quote?.materialGauge ||
+      ql.materialGauge ||
+      ql.products?.[0]?.gauge ||
+      ql.products?.[0]?.gaugeLabel ||
+      ''
   ).trim();
   return g || '—';
 }
 
 function quotationColourRaw(quote) {
   const ql = quotationLines(quote);
-  return String(ql.materialColor || ql.products?.[0]?.colour || ql.products?.[0]?.color || '').trim();
+  return String(
+    quote?.materialColor ||
+      ql.materialColor ||
+      ql.products?.[0]?.colour ||
+      ql.products?.[0]?.color ||
+      ''
+  ).trim();
 }
 
 /** Quotation roofing design: Metra, Indus 6, Metcoppo, or Flatsheet. */

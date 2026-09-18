@@ -352,12 +352,18 @@ export function accessoryFulfillmentSummaryForQuotation(db, quotationRef) {
       name: line.name,
     });
     const shortfall = Math.max(0, line.orderedQty - supplied);
+    // Canonical: ordered/supplied/shortfall. Aliases issuedQty/quotedQty/label keep
+    // refund approval UIs (RefundManagerApprovalPreview, ManagementQuotationIntelGrid)
+    // that still read the older field names from showing blank accessory supply rows.
     out.push({
       quoteLineId: stableKey,
       name: line.name,
+      label: line.name,
       ordered: line.orderedQty,
       supplied,
       shortfall,
+      quotedQty: line.orderedQty,
+      issuedQty: supplied,
       unitPriceNgn: line.unitPriceNgn,
     });
   }

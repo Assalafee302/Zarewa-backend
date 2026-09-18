@@ -145,13 +145,13 @@ describe('workspaceSearchCore', () => {
 
   it('filterNavSearchCommands finds full cashier statement and duplicate delete', () => {
     const hasPermission = (p) => p === 'finance.post' || p === 'cashier.desk.view';
-    expect(
-      filterNavSearchCommands('before 12th', hasPermission, () => true).some((h) => h.id === 'nav-cashier-statement')
-    ).toBe(true);
-    expect(
-      filterNavSearchCommands('duplicate expenses', hasPermission, () => true).some(
-        (h) => h.id === 'nav-expense-duplicates'
-      )
-    ).toBe(true);
+    const statement = filterNavSearchCommands('before 12th', hasPermission, () => true).find(
+      (h) => h.id === 'nav-cashier-statement'
+    );
+    const duplicates = filterNavSearchCommands('duplicate expenses', hasPermission, () => true).find(
+      (h) => h.id === 'nav-expense-duplicates'
+    );
+    expect(statement?.path).toBe('/expense-cash-catchup?view=statement');
+    expect(duplicates?.path).toBe('/expense-cash-catchup?view=duplicates');
   });
 });

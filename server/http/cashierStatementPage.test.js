@@ -41,6 +41,20 @@ describe('cashier statement HTML page', () => {
     expect(html).toMatch(/9886/);
     expect(html).not.toMatch(/min="/);
   });
+
+  it('posts the date form back to the catch-up path when aliased', () => {
+    const html = renderCashierStatementPage({
+      user: { displayName: 'Yola Finance' },
+      canView: true,
+      branches: [{ id: 'BR-YL', name: 'Yola Factory' }],
+      selectedBranchId: 'BR-YL',
+      accounts: [{ id: 9, name: 'POS' }],
+      formAction: '/expense-cash-catchup',
+      view: 'statement',
+    });
+    expect(html).toMatch(/action="\/expense-cash-catchup"/);
+    expect(html).toMatch(/name="view" value="statement"/);
+  });
 });
 
 describe('expense duplicates HTML page', () => {
@@ -67,5 +81,31 @@ describe('expense duplicates HTML page', () => {
     expect(html).toMatch(/Keep EXP-YL-26-0210/);
     expect(html).toMatch(/EXP-YL-26-0211/);
     expect(html).toMatch(/Delete selected extras and restore cash/);
+  });
+
+  it('posts duplicate deletes back to the catch-up path when aliased', () => {
+    const html = renderExpenseDuplicatesPage({
+      user: { displayName: 'Yola Finance' },
+      canPost: true,
+      csrf: 'dup-csrf',
+      branches: [{ id: 'BR-YL', name: 'Yola Factory' }],
+      selectedBranchId: 'BR-YL',
+      extraCount: 1,
+      restoreCashNgn: 7400,
+      formAction: '/expense-cash-catchup',
+      view: 'duplicates',
+      groups: [
+        {
+          date: '2026-09-12',
+          category: 'Refund',
+          reference: '9899',
+          amountNgn: 7400,
+          keepExpenseID: 'EXP-YL-26-0210',
+          extraExpenseIDs: ['EXP-YL-26-0211'],
+        },
+      ],
+    });
+    expect(html).toMatch(/action="\/expense-cash-catchup"/);
+    expect(html).toMatch(/name="view" value="duplicates"/);
   });
 });

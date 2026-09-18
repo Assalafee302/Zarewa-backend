@@ -258,11 +258,11 @@ const OPERATIONAL_TOPICS = [
     answer:
       'The Cashier desk page only loads recent lines, so POS looks like it starts on 12 Sep. Use the full-date statement print to include 5–11 Sep.',
     steps: [
-      'Open **Cashier statement (full dates)** (`/cashier-statement`).',
+      'Open **Cashier statement (full dates)** (`/expense-cash-catchup?view=statement`) — same page as Post imported expenses, with view=statement.',
       'Pick Yola, then POS or Cash.',
       'Set From to **2026-09-01** (or 5 Sep) and To today, then Show statement.',
     ],
-    links: [{ label: 'Cashier statement (full dates)', to: '/cashier-statement' }],
+    links: [{ label: 'Cashier statement (full dates)', to: '/expense-cash-catchup?view=statement' }],
     extraKeywords: ['pos', 'before 12th', 'statement period', 'cash till'],
   },
   {
@@ -272,11 +272,11 @@ const OPERATIONAL_TOPICS = [
     answer:
       'If the same refund was uploaded twice, extra copies sit on Cash/POS. Keep one row and delete the extras — cash is put back on the till.',
     steps: [
-      'Open **Delete duplicate expenses** (`/expense-duplicates`).',
+      'Open **Delete duplicate expenses** (`/expense-cash-catchup?view=duplicates`).',
       'Pick Yola Factory. Leave extras ticked. Keep the first expense id in each group.',
       'Click **Delete selected extras and restore cash**. Then reprint the till statement.',
     ],
-    links: [{ label: 'Delete duplicate expenses', to: '/expense-duplicates' }],
+    links: [{ label: 'Delete duplicate expenses', to: '/expense-cash-catchup?view=duplicates' }],
     extraKeywords: ['duplicate', '9899', '9918', 'imported twice'],
   },
   {

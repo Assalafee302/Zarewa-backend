@@ -11,6 +11,7 @@ import {
 } from '../finance/expenseTreasuryCatchUpOps.js';
 
 export const EXPENSE_DUPLICATES_PATH = '/expense-duplicates';
+export const EXPENSE_DUPLICATES_VIEW = 'duplicates';
 
 function esc(value) {
   return String(value ?? '')
@@ -45,6 +46,10 @@ export function renderExpenseDuplicatesPage(model = {}) {
   const who = esc(user?.displayName || user?.username || '');
   const extraCount = Number(model.extraCount) || 0;
   const restoreCashNgn = Number(model.restoreCashNgn) || 0;
+  const formAction = String(model.formAction || EXPENSE_DUPLICATES_PATH);
+  const viewField = model.view
+    ? `<input type="hidden" name="view" value="${esc(model.view)}" />`
+    : '';
 
   const branchOptions = branches
     .map((b) => {
@@ -83,7 +88,8 @@ export function renderExpenseDuplicatesPage(model = {}) {
       <p class="lead">Signed in as ${who}. Keep one row for each refund. Extra copies (same date, category, amount, and reference) are listed below. Deleting them <strong>puts the money back</strong> on Cash or POS.</p>
       ${model.error ? `<p class="err">${esc(model.error)}</p>` : ''}
       ${model.notice ? `<p class="ok">${esc(model.notice)}</p>` : ''}
-      <form method="get" action="${EXPENSE_DUPLICATES_PATH}" class="card">
+      <form method="get" action="${esc(formAction)}" class="card">
+        ${viewField}
         <label>Branch
           <select name="branchId" onchange="this.form.submit()">${branchOptions}</select>
         </label>
@@ -93,7 +99,8 @@ export function renderExpenseDuplicatesPage(model = {}) {
         <h2>${groups.length} duplicate group(s) · ${extraCount} extra row(s) · ₦${esc(formatNgn(restoreCashNgn))} to put back</h2>
         ${
           groups.length
-            ? `<form method="post" action="${EXPENSE_DUPLICATES_PATH}">
+            ? `<form method="post" action="${esc(formAction)}">
+          ${viewField}
           <input type="hidden" name="csrf" value="${esc(model.csrf || '')}" />
           <input type="hidden" name="branchId" value="${esc(selectedBranch)}" />
           <table>
@@ -107,7 +114,7 @@ export function renderExpenseDuplicatesPage(model = {}) {
             : `<p>No duplicate extra copies on this branch (same date + category + amount + reference).</p>`
         }
       </div>
-      <p><a href="/cashier-statement">Open full cashier statement</a> · <a href="/">Back to Zarewa</a></p>`;
+      <p><a href="/expense-cash-catchup?view=statement">Open full cashier statement</a> · <a href="/expense-cash-catchup">Post imported expenses</a> · <a href="/">Back to Zarewa</a></p>`;
   }
 
   return `<!DOCTYPE html>
@@ -179,48 +186,72 @@ function sendPage(res, html, status = 200) {
  * @param {import('express').Express} app
  * @param {object} db
  */
-export function registerExpenseDuplicatesPage(app, db) {
-  app.get(EXPENSE_DUPLICATES_PATH, (req, res) => {
-    return sendPage(res, renderExpenseDuplicatesPage(pageModel(db, req)));
-  });
+export function handleExpenseDuplicatesGet(db, req, res, opts = {}) {
+  return sendPage(
+    res,
+    renderExpenseDuplicatesPage({
+      ...pageModel(db, req),
+      formAction: String(opts.formAction || EXPENSE_DUPLICATES_PATH),
+      view: String(opts.view || ''),
+    })
+  );
+}
 
-  app.post(EXPENSE_DUPLICATES_PATH, express.urlencoded({ extended: false }), (req, res) => {
-    const body = req.body || {};
-    const rawIds = body.expenseIds;
-    const expenseIds = Array.isArray(rawIds) ? rawIds : rawIds ? [rawIds] : [];
-    const modelBase = pageModel(db, req, { selectedBranchId: body.branchId });
-    if (!req.user) {
-      return sendPage(res, renderExpenseDuplicatesPage({ ...modelBase, error: 'Sign in first.' }), 401);
-    }
-    if (!userMayDelete(req.user)) {
-      return sendPage(
-        res,
-        renderExpenseDuplicatesPage({ ...modelBase, error: 'Only Finance or an Administrator can delete duplicates.' }),
-        403
-      );
-    }
-    if (!csrfTokensEqual(req.csrfToken, body.csrf)) {
-      return sendPage(
-        res,
-        renderExpenseDuplicatesPage({
-          ...modelBase,
-          error: 'Your session expired. Sign in again, then open this page and retry.',
-        }),
-        403
-      );
-    }
-    const r = deleteDuplicateImportedExpenses(db, req.user, {
-      workspaceBranchId: String(body.branchId || '').trim(),
-      workspaceViewAll: false,
-      expenseIds,
-    });
-    if (!r.ok) {
-      return sendPage(res, renderExpenseDuplicatesPage({ ...modelBase, error: r.error || 'Could not delete.' }), 400);
-    }
-    const qs = new URLSearchParams({
-      notice: r.message || `Removed ${r.deletedCount} duplicate(s).`,
-      branchId: String(body.branchId || ''),
-    });
-    return res.redirect(303, `${EXPENSE_DUPLICATES_PATH}?${qs.toString()}`);
+export function handleExpenseDuplicatesPost(db, req, res, opts = {}) {
+  const formAction = String(opts.formAction || EXPENSE_DUPLICATES_PATH);
+  const view = String(opts.view || '');
+  const redirectBase = String(opts.redirectPath || EXPENSE_DUPLICATES_PATH);
+  const body = req.body || {};
+  const rawIds = body.expenseIds;
+  const expenseIds = Array.isArray(rawIds) ? rawIds : rawIds ? [rawIds] : [];
+  const modelBase = {
+    ...pageModel(db, req, { selectedBranchId: body.branchId }),
+    formAction,
+    view,
+  };
+  if (!req.user) {
+    return sendPage(res, renderExpenseDuplicatesPage({ ...modelBase, error: 'Sign in first.' }), 401);
+  }
+  if (!userMayDelete(req.user)) {
+    return sendPage(
+      res,
+      renderExpenseDuplicatesPage({ ...modelBase, error: 'Only Finance or an Administrator can delete duplicates.' }),
+      403
+    );
+  }
+  if (!csrfTokensEqual(req.csrfToken, body.csrf)) {
+    return sendPage(
+      res,
+      renderExpenseDuplicatesPage({
+        ...modelBase,
+        error: 'Your session expired. Sign in again, then open this page and retry.',
+      }),
+      403
+    );
+  }
+  const r = deleteDuplicateImportedExpenses(db, req.user, {
+    workspaceBranchId: String(body.branchId || '').trim(),
+    workspaceViewAll: false,
+    expenseIds,
   });
+  if (!r.ok) {
+    return sendPage(res, renderExpenseDuplicatesPage({ ...modelBase, error: r.error || 'Could not delete.' }), 400);
+  }
+  const qs = new URLSearchParams({
+    notice: r.message || `Removed ${r.deletedCount} duplicate(s).`,
+    branchId: String(body.branchId || ''),
+  });
+  if (view) qs.set('view', view);
+  return res.redirect(303, `${redirectBase}?${qs.toString()}`);
+}
+
+/**
+ * @param {import('express').Express} app
+ * @param {object} db
+ */
+export function registerExpenseDuplicatesPage(app, db) {
+  app.get(EXPENSE_DUPLICATES_PATH, (req, res) => handleExpenseDuplicatesGet(db, req, res));
+  app.post(EXPENSE_DUPLICATES_PATH, express.urlencoded({ extended: false }), (req, res) =>
+    handleExpenseDuplicatesPost(db, req, res)
+  );
 }

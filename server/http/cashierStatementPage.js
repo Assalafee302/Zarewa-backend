@@ -7,6 +7,7 @@ import { listTreasuryAccounts } from '../readModel.js';
 import { buildTreasuryAccountStatement } from '../finance/treasuryAccountStatementOps.js';
 
 export const CASHIER_STATEMENT_PATH = '/cashier-statement';
+export const CASHIER_STATEMENT_VIEW = 'statement';
 
 function esc(value) {
   return String(value ?? '')
@@ -54,6 +55,10 @@ export function renderCashierStatementPage(model = {}) {
   const selectedAccount = String(model.selectedTreasuryAccountId || '');
   const fromISO = String(model.fromISO || '2026-09-01');
   const toISO = String(model.toISO || todayIso());
+  const formAction = String(model.formAction || CASHIER_STATEMENT_PATH);
+  const viewField = model.view
+    ? `<input type="hidden" name="view" value="${esc(model.view)}" />`
+    : '';
   const stmt = model.statement;
   const who = esc(user?.displayName || user?.username || '');
 
@@ -95,7 +100,8 @@ export function renderCashierStatementPage(model = {}) {
     body = `
       <p class="lead">Signed in as ${who}. This print includes <strong>every</strong> line in the dates you pick — including 5–11 Sep — not only the recent Cashier desk page.</p>
       ${model.error ? `<p class="err">${esc(model.error)}</p>` : ''}
-      <form method="get" action="${CASHIER_STATEMENT_PATH}" class="card noprint">
+      <form method="get" action="${esc(formAction)}" class="card noprint">
+        ${viewField}
         <label>Branch
           <select name="branchId" onchange="this.form.submit()">${branchOptions}</select>
         </label>
@@ -126,7 +132,7 @@ export function renderCashierStatementPage(model = {}) {
       </article>`
           : ''
       }
-      <p class="noprint"><a href="/expense-duplicates">Remove duplicate expenses</a> · <a href="/">Back to Zarewa</a></p>`;
+      <p class="noprint"><a href="/expense-cash-catchup?view=duplicates">Remove duplicate expenses</a> · <a href="/expense-cash-catchup">Post imported expenses</a> · <a href="/">Back to Zarewa</a></p>`;
   }
 
   return `<!DOCTYPE html>
@@ -176,46 +182,52 @@ function sendPage(res, html, status = 200) {
   return res.send(html);
 }
 
+export function handleCashierStatementGet(db, req, res, opts = {}) {
+  const formAction = String(opts.formAction || CASHIER_STATEMENT_PATH);
+  const view = String(opts.view || '');
+  const branches = listBranches(db);
+  const selectedBranchId =
+    String(req.query?.branchId || req.workspaceBranchId || '').trim() ||
+    branches.find((b) => String(b.id) === 'BR-YL')?.id ||
+    branches[0]?.id ||
+    '';
+  const accounts = selectedBranchId ? listTreasuryAccounts(db, selectedBranchId) : [];
+  const selectedTreasuryAccountId =
+    String(req.query?.treasuryAccountId || '').trim() ||
+    (accounts.find((a) => /pos/i.test(String(a.name || ''))) || accounts[0])?.id ||
+    '';
+  const fromISO = String(req.query?.fromISO || '2026-09-01').slice(0, 10);
+  const toISO = String(req.query?.toISO || todayIso()).slice(0, 10);
+  const q = String(req.query?.treasuryAccountId || '').trim();
+  let statement = null;
+  let error = '';
+  if (q) {
+    statement = buildTreasuryAccountStatement(db, selectedTreasuryAccountId, fromISO, toISO);
+    if (!statement.ok) error = statement.error || 'Could not build statement.';
+  }
+  return sendPage(
+    res,
+    renderCashierStatementPage({
+      user: req.user || null,
+      canView: userMayView(req.user),
+      branches,
+      selectedBranchId,
+      accounts,
+      selectedTreasuryAccountId,
+      fromISO,
+      toISO,
+      statement: statement?.ok ? statement : null,
+      error,
+      formAction,
+      view,
+    })
+  );
+}
+
 /**
  * @param {import('express').Express} app
  * @param {object} db
  */
 export function registerCashierStatementPage(app, db) {
-  app.get(CASHIER_STATEMENT_PATH, (req, res) => {
-    const branches = listBranches(db);
-    const selectedBranchId =
-      String(req.query?.branchId || req.workspaceBranchId || '').trim() ||
-      branches.find((b) => String(b.id) === 'BR-YL')?.id ||
-      branches[0]?.id ||
-      '';
-    const accounts = selectedBranchId ? listTreasuryAccounts(db, selectedBranchId) : [];
-    const selectedTreasuryAccountId =
-      String(req.query?.treasuryAccountId || '').trim() ||
-      (accounts.find((a) => /pos/i.test(String(a.name || ''))) || accounts[0])?.id ||
-      '';
-    const fromISO = String(req.query?.fromISO || '2026-09-01').slice(0, 10);
-    const toISO = String(req.query?.toISO || todayIso()).slice(0, 10);
-    const q = String(req.query?.treasuryAccountId || '').trim();
-    let statement = null;
-    let error = '';
-    if (q) {
-      statement = buildTreasuryAccountStatement(db, selectedTreasuryAccountId, fromISO, toISO);
-      if (!statement.ok) error = statement.error || 'Could not build statement.';
-    }
-    return sendPage(
-      res,
-      renderCashierStatementPage({
-        user: req.user || null,
-        canView: userMayView(req.user),
-        branches,
-        selectedBranchId,
-        accounts,
-        selectedTreasuryAccountId,
-        fromISO,
-        toISO,
-        statement: statement?.ok ? statement : null,
-        error,
-      })
-    );
-  });
+  app.get(CASHIER_STATEMENT_PATH, (req, res) => handleCashierStatementGet(db, req, res));
 }

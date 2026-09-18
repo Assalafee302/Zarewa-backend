@@ -378,7 +378,7 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
     id: 'nav-cashier-statement',
     label: 'Cashier statement (full dates)',
     sublabel: 'Print POS or Cash including 5–11 Sep',
-    path: '/cashier-statement',
+    path: '/expense-cash-catchup?view=statement',
     keywords: [
       'cashier statement',
       'pos statement',
@@ -393,7 +393,7 @@ export const WORKSPACE_NAV_SEARCH_COMMANDS = [
     id: 'nav-expense-duplicates',
     label: 'Delete duplicate expenses',
     sublabel: 'Remove extra import copies and put cash back',
-    path: '/expense-duplicates',
+    path: '/expense-cash-catchup?view=duplicates',
     keywords: ['duplicate expenses', 'delete duplicate', 'double refund', 'import twice'],
     permissions: ['finance.post', 'expenses.create'],
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderExpenseCashCatchupPage } from './expenseCashCatchupPage.js';
+import { catchupPageView, renderExpenseCashCatchupPage } from './expenseCashCatchupPage.js';
 
 describe('expense cash catch-up HTML page', () => {
   it('asks unsigned visitors to sign in', () => {
@@ -34,5 +34,13 @@ describe('expense cash catch-up HTML page', () => {
     expect(html).toMatch(/RFD-SEP-03/);
     expect(html).toMatch(/value="token-cash-1"/);
     expect(html).toMatch(/45,000/);
+    expect(html).toMatch(/expense-cash-catchup\?view=statement/);
+    expect(html).toMatch(/expense-cash-catchup\?view=duplicates/);
+  });
+
+  it('catchupPageView reads statement and duplicates from query or body', () => {
+    expect(catchupPageView({ query: { view: 'statement' } })).toBe('statement');
+    expect(catchupPageView({ body: { view: 'duplicates' } })).toBe('duplicates');
+    expect(catchupPageView({ query: {} })).toBe('');
   });
 });

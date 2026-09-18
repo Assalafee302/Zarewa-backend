@@ -15,8 +15,18 @@ import {
   attachTreasuryToImportedExpenses,
   listExpensesMissingBankPosting,
 } from '../finance/expenseTreasuryCatchUpOps.js';
+import { handleCashierStatementGet } from './cashierStatementPage.js';
+import { handleExpenseDuplicatesGet, handleExpenseDuplicatesPost } from './expenseDuplicatesPage.js';
 
 export const EXPENSE_CASH_CATCHUP_PATH = '/expense-cash-catchup';
+export const EXPENSE_CASH_CATCHUP_API_PATH = '/api/expense-cash-catchup';
+
+/** ERP nginx only proxies this path; statement/duplicates live as `?view=`. */
+export function catchupPageView(req) {
+  return String(req?.query?.view || req?.body?.view || '')
+    .trim()
+    .toLowerCase();
+}
 
 const PREVIEW_ROWS = 40;
 const POST_LIMIT = 500;
@@ -158,7 +168,7 @@ export function renderExpenseCashCatchupPage(model = {}) {
       </form>`
           : ''
       }
-      <p><a href="/">Back to Zarewa</a></p>`;
+      <p><a href="/expense-cash-catchup?view=statement">Full cashier statement (including before 12 Sep)</a> · <a href="/expense-cash-catchup?view=duplicates">Delete duplicate expenses</a> · <a href="/">Back to Zarewa</a></p>`;
   }
 
   return `<!DOCTYPE html>
@@ -237,96 +247,117 @@ function sendPage(res, html, status = 200) {
   return res.send(html);
 }
 
+function handleExpenseCashCatchupPost(db, req, res) {
+  const body = req.body || {};
+  const modelBase = pageModel(db, req, {
+    selectedBranchId: body.branchId,
+    category: body.category,
+    selectedTreasuryAccountId: body.treasuryAccountId,
+  });
+  if (!req.user) {
+    return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: 'Sign in first.' }), 401);
+  }
+  if (!userMayCatchUpExpenseCash(req.user)) {
+    return sendPage(
+      res,
+      renderExpenseCashCatchupPage({
+        ...modelBase,
+        error: 'Only Finance or an Administrator can post imported expenses onto the cashier book.',
+      }),
+      403
+    );
+  }
+  if (!csrfTokensEqual(req.csrfToken, body.csrf)) {
+    return sendPage(
+      res,
+      renderExpenseCashCatchupPage({
+        ...modelBase,
+        error: 'Your session expired. Sign in again, then open this page and retry.',
+      }),
+      403
+    );
+  }
+
+  const bid = String(body.branchId || '').trim();
+  const category = String(body.category || '').trim();
+  const treasuryAccountId = Number(body.treasuryAccountId);
+  if (!bid) {
+    return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: 'Pick a branch.' }), 400);
+  }
+  if (!treasuryAccountId) {
+    return sendPage(
+      res,
+      renderExpenseCashCatchupPage({
+        ...modelBase,
+        error: 'Pick the cashier or bank account these refunds were paid from.',
+      }),
+      400
+    );
+  }
+
+  const rows = listExpensesMissingBankPosting(db, bid, {
+    category: category || undefined,
+    limit: POST_LIMIT,
+  });
+  const ids = rows.filter((r) => r.missingTreasury).map((r) => r.expenseID);
+  if (!ids.length) {
+    return sendPage(
+      res,
+      renderExpenseCashCatchupPage({
+        ...modelBase,
+        error:
+          'No expenses on this branch are missing a bank/cash line. They may already be on the statement, or you are on the wrong branch.',
+      }),
+      400
+    );
+  }
+
+  const r = attachTreasuryToImportedExpenses(
+    db,
+    ids,
+    {
+      treasuryAccountId,
+      workspaceBranchId: bid,
+      workspaceViewAll: false,
+    },
+    req.user
+  );
+  if (!r.ok) {
+    return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: r.error || 'Could not post.' }), 400);
+  }
+  const notice = r.message || `Posted ${r.postedCount} expense(s) to the cashier book.`;
+  const qs = new URLSearchParams({
+    notice,
+    branchId: bid,
+    category,
+  });
+  return res.redirect(303, `${EXPENSE_CASH_CATCHUP_PATH}?${qs.toString()}`);
+}
+
+function mountCatchupRoutes(app, db, path) {
+  const statementOpts = { formAction: path, view: 'statement' };
+  const duplicateOpts = { formAction: path, view: 'duplicates', redirectPath: path };
+
+  app.get(path, (req, res) => {
+    const view = catchupPageView(req);
+    if (view === 'statement') return handleCashierStatementGet(db, req, res, statementOpts);
+    if (view === 'duplicates') return handleExpenseDuplicatesGet(db, req, res, duplicateOpts);
+    return sendPage(res, renderExpenseCashCatchupPage(pageModel(db, req)));
+  });
+
+  app.post(path, express.urlencoded({ extended: false }), (req, res) => {
+    if (catchupPageView(req) === 'duplicates') {
+      return handleExpenseDuplicatesPost(db, req, res, duplicateOpts);
+    }
+    return handleExpenseCashCatchupPost(db, req, res);
+  });
+}
+
 /**
  * @param {import('express').Express} app
  * @param {object} db
  */
 export function registerExpenseCashCatchupPage(app, db) {
-  app.get(EXPENSE_CASH_CATCHUP_PATH, (req, res) => {
-    return sendPage(res, renderExpenseCashCatchupPage(pageModel(db, req)));
-  });
-
-  app.post(EXPENSE_CASH_CATCHUP_PATH, express.urlencoded({ extended: false }), (req, res) => {
-    const body = req.body || {};
-    const modelBase = pageModel(db, req, {
-      selectedBranchId: body.branchId,
-      category: body.category,
-      selectedTreasuryAccountId: body.treasuryAccountId,
-    });
-    if (!req.user) {
-      return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: 'Sign in first.' }), 401);
-    }
-    if (!userMayCatchUpExpenseCash(req.user)) {
-      return sendPage(
-        res,
-        renderExpenseCashCatchupPage({
-          ...modelBase,
-          error: 'Only Finance or an Administrator can post imported expenses onto the cashier book.',
-        }),
-        403
-      );
-    }
-    if (!csrfTokensEqual(req.csrfToken, body.csrf)) {
-      return sendPage(
-        res,
-        renderExpenseCashCatchupPage({
-          ...modelBase,
-          error: 'Your session expired. Sign in again, then open this page and retry.',
-        }),
-        403
-      );
-    }
-
-    const bid = String(body.branchId || '').trim();
-    const category = String(body.category || '').trim();
-    const treasuryAccountId = Number(body.treasuryAccountId);
-    if (!bid) {
-      return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: 'Pick a branch.' }), 400);
-    }
-    if (!treasuryAccountId) {
-      return sendPage(
-        res,
-        renderExpenseCashCatchupPage({ ...modelBase, error: 'Pick the cashier or bank account these refunds were paid from.' }),
-        400
-      );
-    }
-
-    const rows = listExpensesMissingBankPosting(db, bid, {
-      category: category || undefined,
-      limit: POST_LIMIT,
-    });
-    const ids = rows.filter((r) => r.missingTreasury).map((r) => r.expenseID);
-    if (!ids.length) {
-      return sendPage(
-        res,
-        renderExpenseCashCatchupPage({
-          ...modelBase,
-          error:
-            'No expenses on this branch are missing a bank/cash line. They may already be on the statement, or you are on the wrong branch.',
-        }),
-        400
-      );
-    }
-
-    const r = attachTreasuryToImportedExpenses(
-      db,
-      ids,
-      {
-        treasuryAccountId,
-        workspaceBranchId: bid,
-        workspaceViewAll: false,
-      },
-      req.user
-    );
-    if (!r.ok) {
-      return sendPage(res, renderExpenseCashCatchupPage({ ...modelBase, error: r.error || 'Could not post.' }), 400);
-    }
-    const notice = r.message || `Posted ${r.postedCount} expense(s) to the cashier book.`;
-    const qs = new URLSearchParams({
-      notice,
-      branchId: bid,
-      category,
-    });
-    return res.redirect(303, `${EXPENSE_CASH_CATCHUP_PATH}?${qs.toString()}`);
-  });
+  mountCatchupRoutes(app, db, EXPENSE_CASH_CATCHUP_PATH);
+  mountCatchupRoutes(app, db, EXPENSE_CASH_CATCHUP_API_PATH);
 }

@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import { registerHttpApi } from './httpApi.js';
+import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
 import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
@@ -147,6 +148,7 @@ export function createApp(db) {
   app.use(attachAuthContext(db));
 
   registerHttpApi(app, db);
+  registerExpenseMemoFilingRoutes(app, db);
   scheduleHelpAnalytics(db);
   scheduleWorkspaceMaintenance(db);
 

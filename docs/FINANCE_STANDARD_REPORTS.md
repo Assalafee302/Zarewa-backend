@@ -11,6 +11,7 @@ Branch-scoped endpoints require `reports.view`. Coil snapshot capture requires `
 | `GET /api/reports/ar-as-at` | `asAtDate` label only; rows use **live** quote `paidNgn` vs `totalNgn` (`arBasis: quote_row_live`) |
 | `GET /api/reports/sales-bridge` | Receipts in period + `asAtDate` for production-cutoff |
 | `GET /api/reports/expenses-pack` | Expense `date` in range |
+| `GET /api/reports/expense-memo-filing-pack` | Default **payout date** (`dateBasis=paid`) in the month; optional `dateBasis=expense`. Grouped by category for stacked month-end filing. Query: `month=YYYY-MM` or `startDate`+`endDate`; `status=paid\|approved\|all`; optional `category`, `format=json\|pdf\|csv` |
 | `GET /api/reports/refunds-pack` | Payout `postedAtISO` in range for paid sheet; pipeline = non-`Paid` |
 | `GET /api/reports/purchases?cut=` | **received**: `receivedAtISO` on coil lots; **ordered**: PO `orderDateISO`; **paid**: treasury `postedAtISO` (`SUPPLIER_PAYMENT` / `PO_SUPPLIER_PAYMENT`) |
 | `GET /api/reports/stock-coil-as-at` | `asAtDate` — uses **snapshot** rows when present, else **live** lots + disclaimer |

@@ -55,4 +55,10 @@ describe('helpKnowledge', () => {
     expect(m).not.toBeNull();
     expect(m.article.id).toBe('stone-flatsheet-quotations');
   });
+
+  it('matches monthly expense filing print', () => {
+    const m = matchHelpArticle('print monthly expense memos by category to save paper');
+    expect(m).not.toBeNull();
+    expect(m.article.id).toBe('monthly-expense-filing-print');
+  });
 });

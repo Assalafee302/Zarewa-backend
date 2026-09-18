@@ -519,6 +519,7 @@ Gate: role in `{admin, md, ceo, sales_manager, finance_manager}` **and** `report
 | ar-as-at | Outstanding by quote | Finance | paid vs total | Collection focus |
 | sales-bridge | Receipts + production cut | Finance | Bridge metrics | Month-end tie-out |
 | expenses-pack | Operating expenses | Finance | By category | Cost control |
+| expense-memo-filing-pack | Month-end stacked memos by category | Finance, cashier, BM | Paid count, category subtotals | File one compact pack instead of one page per memo |
 | refunds-pack | Paid + pipeline refunds | Finance, BM | Paid vs pending | Refund governance |
 | purchase-register | PO register | Procurement | PO values | Spend tracking |
 | purchases (cut) | Received/ordered/paid | Finance | Cut-specific | AP accrual |

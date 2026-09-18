@@ -1170,6 +1170,34 @@ const CORE_HELP_ARTICLES = [
     ],
   },
   {
+    id: 'monthly-expense-filing-print',
+    title: 'Print monthly expense memos by category (save paper)',
+    keywords: [
+      'print expense memo',
+      'expense filing pack',
+      'monthly expenses print',
+      'print all expenses',
+      'expense category print',
+      'file expense memos',
+      'paper expense',
+      'stacked expense memos',
+      'end of month expenses',
+    ],
+    answer:
+      'Do **not** print each expense memo on its own page. At month-end, print the **expense filing pack**: paid memos stacked by category on compact A4 sheets, then file under Accounts → Expenses → YYYY-MM → category.',
+    steps: [
+      'Wait until the month is closed (or the last working day) so payouts are complete.',
+      'Open the expense filing pack for that month (`GET /api/reports/expense-memo-filing-pack?month=YYYY-MM`).',
+      'Print **all categories** as one binder, or print **one category** at a time (`&category=Fuel%20%26%20lubricant`) for separate folders.',
+      'Use PDF (`&format=pdf`) if you need a file copy; CSV (`&format=csv`) is the register index.',
+      'File the pack. Keep original memo attachments in the system — the paper pack is the month register, not a reprint of letterhead.',
+    ],
+    links: [
+      { label: 'Finance', to: '/accounts' },
+      { label: 'Reports', to: '/reports' },
+    ],
+  },
+  {
     id: 'wrong-branch-transaction',
     title: 'Wrong branch on a transaction',
     keywords: ['wrong branch', 'other branch', 'branch mistake', 'posted wrong branch'],

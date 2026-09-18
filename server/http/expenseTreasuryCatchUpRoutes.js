@@ -12,6 +12,7 @@ import {
   clearExpensesForReimport,
   listExpensesClearableForReimport,
   listExpensesMissingBankPosting,
+  voidAllUnpostedImportedExpenses,
   voidUnpostedImportedExpenses,
 } from '../finance/expenseTreasuryCatchUpOps.js';
 
@@ -103,10 +104,15 @@ export function registerExpenseTreasuryCatchUpRoutes(app, db) {
           : body.expenseId
             ? [body.expenseId]
             : [];
-        const r = voidUnpostedImportedExpenses(db, expenseIds, req.user, {
-          workspaceBranchId: req.workspaceBranchId,
-          workspaceViewAll: Boolean(req.workspaceViewAll),
-        });
+        const r = body.allUnposted
+          ? voidAllUnpostedImportedExpenses(db, req.user, {
+              workspaceBranchId: req.workspaceBranchId,
+              workspaceViewAll: Boolean(req.workspaceViewAll),
+            })
+          : voidUnpostedImportedExpenses(db, expenseIds, req.user, {
+              workspaceBranchId: req.workspaceBranchId,
+              workspaceViewAll: Boolean(req.workspaceViewAll),
+            });
         return res.status(r.ok ? 200 : 400).json(r);
       } catch (e) {
         console.error('[expenses-import-void-unposted]', e);

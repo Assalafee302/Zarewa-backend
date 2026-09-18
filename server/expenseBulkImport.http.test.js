@@ -167,28 +167,21 @@ describe('expense bulk import HTTP (MySQL)', () => {
       treasury.id
     );
 
-    const commit = await agent.post('/api/expenses/import/commit').send({
-      requireTreasury: false,
+    const autoTill = await agent.post('/api/expenses/import/commit').send({
       rows: [
         {
           date: '2026-07-11',
           amountNgn: 15_000,
           category: 'Refund',
-          reference: 'HTTP-VOID-1',
-          description: 'Imported refund without bank account',
-          include: true,
-        },
-        {
-          date: '2026-07-11',
-          amountNgn: 22_000,
-          category: 'Refund',
-          reference: 'HTTP-BANK-1',
-          description: 'Imported refund to attach later',
+          reference: 'HTTP-VOID-BLOCK',
+          description: 'Should post to the branch cash till even without AccountKey',
           include: true,
         },
       ],
     });
-    expect(commit.status, JSON.stringify(commit.body)).toBe(400);
+    expect(autoTill.status, JSON.stringify(autoTill.body)).toBe(201);
+    expect(autoTill.body.createdCount).toBe(1);
+    expect(autoTill.body.created[0].treasuryAccountId).toBeTruthy();
 
     db.prepare(
       `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
@@ -207,12 +200,85 @@ describe('expense bulk import HTTP (MySQL)', () => {
 
     const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
     const attached = await agent.post('/api/expenses/import/attach-treasury').send({
-      allUnposted: true,
+      expenseIds: ['EXP-HTTP-BANK-1'],
       treasuryAccountId: treasury.id,
     });
     expect(attached.status, JSON.stringify(attached.body)).toBe(201);
-    expect(attached.body.postedCount).toBeGreaterThanOrEqual(1);
+    expect(attached.body.postedCount).toBe(1);
     const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
     expect(after).toBe(before - 22_000);
+  }, 120_000);
+
+  it('lets finance delete unposted imports and re-upload onto the cash till without AccountKey', async () => {
+    const { app, db } = makeApp();
+    const agent = request.agent(app);
+
+    const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    expect(login.status).toBe(200);
+    await agent.patch('/api/session/workspace').send({ currentBranchId: DEFAULT_BRANCH_ID, viewAllBranches: false });
+
+    const boot = await agent.get('/api/bootstrap');
+    const cash =
+      (boot.body.treasuryAccounts || []).find((a) => String(a.type || '').toLowerCase() === 'cash') ||
+      boot.body.treasuryAccounts?.[0];
+    expect(cash?.id).toBeTruthy();
+    db.prepare(`UPDATE treasury_accounts SET balance = GREATEST(COALESCE(balance, 0), ?) WHERE id = ?`).run(
+      5_000_000,
+      cash.id
+    );
+
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+       VALUES
+         ('EXP-REIMPORT-A', 'Old memo refund', 11000, '2026-07-08', 'Refund', 'Import', 'OLD-A', ?),
+         ('EXP-REIMPORT-B', 'Old memo refund', 19000, '2026-07-08', 'Refund', 'Import', 'OLD-B', ?)`
+    ).run(DEFAULT_BRANCH_ID, DEFAULT_BRANCH_ID);
+
+    const wiped = await agent.post('/api/expenses/import/void-unposted').send({ allUnposted: true });
+    expect(wiped.status, JSON.stringify(wiped.body)).toBe(200);
+    expect(wiped.body.voidedCount).toBeGreaterThanOrEqual(2);
+    expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = 'EXP-REIMPORT-A'`).get()).toBeFalsy();
+    expect(db.prepare(`SELECT expense_id FROM expenses WHERE expense_id = 'EXP-REIMPORT-B'`).get()).toBeFalsy();
+
+    const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cash.id).balance);
+    const commit = await agent.post('/api/expenses/import/commit').send({
+      rows: [
+        {
+          date: '2026-07-08',
+          amountNgn: 11_000,
+          category: 'Refund',
+          reference: 'NEW-A',
+          description: 'Re-imported refund that must hit cashier statement',
+          include: true,
+        },
+        {
+          date: '2026-07-08',
+          amountNgn: 19_000,
+          category: 'Refund',
+          reference: 'NEW-B',
+          description: 'Re-imported refund that must hit cashier statement',
+          include: true,
+        },
+      ],
+    });
+    expect(commit.status, JSON.stringify(commit.body)).toBe(201);
+    expect(commit.body.createdCount).toBe(2);
+    expect(Number(commit.body.created[0].treasuryAccountId)).toBe(Number(cash.id));
+    expect(Number(commit.body.created[1].treasuryAccountId)).toBe(Number(cash.id));
+
+    const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(cash.id).balance);
+    expect(after).toBe(before - 30_000);
+
+    for (const row of commit.body.created) {
+      const tm = db
+        .prepare(
+          `SELECT amount_ngn, treasury_account_id FROM treasury_movements
+           WHERE source_kind = 'EXPENSE' AND source_id = ?`
+        )
+        .get(row.expenseID);
+      expect(tm).toBeTruthy();
+      expect(Number(tm.amount_ngn)).toBe(-row.amountNgn);
+      expect(Number(tm.treasury_account_id)).toBe(Number(cash.id));
+    }
   }, 120_000);
 });

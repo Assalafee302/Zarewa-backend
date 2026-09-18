@@ -11,7 +11,7 @@ import {
 import { validateExpenseCategorySelection } from '../shared/expenseCategoryPolicy.js';
 import { userHasPermission } from './auth.js';
 import { insertExpenseEntry } from './writeOps.js';
-import { requireExplicitBranchId } from './branches.js';
+import { DEFAULT_BRANCH_ID, requireExplicitBranchId } from './branches.js';
 import { hasColumn } from './ap2ReceivedBasisOps.js';
 
 export const EXPENSE_IMPORT_HEADERS = Object.freeze([
@@ -168,6 +168,94 @@ export function resolveTreasuryAccountId(db, accountKeyRaw, branchId = '') {
   return { id: null, error: `Treasury account not found for "${raw}" on this branch.` };
 }
 
+function isCashTreasuryType(row) {
+  return String(row?.type || '').trim().toLowerCase() === 'cash';
+}
+
+/**
+ * Cash/bank accounts the cashier desk can post against on this workspace branch.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [branchId]
+ */
+export function listBranchTreasuryAccountsForImport(db, branchId = '') {
+  const bid = String(branchId || '').trim();
+  const hasBranch = hasColumn(db, 'treasury_accounts', 'branch_id');
+  const sql = `SELECT id, name, type, bank_name, acc_no, balance, branch_id FROM treasury_accounts`;
+  if (!hasBranch || !bid) {
+    return db.prepare(`${sql} ORDER BY id`).all();
+  }
+  return db
+    .prepare(
+      `${sql}
+       WHERE branch_id = ?
+          OR (TRIM(COALESCE(branch_id, '')) = '' AND ? = ?)
+       ORDER BY id`
+    )
+    .all(bid, bid, DEFAULT_BRANCH_ID);
+}
+
+/**
+ * Pick the branch till when AccountKey is blank: the only account, or the only Cash account.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} [branchId]
+ * @returns {{ id: number|null, account?: object, auto?: boolean, error?: string, accounts?: object[] }}
+ */
+export function resolveDefaultBranchTreasuryAccount(db, branchId = '') {
+  const accounts = listBranchTreasuryAccountsForImport(db, branchId);
+  if (!accounts.length) {
+    return {
+      id: null,
+      accounts,
+      error: 'This branch has no cash or bank account. Add the till on Cashier desk, then import again.',
+    };
+  }
+  if (accounts.length === 1) {
+    return { id: Number(accounts[0].id), account: accounts[0], auto: true };
+  }
+  const cash = accounts.filter(isCashTreasuryType);
+  if (cash.length === 1) {
+    return { id: Number(cash[0].id), account: cash[0], auto: true };
+  }
+  if (cash.length > 1) {
+    const namedTill = cash.find((a) => /till|cash office|cashier/i.test(String(a.name || '')));
+    if (namedTill) {
+      return { id: Number(namedTill.id), account: namedTill, auto: true };
+    }
+  }
+  const names = accounts.map((a) => a.name || `#${a.id}`).join(', ');
+  return {
+    id: null,
+    accounts,
+    error: `This branch has more than one cash/bank account (${names}). Put the cashier account name in AccountKey, or send treasuryAccountId / accountKey for the till that paid these expenses.`,
+  };
+}
+
+/**
+ * Row AccountKey wins; otherwise the request paid-from account; otherwise the branch cash till.
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ treasuryAccountId?: number|null, accountKey?: string }} row
+ * @param {string} branchId
+ * @param {{ requireTreasury?: boolean, defaultTreasuryAccountId?: number|string, accountKey?: string }} [opts]
+ */
+export function resolveImportRowTreasury(db, row, branchId, opts = {}) {
+  if (row.treasuryAccountId != null && Number.isFinite(Number(row.treasuryAccountId))) {
+    return resolveTreasuryAccountId(db, Number(row.treasuryAccountId), branchId);
+  }
+  if (row.accountKey) {
+    return resolveTreasuryAccountId(db, row.accountKey, branchId);
+  }
+  if (opts.defaultTreasuryAccountId != null && String(opts.defaultTreasuryAccountId).trim() !== '') {
+    return resolveTreasuryAccountId(db, opts.defaultTreasuryAccountId, branchId);
+  }
+  if (opts.accountKey) {
+    return resolveTreasuryAccountId(db, opts.accountKey, branchId);
+  }
+  if (opts.requireTreasury) {
+    return resolveDefaultBranchTreasuryAccount(db, branchId);
+  }
+  return { id: null };
+}
+
 /**
  * @returns {Buffer}
  */
@@ -244,7 +332,7 @@ export function buildExpenseImportTemplateXlsx() {
     ['Date — REQUIRED. Use the real expense date (e.g. 2026-07-15 for July). Dates are NEVER auto-filled to today.'],
     ['Amount — NGN (blank/zero rows must be updated in preview before post)'],
     ['Category — use a value from the Categories sheet. Refund is allowed on this import for Finance/Admin historical catch-up (it is blocked on the regular expense form).'],
-    ['AccountKey — treasury account name/id on the same branch'],
+    ['AccountKey — cashier till / bank name on this branch. If you leave it blank, import uses the branch cash till (or the only account). Required when the branch has more than one cash/bank account.'],
     ['Reference — voucher / invoice ref'],
     ['PaymentMethod — Cash, Transfer, etc.'],
     ['Description — memo (Others category needs at least 40 characters)'],
@@ -368,7 +456,7 @@ export function normalizeExpenseImportRows(input) {
  * @param {import('better-sqlite3').Database} db
  * @param {ReturnType<typeof normalizeExpenseImportRows>[number]} row
  * @param {object|null} actor
- * @param {{ requireTreasury?: boolean, branchId?: string }} [opts]
+ * @param {{ requireTreasury?: boolean, branchId?: string, defaultTreasuryAccountId?: number|string, accountKey?: string }} [opts]
  */
 function validateImportRow(db, row, actor, opts = {}) {
   const errors = [];
@@ -423,26 +511,17 @@ function validateImportRow(db, row, actor, opts = {}) {
   }
 
   let treasuryAccountId = null;
-  if (row.treasuryAccountId != null && Number.isFinite(Number(row.treasuryAccountId))) {
-    const id = Number(row.treasuryAccountId);
-    const resolved = resolveTreasuryAccountId(db, id, bid);
-    if (!resolved.id) {
-      missingFields.push('treasury');
-      errors.push(resolved.error || `Update treasury account in the preview (#${id}).`);
-    } else {
-      treasuryAccountId = resolved.id;
-    }
-  } else if (row.accountKey) {
-    const resolved = resolveTreasuryAccountId(db, row.accountKey, bid);
-    if (!resolved.id) {
-      missingFields.push('treasury');
-      errors.push(resolved.error || `Update treasury account in the preview for "${row.accountKey}".`);
-    } else {
-      treasuryAccountId = resolved.id;
+  const resolved = resolveImportRowTreasury(db, row, bid, opts);
+  if (resolved.id) {
+    treasuryAccountId = resolved.id;
+    if (resolved.auto && resolved.account?.name) {
+      warnings.push(
+        `Will deduct from "${resolved.account.name}" on this branch (cashier till). AccountKey was blank.`
+      );
     }
   } else if (opts.requireTreasury) {
     missingFields.push('treasury');
-    errors.push('Update treasury account in the preview (required for this import).');
+    errors.push(resolved.error || 'Update treasury account in the preview (required for this import).');
   } else {
     warnings.push('No treasury account — expense will post on this branch without cash outflow.');
   }
@@ -473,7 +552,7 @@ function validateImportRow(db, row, actor, opts = {}) {
  * @param {import('better-sqlite3').Database} db
  * @param {object[]} rows
  * @param {object|null} actor
- * @param {{ requireTreasury?: boolean, branchId?: string }} [opts]
+ * @param {{ requireTreasury?: boolean, branchId?: string, defaultTreasuryAccountId?: number|string, accountKey?: string }} [opts]
  */
 export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
   const branchCheck = requireExplicitBranchId(opts.branchId, 'expense import');
@@ -505,16 +584,29 @@ export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
   const invalid = included.filter((r) => r.status === 'error');
   const needsUpdateCount = included.filter((r) => r.needsUpdate).length;
 
+  const paidFrom = resolveImportRowTreasury(
+    db,
+    { treasuryAccountId: null, accountKey: '' },
+    branchId,
+    opts
+  );
   let message = '';
   if (needsUpdateCount > 0) {
     message = `${needsUpdateCount} row(s) need updates in the preview before you can post (missing or invalid fields).`;
   } else if (valid.length) {
-    message = `${valid.length} row(s) ready to post to branch ${branchId}.`;
+    const tillName = paidFrom.account?.name || (paidFrom.id ? `#${paidFrom.id}` : '');
+    message = tillName
+      ? `${valid.length} row(s) ready to post to branch ${branchId} from ${tillName}. Balance will drop and statement lines will be created.`
+      : `${valid.length} row(s) ready to post to branch ${branchId}.`;
   }
 
   return {
     ok: true,
     branchId,
+    paidFromAccountId: paidFrom.id || null,
+    paidFromAccountName: paidFrom.account?.name || '',
+    paidFromAccountType: paidFrom.account?.type || '',
+    paidFromAutoAssigned: Boolean(paidFrom.auto),
     categories: [...EXPENSE_CATEGORY_OPTIONS],
     previewTable,
     totalRows: previewTable.length,
@@ -534,7 +626,7 @@ export function previewExpenseBulkImport(db, rows, actor, opts = {}) {
  * @param {object} actor
  * @param {object[]} rows
  * @param {string} branchId
- * @param {{ workspaceViewAll?: boolean, requireTreasury?: boolean }} [opts]
+ * @param {{ workspaceViewAll?: boolean, requireTreasury?: boolean, defaultTreasuryAccountId?: number|string, accountKey?: string }} [opts]
  */
 export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
   const branchCheck = requireExplicitBranchId(branchId, 'expense import');
@@ -623,6 +715,8 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
     failed,
     skippedIncomplete: preview.incompleteCount + preview.invalidCount,
     totalAmountNgn: created.reduce((s, r) => s + (Number(r.amountNgn) || 0), 0),
+    paidFromAccountId: preview.paidFromAccountId || null,
+    paidFromAccountName: preview.paidFromAccountName || '',
     preview,
     warning:
       failed.length > 0
@@ -630,5 +724,11 @@ export function commitExpenseBulkImport(db, actor, rows, branchId, opts = {}) {
         : preview.incompleteCount + preview.invalidCount > 0
           ? `Posted ${created.length} ready row(s). Incomplete/error rows were left unposted.`
           : '',
+    message:
+      failed.length > 0
+        ? `Posted ${created.length} expense(s) to the cashier book; ${failed.length} row(s) failed.`
+        : `Posted ${created.length} expense(s) to ${
+            preview.paidFromAccountName || 'the cashier account'
+          }. Balance reduced and statement lines created.`,
   };
 }

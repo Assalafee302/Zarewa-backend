@@ -9724,8 +9724,13 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
-      const requireTreasury = true;
       const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
+      const paidFromOpts = {
+        requireTreasury: true,
+        branchId,
+        defaultTreasuryAccountId: req.body?.treasuryAccountId,
+        accountKey: req.body?.accountKey,
+      };
       let rows = normalizeExpenseImportRows(req.body?.rows);
       if (!rows.length) {
         const b64 = req.body?.fileBase64 || req.body?.data;
@@ -9736,7 +9741,7 @@ export function registerHttpApi(app, db) {
         if (!parsed.ok) return res.status(400).json(parsed);
         rows = parsed.rows;
       }
-      const r = previewExpenseBulkImport(db, rows, req.user, { requireTreasury, branchId });
+      const r = previewExpenseBulkImport(db, rows, req.user, paidFromOpts);
       return res.json(r);
     } catch (e) {
       console.error(e);
@@ -9752,7 +9757,6 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
-      const requireTreasury = true;
       const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
       let rows = normalizeExpenseImportRows(req.body?.rows);
       if (!rows.length) {
@@ -9766,7 +9770,9 @@ export function registerHttpApi(app, db) {
       }
       const r = commitExpenseBulkImport(db, req.user, rows, branchId, {
         workspaceViewAll: Boolean(req.workspaceViewAll),
-        requireTreasury,
+        requireTreasury: true,
+        defaultTreasuryAccountId: req.body?.treasuryAccountId,
+        accountKey: req.body?.accountKey,
       });
       return res.status(r.ok ? 201 : 400).json(r);
     } catch (e) {

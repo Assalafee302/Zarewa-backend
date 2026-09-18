@@ -14,7 +14,7 @@ import { branchWhere } from '../readModel.js';
 import { tryPostExpensePaymentGlTx } from '../accountingPostingOps.js';
 import { syncFixedAssetFromCapexExpense } from '../fixedAssetAutomationOps.js';
 import { insertTreasuryMovementTx } from '../writeOps.js';
-import { resolveTreasuryAccountId } from '../expenseBulkImport.js';
+import { resolveDefaultBranchTreasuryAccount, resolveTreasuryAccountId } from '../expenseBulkImport.js';
 
 const MAX_BULK = 500;
 
@@ -340,7 +340,13 @@ export function attachAllUnpostedImportedExpenses(db, actor, payload = {}) {
         'No expenses on this branch are missing a bank/cash line. They may already be on the statement, or you are on the wrong branch.',
     };
   }
-  return attachTreasuryToImportedExpenses(db, ids, payload, actor);
+  let paidFrom = payload;
+  if (!Number(payload.treasuryAccountId) && !String(payload.accountKey || '').trim()) {
+    const fallback = resolveDefaultBranchTreasuryAccount(db, bid);
+    if (!fallback.id) return { ok: false, error: fallback.error };
+    paidFrom = { ...payload, treasuryAccountId: fallback.id };
+  }
+  return attachTreasuryToImportedExpenses(db, ids, paidFrom, actor);
 }
 
 /**
@@ -441,6 +447,26 @@ export function voidUnpostedImportedExpenses(db, expenseIds, actor = null, opts 
       ? `Removed ${voided.length} imported expense(s); ${failed.length} could not be removed.`
       : `Removed ${voided.length} imported expense(s) that never hit the bank book.`,
   };
+}
+
+/**
+ * Delete every memo-only imported expense on this branch (no till/bank line yet).
+ * @param {import('better-sqlite3').Database} db
+ * @param {object|null} actor
+ * @param {{ workspaceBranchId?: string, workspaceViewAll?: boolean }} [opts]
+ */
+export function voidAllUnpostedImportedExpenses(db, actor, opts = {}) {
+  const bid = String(opts.workspaceBranchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a single workspace branch first.' };
+  if (opts.workspaceViewAll) {
+    return { ok: false, error: 'Turn off all-branches view. Undo unposted expenses on one branch at a time.' };
+  }
+  const rows = listExpensesMissingBankPosting(db, bid, { limit: MAX_BULK });
+  const ids = rows.filter((r) => r.missingTreasury).map((r) => r.expenseID);
+  if (!ids.length) {
+    return { ok: false, error: 'No unposted imported expenses on this branch to delete.' };
+  }
+  return voidUnpostedImportedExpenses(db, ids, actor, opts);
 }
 
 function capexAssetLinked(db, expenseId) {

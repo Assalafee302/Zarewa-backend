@@ -149,6 +149,45 @@ describe('expense bulk import E2E (MySQL)', () => {
     }
   });
 
+  it('posts onto the branch cash till when AccountKey is blank', () => {
+    const before = Number(
+      db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasuryId).balance
+    );
+    const committed = commitExpenseBulkImport(
+      db,
+      ACTOR,
+      [
+        {
+          date: '2026-07-19',
+          amountNgn: 14_500,
+          category: 'Refund',
+          reference: 'E2E-AUTO-TILL',
+          description: 'Historical refund catch-up with blank AccountKey',
+          paymentMethod: 'Cash',
+          include: true,
+        },
+      ],
+      DEFAULT_BRANCH_ID,
+      { requireTreasury: true }
+    );
+    expect(committed.ok, JSON.stringify(committed)).toBe(true);
+    expect(committed.createdCount).toBe(1);
+    expect(committed.created[0].treasuryAccountId).toBe(treasuryId);
+    const tm = db
+      .prepare(
+        `SELECT amount_ngn, treasury_account_id FROM treasury_movements
+         WHERE source_kind = 'EXPENSE' AND source_id = ?`
+      )
+      .get(committed.created[0].expenseID);
+    expect(tm).toBeTruthy();
+    expect(Number(tm.amount_ngn)).toBe(-14_500);
+    expect(Number(tm.treasury_account_id)).toBe(treasuryId);
+    const after = Number(
+      db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasuryId).balance
+    );
+    expect(after).toBe(before - 14_500);
+  });
+
   it('rejects blank dates instead of writing today', () => {
     const committed = commitExpenseBulkImport(
       db,

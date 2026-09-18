@@ -4620,32 +4620,32 @@ export function registerHrApi(app, db) {
     try { if(!hrReady(res,db)) return; return res.json({ok:true,fees:listChairmanSchoolFees(db)}); } catch(e){return hrApiFail(res,e,'Failed to load school fees.');}
   });
   app.post('/api/hr/chairman/school-fees', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to save school fee.');}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){return hrApiFail(res,e,'Failed to save school fee.');}
   });
   app.put('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update school fee.');}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanSchoolFee(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){return hrApiFail(res,e,'Failed to update school fee.');}
   });
   app.delete('/api/hr/chairman/school-fees/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; deleteChairmanSchoolFee(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to delete.');}
+    try { if(!hrReady(res,db)) return; deleteChairmanSchoolFee(db,req.params.id); return res.json({ok:true}); } catch(e){return hrApiFail(res,e,'Failed to delete.');}
   });
 
   // ── Chairman Expenses ────────────────────────────
   app.get('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; return res.json({ok:true,expenses:listChairmanExpenses(db,req.query.period||null)}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to load expenses.');}
+    try { if(!hrReady(res,db)) return; return res.json({ok:true,expenses:listChairmanExpenses(db,req.query.period||null)}); } catch(e){return hrApiFail(res,e,'Failed to load expenses.');}
   });
   app.post('/api/hr/chairman/expenses', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to save expense.');}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,req.body||{}); return res.status(201).json(r); } catch(e){return hrApiFail(res,e,'Failed to save expense.');}
   });
   app.put('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update expense.');}
+    try { if(!hrReady(res,db)) return; const r=upsertChairmanExpense(db,req.user,{...req.body,id:req.params.id}); return res.json(r); } catch(e){return hrApiFail(res,e,'Failed to update expense.');}
   });
   app.delete('/api/hr/chairman/expenses/:id', requireHrAny('hr.*','hr.chairman.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; deleteChairmanExpense(db,req.params.id); return res.json({ok:true}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to delete.');}
+    try { if(!hrReady(res,db)) return; deleteChairmanExpense(db,req.params.id); return res.json({ok:true}); } catch(e){return hrApiFail(res,e,'Failed to delete.');}
   });
 
   // ── ID Cards ─────────────────────────────────────
   app.get('/api/hr/id-cards', (req,res) => {
-    try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to load ID card requests.');}
+    try { if(!hrReady(res,db)) return; const userId = userCanAccessHrModule(req.user) ? (req.query.userId||null) : req.user?.id; return res.json({ok:true,requests:listHrIdCardRequests(db,userId)}); } catch(e){return hrApiFail(res,e,'Failed to load ID card requests.');}
   });
   app.post('/api/hr/id-cards', (req,res) => {
     try {
@@ -4657,10 +4657,10 @@ export function registerHrApi(app, db) {
       const r=createHrIdCardRequest(db,req.user,body);
       if (!r.ok) return res.status(400).json(r);
       return res.status(201).json(r);
-    } catch(e){console.error(e);return hrApiFail(res,e,'Failed to create ID card request.');}
+    } catch(e){return hrApiFail(res,e,'Failed to create ID card request.');}
   });
   app.patch('/api/hr/id-cards/:id', requireHrAny('hr.*','hr.staff.manage'), (req,res) => {
-    try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){console.error(e);return hrApiFail(res,e,'Failed to update ID card request.');}
+    try { if(!hrReady(res,db)) return; const r=patchHrIdCardRequest(db,req.user,req.params.id,req.body||{}); if(!r.ok) return res.status(404).json(r); return res.json(r); } catch(e){return hrApiFail(res,e,'Failed to update ID card request.');}
   });
 
   app.get('/api/hr/staff/:userId/severance-preview', requireHrAny('hr.*', 'hr.staff.manage'), (req, res) => {
@@ -4705,21 +4705,21 @@ export function registerHrApi(app, db) {
       const trends = getAttendanceTrends(db, req.query.branchId || null, Number(req.query.months) || 6);
       const chronic = getChronicAbsentees(db, req.query.branchId || null, Number(req.query.threshold) || 5);
       return res.json({ ok: true, trends, chronicAbsentees: chronic });
-    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load attendance analytics.'); }
+    } catch (e) { return hrApiFail(res, e, 'Could not load attendance analytics.'); }
   });
 
   app.get('/api/hr/analytics/loan-portfolio', requireHrAny('hr.*', 'hr.loans.manage', 'hr.reports.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getLoanPortfolioAnalytics(db) });
-    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load loan portfolio.'); }
+    } catch (e) { return hrApiFail(res, e, 'Could not load loan portfolio.'); }
   });
 
   app.get('/api/hr/payroll-runs/:runId/variance-alerts', requireHrAny('hr.*', 'hr.payroll.manage'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getPayrollVarianceAlerts(db, req.params.runId, req.query.threshold) });
-    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not run variance check.'); }
+    } catch (e) { return hrApiFail(res, e, 'Could not run variance check.'); }
   });
 
   app.get('/api/hr/payroll-runs/:runId/paye-alerts', requireHrAny('hr.payroll.prepare', 'hr.payroll.manage', 'hr.payroll.view_sensitive'), (req, res) => {
@@ -4736,14 +4736,14 @@ export function registerHrApi(app, db) {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, trend: getStaffTurnoverTrend(db, Number(req.query.months) || 12) });
-    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load turnover trend.'); }
+    } catch (e) { return hrApiFail(res, e, 'Could not load turnover trend.'); }
   });
 
   app.get('/api/hr/analytics/headcount', requireHrAny('hr.*', 'hr.reports.view', 'hr.directory.view'), (req, res) => {
     try {
       if (!hrReady(res, db)) return;
       return res.json({ ok: true, ...getHeadcountSummary(db) });
-    } catch (e) { console.error(e); return hrApiFail(res, e, 'Could not load headcount.'); }
+    } catch (e) { return hrApiFail(res, e, 'Could not load headcount.'); }
   });
 
   // ── Phase 10: Bonus, Leave Carry-Over, Dashboard Alerts ───────────────────

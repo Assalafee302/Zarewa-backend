@@ -324,4 +324,60 @@ describe('pricingAsOf', () => {
     expect(bd[0].meters).toBe(315.8);
     expect(bd[0].deltaPerMeterNgn).toBe(300);
   });
+
+  it('auto-suggests quoted ₦/m minus workbook floor on same-gauge produced metres (sold at list)', () => {
+    const linesSame = JSON.stringify({
+      materialGauge: '0.24mm',
+      materialDesign: 'IV',
+      products: [
+        {
+          name: 'Roofing Sheet',
+          qty: 10,
+          unitPrice: 5000,
+          gauge: '0.24mm',
+          design: 'IV',
+          recommendedPricePerMeter: 5000,
+          floorPricePerMeter: 5000,
+        },
+      ],
+      accessories: [],
+      services: [],
+    });
+    db.prepare(
+      `INSERT INTO customers (customer_id, name) VALUES ('CUS-FLOOR-DELTA', 'Floor delta')`
+    ).run();
+    db.prepare(
+      `INSERT INTO quotations (id, customer_id, customer_name, date_iso, total_ngn, paid_ngn, payment_status, status, lines_json, branch_id)
+       VALUES ('QT-SAME-FLOOR-DELTA', 'CUS-FLOOR-DELTA', 'Floor delta', '2024-06-01', 50000, 50000, 'Paid', 'Finished', ?, 'BR-KD')`
+    ).run(linesSame);
+    db.prepare(
+      `INSERT INTO sales_receipts (id, customer_id, customer_name, quotation_ref, amount_ngn, status, date_iso)
+       VALUES ('RCT-SAME-FLOOR', 'CUS-FLOOR-DELTA', 'Floor delta', 'QT-SAME-FLOOR-DELTA', 50000, 'Cleared', '2024-06-01')`
+    ).run();
+    db.prepare(
+      `INSERT INTO products (product_id, name, stock_level, unit, branch_id, gauge, colour, material_type)
+       VALUES ('FG-SAME-FLOOR', 'Longspan', 0, 'm', 'BR-KD', '0.24mm', 'IV', 'Aluminium')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_jobs (job_id, quotation_ref, product_id, product_name, actual_meters, status, created_at_iso)
+       VALUES ('JOB-SAME-FLOOR', 'QT-SAME-FLOOR-DELTA', 'FG-SAME-FLOOR', 'Longspan', 10, 'Completed', '2024-06-02T10:00:00Z')`
+    ).run();
+    db.prepare(
+      `INSERT INTO coil_lots (coil_no, product_id, qty_received, qty_remaining, current_weight_kg, current_status, gauge_label, colour)
+       VALUES ('CL-SAME-FLOOR', 'FG-SAME-FLOOR', 1000, 1000, 1000, 'Available', '0.24mm', 'IV')`
+    ).run();
+    db.prepare(
+      `INSERT INTO production_job_coils (id, job_id, sequence_no, coil_no, gauge_label, opening_weight_kg, closing_weight_kg, consumed_weight_kg, meters_produced, allocation_status, allocated_at_iso)
+       VALUES ('PJC-SAME-FLOOR', 'JOB-SAME-FLOOR', 1, 'CL-SAME-FLOOR', '0.24mm', 100, 0, 100, 10, 'Completed', '2024-06-02T10:00:00Z')`
+    ).run();
+
+    const prev = previewRefundRequest(db, { quotationRef: 'QT-SAME-FLOOR-DELTA' });
+    expect(prev.ok).toBe(true);
+    const sub = prev.preview.suggestedLines.find((l) => l.category === 'Substitution Difference');
+    expect(sub).toBeUndefined();
+    const floorDelta = prev.preview.suggestedLines.find((l) => l.category === 'Customer commission');
+    expect(floorDelta).toBeDefined();
+    // 5000 quoted list − 2000 workbook floor (Jun 2024) × 10 m. Old formula (list − quoted) was ₦0.
+    expect(floorDelta.amountNgn).toBe(30_000);
+  });
 });

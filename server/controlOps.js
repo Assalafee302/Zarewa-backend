@@ -38,6 +38,7 @@ import {
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
 import { coilProducedMetersFromProductionJobs, jobOutputMetresForUnproducedRefund, producedMetersForUnproducedRefund } from '../shared/lib/refundCoilProducedMeters.js';
 import { quotedCoilSheetPoolMetresFromLines, quotedRoofingSheetMetresFromLines } from '../shared/lib/refundQuotationMetres.js';
+import { quotedAboveFloorCreditNgn } from '../shared/lib/refundQuotedAboveFloor.js';
 import { refundCashierPayRelaxed } from './financeFeatureFlags.js';
 import {
   quotedCuttingListSheetPoolMetresFromProducts,
@@ -1216,6 +1217,125 @@ function gaugesDifferBeyondTolerance(quotedLabel, producedLabel, tolMm = 0.005) 
   const b = firstGaugeMmFromLabel(producedLabel);
   if (a == null || b == null) return false;
   return Math.abs(a - b) > tolMm + 1e-9;
+}
+
+/**
+ * Produced metres substitution does not already credit (same gauge as the quote, unknown coil
+ * gauge, or offcut remainder). Thinner-coil slices stay on Substitution Difference so the
+ * quoted-above-floor margin is not double-counted.
+ */
+function sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs) {
+  const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
+  let sameM = 0;
+  for (const j of productionJobs || []) {
+    const outputM = jobOutputMetresForUnproducedRefund(db, j);
+    const jobId = String(j?.job_id ?? j?.jobID ?? '').trim();
+    const gaugeGroups = coilGaugeMeterGroupsFromJob(db, jobId).filter(
+      (g) => (Number(g.meters) || 0) > 0.001
+    );
+    const slices =
+      gaugeGroups.length > 0
+        ? gaugeGroups.map((g) => ({ meters: Number(g.meters) || 0, coilGauge: g.gaugeLabel }))
+        : outputM > 0.001
+          ? [{ meters: outputM, coilGauge: producedGaugeLabelFromJobCoils(db, jobId) }]
+          : [];
+    if (slices.length === 0) {
+      sameM += outputM;
+      continue;
+    }
+    let coilSum = 0;
+    for (const slice of slices) {
+      const m = Number(slice.meters) || 0;
+      if (m <= 0) continue;
+      coilSum += m;
+      const coilGauge = String(slice.coilGauge || '').trim();
+      if (!quotedGaugeRaw || !coilGauge || !gaugesDifferBeyondTolerance(quotedGaugeRaw, coilGauge)) {
+        sameM += m;
+      }
+    }
+    if (outputM > coilSum + 0.001) sameM += outputM - coilSum;
+  }
+  return Math.round(sameM * 100) / 100;
+}
+
+/** Workbook (or list) floor ₦/m for the quoted gauge — same lookup family as substitution. */
+function quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso) {
+  const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const sheetBranch = (branchId && String(branchId).trim()) || DEFAULT_BRANCH_ID;
+  const quotedGd = firstQuotedProductGaugeDesign(quote?.lines_json);
+  const ctxJob =
+    (productionJobs || []).find((jj) => jobOutputMetresForUnproducedRefund(db, jj) > 0.001) ||
+    (productionJobs || [])[0] ||
+    null;
+  const mkQuotedCtx = ctxJob ? materialPricingMaterialKeyFromJob(db, ctxJob) : null;
+  if (quotedGd && mkQuotedCtx) {
+    const f = workbookFloorPpmForQuotedGaugeDesign(db, mkQuotedCtx, quotedGd, sheetBranch, pricingAsAtIso);
+    if (f != null && f > 0) return f;
+  }
+  if (ctxJob) {
+    const quotedGaugeRaw = quotedGaugeLabelForSubstitutionComparison(quote?.lines_json ?? '');
+    const coilGauge = producedGaugeLabelFromJobCoils(db, ctxJob.job_id) || quotedGaugeRaw;
+    const lookup = listWorkbookPpmForJobAllocatedCoil(
+      db,
+      ctxJob,
+      branchId,
+      quotedGd,
+      null,
+      quote?.lines_json ?? '',
+      pricingAsAtIso,
+      coilGauge
+    );
+    const ppm = ppmValueFromWorkbookLookup(lookup);
+    if (ppm != null && ppm > 0) return ppm;
+  }
+  return null;
+}
+
+function blendedFloorPpmFromQuoteLineStamps(db, quote, pricingAsAtIso) {
+  let linesParsed;
+  try {
+    linesParsed = typeof quote?.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
+  } catch {
+    return null;
+  }
+  const branchId = quote?.branch_id != null ? String(quote.branch_id).trim() || null : null;
+  const headerCtx = {
+    asAtIso: pricingAsAtIso,
+    materialTypeId: linesParsed?.materialTypeId ?? linesParsed?.materialType,
+    materialGauge: linesParsed?.materialGauge,
+    materialDesign: linesParsed?.materialDesign ?? linesParsed?.materialColor,
+  };
+  const rows = Array.isArray(linesParsed?.products) ? linesParsed.products : [];
+  let weighted = 0;
+  let metres = 0;
+  for (const line of rows) {
+    if (productLineIsTrimSheetNotRoofingMetres(line) || productLineIsStoneFlatsheetNotRoofingMetres(line)) {
+      continue;
+    }
+    const qty = quotationLineQtyNumber(line);
+    if (qty <= 0) continue;
+    const enriched = {
+      ...line,
+      gauge: line?.gauge ?? line?.gaugeLabel ?? headerCtx.materialGauge,
+      design: line?.design ?? headerCtx.materialDesign,
+    };
+    const nums = pricingPolicyNumbersForServiceLine(db, enriched, branchId, {
+      ...headerCtx,
+      productName: line?.name,
+    });
+    let floor = nums.floor != null && nums.floor > 0 ? Number(nums.floor) : null;
+    const stampedRaw = Math.round(Number(line?.floorPricePerMeter ?? line?.floor_price_per_meter) || 0);
+    const listRec = Math.round(Number(line?.recommendedPricePerMeter ?? line?.recommended_price_per_meter) || 0);
+    let stampedFloor = stampedRaw;
+    // Older quotes stamped list (floor+commission) into floorPricePerMeter.
+    if (stampedFloor > 0 && listRec > 0 && stampedFloor === listRec) stampedFloor = 0;
+    if (stampedFloor > 0 && floor != null) floor = Math.min(floor, stampedFloor);
+    else if (stampedFloor > 0) floor = stampedFloor;
+    if (floor == null || floor <= 0) continue;
+    weighted += floor * qty;
+    metres += qty;
+  }
+  return metres > 0.001 ? weighted / metres : null;
 }
 
 /**
@@ -3156,7 +3276,7 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
               'en-NG'
             )}) exceeds the maximum allowed (₦${maxNgn.toLocaleString(
               'en-NG'
-            )}) for this quotation given minimum selling prices and refundable headroom.`,
+            )}) for this quotation given quoted ₦/m minus workbook floor and refundable headroom.`,
           };
         }
       }
@@ -4147,8 +4267,6 @@ export function previewRefundRequest(db, payload) {
   const hasCancelledProductionJob = productionJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'cancelled'
   );
-  const includeCustomerCommission = Boolean(payload.includeCustomerCommission);
-
   const existingRefunds = quotationRef
     ? db
         .prepare(
@@ -4353,9 +4471,10 @@ export function previewRefundRequest(db, payload) {
     });
   }
 
-  // 1b. Customer commission — only when explicitly requested; capped by minimum selling ₦/m and remaining refundable.
+  // 1b. Quoted ₦/m minus workbook floor ₦/m × same-gauge produced metres.
+  // Auto-included so refund preview calculates the floor difference without a separate opt-in.
+  // Thinner-coil metres stay on Substitution Difference (already quoted − coil floor).
   if (
-    includeCustomerCommission &&
     quotationRef &&
     !hardBlockedCategories.has('Customer commission') &&
     cashInNgn > 0 &&
@@ -4369,7 +4488,7 @@ export function previewRefundRequest(db, payload) {
       }
       if (maxNgn >= 1) {
         suggestedLines.push({
-          label: `Customer commission / agreed price concession (recommended vs quoted, capped by minimum selling ₦/m): up to ₦${maxNgn.toLocaleString('en-NG')}`,
+          label: `Price above floor (quoted ₦/m minus workbook floor ₦/m × produced metres at quoted gauge): ₦${maxNgn.toLocaleString('en-NG')}`,
           amountNgn: maxNgn,
           category: 'Customer commission',
         });
@@ -5101,6 +5220,7 @@ export function previewRefundRequest(db, payload) {
       'Accessory shortfall',
       'Stone flatsheet shortfall',
       'Substitution Difference',
+      'Customer commission',
     ]);
     const removed = finalSuggestedLines.filter((l) =>
       orderCancelExcludes.has(String(l.category || '').trim())
@@ -5362,8 +5482,9 @@ export function quotationMeetsRefundEligibility(db, quotationRef, existingRow = 
 }
 
 /**
- * Maximum “customer commission” refund: (recommended − quoted) × metres per line, capped so the implied
- * effective selling ₦/m after refund would not fall below {@link pricingPolicyNumbersForServiceLine} minAllowed.
+ * Maximum “customer commission” / price-above-floor refund: (quoted selling ₦/m − workbook floor ₦/m)
+ * × produced metres at the quoted gauge. Sold-at-list quotes still credit the floor gap.
+ * Thinner-coil metres are left to Substitution Difference so the same margin is not paid twice.
  */
 export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoOverride) {
   const ref = String(quotationRef ?? '').trim();
@@ -5373,46 +5494,33 @@ export function maxCustomerCommissionRefundNgn(db, quotationRef, pricingAsAtIsoO
   if (!quote?.lines_json) return { maxNgn: 0, warnings };
   const el = quotationMeetsRefundEligibility(db, ref);
   if (!el.ok) return { maxNgn: 0, warnings };
-  const branchId = quote.branch_id != null ? String(quote.branch_id).trim() || null : null;
   const pricingAsAtIso =
     pricingAsAtIsoOverride != null && String(pricingAsAtIsoOverride).trim()
       ? String(pricingAsAtIsoOverride).trim().slice(0, 10)
       : quotationPricingAsAtIso(quote, db);
-  const headerCtx = { asAtIso: pricingAsAtIso };
-  let linesParsed;
-  try {
-    linesParsed = typeof quote.lines_json === 'string' ? JSON.parse(quote.lines_json) : quote.lines_json;
-  } catch {
+  const productionJobs = db
+    .prepare(
+      `SELECT * FROM production_jobs WHERE quotation_ref = ?
+       AND LOWER(TRIM(COALESCE(status, ''))) IN ('completed', 'cancelled')`
+    )
+    .all(ref);
+  const sameGaugeMetres = sameGaugeProducedMetresForFloorDelta(db, quote, productionJobs);
+  if (sameGaugeMetres <= 0.001) return { maxNgn: 0, warnings };
+
+  const quotedPpm =
+    quotedRoofingSheetAmountPerMeter(quote.lines_json) ?? quotedAmountPerMeter(quote.lines_json);
+  let floorPpm = quotedWorkbookFloorPpmForCommission(db, quote, productionJobs, pricingAsAtIso);
+  if (floorPpm == null || floorPpm <= 0) {
+    floorPpm = blendedFloorPpmFromQuoteLineStamps(db, quote, pricingAsAtIso);
+  }
+  if (quotedPpm == null || !(quotedPpm > 0) || floorPpm == null || floorPpm <= 0) {
     return { maxNgn: 0, warnings };
   }
-  const lines = [...(linesParsed?.products || []), ...(linesParsed?.services || [])];
-  let totalConcession = 0;
-  for (const line of lines) {
-    const rec = Number(line?.recommendedPricePerMeter);
-    const up = Number(line?.unitPrice ?? line?.unitPriceNgn ?? line?.pricePerMeter ?? 0);
-    const m = Number(line?.qty ?? line?.meters ?? line?.qtyMeters ?? 0);
-    if (!Number.isFinite(rec) || rec <= 0 || !Number.isFinite(up) || !Number.isFinite(m) || m <= 0) continue;
-    if (up >= rec - 0.001) continue;
-    const rawConcession = roundMoney((rec - up) * m);
-    const nums = pricingPolicyNumbersForServiceLine(db, line, branchId, headerCtx);
-    const minAllowed = nums.minAllowed;
-    let capped = rawConcession;
-    if (minAllowed != null && Number.isFinite(minAllowed)) {
-      if (up <= minAllowed + 0.001) {
-        capped = 0;
-      } else {
-        const maxByFloor = roundMoney(Math.max(0, (up - minAllowed) * m));
-        if (maxByFloor + 0.01 < rawConcession) {
-          capped = maxByFloor;
-          warnings.push(
-            `Customer commission capped: refund cannot imply an effective price below the minimum allowed ₦/m (≈₦${Math.round(minAllowed).toLocaleString('en-NG')}/m) for a quoted line.`
-          );
-        }
-      }
-    }
-    totalConcession += capped;
+  if (quotedPpm <= floorPpm + 0.001) {
+    return { maxNgn: 0, warnings };
   }
-  totalConcession = roundMoney(totalConcession);
+
+  const totalConcession = quotedAboveFloorCreditNgn(quotedPpm, floorPpm, sameGaugeMetres);
   const amountNgn = roundMoney(Math.min(totalConcession, Math.max(0, el.remainingNgn)));
   return { maxNgn: amountNgn, warnings };
 }

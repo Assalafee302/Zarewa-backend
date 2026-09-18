@@ -304,11 +304,15 @@ export function groupExpenseMemosByCategory(memos = []) {
   return groups;
 }
 
-export function estimateFilingPackPages(memoCount, categoryCount) {
+export function estimateFilingPackPages(memoCount, categoryCount, pageBreakBeforeCategory = true) {
   const memos = Math.max(0, Number(memoCount) || 0);
   const cats = Math.max(0, Number(categoryCount) || 0);
   const cover = 1;
-  const body = memos === 0 ? 0 : Math.max(cats, Math.ceil(memos / FILING_MEMOS_PER_A4));
+  if (memos === 0) return cover;
+  if (!pageBreakBeforeCategory) {
+    return cover + Math.ceil(memos / FILING_MEMOS_PER_A4);
+  }
+  const body = Math.max(cats, Math.ceil(memos / FILING_MEMOS_PER_A4));
   return cover + body;
 }
 
@@ -332,16 +336,20 @@ export function buildExpenseMemoFilingPack(input = {}) {
   const categoryCount = groups.length;
   const filteredCategory = String(input.categoryFilter || '').trim();
   const pageBreakBeforeCategory = boolFlag(input.pageBreakBeforeCategory, !filteredCategory);
-  const estimatedPagesA4 = estimateFilingPackPages(count, pageBreakBeforeCategory ? categoryCount : Math.max(1, Math.ceil(count / FILING_MEMOS_PER_A4)));
+  const estimatedPagesA4 = estimateFilingPackPages(count, categoryCount, pageBreakBeforeCategory);
   const vsSinglePageMemos = Math.max(0, count - estimatedPagesA4);
+  const monthKey = period?.monthKey || '';
+  const filingFolder = filteredCategory
+    ? `Accounts / Expenses / ${monthKey || 'YYYY-MM'} / ${filteredCategory}`
+    : `Accounts / Expenses / ${monthKey || 'YYYY-MM'} / <category>`;
   return {
     ok: true,
-    title: `Expense filing pack — ${period?.label || period?.monthKey || ''}`.trim(),
+    title: `Expense filing pack — ${period?.label || monthKey}`.trim(),
     period: {
-      startDate: period.startDate,
-      endDate: period.endDate,
-      monthKey: period.monthKey,
-      label: period.label,
+      startDate: period?.startDate || '',
+      endDate: period?.endDate || '',
+      monthKey,
+      label: period?.label || monthKey,
     },
     branchScope: String(input.branchScope || 'ALL').trim() || 'ALL',
     status: normalizeFilingStatus(input.status),
@@ -365,8 +373,7 @@ export function buildExpenseMemoFilingPack(input = {}) {
       avoidPageBreakInsideMemo: true,
       estimatedPagesA4,
       pagesSavedVsOneMemoPerPage: vsSinglePageMemos,
-      filingInstruction:
-        'Print this pack once at month-end. File under Accounts / Expenses / {month} / {category}. Do not print each memo on its own page.',
+      filingInstruction: `Print this pack once at month-end. File under ${filingFolder}. Do not print each memo on its own page.`,
     },
   };
 }
@@ -436,9 +443,10 @@ export function filingPackToPdfPages(pack) {
     cover.push('(No paid expenses in this period.)');
   } else {
     for (const row of index) {
+      const name = String(row.category || '—').slice(0, 28).padEnd(28, ' ');
       pushWrapped(
         cover,
-        `${row.category.padEnd(28, ' ').slice(0, 28)}  ${String(row.rowCount).padStart(4, ' ')}   ${formatFilingNgn(row.subtotalNgn)}`
+        `${name}  ${String(row.rowCount).padStart(4, ' ')}   ${formatFilingNgn(row.subtotalNgn)}`
       );
     }
     cover.push('----------------------------------------');

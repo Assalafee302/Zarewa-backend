@@ -1184,12 +1184,12 @@ const CORE_HELP_ARTICLES = [
       'end of month expenses',
     ],
     answer:
-      'Do **not** print each expense memo on its own page. At month-end, print the **expense filing pack**: paid memos stacked by category on compact A4 sheets, then file under Accounts → Expenses → YYYY-MM → category.',
+      'Do **not** print each expense memo on its own page. At month-end, print the **expense filing pack**: paid memos stacked by category on compact A4 sheets, then file under Accounts → Expenses → that month → category.',
     steps: [
       'Wait until the month is closed (or the last working day) so payouts are complete.',
-      'Open the expense filing pack for that month (`GET /api/reports/expense-memo-filing-pack?month=YYYY-MM`).',
-      'Print **all categories** as one binder, or print **one category** at a time (`&category=Fuel%20%26%20lubricant`) for separate folders.',
-      'Use PDF (`&format=pdf`) if you need a file copy; CSV (`&format=csv`) is the register index.',
+      'Open Reports or Finance and choose the expense filing pack for that month.',
+      'Print the whole month as one binder, or print one category for a separate folder (for example Fuel & lubricant).',
+      'Save a PDF copy if you need an archive; use CSV if you want a spreadsheet index.',
       'File the pack. Keep original memo attachments in the system — the paper pack is the month register, not a reprint of letterhead.',
     ],
     links: [

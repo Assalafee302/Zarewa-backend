@@ -220,6 +220,7 @@ POST /api/payment-requests/:id/pay  (finance.pay)
 | Report | Endpoint |
 |--------|----------|
 | Expenses pack | `GET /api/reports/expenses-pack` |
+| Expense memo filing pack | `GET /api/reports/expense-memo-filing-pack` |
 | Category exceptions | `GET /api/reports/expense-category-exceptions` |
 | Monthly alert | `GET /api/reports/expense-category-monthly-alert` |
 

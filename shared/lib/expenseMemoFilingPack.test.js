@@ -78,8 +78,31 @@ describe('buildExpenseMemoFilingPack', () => {
     expect(fuel.memos.map((m) => m.expenseId)).toEqual(['EXP-1', 'EXP-2']);
     expect(pack.printHints.pageBreakBeforeMemo).toBe(false);
     expect(pack.printHints.density).toBe('compact');
-    expect(pack.printHints.estimatedPagesA4).toBeLessThan(3);
-    expect(pack.printHints.pagesSavedVsOneMemoPerPage).toBeGreaterThan(0);
+    expect(pack.printHints.filingInstruction).toContain('Accounts / Expenses / 2026-09');
+  });
+
+  it('estimates far fewer sheets once a category has many memos', () => {
+    const memos = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        expenseId: `EXP-F-${i + 1}`,
+        dateISO: `2026-09-${String(i + 1).padStart(2, '0')}`,
+        category: 'Fuel & lubricant',
+        amountNgn: 1000,
+        approvalStatus: 'Paid',
+        description: `Diesel ${i + 1}`,
+      })),
+      {
+        expenseId: 'EXP-O-1',
+        dateISO: '2026-09-12',
+        category: 'Office expenses',
+        amountNgn: 8000,
+        approvalStatus: 'Paid',
+        description: 'A4 paper',
+      },
+    ];
+    const pack = buildExpenseMemoFilingPack({ period, memos });
+    expect(pack.printHints.estimatedPagesA4).toBeLessThan(memos.length);
+    expect(pack.printHints.pagesSavedVsOneMemoPerPage).toBeGreaterThan(5);
   });
 
   it('starts a new sheet per category only when printing the full binder', () => {

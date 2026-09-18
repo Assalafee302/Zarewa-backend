@@ -522,6 +522,9 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
   const expenses = expensesSnapshotOk ? listExpenses(db, branchScope, historyOpts) : [];
   const paymentRequests = payReqOk ? listPaymentRequests(db, branchScope, historyOpts) : [];
   const refunds = refundsOk ? listRefunds(db, branchScope, historyOpts) : [];
+  const accountsPayable = finOk
+    ? listAccountsPayable(db, branchScope, { ...registerOpts, openOnly: true })
+    : [];
   const pageSize = deskPageLimit();
   const lim = (o) => (o.unlimited ? 0 : Number(o.limit) || pageSize);
   return {
@@ -536,7 +539,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
     treasuryMovements,
     expenses,
     paymentRequests,
-    accountsPayable: finOk ? listAccountsPayable(db, branchScope, registerOpts) : [],
+    accountsPayable,
     bankReconciliation: finOk ? listBankReconciliation(db, branchScope, registerOpts) : [],
     refunds,
     refundCreditApplications: snapshotRefundCreditApplications(db, f),
@@ -607,6 +610,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
         receipts: lim(receiptOpts),
         refunds: lim(historyOpts),
         ledgerEntries: MAX_LEDGER_ROWS,
+        accountsPayable: lim(registerOpts),
       },
       truncated: {
         expenses: expensesSnapshotOk && lim(historyOpts) > 0 && expenses.length >= lim(historyOpts),
@@ -619,6 +623,7 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
           receipts.length >= lim(receiptOpts),
         refunds: refundsOk && lim(historyOpts) > 0 && refunds.length >= lim(historyOpts),
         ledgerEntries: ledgerOk && ledgerRows.length >= MAX_LEDGER_ROWS,
+        accountsPayable: finOk && lim(registerOpts) > 0 && accountsPayable.length >= lim(registerOpts),
       },
       backgroundHydrate: buildBackgroundHydrateMeta(
         [
@@ -652,6 +657,13 @@ export function buildFinanceDomainSnapshot(db, opts = {}) {
             limit: lim(cuttingOpts),
             loaded: cuttingLists.length,
           },
+          {
+            key: 'accountsPayable',
+            path: '/api/accounts-payable',
+            limit: lim(registerOpts),
+            loaded: accountsPayable.length,
+            querySuffix: '&open=1',
+          },
         ],
         { pageSize }
       ),
@@ -672,10 +684,17 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
   const historyOpts = productionHistoryListOpts();
   const historyLim = historyOpts.unlimited ? 0 : Number(historyOpts.limit) || deskPageLimit();
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
+  const poDeskOpts = deskPageListOpts();
+  const poDeskLim = poDeskOpts.unlimited ? 0 : Number(poDeskOpts.limit) || deskPageLimit();
   const purchaseOrders = poListOk
-    ? listPurchaseOrders(db, branchScope, { ...deskPageListOpts(), skipSideEffects: true })
+    ? listPurchaseOrders(db, branchScope, { ...poDeskOpts, skipSideEffects: true })
     : [];
+  const registerOpts = { ...financeRegisterListOpts(), openOnly: true };
+  // Purchases → Payments reads `accountsPayable` from this pack (shell bootstrap leaves it empty).
+  const apOk = procOk || finOk;
+  const accountsPayable = apOk ? listAccountsPayable(db, branchScope, registerOpts) : [];
   const pageSize = deskPageLimit();
+  const apLim = registerOpts.unlimited ? 0 : Number(registerOpts.limit) || pageSize;
   return {
     ok: true,
     domain: 'procurement',
@@ -686,6 +705,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
       enabled: /^(1|true|yes|on)$/i.test(String(process.env.ZAREWA_ASSOCIATED_STAFF_POLICY_V1 || '0')),
     },
     purchaseOrders,
+    accountsPayable,
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
     coilLots: coilDesk.coilLots,
@@ -699,14 +719,21 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
       finOk || procOk ? listOrphanHaulageTreasuryMovements(db, branchScope) : [],
     bootstrapMeta: {
       deferredDeskArrays: [],
-      sort: { purchaseOrders: 'order_date_iso_desc', movements: 'at_iso_desc' },
+      sort: {
+        purchaseOrders: 'order_date_iso_desc',
+        movements: 'at_iso_desc',
+        accountsPayable: 'outstanding_then_due_date_desc',
+      },
       listLimitsApplied: {
-        ...(historyLim ? { movements: historyLim, purchaseOrders: historyLim } : {}),
+        ...(historyLim ? { movements: historyLim } : {}),
+        ...(poListOk && poDeskLim ? { purchaseOrders: poDeskLim } : {}),
+        ...(apOk && apLim ? { accountsPayable: apLim } : {}),
         ...(coilMovOk ? { coilLots: coilDesk.mode } : {}),
       },
       coilLotsRecovery: coilMovOk ? COIL_DESK_RECOVERY : undefined,
       truncated: {
-        ...(poListOk ? { purchaseOrders: historyLim > 0 && purchaseOrders.length >= historyLim } : {}),
+        ...(poListOk ? { purchaseOrders: poDeskLim > 0 && purchaseOrders.length >= poDeskLim } : {}),
+        ...(apOk ? { accountsPayable: apLim > 0 && accountsPayable.length >= apLim } : {}),
         ...(coilMovOk
           ? {
               coilLots: coilDesk.truncated,
@@ -721,6 +748,19 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
             path: '/api/stock-movements',
             limit: historyLim,
             loaded: movements.length,
+          },
+          {
+            key: 'purchaseOrders',
+            path: '/api/purchase-orders',
+            limit: poDeskLim,
+            loaded: purchaseOrders.length,
+          },
+          {
+            key: 'accountsPayable',
+            path: '/api/accounts-payable',
+            limit: apLim,
+            loaded: accountsPayable.length,
+            querySuffix: '&open=1',
           },
         ],
         { pageSize }

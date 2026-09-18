@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import {
+  listAccountsPayable,
   listCuttingLists,
   listEligibleCuttingListQuotations,
   listPurchaseOrders,
   listQuotations,
   listStockMovements,
+  countAccountsPayable,
   countStockMovements,
 } from './readModel.js';
 import { buildDashboardBootstrap } from './bootstrap.js';
@@ -41,6 +43,26 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     expect(pos).toHaveLength(2);
     expect(pos.find((p) => p.poID === 'PO-1')?.lines).toHaveLength(1);
     expect(pos.find((p) => p.poID === 'PO-2')?.lines).toHaveLength(2);
+    db.close();
+  });
+
+  it('listAccountsPayable openOnly prefers outstanding balances', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
+    db.exec(`
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id)
+      VALUES ('PO-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD');
+      INSERT INTO accounts_payable (ap_id, supplier_name, po_ref, invoice_ref, amount_ngn, paid_ngn, due_date_iso, payment_method)
+      VALUES
+        ('AP-PAID', 'Supplier 1', 'PO-1', 'INV-P', 80000, 80000, '2026-09-01', ''),
+        ('AP-OPEN', 'Supplier 1', 'PO-1', 'INV-O', 50000, 10000, '2026-08-01', '');
+    `);
+    const all = listAccountsPayable(db, 'BR-KD', { unlimited: true });
+    expect(all.map((a) => a.apID)).toEqual(['AP-OPEN', 'AP-PAID']);
+    expect(all[0].outstandingNgn).toBe(40_000);
+    const open = listAccountsPayable(db, 'BR-KD', { unlimited: true, openOnly: true });
+    expect(open.map((a) => a.apID)).toEqual(['AP-OPEN']);
+    expect(countAccountsPayable(db, 'BR-KD', { openOnly: true })).toBe(1);
     db.close();
   });
 

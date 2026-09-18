@@ -1173,6 +1173,9 @@ CREATE TABLE IF NOT EXISTS accounts_payable (
   payment_method TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_accounts_payable_po_ref ON accounts_payable(po_ref);
+CREATE INDEX IF NOT EXISTS idx_accounts_payable_due ON accounts_payable(due_date_iso);
+
 CREATE TABLE IF NOT EXISTS bank_reconciliation_lines (
   id TEXT PRIMARY KEY,
   bank_date_iso TEXT,

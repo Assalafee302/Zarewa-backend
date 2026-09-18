@@ -1,5 +1,6 @@
 /**
- * Paginated desk lists (customers, expenses, coil lots, jobs, movements, cutting lists).
+ * Paginated desk lists (customers, expenses, coil lots, jobs, movements, cutting lists,
+ * purchase orders, accounts payable).
  * Dashboard bootstrap omits these arrays; desks refill via domain snapshots
  * or these GET endpoints. SQL LIMIT/OFFSET — do not load-all-then-slice.
  *
@@ -11,12 +12,15 @@ import { apiError } from '../apiError.js';
 import { resolveBootstrapBranchScope } from '../branchScope.js';
 import { parseListQuery, sendPaginatedList } from '../listPagination.js';
 import {
+  countAccountsPayable,
   countCoilLots,
   countCustomers,
   countCuttingLists,
   countExpenses,
   countProductionJobs,
+  countPurchaseOrders,
   countStockMovements,
+  listAccountsPayable,
   listCoilLots,
   listCustomers,
   listCuttingLists,
@@ -24,6 +28,7 @@ import {
   listEligibleCuttingListQuotations,
   listEligibleProductionCoils,
   listProductionJobs,
+  listPurchaseOrders,
   listStockMovements,
   searchCuttingLists,
   searchProductionJobs,
@@ -40,6 +45,8 @@ const COIL_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS
 const CUTTING_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...SALES_DOMAIN_PERMS];
 const MOVEMENTS_LIST_PERMS = [...OPERATIONS_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS];
 const PRODUCTION_JOBS_PERMS = [...OPERATIONS_DOMAIN_PERMS, 'production.manage'];
+const PO_LIST_PERMS = [...PROCUREMENT_DOMAIN_PERMS, 'inventory.receive'];
+const AP_LIST_PERMS = [...FINANCE_DOMAIN_PERMS, ...PROCUREMENT_DOMAIN_PERMS];
 
 function listOptsFromQuery(parsed) {
   if (parsed.unlimited) return { unlimited: true };
@@ -227,6 +234,53 @@ export function registerWorkspaceListRoutes(app, db) {
     } catch (e) {
       console.error(e);
       return apiError(res, { status: 500, code: 'SEARCH_FAILED', error: 'Failed to search cutting lists.' });
+    }
+  });
+
+  app.get('/api/purchase-orders', requirePermission(PO_LIST_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const listOpts = { ...listOptsFromQuery(parsed), skipSideEffects: true };
+      const items = listPurchaseOrders(db, branchScope, listOpts);
+      const total = parsed.unlimited ? items.length : countPurchaseOrders(db, branchScope);
+      return sendPaginatedList(res, {
+        items,
+        total,
+        limit: parsed.unlimited ? 0 : parsed.limit,
+        offset: parsed.offset,
+        key: 'purchaseOrders',
+      });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, { status: 500, code: 'LOAD_FAILED', error: 'Failed to load purchase orders.' });
+    }
+  });
+
+  app.get('/api/accounts-payable', requirePermission(AP_LIST_PERMS), (req, res) => {
+    try {
+      const branchScope = resolveBootstrapBranchScope(req);
+      const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
+      const openOnly =
+        /^(1|true|yes|on)$/i.test(String(req.query?.open || '')) ||
+        /^(1|true|yes|on)$/i.test(String(req.query?.openOnly || ''));
+      const listOpts = { ...listOptsFromQuery(parsed), openOnly };
+      const items = listAccountsPayable(db, branchScope, listOpts);
+      const total = parsed.unlimited ? items.length : countAccountsPayable(db, branchScope, { openOnly });
+      return sendPaginatedList(res, {
+        items,
+        total,
+        limit: parsed.unlimited ? 0 : parsed.limit,
+        offset: parsed.offset,
+        key: 'accountsPayable',
+      });
+    } catch (e) {
+      console.error(e);
+      return apiError(res, {
+        status: 500,
+        code: 'LOAD_FAILED',
+        error: 'Failed to load outstanding supplier payments.',
+      });
     }
   });
 

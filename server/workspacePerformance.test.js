@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createDatabase } from './db.js';
 import { buildWorkspaceRevision } from './workspaceRevision.js';
 import { buildBootstrap } from './bootstrap.js';
-import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot } from './domainBootstrap.js';
+import { buildSalesDomainSnapshot, buildFinanceDomainSnapshot, buildProcurementDomainSnapshot } from './domainBootstrap.js';
 import { jsonWeakEtag } from './httpEtag.js';
-import { insertAssociatedStaff } from './writeOps.js';
+import { insertAssociatedStaff, insertSupplier } from './writeOps.js';
 
 function mysqlAvailable() {
   try {
@@ -88,6 +88,32 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(Array.isArray(snap.receipts)).toBe(true);
     expect(Array.isArray(snap.cuttingLists)).toBe(true);
     expect(Array.isArray(snap.purchasePaymentCashierAcksPending)).toBe(true);
+    db.close();
+  });
+
+  it('procurement snapshot ships open AP lines for Purchases outstanding payments', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
+    db.exec(`
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id)
+      VALUES ('PO-AP-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD');
+      INSERT INTO accounts_payable (ap_id, supplier_name, po_ref, invoice_ref, amount_ngn, paid_ngn, due_date_iso, payment_method)
+      VALUES
+        ('AP-OPEN-1', 'Supplier 1', 'PO-AP-1', 'INV-1', 100000, 10000, '2026-08-01', ''),
+        ('AP-PAID-1', 'Supplier 1', 'PO-AP-1', 'INV-2', 50000, 50000, '2026-09-01', '');
+    `);
+    const user = {
+      id: 'proc-1',
+      roleKey: 'procurement',
+      displayName: 'Procurement',
+      permissions: ['procurement.view', 'purchase_orders.manage'],
+    };
+    const snap = buildProcurementDomainSnapshot(db, { user, branchScope: 'BR-KD' });
+    expect(snap.ok).toBe(true);
+    expect(snap.domain).toBe('procurement');
+    expect(snap.accountsPayable.map((a) => a.apID)).toEqual(['AP-OPEN-1']);
+    expect(snap.accountsPayable[0].outstandingNgn).toBe(90_000);
+    expect(snap.bootstrapMeta?.sort?.accountsPayable).toBe('outstanding_then_due_date_desc');
     db.close();
   });
 

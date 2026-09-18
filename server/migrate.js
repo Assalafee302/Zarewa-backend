@@ -1957,6 +1957,16 @@ function migrateMaintenanceRegistry2026(db) {
   } catch {
     /* index already present */
   }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_payable_po_ref ON accounts_payable(po_ref)`);
+  } catch {
+    /* index already present */
+  }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_payable_due ON accounts_payable(due_date_iso)`);
+  } catch {
+    /* index already present */
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS machine_fuel_logs (

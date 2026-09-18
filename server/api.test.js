@@ -442,6 +442,26 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(typeof coils.body.total).toBe('number');
   });
 
+  it('GET procurement snapshot and accounts-payable include outstanding supplier lines', async () => {
+    const snap = await agent.get('/api/workspace/procurement-snapshot');
+    expect(snap.status).toBe(200);
+    expect(snap.body.ok).toBe(true);
+    expect(Array.isArray(snap.body.accountsPayable)).toBe(true);
+    expect(snap.body.accountsPayable.every((row) => (Number(row.outstandingNgn) || 0) > 0)).toBe(true);
+
+    const open = await agent.get('/api/accounts-payable?open=1&limit=20');
+    expect(open.status).toBe(200);
+    expect(open.body.ok).toBe(true);
+    expect(Array.isArray(open.body.accountsPayable)).toBe(true);
+    expect(typeof open.body.total).toBe('number');
+    expect(open.body.accountsPayable.every((row) => (Number(row.outstandingNgn) || 0) > 0)).toBe(true);
+
+    const pos = await agent.get('/api/purchase-orders?limit=20');
+    expect(pos.status).toBe(200);
+    expect(pos.body.ok).toBe(true);
+    expect(Array.isArray(pos.body.purchaseOrders)).toBe(true);
+  });
+
   it('PATCH /api/customers/:id updates customer and linked display names', async () => {
     const patch = await agent.patch('/api/customers/CUS-001').send({
       name: 'Alhaji Musa Updated',

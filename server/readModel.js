@@ -5,7 +5,10 @@ import {
   receivableDueOnQuotationFromEntries,
 } from '../shared/lib/customerLedgerCore.js';
 import { jobTotalOutputMetres } from '../shared/lib/jobOutputMetres.js';
-import { effectiveOutstandingNgn } from '../shared/lib/paymentOutstandingTolerance.js';
+import {
+  effectiveOutstandingNgn,
+  PAYMENT_OUTSTANDING_TOLERANCE_NGN,
+} from '../shared/lib/paymentOutstandingTolerance.js';
 import { repairRefundPayoutStateTx, resolveRefundStatus, buildRefundSettlementSummary } from './sales/refundPayoutStatus.js';
 import { refundCreditAppliedByIds } from './sales/refundCreditLedger.js';
 import { healRefundCreditAppliedFromApplicationsTx } from './sales/refundCreditHeal.js';
@@ -1493,10 +1496,7 @@ function purchaseOrderLinesByPoIds(db, poIds) {
   return byPoId;
 }
 
-export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
-  const limit = resolveListLimit(opts);
-  const b = branchWhere(db, 'purchase_orders', branchScope);
-  /** Optional LOWER(status) filter — e.g. ops GRN desk only needs receipt-pending keys. */
+function purchaseOrderStatusFilter(opts = {}) {
   const statusKeys = Array.isArray(opts.statusKeys)
     ? opts.statusKeys.map((s) => normalizePoStatusKey(s)).filter(Boolean)
     : [];
@@ -1504,8 +1504,18 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
     statusKeys.length > 0
       ? ` AND LOWER(TRIM(IFNULL(status,''))) IN (${statusKeys.map(() => '?').join(',')})`
       : '';
-  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql} ORDER BY order_date_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, ...statusKeys, limit] : [...b.args, ...statusKeys];
+  return { statusKeys, statusSql };
+}
+
+export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
+  const limit = resolveListLimit(opts);
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  /** Optional LOWER(status) filter — e.g. ops GRN desk only needs receipt-pending keys. */
+  const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
+  const lo = sqlLimitOffsetClause(limit, offset);
+  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql} ORDER BY order_date_iso DESC${lo.sql}`;
+  const args = [...b.args, ...statusKeys, ...lo.args];
   const pos = db.prepare(sql).all(...args);
   const linesByPoId = purchaseOrderLinesByPoIds(
     db,
@@ -1563,6 +1573,16 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
       })),
     };
   });
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
+  const b = branchWhere(db, 'purchase_orders', branchScope);
+  const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE 1=1${b.sql}${statusSql}`)
+    .get(...b.args, ...statusKeys);
+  return Number(row?.n) || 0;
 }
 
 /** Single PO for write-delta merges (avoids full procurement list). */
@@ -3513,29 +3533,63 @@ function mapCustomerRefundListRow(db, row, payoutByRefundId, walletOpenByRefundI
   };
 }
 
-export function listAccountsPayable(db, branchScope = 'ALL', opts) {
-  // No opts → full register (subledger / exports). Domain snapshots pass financeRegisterListOpts().
-  const limit = opts == null ? 0 : resolveListLimit(opts);
+function accountsPayableScope(db, branchScope, opts = {}) {
   const b = branchPredicate(db, 'purchase_orders', branchScope, 'po');
+  const openSql = opts.openOnly
+    ? ` AND (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) > ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`
+    : '';
+  const outstandingFirstSql = `CASE WHEN (COALESCE(ap.amount_ngn, 0) - COALESCE(ap.paid_ngn, 0)) > ${PAYMENT_OUTSTANDING_TOLERANCE_NGN} THEN 0 ELSE 1 END`;
+  return { b, openSql, outstandingFirstSql };
+}
+
+function mapAccountsPayableRow(row) {
+  const amountNgn = Number(row.amount_ngn) || 0;
+  const paidNgn = Number(row.paid_ngn) || 0;
+  return {
+    apID: row.ap_id,
+    supplierName: row.supplier_name,
+    poRef: row.po_ref,
+    invoiceRef: row.invoice_ref,
+    amountNgn,
+    paidNgn,
+    outstandingNgn: effectiveOutstandingNgn(amountNgn, paidNgn),
+    dueDateISO: row.due_date_iso,
+    paymentMethod: row.payment_method,
+    branchId: row.po_branch_id ?? '',
+  };
+}
+
+/**
+ * Supplier AP register. No opts → full register (subledger / exports).
+ * Domain snapshots pass `financeRegisterListOpts()` plus `openOnly` for the Purchases desk.
+ */
+export function listAccountsPayable(db, branchScope = 'ALL', opts) {
+  const unlimitedRegister = opts == null;
+  const limit = unlimitedRegister ? 0 : resolveListLimit(opts);
+  const offset = unlimitedRegister ? 0 : Math.max(0, Math.floor(Number(opts?.offset) || 0));
+  const { b, openSql, outstandingFirstSql } = accountsPayableScope(db, branchScope, opts || {});
+  const lo = sqlLimitOffsetClause(limit, offset);
   const sql = `SELECT ap.*, po.branch_id AS po_branch_id FROM accounts_payable ap
        LEFT JOIN purchase_orders po ON po.po_id = ap.po_ref
-       WHERE 1=1${b.sql}
-       ORDER BY ap.due_date_iso DESC${sqlLimitClause(limit)}`;
-  const args = limit > 0 ? [...b.args, limit] : b.args;
+       WHERE 1=1${b.sql}${openSql}
+       ORDER BY ${outstandingFirstSql} ASC, ap.due_date_iso DESC${lo.sql}`;
   return db
     .prepare(sql)
-    .all(...args)
-    .map((row) => ({
-      apID: row.ap_id,
-      supplierName: row.supplier_name,
-      poRef: row.po_ref,
-      invoiceRef: row.invoice_ref,
-      amountNgn: row.amount_ngn,
-      paidNgn: row.paid_ngn,
-      dueDateISO: row.due_date_iso,
-      paymentMethod: row.payment_method,
-      branchId: row.po_branch_id ?? '',
-    }));
+    .all(...b.args, ...lo.args)
+    .map(mapAccountsPayableRow);
+}
+
+/** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */
+export function countAccountsPayable(db, branchScope = 'ALL', opts = {}) {
+  const { b, openSql } = accountsPayableScope(db, branchScope, opts);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM accounts_payable ap
+       LEFT JOIN purchase_orders po ON po.po_id = ap.po_ref
+       WHERE 1=1${b.sql}${openSql}`
+    )
+    .get(...b.args);
+  return Number(row?.n) || 0;
 }
 
 export function listBankReconciliation(db, branchScope = 'ALL', opts) {

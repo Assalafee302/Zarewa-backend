@@ -481,6 +481,7 @@ import {
   listProductionJobCoilsForJob,
   listProductionJobCoils,
   listCoilProductionHolders,
+  listOrphanCoilProductionHolders,
   listCoilProductionBookReconciliationIssues,
   summarizeCoilProductionHoldersBook,
   recalculateAllCoilProductionJobStock,
@@ -8603,8 +8604,9 @@ export function registerHttpApi(app, db) {
       if (!br.ok) return res.status(403).json({ ok: false, error: br.error });
 
       const syncResult = syncProductionJobCoilConsumedWeightsForCoil(db, coilNo);
-      let holders = listCoilProductionHolders(db, coilNo);
+      const holders = listCoilProductionHolders(db, coilNo);
       const bookSummary = summarizeCoilProductionHoldersBook(db, coilNo, holders);
+      const statementHolders = [...holders, ...listOrphanCoilProductionHolders(db, coilNo, holders)];
       const expectedReserved = holders
         .filter((h) => h.jobStatus === 'Planned' || h.jobStatus === 'Running')
         .reduce((s, h) => s + (Number(h.openingWeightKg) || 0), 0);
@@ -8625,12 +8627,14 @@ export function registerHttpApi(app, db) {
         orphanReservedKg: Math.max(0, bookedReserved - expectedReserved),
         consumedWeightSync: syncResult,
         jobsConsumedKgSum: bookSummary?.jobsConsumedKgSum ?? null,
+        holderJobsConsumedKgSum: bookSummary?.holderJobsConsumedKgSum ?? null,
+        movementJobsConsumedKgSum: bookSummary?.movementJobsConsumedKgSum ?? null,
         openingClosingKgSum: bookSummary?.openingClosingKgSum ?? null,
         bookUsedFromJobsKg: bookSummary?.bookUsedFromJobsKg ?? null,
         ancillaryNetKg: bookSummary?.ancillaryNetKg ?? null,
         reconciliationGapKg: bookSummary?.reconciliationGapKg ?? null,
         openingClosingGapKg: bookSummary?.openingClosingGapKg ?? null,
-        holders,
+        holders: statementHolders,
       });
     } catch (e) {
       console.error(e);

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { holderBookedKgUsed, listCoilProductionHolders } from './productionTraceability.js';
+import {
+  holderBookedKgUsed,
+  listCoilProductionHolders,
+  stockMovementDetailRefersToCoilNo,
+} from './productionTraceability.js';
 
 describe('listCoilProductionHolders', () => {
   it('selects cutting_lists.customer_name (not cl.customer)', () => {
@@ -91,5 +95,28 @@ describe('holderBookedKgUsed', () => {
         consumedWeightKg: 700,
       })
     ).toBe(700);
+  });
+});
+
+describe('stockMovementDetailRefersToCoilNo', () => {
+  it('matches production consume and completion-correction restore wording', () => {
+    expect(stockMovementDetailRefersToCoilNo('8405 consumed for 226.40 m on PRO-YL-26-0110', '8405')).toBe(
+      true
+    );
+    expect(
+      stockMovementDetailRefersToCoilNo(
+        'Completion coil correction — restore 500.00 kg to 8405 (PRO-YL-26-0110)',
+        '8405'
+      )
+    ).toBe(true);
+  });
+
+  it('does not treat a coil number as a substring of another coil or a job id', () => {
+    expect(stockMovementDetailRefersToCoilNo('18405 consumed for 9.50 m on PRO-1', '8405')).toBe(false);
+    expect(stockMovementDetailRefersToCoilNo('84050 consumed for 9.50 m on PRO-1', '8405')).toBe(false);
+    expect(stockMovementDetailRefersToCoilNo('PRO-YL-26-0110 consumed for 9.50 m on PRO-YL-26-0110', '26')).toBe(
+      false
+    );
+    expect(stockMovementDetailRefersToCoilNo('CL-10 consumed for 9.50 m on PRO-1', 'CL-1')).toBe(false);
   });
 });

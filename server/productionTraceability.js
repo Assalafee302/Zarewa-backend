@@ -3866,6 +3866,170 @@ export function listCoilProductionHolders(db, coilNo) {
 }
 
 /**
+ * True when a COIL_CONSUMPTION detail is for this coil number.
+ * Matches production wording (`8405 consumed for…`, `restore … kg to 8405`) with a
+ * token boundary so coil 8405 does not match 18405 / 84050, and coil 26 does not
+ * match inside PRO-YL-26-0110.
+ */
+export function stockMovementDetailRefersToCoilNo(detail, coilNo) {
+  const d = String(detail ?? '');
+  const cn = String(coilNo ?? '').trim();
+  if (!cn || !d) return false;
+  const escaped = cn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (new RegExp(`^${escaped}(?:\\s|$)`).test(d)) return true;
+  if (new RegExp(`\\bto\\s+${escaped}(?:\\s|[:(]|$)`).test(d)) return true;
+  return false;
+}
+
+function isCoilFinishRollConsumptionDetail(detail) {
+  const d = String(detail || '');
+  return /roll finished/i.test(d) || /undo finish roll/i.test(d);
+}
+
+function parseConsumedMetersFromCoilMovementDetail(detail) {
+  const m = String(detail || '').match(/consumed for\s+([\d.]+)\s+m\b/i);
+  return m ? safeNumber(m[1]) : 0;
+}
+
+function listCoilProductionConsumptionMovementRows(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return [];
+  const like = `%${cn}%`;
+  try {
+    return db
+      .prepare(
+        `SELECT qty, detail, ref, at_iso, coil_no FROM stock_movements
+         WHERE type = 'COIL_CONSUMPTION'
+           AND (coil_no = ? OR detail LIKE ?)`
+      )
+      .all(cn, like);
+  } catch {
+    return db
+      .prepare(
+        `SELECT qty, detail, ref, at_iso FROM stock_movements
+         WHERE type = 'COIL_CONSUMPTION' AND detail LIKE ?`
+      )
+      .all(like);
+  }
+}
+
+function movementBelongsToCoil(row, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (String(row?.coil_no ?? '').trim() === cn) return true;
+  return stockMovementDetailRefersToCoilNo(row?.detail, cn);
+}
+
+/**
+ * Net kg still drawn from this coil by production COIL_CONSUMPTION (job consume +
+ * completion-correction restore/re-consume pairs). Finish-roll tails stay in ancillary.
+ * Invariant: a deleted production_job_coils row must not make reconcile put that kg back.
+ */
+export function coilProductionJobConsumedKgFromMovements(db, coilNo) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return 0;
+  let netCleared = 0;
+  for (const m of listCoilProductionConsumptionMovementRows(db, cn)) {
+    if (!movementBelongsToCoil(m, cn)) continue;
+    if (isCoilFinishRollConsumptionDetail(m.detail)) continue;
+    netCleared -= safeNumber(m.qty);
+  }
+  return Math.max(0, netCleared);
+}
+
+function holdersJobsConsumedKgSum(holders) {
+  let kg = 0;
+  for (const h of holders || []) kg += holderBookedKgUsed(h);
+  return kg;
+}
+
+/** Book used from jobs: live completed holders, or leftover ledger consumption if higher. */
+export function coilBookJobsConsumedKg(db, coilNo, holders) {
+  return Math.max(holdersJobsConsumedKgSum(holders), coilProductionJobConsumedKgFromMovements(db, coilNo));
+}
+
+/**
+ * Jobs that still have COIL_CONSUMPTION / conversion checks on this coil but no
+ * production_job_coils row (cancel/return/allocate-clear after steel had already left).
+ */
+export function listOrphanCoilProductionHolders(db, coilNo, existingHolders = []) {
+  const cn = String(coilNo ?? '').trim();
+  if (!cn) return [];
+  const seen = new Set(
+    (existingHolders || []).map((h) => String(h.jobID || '').trim()).filter(Boolean)
+  );
+  const byJob = new Map();
+  for (const m of listCoilProductionConsumptionMovementRows(db, cn)) {
+    if (!movementBelongsToCoil(m, cn)) continue;
+    if (isCoilFinishRollConsumptionDetail(m.detail)) continue;
+    const jobId = String(m.ref || '').trim();
+    if (!jobId || jobId === cn || seen.has(jobId)) continue;
+    const cur = byJob.get(jobId) || { kg: 0, meters: 0, atISO: m.at_iso || '' };
+    cur.kg -= safeNumber(m.qty);
+    const meters = parseConsumedMetersFromCoilMovementDetail(m.detail);
+    if (meters > cur.meters) cur.meters = meters;
+    if (String(m.at_iso || '') > String(cur.atISO || '')) cur.atISO = m.at_iso || '';
+    byJob.set(jobId, cur);
+  }
+
+  let checks = [];
+  try {
+    checks = db
+      .prepare(
+        `SELECT job_id, alert_state, actual_conversion_kg_per_m, checked_at_iso
+         FROM production_conversion_checks WHERE coil_no = ?
+         ORDER BY checked_at_iso DESC, id DESC`
+      )
+      .all(cn);
+  } catch {
+    checks = [];
+  }
+  for (const c of checks) {
+    const jobId = String(c.job_id || '').trim();
+    if (!jobId || seen.has(jobId)) continue;
+    if (!byJob.has(jobId)) {
+      byJob.set(jobId, { kg: 0, meters: 0, atISO: c.checked_at_iso || '' });
+    }
+  }
+
+  const orphans = [];
+  for (const [jobId, agg] of byJob.entries()) {
+    if (agg.kg <= 0.05) continue;
+    const job = productionJobRow(db, jobId);
+    const cuttingListId = String(job?.cutting_list_id ?? '').trim();
+    const quotationRef = String(job?.quotation_ref ?? '').trim();
+    let customer = '';
+    if (cuttingListId) {
+      try {
+        const cl = db.prepare(`SELECT customer_name FROM cutting_lists WHERE id = ?`).get(cuttingListId);
+        customer = cl?.customer_name ?? '';
+      } catch {
+        customer = '';
+      }
+    }
+    const check = checks.find((c) => String(c.job_id || '').trim() === jobId);
+    orphans.push({
+      id: `orphan-ledger:${jobId}:${cn}`,
+      jobID: jobId,
+      coilNo: cn,
+      openingWeightKg: 0,
+      closingWeightKg: 0,
+      consumedWeightKg: clampNonNegative(agg.kg),
+      metersProduced: agg.meters,
+      allocationStatus: 'Ledger',
+      allocatedAtISO: agg.atISO || '',
+      jobStatus: job?.status ?? 'Completed',
+      cuttingListId,
+      quotationRef,
+      customer,
+      conversionAlertState: check?.alert_state ?? '',
+      orphanedFromLedger: true,
+    });
+  }
+  orphans.sort((a, b) => String(b.allocatedAtISO || '').localeCompare(String(a.allocatedAtISO || '')));
+  return orphans;
+}
+
+/**
  * Kg that actually left the coil book for one production_job_coils holder.
  * Planned/Running lines only reserve opening kg — they must not reduce on-hand.
  * Prefer opening − closing (the register reading) over stored consumed_weight_kg,
@@ -3964,8 +4128,9 @@ export function syncProductionJobCoilConsumedWeightsForCoil(db, coilNo) {
 }
 
 /**
- * Rebuild coil on-hand (kg used / remaining) from GRN received, summed job consumption,
- * coil splits, and non-production scrap/return/finish-roll movements.
+ * Rebuild coil on-hand (kg used / remaining) from GRN received, summed job consumption
+ * (live holders, or leftover COIL_CONSUMPTION if a job row was deleted), coil splits,
+ * and non-production scrap/return/finish-roll movements.
  */
 export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
   const cn = String(coilNo ?? '').trim();
@@ -3978,10 +4143,7 @@ export function reconcileCoilBookFromProductionHolders(db, coilNo, opts = {}) {
   const syncResult = syncProductionJobCoilConsumedWeightsForCoil(db, cn);
   const holders = listCoilProductionHolders(db, cn);
   const received = clampNonNegative(coil.weight_kg ?? coil.qty_received);
-  let jobsConsumedKg = 0;
-  for (const h of holders) {
-    jobsConsumedKg += holderBookedKgUsed(h);
-  }
+  const jobsConsumedKg = coilBookJobsConsumedKg(db, cn, holders);
   const splitOutKg = coilSplitOutKgFromChildren(db, cn);
   const ancillaryNetKg = coilAncillaryKgNetDelta(db, cn);
   const expectedOnHand = clampNonNegative(received - jobsConsumedKg - splitOutKg + ancillaryNetKg);
@@ -4092,10 +4254,11 @@ export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
   const bookUsedKg = Math.max(0, received - onHand);
   const splitOutKg = coilSplitOutKgFromChildren(db, cn);
   const ancillaryNetKg = coilAncillaryKgNetDelta(db, cn);
-  let jobsConsumedKgSum = 0;
+  const holderJobsConsumedKgSum = holdersJobsConsumedKgSum(rows);
+  const movementJobsConsumedKgSum = coilProductionJobConsumedKgFromMovements(db, cn);
+  const jobsConsumedKgSum = Math.max(holderJobsConsumedKgSum, movementJobsConsumedKgSum);
   let openingClosingKgSum = 0;
   for (const h of rows) {
-    jobsConsumedKgSum += holderBookedKgUsed(h);
     const opening = safeNumber(h.openingWeightKg);
     const closing = safeNumber(h.closingWeightKg);
     if (opening > 0 && closing >= 0 && opening >= closing) {
@@ -4111,6 +4274,8 @@ export function summarizeCoilProductionHoldersBook(db, coilNo, holders = null) {
     onHandKg: onHand,
     receivedKg: received,
     jobsConsumedKgSum,
+    holderJobsConsumedKgSum,
+    movementJobsConsumedKgSum,
     openingClosingKgSum,
     bookUsedFromJobsKg,
     ancillaryNetKg,

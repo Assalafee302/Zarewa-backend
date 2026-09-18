@@ -4,10 +4,12 @@
  */
 import { stockRowMatchesColourFilter } from './stockCheckMasterOptions.js';
 import {
+  isStoneCoilBackedQuotationLine,
   quotationHasCoilLine,
   quotationHasFlatSheetLine,
   quotationHasStoneCoilBackedProductLines,
   quotationProductLinesForJobProduct,
+  STONE_QUOTE_FLAT_SHEET_COIL_MATERIAL_KEY,
 } from './stoneCoatedQuotationPolicy.js';
 
 /** First numeric gauge in a label, e.g. "0.24mm" → 0.24 */
@@ -41,8 +43,38 @@ function skipMaterialCompareToCoil(expectedMaterialType) {
   if (/\bfinished\b/.test(m)) return true;
   if (/\broofing sheet\b/.test(m)) return true;
   if (/\baccessory\b/.test(m)) return true;
+  if (/\bstone[\s-]*coated\b/.test(m)) return true;
   if (/\bsteeltile\b/.test(m) && !/\bcoil\b/.test(m)) return true;
   return false;
+}
+
+/** Stone-coated metre header (quotation mapping or lines_json). */
+export function quotationIsStoneMeterHeader(quotation) {
+  if (!quotation || typeof quotation !== 'object') return false;
+  if (quotation.stoneMeterQuote === true) return true;
+  const mid = String(quotation.materialTypeId ?? quotation.material_type_id ?? '').trim();
+  return mid === 'MAT-005' || mid === 'stone-coated';
+}
+
+/**
+ * Coil expected spec for stone-coated hybrid jobs (Flat sheet / gutter / Coil).
+ * Those portions are fulfilled as aluzinc coil — never the stone roofing header
+ * (gauge / colour / "Stone coated"), which would false-flag every matching aluzinc lot.
+ */
+export function buildExpectedCoilSpecForStoneHybridFlatsheet(quotation, jobProductAttrs) {
+  const p = jobProductAttrs || {};
+  const products = quotationProductsFromQuotation(quotation);
+  const coilLine = products.find((row) => isStoneCoilBackedQuotationLine(row?.name));
+  const gauge = String(coilLine?.materialGauge || coilLine?.gauge || p.gauge || '').trim();
+  const colour = String(coilLine?.colour || coilLine?.materialColor || p.colour || '').trim();
+  const design = String(coilLine?.materialDesign || coilLine?.design || '').trim();
+  return {
+    gauge: gauge || null,
+    colour: colour || null,
+    materialType: 'Aluzinc',
+    design: design || null,
+    coilMaterialKey: STONE_QUOTE_FLAT_SHEET_COIL_MATERIAL_KEY,
+  };
 }
 
 /**
@@ -66,6 +98,9 @@ export function firstPrimaryProductNameFromQuotation(quotation) {
 export function buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs) {
   const q = quotation || {};
   const p = jobProductAttrs || {};
+  if (quotationIsStoneMeterHeader(q) && quotationExpectsCoilAllocation(q)) {
+    return buildExpectedCoilSpecForStoneHybridFlatsheet(q, p);
+  }
   const gauge = String(q.materialGauge || p.gauge || '').trim();
   const colour = String(q.materialColor || p.colour || '').trim();
   let materialType = String(p.materialType || '').trim();
@@ -173,7 +208,9 @@ export function coilMatchesQuotationSpec(lot, quotation, jobProductAttrs, master
  * @returns {string | null} Warning sentence or null if aligned / insufficient data
  */
 export function coilVersusQuotationAndProductWarning(lot, quotation, jobProductAttrs, masterData) {
-  const expected = buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs);
+  const expected = quotationIsStoneMeterHeader(quotation)
+    ? buildExpectedCoilSpecForStoneHybridFlatsheet(quotation, jobProductAttrs)
+    : buildExpectedCoilSpecFromQuotation(quotation, jobProductAttrs);
   const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterData);
   if (!hasExpected || issues.length === 0) return null;
   return `Spec check: this coil does not match the quotation material spec — ${issues.join('; ')}. Pick a recommended coil or save with acknowledgement to flag the branch manager.`;

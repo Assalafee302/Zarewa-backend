@@ -29,10 +29,12 @@ import {
   resolveStoneRawProductIdForQuotation,
 } from './stoneInventory.js';
 import {
+  buildExpectedCoilSpecForStoneHybridFlatsheet,
   buildExpectedCoilSpecFromQuotation,
   coilSpecMismatchIssues,
   quotationExpectsCoilAllocation,
 } from '../shared/lib/coilSpecVersusProduct.js';
+import { assessProductionMetreOverrun } from '../shared/lib/productionMetreVariance.js';
 import {
   quotationRequiresStoneMetreConsumption,
   cuttingListLineTypeSet,
@@ -527,7 +529,11 @@ function allocationCoilSpecMismatched(db, job, coilNo, masterDataForCoil) {
   const qref = String(job.quotation_ref || '').trim();
   const quotation = qref ? getQuotation(db, qref) : null;
   const productAttrs = jobProductAttrsFromDb(db, job.product_id);
-  const expected = buildExpectedCoilSpecFromQuotation(quotation, productAttrs);
+  /* Stone roofing header (0.24mm / Red patch black / Stone coated) is not the coil spec —
+     hybrid flatsheet / gutter is aluzinc. Comparing the header false-flags every valid lot. */
+  const expected = jobIsStoneMeter(db, job)
+    ? buildExpectedCoilSpecForStoneHybridFlatsheet(quotation, productAttrs)
+    : buildExpectedCoilSpecFromQuotation(quotation, productAttrs);
   const lot = {
     gaugeLabel: coil.gauge_label,
     colour: coil.colour,
@@ -537,6 +543,29 @@ function allocationCoilSpecMismatched(db, job, coilNo, masterDataForCoil) {
   const { issues, hasExpected } = coilSpecMismatchIssues(lot, expected, masterDataForCoil);
   if (!hasExpected || issues.length === 0) return { mismatched: false, detail: '' };
   return { mismatched: true, detail: issues.join('; ') };
+}
+
+function stoneMetersConsumedFromPayload(payload) {
+  return safeNumber(payload?.stoneMetersConsumed ?? payload?.stoneMeters ?? payload?.metersConsumed, 0);
+}
+
+function meterOverrunRemarkGate(job, payload, { stoneHybrid, stoneMetersConsumed, flatsheetMeters }) {
+  const assessed = assessProductionMetreOverrun({
+    stoneHybrid,
+    plannedMeters: job.planned_meters,
+    plannedRoofM: job.planned_roof_m,
+    plannedFlatsheetM: job.planned_flatsheet_m,
+    stoneMetersConsumed,
+    flatsheetMeters,
+  });
+  if (!assessed.overrun) return null;
+  const remark = String(payload?.meterOverrunRemark ?? '').trim();
+  if (remark.length >= 3) return null;
+  return {
+    ok: false,
+    error: assessed.message,
+    code: 'METER_OVERRUN_REMARK_REQUIRED',
+  };
 }
 
 function refreshJobCoilSpecFlagsTx(db, jobID) {
@@ -1458,6 +1487,14 @@ export function previewProductionConversion(db, jobID, payload = {}) {
       totalWeightKg: 0,
       accessoryPlan: acc.plannedLines,
       accessoryStockWarnings: acc.accessoryStockWarnings ?? [],
+      metreOverrun: assessProductionMetreOverrun({
+        stoneHybrid: jobIsStoneCoilHybrid(db, jobRow),
+        plannedMeters: jobRow.planned_meters,
+        plannedRoofM: jobRow.planned_roof_m,
+        plannedFlatsheetM: jobRow.planned_flatsheet_m,
+        stoneMetersConsumed: jobIsStoneCoilHybrid(db, jobRow) ? stoneMetersConsumedFromPayload(payload) : 0,
+        flatsheetMeters: metres,
+      }),
     };
   }
   if (jobRow && jobIsStoneMeter(db, jobRow) && !jobExpectsCoilAllocation(db, jobRow)) {
@@ -1488,6 +1525,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
   if (!acc.ok) return { ok: false, error: acc.error };
   const offInvPreview = offcutInventoryMetersFromPayload(payload);
   const totalOutputMeters = r.totalMeters + offInvPreview;
+  const stoneHybridPreview = jobIsStoneCoilHybrid(db, jobRow);
   return {
     ok: true,
     previewPartial: Boolean(r.previewPartial),
@@ -1517,6 +1555,17 @@ export function previewProductionConversion(db, jobID, payload = {}) {
     offcutInventoryMeters: offInvPreview,
     totalWeightKg: r.totalWeightKg,
     accessoryPlan: acc.plannedLines,
+    stoneMetersConsumed: stoneHybridPreview ? stoneMetersConsumedFromPayload(payload) : 0,
+    plannedRoofM: Number(jobRow.planned_roof_m) || 0,
+    plannedFlatsheetM: Number(jobRow.planned_flatsheet_m) || 0,
+    metreOverrun: assessProductionMetreOverrun({
+      stoneHybrid: stoneHybridPreview,
+      plannedMeters: jobRow.planned_meters,
+      plannedRoofM: jobRow.planned_roof_m,
+      plannedFlatsheetM: jobRow.planned_flatsheet_m,
+      stoneMetersConsumed: stoneHybridPreview ? stoneMetersConsumedFromPayload(payload) : 0,
+      flatsheetMeters: totalOutputMeters,
+    }),
   };
 }
 
@@ -1530,7 +1579,7 @@ export function previewProductionConversion(db, jobID, payload = {}) {
 export function saveProductionCoilRunLogDraft(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
-  if (jobIsStoneMeter(db, job)) {
+  if (jobIsStoneMeter(db, job) && !jobExpectsCoilAllocation(db, job)) {
     return { ok: false, error: 'Stone-coated jobs do not use coil run log rows.' };
   }
   if ((job.status ?? '') !== 'Running') {
@@ -1932,17 +1981,13 @@ function completeProductionJobOffcut(db, job, jobID, payload = {}, opts = {}) {
     proposedJobOutputMetres: outputMetresOffcut,
   });
   if (!paidRefundGatePre.ok) return paidRefundGatePre;
-  const plannedMOffcut = Number(job.planned_meters) || 0;
-  if (plannedMOffcut > 0 && outputMetresOffcut > plannedMOffcut + 0.001) {
-    const remark = String(payload?.meterOverrunRemark ?? '').trim();
-    if (remark.length < 3) {
-      return {
-        ok: false,
-        error: `Output (${outputMetresOffcut.toFixed(2)} m) exceeds planned (${plannedMOffcut.toFixed(2)} m). Enter a manager remark explaining the overrun to continue.`,
-        code: 'METER_OVERRUN_REMARK_REQUIRED',
-      };
-    }
-  }
+  const stoneHybridOffcut = jobIsStoneCoilHybrid(db, job);
+  const overrunOffcut = meterOverrunRemarkGate(job, payload, {
+    stoneHybrid: stoneHybridOffcut,
+    stoneMetersConsumed: stoneHybridOffcut ? stoneMetersConsumedFromPayload(payload) : 0,
+    flatsheetMeters: outputMetresOffcut,
+  });
+  if (overrunOffcut) return overrunOffcut;
   let accessoryStockWarnings = [];
   try {
     assertPeriodOpen(db, completedAtISO, 'Production completion date');
@@ -2155,17 +2200,13 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
       plannedStoneFlatsheetLines: sfPlanPre.plannedLines,
     });
     if (!paidRefundGate.ok) return paidRefundGate;
-    const plannedM = Number(job.planned_meters) || 0;
-    if (plannedM > 0 && outputMeters > plannedM + 0.001) {
-      const remark = String(payload?.meterOverrunRemark ?? '').trim();
-      if (remark.length < 3) {
-        return {
-          ok: false,
-          error:
-            'Output exceeds planned metres. Enter a manager overrun remark (at least 3 characters) or reduce coil/offcut metres.',
-        };
-      }
-    }
+    const stoneHybrid = jobIsStoneCoilHybrid(db, job);
+    const overrunGate = meterOverrunRemarkGate(job, payload, {
+      stoneHybrid,
+      stoneMetersConsumed: stoneHybrid ? stoneMetersConsumedFromPayload(payload) : 0,
+      flatsheetMeters: outputMeters,
+    });
+    if (overrunGate) return overrunGate;
     let totalCogsForGl = 0;
     let accessoryStockWarnings = [];
     const stockBranch = jobBranchId(job);

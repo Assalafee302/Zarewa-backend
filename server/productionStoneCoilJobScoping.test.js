@@ -180,6 +180,89 @@ describe('stone-coated production jobs built the real way (insertCuttingList -> 
     expect(Number(stoneMovement.qty)).toBe(-60);
   });
 
+  it('hybrid offcut 22 m on a 100 m roof plan is a flatsheet overrun, not a 122 vs 100 roofing overrun', () => {
+    insertStoneQuotation(
+      'QT-STONE-HYBRID-OVERRUN-1',
+      [
+        { name: 'Roofing Sheet', qty: '100', unitPrice: '5000' },
+        { name: 'Flat sheet', qty: '1', unitPrice: '4000' },
+      ],
+      504000
+    );
+
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-HYBRID-OVERRUN-1',
+      lines: [
+        { sheets: 20, lengthM: 5, lineType: 'Roof' },
+        { sheets: 1, lengthM: 1, lineType: 'Flatsheet' },
+      ],
+    });
+    expect(cl.ok).toBe(true);
+
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+    expect(startProductionJob(db, job.jobID).ok).toBe(true);
+
+    const jobRow = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
+    expect(Number(jobRow.planned_meters)).toBe(100);
+    expect(Number(jobRow.planned_flatsheet_m)).toBe(1);
+
+    const noRemark = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 22,
+      offcutInventoryMeters: 22,
+      stoneMetersConsumed: 100,
+    });
+    expect(noRemark.ok).toBe(false);
+    expect(noRemark.error).toMatch(/flatsheet\/offcut/i);
+    expect(noRemark.error).not.toMatch(/roofing/i);
+
+    const withRemark = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 22,
+      offcutInventoryMeters: 22,
+      stoneMetersConsumed: 100,
+      meterOverrunRemark: '15 m offcut flatsheet plus coil remainder',
+    });
+    expect(withRemark.ok).toBe(true);
+    const finalRow = db.prepare(`SELECT * FROM production_jobs WHERE job_id = ?`).get(job.jobID);
+    expect(Number(finalRow.actual_roof_m)).toBe(100);
+    expect(Number(finalRow.actual_flatsheet_m)).toBe(22);
+  });
+
+  it('hybrid complete with stone on roof plan and offcut within flatsheet plan does not require an overrun remark', () => {
+    insertStoneQuotation(
+      'QT-STONE-HYBRID-ONPLAN-1',
+      [
+        { name: 'Roofing Sheet', qty: '100', unitPrice: '5000' },
+        { name: 'Flat sheet', qty: '30', unitPrice: '4000' },
+      ],
+      620000
+    );
+
+    const cl = insertCuttingList(db, {
+      quotationRef: 'QT-STONE-HYBRID-ONPLAN-1',
+      lines: [
+        { sheets: 20, lengthM: 5, lineType: 'Roof' },
+        { sheets: 3, lengthM: 10, lineType: 'Flatsheet' },
+      ],
+    });
+    expect(cl.ok).toBe(true);
+
+    const job = insertProductionJob(db, { cuttingListId: cl.id });
+    expect(job.ok).toBe(true);
+    expect(startProductionJob(db, job.jobID).ok).toBe(true);
+
+    const done = completeProductionJob(db, job.jobID, {
+      completeMode: 'offcut',
+      offcutMetersProduced: 25,
+      offcutInventoryMeters: 25,
+      stoneMetersConsumed: 100,
+    });
+    expect(done.ok).toBe(true);
+    expect(done.error).toBeFalsy();
+  });
+
   it('hybrid offcut completion with stone metres and zero flatsheet output still posts STONE_CONSUMPTION', () => {
     insertStoneQuotation(
       'QT-STONE-HYBRID-ZERO-FS',

@@ -3,6 +3,7 @@ import {
   buildExpectedCoilSpecFromQuotation,
   coilMatchesQuotationSpec,
   coilSpecMismatchIssues,
+  coilVersusQuotationAndProductWarning,
   expectedGaugeBoundsMm,
 } from './coilSpecVersusProduct.js';
 
@@ -79,5 +80,35 @@ describe('coilSpecVersusProduct', () => {
     });
     const { issues } = coilSpecMismatchIssues(lot, exp);
     expect(issues).toHaveLength(0);
+  });
+
+  it('stone hybrid expected coil spec is aluzinc, not the stone roofing header', () => {
+    const q = {
+      stoneMeterQuote: true,
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialColor: 'Red patch black',
+      quotationLines: { products: [{ name: 'Roofing Sheet' }, { name: 'Flat sheet', qty: '20' }] },
+    };
+    const e = buildExpectedCoilSpecFromQuotation(q, null);
+    expect(e.materialType).toBe('Aluzinc');
+    expect(e.gauge).toBeNull();
+    expect(e.colour).toBeNull();
+    const lot = { gaugeLabel: '0.20mm', colour: 'P Red', materialTypeName: 'Aluzinc (PPGI)' };
+    const { issues } = coilSpecMismatchIssues(lot, e);
+    expect(issues).toHaveLength(0);
+    expect(coilMatchesQuotationSpec(lot, q, null)).toBe(true);
+  });
+
+  it('stone hybrid warning does not compare an aluzinc coil to stone roofing colour/gauge', () => {
+    const q = {
+      stoneMeterQuote: true,
+      materialTypeId: 'MAT-005',
+      materialGauge: '0.24mm',
+      materialColor: 'Red patch black',
+      quotationLines: { products: [{ name: 'Roofing Sheet' }, { name: 'Stone flatsheet 2', qty: '20' }] },
+    };
+    const lot = { gaugeLabel: '0.20mm', colour: 'P Red', materialTypeName: 'Aluzinc (PPGI)' };
+    expect(coilVersusQuotationAndProductWarning(lot, q, null)).toBeNull();
   });
 });

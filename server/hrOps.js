@@ -4358,10 +4358,9 @@ export function computePayrollRun(db, runId) {
   const isYearEnd = String(period || '').endsWith('12');
 
   db.prepare(`DELETE FROM hr_payroll_line_loans WHERE run_id = ?`).run(runId);
-  try {
+  const recoveriesReady = hrTableExists(db, 'hr_payroll_line_recoveries');
+  if (recoveriesReady) {
     db.prepare(`DELETE FROM hr_payroll_line_recoveries WHERE run_id = ?`).run(runId);
-  } catch {
-    /* optional until migrate */
   }
   db.prepare(`DELETE FROM hr_payroll_lines WHERE run_id = ?`).run(runId);
 
@@ -4375,26 +4374,64 @@ export function computePayrollRun(db, runId) {
     )
     .all(...PAYROLL_RUN_ELIGIBLE_GROUPS);
 
+  /* Which optional columns this database actually has, asked once for the run
+     instead of once per staff member — each miss used to cost a failed statement. */
+  const lineCols = ['salary_version_id', 'loan_deduction_ngn', 'disciplinary_deduction_ngn', 'pension_employer_ngn']
+    .filter((c) => hasColumn(db, 'hr_payroll_lines', c));
+  const hasPayHold =
+    hasColumn(db, 'hr_payroll_lines', 'pay_hold') && hasColumn(db, 'hr_payroll_lines', 'hold_reason');
+  const lineInsertCols = [
+    'run_id',
+    'user_id',
+    'gross_ngn',
+    'bonus_ngn',
+    'attendance_deduction_ngn',
+    'other_deduction_ngn',
+    'tax_ngn',
+    'pension_ngn',
+    'net_ngn',
+    ...lineCols,
+    ...(hasPayHold ? ['pay_hold', 'hold_reason'] : []),
+  ];
   const ins = db.prepare(
-    `INSERT INTO hr_payroll_lines (
-      run_id, user_id, gross_ngn, bonus_ngn, attendance_deduction_ngn, other_deduction_ngn, tax_ngn, pension_ngn, net_ngn
-    ) VALUES (?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO hr_payroll_lines (${lineInsertCols.join(', ')})
+     VALUES (${lineInsertCols.map(() => '?').join(',')})`
   );
+
+  const loanHasObligation = hasColumn(db, 'hr_payroll_line_loans', 'obligation_account_id');
+  const loanCols = [
+    'run_id',
+    'user_id',
+    'hr_request_id',
+    ...(loanHasObligation ? ['obligation_account_id'] : []),
+    'period_yyyymm',
+    'amount_ngn',
+    'loan_title',
+    'computed_at_iso',
+  ];
   const insLoan = db.prepare(
-    `INSERT INTO hr_payroll_line_loans (
-      run_id, user_id, hr_request_id, period_yyyymm, amount_ngn, loan_title, computed_at_iso
-    ) VALUES (?,?,?,?,?,?,?)`
+    `INSERT INTO hr_payroll_line_loans (${loanCols.join(', ')})
+     VALUES (${loanCols.map(() => '?').join(',')})`
   );
-  let insRecovery = null;
-  try {
-    insRecovery = db.prepare(
-      `INSERT INTO hr_payroll_line_recoveries (
-        run_id, user_id, schedule_id, period_yyyymm, amount_ngn, case_number, computed_at_iso
-      ) VALUES (?,?,?,?,?,?,?)`
-    );
-  } catch {
-    insRecovery = null;
-  }
+
+  const recoveryHasObligation =
+    recoveriesReady && hasColumn(db, 'hr_payroll_line_recoveries', 'obligation_account_id');
+  const recoveryCols = [
+    'run_id',
+    'user_id',
+    'schedule_id',
+    ...(recoveryHasObligation ? ['obligation_account_id'] : []),
+    'period_yyyymm',
+    'amount_ngn',
+    'case_number',
+    'computed_at_iso',
+  ];
+  const insRecovery = recoveriesReady
+    ? db.prepare(
+        `INSERT INTO hr_payroll_line_recoveries (${recoveryCols.join(', ')})
+         VALUES (${recoveryCols.map(() => '?').join(',')})`
+      )
+    : null;
   const computedAt = nowIso();
 
   let totalGross = 0;
@@ -4423,13 +4460,13 @@ export function computePayrollRun(db, runId) {
     const gross = salaryAmount + bonus - deductionNgn;
     const payeApplies = requiresPaye(payrollGroup);
     const tax = payeApplies ? Math.max(0, Math.round(Number(s.paye_tax_ngn) || 0)) : 0;
+    const extra = parseJsonObject(s.profile_extra_json, {});
     const meetsPension = staffMeetsPensionPolicy({
       payrollGroup,
       profileExtraJson: s.profile_extra_json,
     });
     const pension = meetsPension ? Math.round((gross * penEmpP) / 100) : 0;
     const pensionEmployer = meetsPension ? Math.round((gross * penErP) / 100) : 0;
-    const extra = parseJsonObject(s.profile_extra_json, {});
     const comp = extra.compensationPackage || {};
     const useLegacyDisc = process.env.HR_LEGACY_DISC_DEDUCTION === '1';
     const discFix =
@@ -4439,78 +4476,59 @@ export function computePayrollRun(db, runId) {
     const disciplinaryNgn =
       assessmentDisciplinaryForUser(db, s.user_id, s.branch_id, period) || discFix;
     const other = loanTotal + recoveryTotal + disciplinaryNgn;
-    const net = gross - tax - pension - other;
-    ins.run(runId, s.user_id, gross, bonus, deductionNgn, other, tax, pension, net);
-    try {
-      db.prepare(
-        `UPDATE hr_payroll_lines SET salary_version_id = ?, loan_deduction_ngn = ?, disciplinary_deduction_ngn = ?
-         WHERE run_id = ? AND user_id = ?`
-      ).run(salaryVersionId, loanTotal, disciplinaryNgn, runId, s.user_id);
-    } catch {
-      /* optional columns until migrate */
-    }
-    try {
-      db.prepare(`UPDATE hr_payroll_lines SET pension_employer_ngn = ? WHERE run_id = ? AND user_id = ?`).run(
-        pensionEmployer,
-        runId,
-        s.user_id
-      );
-    } catch {
-      /* pension_employer_ngn optional until migrate */
-    }
-    const extraHold = parseJsonObject(s.profile_extra_json, {});
     const salaryHeld = ['held', 'suspended'].includes(
-      String(extraHold?.employmentMeta?.salaryStatus || '').toLowerCase()
+      String(extra?.employmentMeta?.salaryStatus || '').toLowerCase()
     );
-    if (salaryHeld) {
-      try {
-        db.prepare(
-          `UPDATE hr_payroll_lines SET pay_hold = 1, hold_reason = ?, net_ngn = 0 WHERE run_id = ? AND user_id = ?`
-        ).run(extraHold?.employmentMeta?.payrollHoldReason || 'Salary on hold', runId, s.user_id);
-      } catch {
-        /* pay_hold column optional until migrate */
-      }
-    }
+    /* A held line still records what was earned; only the payable net is zeroed. */
+    const net = salaryHeld && hasPayHold ? 0 : gross - tax - pension - other;
+    const optionalLineValues = {
+      salary_version_id: salaryVersionId,
+      loan_deduction_ngn: loanTotal,
+      disciplinary_deduction_ngn: disciplinaryNgn,
+      pension_employer_ngn: pensionEmployer,
+    };
+    ins.run(
+      runId,
+      s.user_id,
+      gross,
+      bonus,
+      deductionNgn,
+      other,
+      tax,
+      pension,
+      net,
+      ...lineCols.map((c) => optionalLineValues[c]),
+      ...(hasPayHold
+        ? [
+            salaryHeld ? 1 : 0,
+            salaryHeld ? extra?.employmentMeta?.payrollHoldReason || 'Salary on hold' : null,
+          ]
+        : [])
+    );
     for (const ln of loanParts || []) {
-      try {
-        db.prepare(
-          `INSERT INTO hr_payroll_line_loans (
-            run_id, user_id, hr_request_id, obligation_account_id, period_yyyymm, amount_ngn, loan_title, computed_at_iso
-          ) VALUES (?,?,?,?,?,?,?,?)`
-        ).run(
-          runId,
-          s.user_id,
-          ln.hrRequestId,
-          ln.obligationAccountId || null,
-          period,
-          ln.amountNgn,
-          ln.title,
-          computedAt
-        );
-      } catch {
-        insLoan.run(runId, s.user_id, ln.hrRequestId, period, ln.amountNgn, ln.title, computedAt);
-      }
+      insLoan.run(
+        runId,
+        s.user_id,
+        ln.hrRequestId,
+        ...(loanHasObligation ? [ln.obligationAccountId || null] : []),
+        period,
+        ln.amountNgn,
+        ln.title,
+        computedAt
+      );
     }
     if (insRecovery) {
       for (const rc of recoveryParts || []) {
-        try {
-          db.prepare(
-            `INSERT INTO hr_payroll_line_recoveries (
-              run_id, user_id, schedule_id, obligation_account_id, period_yyyymm, amount_ngn, case_number, computed_at_iso
-            ) VALUES (?,?,?,?,?,?,?,?)`
-          ).run(
-            runId,
-            s.user_id,
-            rc.scheduleId,
-            rc.obligationAccountId || null,
-            period,
-            rc.amountNgn,
-            rc.caseNumber,
-            computedAt
-          );
-        } catch {
-          insRecovery.run(runId, s.user_id, rc.scheduleId, period, rc.amountNgn, rc.caseNumber, computedAt);
-        }
+        insRecovery.run(
+          runId,
+          s.user_id,
+          rc.scheduleId,
+          ...(recoveryHasObligation ? [rc.obligationAccountId || null] : []),
+          period,
+          rc.amountNgn,
+          rc.caseNumber,
+          computedAt
+        );
       }
     }
     totalGross += Math.max(0, gross);

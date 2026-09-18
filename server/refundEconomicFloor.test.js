@@ -87,6 +87,36 @@ describe('buildRefundEconomicFloorSummary (unit)', () => {
     expect(summary.ppmSourceByJob['JOB-OK']).toBe('override');
   });
 
+  it('caps produced value at quoted selling ₦/m even without an MD price exception', () => {
+    const db = mockFloorDb({
+      coilMetersByJob: { 'JOB-YL': 60.4 },
+      coilGaugeByJob: { 'JOB-YL': '0.24mm' },
+    });
+    const quote = {
+      lines_json: JSON.stringify({
+        products: [
+          { name: 'Roofing Sheet', qty: 60, unitPrice: 4900 },
+          { name: 'Flat sheet', qty: 16, unitPrice: 4900 },
+        ],
+      }),
+      branch_id: 'BR-YL',
+    };
+    const jobs = [{ job_id: 'JOB-YL', status: 'Completed', actual_meters: 60.4 }];
+    const summary = buildRefundEconomicFloorSummary(db, quote, jobs, {
+      cashInNgn: 387_400,
+      priorRefundedNgn: 0,
+      substitutePricePerMeterNgn: 7500,
+    });
+    expect(summary.honouredMdPriceException).toBe(false);
+    expect(summary.usedQuotedSellingCap).toBe(true);
+    expect(summary.producedOutputMeters).toBe(60.4);
+    expect(summary.ppmSourceByJob['JOB-YL']).toBe('quoted_selling_cap');
+    expect(summary.floorDeliveredValueNgn).toBe(295_960); // 60.4 × ₦4,900, not 60.4 × ₦7,500
+    expect(summary.maxDefensibleRefundNgn).toBe(91_440);
+    // Unproduced 15.6 m × ₦4,900 = ₦76,440 sits inside deal-price headroom.
+    expect(76_440).toBeLessThanOrEqual(summary.maxDefensibleRefundNgn);
+  });
+
   it('values produced at quoted selling ₦/m when MD below-floor exception is on file', () => {
     const db = mockFloorDb({
       coilMetersByJob: { 'JOB-MD': 10 },

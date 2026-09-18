@@ -143,6 +143,11 @@ export function resolveTreasuryAccountId(db, accountKeyRaw, branchId = '') {
     .get(raw.toLowerCase(), ...branchArgs);
   if (byName) return { id: Number(byName.id) };
 
+  const byBank = db
+    .prepare(`SELECT id FROM treasury_accounts WHERE LOWER(TRIM(bank_name)) = ?${branchSql} LIMIT 1`)
+    .get(raw.toLowerCase(), ...branchArgs);
+  if (byBank) return { id: Number(byBank.id) };
+
   if (hasBranch && bid) {
     const elsewhere = db
       .prepare(

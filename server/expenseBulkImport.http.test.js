@@ -188,26 +188,30 @@ describe('expense bulk import HTTP (MySQL)', () => {
         },
       ],
     });
-    expect(commit.status, JSON.stringify(commit.body)).toBe(201);
-    expect(commit.body.createdCount).toBe(2);
-    const voidId = commit.body.created.find((c) => c.reference === 'HTTP-VOID-1').expenseID;
-    const attachId = commit.body.created.find((c) => c.reference === 'HTTP-BANK-1').expenseID;
+    expect(commit.status, JSON.stringify(commit.body)).toBe(400);
+
+    db.prepare(
+      `INSERT INTO expenses (expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id)
+       VALUES
+         ('EXP-HTTP-VOID-1', 'Imported refund without bank account', 15000, '2026-07-11', 'Refund', 'Import', 'HTTP-VOID-1', ?),
+         ('EXP-HTTP-BANK-1', 'Imported refund to attach later', 22000, '2026-07-11', 'Refund', 'Import', 'HTTP-BANK-1', ?)`
+    ).run(DEFAULT_BRANCH_ID, DEFAULT_BRANCH_ID);
 
     const unposted = await agent.get('/api/expenses/import/unposted?category=Refund');
     expect(unposted.status).toBe(200);
-    expect(unposted.body.rows.some((r) => r.expenseID === voidId && r.missingTreasury)).toBe(true);
+    expect(unposted.body.rows.some((r) => r.expenseID === 'EXP-HTTP-VOID-1' && r.missingTreasury)).toBe(true);
 
-    const voided = await agent.post('/api/expenses/import/void-unposted').send({ expenseIds: [voidId] });
+    const voided = await agent.post('/api/expenses/import/void-unposted').send({ expenseIds: ['EXP-HTTP-VOID-1'] });
     expect(voided.status, JSON.stringify(voided.body)).toBe(200);
     expect(voided.body.voidedCount).toBe(1);
 
     const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
     const attached = await agent.post('/api/expenses/import/attach-treasury').send({
-      expenseIds: [attachId],
+      allUnposted: true,
       treasuryAccountId: treasury.id,
     });
     expect(attached.status, JSON.stringify(attached.body)).toBe(201);
-    expect(attached.body.postedCount).toBe(1);
+    expect(attached.body.postedCount).toBeGreaterThanOrEqual(1);
     const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
     expect(after).toBe(before - 22_000);
   }, 120_000);

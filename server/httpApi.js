@@ -9724,7 +9724,7 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
-      const requireTreasury = req.body?.requireTreasury !== false;
+      const requireTreasury = true;
       const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
       let rows = normalizeExpenseImportRows(req.body?.rows);
       if (!rows.length) {
@@ -9752,7 +9752,7 @@ export function registerHttpApi(app, db) {
     try {
       const createGate = assertSingleBranchWorkspaceForCreate(req);
       if (!createGate.ok) return apiError(res, { status: 403, code: 'FORBIDDEN', error: createGate.error });
-      const requireTreasury = req.body?.requireTreasury !== false;
+      const requireTreasury = true;
       const branchId = req.workspaceBranchId || DEFAULT_BRANCH_ID;
       let rows = normalizeExpenseImportRows(req.body?.rows);
       if (!rows.length) {

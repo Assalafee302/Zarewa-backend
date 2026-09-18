@@ -320,6 +320,30 @@ export function attachTreasuryToImportedExpenses(db, expenseIds, payload = {}, a
 }
 
 /**
+ * Post every expense on this branch that has no till/bank outflow onto one treasury account.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object|null} actor
+ * @param {{ treasuryAccountId?: number, accountKey?: string, workspaceBranchId?: string, workspaceViewAll?: boolean }} payload
+ */
+export function attachAllUnpostedImportedExpenses(db, actor, payload = {}) {
+  const bid = String(payload.workspaceBranchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a single workspace branch first.' };
+  if (payload.workspaceViewAll) {
+    return { ok: false, error: 'Turn off all-branches view. Post unposted expenses on one branch at a time.' };
+  }
+  const rows = listExpensesMissingBankPosting(db, bid, { limit: MAX_BULK });
+  const ids = rows.filter((r) => r.missingTreasury).map((r) => r.expenseID);
+  if (!ids.length) {
+    return {
+      ok: false,
+      error:
+        'No expenses on this branch are missing a bank/cash line. They may already be on the statement, or you are on the wrong branch.',
+    };
+  }
+  return attachTreasuryToImportedExpenses(db, ids, payload, actor);
+}
+
+/**
  * Delete an imported expense that never hit till/bank. Period lock does not apply:
  * these rows are memo-only and are not on the cash book.
  *

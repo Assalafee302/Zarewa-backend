@@ -7,6 +7,7 @@ import { resolveBootstrapBranchScope } from '../branchScope.js';
 import { withWriteDelta } from '../workspaceWriteDelta.js';
 import { listTreasuryAccounts } from '../readModel.js';
 import {
+  attachAllUnpostedImportedExpenses,
   attachTreasuryToImportedExpenses,
   clearExpensesForReimport,
   listExpensesClearableForReimport,
@@ -29,7 +30,7 @@ export function registerExpenseTreasuryCatchUpRoutes(app, db) {
         const branchScope = resolveBootstrapBranchScope(req);
         const rows = listExpensesMissingBankPosting(db, branchScope, {
           category: req.query?.category,
-          limit: req.query?.limit,
+          limit: req.query?.limit || 500,
           offset: req.query?.offset,
         });
         return res.json({
@@ -60,17 +61,15 @@ export function registerExpenseTreasuryCatchUpRoutes(app, db) {
           : body.expenseId
             ? [body.expenseId]
             : [];
-        const r = attachTreasuryToImportedExpenses(
-          db,
-          expenseIds,
-          {
-            treasuryAccountId: body.treasuryAccountId,
-            accountKey: body.accountKey,
-            workspaceBranchId: req.workspaceBranchId,
-            workspaceViewAll: Boolean(req.workspaceViewAll),
-          },
-          req.user
-        );
+        const payload = {
+          treasuryAccountId: body.treasuryAccountId,
+          accountKey: body.accountKey,
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        };
+        const r = body.allUnposted
+          ? attachAllUnpostedImportedExpenses(db, req.user, payload)
+          : attachTreasuryToImportedExpenses(db, expenseIds, payload, req.user);
         if (!r.ok) {
           return res.status(400).json(r);
         }

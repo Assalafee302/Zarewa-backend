@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { listCoilProductionHolders } from './productionTraceability.js';
+import { holderBookedKgUsed, listCoilProductionHolders } from './productionTraceability.js';
 
 describe('listCoilProductionHolders', () => {
   it('selects cutting_lists.customer_name (not cl.customer)', () => {
@@ -44,5 +44,52 @@ describe('listCoilProductionHolders', () => {
     const db = { prepare: () => ({ all: () => [] }) };
     expect(listCoilProductionHolders(db, '')).toEqual([]);
     expect(listCoilProductionHolders(db, '   ')).toEqual([]);
+  });
+});
+
+describe('holderBookedKgUsed', () => {
+  it('uses opening − closing on completed jobs even when stored consumed drifted low', () => {
+    expect(
+      holderBookedKgUsed({
+        jobStatus: 'Completed',
+        allocationStatus: 'Completed',
+        openingWeightKg: 3540,
+        closingWeightKg: 72,
+        consumedWeightKg: 500,
+      })
+    ).toBe(3468);
+  });
+
+  it('does not treat planned or running allocations as coil consumption', () => {
+    expect(
+      holderBookedKgUsed({
+        jobStatus: 'Planned',
+        allocationStatus: 'Allocated',
+        openingWeightKg: 800,
+        closingWeightKg: 0,
+        consumedWeightKg: 0,
+      })
+    ).toBe(0);
+    expect(
+      holderBookedKgUsed({
+        jobStatus: 'Running',
+        allocationStatus: 'Running',
+        openingWeightKg: 800,
+        closingWeightKg: 100,
+        consumedWeightKg: 700,
+      })
+    ).toBe(0);
+  });
+
+  it('counts a completed correction that increased consumption (lower closing kg)', () => {
+    expect(
+      holderBookedKgUsed({
+        jobStatus: 'Completed',
+        allocationStatus: 'Completed',
+        openingWeightKg: 800,
+        closingWeightKg: 100,
+        consumedWeightKg: 700,
+      })
+    ).toBe(700);
   });
 });

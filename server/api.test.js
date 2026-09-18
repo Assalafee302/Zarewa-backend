@@ -3130,6 +3130,109 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(remAfterCorr).toBeGreaterThanOrEqual(2500);
   });
 
+  it('completion-coil-corrections takes extra consumed kg off the coil remaining', async () => {
+    const { coilA, coilB } = await seedTwoCoilsForProduction(agent);
+    const cutting = await agent.post('/api/cutting-lists').send({
+      quotationRef: 'QT-2026-005',
+      customerID: 'CUS-001',
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      dateISO: '2026-03-29',
+      machineName: 'M1',
+      operatorName: 'QA',
+      lines: [{ sheets: 1, lengthM: 100 }],
+    });
+    expect(cutting.status).toBe(201);
+    const job = await agent.post('/api/production-jobs').send({
+      cuttingListId: cutting.body.id,
+      productID: 'FG-101',
+      productName: 'Longspan thin',
+      plannedMeters: 100,
+      plannedSheets: 1,
+      status: 'Planned',
+    });
+    expect(job.status).toBe(201);
+    const jobId = job.body.jobID;
+    const alloc = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/allocations`).send({
+      allocations: [{ coilNo: coilA, openingWeightKg: 800 }],
+    });
+    expect(alloc.status).toBe(200);
+    const allocationId = alloc.body.allocations[0].id;
+    await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({ startedAtISO: '2026-03-29' });
+    const complete = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/complete`).send({
+      completedAtISO: '2026-03-29',
+      allocations: [
+        {
+          allocationId,
+          coilNo: coilA,
+          closingWeightKg: 400,
+          metersProduced: 80,
+          finishCoil: false,
+        },
+      ],
+    });
+    expect(complete.status).toBe(200);
+
+    const bootAfterComplete = await agent.get('/api/bootstrap');
+    const lotAfterComplete = bootAfterComplete.body.coilLots.find((c) => c.coilNo === coilA);
+    const remAfterComplete = Number(lotAfterComplete.qtyRemaining ?? lotAfterComplete.currentWeightKg) || 0;
+    expect(remAfterComplete).toBeCloseTo(2600, 1);
+
+    const list = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    expect(list.status).toBe(200);
+    const line = list.body.allocations[0];
+    const corr = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+      reason: 'Closing kg was typed too high — yard recount shows 100 kg left on the roll not 400.',
+      readings: [
+        {
+          allocationId: line.id,
+          coilNo: line.coilNo,
+          openingWeightKg: line.openingWeightKg,
+          closingWeightKg: 100,
+          metersProduced: line.metersProduced,
+        },
+      ],
+    });
+    expect(corr.status).toBe(200);
+    expect(corr.body.ok).toBe(true);
+
+    const bootAfterCorr = await agent.get('/api/bootstrap');
+    const lotAfterCorr = bootAfterCorr.body.coilLots.find((c) => c.coilNo === coilA);
+    const remAfterCorr = Number(lotAfterCorr.qtyRemaining ?? lotAfterCorr.currentWeightKg) || 0;
+    expect(remAfterCorr).toBeCloseTo(2300, 1);
+    expect(remAfterCorr).toBeLessThan(remAfterComplete - 200);
+
+    const list2 = await agent.get(`/api/production-jobs/${encodeURIComponent(jobId)}/coil-allocations`);
+    const line2 = list2.body.allocations[0];
+    const addCoil = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/completion-coil-corrections`).send({
+      reason: 'Second roll was used on the same job but omitted from the original completion entry.',
+      readings: [
+        {
+          allocationId: line2.id,
+          coilNo: line2.coilNo,
+          openingWeightKg: line2.openingWeightKg,
+          closingWeightKg: line2.closingWeightKg,
+          metersProduced: line2.metersProduced,
+        },
+        {
+          coilNo: coilB,
+          openingWeightKg: 500,
+          closingWeightKg: 200,
+          metersProduced: 20,
+        },
+      ],
+    });
+    expect(addCoil.status).toBe(200);
+    expect(addCoil.body.ok).toBe(true);
+
+    const bootAfterAdd = await agent.get('/api/bootstrap');
+    const lotB = bootAfterAdd.body.coilLots.find((c) => c.coilNo === coilB);
+    const remB = Number(lotB.qtyRemaining ?? lotB.currentWeightKg) || 0;
+    expect(remB).toBeCloseTo(2700, 1);
+    const lotAStill = bootAfterAdd.body.coilLots.find((c) => c.coilNo === coilA);
+    expect(Number(lotAStill.qtyRemaining ?? lotAStill.currentWeightKg)).toBeCloseTo(2300, 1);
+  });
+
   it('coil split, scrap, and return-material update lots, lineage, and stock movements', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const d = '2026-03-29';

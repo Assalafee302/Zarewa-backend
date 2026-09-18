@@ -2775,7 +2775,10 @@ function finishRollTailNetClearedKg(db, jobId, coilNo) {
 function undoSingleCompletedCoilLineTx(db, row, atISO, jobId, stockBranch) {
   const coilNo = String(row.coil_no ?? '').trim();
   const opening = safeNumber(row.opening_weight_kg);
-  const consumed = safeNumber(row.consumed_weight_kg);
+  const closing = safeNumber(row.closing_weight_kg);
+  const fromReadings =
+    opening > 0 && closing >= 0 && opening >= closing ? opening - closing : 0;
+  const consumed = fromReadings > 0 ? fromReadings : safeNumber(row.consumed_weight_kg);
   const productId = String(row.product_id ?? '').trim();
   const coil = coilRow(db, coilNo);
   if (!coil) throw new Error(`Coil ${coilNo} not found.`);
@@ -3009,8 +3012,8 @@ export function applyCompletedProductionCoilCorrections(db, jobID, payload = {},
     const aid = String(raw?.allocationId ?? raw?.allocation_id ?? '').trim();
     const nextCoil = String(raw.coilNo ?? raw.coil_no ?? '').trim();
     if (!nextCoil) return { ok: false, error: 'Each line must have a coil number.' };
-    const nextOpening = safeNumber(raw.openingWeightKg ?? raw.opening_weight_kg);
-    const nextClosing = safeNumber(raw.closingWeightKg ?? raw.closing_weight_kg);
+    const nextOpening = roundWholeKg(safeNumber(raw.openingWeightKg ?? raw.opening_weight_kg));
+    const nextClosing = roundWholeKg(safeNumber(raw.closingWeightKg ?? raw.closing_weight_kg));
     const nextMeters = safeNumber(raw.metersProduced ?? raw.meters_produced);
     const newCoilRow = coilRow(db, nextCoil);
     if (!newCoilRow) return { ok: false, error: `Coil ${nextCoil} not found.` };
@@ -3747,13 +3750,21 @@ export function listCoilProductionHolders(db, coilNo) {
   }));
 }
 
-function holderBookedKgUsed(h) {
-  const consumed = clampNonNegative(h?.consumedWeightKg);
-  if (consumed > 0) return consumed;
+/**
+ * Kg that actually left the coil book for one production_job_coils holder.
+ * Planned/Running lines only reserve opening kg — they must not reduce on-hand.
+ * Prefer opening − closing (the register reading) over stored consumed_weight_kg,
+ * which can drift and cause post-correction reconcile to put kg back on the coil.
+ */
+export function holderBookedKgUsed(h) {
+  const jobStatus = String(h?.jobStatus ?? '').trim();
+  const allocStatus = String(h?.allocationStatus ?? '').trim();
+  if (jobStatus && jobStatus !== 'Completed') return 0;
+  if (!jobStatus && allocStatus && allocStatus !== 'Completed') return 0;
   const opening = safeNumber(h?.openingWeightKg);
   const closing = safeNumber(h?.closingWeightKg);
   if (opening > 0 && closing >= 0 && opening >= closing) return opening - closing;
-  return 0;
+  return clampNonNegative(h?.consumedWeightKg);
 }
 
 /** Kg split off this parent into child coil lots (reduces parent on-hand, not in job consumed sum). */

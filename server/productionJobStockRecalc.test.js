@@ -35,8 +35,10 @@ describe('recalculateProductionJobCoilStock', () => {
     expect(r.ok).toBe(true);
     expect(r.recalculatedCount).toBe(1);
 
-    const after = db.prepare(`SELECT qty_reserved FROM coil_lots WHERE coil_no = 'CL-T-1975'`).get();
+    const after = db.prepare(`SELECT qty_reserved, qty_remaining FROM coil_lots WHERE coil_no = 'CL-T-1975'`).get();
     expect(after.qty_reserved).toBe(800);
+    /** Planned jobs reserve kg; they must not reduce on-hand as if the coil was consumed. */
+    expect(after.qty_remaining).toBeCloseTo(5000, 1);
   });
 });
 

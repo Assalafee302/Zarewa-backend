@@ -1820,6 +1820,8 @@ export function quickQuestionsForPath(pathname) {
       { label: 'Workbook price', query: 'Material workbook floor pricing on quotations' },
       { label: 'Stone flatsheet', query: 'Stone-coated flatsheet quotation and refund rules' },
       { label: 'Cutting list blocked', query: 'Cannot edit cutting list while production running' },
+      { label: 'Return to waiting', query: 'Return production job to waiting so Sales can edit quotation' },
+      { label: 'Cancel not produced', query: 'Cancel production not produced customer change of mind' },
     ];
   }
   if (p.startsWith('/procurement')) {

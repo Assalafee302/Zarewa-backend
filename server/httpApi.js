@@ -487,6 +487,7 @@ import {
   previewProductionConversion,
   saveProductionCoilRunLogDraft,
   returnProductionJobToPlanned,
+  returnProductionJobToWaiting,
   saveProductionJobAllocations,
   signOffProductionManagerReview,
   startProductionJob,
@@ -7380,6 +7381,13 @@ export function registerHttpApi(app, db) {
         if (!cl) return res.status(404).json({ ok: false, error: 'Cutting list not found.' });
         const rg = assertCuttingListRowInWorkspace(req, cl);
         if (!rg.ok) return res.status(rg.status).json({ ok: false, error: rg.error });
+        if (String(cl.status || '').trim() === 'Cancelled') {
+          return res.status(400).json({
+            ok: false,
+            error:
+              'This cutting list was cancelled in production (not produced). It cannot be re-queued. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+          });
+        }
         if (cl.productionRegistered) {
           return res.status(400).json({
             ok: false,
@@ -7814,7 +7822,8 @@ export function registerHttpApi(app, db) {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = cancelProductionJob(db, req.params.jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -7845,13 +7854,32 @@ export function registerHttpApi(app, db) {
    * Matches LiveProductionMonitor canReturnJobToPlanned.
    */
   const returnToPlannedPerms = ['production.release', 'operations.manage', 'production.manage'];
+  /**
+   * Send a Planned/Running job back to Sales (Waiting) so the quotation can be edited.
+   * Distinct from cancel (customer change of mind, not produced).
+   */
+  const returnToWaitingPerms = ['production.release', 'operations.manage', 'production.manage'];
 
   app.post('/api/production-jobs/:jobId/return-to-planned', requirePermission(returnToPlannedPerms), (req, res) => {
     try {
       const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
       if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
       const r = returnProductionJobToPlanned(db, req.params.jobId, req.body || {}, { actor: req.user });
-      res.status(r.ok ? 200 : 400).json(r);
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
+    } catch (e) {
+      console.error(e);
+      res.status(400).json({ ok: false, error: String(e.message || e) });
+    }
+  });
+
+  app.post('/api/production-jobs/:jobId/return-to-waiting', requirePermission(returnToWaitingPerms), (req, res) => {
+    try {
+      const jg = assertProductionJobIdInWorkspace(db, req, req.params.jobId);
+      if (!jg.ok) return res.status(jg.status).json({ ok: false, error: jg.error });
+      const r = returnProductionJobToWaiting(db, req.params.jobId, req.body || {}, { actor: req.user });
+      if (!r.ok) return res.status(400).json(r);
+      res.status(200).json(withProductionJobWriteDelta(db, req.params.jobId, r));
     } catch (e) {
       console.error(e);
       res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -12194,6 +12222,13 @@ export function registerHttpApi(app, db) {
           error: String(e.message || ''),
           code: e.code,
           details: e.details,
+        });
+      }
+      if (e?.statusCode === 409 && e?.code) {
+        return res.status(409).json({
+          ok: false,
+          error: String(e.message || ''),
+          code: e.code,
         });
       }
       res.status(400).json({ ok: false, error: String(e.message || e) });

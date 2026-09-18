@@ -39,6 +39,13 @@ import {
   cuttingListExpectsCoilAllocation,
   cuttingListRequiresStoneMetreConsumption,
 } from '../shared/lib/stoneCoatedQuotationPolicy.js';
+import {
+  CUTTING_LIST_STATUS_CANCELLED,
+  PRODUCTION_JOB_STATUS,
+  isCancelledNotProducedStatus,
+  isCompletedProductionJobStatus,
+  isReturnedToWaitingStatus,
+} from '../shared/lib/productionJobStatus.js';
 import { coloursMatchWithMaster } from '../shared/lib/stockCheckMasterOptions.js';
 import {
   adjustProductStockForBranch,
@@ -865,8 +872,14 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
   const status = job.status ?? 'Planned';
   const append = Boolean(opts.append);
 
-  if (status === 'Cancelled') {
-    return { ok: false, error: 'This production job was cancelled.' };
+  if (isCancelledNotProducedStatus(status)) {
+    return { ok: false, error: 'This production job was cancelled (not produced).' };
+  }
+  if (isReturnedToWaitingStatus(status)) {
+    return { ok: false, error: 'This job was returned to waiting so Sales can edit the quotation.' };
+  }
+  if (isCompletedProductionJobStatus(status)) {
+    return { ok: false, error: 'Completed jobs cannot receive new coil allocations.' };
   }
 
   if (append) {
@@ -1132,10 +1145,13 @@ export function saveProductionJobAllocations(db, jobID, allocations, opts = {}) 
 export function startProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobID);
   if (!job) return { ok: false, error: 'Production job not found.' };
-  if ((job.status ?? 'Planned') === 'Cancelled') {
+  if (isCancelledNotProducedStatus(job.status)) {
     return { ok: false, error: 'Cancelled jobs cannot be started.' };
   }
-  if ((job.status ?? 'Planned') === 'Completed') {
+  if (isReturnedToWaitingStatus(job.status)) {
+    return { ok: false, error: 'This job was returned to waiting. Register a new production job after Sales edits the quotation.' };
+  }
+  if (isCompletedProductionJobStatus(job.status)) {
     return { ok: false, error: 'Completed jobs cannot be started again.' };
   }
   const qref = String(job.quotation_ref || '').trim();
@@ -2089,8 +2105,11 @@ export function completeProductionJob(db, jobID, payload = {}, opts = {}) {
     const refundProdBlock = assertQuotationProductionNotBlockedByRefund(db, qrefComplete);
     if (!refundProdBlock.ok) return refundProdBlock;
   }
-  if (String(job.status ?? '') === 'Cancelled') {
-    return { ok: false, error: 'This production job was cancelled.' };
+  if (isCancelledNotProducedStatus(job.status)) {
+    return { ok: false, error: 'This production job was cancelled (not produced).' };
+  }
+  if (isReturnedToWaitingStatus(job.status)) {
+    return { ok: false, error: 'This job was returned to waiting so Sales can edit the quotation.' };
   }
   if (jobIsStoneMeter(db, job) && quotationIsAccessoriesOnlyForJob(db, job)) {
     return completeProductionJobOffcut(db, job, jobID, payload, opts);
@@ -2542,8 +2561,74 @@ function releaseProductionJobCoilReservationsTx(db, jobId) {
 }
 
 /**
- * Cancel before completion: clears run readings if needed, releases coil reservations, deletes allocations, sets job Cancelled.
- * Allowed from Planned or Running only.
+ * Clear run readings and coil reservations for an open job (Planned / Running).
+ * @param {{ stampCompletedAtIso?: boolean, nextStatus: string, cuttingListStatus: string, clearRegistration: boolean, auditAction: string }} opts
+ */
+function unwindOpenProductionJobTx(db, job, reason, actor, opts) {
+  const jobId = job.job_id;
+  const st = String(job.status ?? 'Planned');
+  if (st === 'Running') {
+    db.prepare(
+      `UPDATE production_job_coils
+       SET closing_weight_kg = 0, consumed_weight_kg = 0, meters_produced = 0,
+           actual_conversion_kg_per_m = NULL, allocation_status = 'Allocated'
+       WHERE job_id = ?`
+    ).run(jobId);
+  }
+  releaseProductionJobCoilReservationsTx(db, jobId);
+  const at = nowIso();
+  db.prepare(
+    `UPDATE production_jobs
+     SET status = ?,
+         start_date_iso = NULL,
+         completed_at_iso = ?,
+         actual_meters = 0,
+         actual_weight_kg = 0,
+         conversion_alert_state = 'Pending',
+         manager_review_required = 0,
+         coil_spec_mismatch_pending = 0
+     WHERE job_id = ?`
+  ).run(opts.nextStatus, opts.stampCompletedAtIso ? at : null, jobId);
+  if (job.cutting_list_id) {
+    if (opts.clearRegistration) {
+      db.prepare(
+        `UPDATE cutting_lists
+         SET status = ?, production_registered = 0, production_register_ref = NULL
+         WHERE id = ?`
+      ).run(opts.cuttingListStatus, job.cutting_list_id);
+    } else {
+      db.prepare(`UPDATE cutting_lists SET status = ? WHERE id = ?`).run(
+        opts.cuttingListStatus,
+        job.cutting_list_id
+      );
+    }
+  }
+  appendAuditLog(db, {
+    actor,
+    action: opts.auditAction,
+    entityKind: 'production_job',
+    entityId: jobId,
+    note: reason.length > 240 ? `${reason.slice(0, 237)}…` : reason,
+    details: {
+      cuttingListId: job.cutting_list_id ?? null,
+      priorStatus: st,
+      outcome: opts.outcome || null,
+    },
+  });
+}
+
+function assertOpenJobReason(payload) {
+  const reason = String(payload.reason ?? payload.note ?? '').trim();
+  if (reason.length < 8) {
+    return { ok: false, error: 'Enter a reason (at least 8 characters) for the audit trail.' };
+  }
+  return { ok: true, reason };
+}
+
+/**
+ * Cancel before completion: customer change of mind — not produced.
+ * Job stays Cancelled on the register; cutting list is not returned to Waiting for Sales edits.
+ * Allowed from Planned or Running only. Use {@link returnProductionJobToWaiting} to let Sales edit the quotation.
  */
 export function cancelProductionJob(db, jobID, payload = {}, opts = {}) {
   const jobId = String(jobID ?? '').trim();
@@ -2551,68 +2636,98 @@ export function cancelProductionJob(db, jobID, payload = {}, opts = {}) {
   const job = productionJobRow(db, jobId);
   if (!job) return { ok: false, error: 'Production job not found.' };
   const st = String(job.status ?? 'Planned');
-  if (st === 'Completed') {
+  if (isCompletedProductionJobStatus(st)) {
     return { ok: false, error: 'Completed jobs cannot be cancelled.' };
   }
-  if (st === 'Cancelled') {
-    return { ok: false, error: 'This job is already cancelled.' };
+  if (isCancelledNotProducedStatus(st)) {
+    return { ok: false, error: 'This job is already cancelled (not produced).' };
+  }
+  if (isReturnedToWaitingStatus(st)) {
+    return {
+      ok: false,
+      error:
+        'This job was returned to waiting so Sales can edit the quotation. It is not a cancelled (not produced) job.',
+    };
   }
   if (st !== 'Planned' && st !== 'Running') {
     return { ok: false, error: 'Only planned or running jobs can be cancelled.' };
   }
-  const reason = String(payload.reason ?? payload.note ?? '').trim();
-  if (reason.length < 8) {
-    return { ok: false, error: 'Enter a reason (at least 8 characters) for the audit trail.' };
-  }
+  const reasonGate = assertOpenJobReason(payload);
+  if (!reasonGate.ok) return reasonGate;
   const refIso = job.start_date_iso || job.created_at_iso || nowIso();
   try {
     assertPeriodOpen(db, refIso, 'Production cancel date');
     db.transaction(() => {
-      if (st === 'Running') {
-        db.prepare(
-          `UPDATE production_job_coils
-           SET closing_weight_kg = 0, consumed_weight_kg = 0, meters_produced = 0,
-               actual_conversion_kg_per_m = NULL, allocation_status = 'Allocated'
-           WHERE job_id = ?`
-        ).run(jobId);
-      }
-      releaseProductionJobCoilReservationsTx(db, jobId);
-      const at = nowIso();
-      db.prepare(
-        `UPDATE production_jobs
-         SET status = 'Cancelled',
-             start_date_iso = NULL,
-             completed_at_iso = ?,
-             actual_meters = 0,
-             actual_weight_kg = 0,
-             conversion_alert_state = 'Pending',
-             manager_review_required = 0,
-             coil_spec_mismatch_pending = 0
-         WHERE job_id = ?`
-      ).run(at, jobId);
-      if (job.cutting_list_id) {
-        /** Release queue registration so Sales can edit the cutting list again and a new job may be opened. */
-        db.prepare(
-          `UPDATE cutting_lists
-           SET status = 'Waiting', production_registered = 0, production_register_ref = NULL
-           WHERE id = ?`
-        ).run(job.cutting_list_id);
-      }
-      appendAuditLog(db, {
-        actor: opts.actor,
-        action: 'production.cancel',
-        entityKind: 'production_job',
-        entityId: jobId,
-        note: reason.length > 240 ? `${reason.slice(0, 237)}…` : reason,
-        details: { cuttingListId: job.cutting_list_id ?? null, priorStatus: st },
+      unwindOpenProductionJobTx(db, job, reasonGate.reason, opts.actor, {
+        nextStatus: PRODUCTION_JOB_STATUS.CANCELLED,
+        cuttingListStatus: CUTTING_LIST_STATUS_CANCELLED,
+        clearRegistration: false,
+        stampCompletedAtIso: true,
+        auditAction: 'production.cancel',
+        outcome: 'cancelled_not_produced',
       });
     })();
-    return { ok: true, jobID: jobId };
+    return { ok: true, jobID: jobId, outcome: 'cancelled_not_produced' };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
 }
 
+/**
+ * Release the job from the production register so Sales can edit the quotation and cutting list.
+ * Distinct from cancel (customer change of mind, not produced) and from return-to-planned (shop-floor coil recall).
+ * Allowed from Planned or Running only.
+ */
+export function returnProductionJobToWaiting(db, jobID, payload = {}, opts = {}) {
+  const jobId = String(jobID ?? '').trim();
+  if (!jobId) return { ok: false, error: 'Job ID required.' };
+  const job = productionJobRow(db, jobId);
+  if (!job) return { ok: false, error: 'Production job not found.' };
+  const st = String(job.status ?? 'Planned');
+  if (isCompletedProductionJobStatus(st)) {
+    return {
+      ok: false,
+      error: 'Completed jobs cannot be returned to waiting. Sales cannot reopen a produced job by this path.',
+    };
+  }
+  if (isCancelledNotProducedStatus(st)) {
+    return {
+      ok: false,
+      error:
+        'This job was cancelled (not produced). That path is a customer change of mind, not a return to Sales.',
+    };
+  }
+  if (isReturnedToWaitingStatus(st)) {
+    return { ok: false, error: 'This job was already returned to waiting.' };
+  }
+  if (st !== 'Planned' && st !== 'Running') {
+    return { ok: false, error: 'Only planned or running jobs can be returned to waiting.' };
+  }
+  const reasonGate = assertOpenJobReason(payload);
+  if (!reasonGate.ok) return reasonGate;
+  const refIso = job.start_date_iso || job.created_at_iso || nowIso();
+  try {
+    assertPeriodOpen(db, refIso, 'Production return-to-waiting date');
+    db.transaction(() => {
+      unwindOpenProductionJobTx(db, job, reasonGate.reason, opts.actor, {
+        nextStatus: PRODUCTION_JOB_STATUS.RETURNED,
+        cuttingListStatus: 'Waiting',
+        clearRegistration: true,
+        stampCompletedAtIso: false,
+        auditAction: 'production.return_to_waiting',
+        outcome: 'returned_to_waiting',
+      });
+    })();
+    return { ok: true, jobID: jobId, outcome: 'returned_to_waiting' };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+/**
+ * Shop-floor recall: Running → Planned (wrong coils / opening kg). Stays on the production register.
+ * Not a customer cancel, and not a release for Sales to edit the quotation — use {@link returnProductionJobToWaiting}.
+ */
 export function returnProductionJobToPlanned(db, jobID, payload = {}, opts = {}) {
   const jobId = String(jobID ?? '').trim();
   if (!jobId) return { ok: false, error: 'Job ID required.' };

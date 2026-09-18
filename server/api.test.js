@@ -2538,12 +2538,15 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     });
     expect(cancel.status).toBe(200);
     expect(cancel.body.ok).toBe(true);
+    expect(cancel.body.outcome).toBe('cancelled_not_produced');
     const boot = await agent.get('/api/bootstrap');
     const j = boot.body.productionJobs.find((x) => x.jobID === jobId);
     expect(j?.status).toBe('Cancelled');
     const clAfter = boot.body.cuttingLists.find((x) => x.id === cutting.body.id);
-    expect(clAfter?.productionRegistered).toBe(false);
-    expect(String(clAfter?.productionRegisterRef ?? '')).toBe('');
+    expect(clAfter?.status).toBe('Cancelled');
+    expect(clAfter?.productionRegistered).toBe(true);
+    expect(clAfter?.productionCancelledNotProduced).toBe(true);
+    expect(String(clAfter?.productionRegisterRef ?? '')).toBe(jobId);
     const requeue = await agent.post('/api/production-jobs').send({
       cuttingListId: cutting.body.id,
       productID: 'FG-101',
@@ -2551,13 +2554,14 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
       plannedMeters: 10,
       plannedSheets: 1,
     });
-    expect(requeue.status).toBe(201);
+    expect(requeue.status).toBe(400);
+    expect(String(requeue.body.error || '')).toMatch(/cancelled|not produced/i);
     const badStart = await agent.post(`/api/production-jobs/${encodeURIComponent(jobId)}/start`).send({});
     expect(badStart.status).toBe(400);
     expect(String(badStart.body.error || '')).toMatch(/cancel/i);
   });
 
-  it('store keeper (operations) can recall Planned cancel and Running return-to-planned', async () => {
+  it('store keeper (operations) can return Planned to waiting and Running to planned', async () => {
     const { coilA } = await seedTwoCoilsForProduction(agent);
     const ops = request.agent(app);
     await loginAs(ops, 'operations', 'Ops@123');
@@ -2582,12 +2586,13 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     });
     expect(plannedJob.status).toBe(201);
     const recallPlanned = await ops
-      .post(`/api/production-jobs/${encodeURIComponent(plannedJob.body.jobID)}/cancel`)
-      .send({ reason: 'Wrong cutting list registered — recalling for re-entry.' });
+      .post(`/api/production-jobs/${encodeURIComponent(plannedJob.body.jobID)}/return-to-waiting`)
+      .send({ reason: 'Wrong cutting list registered — returning to Sales for re-entry.' });
     expect(recallPlanned.status).toBe(200);
     expect(recallPlanned.body.ok).toBe(true);
+    expect(recallPlanned.body.outcome).toBe('returned_to_waiting');
 
-    /** Same cutting list is free after cancel — re-register and start, then recall Running→Planned. */
+    /** Same cutting list is free after return-to-waiting — re-register and start, then recall Running→Planned. */
     const runJob = await ops.post('/api/production-jobs').send({
       cuttingListId: plannedCl.body.id,
       productID: 'FG-101',

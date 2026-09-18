@@ -104,6 +104,12 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
   enrich(linesJson.services);
 }
 import { isCuttingListProductionCompleted, linkedProductionJobForCuttingList } from './cuttingListProductionGate.js';
+import {
+  CUTTING_LIST_STATUS_CANCELLED,
+  PRODUCTION_JOB_STATUS,
+  isCancelledNotProducedStatus,
+  quotationLineEditBlockedByProductionStatus,
+} from '../shared/lib/productionJobStatus.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
@@ -7267,19 +7273,17 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
   if (isCuttingListProductionCompleted(db, existing) && !mayEditAfterProduction) {
     return { ok: false, error: 'Cutting list cannot be edited after production is completed.' };
   }
+  const jobGate = linkedProductionJobForCuttingList(db, existing);
+  const jobGateStatus = String(jobGate?.status || '').trim();
+  if (String(existing.status || '').trim() === CUTTING_LIST_STATUS_CANCELLED || isCancelledNotProducedStatus(jobGateStatus)) {
+    return {
+      ok: false,
+      error:
+        'This cutting list was cancelled in production (not produced). That is a customer change of mind. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+    };
+  }
   if (Number(existing.production_registered)) {
-    const regRef = String(existing.production_register_ref ?? '').trim();
-    let jobGate = regRef
-      ? db.prepare(`SELECT job_id, status FROM production_jobs WHERE job_id = ?`).get(regRef)
-      : null;
-    if (!jobGate) {
-      jobGate = db
-        .prepare(
-          `SELECT job_id, status FROM production_jobs WHERE cutting_list_id = ? ORDER BY created_at_iso DESC, job_id DESC LIMIT 1`
-        )
-        .get(cuttingListId);
-    }
-    if (jobGate && String(jobGate.status || '').trim().toLowerCase() === 'running') {
+    if (jobGate && String(jobGateStatus).toLowerCase() === 'running') {
       return {
         ok: false,
         error:
@@ -7457,7 +7461,7 @@ export function updateCuttingList(db, cuttingListId, payload, actor = null) {
     }
     if (jobRow?.job_id) {
       const st = String(jobRow.status || '').trim();
-      if (st !== 'Completed' && st !== 'Cancelled') {
+      if (st !== 'Completed' && st !== 'Cancelled' && st !== 'Returned') {
         const planTotals = productionPlannedTotalsForCuttingList(db, quotationRef, lines);
         db.prepare(
           `UPDATE production_jobs SET
@@ -7522,6 +7526,13 @@ export function insertProductionJob(db, payload, branchFallback = DEFAULT_BRANCH
     ? db.prepare(`SELECT * FROM cutting_lists WHERE id = ?`).get(cuttingListId)
     : null;
   if (cuttingListId && !cuttingList) return { ok: false, error: 'Cutting list not found.' };
+  if (cuttingList && String(cuttingList.status || '').trim() === CUTTING_LIST_STATUS_CANCELLED) {
+    return {
+      ok: false,
+      error:
+        'This cutting list was cancelled in production (not produced). It cannot be re-queued. Ask Operations to return a live job to waiting if Sales must edit the quotation.',
+    };
+  }
   if (cuttingList?.production_registered) {
     return { ok: false, error: 'Production is already registered for this cutting list.' };
   }
@@ -7679,10 +7690,16 @@ export function setProductionJobStatus(db, jobID, status) {
   if (nextStatus === 'Completed') {
     return { ok: false, error: 'Use the completion flow with coil readings to finish this job.' };
   }
-  if (nextStatus === 'Cancelled') {
+  if (nextStatus === PRODUCTION_JOB_STATUS.CANCELLED) {
     return {
       ok: false,
-      error: 'Use POST /api/production-jobs/:jobId/cancel with a reason to cancel and release coil reservations.',
+      error: 'Use POST /api/production-jobs/:jobId/cancel with a reason to cancel (not produced).',
+    };
+  }
+  if (nextStatus === PRODUCTION_JOB_STATUS.RETURNED) {
+    return {
+      ok: false,
+      error: 'Use POST /api/production-jobs/:jobId/return-to-waiting with a reason to send this job back so Sales can edit the quotation.',
     };
   }
   db.transaction(() => {
@@ -9910,6 +9927,44 @@ export function reconcileAutoOverpayApplyForQuotation(db, quotationId, ctx, acto
   }
 }
 
+/**
+ * Sales line edits are blocked while the quote is on the production register or cancelled-not-produced.
+ * Operations must return the job to waiting before Sales can change the quotation.
+ */
+function assertQuotationLineEditAgainstProduction(db, quotationId) {
+  const qid = String(quotationId || '').trim();
+  if (!qid) return { ok: true };
+  const lists = db
+    .prepare(
+      `SELECT id, status, production_registered, production_register_ref
+       FROM cutting_lists
+       WHERE quotation_ref = ?`
+    )
+    .all(qid);
+  for (const row of lists) {
+    const clCancelled = String(row.status || '').trim() === CUTTING_LIST_STATUS_CANCELLED;
+    const job = linkedProductionJobForCuttingList(db, row);
+    const jobStatus = job?.status;
+    if (clCancelled || isCancelledNotProducedStatus(jobStatus)) {
+      return {
+        ok: false,
+        code: 'PRODUCTION_CANCELLED_NOT_PRODUCED',
+        error:
+          'Production was cancelled (not produced) for a customer change of mind. Sales cannot edit this quotation on that path. Raise a refund if the customer should be paid back.',
+      };
+    }
+    if (Number(row.production_registered) && quotationLineEditBlockedByProductionStatus(jobStatus)) {
+      return {
+        ok: false,
+        code: 'PRODUCTION_RETURN_TO_WAITING_REQUIRED',
+        error:
+          'This quotation is on the production register. Ask Operations to return the job to waiting before Sales can edit the quotation.',
+      };
+    }
+  }
+  return { ok: true };
+}
+
 export function updateQuotation(db, quotationId, payload, actor = null) {
   const existing = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationId);
   if (!existing) throw new Error('Quotation not found.');
@@ -9940,6 +9995,13 @@ export function updateQuotation(db, quotationId, payload, actor = null) {
     payload.materialDesign !== undefined ||
     payload.materialTypeId !== undefined;
   if (materialHeaderTouched) {
+    const prodBlock = assertQuotationLineEditAgainstProduction(db, quotationId);
+    if (!prodBlock.ok) {
+      const err = new Error(prodBlock.error);
+      err.code = prodBlock.code;
+      err.statusCode = 409;
+      throw err;
+    }
     assertQuotationMaterialHeaderRequired(linesJson);
   }
   if (payload.lines != null) {

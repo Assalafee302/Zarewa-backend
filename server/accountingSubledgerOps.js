@@ -43,6 +43,7 @@ import {
   listSuppliers,
 } from './readModel.js';
 import { quotationIdsWithUnclearedReceipts } from './writeOps.js';
+import { isActiveProductionQueueStatus, isProductionClosedForRefundStatus } from '../shared/lib/productionJobStatus.js';
 
 function branchScopeFromOpts(opts = {}) {
   const raw = String(opts.branchId || opts.branch || '').trim();
@@ -62,14 +63,13 @@ function roundMoney(value) {
   return Math.round(Number(value) || 0);
 }
 
-/** True when any production row for the quote is not terminal (Completed / Cancelled). */
+/** True when any production row for the quote is still on the shop-floor queue (Planned / Running). */
 function quotationHasOpenProductionJobFromList(quotationRef, productionJobs) {
   const ref = String(quotationRef || '').trim();
   if (!ref) return false;
   return (productionJobs || []).some((j) => {
     if (String(j?.quotationRef || '').trim() !== ref) return false;
-    const st = String(j?.status || '').trim().toLowerCase();
-    return st !== 'completed' && st !== 'cancelled';
+    return isActiveProductionQueueStatus(j?.status);
   });
 }
 
@@ -82,8 +82,7 @@ function quotationProductionClosedForRefund(q, productionJobs) {
   if (isVoid && roundMoney(q?.paidNgn) > 0) return true;
   return (productionJobs || []).some((j) => {
     if (String(j?.quotationRef || '').trim() !== ref) return false;
-    const st = String(j?.status || '').trim().toLowerCase();
-    return st === 'completed' || st === 'cancelled';
+    return isProductionClosedForRefundStatus(j?.status);
   });
 }
 

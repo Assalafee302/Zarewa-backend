@@ -683,6 +683,25 @@ function quotationPatchResultPayload(result) {
   return { quotation: result, autoOverpayAppliedNgn: 0 };
 }
 
+function quotationPatchErrorResponse(res, e) {
+  if (e?.statusCode === 422 && e?.code) {
+    return res.status(422).json({
+      ok: false,
+      error: String(e.message || ''),
+      code: e.code,
+      details: e.details,
+    });
+  }
+  if (e?.statusCode === 409 && e?.code) {
+    return res.status(409).json({
+      ok: false,
+      error: String(e.message || ''),
+      code: e.code,
+    });
+  }
+  return res.status(400).json({ ok: false, error: String(e.message || e) });
+}
+
 export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotationId, executeWrite) {
   const stripped = stripEditApprovalFromBody(body || {});
   const respondOk = (quotation, autoOverpayAppliedNgn) =>
@@ -697,15 +716,7 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
       const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(executeWrite(stripped));
       return respondOk(quotation, autoOverpayAppliedNgn);
     } catch (e) {
-      if (e?.statusCode === 422 && e?.code) {
-        return res.status(422).json({
-          ok: false,
-          error: String(e.message || ''),
-          code: e.code,
-          details: e.details,
-        });
-      }
-      return res.status(400).json({ ok: false, error: String(e.message || e) });
+      return quotationPatchErrorResponse(res, e);
     }
   }
   const aid = String(body?.editApprovalId ?? '').trim();
@@ -727,14 +738,6 @@ export function handlePatchWithEditApprovalQuotation(res, db, user, body, quotat
     const { quotation, autoOverpayAppliedNgn } = quotationPatchResultPayload(raw);
     return respondOk(quotation, autoOverpayAppliedNgn);
   } catch (e) {
-    if (e?.statusCode === 422 && e?.code) {
-      return res.status(422).json({
-        ok: false,
-        error: String(e.message || ''),
-        code: e.code,
-        details: e.details,
-      });
-    }
-    return res.status(400).json({ ok: false, error: String(e.message || e) });
+    return quotationPatchErrorResponse(res, e);
   }
 }

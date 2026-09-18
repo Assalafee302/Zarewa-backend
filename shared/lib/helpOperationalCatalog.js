@@ -652,14 +652,15 @@ const OPERATIONAL_TOPICS = [
     module: 'operations',
     action: 'use the production register',
     title: 'Production register',
-    answer: 'Register tracks coils/jobs output by period.',
+    answer:
+      'Cancel = customer changed mind, not produced. Return to waiting = send back so Sales can edit the quotation. Return to planned = recall a started run (wrong coils).',
     steps: [
-      'Open production register view.',
-      'Filter branch and date.',
-      'Export or reconcile with job completions.',
+      'Open the production register.',
+      'Use Cancel only when the order will not be produced.',
+      'Use Return to waiting when Sales must edit the quotation, then re-register.',
     ],
     links: [{ label: 'Operations', to: '/operations' }],
-    extraKeywords: ['register', 'production log'],
+    extraKeywords: ['register', 'production log', 'return to waiting', 'cancel not produced'],
   },
   {
     module: 'operations',

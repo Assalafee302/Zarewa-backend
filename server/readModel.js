@@ -1224,6 +1224,7 @@ function mapCuttingListRow(db, row, preloaded = {}) {
     operatorName: row.operator_name ?? '',
     productionRegistered: Boolean(row.production_registered),
     productionEditLocked,
+    productionCancelledNotProduced: String(row.status || '').trim() === 'Cancelled',
     productionRegisterRef: row.production_register_ref ?? '',
     handledBy: row.handled_by,
     lines,

@@ -428,4 +428,102 @@ describe('getEligibleRefundQuotations fast list', () => {
     };
     expect(getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 })).toHaveLength(0);
   });
+
+  it('lists fully produced quotes when only quoted-above-floor remains after a prior refund', () => {
+    const quote = {
+      id: 'QT-FLOOR-FOLLOW',
+      customer_id: 'CUS-1',
+      customer_name: 'Floor Follow',
+      date_iso: '2026-08-18',
+      total_ngn: 500_000,
+      paid_ngn: 500_000,
+      status: 'Finished',
+      refunds_blocked_at_iso: null,
+      total_refunded: 20_000,
+      lines_json: JSON.stringify({
+        materialGauge: '0.24mm',
+        materialDesign: 'IV',
+        products: [
+          {
+            name: 'Roofing Sheet',
+            qty: 100,
+            unitPrice: 5000,
+            gauge: '0.24mm',
+            design: 'IV',
+            floorPricePerMeter: 4500,
+            recommendedPricePerMeter: 5000,
+          },
+        ],
+        accessories: [],
+        services: [],
+      }),
+    };
+    const job = {
+      job_id: 'JOB-FLOOR-FOLLOW',
+      quotation_ref: 'QT-FLOOR-FOLLOW',
+      product_id: 'FG-FLOOR',
+      actual_meters: 100,
+      status: 'Completed',
+    };
+    const prior = {
+      quotation_ref: 'QT-FLOOR-FOLLOW',
+      refund_id: 'RF-PRIOR',
+      status: 'Pending',
+      amount_ngn: 20_000,
+      paid_amount_ngn: 0,
+      reason_category: JSON.stringify(['Accessory shortfall']),
+      calculation_lines_json: '[]',
+      credit_applied_ngn: 0,
+    };
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        return {
+          all() {
+            if (text.includes('FROM quotations q')) return [quote];
+            if (text.includes('FROM sales_receipts')) {
+              return [
+                {
+                  id: 'RCT-FLOOR-FOLLOW',
+                  quotation_ref: 'QT-FLOOR-FOLLOW',
+                  amount_ngn: 500_000,
+                  ledger_entry_id: null,
+                  finance_reconciliation_saved_at_iso: null,
+                  bank_received_amount_ngn: null,
+                  status: 'Confirmed',
+                },
+              ];
+            }
+            if (text.includes('FROM production_job_coils') && text.includes('gauge')) {
+              return [{ g: '0.24mm', meters: 100 }];
+            }
+            if (text.includes('FROM production_jobs') && text.includes('IN (')) return [job];
+            if (text.includes('FROM customer_refunds')) return [prior];
+            if (text.includes('FROM deliveries')) return [];
+            if (text.includes('FROM ledger_entries')) return [];
+            if (text.includes('FROM production_jobs')) return [];
+            return [];
+          },
+          get() {
+            if (text.includes('FROM customer_refunds')) return { s: 20_000 };
+            if (text.includes('FROM production_job_coils')) return { s: 100 };
+            if (text.includes('FROM products')) {
+              return { material_type: 'Aluminium', name: 'Longspan' };
+            }
+            if (text.includes('FROM production_jobs') && text.includes('NOT IN')) return undefined;
+            if (text.includes('FROM production_jobs')) return { 1: 1 };
+            if (text.includes('FROM ledger_entries')) return { s: 0 };
+            if (text.includes('FROM quotations')) return quote;
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const rows = getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('QT-FLOOR-FOLLOW');
+    expect(rows[0].eligible_refund_categories).toContain('Customer commission');
+    expect(rows[0].suggested_preview_amount_ngn).toBe(50_000);
+  });
 });

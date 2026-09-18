@@ -9982,6 +9982,11 @@ export function registerHttpApi(app, db) {
       const blockingReasons = [];
       if (!meets.ok) {
         blockingReasons.push(meets.error || 'Does not meet refund listing rules.');
+        if (/fully covered by existing refund/i.test(String(meets.error || ''))) {
+          blockingReasons.push(
+            'To add quoted ₦/m minus floor (agent commission), the branch manager must reject the open refund first, then create a new request so preview can include that line. A second refund cannot exceed cash already requested.'
+          );
+        }
       }
       if (meets.ok && categories.length === 0) {
         blockingReasons.push(

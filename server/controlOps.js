@@ -5718,6 +5718,29 @@ function refundPickerListHint(db, row, jobs, {
     }
   }
 
+  // Same-gauge quoted ₦/m minus workbook floor — otherwise a follow-up refund after
+  // overpay/unproduced is claimed never appears in the picker.
+  if (!hardBlocked.has('Customer commission')) {
+    const asAt = quotationPricingAsAtIso(row, db);
+    const sameGaugeM = sameGaugeProducedMetresForFloorDelta(db, row, closedJobs);
+    if (sameGaugeM > 0.001) {
+      const quotedPpm =
+        quotedRoofingSheetAmountPerMeter(row.lines_json) ?? quotedAmountPerMeter(row.lines_json);
+      let floorPpm = quotedWorkbookFloorPpmForCommission(db, row, closedJobs, asAt);
+      if (floorPpm == null || floorPpm <= 0) {
+        floorPpm = blendedFloorPpmFromQuoteLineStamps(db, row, asAt);
+      }
+      const credit = quotedAboveFloorCreditNgn(quotedPpm, floorPpm, sameGaugeM);
+      const floorClaim = Math.min(credit, remaining);
+      if (floorClaim >= 1) {
+        claimParts.push({
+          category: 'Customer commission',
+          amountNgn: floorClaim,
+        });
+      }
+    }
+  }
+
   if (!claimParts.length) return null;
   const suggestedPreviewAmountNgn = Math.min(
     remaining,
@@ -5758,8 +5781,9 @@ function closedProductionJobsByQuotationRef(db, quoteIds) {
  * at least one job in `Completed` or `Cancelled`, or a paid `Void` quotation (sales-side cancellation).
  * Order must be effectively fully paid when total is set ({@link isEffectivelyFullyPaid}).
  * The pick list never runs {@link previewRefundRequest}. Obvious overpayments (residual), void/cancelled jobs
- * (when Order cancellation is not already claimed), and unproduced metres are classified cheaply so finished
- * under-produced jobs stay visible. Quotes with only exhausted / delivered-blocked claims are omitted.
+ * (when Order cancellation is not already claimed), unproduced metres, and quoted-above-floor (same-gauge)
+ * are classified cheaply so a follow-up commission refund still appears after overpay/unproduced is claimed.
+ * Quotes with only exhausted / delivered-blocked claims are omitted.
  * Rows include `cash_in_ngn`, `remaining_ngn`, and `suggested_preview_amount_ngn` for the picker UI.
  *
  * Listing path batches cash-in and closed production jobs for SQL candidates and never scans

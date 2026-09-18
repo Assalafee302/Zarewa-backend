@@ -95,8 +95,10 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     const db = createDatabase(':memory:', { seed: false });
     insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
     db.exec(`
-      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id)
-      VALUES ('PO-AP-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD');
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+      VALUES ('PO-AP-1', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD', 10000);
+      INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+      VALUES ('PO-AP-1', 'L1', 'P1', 'Coil', 10, 0, 10000);
       INSERT INTO accounts_payable (ap_id, supplier_name, po_ref, invoice_ref, amount_ngn, paid_ngn, due_date_iso, payment_method)
       VALUES
         ('AP-OPEN-1', 'Supplier 1', 'PO-AP-1', 'INV-1', 100000, 10000, '2026-08-01', ''),
@@ -113,6 +115,8 @@ describe.skipIf(!mysqlOk)('workspace performance helpers', () => {
     expect(snap.domain).toBe('procurement');
     expect(snap.accountsPayable.map((a) => a.apID)).toEqual(['AP-OPEN-1']);
     expect(snap.accountsPayable[0].outstandingNgn).toBe(90_000);
+    expect(Array.isArray(snap.accountsPayable[0].lines)).toBe(true);
+    expect(snap.outstandingPaymentLines.length).toBeGreaterThan(0);
     expect(snap.bootstrapMeta?.sort?.accountsPayable).toBe('outstanding_then_due_date_desc');
     db.close();
   });

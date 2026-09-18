@@ -66,6 +66,27 @@ describe.skipIf(!mysqlOk)('readModel list performance helpers', () => {
     db.close();
   });
 
+  it('listPurchaseOrders outstandingOnly keeps unpaid PO lines', () => {
+    const db = createDatabase(':memory:', { seed: false });
+    insertSupplier(db, { supplierID: 'S1', name: 'Supplier 1' });
+    db.exec(`
+      INSERT INTO purchase_orders (po_id, supplier_id, supplier_name, order_date_iso, status, branch_id, supplier_paid_ngn)
+      VALUES
+        ('PO-OPEN', 'S1', 'Supplier 1', '2026-07-01', 'Approved', 'BR-KD', 10000),
+        ('PO-PAID', 'S1', 'Supplier 1', '2026-07-02', 'Approved', 'BR-KD', 50000);
+      INSERT INTO purchase_order_lines (po_id, line_key, product_id, product_name, qty_ordered, qty_received, unit_price_ngn)
+      VALUES
+        ('PO-OPEN', 'L1', 'P1', 'Coil', 10, 0, 5000),
+        ('PO-PAID', 'L1', 'P1', 'Coil', 5, 5, 10000);
+    `);
+    const open = listPurchaseOrders(db, 'BR-KD', { unlimited: true, outstandingOnly: true, skipSideEffects: true });
+    expect(open.map((p) => p.poID)).toEqual(['PO-OPEN']);
+    expect(open[0].outstandingNgn).toBe(40_000);
+    expect(open[0].lines[0].lineValueNgn).toBe(50_000);
+    expect(open[0].branchId).toBe('BR-KD');
+    db.close();
+  });
+
   it('listQuotations respects SQL limit', () => {
     const db = createDatabase(':memory:', { seed: false });
     insertCustomer(db, { customerID: 'C1', name: 'Customer' }, 'BR-KD');

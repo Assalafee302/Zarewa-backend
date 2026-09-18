@@ -728,6 +728,7 @@ export const SHELL_DEFERRED_DESK_ARRAYS = [
   'yardCoilRegister',
   'procurementCatalog',
   'accountsPayable',
+  'outstandingPaymentLines',
   'advanceInEvents',
   'glJournalSearchSlice',
   'materialPricingRows',

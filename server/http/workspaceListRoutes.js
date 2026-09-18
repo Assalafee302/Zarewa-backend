@@ -241,9 +241,14 @@ export function registerWorkspaceListRoutes(app, db) {
     try {
       const branchScope = resolveBootstrapBranchScope(req);
       const parsed = parseListQuery(req, { defaultLimit: 150, maxLimit: 5000 });
-      const listOpts = { ...listOptsFromQuery(parsed), skipSideEffects: true };
+      const outstandingOnly =
+        /^(1|true|yes|on)$/i.test(String(req.query?.outstanding || '')) ||
+        /^(1|true|yes|on)$/i.test(String(req.query?.open || ''));
+      const listOpts = { ...listOptsFromQuery(parsed), skipSideEffects: true, outstandingOnly };
       const items = listPurchaseOrders(db, branchScope, listOpts);
-      const total = parsed.unlimited ? items.length : countPurchaseOrders(db, branchScope);
+      const total = parsed.unlimited
+        ? items.length
+        : countPurchaseOrders(db, branchScope, { outstandingOnly });
       return sendPaginatedList(res, {
         items,
         total,
@@ -264,7 +269,7 @@ export function registerWorkspaceListRoutes(app, db) {
       const openOnly =
         /^(1|true|yes|on)$/i.test(String(req.query?.open || '')) ||
         /^(1|true|yes|on)$/i.test(String(req.query?.openOnly || ''));
-      const listOpts = { ...listOptsFromQuery(parsed), openOnly };
+      const listOpts = { ...listOptsFromQuery(parsed), openOnly, includeLines: true };
       const items = listAccountsPayable(db, branchScope, listOpts);
       const total = parsed.unlimited ? items.length : countAccountsPayable(db, branchScope, { openOnly });
       return sendPaginatedList(res, {

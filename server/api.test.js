@@ -448,6 +448,7 @@ describe.skipIf(!mysqlOk).sequential('Zarewa API', () => {
     expect(snap.body.ok).toBe(true);
     expect(Array.isArray(snap.body.accountsPayable)).toBe(true);
     expect(snap.body.accountsPayable.every((row) => (Number(row.outstandingNgn) || 0) > 0)).toBe(true);
+    expect(Array.isArray(snap.body.outstandingPaymentLines)).toBe(true);
 
     const open = await agent.get('/api/accounts-payable?open=1&limit=20');
     expect(open.status).toBe(200);

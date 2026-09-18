@@ -7,6 +7,7 @@ import {
   listAssociatedStaff,
   listProducts,
   listPurchaseOrders,
+  accountsPayableRowsFromPurchaseOrders,
   listCoilLotsForDesk,
   listCoilControlEvents,
   listStockMovements,
@@ -686,13 +687,47 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
   const movements = coilMovOk ? listStockMovements(db, branchScope, historyOpts) : [];
   const poDeskOpts = deskPageListOpts();
   const poDeskLim = poDeskOpts.unlimited ? 0 : Number(poDeskOpts.limit) || deskPageLimit();
-  const purchaseOrders = poListOk
+  const outstandingPos = poListOk
+    ? listPurchaseOrders(db, branchScope, {
+        outstandingOnly: true,
+        skipSideEffects: true,
+        ...poDeskOpts,
+      })
+    : [];
+  const recentPos = poListOk
     ? listPurchaseOrders(db, branchScope, { ...poDeskOpts, skipSideEffects: true })
     : [];
-  const registerOpts = { ...financeRegisterListOpts(), openOnly: true };
-  // Purchases → Payments reads `accountsPayable` from this pack (shell bootstrap leaves it empty).
+  const purchaseOrders = (() => {
+    const byId = new Map();
+    for (const po of outstandingPos) byId.set(po.poID, po);
+    for (const po of recentPos) {
+      if (!byId.has(po.poID)) byId.set(po.poID, po);
+    }
+    return [...byId.values()];
+  })();
+  const registerOpts = { ...financeRegisterListOpts(), openOnly: true, includeLines: true };
+  // Purchases outstanding table reads AP and/or PO lines; shell bootstrap leaves both empty.
   const apOk = procOk || finOk;
-  const accountsPayable = apOk ? listAccountsPayable(db, branchScope, registerOpts) : [];
+  const apFromRegister = apOk ? listAccountsPayable(db, branchScope, registerOpts) : [];
+  const apPoRefs = new Set(apFromRegister.map((row) => String(row.poRef || '').trim()).filter(Boolean));
+  const synthesizedAp = accountsPayableRowsFromPurchaseOrders(
+    outstandingPos.filter((po) => !apPoRefs.has(String(po.poID || '').trim()))
+  );
+  const accountsPayable = [...apFromRegister, ...synthesizedAp];
+  const outstandingPaymentLines = purchaseOrders.flatMap((po) => {
+    if (!(Number(po.outstandingNgn) > 0)) return [];
+    const lines = Array.isArray(po.lines) && po.lines.length ? po.lines : [{ lineKey: po.poID, productName: po.supplierName, lineValueNgn: po.amountNgn, amountNgn: po.amountNgn }];
+    return lines.map((line) => ({
+      ...line,
+      poID: po.poID,
+      supplierName: po.supplierName,
+      status: po.status,
+      orderDateISO: po.orderDateISO,
+      paidNgn: po.paidNgn,
+      outstandingNgn: po.outstandingNgn,
+      branchId: po.branchId || '',
+    }));
+  });
   const pageSize = deskPageLimit();
   const apLim = registerOpts.unlimited ? 0 : Number(registerOpts.limit) || pageSize;
   return {
@@ -706,6 +741,7 @@ export function buildProcurementDomainSnapshot(db, opts = {}) {
     },
     purchaseOrders,
     accountsPayable,
+    outstandingPaymentLines,
     procurementCatalog: procOk ? listProcurementCatalog(db) : [],
     products: productsOk ? listProducts(db, branchScope) : [],
     coilLots: coilDesk.coilLots,

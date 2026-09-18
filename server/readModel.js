@@ -28,6 +28,7 @@ import {
 } from '../shared/lib/inTransitVisibility.js';
 import { reconcilePoReceiptStatusIfComplete } from './inTransitOps.js';
 import { procurementKindFromPoRow } from './procurementPoKind.js';
+import { poLineOrderedValueNgn } from '../shared/lib/liveAnalytics.js';
 import { parseSupplierProfileJson, stripAgreementBodiesForList } from './supplierProfile.js';
 import { listBranches, DEFAULT_BRANCH_ID } from './branches.js';
 import { branchPredicate } from './branchSql.js';
@@ -1507,14 +1508,87 @@ function purchaseOrderStatusFilter(opts = {}) {
   return { statusKeys, statusSql };
 }
 
+/** Ordered PO value in SQL — same unit-price-first rule as poLineOrderedValueNgn. */
+const PO_ORDERED_VALUE_SQL = `COALESCE((
+  SELECT SUM(CASE
+    WHEN COALESCE(l.unit_price_ngn, 0) > 0 THEN ROUND(l.qty_ordered * l.unit_price_ngn)
+    ELSE ROUND(l.qty_ordered * COALESCE(l.unit_price_per_kg_ngn, 0))
+  END)
+  FROM purchase_order_lines l
+  WHERE l.po_id = purchase_orders.po_id
+), 0)`;
+
+function purchaseOrderOutstandingSql(opts = {}) {
+  if (!opts.outstandingOnly) return '';
+  return ` AND LOWER(TRIM(IFNULL(status,''))) NOT IN ('rejected','cancelled','canceled')
+           AND ${PO_ORDERED_VALUE_SQL} > COALESCE(supplier_paid_ngn, 0) + ${PAYMENT_OUTSTANDING_TOLERANCE_NGN}`;
+}
+
+function mapPurchaseOrderLine(l) {
+  const line = {
+    lineKey: l.line_key,
+    lineType: l.line_type ?? '',
+    productID: l.product_id,
+    productName: l.product_name,
+    color: l.color ?? '',
+    gauge: l.gauge ?? '',
+    metersOffered: l.meters_offered,
+    conversionKgPerM: roundConv2(l.conversion_kg_per_m),
+    unitPricePerKgNgn: l.unit_price_per_kg_ngn,
+    unitPriceNgn: l.unit_price_ngn,
+    qtyOrdered: l.qty_ordered,
+    qtyReceived: l.qty_received,
+  };
+  const lineValueNgn = poLineOrderedValueNgn(line);
+  return { ...line, lineValueNgn, amountNgn: lineValueNgn };
+}
+
+function mapPurchaseOrderRecord(row, rawLines, statusOverride) {
+  const lines = (rawLines || []).map(mapPurchaseOrderLine);
+  const amountNgn = lines.reduce((s, line) => s + (Number(line.lineValueNgn) || 0), 0);
+  const paidNgn = Math.round(Number(row.supplier_paid_ngn) || 0);
+  const outstandingNgn = effectiveOutstandingNgn(amountNgn, paidNgn);
+  return {
+    poID: row.po_id,
+    supplierID: row.supplier_id,
+    supplierName: row.supplier_name,
+    orderDateISO: row.order_date_iso,
+    expectedDeliveryISO: row.expected_delivery_iso,
+    status: statusOverride ?? row.status,
+    invoiceNo: row.invoice_no ?? '',
+    invoiceDateISO: row.invoice_date_iso ?? '',
+    deliveryDateISO: row.delivery_date_iso ?? '',
+    transportAgentId: row.transport_agent_id ?? '',
+    transportAgentName: row.transport_agent_name ?? '',
+    transportReference: row.transport_reference ?? '',
+    transportNote: row.transport_note ?? '',
+    transportFinanceAdvice: row.transport_finance_advice ?? '',
+    transportTreasuryMovementId: row.transport_treasury_movement_id ?? '',
+    transportAmountNgn: Number(row.transport_amount_ngn) || 0,
+    transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
+    transportPaidNgn: Number(row.transport_paid_ngn) || 0,
+    transportPaid: Boolean(row.transport_paid),
+    transportPaidAtISO: row.transport_paid_at_iso ?? '',
+    supplierPaidNgn: paidNgn,
+    paidNgn,
+    amountNgn,
+    orderedValueNgn: amountNgn,
+    outstandingNgn,
+    branchId: row.branch_id ?? '',
+    procurementKind: procurementKindFromPoRow(row, rawLines),
+    lines,
+  };
+}
+
 export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const limit = resolveListLimit(opts);
   const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
   const b = branchWhere(db, 'purchase_orders', branchScope);
   /** Optional LOWER(status) filter — e.g. ops GRN desk only needs receipt-pending keys. */
   const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
+  const outstandingSql = purchaseOrderOutstandingSql(opts);
   const lo = sqlLimitOffsetClause(limit, offset);
-  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql} ORDER BY order_date_iso DESC${lo.sql}`;
+  const sql = `SELECT * FROM purchase_orders WHERE 1=1${b.sql}${statusSql}${outstandingSql} ORDER BY order_date_iso DESC${lo.sql}`;
   const args = [...b.args, ...statusKeys, ...lo.args];
   const pos = db.prepare(sql).all(...args);
   const linesByPoId = purchaseOrderLinesByPoIds(
@@ -1534,44 +1608,7 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
       // Re-read only when reconcile may have flipped status — avoid N+1 on desk bootstrap.
       effectiveStatus = statusStmt.get(row.po_id)?.status ?? row.status;
     }
-    return {
-      poID: row.po_id,
-      supplierID: row.supplier_id,
-      supplierName: row.supplier_name,
-      orderDateISO: row.order_date_iso,
-      expectedDeliveryISO: row.expected_delivery_iso,
-      status: effectiveStatus,
-      invoiceNo: row.invoice_no ?? '',
-      invoiceDateISO: row.invoice_date_iso ?? '',
-      deliveryDateISO: row.delivery_date_iso ?? '',
-      transportAgentId: row.transport_agent_id ?? '',
-      transportAgentName: row.transport_agent_name ?? '',
-      transportReference: row.transport_reference ?? '',
-      transportNote: row.transport_note ?? '',
-      transportFinanceAdvice: row.transport_finance_advice ?? '',
-      transportTreasuryMovementId: row.transport_treasury_movement_id ?? '',
-      transportAmountNgn: Number(row.transport_amount_ngn) || 0,
-      transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
-      transportPaidNgn: Number(row.transport_paid_ngn) || 0,
-      transportPaid: Boolean(row.transport_paid),
-      transportPaidAtISO: row.transport_paid_at_iso ?? '',
-      supplierPaidNgn: row.supplier_paid_ngn ?? 0,
-      procurementKind: procurementKindFromPoRow(row, rawLines),
-      lines: rawLines.map((l) => ({
-        lineKey: l.line_key,
-        lineType: l.line_type ?? '',
-        productID: l.product_id,
-        productName: l.product_name,
-        color: l.color ?? '',
-        gauge: l.gauge ?? '',
-        metersOffered: l.meters_offered,
-        conversionKgPerM: roundConv2(l.conversion_kg_per_m),
-        unitPricePerKgNgn: l.unit_price_per_kg_ngn,
-        unitPriceNgn: l.unit_price_ngn,
-        qtyOrdered: l.qty_ordered,
-        qtyReceived: l.qty_received,
-      })),
-    };
+    return mapPurchaseOrderRecord(row, rawLines, effectiveStatus);
   });
 }
 
@@ -1579,8 +1616,9 @@ export function listPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
 export function countPurchaseOrders(db, branchScope = 'ALL', opts = {}) {
   const b = branchWhere(db, 'purchase_orders', branchScope);
   const { statusKeys, statusSql } = purchaseOrderStatusFilter(opts);
+  const outstandingSql = purchaseOrderOutstandingSql(opts);
   const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE 1=1${b.sql}${statusSql}`)
+    .prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE 1=1${b.sql}${statusSql}${outstandingSql}`)
     .get(...b.args, ...statusKeys);
   return Number(row?.n) || 0;
 }
@@ -1593,44 +1631,29 @@ export function getPurchaseOrder(db, poId) {
   if (!row) return null;
   const linesByPoId = purchaseOrderLinesByPoIds(db, [id]);
   const rawLines = linesByPoId.get(id) || [];
-  return {
-    poID: row.po_id,
-    supplierID: row.supplier_id,
-    supplierName: row.supplier_name,
-    orderDateISO: row.order_date_iso,
-    expectedDeliveryISO: row.expected_delivery_iso,
-    status: row.status,
-    invoiceNo: row.invoice_no ?? '',
-    invoiceDateISO: row.invoice_date_iso ?? '',
-    deliveryDateISO: row.delivery_date_iso ?? '',
-    transportAgentId: row.transport_agent_id ?? '',
-    transportAgentName: row.transport_agent_name ?? '',
-    transportReference: row.transport_reference ?? '',
-    transportNote: row.transport_note ?? '',
-    transportFinanceAdvice: row.transport_finance_advice ?? '',
-    transportTreasuryMovementId: row.transport_treasury_movement_id ?? '',
-    transportAmountNgn: Number(row.transport_amount_ngn) || 0,
-    transportAdvanceNgn: Number(row.transport_advance_ngn) || 0,
-    transportPaidNgn: Number(row.transport_paid_ngn) || 0,
-    transportPaid: Boolean(row.transport_paid),
-    transportPaidAtISO: row.transport_paid_at_iso ?? '',
-    supplierPaidNgn: row.supplier_paid_ngn ?? 0,
-    procurementKind: procurementKindFromPoRow(row, rawLines),
-    lines: rawLines.map((l) => ({
-      lineKey: l.line_key,
-      lineType: l.line_type ?? '',
-      productID: l.product_id,
-      productName: l.product_name,
-      color: l.color ?? '',
-      gauge: l.gauge ?? '',
-      metersOffered: l.meters_offered,
-      conversionKgPerM: roundConv2(l.conversion_kg_per_m),
-      unitPricePerKgNgn: l.unit_price_per_kg_ngn,
-      unitPriceNgn: l.unit_price_ngn,
-      qtyOrdered: l.qty_ordered,
-      qtyReceived: l.qty_received,
-    })),
-  };
+  return mapPurchaseOrderRecord(row, rawLines);
+}
+
+/**
+ * AP-shaped rows for Purchases → outstanding payments when the AP register is empty or stale.
+ * @param {object[]} pos
+ */
+export function accountsPayableRowsFromPurchaseOrders(pos) {
+  return (pos || [])
+    .filter((po) => (Number(po.outstandingNgn) || 0) > 0)
+    .map((po) => ({
+      apID: `AP-PO-${po.poID}`,
+      supplierName: po.supplierName,
+      poRef: po.poID,
+      invoiceRef: po.invoiceNo || '',
+      amountNgn: Number(po.amountNgn) || Number(po.orderedValueNgn) || 0,
+      paidNgn: Number(po.paidNgn) || Number(po.supplierPaidNgn) || 0,
+      outstandingNgn: Number(po.outstandingNgn) || 0,
+      dueDateISO: po.expectedDeliveryISO || po.orderDateISO || '',
+      paymentMethod: '',
+      branchId: po.branchId || '',
+      lines: po.lines || [],
+    }));
 }
 
 /**
@@ -3567,16 +3590,26 @@ export function listAccountsPayable(db, branchScope = 'ALL', opts) {
   const unlimitedRegister = opts == null;
   const limit = unlimitedRegister ? 0 : resolveListLimit(opts);
   const offset = unlimitedRegister ? 0 : Math.max(0, Math.floor(Number(opts?.offset) || 0));
+  const includeLines = Boolean(opts?.includeLines);
   const { b, openSql, outstandingFirstSql } = accountsPayableScope(db, branchScope, opts || {});
   const lo = sqlLimitOffsetClause(limit, offset);
   const sql = `SELECT ap.*, po.branch_id AS po_branch_id FROM accounts_payable ap
        LEFT JOIN purchase_orders po ON po.po_id = ap.po_ref
        WHERE 1=1${b.sql}${openSql}
        ORDER BY ${outstandingFirstSql} ASC, ap.due_date_iso DESC${lo.sql}`;
-  return db
-    .prepare(sql)
-    .all(...b.args, ...lo.args)
-    .map(mapAccountsPayableRow);
+  const rows = db.prepare(sql).all(...b.args, ...lo.args);
+  const linesByPoId = includeLines
+    ? purchaseOrderLinesByPoIds(
+        db,
+        rows.map((row) => row.po_ref).filter(Boolean)
+      )
+    : null;
+  return rows.map((row) => {
+    const mapped = mapAccountsPayableRow(row);
+    if (!linesByPoId) return mapped;
+    const rawLines = linesByPoId.get(String(row.po_ref || '').trim()) || [];
+    return { ...mapped, lines: rawLines.map(mapPurchaseOrderLine) };
+  });
 }
 
 /** @param {import('better-sqlite3').Database} db @param {'ALL' | string} [branchScope] */

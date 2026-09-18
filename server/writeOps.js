@@ -103,7 +103,7 @@ function enrichQuotationLinesWithMaterialHeader(linesJson) {
   enrich(linesJson.products);
   enrich(linesJson.services);
 }
-import { isCuttingListProductionCompleted } from './cuttingListProductionGate.js';
+import { isCuttingListProductionCompleted, linkedProductionJobForCuttingList } from './cuttingListProductionGate.js';
 import { deriveProcurementKindFromPoLines } from '../shared/lib/poLineTypes.js';
 import { roundConv2 } from '../shared/lib/conversionKgPerM.js';
 import { notifyMdCoilShortReceipt } from './procurementWorkItems.js';
@@ -169,7 +169,7 @@ import {
   quotationOverpaymentResidualNgn,
   sumRefundCalculationLinesByCategoryNgn,
 } from '../shared/lib/refundQuotationMoney.js';
-import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn } from './ap2ReceivedBasisOps.js';
+import { apReceivedBasisEnabled, receivedBasisAmountForPoSync, hasColumn, tableExists } from './ap2ReceivedBasisOps.js';
 import {
   resolveAppUserIdFromHandledByLabel,
 } from './sales/customerPayoutAccount.js';
@@ -7932,7 +7932,7 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
         );
       }
       if (payload.treasuryAccountId) {
-        insertTreasuryMovementTx(db, {
+        const movement = insertTreasuryMovementTx(db, {
           type: 'EXPENSE',
           treasuryAccountId: payload.treasuryAccountId,
           amountNgn: -amountNgn,
@@ -7949,6 +7949,19 @@ export function insertExpenseEntry(db, payload, branchId = DEFAULT_BRANCH_ID) {
           workspaceViewAll: payload.workspaceViewAll,
           actor: payload.actor,
         });
+        const glExp = tryPostExpensePaymentGlTx(db, {
+          treasuryAccountId: payload.treasuryAccountId,
+          amountNgn,
+          entryDateISO: expenseDate,
+          sourceId: movement.id,
+          expenseCategory: category,
+          branchId: bid,
+          createdByUserId: payload.actor?.id ?? null,
+          memo: payload.expenseType || category,
+        });
+        if (!glExp.ok && !glExp.skipped && !glExp.duplicate) {
+          throw new Error(glExp.error || 'Expense payment GL posting failed.');
+        }
         const assetSync = syncFixedAssetFromCapexExpense(db, expenseID, {
           acquisitionDateIso: expenseDate,
           actor: payload.actor,
@@ -8255,6 +8268,23 @@ export function deleteExpenseRolloutDup(db, expenseId, actor, opts = {}) {
           pr.request_id
         );
         db.prepare(`DELETE FROM payment_requests WHERE request_id = ?`).run(pr.request_id);
+      }
+      const expenseMoves = db
+        .prepare(
+          `SELECT id, treasury_account_id, amount_ngn FROM treasury_movements
+           WHERE source_kind = 'EXPENSE' AND source_id = ?`
+        )
+        .all(eid);
+      for (const tm of expenseMoves) {
+        // Deleting the statement line must put cash back on the account.
+        adjustTreasuryBalanceTx(db, tm.treasury_account_id, -roundMoney(tm.amount_ngn), {
+          allowNegativeBalance: true,
+        });
+        if (tableExists(db, 'gl_journal_entries')) {
+          db.prepare(
+            `DELETE FROM gl_journal_entries WHERE source_kind = 'EXPENSE_PAYMENT_GL' AND source_id = ?`
+          ).run(tm.id);
+        }
       }
       db.prepare(`DELETE FROM treasury_movements WHERE source_kind = 'EXPENSE' AND source_id = ?`).run(eid);
       db.prepare(`DELETE FROM expenses WHERE expense_id = ?`).run(eid);

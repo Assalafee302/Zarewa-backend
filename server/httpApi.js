@@ -264,6 +264,7 @@ import {
   commitExpenseBulkImport,
   normalizeExpenseImportRows,
 } from './expenseBulkImport.js';
+import { isExpenseUnpostedForVoid, voidUnpostedImportedExpense } from './finance/expenseTreasuryCatchUpOps.js';
 import { EXPENSE_CATEGORY_OPTIONS } from '../shared/expenseCategories.js';
 import {
   ADMIN_DATA_RESET_CONFIRM_PHRASE,
@@ -1027,6 +1028,7 @@ import { registerMaintenanceRoutes } from './http/maintenanceRoutes.js';
 import { registerChairmanOfficeRoutes } from './http/chairmanOfficeRoutes.js';
 import { registerPurchasePaymentCashierAckRoutes } from './http/purchasePaymentCashierAckRoutes.js';
 import { registerBranchRefundFreezeRoutes } from './http/branchRefundFreezeRoutes.js';
+import { registerExpenseTreasuryCatchUpRoutes } from './http/expenseTreasuryCatchUpRoutes.js';
 
 export function registerHttpApi(app, db) {
   registerMobileApi(app, db);
@@ -1099,6 +1101,7 @@ export function registerHttpApi(app, db) {
   registerChairmanOfficeRoutes(app, db);
   registerPurchasePaymentCashierAckRoutes(app, db);
   registerBranchRefundFreezeRoutes(app, db);
+  registerExpenseTreasuryCatchUpRoutes(app, db);
 
   /** Accounting sub-ledgers — Creditors, Debtors, Assets register. */
   function accountingListBranchId(req) {
@@ -9748,8 +9751,8 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  /** Rollout duplicate cleanup: unpaid expense + linked requests only (requires finance approval + KPI for officers). */
-  app.delete('/api/expenses/:expenseId', requirePermission('finance.approve'), (req, res) => {
+  /** Unposted import rows can be undone by finance.post; cash-posted deletes still need finance.approve + KPI. */
+  app.delete('/api/expenses/:expenseId', requirePermission(['finance.approve', 'finance.post', 'expenses.create']), (req, res) => {
     try {
       const expenseId = String(req.params.expenseId || '').trim();
       if (!expenseId) return res.status(400).json({ ok: false, error: 'Expense ID is required.' });
@@ -9764,6 +9767,19 @@ export function registerHttpApi(app, db) {
       ) {
         return res.status(403).json({ ok: false, error: 'Switch workspace branch to delete this expense.' });
       }
+      if (isExpenseUnpostedForVoid(db, expenseId)) {
+        const r = voidUnpostedImportedExpense(db, expenseId, req.user, {
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        return res.status(r.ok ? 200 : 400).json(r);
+      }
+      if (!userHasPermission(req.user, 'finance.approve') && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({
+          ok: false,
+          error: 'This expense already posted to till/bank. A finance approver must reverse or delete it.',
+        });
+      }
       return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'expense', expenseId, (_stripped, ctx) =>
         write.deleteExpenseRolloutDup(db, expenseId, req.user, {
           skipInnerTransaction: Boolean(ctx?.withinEditApprovalTransaction),
@@ -9775,7 +9791,7 @@ export function registerHttpApi(app, db) {
     }
   });
 
-  app.post('/api/expenses/:expenseId/rollout-delete', requirePermission('finance.approve'), (req, res) => {
+  app.post('/api/expenses/:expenseId/rollout-delete', requirePermission(['finance.approve', 'finance.post', 'expenses.create']), (req, res) => {
     try {
       const expenseId = String(req.params.expenseId || '').trim();
       if (!expenseId) return res.status(400).json({ ok: false, error: 'Expense ID is required.' });
@@ -9789,6 +9805,19 @@ export function registerHttpApi(app, db) {
         !(Boolean(req.workspaceViewAll) && canUseAllBranchesRollup(req.user))
       ) {
         return res.status(403).json({ ok: false, error: 'Switch workspace branch to delete this expense.' });
+      }
+      if (isExpenseUnpostedForVoid(db, expenseId)) {
+        const r = voidUnpostedImportedExpense(db, expenseId, req.user, {
+          workspaceBranchId: req.workspaceBranchId,
+          workspaceViewAll: Boolean(req.workspaceViewAll),
+        });
+        return res.status(r.ok ? 200 : 400).json(r);
+      }
+      if (!userHasPermission(req.user, 'finance.approve') && !userHasPermission(req.user, '*')) {
+        return res.status(403).json({
+          ok: false,
+          error: 'This expense already posted to till/bank. A finance approver must reverse or delete it.',
+        });
       }
       return handleWriteWithEditApproval(res, db, req.user, req.body || {}, 'expense', expenseId, (_stripped, ctx) =>
         write.deleteExpenseRolloutDup(db, expenseId, req.user, {

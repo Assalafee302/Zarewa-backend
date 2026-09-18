@@ -148,4 +148,67 @@ describe('expense bulk import HTTP (MySQL)', () => {
     expect(blankReject.status).toBe(400);
     expect(blankReject.body.ok).toBe(false);
   }, 120_000);
+
+  it('voids unposted imported expenses and can attach the rest to a bank account', async () => {
+    const { app, db } = makeApp();
+    const agent = request.agent(app);
+
+    const login = await agent.post('/api/session/login').send({ username: 'admin', password: 'Admin@123' });
+    expect(login.status).toBe(200);
+    await agent.patch('/api/session/workspace').send({ currentBranchId: DEFAULT_BRANCH_ID, viewAllBranches: false });
+
+    const boot = await agent.get('/api/bootstrap');
+    const treasury =
+      (boot.body.treasuryAccounts || []).find(
+        (a) => String(a.branchId || a.branch_id || '') === DEFAULT_BRANCH_ID
+      ) || boot.body.treasuryAccounts?.[0];
+    db.prepare(`UPDATE treasury_accounts SET balance = GREATEST(COALESCE(balance, 0), ?) WHERE id = ?`).run(
+      5_000_000,
+      treasury.id
+    );
+
+    const commit = await agent.post('/api/expenses/import/commit').send({
+      requireTreasury: false,
+      rows: [
+        {
+          date: '2026-07-11',
+          amountNgn: 15_000,
+          category: 'Refund',
+          reference: 'HTTP-VOID-1',
+          description: 'Imported refund without bank account',
+          include: true,
+        },
+        {
+          date: '2026-07-11',
+          amountNgn: 22_000,
+          category: 'Refund',
+          reference: 'HTTP-BANK-1',
+          description: 'Imported refund to attach later',
+          include: true,
+        },
+      ],
+    });
+    expect(commit.status, JSON.stringify(commit.body)).toBe(201);
+    expect(commit.body.createdCount).toBe(2);
+    const voidId = commit.body.created.find((c) => c.reference === 'HTTP-VOID-1').expenseID;
+    const attachId = commit.body.created.find((c) => c.reference === 'HTTP-BANK-1').expenseID;
+
+    const unposted = await agent.get('/api/expenses/import/unposted?category=Refund');
+    expect(unposted.status).toBe(200);
+    expect(unposted.body.rows.some((r) => r.expenseID === voidId && r.missingTreasury)).toBe(true);
+
+    const voided = await agent.post('/api/expenses/import/void-unposted').send({ expenseIds: [voidId] });
+    expect(voided.status, JSON.stringify(voided.body)).toBe(200);
+    expect(voided.body.voidedCount).toBe(1);
+
+    const before = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
+    const attached = await agent.post('/api/expenses/import/attach-treasury').send({
+      expenseIds: [attachId],
+      treasuryAccountId: treasury.id,
+    });
+    expect(attached.status, JSON.stringify(attached.body)).toBe(201);
+    expect(attached.body.postedCount).toBe(1);
+    const after = Number(db.prepare(`SELECT balance FROM treasury_accounts WHERE id = ?`).get(treasury.id).balance);
+    expect(after).toBe(before - 22_000);
+  }, 120_000);
 });

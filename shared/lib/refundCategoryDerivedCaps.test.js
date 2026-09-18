@@ -18,6 +18,7 @@ describe('refundCategoryDerivedCaps', () => {
     });
     expect(caps['Order cancellation']).toBe(400_000);
     expect(caps.Other).toBe(400_000);
+    expect(caps['MD discount']).toBe(1_000_000);
   });
 
   it('allows full hard cap for cancellation when nothing produced', () => {

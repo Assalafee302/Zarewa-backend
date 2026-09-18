@@ -51,6 +51,8 @@ export function buildDerivedRefundCategoryCapsNgn({ cashInNgn, totalRefundedNgn 
   return {
     'Order cancellation': cancelCap,
     Other: otherCap,
+    /** Discretionary MD amount — cash headroom only; economic floor does not cap it. */
+    'MD discount': hardCap,
   };
 }
 

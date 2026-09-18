@@ -22,6 +22,7 @@ import {
 import { getExpenseCategoryLane } from '../shared/expenseCategoryLanes.js';
 import { glAccountForExpenseCategory } from '../shared/lib/expenseCategoryGlMap.js';
 import {
+  MIN_MD_DISCOUNT_REASON_LEN,
   MIN_REFUND_QUOTATION_REMAINING_NGN,
   normalizeRefundReasonCategoriesForApi,
   quotationMeetsRefundPickerFloor,
@@ -31,6 +32,7 @@ import {
   refundAmountExceedsEconomicFloorCap,
   refundFloorGatedAmountNgn,
   refundRequestIsEconomicFloorExempt,
+  refundRequestRequiresMdApproval,
 } from '../shared/refundConstants.js';
 import {
   isStoneFlatsheetQuotationLine,
@@ -92,6 +94,7 @@ import {
   quotationLineUnitPriceNumber,
 } from '../shared/lib/quotationLineNumericForRefund.js';
 import {
+  actorMayApproveMdOnlyRefundCategory,
   actorMayApprovePaymentRequestAmount,
   actorMayApproveRefundAmount,
   isExecutiveRoleKey,
@@ -3287,6 +3290,39 @@ export function insertRefundRequest(db, payload, actor, branchId = DEFAULT_BRANC
         };
       }
 
+      const mdDiscountRefundSum = calcLinesRaw
+        .filter((l) => String(l.category || '').trim() === 'MD discount')
+        .reduce((s, l) => s + roundMoney(l.amountNgn), 0);
+      if (requestedCats.includes('MD discount') && mdDiscountRefundSum <= 0) {
+        return {
+          ok: false,
+          error: 'MD discount is selected but no calculation line carries a positive amount for that category.',
+        };
+      }
+      if (mdDiscountRefundSum > 0 || requestedCats.includes('MD discount')) {
+        const mdNote = String(payload.reason ?? payload.calculationNotes ?? '').trim();
+        if (mdNote.length < MIN_MD_DISCOUNT_REASON_LEN) {
+          return {
+            ok: false,
+            error: `MD discount requires a note (min ${MIN_MD_DISCOUNT_REASON_LEN} characters) explaining the requested amount for MD/CEO approval.`,
+          };
+        }
+        const completedProd = db
+          .prepare(
+            `SELECT 1 AS ok FROM production_jobs
+             WHERE quotation_ref = ?
+               AND LOWER(TRIM(COALESCE(status, ''))) = 'completed'
+             LIMIT 1`
+          )
+          .get(quotationRef);
+        if (!completedProd) {
+          return {
+            ok: false,
+            error: 'MD discount can be requested only after production is completed on this quotation.',
+          };
+        }
+      }
+
       const quoteRowForBundled = db.prepare(`SELECT * FROM quotations WHERE id = ?`).get(quotationRef);
       const bundledSubmit = validateBundledTransportInstallCrossRequest(
         db,
@@ -3727,6 +3763,26 @@ export function decideRefundRequest(db, refundID, payload, actor) {
       ok: false,
       error: `Refunds above ₦${hi.toLocaleString('en-NG')} require MD/CEO-level approval (or administrator).`,
     };
+  }
+  if (status === 'Approved') {
+    const mdCats = resolveRefundReasonCategoriesForDecision(
+      row,
+      payload,
+      normalizeRefundReasonCategoriesForApi
+    );
+    const mdLines = parseRefundCalculationLinesFromRow(
+      row,
+      Array.isArray(payload.calculationLines) ? payload.calculationLines : null
+    );
+    if (
+      refundRequestRequiresMdApproval({ categories: mdCats, calculationLines: mdLines }) &&
+      !actorMayApproveMdOnlyRefundCategory(actor, (p) => userHasPermission(actor, p))
+    ) {
+      return {
+        ok: false,
+        error: 'MD discount refunds require Managing Director, CEO, or Administrator approval. Branch Manager cannot approve this category.',
+      };
+    }
   }
   const refundWarnings = [];
   const bdR = backdateWarningForActedDate(actedAtISO, 'Refund approval date');
@@ -4266,6 +4322,9 @@ export function previewRefundRequest(db, payload) {
     : [];
   const hasCancelledProductionJob = productionJobs.some(
     (j) => String(j.status || '').trim().toLowerCase() === 'cancelled'
+  );
+  const hasCompletedProductionJob = productionJobs.some(
+    (j) => String(j.status || '').trim().toLowerCase() === 'completed'
   );
   const existingRefunds = quotationRef
     ? db
@@ -5022,6 +5081,17 @@ export function previewRefundRequest(db, payload) {
       if (suggestedPositiveCategories.has(cat)) eligibleRefundCategories.push(cat);
       continue;
     }
+    if (cat === 'MD discount') {
+      if (
+        hasCompletedProductionJob &&
+        !hasCancelledProductionJob &&
+        refundHardCapNgn != null &&
+        refundHardCapNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN
+      ) {
+        eligibleRefundCategories.push(cat);
+      }
+      continue;
+    }
     if (cat === 'Other') {
       if (remainingRefundableNgn != null && remainingRefundableNgn > 0) eligibleRefundCategories.push(cat);
     }
@@ -5739,6 +5809,22 @@ function refundPickerListHint(db, row, jobs, {
         });
       }
     }
+  }
+
+  // After production, Sales may request a typed amount for MD/CEO approval even when
+  // there is no overpay / unproduced / quoted-minus-floor line.
+  const hasCompletedProduction = closedJobs.some(
+    (j) => String(j.status || '').trim().toLowerCase() === 'completed'
+  );
+  if (
+    !claimParts.length &&
+    hasCompletedProduction &&
+    !hardBlocked.has('MD discount')
+  ) {
+    claimParts.push({
+      category: 'MD discount',
+      amountNgn: remaining,
+    });
   }
 
   if (!claimParts.length) return null;

@@ -3,7 +3,7 @@
  * Frontend copies via `npm run sync:shared` → src/shared/refundConstants.js
  * Bump when preview suggestion rules change materially (stored on refund snapshot).
  */
-export const REFUND_PREVIEW_VERSION = 11;
+export const REFUND_PREVIEW_VERSION = 12;
 
 /**
  * Refund quotation picker:
@@ -12,6 +12,9 @@ export const REFUND_PREVIEW_VERSION = 11;
  * Not the material workbook floor and not the refund economic floor.
  */
 export const MIN_REFUND_QUOTATION_REMAINING_NGN = 1000;
+
+/** Sales must leave a reason when requesting an MD-approved amount discount. */
+export const MIN_MD_DISCOUNT_REASON_LEN = 10;
 
 /**
  * Whether a quotation row belongs in refund form picklists (dropdown / potential refunds).
@@ -33,6 +36,8 @@ export function quotationMeetsRefundPickerFloor(row) {
   const hasCategories = Array.isArray(cats) && cats.length > 0;
   if (!hasCategories) return false;
   if (remaining < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
+  // MD discount is a typed amount (no automatic preview line). Remaining cash is the floor.
+  if (refundCategoriesRequireMdApproval(cats)) return true;
   if (suggested < MIN_REFUND_QUOTATION_REMAINING_NGN) return false;
   return true;
 }
@@ -52,6 +57,7 @@ export const REFUND_REASON_CATEGORY_VALUES = [
   'Calculation error',
   'Substitution Difference',
   'Customer commission',
+  'MD discount',
   'Other',
 ];
 
@@ -64,6 +70,7 @@ export const REFUND_ECONOMIC_FLOOR_EXEMPT_CATEGORIES = [
   'Transport issue',
   'Installation issue',
   'Additional services',
+  'MD discount',
 ];
 
 const FLOOR_EXEMPT_CAT_KEYS = new Set(
@@ -78,6 +85,7 @@ function refundCategoryIsEconomicFloorExempt(cat) {
   if (FLOOR_EXEMPT_CAT_KEYS.has(s)) return true;
   // Partial match for legacy / free-text overpayment labels.
   if (s.includes('overpay')) return true;
+  if (s.includes('md discount')) return true;
   return false;
 }
 
@@ -104,6 +112,7 @@ function refundTextLooksFloorExempt(text) {
   if (s.includes('transport')) return true;
   if (s.includes('install')) return true;
   if (s.includes('additional service')) return true;
+  if (s.includes('md discount')) return true;
   return false;
 }
 
@@ -201,6 +210,7 @@ export const REFUND_CATEGORY_DISPLAY_LABELS = {
   'Unproduced meterage': 'Unproduced metres',
   'Stone flatsheet shortfall': 'Stone flat-sheet shortfall',
   'Customer commission': 'Agent commission',
+  'MD discount': 'MD discount',
 };
 
 /** @param {unknown} canonical */
@@ -222,9 +232,49 @@ export const REFUND_CATEGORY_LEGACY_ALIASES = {
   'substitution pricing': 'Substitution Difference',
   'agent commission': 'Customer commission',
   commission: 'Customer commission',
+  'managing director discount': 'MD discount',
+  'md amount discount': 'MD discount',
+  'director discount': 'MD discount',
   adjustment: 'Other',
   'material shortage': 'Other',
 };
+
+function refundTokenLooksLikeMdDiscount(value) {
+  const s = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return false;
+  if (s === 'md discount') return true;
+  if (s.includes('md discount')) return true;
+  if (s.includes('managing director discount')) return true;
+  return false;
+}
+
+/**
+ * True when any reason category is a discretionary MD amount discount
+ * (always MD/CEO/admin to approve, regardless of ₦ threshold).
+ * @param {unknown} categories
+ */
+export function refundCategoriesRequireMdApproval(categories) {
+  const cats = Array.isArray(categories) ? categories : normalizeRefundReasonCategoriesForApi(categories);
+  return cats.some((c) => refundTokenLooksLikeMdDiscount(c));
+}
+
+/**
+ * @param {{ categories?: unknown, calculationLines?: Array<{ category?: string, label?: string, amountNgn?: number, include?: boolean }> | null }} [p]
+ */
+export function refundRequestRequiresMdApproval({ categories, calculationLines } = {}) {
+  if (refundCategoriesRequireMdApproval(categories)) return true;
+  const lines = Array.isArray(calculationLines) ? calculationLines : [];
+  return lines.some((line) => {
+    if (line?.include === false) return false;
+    const amt = Math.round(Number(line?.amountNgn) || 0);
+    if (amt <= 0) return false;
+    return (
+      refundTokenLooksLikeMdDiscount(line?.category) || refundTokenLooksLikeMdDiscount(line?.label)
+    );
+  });
+}
 
 const KNOWN = new Set(REFUND_REASON_CATEGORY_VALUES.map((s) => s.toLowerCase()));
 

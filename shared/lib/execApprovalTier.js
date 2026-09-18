@@ -5,6 +5,10 @@
  */
 
 import { REFUND_MD_APPROVAL_THRESHOLD_NGN } from '../workspaceGovernance.js';
+import {
+  normalizeRefundReasonCategoriesForApi,
+  refundCategoriesRequireMdApproval,
+} from '../refundConstants.js';
 
 export const EXEC_APPROVAL_TIER_MD_ONLY = 'md_only';
 export const EXEC_APPROVAL_TIER_SHARED = 'shared';
@@ -46,6 +50,16 @@ export function classifyExecWorkTrayApprovalTier(item, limits = {}) {
   }
 
   if (kind === 'refunds') {
+    const refundCats = normalizeRefundReasonCategoriesForApi(
+      row.reason_category ?? row.reasonCategory ?? item?.reasonCategory ?? item?.reason_category
+    );
+    if (refundCategoriesRequireMdApproval(refundCats)) {
+      return {
+        tier: EXEC_APPROVAL_TIER_MD_ONLY,
+        label: 'MD only',
+        reason: 'MD discount',
+      };
+    }
     if (amt >= refundHi) {
       return {
         tier: EXEC_APPROVAL_TIER_MD_ONLY,

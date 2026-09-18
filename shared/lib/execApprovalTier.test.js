@@ -22,12 +22,22 @@ describe('execApprovalTier', () => {
     );
   });
 
-  it('splits refunds by threshold', () => {
+  it('splits refunds by threshold unless the category is MD discount', () => {
     expect(
       classifyExecWorkTrayApprovalTier({ kind: 'refunds', amountNgn: 500_000 }, limits).tier
     ).toBe(EXEC_APPROVAL_TIER_SHARED);
     expect(
       classifyExecWorkTrayApprovalTier({ kind: 'refunds', amountNgn: 1_500_000 }, limits).tier
+    ).toBe(EXEC_APPROVAL_TIER_MD_ONLY);
+    expect(
+      classifyExecWorkTrayApprovalTier(
+        {
+          kind: 'refunds',
+          amountNgn: 40_000,
+          row: { reason_category: JSON.stringify(['MD discount']) },
+        },
+        limits
+      ).tier
     ).toBe(EXEC_APPROVAL_TIER_MD_ONLY);
   });
 

@@ -9,6 +9,10 @@ import { listStaffPurchaseCreditQueue } from './staffPurchaseCreditOps.js';
 import { listRegisterSettlements } from './accountingRegisterSettlementOps.js';
 import { listBranchesMissingBranchManager } from './customerComplaintsOps.js';
 import { OT_STATUS, listOtRequests } from './otOps.js';
+import {
+  normalizeRefundReasonCategoriesForApi,
+  refundCategoriesRequireMdApproval,
+} from '../shared/refundConstants.js';
 
 function daysSince(iso) {
   const s = String(iso || '').trim();
@@ -115,10 +119,13 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
 
   for (const r of raw.pendingRefunds || []) {
     const amt = Number(r.amount_ngn) || 0;
+    const mdDiscount = refundCategoriesRequireMdApproval(
+      normalizeRefundReasonCategoriesForApi(r.reason_category)
+    );
     pushItem(items, {
       id: `refund:${r.refund_id}`,
       kind: 'refunds',
-      priority: 74 + (amt >= refundHi ? 12 : 0),
+      priority: 74 + (amt >= refundHi || mdDiscount ? 12 : 0),
       quotationRef: r.quotation_ref || '',
       refundId: r.refund_id,
       title: r.refund_id,
@@ -126,7 +133,11 @@ export function listMdAttentionInbox(db, branchScope = 'ALL') {
       amountNgn: amt,
       atIso: r.requested_at_iso,
       branchId: r.branch_id || '',
-      reasons: ['Pending refund approval', amt >= refundHi ? 'Above executive refund threshold' : null].filter(Boolean),
+      reasons: [
+        'Pending refund approval',
+        amt >= refundHi ? 'Above executive refund threshold' : null,
+        mdDiscount ? 'MD discount — MD/CEO approval required' : null,
+      ].filter(Boolean),
       row: r,
     });
   }

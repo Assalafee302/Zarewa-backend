@@ -526,4 +526,92 @@ describe('getEligibleRefundQuotations fast list', () => {
     expect(rows[0].eligible_refund_categories).toContain('Customer commission');
     expect(rows[0].suggested_preview_amount_ngn).toBe(50_000);
   });
+
+  it('lists a fully produced quote for MD discount when there is no overpay or floor delta', () => {
+    const quote = {
+      id: 'QT-MD-DISC',
+      customer_id: 'CUS-MD',
+      customer_name: 'MD Discount Customer',
+      date_iso: '2026-07-18',
+      total_ngn: 450_000,
+      paid_ngn: 450_000,
+      status: 'Finished',
+      refunds_blocked_at_iso: null,
+      total_refunded: 0,
+      lines_json: JSON.stringify({
+        materialGauge: '0.24mm',
+        materialDesign: 'IV',
+        products: [
+          {
+            name: 'Roofing Sheet',
+            qty: 100,
+            unitPrice: 4500,
+            gauge: '0.24mm',
+            design: 'IV',
+            floorPricePerMeter: 4500,
+            recommendedPricePerMeter: 4500,
+          },
+        ],
+        accessories: [],
+        services: [],
+      }),
+    };
+    const job = {
+      job_id: 'JOB-MD-DISC',
+      quotation_ref: 'QT-MD-DISC',
+      product_id: 'FG-MD',
+      actual_meters: 100,
+      status: 'Completed',
+    };
+    const db = {
+      prepare(sql) {
+        const text = String(sql);
+        return {
+          all() {
+            if (text.includes('FROM quotations q')) return [quote];
+            if (text.includes('FROM sales_receipts')) {
+              return [
+                {
+                  id: 'RCT-MD-DISC',
+                  quotation_ref: 'QT-MD-DISC',
+                  amount_ngn: 450_000,
+                  ledger_entry_id: null,
+                  finance_reconciliation_saved_at_iso: null,
+                  bank_received_amount_ngn: null,
+                  status: 'Confirmed',
+                },
+              ];
+            }
+            if (text.includes('FROM production_job_coils') && text.includes('gauge')) {
+              return [{ g: '0.24mm', meters: 100 }];
+            }
+            if (text.includes('FROM production_jobs') && text.includes('IN (')) return [job];
+            if (text.includes('FROM customer_refunds')) return [];
+            if (text.includes('FROM deliveries')) return [];
+            if (text.includes('FROM ledger_entries')) return [];
+            if (text.includes('FROM production_jobs')) return [];
+            return [];
+          },
+          get() {
+            if (text.includes('FROM customer_refunds')) return { s: 0 };
+            if (text.includes('FROM production_job_coils')) return { s: 100 };
+            if (text.includes('FROM products')) {
+              return { material_type: 'Aluminium', name: 'Longspan' };
+            }
+            if (text.includes('FROM production_jobs') && text.includes('NOT IN')) return undefined;
+            if (text.includes('FROM production_jobs')) return { 1: 1 };
+            if (text.includes('FROM ledger_entries')) return { s: 0 };
+            if (text.includes('FROM quotations')) return quote;
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const rows = getEligibleRefundQuotations(db, { candidateLimit: 20, resultLimit: 20 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('QT-MD-DISC');
+    expect(rows[0].eligible_refund_categories).toContain('MD discount');
+    expect(rows[0].suggested_preview_amount_ngn).toBe(450_000);
+  });
 });

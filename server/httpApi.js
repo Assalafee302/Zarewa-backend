@@ -157,7 +157,10 @@ import {
 } from './accountingPhase2Ops.js';
 import { disposeFixedAsset } from './fixedAssetDisposalOps.js';
 import { buildFinanceTrialExceptionSummary } from './financeTrialExceptions.js';
-import { MIN_REFUND_QUOTATION_REMAINING_NGN } from '../shared/refundConstants.js';
+import {
+  MIN_REFUND_QUOTATION_REMAINING_NGN,
+  refundCategoriesRequireMdApproval,
+} from '../shared/refundConstants.js';
 import { buildRefundProductionFulfillmentSummary } from '../shared/lib/refundProductionFulfillment.js';
 import { refundProductionAlignmentWarnings, suggestRefundCategoriesFromProduction, validateRefundProductionAlignmentAtSubmit } from './refundProductionAlignment.js';
 import { buildGovernancePack, governancePackToCsv } from './governancePackOps.js';
@@ -9988,6 +9991,7 @@ export function registerHttpApi(app, db) {
           );
         }
       }
+      const mdDiscountEligible = refundCategoriesRequireMdApproval(categories);
       if (meets.ok && categories.length === 0) {
         blockingReasons.push(
           'Refund preview returned no eligible refund categories (use Use quotation id when manual entry is allowed).'
@@ -9996,7 +10000,8 @@ export function registerHttpApi(app, db) {
       if (
         meets.ok &&
         categories.length > 0 &&
-        suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN
+        suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        !mdDiscountEligible
       ) {
         blockingReasons.push(
           `Automatic refund preview total is ₦${suggestedPreviewAmountNgn.toLocaleString('en-NG')} — refunds below ₦${MIN_REFUND_QUOTATION_REMAINING_NGN.toLocaleString('en-NG')} are not accepted.`
@@ -10015,15 +10020,16 @@ export function registerHttpApi(app, db) {
       const wouldAppearInPicklist =
         meets.ok &&
         categories.length > 0 &&
-        suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
         remainingNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN &&
-        isOrderFullySettledForPicker === true;
+        isOrderFullySettledForPicker === true &&
+        (suggestedPreviewAmountNgn >= MIN_REFUND_QUOTATION_REMAINING_NGN || mdDiscountEligible);
       /** Below-floor automatic previews are not eligible — do not allow paste/manual bypass. */
       const manualEntryRefundAllowed = false;
       if (
         meets.ok &&
         categories.length > 0 &&
         suggestedPreviewAmountNgn < MIN_REFUND_QUOTATION_REMAINING_NGN &&
+        !mdDiscountEligible &&
         !blockingReasons.some((r) => String(r).includes('Automatic refund preview total'))
       ) {
         blockingReasons.push(

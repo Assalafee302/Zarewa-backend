@@ -3,6 +3,7 @@ import {
   REFUND_MD_APPROVAL_THRESHOLD_NGN,
   EXPENSE_MD_APPROVAL_THRESHOLD_NGN,
   actorMayApproveRefundAmount,
+  actorMayApproveMdOnlyRefundCategory,
   actorMayApprovePaymentRequestAmount,
   isRefundLikeExpenseCategory,
   isExecutiveRoleKey,
@@ -53,6 +54,17 @@ describe('workspaceGovernance', () => {
       false
     );
     expect(actorMayApproveRefundAmount({ roleKey: 'md' }, has, 50_001, { refundExecutiveThresholdNgn: 50_000 })).toBe(true);
+  });
+
+  it('restricts MD discount approval to MD/CEO/admin (not Branch Manager)', () => {
+    const has = () => false;
+    expect(actorMayApproveMdOnlyRefundCategory({ roleKey: 'sales_manager' }, has)).toBe(false);
+    expect(actorMayApproveMdOnlyRefundCategory({ roleKey: 'branch_manager' }, (p) => p === 'refunds.approve')).toBe(
+      false
+    );
+    expect(actorMayApproveMdOnlyRefundCategory({ roleKey: 'md' }, has)).toBe(true);
+    expect(actorMayApproveMdOnlyRefundCategory({ roleKey: 'admin' }, has)).toBe(true);
+    expect(actorMayApproveMdOnlyRefundCategory({ roleKey: 'finance_manager' }, (p) => p === '*')).toBe(true);
   });
 
   it('allows finance manager to approve payment requests with finance.approve', () => {

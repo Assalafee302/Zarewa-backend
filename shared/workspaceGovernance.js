@@ -173,6 +173,19 @@ export function actorMayApproveRefundAmount(actor, hasPermission, approvedAmount
 }
 
 /**
+ * MD discount (and any other MD-only refund category) — Branch Manager cannot approve,
+ * even under the ₦ threshold. Admin / MD / CEO / chairman only.
+ * @param {{ roleKey?: string } | null | undefined} actor
+ * @param {(perm: string) => boolean} hasPermission
+ */
+export function actorMayApproveMdOnlyRefundCategory(actor, hasPermission) {
+  if (typeof hasPermission === 'function' && hasPermission('*')) return true;
+  const rk = String(actor?.roleKey || actor?.role_key || '').trim().toLowerCase();
+  if (rk === 'admin') return true;
+  return isExecutiveRoleKey(rk);
+}
+
+/**
  * @typedef {{ expenseExecutiveThresholdNgn?: number }} PaymentGovernanceLimits
  */
 

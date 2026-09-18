@@ -19,6 +19,7 @@ describe('refundConstants', () => {
     ]);
     expect(normalizeRefundReasonCategoriesForApi('Substitution pricing')).toEqual(['Substitution Difference']);
     expect(normalizeRefundReasonCategoriesForApi('Agent commission')).toEqual(['Customer commission']);
+    expect(normalizeRefundReasonCategoriesForApi('Managing director discount')).toEqual(['MD discount']);
     expect(normalizeRefundReasonCategoriesForApi('Adjustment')).toEqual(['Other']);
     expect(normalizeRefundReasonCategoriesForApi('["Unproduced meterage"]')).toEqual(['Unproduced meterage']);
   });
@@ -106,6 +107,14 @@ describe('refundConstants', () => {
     ).toBe(false);
     expect(
       refundAmountExceedsEconomicFloorCap({
+        amountNgn: 80_000,
+        calculationLines: [{ category: 'MD discount', amountNgn: 80_000 }],
+        categories: ['MD discount'],
+        maxDefensibleRefundNgn: 12_000,
+      })
+    ).toBe(false);
+    expect(
+      refundAmountExceedsEconomicFloorCap({
         amountNgn: 115_960,
         calculationLines: [
           { category: 'Unproduced meterage', amountNgn: 113_640 },
@@ -128,5 +137,23 @@ describe('refundConstants', () => {
   it('maps canonical refund categories to SPA display labels', () => {
     expect(refundCategoryDisplayLabel('Unproduced meterage')).toBe('Unproduced metres');
     expect(refundCategoryDisplayLabel('Other')).toBe('Other');
+    expect(refundCategoryDisplayLabel('MD discount')).toBe('MD discount');
+  });
+
+  it('treats MD discount as picker-eligible without an automatic preview total', () => {
+    expect(
+      quotationMeetsRefundPickerFloor({
+        remainingNgn: 50_000,
+        suggestedPreviewAmountNgn: 0,
+        eligibleRefundCategories: ['MD discount'],
+      })
+    ).toBe(true);
+    expect(
+      quotationMeetsRefundPickerFloor({
+        remainingNgn: 50_000,
+        suggestedPreviewAmountNgn: 0,
+        eligibleRefundCategories: ['Other'],
+      })
+    ).toBe(false);
   });
 });

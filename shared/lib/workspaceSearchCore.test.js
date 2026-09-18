@@ -136,4 +136,10 @@ describe('workspaceSearchCore', () => {
     const hits = filterNavSearchCommands('sales', hasPermission, canAccessModule);
     expect(hits.some((h) => h.id === 'nav-sales')).toBe(true);
   });
+
+  it('filterNavSearchCommands finds expense cash catch-up for finance.post', () => {
+    const hasPermission = (p) => p === 'finance.post';
+    const hits = filterNavSearchCommands('post imported', hasPermission, () => true);
+    expect(hits.some((h) => h.id === 'nav-expense-cash-catchup')).toBe(true);
+  });
 });

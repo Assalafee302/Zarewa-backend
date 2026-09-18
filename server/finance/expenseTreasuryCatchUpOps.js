@@ -118,6 +118,89 @@ export function listExpensesMissingBankPosting(db, branchScope = 'ALL', opts = {
   );
 }
 
+/**
+ * Where this branch’s expenses already sit on cashier books — used when catch-up shows 0 unposted.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ * @param {{ category?: string }} [opts]
+ */
+export function summarizeBranchExpenseCashPosting(db, branchId, opts = {}) {
+  const bid = String(branchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a workspace branch first.' };
+  const cat = String(opts.category || '').trim();
+  const catSql = cat ? ` AND TRIM(e.category) = ?` : '';
+  const catArgs = cat ? [cat] : [];
+
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(e.amount_ngn), 0) AS amt
+       FROM expenses e
+       WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}`
+    )
+    .get(bid, ...catArgs);
+
+  const unposted = db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(e.amount_ngn), 0) AS amt
+       FROM expenses e
+       LEFT JOIN treasury_movements tm
+         ON tm.source_kind = 'EXPENSE' AND tm.source_id = e.expense_id
+        AND tm.amount_ngn < 0
+        AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+       WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}
+         AND tm.id IS NULL`
+    )
+    .get(bid, ...catArgs);
+
+  const postedAccounts = db
+    .prepare(
+      `SELECT ta.id AS treasury_account_id, ta.name AS account_name, ta.type AS account_type,
+              COUNT(*) AS expense_count, COALESCE(SUM(ABS(tm.amount_ngn)), 0) AS amount_ngn
+       FROM expenses e
+       INNER JOIN treasury_movements tm
+         ON tm.source_kind = 'EXPENSE' AND tm.source_id = e.expense_id
+        AND tm.amount_ngn < 0
+        AND (tm.reverses_movement_id IS NULL OR TRIM(COALESCE(tm.reverses_movement_id, '')) = '')
+       INNER JOIN treasury_accounts ta ON ta.id = tm.treasury_account_id
+       WHERE TRIM(COALESCE(e.branch_id, '')) = ?${catSql}
+       GROUP BY ta.id, ta.name, ta.type
+       ORDER BY amount_ngn DESC, ta.name ASC`
+    )
+    .all(bid, ...catArgs);
+
+  const categories = db
+    .prepare(
+      `SELECT TRIM(e.category) AS category, COUNT(*) AS n, COALESCE(SUM(e.amount_ngn), 0) AS amt
+       FROM expenses e
+       WHERE TRIM(COALESCE(e.branch_id, '')) = ?
+       GROUP BY TRIM(e.category)
+       ORDER BY n DESC, category ASC`
+    )
+    .all(bid);
+
+  return {
+    ok: true,
+    branchId: bid,
+    category: cat,
+    expenseCount: Number(totals?.n) || 0,
+    expenseAmountNgn: roundMoney(totals?.amt),
+    unpostedCount: Number(unposted?.n) || 0,
+    unpostedAmountNgn: roundMoney(unposted?.amt),
+    postedAccounts: postedAccounts.map((row) => ({
+      treasuryAccountId: Number(row.treasury_account_id),
+      accountName: row.account_name || `#${row.treasury_account_id}`,
+      accountType: row.account_type || '',
+      expenseCount: Number(row.expense_count) || 0,
+      amountNgn: roundMoney(row.amount_ngn),
+    })),
+    categories: categories.map((row) => ({
+      category: row.category || '(blank)',
+      count: Number(row.n) || 0,
+      amountNgn: roundMoney(row.amt),
+    })),
+  };
+}
+
 function postGlForExpenseMovement(db, exp, movement, actor) {
   const amt = Math.abs(roundMoney(movement.amount_ngn));
   const glExp = tryPostExpensePaymentGlTx(db, {
@@ -666,5 +749,133 @@ export function clearExpensesForReimport(db, actor, opts = {}) {
     message: failed.length
       ? `Removed ${cleared.length} expense(s). ${failed.length} could not be removed. Re-import with AccountKey filled.`
       : `Removed ${cleared.length} expense(s) on this branch. Bank/till cash for those rows was put back. Re-import with AccountKey on every row.`,
+  };
+}
+
+function duplicateGroupKey(row) {
+  const ref = String(row.reference || '').trim().toLowerCase();
+  const date = String(row.date || '').trim().slice(0, 10);
+  const cat = String(row.category || '').trim().toLowerCase();
+  const amt = roundMoney(row.amount_ngn);
+  const fallback = String(row.expense_type || '').trim().toLowerCase();
+  return `${date}|${cat}|${amt}|${ref || fallback}`;
+}
+
+/**
+ * Imported expenses that share date, category, amount, and reference on this branch.
+ * The oldest expense_id in each group is the keeper.
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} branchId
+ */
+export function listDuplicateImportedExpenseGroups(db, branchId) {
+  const bid = String(branchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a workspace branch first.' };
+  const rows = db
+    .prepare(
+      `SELECT expense_id, expense_type, amount_ngn, date, category, payment_method, reference, branch_id
+       FROM expenses
+       WHERE TRIM(COALESCE(branch_id, '')) = ?
+       ORDER BY expense_id ASC`
+    )
+    .all(bid);
+
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = duplicateGroupKey(row);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(row);
+  }
+
+  const groups = [];
+  for (const [, members] of byKey) {
+    if (members.length < 2) continue;
+    const keep = members[0];
+    const extras = members.slice(1);
+    groups.push({
+      date: keep.date,
+      category: keep.category,
+      amountNgn: roundMoney(keep.amount_ngn),
+      reference: keep.reference || '',
+      keepExpenseID: keep.expense_id,
+      extraExpenseIDs: extras.map((r) => r.expense_id),
+      extraCount: extras.length,
+      restoreCashNgn: extras.reduce((s, r) => s + roundMoney(r.amount_ngn), 0),
+    });
+  }
+  return {
+    ok: true,
+    branchId: bid,
+    groupCount: groups.length,
+    extraCount: groups.reduce((s, g) => s + g.extraCount, 0),
+    restoreCashNgn: groups.reduce((s, g) => s + g.restoreCashNgn, 0),
+    groups,
+  };
+}
+
+/**
+ * Delete extra copies in duplicate groups. Puts till/bank cash back for any EXPENSE lines.
+ * @param {import('better-sqlite3').Database} db
+ * @param {object|null} actor
+ * @param {{ workspaceBranchId?: string, workspaceViewAll?: boolean, expenseIds?: string[] }} opts
+ */
+export function deleteDuplicateImportedExpenses(db, actor, opts = {}) {
+  const bid = String(opts.workspaceBranchId || '').trim();
+  if (!bid) return { ok: false, error: 'Select a single workspace branch first.' };
+  if (opts.workspaceViewAll) {
+    return { ok: false, error: 'Turn off all-branches view. Remove duplicates on one branch at a time.' };
+  }
+  const preview = listDuplicateImportedExpenseGroups(db, bid);
+  if (!preview.ok) return preview;
+  const allowed = new Set(preview.groups.flatMap((g) => g.extraExpenseIDs));
+  let ids = [...new Set((opts.expenseIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) ids = [...allowed];
+  ids = ids.filter((id) => allowed.has(id));
+  if (!ids.length) {
+    return { ok: false, error: 'No duplicate extra copies on this branch to delete.' };
+  }
+
+  const deleted = [];
+  const failed = [];
+  let restoredCashNgn = 0;
+  for (const expenseId of ids) {
+    const exp = db.prepare(`SELECT * FROM expenses WHERE expense_id = ?`).get(expenseId);
+    if (!exp) continue;
+    if (paidPaymentRequestCount(db, expenseId) > 0) {
+      failed.push({ expenseID: expenseId, error: 'This copy has a paid payment request. Reverse that payout first.' });
+      continue;
+    }
+    if (capexAssetLinked(db, expenseId)) {
+      failed.push({ expenseID: expenseId, error: 'This copy is linked to a fixed asset.' });
+      continue;
+    }
+    try {
+      let restoredNgn = 0;
+      db.transaction(() => {
+        restoredNgn = restoreExpenseCashAndDeleteTx(db, exp, actor).restoredNgn;
+      })();
+      restoredCashNgn += restoredNgn;
+      deleted.push({ expenseID: expenseId, restoredNgn });
+    } catch (e) {
+      failed.push({ expenseID: expenseId, error: String(e.message || e) });
+    }
+  }
+  if (!deleted.length) {
+    return {
+      ok: false,
+      error: failed[0]?.error || 'Could not delete duplicate expenses.',
+      deleted,
+      failed,
+    };
+  }
+  return {
+    ok: true,
+    deletedCount: deleted.length,
+    failedCount: failed.length,
+    restoredCashNgn,
+    deleted,
+    failed,
+    message: failed.length
+      ? `Removed ${deleted.length} duplicate expense(s) and put cash back. ${failed.length} could not be removed.`
+      : `Removed ${deleted.length} duplicate expense(s). Till/bank cash for those copies was put back.`,
   };
 }

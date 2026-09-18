@@ -8,6 +8,8 @@ import { registerHttpApi } from './httpApi.js';
 import { registerExpenseMemoFilingRoutes } from './http/expenseMemoFilingRoutes.js';
 import { registerBranchRefundFreezePage } from './http/branchRefundFreezePage.js';
 import { registerExpenseCashCatchupPage } from './http/expenseCashCatchupPage.js';
+import { registerCashierStatementPage } from './http/cashierStatementPage.js';
+import { registerExpenseDuplicatesPage } from './http/expenseDuplicatesPage.js';
 import { jsonParseErrorHandler } from './http/jsonParseErrorHandler.js';
 import { attachAuthContext } from './auth.js';
 import { scheduleHelpAnalytics } from './helpAnalytics.js';
@@ -153,6 +155,8 @@ export function createApp(db) {
   registerExpenseMemoFilingRoutes(app, db);
   registerBranchRefundFreezePage(app, db);
   registerExpenseCashCatchupPage(app, db);
+  registerCashierStatementPage(app, db);
+  registerExpenseDuplicatesPage(app, db);
   scheduleHelpAnalytics(db);
   scheduleWorkspaceMaintenance(db);
 
@@ -177,6 +181,8 @@ export function createApp(db) {
       if (req.path.startsWith('/api')) return next();
       if (req.path === '/refund-lock') return next();
       if (req.path === '/expense-cash-catchup') return next();
+      if (req.path === '/cashier-statement') return next();
+      if (req.path === '/expense-duplicates') return next();
       res.sendFile(spaIndex, (err) => (err ? next(err) : undefined));
     });
   }

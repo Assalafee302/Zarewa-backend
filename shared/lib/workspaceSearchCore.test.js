@@ -142,4 +142,16 @@ describe('workspaceSearchCore', () => {
     const hits = filterNavSearchCommands('post imported', hasPermission, () => true);
     expect(hits.some((h) => h.id === 'nav-expense-cash-catchup')).toBe(true);
   });
+
+  it('filterNavSearchCommands finds full cashier statement and duplicate delete', () => {
+    const hasPermission = (p) => p === 'finance.post' || p === 'cashier.desk.view';
+    expect(
+      filterNavSearchCommands('before 12th', hasPermission, () => true).some((h) => h.id === 'nav-cashier-statement')
+    ).toBe(true);
+    expect(
+      filterNavSearchCommands('duplicate expenses', hasPermission, () => true).some(
+        (h) => h.id === 'nav-expense-duplicates'
+      )
+    ).toBe(true);
+  });
 });
